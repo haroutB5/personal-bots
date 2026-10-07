@@ -13,7 +13,11 @@ import {
   PERSONAL_SECRET_MAX_VALUE_BYTES,
   PersonalSecretRequestId,
   normalizePersonalSecretOrigins,
+  normalizePersonalSecretPlacement,
+  PERSONAL_SECRET_WELL_KNOWN_ORIGINS,
+  unverifiedPersonalSecretOrigins,
   type PersonalSecretMode,
+  type PersonalSecretPlacement,
   type PersonalSecretModeInput,
   PersonalSecretsError,
   personalSecretEnvVar,
@@ -78,19 +82,10 @@ export const secretAvailableNote = (
     .map((entry) => {
       const { name, mode } = typeof entry === "string" ? { name: entry, mode: "env" } : entry;
       return mode === "brokered"
-        ? `Secret ${name} is now saved. Use it only through the secret_request tool by writing ${personalSecretPlaceholder(name)} where its value goes (a header, the URL or the body); the server adds it and never shows it to you.`
+        ? `Secret ${name} is now saved. Use it only through the secret_request tool by writing ${personalSecretPlaceholder(name)} in the Authorization header (the URL or body only if the owner allowed that for this key); the server adds it and never shows it to you.`
         : `Secret ${name} is now available as the environment variable ${personalSecretEnvVar(name)} in new shell commands. Do not print it.`;
     })
     .join("\n");
-
-/** Origins that are well known for the keys the app's own tools use; a bot's own hint wins. */
-const WELL_KNOWN_ORIGINS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  TAVILY_API_KEY: ["https://api.tavily.com"],
-  SERPAPI_API_KEY: ["https://serpapi.com"],
-  VERCEL_TOKEN: ["https://api.vercel.com"],
-  GITHUB_TOKEN: ["https://api.github.com"],
-  GH_TOKEN: ["https://api.github.com"],
-};
 
 /** The origins a bot named for a key it asks for; anything unusable is dropped, never an error. */
 const hintedOrigins = (
@@ -98,7 +93,32 @@ const hintedOrigins = (
   origins: ReadonlyArray<string> | undefined,
 ): ReadonlyArray<string> => {
   const named = origins === undefined ? [] : (normalizePersonalSecretOrigins(origins) ?? []);
-  return named.length > 0 ? named : (WELL_KNOWN_ORIGINS[name] ?? []);
+  return named.length > 0 ? named : (PERSONAL_SECRET_WELL_KNOWN_ORIGINS[name] ?? []);
+};
+
+/**
+ * One placement to show for several rows of one name: the widest of them, so
+ * the Settings list never reads stricter than a row really is. A header or
+ * `anywhere` any row has counts; a path prefix or method list shows only when
+ * every row has the same one.
+ */
+const widestPlacement = (
+  previous: PersonalSecretPlacement | undefined,
+  next: PersonalSecretPlacement,
+): PersonalSecretPlacement => {
+  if (previous === undefined) return next;
+  const header = previous.header ?? next.header;
+  const pathPrefix = previous.pathPrefix === next.pathPrefix ? next.pathPrefix : undefined;
+  const sameMethods =
+    (previous.methods ?? []).join(",") === (next.methods ?? []).join(",")
+      ? next.methods
+      : undefined;
+  return {
+    ...(header === undefined ? {} : { header }),
+    ...(previous.anywhere === true || next.anywhere === true ? { anywhere: true } : {}),
+    ...(pathPrefix === undefined ? {} : { pathPrefix }),
+    ...(sameMethods === undefined ? {} : { methods: sameMethods }),
+  };
 };
 
 /** Switch for the 1.66.0 default; `PERSONAL_SECRET_DEFAULT_MODE=env` restores the old default. */
@@ -178,16 +198,25 @@ export const make = Effect.gen(function* () {
     effect.pipe(Effect.mapError((cause) => fail(`Personal secrets ${operation} failed.`, cause)));
 
   /**
-   * The mode and origins a key is saved with. A brokered key must name at
-   * least one public HTTPS origin; an env key has none. Omitting the mode
-   * means the default (brokered, unless PERSONAL_SECRET_DEFAULT_MODE=env).
+   * The mode, origins and placement a key is saved with. A brokered key must
+   * name at least one public HTTPS origin; an env key has none (and no
+   * placement, which only a broker call reads). Omitting the mode means the
+   * default (brokered, unless PERSONAL_SECRET_DEFAULT_MODE=env). Omitting the
+   * placement means the default: the Authorization header only.
    */
   const resolveAccess = Effect.fn("PersonalSecretService.resolveAccess")(function* (input: {
     readonly mode: PersonalSecretMode | undefined;
     readonly origins: ReadonlyArray<string> | undefined;
+    readonly placement?: PersonalSecretPlacement | undefined;
   }) {
     const mode = input.mode ?? defaultNewSecretMode();
-    if (mode === "env") return { mode, origins: [] as ReadonlyArray<string> };
+    if (mode === "env") {
+      return {
+        mode,
+        origins: [] as ReadonlyArray<string>,
+        placement: {} as PersonalSecretPlacement,
+      };
+    }
     const origins = normalizePersonalSecretOrigins(input.origins ?? []);
     if (origins === null) {
       return yield* fail(
@@ -199,14 +228,35 @@ export const make = Effect.gen(function* () {
         "Add the HTTPS origin this key may be sent to, such as https://api.vercel.com, or save it as an environment variable.",
       );
     }
-    return { mode, origins };
+    const placement = normalizePersonalSecretPlacement(input.placement);
+    if (placement === null) {
+      return yield* fail(
+        "The key placement is not usable: use a plain header name, a path starting with / and no .. or ?, and real request methods.",
+      );
+    }
+    return { mode, origins, placement };
   });
 
-  /** Every row of one name carries the same mode and origins, whichever bot's value it is. */
-  const alignNameAccess = (
+  /**
+   * The owner's Settings action: every fulfilled row of one name takes the same
+   * access. A bot's request card never calls this (see `fulfill`): approving one
+   * bot's request must not rebind or downgrade another row of the same name.
+   */
+  const setNameAccess = (
     name: string,
-    access: { readonly mode: PersonalSecretMode; readonly origins: ReadonlyArray<string> },
+    access: {
+      readonly mode: PersonalSecretMode;
+      readonly origins: ReadonlyArray<string>;
+      readonly placement: PersonalSecretPlacement;
+    },
   ) => db("mode", repository.setMode({ name, ...access }));
+
+  /** A pending request as the owner's card shows it: the origins the app cannot vouch for are flagged. */
+  const withUnverifiedOrigins = (row: PersonalSecretRequest): PersonalSecretRequest => {
+    if (row.status !== "pending") return row;
+    const unverified = unverifiedPersonalSecretOrigins(row.name, row.origins ?? []);
+    return unverified.length === 0 ? row : { ...row, unverifiedOrigins: unverified };
+  };
 
   const requirePending = Effect.fn("PersonalSecretService.requirePending")(function* (
     requestId: PersonalSecretRequestId,
@@ -291,12 +341,12 @@ export const make = Effect.gen(function* () {
     yield* tasks
       .waitForUser({ taskId: input.task.taskId })
       .pipe(Effect.mapError((error) => fail(error.message, error)));
-    return { request: stored, status: "pending" as const };
+    return { request: withUnverifiedOrigins(stored), status: "pending" as const };
   });
 
   const listPending: PersonalSecretService["Service"]["listPending"] = () =>
     db("listPending", repository.listByStatus("pending")).pipe(
-      Effect.map((requests) => ({ requests: [...requests] })),
+      Effect.map((requests) => ({ requests: requests.map(withUnverifiedOrigins) })),
     );
 
   // The task resumes once, when its last pending request is answered, with
@@ -352,6 +402,7 @@ export const make = Effect.gen(function* () {
     const access = yield* resolveAccess({
       mode: input.mode,
       origins: input.origins ?? (pending.origins?.length ? pending.origins : undefined),
+      placement: input.placement,
     });
     yield* store
       .set(personalSecretStoreKey({ name: pending.name, botId: pending.botId, shared }), bytes)
@@ -367,6 +418,7 @@ export const make = Effect.gen(function* () {
         fulfilledAt,
         mode: access.mode,
         origins: access.origins,
+        placement: access.placement,
       }),
     );
     if (!written) {
@@ -378,6 +430,7 @@ export const make = Effect.gen(function* () {
       shared,
       mode: access.mode,
       origins: access.origins,
+      placement: access.placement,
       fulfilledAt,
     };
     secretRedactor.set(
@@ -385,7 +438,8 @@ export const make = Effect.gen(function* () {
       Redacted.value(input.value),
       personalSecretStoreKey({ name: pending.name, botId: pending.botId, shared }),
     );
-    yield* alignNameAccess(pending.name, access);
+    // Only this row carries the access the owner chose: another bot's row (or
+    // the owner's own saved key) of the same name keeps its mode and origins.
     yield* resumeTaskIfReady(fulfilled);
     return fulfilled;
   });
@@ -442,6 +496,7 @@ export const make = Effect.gen(function* () {
             // One row in env mode makes the whole name read env: the safer sign to show.
             mode: previous?.mode === "env" ? "env" : mode,
             origins: [...new Set([...(previous?.origins ?? []), ...(entry.origins ?? [])])],
+            placement: widestPlacement(previous?.placement, entry.placement ?? {}),
             fulfilledAt: entry.fulfilledAt,
           });
         }
@@ -536,11 +591,13 @@ export const make = Effect.gen(function* () {
     if (rows.length === 0) return yield* fail("Saved secret not found.");
     // Moving to brokered with no new origins keeps the ones the key already has.
     const known = [...new Set(rows.flatMap((row) => row.origins ?? []))];
+    const current = rows.map((row) => row.placement ?? {}).reduce(widestPlacement);
     const access = yield* resolveAccess({
       mode: input.mode,
       origins: input.origins ?? (known.length > 0 ? known : undefined),
+      placement: input.placement ?? current,
     });
-    yield* alignNameAccess(input.name, access);
+    yield* setNameAccess(input.name, access);
     return yield* list();
   });
 
@@ -565,7 +622,11 @@ export const make = Effect.gen(function* () {
     }
     const shared = input.shared ?? true;
     const label = (input.label ?? "").trim() || input.name;
-    const access = yield* resolveAccess({ mode: input.mode, origins: input.origins });
+    const access = yield* resolveAccess({
+      mode: input.mode,
+      origins: input.origins,
+      placement: input.placement,
+    });
     const storeKey = personalSecretStoreKey({
       name: input.name,
       botId: OWNER_SAVED_BOT_ID,
@@ -580,7 +641,8 @@ export const make = Effect.gen(function* () {
       (entry) => entry.name === input.name && entry.shared === shared,
     );
     if (existing !== undefined) {
-      yield* alignNameAccess(input.name, access);
+      // Rotating this row's value: its own access changes, no other row's.
+      yield* db("mode", repository.setRowAccess({ requestId: existing.requestId, ...access }));
       return { ...existing, ...access };
     }
 
@@ -598,11 +660,11 @@ export const make = Effect.gen(function* () {
       shared,
       mode: access.mode,
       origins: access.origins,
+      placement: access.placement,
       createdAt,
       fulfilledAt: createdAt,
     };
     yield* db("create", repository.insertRequest(row));
-    yield* alignNameAccess(input.name, access);
     return row;
   });
 

@@ -15,6 +15,7 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
+import { secretRedactor } from "../personal/secrets/secretRedaction.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -24,6 +25,7 @@ const threadId = ThreadId.make("thread-mcp-test");
 const tabId = PreviewTabId.make("tab-mcp-test");
 const alternateTabId = PreviewTabId.make("tab-mcp-alternate");
 const decodeJsonText = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const invocation = {
   environmentId,
   threadId,
@@ -870,6 +872,32 @@ it.effect("registers annotated tools and preserves authenticated request context
         const text = result.content[0];
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("masks a saved key in a registered tool's input before the handler sees it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const key = "sk-live-AbCdEf0123456789xyzQ";
+      secretRedactor.set("SAVED_KEY", key);
+      yield* Effect.addFinalizer(() => Effect.sync(() => secretRedactor.clear()));
+      const inputs = yield* serveSnapshots("mcp-guard-client", ["ok"]);
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "preview_evaluate",
+          arguments: { expression: `fetch("/x?k=${key}")` },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(false);
+      expect(inputs.length).toBeGreaterThan(0);
+      const sent = encodeJsonText(inputs);
+      expect(sent).not.toContain(key);
+      expect(sent).toContain("[secret SAVED_KEY]");
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

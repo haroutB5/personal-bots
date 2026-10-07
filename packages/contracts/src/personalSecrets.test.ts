@@ -4,7 +4,9 @@ import {
   PERSONAL_SECRET_MAX_ORIGINS,
   normalizePersonalSecretOrigin,
   normalizePersonalSecretOrigins,
+  normalizePersonalSecretPlacement,
   personalSecretPlaceholder,
+  unverifiedPersonalSecretOrigins,
 } from "./personalSecrets.ts";
 
 describe("normalizePersonalSecretOrigin", () => {
@@ -82,5 +84,68 @@ describe("normalizePersonalSecretOrigins", () => {
 describe("personalSecretPlaceholder", () => {
   it("is the text a bot writes where a brokered key's value belongs", () => {
     expect(personalSecretPlaceholder("VERCEL_TOKEN")).toBe("{{secret:VERCEL_TOKEN}}");
+  });
+});
+
+describe("normalizePersonalSecretPlacement", () => {
+  it("defaults to the strictest policy", () => {
+    expect(normalizePersonalSecretPlacement(undefined)).toEqual({});
+    expect(normalizePersonalSecretPlacement(null)).toEqual({});
+    expect(normalizePersonalSecretPlacement({})).toEqual({});
+    // Authorization is already allowed, so naming it adds nothing.
+    expect(normalizePersonalSecretPlacement({ header: " Authorization " })).toEqual({});
+  });
+
+  it("keeps a header, anywhere, a prefix and a method list in canonical form", () => {
+    expect(
+      normalizePersonalSecretPlacement({
+        header: " X-API-Key ",
+        anywhere: true,
+        pathPrefix: "/v1/",
+        methods: ["POST", "GET", "POST"],
+      }),
+    ).toEqual({ header: "x-api-key", anywhere: true, pathPrefix: "/v1", methods: ["GET", "POST"] });
+    // Every method, or the root prefix, is no restriction at all.
+    expect(
+      normalizePersonalSecretPlacement({
+        pathPrefix: "/",
+        methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+      }),
+    ).toEqual({});
+  });
+
+  it("refuses an unusable field instead of ignoring it", () => {
+    for (const bad of [
+      { header: "bad header" },
+      { header: "x:y" },
+      { header: "host" },
+      { header: "Content-Length" },
+      { header: "x".repeat(65) },
+      { pathPrefix: "v1" },
+      { pathPrefix: "/v1/../admin" },
+      { pathPrefix: "/v1?x=1" },
+      { pathPrefix: "/v1#f" },
+      { pathPrefix: "/a//b" },
+      { pathPrefix: "/a b" },
+      { pathPrefix: "/%2e%2e" },
+    ]) {
+      expect(normalizePersonalSecretPlacement(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+});
+
+describe("unverifiedPersonalSecretOrigins", () => {
+  it("flags every origin that is not well known for the key's name", () => {
+    expect(
+      unverifiedPersonalSecretOrigins("GITHUB_TOKEN", [
+        "https://api.github.com",
+        "https://evil.example.com",
+      ]),
+    ).toEqual(["https://evil.example.com"]);
+    expect(unverifiedPersonalSecretOrigins("VERCEL_TOKEN", ["https://api.vercel.com"])).toEqual([]);
+    // A name with no well-known origin cannot be vouched for at all.
+    expect(unverifiedPersonalSecretOrigins("MY_KEY", ["https://api.example.com"])).toEqual([
+      "https://api.example.com",
+    ]);
   });
 });

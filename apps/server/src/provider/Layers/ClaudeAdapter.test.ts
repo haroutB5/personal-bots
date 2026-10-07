@@ -43,6 +43,7 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { buildClaudeBotPermissionDeny } from "../../personal/secrets/botProtectedPaths.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
@@ -649,10 +650,12 @@ describe("ClaudeAdapterLive", () => {
       // adds one should fail until someone decides whether a bot may have it.
       // `showThinkingSummaries` (upstream 052c7ae53, #11784) is derived from
       // the turn's own thinking display, not from the owner's config.
+      const serverConfig = yield* ServerConfig;
       assert.deepEqual(options?.settings, {
         autoMemoryEnabled: false,
         disableClaudeAiConnectors: true,
         showThinkingSummaries: true,
+        permissions: { deny: buildClaudeBotPermissionDeny(serverConfig) },
       });
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
@@ -694,6 +697,60 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(options?.env?.T3_MCP_TOKEN, "test-token");
     }).pipe(
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("denies a bot the secrets, database and logs in every runtime mode", () => {
+    // A real absolute base dir: a drive-less "/tmp" is not absolute on Windows.
+    const harness = makeHarness({ baseDir: NodeOS.tmpdir() });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const serverConfig = yield* ServerConfig;
+      const expected = buildClaudeBotPermissionDeny(serverConfig);
+      for (const runtimeMode of ["full-access", "auto", "approval-required"] as const) {
+        yield* adapter.startSession({
+          threadId: ThreadId.make(`thread-bot-deny-${runtimeMode}`),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode,
+          personalBot: true,
+        });
+        const settings = harness.getLastCreateQueryInput()?.options?.settings;
+        assert.notEqual(typeof settings, "string");
+        const deny =
+          typeof settings === "object" ? ((settings.permissions?.deny ?? []) as string[]) : [];
+        // Same rules whatever the mode: deny rules are evaluated before the mode.
+        assert.deepEqual(deny, expected);
+      }
+      // The rules name the real paths, the sidecars included.
+      const names = (rule: string) => rule.replaceAll("\\", "/");
+      assert.ok(expected.some((rule) => /^Read\(.*\/secrets\/\*\*\)$/.test(names(rule))));
+      assert.ok(expected.some((rule) => /^Edit\(.*state\.sqlite-wal\)$/.test(names(rule))));
+      assert.ok(expected.some((rule) => /^Read\(.*\/logs\/\*\*\)$/.test(names(rule))));
+      // Only the tools whose path rules Claude Code actually consults.
+      for (const rule of expected) {
+        assert.match(rule, /^(Read|Edit|Bash|PowerShell)\(/);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("gives a normal thread no deny rules", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: ThreadId.make("thread-normal-no-deny"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const settings = harness.getLastCreateQueryInput()?.options?.settings;
+      assert.notEqual(typeof settings, "string");
+      assert.equal(typeof settings === "object" ? settings.permissions : "string", undefined);
+    }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );

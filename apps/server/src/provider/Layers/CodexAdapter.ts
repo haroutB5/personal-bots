@@ -2309,6 +2309,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
               ]
             : []),
+          // No path deny for bots here, deliberately. A bot runs full-access
+          // (`danger-full-access`), which Codex's sandbox cannot restrict. A
+          // `[permissions.<id>.filesystem]` profile with `"<path>" = "none"`
+          // is ignored once thread/start sends the legacy `sandbox` value
+          // (measured on 0.160.1: activePermissionProfile stays null), and
+          // without that value the Windows backend refuses to start the thread
+          // ("cannot enforce split filesystem read restrictions"). So the
+          // secrets, state.sqlite and logs are not protected from a Codex bot.
           ...(input.personalBot === true
             ? [
                 ...PERSONAL_BOT_CODEX_APP_SERVER_ARGS,

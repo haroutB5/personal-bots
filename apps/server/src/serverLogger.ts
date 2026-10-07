@@ -39,12 +39,17 @@ export const ServerLoggerLive = Effect.gen(function* () {
   // https://opentelemetry.io/blog/2026/deprecating-span-events/
   const loggerLayer = Logger.layer(
     // A bot tool's refusal is an answer, not a fault: it is logged at INFO (expectedToolRefusals.ts).
+    // Every sink is wrapped, not just the console: the tracer logger puts each
+    // message on a span (server.trace.ndjson) and the OTLP logger exports it.
     otlpLogger === undefined
       ? [
           redactSecretsInLogs(downgradeExpectedRefusals(Logger.consolePretty())),
-          Logger.tracerLogger,
+          redactSecretsInLogs(Logger.tracerLogger),
         ]
-      : [redactSecretsInLogs(downgradeExpectedRefusals(Logger.consolePretty())), otlpLogger],
+      : [
+          redactSecretsInLogs(downgradeExpectedRefusals(Logger.consolePretty())),
+          otlpLogger.pipe(Effect.map((logger) => redactSecretsInLogs(logger))),
+        ],
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),

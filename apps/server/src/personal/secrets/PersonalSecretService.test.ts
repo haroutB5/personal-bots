@@ -1108,6 +1108,235 @@ describe("brokered secrets", () => {
       }),
     ),
   );
+
+  it.effect("approving one bot's request does not rebind or downgrade another bot's row", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        const assistant = yield* runningTask(harness, "scope-a", "assistant");
+        const developer = yield* runningTask(harness, "scope-b", "developer");
+        yield* bots.createThread({ botId: botId("assistant"), threadId: assistant.threadId });
+        yield* bots.createThread({ botId: botId("developer"), threadId: developer.threadId });
+
+        const ask = (task: PersonalTask, threadId: ThreadId, bot: string, origin: string) =>
+          secrets.request({
+            task,
+            threadId,
+            botId: botId(bot),
+            name: "DEPLOY_KEY",
+            label: "Deploy key",
+            purpose: "Deploy.",
+            origins: [origin],
+          });
+        const first = yield* ask(
+          assistant.task,
+          assistant.threadId,
+          "assistant",
+          "https://api.vercel.com",
+        );
+        yield* secrets.fulfill({
+          requestId: first.request.requestId,
+          value: Redacted.make("assistant-deploy-key-0123"),
+          mode: "brokered",
+        });
+        const second = yield* ask(
+          developer.task,
+          developer.threadId,
+          "developer",
+          "https://evil.example.com",
+        );
+        // The other bot's card is approved as an environment variable: a downgrade attempt.
+        yield* secrets.fulfill({
+          requestId: second.request.requestId,
+          value: Redacted.make("developer-deploy-key-0456"),
+          mode: "env",
+        });
+
+        const seenByAssistant = (yield* access.secretsForThread(assistant.threadId)).find(
+          (entry) => entry.name === "DEPLOY_KEY",
+        );
+        const seenByDeveloper = (yield* access.secretsForThread(developer.threadId)).find(
+          (entry) => entry.name === "DEPLOY_KEY",
+        );
+        expect(seenByAssistant).toEqual(
+          expect.objectContaining({ mode: "brokered", origins: ["https://api.vercel.com"] }),
+        );
+        expect(seenByDeveloper).toEqual(expect.objectContaining({ mode: "env", origins: [] }));
+        // Nothing of the first bot's value moved into the other's environment, or the reverse.
+        expect((yield* access.forThread(assistant.threadId)).environment).toEqual({});
+        expect(Object.keys((yield* access.forThread(developer.threadId)).environment)).toEqual([
+          "PB_SECRET_DEPLOY_KEY",
+        ]);
+        // The Settings list shows the safer sign for a name with mixed rows.
+        expect((yield* secrets.list()).secrets[0]?.mode).toBe("env");
+      }),
+    ),
+  );
+
+  it.effect("the owner saving a key again changes that row only, not another bot's row", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        const assistant = yield* runningTask(harness, "own-row", "assistant");
+        yield* bots.createThread({ botId: botId("assistant"), threadId: assistant.threadId });
+        const asked = yield* secrets.request({
+          task: assistant.task,
+          threadId: assistant.threadId,
+          botId: botId("assistant"),
+          name: "ROW_KEY",
+          label: "Row key",
+          purpose: "Test.",
+          origins: ["https://api.one.example.com"],
+        });
+        yield* secrets.fulfill({
+          requestId: asked.request.requestId,
+          value: Redacted.make("bots-own-row-key-0123"),
+          shared: false,
+          mode: "brokered",
+        });
+        // The owner's shared key of the same name, bound elsewhere.
+        yield* secrets.create({
+          name: "ROW_KEY",
+          value: Redacted.make("owners-shared-key-0123"),
+          shared: true,
+          mode: "brokered",
+          origins: ["https://api.two.example.com"],
+        });
+        yield* secrets.create({
+          name: "ROW_KEY",
+          value: Redacted.make("owners-rotated-key-0123"),
+          shared: true,
+          mode: "brokered",
+          origins: ["https://api.three.example.com"],
+        });
+        const own = (yield* access.secretsForThread(assistant.threadId)).find(
+          (entry) => entry.name === "ROW_KEY",
+        );
+        // The bot keeps its own row: its value, its mode and its origin.
+        expect(own).toEqual(
+          expect.objectContaining({
+            mode: "brokered",
+            origins: ["https://api.one.example.com"],
+            value: "bots-own-row-key-0123",
+          }),
+        );
+      }),
+    ),
+  );
+
+  it.effect("a pending request flags the origins the app cannot vouch for", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const { task, threadId } = yield* runningTask(harness, "unverified", "assistant");
+        const ask = (name: string, origins?: ReadonlyArray<string>) =>
+          secrets.request({
+            task,
+            threadId,
+            botId: botId("assistant"),
+            name,
+            label: name,
+            purpose: "Test.",
+            ...(origins === undefined ? {} : { origins }),
+          });
+        const wellKnown = yield* ask("VERCEL_TOKEN", ["https://api.vercel.com"]);
+        expect(wellKnown.request.unverifiedOrigins).toBeUndefined();
+        const hinted = yield* ask("GITHUB_TOKEN", ["https://evil.example.com"]);
+        expect(hinted.request.origins).toEqual(["https://evil.example.com"]);
+        expect(hinted.request.unverifiedOrigins).toEqual(["https://evil.example.com"]);
+        const unknownName = yield* ask("MY_SERVICE_KEY", ["https://api.example.com"]);
+        expect(unknownName.request.unverifiedOrigins).toEqual(["https://api.example.com"]);
+
+        // The card the owner sees (listPending) carries the same flag.
+        const pending = (yield* secrets.listPending()).requests;
+        expect(pending.find((entry) => entry.name === "GITHUB_TOKEN")?.unverifiedOrigins).toEqual([
+          "https://evil.example.com",
+        ]);
+        expect(
+          pending.find((entry) => entry.name === "VERCEL_TOKEN")?.unverifiedOrigins,
+        ).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("stores a key's placement policy, normalised, and refuses an unusable one", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        const assistant = yield* runningTask(harness, "placement", "assistant");
+        yield* bots.createThread({ botId: botId("assistant"), threadId: assistant.threadId });
+
+        for (const placement of [
+          { header: "bad header" },
+          { header: "host" },
+          { pathPrefix: "v1" },
+          { pathPrefix: "/v1/../admin" },
+          { pathPrefix: "/v1?x=1" },
+        ]) {
+          const refused = yield* Effect.flip(
+            secrets.create({
+              name: "PLACED_KEY",
+              value: Redacted.make("placed-key-value-0123"),
+              mode: "brokered",
+              origins: ["https://api.example.com"],
+              placement,
+            }),
+          );
+          expect(refused.message, Object.values(placement).join(" ")).toContain("placement");
+        }
+
+        const saved = yield* secrets.create({
+          name: "PLACED_KEY",
+          value: Redacted.make("placed-key-value-0123"),
+          mode: "brokered",
+          origins: ["https://api.example.com"],
+          placement: {
+            header: " X-API-Key ",
+            anywhere: true,
+            pathPrefix: "/v1/",
+            methods: ["POST", "GET"],
+          },
+        });
+        const expected = {
+          header: "x-api-key",
+          anywhere: true,
+          pathPrefix: "/v1",
+          methods: ["GET", "POST"],
+        };
+        expect(saved.placement).toEqual(expected);
+        expect((yield* secrets.list()).secrets[0]?.placement).toEqual(expected);
+        expect(
+          (yield* access.secretsForThread(assistant.threadId)).find(
+            (entry) => entry.name === "PLACED_KEY",
+          )?.placement,
+        ).toEqual(expected);
+
+        // A mode change that names no placement keeps it; `{}` goes back to the default.
+        const kept = yield* secrets.setMode({
+          name: "PLACED_KEY",
+          mode: "brokered",
+          origins: ["https://api.example.com"],
+        });
+        expect(kept.secrets[0]?.placement).toEqual(expected);
+        const reset = yield* secrets.setMode({
+          name: "PLACED_KEY",
+          mode: "brokered",
+          placement: {},
+        });
+        expect(reset.secrets[0]?.placement).toEqual({});
+      }),
+    ),
+  );
 });
 
 /**

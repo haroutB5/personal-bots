@@ -11,10 +11,12 @@ import {
   PersonalBotId,
   PersonalSecretMode,
   PersonalSecretName,
+  type PersonalSecretPlacement,
   PersonalSecretRequestId,
   PersonalSecretRequestStatus,
   PersonalTaskId,
   ThreadId,
+  normalizePersonalSecretPlacement,
   type PersonalSecretRequest,
 } from "@t3tools/contracts";
 
@@ -36,6 +38,7 @@ const RequestDbRow = Schema.Struct({
   shared: Schema.Number,
   mode: PersonalSecretMode,
   originsJson: Schema.String,
+  placementJson: Schema.String,
   createdAt: Schema.DateTimeUtcFromString,
   fulfilledAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
@@ -53,6 +56,17 @@ const parseOrigins = (json: string): ReadonlyArray<string> => {
   }
 };
 
+/** A bad or hand-edited column reads as the strictest policy: the Authorization header only. */
+const parsePlacement = (json: string): PersonalSecretPlacement => {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    return normalizePersonalSecretPlacement(parsed as PersonalSecretPlacement) ?? {};
+  } catch {
+    return {};
+  }
+};
+
 const REQUEST_COLUMNS = `
   request_id AS "requestId",
   task_id AS "taskId",
@@ -66,6 +80,7 @@ const REQUEST_COLUMNS = `
   shared AS "shared",
   mode AS "mode",
   origins_json AS "originsJson",
+  placement_json AS "placementJson",
   created_at AS "createdAt",
   fulfilled_at AS "fulfilledAt"
 `;
@@ -95,6 +110,7 @@ export class PersonalSecretRepository extends Context.Service<
       /** Written with the row when given (a fulfilment); left alone otherwise. */
       readonly mode?: PersonalSecretMode;
       readonly origins?: ReadonlyArray<string>;
+      readonly placement?: PersonalSecretPlacement;
     }) => Effect.Effect<boolean, PersonalSecretRepositoryError>;
     /** Drops the fulfilled rows for `name`; returns how many there were. */
     readonly deleteFulfilledByName: (
@@ -104,11 +120,23 @@ export class PersonalSecretRepository extends Context.Service<
       name: string,
       shared: boolean,
     ) => Effect.Effect<void, PersonalSecretRepositoryError>;
-    /** Sets the mode and bound origins on every fulfilled row of `name`. */
+    /**
+     * Sets the mode, bound origins and placement on every fulfilled row of
+     * `name`. Only the owner's own Settings action uses this; a bot's request
+     * card changes just its own row (see `setRowAccess`).
+     */
     readonly setMode: (input: {
       readonly name: string;
       readonly mode: PersonalSecretMode;
       readonly origins: ReadonlyArray<string>;
+      readonly placement: PersonalSecretPlacement;
+    }) => Effect.Effect<void, PersonalSecretRepositoryError>;
+    /** Sets the mode, bound origins and placement of one fulfilled row, and no other. */
+    readonly setRowAccess: (input: {
+      readonly requestId: PersonalSecretRequestId;
+      readonly mode: PersonalSecretMode;
+      readonly origins: ReadonlyArray<string>;
+      readonly placement: PersonalSecretPlacement;
     }) => Effect.Effect<void, PersonalSecretRepositoryError>;
   }
 >()("t3/personal/secrets/PersonalSecretRepository") {}
@@ -134,10 +162,11 @@ export const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           PersistenceDecodeError.fromSchemaError(`PersonalSecretRepository.${operation}`, cause),
         ),
-        Effect.map(({ originsJson, ...decoded }): PersonalSecretRequest => ({
+        Effect.map(({ originsJson, placementJson, ...decoded }): PersonalSecretRequest => ({
           ...decoded,
           shared: decoded.shared === 1,
           origins: parseOrigins(originsJson),
+          placement: parsePlacement(placementJson),
         })),
       ),
     );
@@ -148,13 +177,14 @@ export const make = Effect.gen(function* () {
       sql`
         INSERT INTO personal_secret_requests (
           request_id, root_task_id, task_id, thread_id, bot_id, name, label, purpose,
-          status, shared, mode, origins_json, created_at, fulfilled_at
+          status, shared, mode, origins_json, placement_json, created_at, fulfilled_at
         )
         VALUES (
           ${request.requestId}, ${request.rootTaskId}, ${request.taskId}, ${request.threadId},
           ${request.botId}, ${request.name}, ${request.label}, ${request.purpose},
           ${request.status}, ${request.shared ? 1 : 0}, ${request.mode ?? "env"},
-          ${JSON.stringify(request.origins ?? [])}, ${DateTime.formatIso(request.createdAt)},
+          ${JSON.stringify(request.origins ?? [])}, ${JSON.stringify(request.placement ?? {})},
+          ${DateTime.formatIso(request.createdAt)},
           ${request.fulfilledAt === null ? null : DateTime.formatIso(request.fulfilledAt)}
         )
         ON CONFLICT(request_id) DO NOTHING
@@ -205,6 +235,7 @@ export const make = Effect.gen(function* () {
             shared = ${input.shared ? 1 : 0},
             mode = COALESCE(${input.mode ?? null}, mode),
             origins_json = COALESCE(${input.origins === undefined ? null : JSON.stringify(input.origins)}, origins_json),
+            placement_json = COALESCE(${input.placement === undefined ? null : JSON.stringify(input.placement)}, placement_json),
             fulfilled_at = ${input.fulfilledAt === null ? null : DateTime.formatIso(input.fulfilledAt)}
         WHERE request_id = ${input.requestId}
           AND status = ${input.expectedStatus}
@@ -231,8 +262,19 @@ export const make = Effect.gen(function* () {
         "setMode",
         sql`
       UPDATE personal_secret_requests
-      SET mode = ${input.mode}, origins_json = ${JSON.stringify(input.origins)}
+      SET mode = ${input.mode}, origins_json = ${JSON.stringify(input.origins)},
+          placement_json = ${JSON.stringify(input.placement)}
       WHERE name = ${input.name} AND status = 'fulfilled'
+    `,
+      ).pipe(Effect.asVoid),
+    setRowAccess: (input) =>
+      query(
+        "setRowAccess",
+        sql`
+      UPDATE personal_secret_requests
+      SET mode = ${input.mode}, origins_json = ${JSON.stringify(input.origins)},
+          placement_json = ${JSON.stringify(input.placement)}
+      WHERE request_id = ${input.requestId} AND status = 'fulfilled'
     `,
       ).pipe(Effect.asVoid),
     setSharing: (name, shared) =>

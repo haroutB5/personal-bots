@@ -15,6 +15,10 @@ import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
 
 import * as ServerConfig from "../../config.ts";
 import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
+import {
+  redactSecretsInTraceSink,
+  redactSecretsInTracer,
+} from "../../personal/secrets/secretLogRedaction.ts";
 import { ServerLoggerLive } from "../../serverLogger.ts";
 import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
 
@@ -38,7 +42,7 @@ export const ObservabilityLive = Layer.unwrap(
 
     const tracerLayer = Layer.unwrap(
       Effect.gen(function* () {
-        const sink = yield* makeTraceSink({
+        const rawSink = yield* makeTraceSink({
           filePath: config.serverTracePath,
           maxBytes: config.traceMaxBytes,
           maxFiles: config.traceMaxFiles,
@@ -52,15 +56,20 @@ export const ObservabilityLive = Layer.unwrap(
               durationMs: stats.durationMs,
             }),
         });
+        // Saved secret values are masked in every record on its way to the file
+        // and in every attribute handed to the exporter.
+        const sink = redactSecretsInTraceSink(rawSink);
         const delegate =
           config.otlpTracesUrl === undefined
             ? undefined
-            : yield* OtlpTracer.make({
-                url: config.otlpTracesUrl,
-                exportInterval: `${traces.exportIntervalMs} millis`,
-                headers: traces.headers,
-                resource,
-              });
+            : redactSecretsInTracer(
+                yield* OtlpTracer.make({
+                  url: config.otlpTracesUrl,
+                  exportInterval: `${traces.exportIntervalMs} millis`,
+                  headers: traces.headers,
+                  resource,
+                }),
+              );
 
         const tracer = yield* makeLocalFileTracer({
           filePath: config.serverTracePath,

@@ -12,7 +12,8 @@
  *
  * It learns values from the secret store (`PersonalSecretService` keeps it in
  * step) and masks the raw value and the spellings a value commonly turns into:
- * URL-encoded, form-encoded, JSON-escaped, hex, and base64 / base64url both
+ * URL-encoded (either case of the escapes), form-encoded, JSON-escaped (also with
+ * `\/` for slashes), hex (either case), and base64 / base64url both
  * alone and embedded in a longer string (`Authorization: Basic ...`).
  *
  * Kill switch: `PERSONAL_SECRET_REDACT=off` (also 0 / false / no, and the
@@ -20,7 +21,12 @@
  * an idle restart is enough to turn it off.
  */
 
-/** Shorter values would mask ordinary words; the store allows them, redaction skips them. */
+/**
+ * Shorter values would mask ordinary words (a 4-character key would blank every
+ * "true" or "null"); the store allows them, redaction skips them. A key under
+ * this length is therefore not masked anywhere, so use a real, long API key
+ * and keep short secrets out of bots' reach.
+ */
 export const MIN_REDACTED_SECRET_LENGTH = 8;
 
 /** The text a masked value becomes. */
@@ -69,9 +75,16 @@ export const secretVariants = (value: string): ReadonlyArray<string> => {
   variants.add(urlEncoded);
   variants.add(urlEncoded.replaceAll("%20", "+"));
   variants.add(encodeURI(value));
-  // JSON string escaping (a quote, a backslash or a newline inside the value).
-  variants.add(JSON.stringify(value).slice(1, -1));
-  variants.add(Buffer.from(value, "utf8").toString("hex"));
+  // Some encoders write the percent escapes in lower case.
+  variants.add(urlEncoded.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase()));
+  // JSON string escaping (a quote, a backslash or a newline inside the value),
+  // and the `\/` form some serializers (PHP, Ruby) write for every slash.
+  const jsonEscaped = JSON.stringify(value).slice(1, -1);
+  variants.add(jsonEscaped);
+  variants.add(jsonEscaped.replaceAll("/", "\\/"));
+  const hex = Buffer.from(value, "utf8").toString("hex");
+  variants.add(hex);
+  variants.add(hex.toUpperCase());
   for (const variant of base64Variants(value)) variants.add(variant);
   return [...variants].filter((variant) => variant.length >= MIN_REDACTED_SECRET_LENGTH);
 };

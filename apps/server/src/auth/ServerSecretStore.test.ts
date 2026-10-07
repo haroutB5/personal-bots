@@ -327,6 +327,59 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(makeServerConfigLayer())),
   );
 
+  it.effect("keeps bot API keys sealed on disk", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const apiKey = "sk-live-fake-api-key-on-disk-1234567890";
+      const name = "personal-secret-bot-1-GITHUB_TOKEN";
+
+      yield* secretStore.set(name, new TextEncoder().encode(apiKey));
+      const onDisk = yield* fileSystem.readFile(`${config.secretsDir}/${name}.bin`);
+      assert.notInclude(Buffer.from(onDisk).toString("utf8"), apiKey);
+      assert.notInclude(Buffer.from(onDisk).toString("base64"), btoa(apiKey).slice(0, 16));
+      assert.equal(
+        new TextDecoder().decode(Option.getOrThrow(yield* secretStore.get(name))),
+        apiKey,
+      );
+    }).pipe(Effect.provide(Layer.provideMerge(ServerSecretStore.layer, makeServerConfigLayer()))),
+  );
+
+  it.effect(
+    "encrypts legacy plaintext bot API keys on boot, idempotently, leaving others alone",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const configLayer = Layer.succeed(ServerConfig.ServerConfig, config);
+        const keyName = "personal-secret-bot-1-TAVILY_API_KEY";
+        const keyPath = `${config.secretsDir}/${keyName}.bin`;
+        const otherPath = `${config.secretsDir}/session-signing-key.bin`;
+        yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+        yield* fileSystem.writeFile(keyPath, new TextEncoder().encode("tvly-legacy-plain-key"));
+        yield* fileSystem.writeFile(otherPath, Uint8Array.from([9, 9, 9]));
+
+        const boot = <A>(body: Effect.Effect<A, never, ServerSecretStore.ServerSecretStore>) =>
+          body.pipe(Effect.provide(Layer.provide(ServerSecretStore.layer, configLayer)));
+        const readKey = Effect.gen(function* () {
+          const store = yield* ServerSecretStore.ServerSecretStore;
+          return yield* store.get(keyName).pipe(Effect.orDie);
+        });
+
+        const first = yield* boot(readKey);
+        const sealed = yield* fileSystem.readFile(keyPath);
+        assert.notInclude(Buffer.from(sealed).toString("utf8"), "tvly-legacy-plain-key");
+        assert.equal(new TextDecoder().decode(Option.getOrThrow(first)), "tvly-legacy-plain-key");
+        // The unrelated plaintext entry keeps its format.
+        assert.deepEqual(Array.from(yield* fileSystem.readFile(otherPath)), [9, 9, 9]);
+
+        const second = yield* boot(readKey);
+        assert.deepEqual(Array.from(yield* fileSystem.readFile(keyPath)), Array.from(sealed));
+        assert.equal(new TextDecoder().decode(Option.getOrThrow(second)), "tvly-legacy-plain-key");
+      }).pipe(Effect.provide(makeServerConfigLayer())),
+  );
+
   it.effect("propagates read failures other than missing-file errors", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;

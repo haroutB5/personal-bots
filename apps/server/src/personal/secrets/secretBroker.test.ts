@@ -6,6 +6,8 @@ import type * as NodeNet from "node:net";
 
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 
+import type { PersonalSecretPlacement } from "@t3tools/contracts";
+
 import {
   callWithSecrets,
   isPublicAddress,
@@ -27,7 +29,8 @@ const secret = (
   origins: ReadonlyArray<string>,
   mode: "brokered" | "env" = "brokered",
   value = VALUE,
-): BrokerSecret => ({ name, mode, origins, value });
+  placement: PersonalSecretPlacement = {},
+): BrokerSecret => ({ name, mode, origins, value, placement });
 
 const refusal = (fn: () => unknown): string => {
   try {
@@ -92,24 +95,153 @@ describe("prepareBrokerRequest", () => {
     headers: { Authorization: "Bearer {{secret:VERCEL_TOKEN}}" },
   };
 
-  it("puts the value into a header, the query, the path and the body", () => {
+  const open = [
+    secret("VERCEL_TOKEN", [origin], "brokered", VALUE, { anywhere: true, header: "x-key" }),
+  ];
+
+  it("puts the value into a header, the query, the path and the body when the owner allowed it", () => {
     const prepared = prepareBrokerRequest(
       {
         method: "post",
         url: `${origin}/v1/{{secret:VERCEL_TOKEN}}/x?key={{secret:VERCEL_TOKEN}}&a=1`,
-        headers: { "X-Key": "{{secret:VERCEL_TOKEN}}", "X-B64": "{{secret:VERCEL_TOKEN|base64}}" },
+        headers: {
+          "X-Key": "{{secret:VERCEL_TOKEN}}",
+          Authorization: "Basic {{secret:VERCEL_TOKEN|base64}}",
+        },
         body: '{"token":"{{secret:VERCEL_TOKEN}}"}',
       },
-      keys,
+      open,
     );
     expect(prepared.method).toBe("POST");
     expect(prepared.origin).toBe(origin);
     expect(prepared.url.pathname).toBe(`/v1/${VALUE}/x`);
     expect(prepared.url.searchParams.get("key")).toBe(VALUE);
     expect(prepared.headers["X-Key"]).toBe(VALUE);
-    expect(prepared.headers["X-B64"]).toBe(Buffer.from(VALUE).toString("base64"));
+    expect(prepared.headers.Authorization).toBe(`Basic ${Buffer.from(VALUE).toString("base64")}`);
     expect(prepared.body?.toString()).toBe(`{"token":"${VALUE}"}`);
     expect(prepared.secretsUsed).toEqual(["VERCEL_TOKEN"]);
+  });
+
+  it("by default allows the key only in the Authorization header", () => {
+    const strictKeys = [secret("VERCEL_TOKEN", [origin])];
+    expect(
+      prepareBrokerRequest(
+        {
+          method: "GET",
+          url: `${origin}/v9/projects`,
+          headers: { authorization: "Bearer {{secret:VERCEL_TOKEN}}" },
+        },
+        strictKeys,
+      ).headers.authorization,
+    ).toBe(`Bearer ${VALUE}`);
+    const cases: ReadonlyArray<readonly [string, Parameters<typeof prepareBrokerRequest>[0]]> = [
+      ["query", { method: "GET", url: `${origin}/x?token={{secret:VERCEL_TOKEN}}` }],
+      ["path", { method: "GET", url: `${origin}/x/{{secret:VERCEL_TOKEN}}` }],
+      ["body", { method: "POST", url: `${origin}/x`, body: '{"t":"{{secret:VERCEL_TOKEN}}"}' }],
+      [
+        "other header",
+        { method: "GET", url: `${origin}/x`, headers: { "X-Api-Key": "{{secret:VERCEL_TOKEN}}" } },
+      ],
+    ];
+    for (const [label, request] of cases) {
+      const message = refusal(() => prepareBrokerRequest(request, strictKeys));
+      expect(message, label).toContain("Authorization header");
+      expect(message, label).not.toContain(VALUE);
+    }
+  });
+
+  it("allows one more header name the owner set, and no other", () => {
+    const withHeader = [
+      secret("VERCEL_TOKEN", [origin], "brokered", VALUE, { header: "x-api-key" }),
+    ];
+    expect(
+      prepareBrokerRequest(
+        { method: "GET", url: `${origin}/x`, headers: { "X-API-Key": "{{secret:VERCEL_TOKEN}}" } },
+        withHeader,
+      ).headers["X-API-Key"],
+    ).toBe(VALUE);
+    expect(
+      refusal(() =>
+        prepareBrokerRequest(
+          { method: "GET", url: `${origin}/x`, headers: { "X-Other": "{{secret:VERCEL_TOKEN}}" } },
+          withHeader,
+        ),
+      ),
+    ).toContain("x-other");
+    // The header opt-in does not open the URL.
+    expect(
+      refusal(() =>
+        prepareBrokerRequest(
+          { method: "GET", url: `${origin}/x?k={{secret:VERCEL_TOKEN}}` },
+          withHeader,
+        ),
+      ),
+    ).toContain("not in the URL");
+  });
+
+  it("keeps a well-known key header-only (GITHUB_TOKEN to api.github.com)", () => {
+    const github = [secret("GITHUB_TOKEN", ["https://api.github.com"])];
+    expect(
+      prepareBrokerRequest(
+        {
+          method: "GET",
+          url: "https://api.github.com/user",
+          headers: { Authorization: "Bearer {{secret:GITHUB_TOKEN}}" },
+        },
+        github,
+      ).secretsUsed,
+    ).toEqual(["GITHUB_TOKEN"]);
+    expect(
+      refusal(() =>
+        prepareBrokerRequest(
+          {
+            method: "GET",
+            url: "https://api.github.com/user?access_token={{secret:GITHUB_TOKEN}}",
+          },
+          github,
+        ),
+      ),
+    ).toContain("not in the URL");
+  });
+
+  it("holds a key to its path prefix, on a segment boundary, whatever the spelling", () => {
+    const scoped = [
+      secret("VERCEL_TOKEN", [origin], "brokered", VALUE, { anywhere: true, pathPrefix: "/v1" }),
+    ];
+    const call = (path: string) =>
+      prepareBrokerRequest(
+        {
+          method: "GET",
+          url: `${origin}${path}`,
+          headers: { Authorization: "Bearer {{secret:VERCEL_TOKEN}}" },
+        },
+        scoped,
+      );
+    expect(call("/v1").url.pathname).toBe("/v1");
+    expect(call("/v1/projects?x=1").url.pathname).toBe("/v1/projects");
+    for (const path of ["/v10", "/v2/x", "/", "/v1/../admin", "/v1/%2e%2e/admin", "/other/v1"]) {
+      expect(
+        refusal(() => call(path)),
+        path,
+      ).toContain("under /v1");
+    }
+  });
+
+  it("holds a key to its method list", () => {
+    const readOnly = [
+      secret("VERCEL_TOKEN", [origin], "brokered", VALUE, { methods: ["GET", "HEAD"] }),
+    ];
+    const call = (method: string) =>
+      prepareBrokerRequest(
+        {
+          method,
+          url: `${origin}/x`,
+          headers: { Authorization: "Bearer {{secret:VERCEL_TOKEN}}" },
+        },
+        readOnly,
+      );
+    expect(call("get").method).toBe("GET");
+    expect(refusal(() => call("DELETE"))).toContain("may only be used with GET, HEAD");
   });
 
   it("builds a Basic header from a username and a key", () => {
@@ -284,6 +416,11 @@ describe("callWithSecrets against a local HTTPS server", () => {
           case "/slow":
             setTimeout(() => response.end("late"), 5_000).unref();
             return;
+          case "/cut":
+            // The key straddles the 1,024 byte cap the test asks for.
+            response.setHeader("content-type", "text/plain");
+            response.end(`${"a".repeat(1_014)}${VALUE}${"b".repeat(100)}`);
+            return;
           case "/b64":
             response.setHeader("content-type", "text/plain");
             response.end(`Basic ${Buffer.from(`user:${VALUE}`).toString("base64")}`);
@@ -324,7 +461,11 @@ describe("callWithSecrets against a local HTTPS server", () => {
   const origin = () => `https://api.test.example:${port}`;
   const keys = () => [
     secret("VERCEL_TOKEN", [origin()]),
-    secret("OTHER_KEY", [origin()], "brokered", OTHER_VALUE),
+    secret("OTHER_KEY", [origin()], "brokered", OTHER_VALUE, { header: "x-other" }),
+  ];
+  /** A key the owner allowed in the URL and body as well. */
+  const openKeys = () => [
+    secret("VERCEL_TOKEN", [origin()], "brokered", VALUE, { anywhere: true }),
   ];
 
   /** The test resolver sends every name to loopback, and allows it: the CA is the test's own. */
@@ -356,7 +497,7 @@ describe("callWithSecrets against a local HTTPS server", () => {
         },
         body: '{"t":"{{secret:VERCEL_TOKEN}}"}',
       },
-      keys(),
+      openKeys(),
       lenient({ redactor }),
     );
     // The server really received the value, in all three places.
@@ -385,14 +526,18 @@ describe("callWithSecrets against a local HTTPS server", () => {
       lenient(),
     );
     expect(JSON.stringify(result)).not.toContain(VALUE);
-    expect(result.body).toContain("[secret]");
+    expect(result.body).toContain("[secret VERCEL_TOKEN]");
   });
 
   it("masks the key in its base64 spelling too", async () => {
     const redactor = makeSecretRedactor();
     redactor.set("VERCEL_TOKEN", VALUE);
     const result = await callWithSecrets(
-      { method: "GET", url: `${origin()}/b64`, headers: { A: "{{secret:VERCEL_TOKEN}}" } },
+      {
+        method: "GET",
+        url: `${origin()}/b64`,
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
+      },
       keys(),
       lenient({ redactor }),
     );
@@ -436,7 +581,11 @@ describe("callWithSecrets against a local HTTPS server", () => {
 
   it("gives up on a redirect loop", async () => {
     const error = await callWithSecrets(
-      { method: "GET", url: `${origin()}/loop`, headers: { A: "{{secret:VERCEL_TOKEN}}" } },
+      {
+        method: "GET",
+        url: `${origin()}/loop`,
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
+      },
       keys(),
       lenient(),
     ).catch((caught: unknown) => caught);
@@ -448,7 +597,7 @@ describe("callWithSecrets against a local HTTPS server", () => {
       {
         method: "GET",
         url: `${origin()}/big`,
-        headers: { A: "{{secret:VERCEL_TOKEN}}" },
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
         maxResponseBytes: 4096,
       },
       keys(),
@@ -461,7 +610,11 @@ describe("callWithSecrets against a local HTTPS server", () => {
 
   it("does not return a binary body", async () => {
     const result = await callWithSecrets(
-      { method: "GET", url: `${origin()}/binary`, headers: { A: "{{secret:VERCEL_TOKEN}}" } },
+      {
+        method: "GET",
+        url: `${origin()}/binary`,
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
+      },
       keys(),
       lenient(),
     );
@@ -474,7 +627,7 @@ describe("callWithSecrets against a local HTTPS server", () => {
       {
         method: "GET",
         url: `${origin()}/slow`,
-        headers: { A: "{{secret:VERCEL_TOKEN}}" },
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
         timeoutMs: 1_000,
       },
       keys(),
@@ -486,7 +639,11 @@ describe("callWithSecrets against a local HTTPS server", () => {
   it("refuses a name that resolves to a private address, and never connects", async () => {
     seen.length = 0;
     const error = await callWithSecrets(
-      { method: "GET", url: `${origin()}/echo`, headers: { A: "{{secret:VERCEL_TOKEN}}" } },
+      {
+        method: "GET",
+        url: `${origin()}/echo`,
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
+      },
       keys(),
       // The real address rule, a name that points at loopback.
       strict(),
@@ -499,7 +656,11 @@ describe("callWithSecrets against a local HTTPS server", () => {
   it("refuses an answer that mixes a public and a private address", async () => {
     seen.length = 0;
     const error = await callWithSecrets(
-      { method: "GET", url: `${origin()}/echo`, headers: { A: "{{secret:VERCEL_TOKEN}}" } },
+      {
+        method: "GET",
+        url: `${origin()}/echo`,
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
+      },
       keys(),
       {
         ...strict(),
@@ -515,7 +676,11 @@ describe("callWithSecrets against a local HTTPS server", () => {
 
   it("does not accept a certificate it was not told to trust", async () => {
     const error = await callWithSecrets(
-      { method: "GET", url: `${origin()}/echo`, headers: { A: "{{secret:VERCEL_TOKEN}}" } },
+      {
+        method: "GET",
+        url: `${origin()}/echo`,
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
+      },
       keys(),
       { ...lenient(), requestOptions: {} },
     ).catch((caught: unknown) => caught);
@@ -529,13 +694,54 @@ describe("callWithSecrets against a local HTTPS server", () => {
       {
         method: "GET",
         url: `${origin()}/echo`,
-        headers: { A: "{{secret:VERCEL_TOKEN}}", B: "{{secret:OTHER_KEY}}" },
+        headers: { Authorization: "{{secret:VERCEL_TOKEN}}", "X-Other": "{{secret:OTHER_KEY}}" },
       },
       keys(),
       lenient(),
     );
     expect(result.secretsUsed.toSorted()).toEqual(["OTHER_KEY", "VERCEL_TOKEN"]);
-    expect(seen[0]?.headers.a).toBe(VALUE);
-    expect(seen[0]?.headers.b).toBe(OTHER_VALUE);
+    expect(seen[0]?.headers.authorization).toBe(VALUE);
+    expect(seen[0]?.headers["x-other"]).toBe(OTHER_VALUE);
+  });
+
+  it("drops a tail of a truncated response that could be the start of a key", async () => {
+    const redactor = makeSecretRedactor();
+    redactor.set("VERCEL_TOKEN", VALUE);
+    for (const known of [redactor, makeSecretRedactor()]) {
+      const result = await callWithSecrets(
+        {
+          method: "GET",
+          url: `${origin()}/cut`,
+          headers: { Authorization: "{{secret:VERCEL_TOKEN}}" },
+          maxResponseBytes: 1024,
+        },
+        keys(),
+        lenient({ redactor: known }),
+      );
+      expect(result.truncated).toBe(true);
+      // Ten characters of the key were inside the cap; none of them are shown.
+      expect(result.body).toBe("a".repeat(1_014));
+      expect(JSON.stringify(result)).not.toContain(VALUE.slice(0, 6));
+    }
+  });
+
+  it("holds a key's path prefix and methods on a same-origin redirect too", async () => {
+    seen.length = 0;
+    const scoped = [
+      secret("VERCEL_TOKEN", [origin()], "brokered", VALUE, { pathPrefix: "/redirect-same" }),
+    ];
+    const error = await callWithSecrets(
+      {
+        method: "GET",
+        url: `${origin()}/redirect-same`,
+        headers: { Authorization: "Bearer {{secret:VERCEL_TOKEN}}" },
+      },
+      scoped,
+      lenient(),
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SecretBrokerError);
+    expect((error as Error).message).toContain("somewhere this key may not go");
+    // The first hop was allowed; nothing went to the redirect target.
+    expect(seen.map((entry) => entry.url)).toEqual(["/redirect-same"]);
   });
 });

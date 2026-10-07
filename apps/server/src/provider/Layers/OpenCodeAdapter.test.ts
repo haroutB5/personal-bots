@@ -797,6 +797,84 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("appends deny rules for the secrets, database and logs to a bot's session only", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig;
+      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
+        personalBotConfigHome: BOT_CONFIG_HOME,
+        environment: { PATH: "p" },
+      });
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-opencode-bot-deny"),
+        runtimeMode: "full-access",
+        personalBot: true,
+      });
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-opencode-plain-deny"),
+        runtimeMode: "full-access",
+      });
+
+      const [botInput, plainInput] = runtimeMock.state.sessionCreateInputs;
+      const botRules = (botInput?.permission ?? []) as Array<{
+        permission: string;
+        pattern: string;
+        action: string;
+      }>;
+      const plainRules = (plainInput?.permission ?? []) as Array<{ action: string }>;
+      // The mode's own rules come first; the denies are last, so they win.
+      const denies = botRules.filter((rule) => rule.action === "deny");
+      NodeAssert.ok(denies.length > 0);
+      NodeAssert.deepEqual(botRules.slice(-denies.length), denies);
+      NodeAssert.deepEqual(botRules.slice(0, 2), [
+        { permission: "*", pattern: "*", action: "allow" },
+        { permission: "external_directory", pattern: "*", action: "allow" },
+      ]);
+      const has = (permission: string, pattern: string) =>
+        denies.some((rule) => rule.permission === permission && rule.pattern === pattern);
+      const forward = (value: string) => value.replaceAll("\\", "/");
+      for (const permission of ["read", "edit"]) {
+        NodeAssert.ok(has(permission, `${forward(serverConfig.secretsDir)}/*`));
+        NodeAssert.ok(has(permission, forward(serverConfig.dbPath)));
+        NodeAssert.ok(has(permission, `${forward(serverConfig.dbPath)}-wal`));
+        NodeAssert.ok(has(permission, `${forward(serverConfig.logsDir)}/*`));
+      }
+      NodeAssert.ok(has("external_directory", `${forward(serverConfig.secretsDir)}/*`));
+      NodeAssert.ok(has("bash", `*${forward(serverConfig.secretsDir)}*`));
+      // A normal thread keeps exactly the mode's rules.
+      NodeAssert.equal(plainRules.filter((rule) => rule.action === "deny").length, 0);
+
+      yield* adapter.stopSession(asThreadId("thread-opencode-bot-deny"));
+      yield* adapter.stopSession(asThreadId("thread-opencode-plain-deny"));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("re-asserts a bot's deny rules when a session is resumed", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
+        personalBotConfigHome: BOT_CONFIG_HOME,
+        environment: { PATH: "p" },
+      });
+      const threadId = asThreadId("thread-opencode-bot-deny-resume");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        personalBot: true,
+        resumeCursor: { schemaVersion: 1, sessionId: "ses_bot_deny" },
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
+      const rules = (runtimeMock.state.sessionUpdateCalls[0]?.permission ?? []) as Array<{
+        action: string;
+      }>;
+      NodeAssert.equal(rules.at(-1)?.action, "deny");
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses a bot on an external server or without its isolation home", () =>
     Effect.gen(function* () {
       const external = yield* OpenCodeAdapter;

@@ -47,6 +47,29 @@ describe("secretRedaction", () => {
     }
   });
 
+  it("masks uppercase hex, lowercase percent escapes and the escaped-slash JSON form", () => {
+    const value = "key/with+slash=and/more/ABC123";
+    const redactor = redactorWith("SLASH_KEY", value);
+    const spellings = [
+      Buffer.from(value).toString("hex").toUpperCase(),
+      encodeURIComponent(value).replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase()),
+      JSON.stringify(value).slice(1, -1).replaceAll("/", "\\/"),
+    ];
+    for (const spelling of spellings) {
+      assert.notStrictEqual(spelling, value);
+      assert.strictEqual(
+        redactor.redactText(`seen: ${spelling}!`),
+        `seen: ${redactedSecretText("SLASH_KEY")}!`,
+        spelling,
+      );
+    }
+  });
+
+  it("does not mask a value shorter than the minimum (documented limit)", () => {
+    const redactor = redactorWith("SHORT_KEY", "abc1234");
+    assert.strictEqual(redactor.redactText("the key abc1234 is shown"), "the key abc1234 is shown");
+  });
+
   it("masks a value inside a longer base64 string at every alignment", () => {
     const redactor = redactorWith();
     for (const lead of ["", "u", "us", "use", "user:", "Bearer "]) {

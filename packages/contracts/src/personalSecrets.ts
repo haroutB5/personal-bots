@@ -88,6 +88,112 @@ export const normalizePersonalSecretOrigins = (
   return origins.length <= PERSONAL_SECRET_MAX_ORIGINS ? origins : null;
 };
 
+/**
+ * Origins that are well known for keys the app's own tools and common APIs use.
+ * A bot's own hint wins when it is usable, and any origin outside this list for
+ * the key's name is flagged on the approval card (see
+ * {@link unverifiedPersonalSecretOrigins}), because the bot chose it, not the app.
+ */
+export const PERSONAL_SECRET_WELL_KNOWN_ORIGINS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  TAVILY_API_KEY: ["https://api.tavily.com"],
+  SERPAPI_API_KEY: ["https://serpapi.com"],
+  VERCEL_TOKEN: ["https://api.vercel.com"],
+  GITHUB_TOKEN: ["https://api.github.com"],
+  GH_TOKEN: ["https://api.github.com"],
+};
+
+/** The origins in `origins` that are not well known for a key called `name`. */
+export const unverifiedPersonalSecretOrigins = (
+  name: string,
+  origins: ReadonlyArray<string>,
+): ReadonlyArray<string> => {
+  const known = PERSONAL_SECRET_WELL_KNOWN_ORIGINS[name] ?? [];
+  return origins.filter((origin) => !known.includes(origin));
+};
+
+/** Request methods the broker can send. */
+export const PERSONAL_SECRET_BROKER_METHODS = [
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+] as const;
+export type PersonalSecretBrokerMethod = (typeof PERSONAL_SECRET_BROKER_METHODS)[number];
+
+/** Headers the transport owns; a key can never be placed in one of them. */
+export const PERSONAL_SECRET_FORBIDDEN_HEADERS: ReadonlySet<string> = new Set([
+  "host",
+  "content-length",
+  "connection",
+  "keep-alive",
+  "transfer-encoding",
+  "te",
+  "trailer",
+  "upgrade",
+  "expect",
+  "proxy-authorization",
+  "proxy-connection",
+  "accept-encoding",
+]);
+
+/**
+ * Where a brokered key's `{{secret:NAME}}` placeholder may go. The default (an
+ * empty policy) is the `Authorization` header only: a key in a URL or a body
+ * lands in server access logs, redirects and echoing APIs, so the owner has to
+ * opt in per key. `pathPrefix` and `methods` narrow every use of the key.
+ */
+export const PersonalSecretPlacement = Schema.Struct({
+  /** One more header the key may go in besides `Authorization`, e.g. `x-api-key`. Lower case. */
+  header: Schema.optional(Schema.String),
+  /** The owner allows the key in the URL path or query and in the request body. */
+  anywhere: Schema.optional(Schema.Boolean),
+  /** The key is only sent to paths under this prefix, e.g. `/v1`. */
+  pathPrefix: Schema.optional(Schema.String),
+  /** The key is only sent with these methods. */
+  methods: Schema.optional(Schema.Array(Schema.Literals(PERSONAL_SECRET_BROKER_METHODS))),
+});
+export type PersonalSecretPlacement = typeof PersonalSecretPlacement.Type;
+
+/**
+ * The canonical form of a placement policy: defaults dropped, header lower
+ * case, prefix without a trailing slash, methods in a fixed order. Null when a
+ * field is unusable, so a typo is refused rather than silently ignored.
+ */
+export const normalizePersonalSecretPlacement = (
+  raw: PersonalSecretPlacement | null | undefined,
+): PersonalSecretPlacement | null => {
+  if (raw === null || raw === undefined) return {};
+  let header: string | undefined;
+  if (raw.header !== undefined && raw.header.trim() !== "") {
+    const name = raw.header.trim().toLowerCase();
+    if (name.length > 64 || !/^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) return null;
+    if (PERSONAL_SECRET_FORBIDDEN_HEADERS.has(name)) return null;
+    if (name !== "authorization") header = name;
+  }
+  let pathPrefix: string | undefined;
+  if (raw.pathPrefix !== undefined && raw.pathPrefix.trim() !== "") {
+    const prefix = raw.pathPrefix.trim();
+    if (prefix.length > 200 || !prefix.startsWith("/") || /[\s?#\\%]|\.\.|\/\//.test(prefix)) {
+      return null;
+    }
+    const trimmed = prefix.replace(/\/+$/, "");
+    if (trimmed !== "") pathPrefix = trimmed;
+  }
+  let methods: Array<PersonalSecretBrokerMethod> | undefined;
+  if (raw.methods !== undefined && raw.methods.length > 0) {
+    const picked = PERSONAL_SECRET_BROKER_METHODS.filter((method) => raw.methods!.includes(method));
+    if (picked.length < PERSONAL_SECRET_BROKER_METHODS.length) methods = picked;
+  }
+  return {
+    ...(header === undefined ? {} : { header }),
+    ...(raw.anywhere === true ? { anywhere: true } : {}),
+    ...(pathPrefix === undefined ? {} : { pathPrefix }),
+    ...(methods === undefined ? {} : { methods }),
+  };
+};
+
 /** The placeholder a bot writes where a brokered key's value belongs. */
 export const personalSecretPlaceholder = (name: string) => `{{secret:${name}}}`;
 
@@ -124,6 +230,13 @@ export const PersonalSecretRequest = Schema.Struct({
    * origin the bot says the key is for, shown to the owner to confirm.
    */
   origins: Schema.optional(Schema.Array(Schema.String)),
+  /** Where the key's placeholder may go; absent = the default (Authorization header only). */
+  placement: Schema.optional(PersonalSecretPlacement),
+  /**
+   * On a pending request: the suggested origins that are not well known for
+   * this key's name. The card shows them as a warning; the bot picked them.
+   */
+  unverifiedOrigins: Schema.optional(Schema.Array(Schema.String)),
   createdAt: Schema.DateTimeUtcFromString,
   fulfilledAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
@@ -149,6 +262,7 @@ export const PersonalSecretCreateInput = Schema.Struct({
   mode: Schema.optional(PersonalSecretMode),
   /** The HTTPS origins a brokered key may be sent to, e.g. `https://api.vercel.com`. */
   origins: Schema.optional(Schema.Array(Schema.String)),
+  placement: Schema.optional(PersonalSecretPlacement),
 });
 export type PersonalSecretCreateInput = typeof PersonalSecretCreateInput.Type;
 
@@ -161,6 +275,8 @@ export const PersonalSecretSummary = Schema.Struct({
   mode: PersonalSecretMode,
   /** Canonical origins a brokered key is bound to; empty for `env` keys. */
   origins: Schema.Array(Schema.String),
+  /** Where the placeholder may go; absent = Authorization header only. */
+  placement: Schema.optional(PersonalSecretPlacement),
   fulfilledAt: Schema.DateTimeUtcFromString,
 });
 export type PersonalSecretSummary = typeof PersonalSecretSummary.Type;
@@ -190,6 +306,7 @@ export const PersonalSecretFulfillInput = Schema.Struct({
    */
   mode: Schema.optional(PersonalSecretMode),
   origins: Schema.optional(Schema.Array(Schema.String)),
+  placement: Schema.optional(PersonalSecretPlacement),
 });
 export type PersonalSecretFulfillInput = typeof PersonalSecretFulfillInput.Type;
 
@@ -214,6 +331,8 @@ export const PersonalSecretModeInput = Schema.Struct({
   name: PersonalSecretName,
   mode: PersonalSecretMode,
   origins: Schema.optional(Schema.Array(Schema.String)),
+  /** Omitted = keep what the key has; `{}` = back to the default. */
+  placement: Schema.optional(PersonalSecretPlacement),
 });
 export type PersonalSecretModeInput = typeof PersonalSecretModeInput.Type;
 

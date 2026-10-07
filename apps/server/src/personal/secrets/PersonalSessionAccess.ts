@@ -8,6 +8,7 @@ import {
   personalSecretEnvVar,
   type PersonalBotId,
   type PersonalSecretMode,
+  type PersonalSecretPlacement,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -43,6 +44,8 @@ export interface PersonalSessionSecret {
   readonly name: string;
   readonly mode: PersonalSecretMode;
   readonly origins: ReadonlyArray<string>;
+  /** Where the placeholder may go; absent or `{}` is the Authorization header only. */
+  readonly placement?: PersonalSecretPlacement | undefined;
   readonly value: string;
 }
 
@@ -143,6 +146,7 @@ export const make = Effect.gen(function* () {
             name: entry.name,
             mode: entry.mode ?? "env",
             origins: entry.origins ?? [],
+            placement: entry.placement ?? {},
             value: decoder.decode(value.value),
           });
         }

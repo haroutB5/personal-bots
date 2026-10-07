@@ -20,6 +20,7 @@ import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PersonalBotRepository from "../personal/PersonalBotRepository.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { guardedToolkit, guardMcpServer } from "./McpSecretGuard.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import {
@@ -402,7 +403,7 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
 };
 
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
-  const server = yield* McpServer.McpServer;
+  const server = guardMcpServer(yield* McpServer.McpServer);
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   // The MCP tool runner only supplies the client, so hand the save path its services here.
   const saveServices = yield* Effect.context<
@@ -583,7 +584,7 @@ const registerImageTool = <T extends Tool.Any, E, R>(
   failureText: string,
 ) =>
   Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
+    const server = guardMcpServer(yield* McpServer.McpServer);
     yield* server.addTool({
       tool: new McpSchema.Tool({
         name: tool.name,
@@ -681,7 +682,7 @@ const desktopFailureText = (error: unknown): string | null =>
  */
 const registerDesktopImageTools = Effect.fn("McpHttpServer.registerDesktopImageTools")(
   function* () {
-    const server = yield* McpServer.McpServer;
+    const server = guardMcpServer(yield* McpServer.McpServer);
     const built = yield* DesktopImageToolkit;
     // One loop registers every tool, so the per-name handler typing collapses
     // to its common shape here; each tool still decodes its own parameters.
@@ -785,13 +786,13 @@ const registerDesktopImageTools = Effect.fn("McpHttpServer.registerDesktopImageT
  * every personal bot may use it, one at a time (see PersonalDesktop).
  */
 export const DesktopToolkitRegistrationLive = Layer.mergeAll(
-  McpServer.toolkit(DesktopStandardToolkit).pipe(Layer.provide(DesktopStandardToolkitHandlersLive)),
+  guardedToolkit(DesktopStandardToolkit).pipe(Layer.provide(DesktopStandardToolkitHandlersLive)),
   Layer.effectDiscard(registerDesktopImageTools()).pipe(
     Layer.provide(DesktopImageToolkitHandlersLive),
   ),
 ).pipe(Layer.provide(PersonalBotRepository.layer));
 
-const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
+const PreviewStandardToolkitRegistrationLive = guardedToolkit(PreviewStandardToolkit).pipe(
   Layer.provide(PreviewStandardToolkitHandlersLive),
 );
 
@@ -804,7 +805,7 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
-export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
+export const PullRequestsToolkitRegistrationLive = guardedToolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),
 );
 
@@ -816,13 +817,13 @@ export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequest
  * owner's own latest message in the thread to decide whether a handoff across
  * teams was asked for.
  */
-export const BotsToolkitRegistrationLive = McpServer.toolkit(BotsToolkit).pipe(
+export const BotsToolkitRegistrationLive = guardedToolkit(BotsToolkit).pipe(
   Layer.provide(BotsToolkitHandlersLive),
   Layer.provide(PersonalBotRepository.layer),
   Layer.provide(ProjectionThreadMessageRepositoryLive),
 );
 
-export const PersonalToolkitRegistrationLive = McpServer.toolkit(PersonalToolkit).pipe(
+export const PersonalToolkitRegistrationLive = guardedToolkit(PersonalToolkit).pipe(
   Layer.provide(PersonalToolkitHandlersLive),
   Layer.provide(PersonalSessionAccess.layerLive),
 );
@@ -835,7 +836,7 @@ export const PersonalToolkitRegistrationLive = McpServer.toolkit(PersonalToolkit
  * are equally constrained. The bot repository is stateless SQL, so this route
  * brings its own, as the bots toolkit does.
  */
-export const ConnectionsToolkitRegistrationLive = McpServer.toolkit(ConnectionsToolkit).pipe(
+export const ConnectionsToolkitRegistrationLive = guardedToolkit(ConnectionsToolkit).pipe(
   Layer.provide(ConnectionsToolkitHandlersLive),
   Layer.provide(PersonalBotRepository.layer),
   // create_app sits here rather than in the runtime core because its only
@@ -868,7 +869,7 @@ export const CreateAppResumeLive = Layer.effectDiscard(
   Layer.provide(ConnectionAdapters.layer),
 );
 
-const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(
+const DeviceStandardToolkitRegistrationLive = guardedToolkit(DeviceStandardToolkit).pipe(
   Layer.provide(DeviceStandardToolkitHandlersLive),
 );
 

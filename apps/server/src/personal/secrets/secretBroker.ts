@@ -5,10 +5,13 @@
  * key's value put in by the server.
  *
  * A brokered key never leaves the server. The bot writes `{{secret:NAME}}`
- * where the value belongs (a header, the URL's path or query, the body) and
- * this module checks, then sends:
+ * where the value belongs and this module checks, then sends:
  *
  * - every key used must be brokered and bound to the origin being called;
+ * - the placeholder may only be in the `Authorization` header (or the one
+ *   header name the owner set for that key, e.g. `x-api-key`); the URL path,
+ *   query and body only if the owner opted in for that key, and the key's path
+ *   prefix and method list, when set, hold on every hop;
  * - the call must use at least one key (this is not a general fetch tool);
  * - HTTPS only, no login in the address, no IP address, no private, loopback,
  *   link-local or otherwise internal destination: checked on the address the
@@ -26,10 +29,14 @@ import * as NodeDns from "node:dns";
 import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
 
-import { normalizePersonalSecretOrigin } from "@t3tools/contracts";
+import {
+  normalizePersonalSecretOrigin,
+  PERSONAL_SECRET_FORBIDDEN_HEADERS,
+  type PersonalSecretPlacement,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 
-import { secretRedactor, type SecretRedactor } from "./secretRedaction.ts";
+import { makeSecretRedactor, secretRedactor, type SecretRedactor } from "./secretRedaction.ts";
 
 /** Hard ceiling for what a caller can ask for. */
 export const BROKER_MAX_RESPONSE_BYTES = 1_000_000;
@@ -46,20 +53,7 @@ const METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] as const;
 export type BrokerMethod = (typeof METHODS)[number];
 
 /** Headers a bot may not set: the transport owns them. */
-const FORBIDDEN_REQUEST_HEADERS = new Set([
-  "host",
-  "content-length",
-  "connection",
-  "keep-alive",
-  "transfer-encoding",
-  "te",
-  "trailer",
-  "upgrade",
-  "expect",
-  "proxy-authorization",
-  "proxy-connection",
-  "accept-encoding",
-]);
+const FORBIDDEN_REQUEST_HEADERS = PERSONAL_SECRET_FORBIDDEN_HEADERS;
 
 /** Response headers worth showing; set-cookie and the rest stay on the server. */
 const SHOWN_RESPONSE_HEADERS = new Set([
@@ -93,6 +87,8 @@ export interface BrokerSecret {
   readonly name: string;
   readonly mode: "brokered" | "env";
   readonly origins: ReadonlyArray<string>;
+  /** Where the placeholder may go; absent or `{}` = the Authorization header only. */
+  readonly placement?: PersonalSecretPlacement | undefined;
   readonly value: string;
 }
 
@@ -240,8 +236,37 @@ interface Prepared {
   readonly headers: Record<string, string>;
   readonly body: Buffer | undefined;
   readonly secretsUsed: ReadonlyArray<string>;
-  readonly values: ReadonlyArray<string>;
+  readonly values: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+  /** Per key, the path prefix and methods that must hold on every hop (redirects included). */
+  readonly limits: ReadonlyArray<KeyLimits>;
 }
+
+interface KeyLimits {
+  readonly name: string;
+  readonly pathPrefix: string | undefined;
+  readonly methods: ReadonlyArray<string> | undefined;
+}
+
+/** True when `pathname` is the prefix or under it, on a path-segment boundary. */
+const pathWithin = (pathname: string, prefix: string): boolean =>
+  pathname === prefix || pathname.startsWith(`${prefix}/`);
+
+/** The refusal for a key used outside its path prefix or method list, or null when it holds. */
+const limitRefusal = (
+  limits: ReadonlyArray<KeyLimits>,
+  pathname: string,
+  method: string,
+): string | null => {
+  for (const limit of limits) {
+    if (limit.methods !== undefined && !limit.methods.includes(method)) {
+      return `${limit.name} may only be used with ${limit.methods.join(", ")}, not ${method}.`;
+    }
+    if (limit.pathPrefix !== undefined && !pathWithin(pathname, limit.pathPrefix)) {
+      return `${limit.name} may only be sent to paths under ${limit.pathPrefix}.`;
+    }
+  }
+  return null;
+};
 
 const refuse = (message: string): never => {
   throw new SecretBrokerError(message);
@@ -331,7 +356,7 @@ export const prepareBrokerRequest = (
   }
 
   const byName = new Map(secrets.map((secret) => [secret.name, secret]));
-  const values: Array<string> = [];
+  const values: Array<{ name: string; value: string }> = [];
   for (const name of used) {
     const secret = byName.get(name);
     if (secret === undefined) {
@@ -345,9 +370,51 @@ export const prepareBrokerRequest = (
         `${name} is not allowed to be sent to ${origin}. It is bound to: ${secret.origins.join(", ") || "no origin"}. Ask the user to add this origin in Settings > API keys.`,
       );
     } else {
-      values.push(secret.value);
+      values.push({ name, value: secret.value });
     }
   }
+
+  // Where each key's placeholder sits, against what its owner allowed.
+  const inUrl = new Set(placeholderNames(rawUrl));
+  const inBody = new Set(placeholderNames(request.body ?? ""));
+  const inHeaders = new Map<string, Set<string>>();
+  for (const [headerName, value] of headerEntries) {
+    for (const name of placeholderNames(value)) {
+      const lower = headerName.toLowerCase();
+      inHeaders.set(lower, new Set([...(inHeaders.get(lower) ?? []), name]));
+    }
+  }
+  if (request.basicAuth !== undefined) {
+    inHeaders.set(
+      "authorization",
+      new Set([...(inHeaders.get("authorization") ?? []), request.basicAuth.secret]),
+    );
+  }
+  for (const name of used) {
+    const placement = byName.get(name)!.placement ?? {};
+    const allowedHeader = placement.header;
+    const headerHint =
+      allowedHeader === undefined
+        ? "the Authorization header"
+        : `the Authorization or ${allowedHeader} header`;
+    if ((inUrl.has(name) || inBody.has(name)) && placement.anywhere !== true) {
+      refuse(
+        `${name} may only be sent in ${headerHint}, not in the URL or the body. If this API needs it elsewhere, ask the user to allow that for this key in Settings > API keys.`,
+      );
+    }
+    for (const [headerName, names] of inHeaders) {
+      if (!names.has(name)) continue;
+      if (headerName !== "authorization" && headerName !== allowedHeader) {
+        refuse(
+          `${name} may only be sent in ${headerHint}, not in the ${headerName} header. If this API wants another header, ask the user to set it for this key in Settings > API keys.`,
+        );
+      }
+    }
+  }
+  const limits: ReadonlyArray<KeyLimits> = [...used].map((name) => {
+    const placement = byName.get(name)!.placement ?? {};
+    return { name, pathPrefix: placement.pathPrefix, methods: placement.methods };
+  });
 
   const substitute = (text: string, encode: (value: string) => string): string =>
     text.replace(PLACEHOLDER, (_match, name: string, transform: string | undefined) => {
@@ -357,6 +424,8 @@ export const prepareBrokerRequest = (
 
   const url = new URL(substitute(rawUrl, encodeURIComponent));
   if (url.origin !== origin) refuse("The address changed once the key was added; refused.");
+  const outsideLimit = limitRefusal(limits, url.pathname, method);
+  if (outsideLimit !== null) refuse(outsideLimit);
 
   const headers: Record<string, string> = {};
   for (const [name, value] of headerEntries) {
@@ -386,7 +455,7 @@ export const prepareBrokerRequest = (
     refuse(`The body is over ${BROKER_MAX_REQUEST_BODY_BYTES} bytes once the key is added.`);
   }
 
-  return { method, url, origin, headers, body, secretsUsed: [...used], values };
+  return { method, url, origin, headers, body, secretsUsed: [...used], values, limits };
 };
 
 // ---------------------------------------------------------------------------
@@ -619,6 +688,14 @@ export const callWithSecrets = async (
       method = method === "HEAD" ? "HEAD" : "GET";
       body = undefined;
     }
+    // The key's headers go along on a same-origin redirect, so its path prefix
+    // and method list have to hold for the place it was sent to as well.
+    const hopRefusal = limitRefusal(prepared.limits, target.pathname, method);
+    if (hopRefusal !== null) {
+      throw new SecretBrokerError(
+        `The server redirected somewhere this key may not go. ${hopRefusal}`,
+      );
+    }
   }
 
   const contentType = (
@@ -627,14 +704,15 @@ export const callWithSecrets = async (
       : response.headers["content-type"]
   ) as string | undefined;
   const text = textOf(response.body, contentType);
-  // Mask what the server knows, plus the values this call used (a key saved a moment ago).
-  const mask = (value: string) => {
-    let out = redactor.redactText(value);
-    for (const secret of prepared.values) {
-      if (secret.length >= 8) out = out.split(secret).join("[secret]");
-    }
-    return out;
-  };
+  // Mask what the server knows, plus the values this call used (a key saved a
+  // moment ago), in every spelling the redactor knows.
+  const callRedactor = makeSecretRedactor({ enabled: () => true });
+  callRedactor.replaceAll(prepared.values.map((entry, index) => ({ ...entry, id: String(index) })));
+  const mask = (value: string) => callRedactor.redactText(redactor.redactText(value));
+  // A response cut at the size cap can end in the middle of a key, which no
+  // spelling matches any more: drop any tail that could still grow into one
+  // (the same hold-back the chat stream uses) before masking what is left.
+  const cutAtCap = (value: string) => callRedactor.stream().push(redactor.stream().push(value));
   const shown: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
     if (value === undefined) continue;
@@ -647,7 +725,7 @@ export const callWithSecrets = async (
     statusText: mask(response.statusText),
     origin: prepared.origin,
     headers: shown,
-    body: text === null ? null : mask(text),
+    body: text === null ? null : mask(response.truncated ? cutAtCap(text) : text),
     bodyBytes: response.body.length,
     truncated: response.truncated,
     redirects,

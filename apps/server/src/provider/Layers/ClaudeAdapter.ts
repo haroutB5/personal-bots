@@ -105,6 +105,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  botStateDenyEnabled,
+  buildClaudeBotPermissionDeny,
+} from "../../personal/secrets/botProtectedPaths.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
@@ -5282,6 +5286,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
           : {}),
         ...(personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
+        // Deny rules hold in every permission mode, bypassPermissions included.
+        // Best effort: see botProtectedPaths for what they do and do not stop.
+        ...(personalBot && botStateDenyEnabled()
+          ? { permissions: { deny: buildClaudeBotPermissionDeny(serverConfig) } }
+          : {}),
       };
       const settingSources: Array<SettingSource> = personalBot ? [] : [...CLAUDE_SETTING_SOURCES];
       // A bot's own plugin folder (skills, commands) loads explicitly: it is

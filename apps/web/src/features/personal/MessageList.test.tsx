@@ -425,6 +425,33 @@ it("says so when a question is closed elsewhere", async () => {
   expect(renderer!.root.findAllByType("button")).toEqual([]);
 });
 
+it("warns on the card about an address the app cannot vouch for", async () => {
+  stubEnvironment();
+  const flagged: SecretRequestCardItem = {
+    ...PENDING_SECRET,
+    kind: "pending",
+    request: {
+      ...PENDING_SECRET.request,
+      origins: ["https://evil.example.com"],
+      unverifiedOrigins: ["https://evil.example.com"],
+    },
+  } as SecretRequestCardItem;
+  await act(async () => {
+    renderer = create(<MessageList {...BASE_PROPS} items={[secretItem(flagged)]} />);
+  });
+  const warning = renderer!.root.findByProps({ "data-unverified-origins": true });
+  const text = warning.findByType("span").children.join("");
+  expect(text).toContain("https://evil.example.com");
+  expect(text).toContain("does not know");
+  expect(warning.props.role).toBe("alert");
+  // A well-known address carries no warning.
+  await act(async () => renderer!.unmount());
+  await act(async () => {
+    renderer = create(<MessageList {...BASE_PROPS} items={[secretItem(PENDING_SECRET)]} />);
+  });
+  expect(renderer!.root.findAllByProps({ "data-unverified-origins": true })).toEqual([]);
+});
+
 it("shows a secret the bot asked for, and sends the typed value once", async () => {
   stubEnvironment();
   const provided: Array<readonly unknown[]> = [];
@@ -460,7 +487,12 @@ it("shows a secret the bot asked for, and sends the typed value once", async () 
   await act(async () => optionButton("Save secret").props.onClick());
   // Brokered is the default, bound to the address the bot named.
   expect(provided).toEqual([
-    ["secret-1", "ghp_live_value", true, { mode: "brokered", origins: ["https://api.github.com"] }],
+    [
+      "secret-1",
+      "ghp_live_value",
+      true,
+      { mode: "brokered", origins: ["https://api.github.com"], placement: {} },
+    ],
   ]);
 
   // The field is cleared before the send, so the value is nowhere in the tree.
@@ -506,7 +538,9 @@ it("sends an environment variable choice with no address, and refuses a brokered
   // Choosing the environment variable needs no address.
   await act(async () => renderer!.root.findByProps({ "data-mode": "env" }).props.onClick());
   await act(async () => optionButton("Save secret").props.onClick());
-  expect(provided).toEqual([["secret-1", "ghp_live_value", false, { mode: "env", origins: [] }]]);
+  expect(provided).toEqual([
+    ["secret-1", "ghp_live_value", false, { mode: "env", origins: [], placement: {} }],
+  ]);
 });
 
 it("declines a secret request without providing a value", async () => {

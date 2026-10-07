@@ -13,6 +13,9 @@
 //   DELEGATE:<botId>  calls the delegate_task MCP tool.   TASKDONE  answers a delegated task.
 //   MCPTOOL <name> <one-line json>  calls any MCP tool the bot has (update_bot, create_bot, ...) and
 //     answers "MCPTOOL <name> ok|refused: <the tool's result>", so a test reads the outcome in the chat.
+//     $ENV{NAME} inside the json becomes that environment variable's value (a bot typing a key it holds).
+//   CATFILE <path>  tries to read a file the way a bot's Read tool would: refused (and says which rule) when
+//     the server's --settings permissions.deny covers the path, else reads it and reports the size.
 //   PRINTENV <VARNAME>  runs a real shell command that echoes that environment variable (what a bot's
 //     Bash does), shows it as a tool call and result, then says it in a streamed reply split into small
 //     pieces. A key saved as an environment variable (PB_SECRET_<NAME>) must come out masked; a brokered
@@ -50,6 +53,38 @@ const resumeArg = args.find((a) => a.startsWith("--resume="));
 const sessionId =
   sessionIndex >= 0 ? args[sessionIndex + 1] : resumeArg ? resumeArg.slice(9) : randomUUID();
 log(`start session=${sessionId}`);
+
+// The permission rules the server handed this session (`--settings`, JSON text or a file path).
+const denyRules = (() => {
+  const index = args.findIndex((a) => a === "--settings");
+  if (index < 0) return [];
+  try {
+    const raw = args[index + 1] ?? "";
+    const parsed = JSON.parse(raw.trim().startsWith("{") ? raw : readFileSync(raw, "utf8"));
+    return Array.isArray(parsed?.permissions?.deny) ? parsed.permissions.deny : [];
+  } catch {
+    return [];
+  }
+})();
+log(
+  `settings deny rules=${denyRules.length} secretsRule=${denyRules.some((r) => /^Read\(.*\/secrets/.test(r))}`,
+);
+// A stand-in for the CLI's Read deny rule: a `Read(//c/Users/x)` anchor denies that path and everything
+// under it. It proves the rules arrive in a bot's session and that a read of the secrets folder is
+// refused when the CLI honours them; real enforcement is the Claude CLI's own (measured separately).
+const readDeniedBy = (path) => {
+  const normalized = path
+    .replaceAll("\\", "/")
+    .replace(/^([A-Za-z]):/, (_m, d) => `/${d.toLowerCase()}`)
+    .toLowerCase();
+  for (const rule of denyRules) {
+    const match = /^Read\(\/\/(.*?)(\/\*\*)?\)$/.exec(rule);
+    if (!match || match[1].includes("*")) continue;
+    const anchor = `/${match[1]}`.toLowerCase();
+    if (normalized === anchor || normalized.startsWith(`${anchor}/`)) return rule;
+  }
+  return null;
+};
 
 const out = (message) => process.stdout.write(JSON.stringify(message) + "\n");
 const respond = (request, response) =>
@@ -385,7 +420,13 @@ lines.on("line", async (line) => {
   if (tool) {
     let toolArgs;
     try {
-      toolArgs = JSON.parse(tool[2]);
+      // $ENV{NAME} becomes that environment variable's value, so a test can make the bot "type" a key
+      // it holds (an env-mode key) into a tool call without the value ever being in the prompt.
+      toolArgs = JSON.parse(
+        tool[2].replace(/\$ENV\{(\w+)\}/g, (_match, name) =>
+          JSON.stringify(process.env[name] ?? "").slice(1, -1),
+        ),
+      );
     } catch (err) {
       assistant(`MCPTOOL ${tool[1]} has bad JSON: ${err}`);
       finish("failed", false);
@@ -404,6 +445,25 @@ lines.on("line", async (line) => {
         finish("failed", false);
       },
     );
+    return;
+  }
+  const catFile = text.match(/CATFILE (\S+)/);
+  if (catFile) {
+    const denied = readDeniedBy(catFile[1]);
+    if (denied !== null) {
+      log(`catfile denied by ${denied}`);
+      assistant(`CATFILE denied by ${denied}`);
+    } else {
+      let size = -1;
+      try {
+        size = readFileSync(catFile[1]).length;
+      } catch {
+        // unreadable: reported below
+      }
+      log(`catfile read ${size} bytes`);
+      assistant(`CATFILE read ${size} bytes`);
+    }
+    finish("ok", false);
     return;
   }
   const delegate = text.match(/DELEGATE:([\w-]+)/);

@@ -1,3 +1,4 @@
+import type { PersonalSecretPlacement } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -10,6 +11,7 @@ interface SecretRow {
   shared: boolean;
   mode: "brokered" | "env";
   origins: ReadonlyArray<string>;
+  placement?: PersonalSecretPlacement;
 }
 
 const SECRETS: ReadonlyArray<SecretRow> = [
@@ -238,10 +240,78 @@ describe("API keys screen", () => {
             name: "SERPAPI_API_KEY",
             mode: "brokered",
             origins: ["https://serpapi.com", "https://api.serpapi.com"],
+            placement: {},
           },
         },
       },
     ]);
+  });
+
+  it("says where each brokered key may go, strictest by default", async () => {
+    await renderScreen([
+      ...SECRETS,
+      {
+        name: "OPEN_KEY",
+        label: "Open",
+        shared: true,
+        mode: "brokered",
+        origins: ["https://api.example.com"],
+        placement: { header: "x-api-key", anywhere: true, pathPrefix: "/v1", methods: ["GET"] },
+      },
+    ]);
+    const lines = renderer!.root
+      .findAllByProps({ "data-secret-placement": true })
+      .map((node) => node.children.join(""));
+    expect(lines).toEqual([
+      "Sent in the Authorization header only",
+      "Sent in the Authorization or x-api-key header, the URL and the body; paths under /v1; GET only",
+    ]);
+  });
+
+  it("saves a key with the placement the owner opted into, normalised", async () => {
+    await renderScreen();
+    await openForm();
+    await type("api-key-name", "PLACED_KEY");
+    await type("api-key-value", "sk-entered-now");
+    await typeOrigins("https://api.example.com");
+    await act(async () => {
+      renderer!.root
+        .findByProps({ placeholder: "x-api-key" })
+        .props.onChange({ target: { value: " X-API-Key " } });
+    });
+    await act(async () => {
+      renderer!.root
+        .findByProps({ placeholder: "/v1" })
+        .props.onChange({ target: { value: "/v1/" } });
+    });
+    const boxes = renderer!.root.findAllByProps({ type: "checkbox" });
+    // The first box is "also allow it in the web address and body"; GET is the first method.
+    await act(async () => boxes[0]!.props.onChange({ target: { checked: true } }));
+    await act(async () => boxes[1]!.props.onChange({ target: { checked: true } }));
+    await submit();
+    const input = (state.calls[0]!.target as { input: Record<string, unknown> }).input;
+    expect(input.placement).toEqual({
+      header: "x-api-key",
+      anywhere: true,
+      pathPrefix: "/v1",
+      methods: ["GET"],
+    });
+  });
+
+  it("will not save a placement with a bad header or path, and says so", async () => {
+    await renderScreen();
+    await openForm();
+    await type("api-key-name", "PLACED_KEY");
+    await type("api-key-value", "sk-entered-now");
+    await typeOrigins("https://api.example.com");
+    await act(async () => {
+      renderer!.root
+        .findByProps({ placeholder: "/v1" })
+        .props.onChange({ target: { value: "/v1/../admin" } });
+    });
+    await submit();
+    expect(state.calls).toEqual([]);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Check where the key may go");
   });
 
   it("offers the add action when there are no keys yet", async () => {

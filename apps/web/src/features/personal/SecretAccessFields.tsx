@@ -1,10 +1,14 @@
 import type { JSX } from "react";
-import { useId } from "react";
+import { useId, useState } from "react";
 
 import {
+  PERSONAL_SECRET_BROKER_METHODS,
   PERSONAL_SECRET_MAX_ORIGINS,
   normalizePersonalSecretOrigins,
+  normalizePersonalSecretPlacement,
+  type PersonalSecretBrokerMethod,
   type PersonalSecretMode,
+  type PersonalSecretPlacement,
 } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
@@ -14,12 +18,67 @@ export interface SecretAccessChoice {
   readonly mode: PersonalSecretMode;
   /** Canonical origins; empty for an environment variable. */
   readonly origins: ReadonlyArray<string>;
+  /** Where the key's placeholder may go; `{}` is the Authorization header only. */
+  readonly placement: PersonalSecretPlacement;
+}
+
+/** The "where may the key go" boxes as typed, before they are checked. */
+export interface SecretPlacementState {
+  readonly header: string;
+  readonly anywhere: boolean;
+  readonly pathPrefix: string;
+  /** None ticked means every method. */
+  readonly methods: ReadonlyArray<PersonalSecretBrokerMethod>;
 }
 
 export interface SecretAccessState {
   readonly mode: PersonalSecretMode;
   /** What is typed in the address box: one address, or several separated by spaces or commas. */
   readonly originsText: string;
+  readonly placement: SecretPlacementState;
+}
+
+/** The boxes for a key's saved placement (all empty when it has none: the strictest default). */
+export const placementStateOf = (
+  placement: PersonalSecretPlacement | undefined,
+): SecretPlacementState => ({
+  header: placement?.header ?? "",
+  anywhere: placement?.anywhere === true,
+  pathPrefix: placement?.pathPrefix ?? "",
+  methods: placement?.methods ?? [],
+});
+
+/** The state for a saved key's access panel. */
+export const secretAccessStateOf = (secret: {
+  readonly mode: PersonalSecretMode;
+  readonly origins: ReadonlyArray<string>;
+  readonly placement?: PersonalSecretPlacement | undefined;
+}): SecretAccessState => ({
+  mode: secret.mode === "brokered" ? "brokered" : "env",
+  originsText: secret.origins.join(", "),
+  placement: placementStateOf(secret.placement),
+});
+
+const placementOf = (state: SecretPlacementState): PersonalSecretPlacement | null =>
+  normalizePersonalSecretPlacement({
+    header: state.header,
+    anywhere: state.anywhere,
+    pathPrefix: state.pathPrefix,
+    methods: state.methods,
+  });
+
+/** One line saying where a saved key may go, for the keys list. */
+export function describeSecretPlacement(placement: PersonalSecretPlacement | undefined): string {
+  const parts: Array<string> = [
+    placement?.header === undefined
+      ? "Sent in the Authorization header only"
+      : `Sent in the Authorization or ${placement.header} header`,
+  ];
+  if (placement?.anywhere === true)
+    parts[0] = `${parts[0]!.replace(" only", "")}, the URL and the body`;
+  if (placement?.pathPrefix !== undefined) parts.push(`paths under ${placement.pathPrefix}`);
+  if (placement?.methods !== undefined) parts.push(`${placement.methods.join(", ")} only`);
+  return parts.join("; ");
 }
 
 const splitOrigins = (text: string): ReadonlyArray<string> =>
@@ -32,6 +91,7 @@ const splitOrigins = (text: string): ReadonlyArray<string> =>
 export const initialSecretAccess = (origins: ReadonlyArray<string> = []): SecretAccessState => ({
   mode: "brokered",
   originsText: origins.join(", "),
+  placement: placementStateOf(undefined),
 });
 
 /** Why the choice cannot be saved yet, or null when it can. */
@@ -47,15 +107,19 @@ export function secretAccessProblem(state: SecretAccessState): string | null {
   if (normalizePersonalSecretOrigins(entries) === null) {
     return "Use a public https:// address such as https://api.vercel.com (no IP addresses or localhost).";
   }
+  if (placementOf(state.placement) === null) {
+    return "Check where the key may go: a plain header name, and a path that starts with / with no .. or ?.";
+  }
   return null;
 }
 
 /** The choice to send to the server; call only when {@link secretAccessProblem} is null. */
 export function secretAccessChoice(state: SecretAccessState): SecretAccessChoice {
-  if (state.mode === "env") return { mode: "env", origins: [] };
+  if (state.mode === "env") return { mode: "env", origins: [], placement: {} };
   return {
     mode: "brokered",
     origins: normalizePersonalSecretOrigins(splitOrigins(state.originsText)) ?? [],
+    placement: placementOf(state.placement) ?? {},
   };
 }
 
@@ -76,9 +140,12 @@ export function SecretAccessFields({
   disabled = false,
   showProblem = false,
   botName,
+  showPlacement = false,
 }: {
   state: SecretAccessState;
   onChange: (next: SecretAccessState) => void;
+  /** Settings only: the "where may the key go" controls. The request card keeps the default. */
+  showPlacement?: boolean;
   disabled?: boolean;
   /** Show the validation message under the address box (after a failed save). */
   showProblem?: boolean;
@@ -186,8 +253,131 @@ export function SecretAccessFields({
               {problem}
             </p>
           ) : null}
+          {showPlacement ? (
+            <PlacementFields
+              state={state.placement}
+              disabled={disabled}
+              onChange={(placement) => onChange({ ...state, placement })}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Where on a request a brokered key may be put. The default is the
+ * Authorization header only: a key in a URL or a body ends up in access logs
+ * and in anything an API echoes back, so each key opts in for that.
+ */
+function PlacementFields({
+  state,
+  onChange,
+  disabled,
+}: {
+  state: SecretPlacementState;
+  onChange: (next: SecretPlacementState) => void;
+  disabled: boolean;
+}): JSX.Element {
+  const id = useId();
+  // Open at first when the key already has a custom placement; after that the
+  // owner's own toggling decides (clearing a box must not fold the panel).
+  const [open, setOpen] = useState(
+    state.header !== "" || state.anywhere || state.pathPrefix !== "" || state.methods.length > 0,
+  );
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="mt-3 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] px-3 py-2"
+    >
+      <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium text-[var(--personal-text)]">
+        Where the key may go (advanced)
+      </summary>
+      <p className="text-[13px] leading-snug text-[var(--personal-text-secondary)]">
+        By default a bot can put the key only in the Authorization header. Allow more only if the
+        API needs it.
+      </p>
+      <label
+        htmlFor={`${id}-header`}
+        className="mt-3 mb-1.5 block text-sm font-medium text-[var(--personal-text)]"
+      >
+        Another header it may go in
+      </label>
+      <input
+        id={`${id}-header`}
+        value={state.header}
+        disabled={disabled}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        placeholder="x-api-key"
+        onChange={(event) => onChange({ ...state, header: event.target.value })}
+        className={FIELD_CLASS}
+      />
+      <label className="mt-3 flex min-h-11 items-start gap-3 text-[15px] text-[var(--personal-text)]">
+        <input
+          type="checkbox"
+          checked={state.anywhere}
+          disabled={disabled}
+          onChange={(event) => onChange({ ...state, anywhere: event.target.checked })}
+          className="mt-1.5"
+        />
+        <span>
+          Also allow it in the web address and the request body
+          <span className="block text-[13px] leading-snug text-[var(--personal-text-secondary)]">
+            A key there can end up in the API's logs.
+          </span>
+        </span>
+      </label>
+      <label
+        htmlFor={`${id}-prefix`}
+        className="mt-3 mb-1.5 block text-sm font-medium text-[var(--personal-text)]"
+      >
+        Only for paths starting with (optional)
+      </label>
+      <input
+        id={`${id}-prefix`}
+        value={state.pathPrefix}
+        disabled={disabled}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        placeholder="/v1"
+        onChange={(event) => onChange({ ...state, pathPrefix: event.target.value })}
+        className={FIELD_CLASS}
+      />
+      <fieldset className="mt-3">
+        <legend className="mb-1 text-sm font-medium text-[var(--personal-text)]">
+          Only these methods (none ticked means all)
+        </legend>
+        <div className="flex flex-wrap gap-x-4">
+          {PERSONAL_SECRET_BROKER_METHODS.map((method) => (
+            <label
+              key={method}
+              className="flex min-h-11 items-center gap-2 text-[15px] text-[var(--personal-text)]"
+            >
+              <input
+                type="checkbox"
+                checked={state.methods.includes(method)}
+                disabled={disabled}
+                onChange={(event) =>
+                  onChange({
+                    ...state,
+                    methods: event.target.checked
+                      ? [...state.methods, method]
+                      : state.methods.filter((entry) => entry !== method),
+                  })
+                }
+              />
+              {method}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    </details>
   );
 }

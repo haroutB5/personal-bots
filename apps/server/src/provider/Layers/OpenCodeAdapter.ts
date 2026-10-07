@@ -35,6 +35,10 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  botStateDenyEnabled,
+  buildOpenCodeBotPermissionRules,
+} from "../../personal/secrets/botProtectedPaths.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -970,6 +974,17 @@ export function makeOpenCodeAdapter(
     const path = yield* Path.Path;
     const sameDirectory = (left: string, right: string) =>
       isSameOpenCodeDirectory(fileSystem, path, left, right);
+    // A bot's deny rules come last: the last matching rule wins, so they hold
+    // over the mode's `*` allow. Best effort, see botProtectedPaths.
+    const sessionPermissionRules = (
+      runtimeMode: Parameters<typeof buildOpenCodePermissionRules>[0],
+      personalBot: boolean,
+    ) => [
+      ...buildOpenCodePermissionRules(runtimeMode),
+      ...(personalBot && botStateDenyEnabled()
+        ? buildOpenCodeBotPermissionRules(serverConfig)
+        : []),
+    ];
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -2997,7 +3012,7 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: sessionPermissionRules(input.runtimeMode, personalBot),
                     }),
                   );
                   return { openCodeSession: reusable, created: false };
@@ -3024,7 +3039,7 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: sessionPermissionRules(input.runtimeMode, personalBot),
                     }),
                   );
                   return { openCodeSession: forked, created: true };
@@ -3038,7 +3053,7 @@ export function makeOpenCodeAdapter(
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
                     ...(input.title ? { title: input.title } : {}),
-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    permission: sessionPermissionRules(input.runtimeMode, personalBot),
                   }),
                 );
                 if (!createdSession.data) {
@@ -4096,7 +4111,7 @@ export function makeOpenCodeAdapter(
           yield* runOpenCodeSdk("session.update", () =>
             context.client.session.update({
               sessionID: forkedSessionId,
-              permission: buildOpenCodePermissionRules(context.session.runtimeMode),
+              permission: sessionPermissionRules(context.session.runtimeMode, context.personalBot),
             }),
           ).pipe(Effect.mapError(toRequestError));
           yield* clearPendingOpenCodeRequests(context, { type: "session.fork" });

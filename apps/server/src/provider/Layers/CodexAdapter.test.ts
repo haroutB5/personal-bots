@@ -311,6 +311,28 @@ validationLayer("CodexAdapterLive validation", (it) => {
     }),
   );
 
+  // Not a feature: a record that a Codex bot has no path deny. A permission
+  // profile would be ignored beside the legacy `sandbox` value thread/start
+  // sends (measured on 0.160.1), and a profile alone stops the Windows backend
+  // from starting the thread. A full-access bot is `danger-full-access`.
+  it.effect("adds no permission profile for personal bots and keeps full access", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-personal-bot-codex-no-profile"),
+        runtimeMode: "full-access",
+        personalBot: true,
+      });
+      const options = validationRuntimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.equal(options?.runtimeMode, "full-access");
+      NodeAssert.ok(
+        (options?.appServerArgs ?? []).every((arg) => !/permissions|sandbox/.test(arg)),
+      );
+    }),
+  );
+
   it.effect("turns off connectors, plugins, memories and owner skills for personal bots", () =>
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();

@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useId, useState } from "react";
 
-import { Check, KeyRound, X } from "lucide-react";
+import { Check, KeyRound, TriangleAlert, X } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -122,6 +122,8 @@ function PendingSecretRequestCard({
   const helpId = `${fieldId}-help`;
   const declineId = `${fieldId}-decline`;
   const purpose = request.purpose.trim();
+  // The origins the bot picked that the app cannot vouch for (server-computed).
+  const unverifiedOrigins = request.unverifiedOrigins ?? [];
   const accessProblem = secretAccessProblem(access);
   const ready = value.length > 0 && !responding;
 
@@ -137,6 +139,20 @@ function PendingSecretRequestCard({
       {purpose.length > 0 ? (
         <p className="mt-1 text-[13px] leading-[1.4] break-words text-[var(--personal-text-secondary)]">
           {purpose}
+        </p>
+      ) : null}
+      {unverifiedOrigins.length > 0 ? (
+        <p
+          role="alert"
+          data-unverified-origins
+          className="mt-2 flex items-start gap-1.5 rounded-[var(--personal-radius-button)] border border-[var(--personal-error)] px-2.5 py-2 text-[13px] leading-[1.4] break-words text-[var(--personal-error)]"
+        >
+          <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
+          <span>
+            {botName} chose {unverifiedOrigins.join(", ")} for this key. This app does not know that
+            address as one for {request.name}, and the key will be sent there. Save it only if you
+            trust it, or change the address below.
+          </span>
         </p>
       ) : null}
 

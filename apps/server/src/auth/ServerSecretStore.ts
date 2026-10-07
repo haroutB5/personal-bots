@@ -138,16 +138,23 @@ export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
   "cause" in error && isPlatformError(error.cause) && error.cause.reason._tag === "AlreadyExists";
 
 /**
- * Saved website passwords and managed connection credentials are sealed at
- * rest. Other store entries (session keys, DPoP material) keep their existing
- * plaintext format, so no existing install has to be migrated.
+ * Saved website passwords, managed connection credentials and bot API keys are
+ * sealed at rest. Other store entries (session keys, DPoP material) keep their
+ * existing plaintext format, so no existing install has to be migrated.
  */
 export const ENCRYPTED_SECRET_NAME_PREFIX = "personal-login-";
 export const ENCRYPTED_CONNECTION_SECRET_NAME_PREFIX = "personal-connection-";
+/** Bot API keys saved through request_secret / Settings (1.66.0). */
+export const ENCRYPTED_API_KEY_SECRET_NAME_PREFIX = "personal-secret-";
+
+const SEALED_NAME_PREFIXES: ReadonlyArray<string> = [
+  ENCRYPTED_SECRET_NAME_PREFIX,
+  ENCRYPTED_CONNECTION_SECRET_NAME_PREFIX,
+  ENCRYPTED_API_KEY_SECRET_NAME_PREFIX,
+];
 
 export const isEncryptedSecretName = (name: string): boolean =>
-  name.startsWith(ENCRYPTED_SECRET_NAME_PREFIX) ||
-  name.startsWith(ENCRYPTED_CONNECTION_SECRET_NAME_PREFIX);
+  SEALED_NAME_PREFIXES.some((prefix) => name.startsWith(prefix));
 
 /** Holds the machine-wrapped data-encryption key. Never a secret value itself. */
 export const DATA_KEY_FILE_NAME = "data-encryption-key.json";
@@ -439,18 +446,25 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * Seals any `personal-login-*.bin` left in plaintext by an earlier version.
-   * Idempotent: a file that already carries the envelope magic is skipped, so
-   * every later boot is a no-op. A failure here leaves the status quo (a
-   * readable file) rather than an unreadable one, so it is logged, not fatal.
+   * Seals any plaintext `personal-login-*`, `personal-connection-*` and
+   * `personal-secret-*` file left by an earlier version. Idempotent: a file that
+   * already carries the envelope magic is skipped, so every later boot is a
+   * no-op. The sealed copy goes through the atomic temp-and-rename path and is
+   * read back and compared before the boot moves on; if the read-back differs
+   * the original bytes are written back, so a failure never leaves an
+   * unreadable key. No plaintext backup is kept (it would defeat the purpose).
+   * A failure is logged, never fatal, and no value or key name is ever logged.
    */
   const migratePlaintextSecrets = Effect.gen(function* () {
     const entries = yield* fileSystem
       .readDirectory(serverConfig.secretsDir)
       .pipe(Effect.catch(() => Effect.succeed<ReadonlyArray<string>>([])));
+    let sealedCount = 0;
+    let failedCount = 0;
     for (const entry of entries) {
-      if (!entry.startsWith(ENCRYPTED_SECRET_NAME_PREFIX) || !entry.endsWith(".bin")) continue;
+      if (!entry.endsWith(".bin")) continue;
       const name = entry.slice(0, -".bin".length);
+      if (!isEncryptedSecretName(name)) continue;
       const current = yield* fileSystem.readFile(resolveSecretPath(name)).pipe(
         Effect.map(Option.some),
         Effect.catch(() => Effect.succeed(Option.none<Uint8Array>())),
@@ -458,12 +472,36 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(current)) continue;
       const bytes = Uint8Array.from(current.value);
       if (SecretEncryption.isSealedSecret(bytes)) continue;
-      yield* set(name, bytes).pipe(Effect.ensuring(Effect.sync(() => bytes.fill(0))));
-      yield* Effect.logInfo(`Encrypted a saved login secret at rest: ${name}`);
+      const outcome = yield* set(name, bytes).pipe(
+        Effect.flatMap(() => get(name)),
+        Effect.map(
+          (readBack) =>
+            Option.isSome(readBack) &&
+            readBack.value.byteLength === bytes.byteLength &&
+            readBack.value.every((byte, index) => byte === bytes[index]),
+        ),
+        Effect.catch(() => Effect.succeed(false)),
+      );
+      if (outcome) {
+        sealedCount += 1;
+      } else {
+        failedCount += 1;
+        // Put the original back so the key stays usable; best effort.
+        yield* fileSystem.writeFile(resolveSecretPath(name), bytes).pipe(Effect.ignore);
+      }
+      bytes.fill(0);
+    }
+    if (sealedCount > 0) {
+      yield* Effect.logInfo(`Encrypted ${sealedCount} saved secret file(s) at rest.`);
+    }
+    if (failedCount > 0) {
+      yield* Effect.logWarning(
+        `Could not encrypt ${failedCount} saved secret file(s) at rest; they stay as they were.`,
+      );
     }
   }).pipe(
     Effect.catchCause((cause) =>
-      Effect.logWarning("Could not encrypt existing saved-login secrets at rest.", cause),
+      Effect.logWarning("Could not encrypt existing saved secrets at rest.", cause),
     ),
   );
 

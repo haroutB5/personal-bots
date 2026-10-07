@@ -1,5 +1,8 @@
+import type { TraceRecord, TraceSink } from "@t3tools/shared/observability";
 import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
 import * as Logger from "effect/Logger";
+import * as Tracer from "effect/Tracer";
 
 import { secretRedactor, type SecretRedactor } from "./secretRedaction.ts";
 
@@ -39,4 +42,67 @@ export const redactSecretsInLogs = <Output>(
       if (masked !== text) cause = Cause.die(new Error(masked));
     }
     return logger.log({ ...options, message, cause });
+  });
+
+/**
+ * The trace sink (`server.trace.ndjson`, and the browser's forwarded spans)
+ * with every saved secret value masked in each record before it is queued: span
+ * attributes, events, names and an exit's failure text all end up in that file.
+ */
+export const redactSecretsInTraceSink = (
+  sink: TraceSink,
+  redactor: SecretRedactor = secretRedactor,
+): TraceSink => ({
+  ...sink,
+  push: (record: TraceRecord) => sink.push(redactor.active() ? redactor.redact(record) : record),
+});
+
+const maskExit = (
+  exit: Exit.Exit<unknown, unknown>,
+  redactor: SecretRedactor,
+): Exit.Exit<unknown, unknown> => {
+  if (!Exit.isFailure(exit)) return exit;
+  const text = Cause.pretty(exit.cause);
+  const masked = redactor.redactText(text);
+  return masked === text ? exit : Exit.die(new Error(masked));
+};
+
+/**
+ * A tracer whose spans mask saved secret values in what they are handed:
+ * attributes, event attributes and an ending failure. Wraps the exporting
+ * (OTLP) tracer, which sends those straight to a collector.
+ */
+export const redactSecretsInTracer = (
+  tracer: Tracer.Tracer,
+  redactor: SecretRedactor = secretRedactor,
+): Tracer.Tracer =>
+  Tracer.make({
+    span(options) {
+      const inner = tracer.span(options);
+      return new Proxy(inner, {
+        get(target, property) {
+          if (property === "attribute") {
+            return (key: string, value: unknown) =>
+              target.attribute(key, redactor.active() ? redactor.redact(value) : value);
+          }
+          if (property === "event") {
+            return (name: string, startTime: bigint, attributes?: Record<string, unknown>) =>
+              target.event(
+                name,
+                startTime,
+                attributes !== undefined && redactor.active()
+                  ? redactor.redact(attributes)
+                  : attributes,
+              );
+          }
+          if (property === "end") {
+            return (endTime: bigint, exit: Exit.Exit<unknown, unknown>) =>
+              target.end(endTime, redactor.active() ? maskExit(exit, redactor) : exit);
+          }
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    },
+    ...(tracer.context ? { context: tracer.context } : {}),
   });

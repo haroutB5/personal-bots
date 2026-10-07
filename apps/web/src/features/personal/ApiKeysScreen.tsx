@@ -5,14 +5,18 @@ import { Link } from "@tanstack/react-router";
 import * as Redacted from "effect/Redacted";
 import { ChevronLeft, Plus } from "lucide-react";
 
+import type { PersonalSecretPlacement } from "@t3tools/contracts";
+
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
 import {
+  describeSecretPlacement,
   initialSecretAccess,
   SecretAccessFields,
   secretAccessChoice,
   secretAccessProblem,
+  secretAccessStateOf,
   type SecretAccessState,
 } from "./SecretAccessFields";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
@@ -85,6 +89,7 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
         shared: true,
         mode: choice.mode,
         origins: [...choice.origins],
+        placement: choice.placement,
       },
     });
     setBusy(false);
@@ -203,6 +208,7 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
         onChange={setAccess}
         disabled={busy}
         showProblem={showAccessProblem}
+        showPlacement
       />
 
       {submitError === null ? null : (
@@ -242,15 +248,13 @@ function AccessPanel({
     readonly name: string;
     readonly mode: "brokered" | "env";
     readonly origins: ReadonlyArray<string>;
+    readonly placement?: PersonalSecretPlacement | undefined;
   };
   onDone: () => void;
 }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const setMode = useAtomCommand(personalSecretSetMode, { reportFailure: false });
-  const [access, setAccess] = useState<SecretAccessState>(() => ({
-    mode: secret.mode === "brokered" ? "brokered" : "env",
-    originsText: secret.origins.join(", "),
-  }));
+  const [access, setAccess] = useState<SecretAccessState>(() => secretAccessStateOf(secret));
   const [showProblem, setShowProblem] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -265,7 +269,12 @@ function AccessPanel({
     setBusy(true);
     const result = await setMode({
       environmentId,
-      input: { name: secret.name, mode: choice.mode, origins: [...choice.origins] },
+      input: {
+        name: secret.name,
+        mode: choice.mode,
+        origins: [...choice.origins],
+        placement: choice.placement,
+      },
     });
     setBusy(false);
     const failure = commandFailureMessage(result, "Could not change this key. Try again.");
@@ -284,6 +293,7 @@ function AccessPanel({
         onChange={setAccess}
         disabled={busy}
         showProblem={showProblem}
+        showPlacement
       />
       <p className="text-[13px] leading-snug text-[var(--personal-text-secondary)]">
         Applies to new sessions; a session that is already running may still hold the key as an
@@ -425,6 +435,14 @@ export function ApiKeysScreen(): JSX.Element {
                       ? `Brokered${secret.origins.length > 0 ? `: ${secret.origins.join(", ")}` : ""}`
                       : "Environment variable"}
                   </span>
+                  {secret.mode === "brokered" ? (
+                    <span
+                      data-secret-placement
+                      className="block break-words text-[13px] text-[var(--personal-text-secondary)]"
+                    >
+                      {describeSecretPlacement(secret.placement)}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"
