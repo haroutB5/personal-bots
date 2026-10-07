@@ -40,6 +40,7 @@ Write-Host 'build.ps1 and restart.ps1 wiring'
 $buildText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'build.ps1') -Raw
 Assert-Equal 'build.ps1 writes current.txt only behind $activateRelease' 1 ([regex]::Matches($buildText, 'Set-Content -LiteralPath \$paths\.CurrentFile')).Count
 Assert-Equal 'the write sits in the -Activate branch' $true ($buildText -match '(?s)if \(\$activateRelease\) \{\s*Set-Content -LiteralPath \$paths\.CurrentFile')
+Assert-Equal 'the closing message follows the real decision, not -NoActivate' $false ($buildText -match 'if \(\$NoActivate\)')
 Assert-Equal 'build.ps1 still accepts -NoActivate' $true ($buildText -match '\[switch\]\$NoActivate')
 $restartText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'restart.ps1') -Raw
 Assert-Equal 'restart.ps1 (the rollback path) never calls the notes check' $false ($restartText -match 'check-release-notes')

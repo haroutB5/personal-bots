@@ -120,7 +120,8 @@ try {
     console.log(
       `${failure === null ? "PASS" : "FAIL"} ${journey.id} (${ms} ms)${failure ? `: ${failure}` : ""}`,
     );
-    if (unexpected.length > 0) console.log(`     unexpected page errors: ${unexpected.join(" | ")}`);
+    if (unexpected.length > 0)
+      console.log(`     unexpected page errors: ${unexpected.join(" | ")}`);
     if (allowed.length > 0) console.log(`     allowed page errors: ${allowed.join(" | ")}`);
   }
 } catch (error) {

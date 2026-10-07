@@ -208,8 +208,8 @@ if ($activateRelease) {
 Write-Host ''
 Write-Host "Release staged: $releaseDir"
 Write-Host "  $($cliVersion.Trim()), $branch@$sha, built $builtAt"
-if ($NoActivate) {
-    Write-Host "  Not activated. Activate with: restart.ps1 -Release $releaseName"
+if ($activateRelease) {
+    Write-Host '  Active release updated (-Activate). Apply it with: scripts\personal\restart.ps1'
 } else {
-    Write-Host '  Active release updated. Apply it with: scripts\personal\restart.ps1'
+    Write-Host "  Staged, not activated (current.txt untouched). Activate with: restart.ps1 -Release $releaseName"
 }
