@@ -61,6 +61,9 @@ node scripts/personal/perf/bench.mjs --origin local --runs 7 --bot Frontend
 node scripts/personal/perf/bench.mjs --origin relay --runs 5 --bot Frontend
 # A/B one optimization in the same build (runs alternate on/off):
 node scripts/personal/perf/bench.mjs --origin local --runs 10 --bot Frontend --ab preload-chat
+# A/B two builds on two throwaway servers (runs alternate A, B, A, B; journeys are filed as name@A / name@B;
+# run it twice with the servers swapped to cancel the order effect, the second slot is slower by 50 to 90 ms):
+node scripts/personal/perf/bench.mjs --origins http://127.0.0.1:A,http://127.0.0.1:B --runs 20 --journeys J1,J2
 # which counters track wall-clock:
 node scripts/personal/perf/correlate.mjs %USERPROFILE%\.personal-bots\perf\bench-*.json
 # the gate (exit 1 on a regression) and the ratchet:
@@ -253,3 +256,51 @@ of 10 restarts. 6 of 30 phone models hit it and reconnected after 18.1 to 19.9 s
 A real Chrome that opens the app 250 ms after the port opens did not load it in 25 s, 10 of 10. 1.64.2 holds early requests and
 replays them to the handler: 0 of 1188 unanswered, no phone model above 2.5 s, Chrome loads the app and connects `/ws` at a median
 3.0 s. Startup itself is unchanged (ready median 1686 vs 1687 ms). See `HANDOFF-1642.md`.
+
+## 1.66.0: what the warm open really loads, and why no JS was cut (7 Oct 2026)
+
+Brief: cut the warm journey's JS (2.26 MB, 123 requests) by lazy-loading the screens most opens do not need, target under
+1.2 MB, ratchet the budget. Rig: the committed bench (J1/J2, 390x844 at DPR 3, 4x CPU) against throwaway servers from
+`scripts/personal/throwaway-server.ps1` with the fake CLI and four seeded chats (the golden-root numbers match: J1-warm 2256.4 KB,
+123 requests). Tools and every raw result are in `C:/Users/Ht/.personal-bots/qa/frontend-1660/` (`warmlist.mjs` lists the scripts
+before the mark, `coverage.mjs` runs block coverage over the warm open, `attrib.mjs` attributes output bytes to packages through
+the sourcemaps, `swapn.sh` is the interleaved A/B below).
+
+**Finding 1: no screen is in the warm open.** The chunk list of J1-warm has no Computer, Team, Memory, Routines, Files, Passwords,
+Settings or avatar-video code (they are route-split since 1.59.x). The 2.26 MB in 118 requests is the framework floor. Output bytes
+by package before the list shows (2,130 KB attributed): effect 275, react-dom 174, @base-ui 156 (menu, tooltip, toast),
+client-runtime ~200, contracts ~150, @clerk 125 (plus two scripts and two calls to `clerk.t3.codes` on every launch, which no counter
+sees), TanStack router and query ~100, lucide and Icons 128, theme palette (culori) 77, composerDraftStore and what it drags (trait
+picker, model selection) ~70, tailwind-merge 28, about 300 KB of app code. Block coverage: 1,050 of the 2,255 KB run before the mark;
+the rest is loaded and never executed there (base-ui 116, effect 107, react-dom 72, Icons 61, Clerk 64, composerDraftStore 41).
+88 of the 118 requests are chunks under 6 KB (182 KB in all). Under 1.2 MB would mean dropping effect, the contracts schemas or
+Clerk from the first load: no lazy screen gets there.
+
+**Finding 2: cutting bytes made the notification-tap journey slower.** Two cuts were built and measured:
+
+| Change                                                                                                 | Counters (exact)                                                                                            | Wall clock, interleaved on one server                                                                                            |
+| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `__root`: the provider-update popover loads only off the Bots routes (it never renders on them)        | J1-warm 2256.4 -> 2156.8 KB, 123 -> 120 requests (Icons chunk 78.7 KB, its logic 8.3 KB, 11.8 KB of `main`) | J1-warm unchanged (rows 1361 vs 1347 ms, n=20); **J1-deep +300 ms** in the bench (n=10, every round), +87 ms in a reused browser |
+| `ConversationSidePanel`: the Computer screen inside the wide-desktop panel loads when the panel mounts | J1-deep 3586.8 -> 3508.5 KB, 181 -> 179 requests                                                            | **J1-deep +124 ms** (2554 vs 2430 and 2431 ms, n=10, every run above the others' median)                                         |
+
+A third try (moving the whole side panel out of the chat chunk, with its element id in `desktopColumns`) added a shared chunk to the
+Bots list's critical path: J1-warm rows +70 to 85 ms. Nothing shipped: J1-deep has a 2656 ms ceiling and these builds sit at
+2550 to 2740. The method matters: one server, the builds swapped under it by renaming the client folder between runs, one bench run
+per Chrome, a control build of the unchanged source (`ctl`: J1-warm 1448 vs 1443 ms, J1-deep 2415 vs 2378, so the build chain adds
+nothing) and a control of the same code with different bytes (`v7`: 2326 vs 2368, so a changed file is not what slows it).
+Two servers compared with each other differ by up to 300 ms on identical builds, and the second slot of a run pair is 50 to 90 ms
+slower, so never compare builds on two servers or in one fixed order. Why removing code slows the deep link is not found: the extra
+time is many short tasks (taskMs +150 to 200, long tasks unchanged), and it appears only with a fresh Chrome per run, not in a reused
+one. The suspects are idle-scheduled work that now starts before the chat mark; a trace of J1-deep on `ctl` against `v4` would settle it.
+
+**Tried and dropped**: taking `composerDraftStore` out of the first load (reached through `lib/utils`, `toast` and the environment
+cleanup) saves 65 to 108 KB but rolldown then splits its shared chunk into 27 base-ui pieces (+27 requests, the budget would rise); a
+rolldown group for base-ui pulled the whole chat into the first load (3.7 MB); a group to fold the 88 tiny chunks together broke module
+order (`initialConfigValueAtom` of undefined) and needs `strictExecutionOrder`; `treeshake.moduleSideEffects: false` for the workspace
+packages saved 21 KB and risks dropping side-effect imports; blocking Clerk's CDN scripts did not change J1-warm wall (n=10 each);
+deferring the theme engine (77 KB) risks a theme flash.
+
+**Open for a decision, not done:** skip the Clerk provider on the Bots routes. The phone never signs in to T3 Connect; it is about
+127 KB counted, two cross-origin scripts, two calls and a 400 per launch (blocking them cut script time 5% and post-mark long tasks 10%),
+and every launch tells `clerk.t3.codes`. It is one chunk reached only by a dynamic import in `main.tsx`, so it does not reshuffle the
+chunk graph. Budgets are unchanged: with no JS cut there is nothing to ratchet.
