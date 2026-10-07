@@ -66,7 +66,11 @@ export type PerfOptimization =
   | "activity-memo"
   // The team constellation measures each candidate layout once while ordering
   // them (1.64.1); off: twice per comparison, as before.
-  | "layout-once";
+  | "layout-once"
+  // A launch on a Bots path boots without the Clerk (T3 Connect sign-in) shell:
+  // no Clerk chunk, no cross-origin Clerk scripts or calls (cloud/managedAuthBoot,
+  // 1.67.0); off: Clerk loads on every launch, as before.
+  | "skip-clerk";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

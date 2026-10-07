@@ -6,6 +6,7 @@ import "./index.css";
 
 import { isElectron } from "./env";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
+import { MANAGED_AUTH_SKIPPED } from "./cloud/managedAuthBoot";
 import { getRouter } from "./router";
 import {
   syncDocumentElectronPlatformClasses,
@@ -87,7 +88,7 @@ const app = <AppRoot router={router} />;
 // every Clerk byte out of the startup graph for local-mode users, and keeps
 // the bundled clerk-js out of the browser build entirely.
 const managedAuthShellModule =
-  clerkPublishableKey && hasCloudPublicConfig()
+  clerkPublishableKey && hasCloudPublicConfig() && !MANAGED_AUTH_SKIPPED
     ? isElectron
       ? import("./components/clerk/ElectronManagedAuthShell")
       : import("./components/clerk/BrowserManagedAuthShell")

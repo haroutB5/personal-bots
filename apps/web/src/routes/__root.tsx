@@ -67,6 +67,7 @@ import {
   type KeybindingsUpdateToastController,
 } from "../components/KeybindingsUpdateToast.logic";
 
+import { MANAGED_AUTH_SKIPPED } from "../cloud/managedAuthBoot";
 import { isPersonalPath } from "../features/personal/personalMode";
 import { DeferredMount } from "../lib/DeferredMount";
 import { perfOptimizationOn } from "../features/personal/perfFlags";
@@ -319,7 +320,7 @@ function RootRouteView() {
           {isElectron ? <RunningThreadKeepAlive /> : null}
           <DeferredMount>
             <RelayClientInstallDialog />
-            <ConnectOnboardingDialog />
+            {MANAGED_AUTH_SKIPPED ? null : <ConnectOnboardingDialog />}
             <SshPasswordPromptDialog />
           </DeferredMount>
           <ConfirmDialogHost />
