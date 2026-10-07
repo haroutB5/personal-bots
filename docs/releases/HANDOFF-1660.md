@@ -149,3 +149,29 @@ The dev-team app sheet still says "HANDOFF-xxxx.md in the repo": DevOps / CTO to
 - (Fixed in A2: tool inputs, including briefs and `notify_user`, are masked at the dispatcher.)
 - Browser typing masking is proven on a fake page, not on real Chrome.
 - Sessions already running when a key is switched keep their environment variable until they restart.
+
+## D. Web part (Frontend, `feat/hbots-1660-web`, merged in `d96cbc5280`)
+
+Frontend touched only `scripts/personal/build.ps1`, `scripts/personal/perf/`, `scripts/personal/e2e/` and the new
+`scripts/personal/e2e-smoke.ps1`. There are no `apps/` changes: **1.66.0 ships no web code change** and no JS cut.
+
+**Phone e2e smoke suite (new gate).** Five phone journeys in a real Chrome (390x844, dark, touch) against a throwaway
+server with the fake Claude CLI: `bots-list-chat`, `new-chat-named`, `delegate-task`, `chats-search`, `long-press-reply`.
+About 35 s with server start and stop; each journey must finish within 30 s.
+
+- Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\e2e-smoke.ps1 -Release <sha12|folder> [-Journey <id>] [-Json]`.
+  Exit `0` all passed, `1` a journey failed, `2` setup failed (server, browser, pairing), `3` something was left behind or
+  the 180 s limit hit. On a failure the artifacts folder (`%TEMP%\hbots-e2e\<name>`) keeps a screenshot and the page text.
+- `build.ps1 -NoActivate -CopyExternals -E2E` runs it against the staged release and exits non-zero on a failure, before
+  activation. The 1.66.0 ship waiter (`run/restart-1.66.0.ps1`) runs it from `run/release-tools-1.66.0` before the idle wait and
+  aborts without restarting on a non-zero exit.
+- It uses its own port and data root and never touches the live server; it does not replace QA's click-through for a big
+  change. Full usage: `scripts/personal/e2e/README.md`.
+
+**Perf findings (details in `scripts/personal/perf/README.md`, section "1.66.0").** The brief was to cut the warm journey's JS
+(2.26 MB, 123 requests) to under 1.2 MB by lazy-loading screens. Result: no screen is in the warm open; the 2.26 MB is the framework
+floor (effect, react-dom, base-ui, client-runtime, contracts, Clerk, router). Two lazy-load cuts (provider-update popover, the
+Computer screen inside the side panel) saved 100 and 78 KB but made the notification-tap journey (J1-deep) slower in interleaved
+A/B runs, so both were backed out; nothing was shipped and the budgets are unchanged (nothing to ratchet). Open for a decision,
+not done: skip the Clerk provider on the Bots routes (about 127 KB, two cross-origin scripts, two calls per launch). The bench
+gained `--origins A,B` for interleaved A/B between two throwaway servers.
