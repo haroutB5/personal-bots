@@ -45,12 +45,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\pair.ps1
 git pull
 vp i
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\build.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restart.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restart.ps1 -Release <sha the build printed>
 ```
 
 `build.ps1` loads the public T3 Connect config from the repo-root `.env`
 (never printed), runs `vp run --filter t3 build`, and stages
-`releases\<sha>\`. The running server is untouched until `restart.ps1`.
+`releases\<sha>\`. A build only stages: it never touches
+`releases\current.txt`, so a forgotten flag cannot switch the live release.
+`restart.ps1 -Release <sha>` is what activates (and what rolls back).
+`build.ps1 -Activate` also sets `current.txt`, for a first install or a
+hand-run build with nothing live yet; the old `-NoActivate` is still accepted
+and does nothing (waiters, the nightly job and the upstream sync pass it).
 Uncommitted builds are staged as `<sha>-dirty-<time>`.
 
 Roll back to an earlier release:
@@ -74,6 +79,18 @@ Remove-Item -Recurse "$env:USERPROFILE\.personal-bots\releases\<sha>"
 
 Never delete a release folder with `rm -rf` from Git Bash: it follows the
 junction and empties the checkout's `node_modules`.
+
+### Release notes must be finished before a release goes live
+
+`check-release-notes.ps1 -Version x.y.z` fails (exit 1) when
+`docs\releases\HANDOFF-<ver>.md` is missing, under 200 characters, or still
+holds `PROOF_PLACEHOLDER`, TODO, TBD, FIXME, XXX, "to be filled in" or an
+`<insert ...>` marker (code spans and fenced blocks are ignored). The release
+waiter runs it before arming, from the pinned tools copy with
+`-Commit <main sha> -RepoRoot <repo>` so it reads what was pushed. It is not part
+of `build.ps1` (staging needs no finished notes; the proof is written after QA)
+and not part of `restart.ps1`, so a rollback is never held up by notes.
+`release-safety.tests.ps1` tests it and the build default.
 
 ### Tell the requesting chat when a release lands
 

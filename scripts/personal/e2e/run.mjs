@@ -3,9 +3,12 @@
 //                [--journeys id,id] [--channel chrome|msedge]
 // Normally started by scripts\personal\e2e-smoke.ps1, which owns the server (start, stop, root
 // deletion). Exit code: 0 all passed, 1 a journey failed, 2 setup failed.
+// A journey also fails on any uncaught page error or unhandled rejection that is not on the explicit
+// allowlist in page-errors.mjs (empty by default).
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { JOURNEYS, SELFTEST_JOURNEYS } from "./journeys.mjs";
+import { describePageErrors, splitPageErrors } from "./page-errors.mjs";
 import {
   JOURNEY_LIMIT_MS,
   loadPlaywright,
@@ -54,6 +57,7 @@ if (selected.length === 0) {
   process.exit(2);
 }
 
+const PAGE_ERROR_SETTLE_MS = 300;
 const suiteElapsed = stopwatch();
 let browser;
 const results = [];
@@ -84,6 +88,10 @@ try {
           ),
         ),
       ]);
+      // Give a background throw or rejection a moment to surface before judging the journey.
+      await page.waitForTimeout(PAGE_ERROR_SETTLE_MS);
+      const { unexpected } = splitPageErrors(errors);
+      if (unexpected.length > 0) throw new Error(describePageErrors(journey.id, unexpected));
     } catch (error) {
       failure = stripAnsi(String(error?.message ?? error));
       await page
@@ -98,6 +106,7 @@ try {
       await context.close().catch(() => undefined);
     }
     const ms = elapsed();
+    const { unexpected, allowed } = splitPageErrors(errors);
     results.push({
       id: journey.id,
       title: journey.title,
@@ -105,11 +114,14 @@ try {
       ms,
       error: failure,
       pageErrors: errors,
+      unexpectedPageErrors: unexpected,
+      allowedPageErrors: allowed,
     });
     console.log(
       `${failure === null ? "PASS" : "FAIL"} ${journey.id} (${ms} ms)${failure ? `: ${failure}` : ""}`,
     );
-    if (errors.length > 0) console.log(`     uncaught page errors: ${errors.join(" | ")}`);
+    if (unexpected.length > 0) console.log(`     unexpected page errors: ${unexpected.join(" | ")}`);
+    if (allowed.length > 0) console.log(`     allowed page errors: ${allowed.join(" | ")}`);
   }
 } catch (error) {
   console.error(`setup failed: ${error?.stack ?? error}`);

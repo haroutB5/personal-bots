@@ -18,10 +18,21 @@ versioned release under %USERPROFILE%\.personal-bots\releases\<sha>.
    `vp i` or the building checkout going away. The weekly upstream sync always
    uses it: auto-rollback is only trustworthy when each release carries its own
    externals.
-4. Writes releases\<sha>\VERSION and makes it the active release
-   (releases\current.txt) unless -NoActivate is given.
+4. Writes releases\<sha>\VERSION. A build only STAGES the release: it never
+   touches releases\current.txt (the active release pointer) unless -Activate is
+   given (changed 7 Oct; before, activating was the default and staging needed
+   -NoActivate, so a forgotten flag switched the live release).
+   -NoActivate is still accepted and does nothing: it is the default now, and
+   existing waiters, scripts and notes pass it. -Activate together with
+   -NoActivate is refused.
    -E2E first runs the phone e2e smoke (e2e-smoke.ps1, five journeys, about 35 s)
    against the staged release; a failure exits non-zero before activation.
+
+The normal way to activate is restart.ps1 -Release <sha> (the release waiter);
+it is also the rollback. -Activate is for a first install or a hand-run build
+on a machine with nothing live yet. It does not check the release notes: the
+placeholder check (check-release-notes.ps1) runs in the release waiter before
+activation, because restart.ps1 -Release, not this script, is what goes live.
 
 Touches no data root. The running server keeps using its own release until
 restart.ps1.
@@ -33,6 +44,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\build.ps1
 param(
     [string]$Node,
     [switch]$SkipBuild,
+    [switch]$Activate,
+    # Accepted for old callers (waiters, nightly, upstream sync, handoff notes); staging is the default now.
     [switch]$NoActivate,
     [switch]$CopyExternals,
     [switch]$E2E
@@ -40,6 +53,7 @@ param(
 
 . (Join-Path $PSScriptRoot 'common.ps1')
 
+$activateRelease = Resolve-PbBuildActivation -Activate:$Activate -NoActivate:$NoActivate
 $paths = Get-PbPaths -Root dev
 $nodeExe = Resolve-NodeExe -Node $Node
 # Repo-local Node shim first: Smart App Control blocks the global vp.exe
@@ -187,7 +201,7 @@ if ($E2E) {
     }
 }
 
-if (-not $NoActivate) {
+if ($activateRelease) {
     Set-Content -LiteralPath $paths.CurrentFile -Value $releaseName -Encoding ASCII
 }
 

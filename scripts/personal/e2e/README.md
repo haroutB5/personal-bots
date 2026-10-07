@@ -43,16 +43,23 @@ about 35 s with the server start and stop.
 
 The artifacts folder (`%TEMP%\hbots-e2e\<name>`, printed at the end; removed on a pass) keeps, per failed journey, a
 screenshot (`<id>.png`) and the page text with the error (`<id>.txt`), plus `result.json` and the runner's output.
-Uncaught page errors are listed per journey but do not fail it: the Clerk "Failed to load Clerk JS" error is expected
-here (the browser is blocked from the network on purpose).
+**An uncaught page error or unhandled promise rejection fails the journey** (since 7 Oct; they used to be listed but
+ignored). The failure line names the journey and the error, for example
+`uncaught page error in journey "chats-search" (1): "TypeError: x is undefined"`. The only way through is an entry in
+`ALLOWED_PAGE_ERRORS` in `page-errors.mjs`: an anchored regex that matches the whole error line, plus a one-sentence
+reason. The list has one entry: the Clerk "Failed to load Clerk JS" error, which the suite causes itself by blocking
+the network. Add an entry only for an error that a current run actually prints, copied exactly.
+`node --test scripts/personal/e2e/page-errors.test.mjs` tests the matching.
 
 `selftest-fail` is a journey that always fails, only run by name: `-Journey selftest-fail` proves the gate exits `1`
-and keeps its artifacts.
+and keeps its artifacts. `selftest-pageerror` and `selftest-rejection` pass their own steps, then raise one uncaught
+error or one unhandled rejection: each must exit `1` with the page-error line above.
 
 ## How build and release call it
 
-- **Builder / CTO, before handing a release to DevOps:** `build.ps1 -NoActivate -CopyExternals -E2E`. After staging
-  (and before activation) it runs this suite against the staged release and exits non-zero when it fails.
+- **Builder / CTO, before handing a release to DevOps:** `build.ps1 -CopyExternals -E2E` (a build only stages; `-Activate`
+  would switch the live release, `-NoActivate` is still accepted and does nothing). After staging (and before any
+  activation) it runs this suite against the staged release and exits non-zero when it fails.
 - **DevOps, in the release waiter / gate:** run
   `scripts\personal\e2e-smoke.ps1 -Release <sha12> -Json` from the release-tools copy, before arming the restart.
   Ship only on exit `0`; on `1` read the failure line in the JSON (and the screenshot under `artifacts`), on `2` or `3`

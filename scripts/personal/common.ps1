@@ -134,6 +134,16 @@ function Read-PbRuntimeState {
     }
 }
 
+# build.ps1 stages by default; only -Activate may switch releases\current.txt.
+# -NoActivate is the old opt-out, kept as a harmless no-op for existing callers.
+function Resolve-PbBuildActivation {
+    param([switch]$Activate, [switch]$NoActivate)
+    if ($Activate -and $NoActivate) {
+        throw 'build.ps1: -Activate and -NoActivate contradict each other. Staging is the default; pass -Activate only to switch the active release.'
+    }
+    return [bool]$Activate
+}
+
 function Get-PbRelease {
     param([Parameter(Mandatory = $true)]$Paths, [string]$Release)
     if (-not $Release) {

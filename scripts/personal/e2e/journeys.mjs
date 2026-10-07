@@ -137,6 +137,30 @@ export const SELFTEST_JOURNEYS = [
       });
     },
   },
+  // These two pass on their own steps and then raise one background error each: the gate must still fail,
+  // naming the error and the journey (`-Journey selftest-pageerror` / `selftest-rejection`, expect exit 1).
+  {
+    id: "selftest-pageerror",
+    title: "Passes, then throws an uncaught error",
+    async run({ page, origin }) {
+      await openBots(page, origin);
+      await page.evaluate(() => {
+        setTimeout(() => {
+          throw new Error("injected uncaught error (selftest-pageerror)");
+        }, 0);
+      });
+    },
+  },
+  {
+    id: "selftest-rejection",
+    title: "Passes, then leaves an unhandled rejection",
+    async run({ page, origin }) {
+      await openBots(page, origin);
+      await page.evaluate(() => {
+        void Promise.reject(new Error("injected unhandled rejection (selftest-rejection)"));
+      });
+    },
+  },
 ];
 
 export const JOURNEYS = [
