@@ -2,10 +2,15 @@
 // facts the rule and note guards judge a save by.
 import * as Effect from "effect/Effect";
 
-import type { PersonalMemoryNoteOrigin, ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@t3tools/contracts";
 
 import type { MemoryCore } from "./memoryCore.ts";
-import { WEB_TOOL_NEEDLES, WEB_TOOL_PATTERN } from "./memoryProvenancePolicy.ts";
+import {
+  isOwnerMessageId,
+  originOfMessage,
+  usedWebTool,
+  WEB_TOOL_NEEDLES,
+} from "./memoryProvenancePolicy.ts";
 import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
 
 export const makeMemoryProvenance = (core: MemoryCore) => {
@@ -36,12 +41,12 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
         LIMIT 1
       `;
       return {
-        startedByOwner: first[0] !== undefined && !first[0].messageId.startsWith("personal-"),
+        startedByOwner: first[0] !== undefined && isOwnerMessageId(first[0].messageId),
         texts: recent.map((row) => row.text),
         current:
           latest[0] === undefined
             ? null
-            : { text: latest[0].text, byOwner: !latest[0].messageId.startsWith("personal-") },
+            : { text: latest[0].text, byOwner: isOwnerMessageId(latest[0].messageId) },
       };
     }).pipe(Effect.orElseSucceed(() => ({ startedByOwner: false, texts: [], current: null })));
 
@@ -89,17 +94,7 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
         return { origin: "app" as const, readWeb: false, threadReadWeb };
       }
       const id = current.messageId;
-      const origin: PersonalMemoryNoteOrigin = !id.startsWith("personal-")
-        ? "chat"
-        : id.startsWith("personal-task-")
-          ? current.taskSource === "routine"
-            ? "routine"
-            : "task"
-          : id.startsWith("personal-relay-") ||
-              id.startsWith("personal-group-") ||
-              id.startsWith("personal-lead-answer-")
-            ? "bot"
-            : "app";
+      const origin = originOfMessage(id, current.taskSource);
       // In this turn.
       const tools = yield* sql<{ readonly itemType: string | null; readonly text: string }>`
         SELECT json_extract(a.payload_json, '$.itemType') AS "itemType",
@@ -110,9 +105,7 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
           AND a.created_at >= ${current.requestedAt}
         LIMIT 2000
       `;
-      const readWeb = tools.some(
-        (tool) => tool.itemType === "web_search" || WEB_TOOL_PATTERN.test(tool.text),
-      );
+      const readWeb = usedWebTool(tools);
       return { origin, readWeb, threadReadWeb: threadReadWeb || readWeb };
     }).pipe(
       Effect.orElseSucceed(() => ({

@@ -45,6 +45,7 @@ import {
   termsToMatch,
   type Ranked,
 } from "./memoryRetrieval.ts";
+import { carryActiveApps, preferenceSend, sessionHoldsRules } from "./memoryContextPolicy.ts";
 import { capPreferences, dedupeKey, visibleTo } from "./memoryScopePolicy.ts";
 import {
   errorTagOf,
@@ -381,20 +382,12 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
       // A session keeps the apps it has been about (they only grow), so a chat
       // that flips between apps lists each one's rules once, not on every flip.
       const sticky = input.session === undefined ? undefined : stickyApps.get(input.threadId);
-      const carried =
-        input.session !== undefined &&
-        !input.session.fresh &&
-        sticky !== undefined &&
-        sticky.sessionKey === input.session.key
-          ? [...sticky.slugs]
-          : [];
-      const detectedSlugs = new Set(detected.map((app) => app.slug));
-      const activeApps: Array<ActiveApp> = [
-        ...detected,
-        ...carried
-          .filter((slug) => !detectedSlugs.has(slug))
-          .map((slug): ActiveApp => ({ slug, via: ["earlier"] })),
-      ].slice(0, STICKY_APPS_MAX);
+      const activeApps = carryActiveApps({
+        detected,
+        session: input.session,
+        sticky,
+        max: STICKY_APPS_MAX,
+      });
       if (input.session !== undefined) {
         stickyApps.set(input.threadId, {
           sessionKey: input.session.key,
@@ -487,24 +480,22 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
       const nowIso = DateTime.formatIso(nowDate);
       const previous = sentPreferences.get(input.threadId);
       const reusable =
-        input.session !== undefined &&
-        !input.session.fresh &&
-        listed.length > 0 &&
+        sessionHoldsRules({
+          session: input.session,
+          listedCount: listed.length,
+          previous,
+          resendEvery: PERSONAL_MEMORY_RESEND_EVERY_TURNS,
+        }) &&
         previous !== undefined &&
-        previous.sessionKey === input.session.key &&
-        previous.turns + 1 < PERSONAL_MEMORY_RESEND_EVERY_TURNS &&
         !(yield* compactedSince(input.threadId, previous.sentAt));
-      const repeat = reusable && previous !== undefined && previous.setKey === setKey;
-      const addedRules =
-        reusable &&
-        !repeat &&
-        previous !== undefined &&
-        scoping &&
-        [...previous.ids].every(([id, version]) => currentIds.get(id) === version)
-          ? listed.filter((entry) => !previous.ids.has(entry.memoryId))
-          : [];
-      const delta =
-        addedRules.length > 0 && addedRules.every((entry) => (entry.apps ?? null) !== null);
+      const { repeat, addedRules, delta } = preferenceSend({
+        reusable,
+        previous,
+        setKey,
+        currentIds,
+        listed,
+        scoping,
+      });
       // Recorded only once the send succeeds (confirmPreferencesSent): a turn
       // that never reached the provider must not mark the list as given.
       if (input.session !== undefined) {

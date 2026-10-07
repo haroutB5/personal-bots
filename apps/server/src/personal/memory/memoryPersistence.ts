@@ -11,7 +11,6 @@ import * as Stream from "effect/Stream";
 import {
   PERSONAL_MEMORY_LIST_DEFAULT_LIMIT,
   PersonalMemoryId,
-  isBotRuleSource,
   type PersonalMemoryEntry,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -21,7 +20,9 @@ import { rootExposureKey, threadExposureKey } from "../browser/sensitiveExposure
 import { looksLikeSecret, redactSecrets } from "../secretText.ts";
 import { appsToJson } from "./memoryApps.ts";
 import type { MemoryCore } from "./memoryCore.ts";
-import { SCOPE_REACH, visibleTo } from "./memoryScopePolicy.ts";
+import { tracePruneDue } from "./memoryAgeingPolicy.ts";
+import { undoRoute } from "./memoryProvenancePolicy.ts";
+import { replaceRefusal, visibleTo } from "./memoryScopePolicy.ts";
 import {
   encodeMemoryIds,
   encodeVersions,
@@ -175,14 +176,8 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
         if (target === undefined || !visible) {
           return yield* fail(`Memory '${memoryId}' was not found, so nothing was saved.`);
         }
-        if (target.kind === "task_summary") {
-          return yield* fail("Task summaries cannot be replaced, so nothing was saved.");
-        }
-        if (SCOPE_REACH[target.scope] > SCOPE_REACH[input.scope]) {
-          return yield* fail(
-            `This save reaches fewer bots than the ${target.scope} entry it would replace, so those bots would lose it. Save it as ${target.scope} instead. Nothing was saved.`,
-          );
-        }
+        const refusal = replaceRefusal(target, input.scope);
+        if (refusal !== null) return yield* fail(refusal);
         if (target.supersededAt != null) continue;
         targets.push(target);
       }
@@ -268,17 +263,10 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
   const undoNote: PersonalMemoryService["Service"]["undoNote"] = (input) =>
     Effect.gen(function* () {
       const current = yield* readEntry(input.memoryId);
-      // Two rule Undos (1.60.42): a rule a bot saved at the owner's word (`;rule` source) can be
-      // archived again, and a rule a bot forgot at the owner's word comes back whatever its source
-      // is (most live rules were saved as `bot:<id>` or by a tidy-up, long before `;rule`).
-      if (
-        current.kind === "preference" &&
-        (isBotRuleSource(current.source) ||
-          (input.undo === "restore" && current.supersededReason === RULE_FORGOTTEN_REASON))
-      ) {
-        return yield* undoRule(input, current);
-      }
-      if (current.kind !== "note") {
+      // Two rule Undos (1.60.42), see undoRoute.
+      const route = undoRoute(current, input.undo);
+      if (route === "rule") return yield* undoRule(input, current);
+      if (route === "refuse") {
         return yield* fail("Only a note a bot saved can be undone from the chat.");
       }
       const nowIso = DateTime.formatIso(yield* DateTime.now);
@@ -434,7 +422,7 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       `;
       // A trace is kept for TRACE_KEEP_DAYS; the usage row itself stays.
       const nowMs = DateTime.toEpochMillis(now);
-      if (nowMs - state.tracesPrunedAtMs > 3_600_000) {
+      if (tracePruneDue(nowMs, state.tracesPrunedAtMs)) {
         state.tracesPrunedAtMs = nowMs;
         const cutoff = DateTime.formatIso(DateTime.subtract(now, { days: TRACE_KEEP_DAYS }));
         yield* sql`

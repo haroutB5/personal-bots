@@ -14,6 +14,23 @@ export const SCOPE_REACH: Record<PersonalMemoryScope, number> = {
   shared: 3,
 };
 
+/**
+ * Why a save may not replace `target`, or null when it may. Whether the target exists and is visible to the
+ * saving bot is the caller's check.
+ */
+export const replaceRefusal = (
+  target: Pick<PersonalMemoryEntry, "kind" | "scope">,
+  saveScope: PersonalMemoryScope,
+): string | null => {
+  if (target.kind === "task_summary") {
+    return "Task summaries cannot be replaced, so nothing was saved.";
+  }
+  if (SCOPE_REACH[target.scope] > SCOPE_REACH[saveScope]) {
+    return `This save reaches fewer bots than the ${target.scope} entry it would replace, so those bots would lose it. Save it as ${target.scope} instead. Nothing was saved.`;
+  }
+  return null;
+};
+
 /** Whether a bot (on a team) can see an entry. */
 export const visibleTo = (
   entry: PersonalMemoryEntry,
