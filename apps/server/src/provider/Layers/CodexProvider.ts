@@ -662,7 +662,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         ? makeUnavailableUsageLimits({
             checkedAt,
             reason: "probeFailed",
-            ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
+            message: snapshot.rateLimits?.failure ?? "Codex did not return its usage",
           })
         : codexRateLimitsToLimits({
             snapshot: snapshot.rateLimits.snapshot,

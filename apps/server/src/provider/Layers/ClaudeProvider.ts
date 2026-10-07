@@ -620,7 +620,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         // The SDK probe that reads usage never got that far. Saying so, rather
         // than omitting usage, keeps the last good reading and earns the
         // early retry; an omitted field would wipe the reading instead.
-        usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" }),
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "Claude could not be started to read usage",
+        }),
       },
     });
   }
@@ -631,7 +635,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
   const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+    ? makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Claude did not return its usage",
+      })
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,
