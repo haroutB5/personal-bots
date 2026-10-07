@@ -18,6 +18,7 @@ import {
   EventId,
   MessageId,
   type OrchestrationCommand,
+  PersonalBotId,
   type PersonalBotThread,
   ProjectId,
   ProviderItemId,
@@ -285,6 +286,8 @@ describe("ProviderRuntimeIngestion", () => {
     threadTitle?: string;
     /** thread-1 is linked to a personal bot (personal_bot_threads). */
     personalBotThread?: boolean;
+    /** Titles of thread-1's bot's other open chats (its chat-name scope). */
+    peerChatTitles?: ReadonlyArray<string>;
     workspaceSubdirectory?: string;
     isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
   }) {
@@ -355,6 +358,16 @@ describe("ProviderRuntimeIngestion", () => {
                     createdAt: "2026-01-01T00:00:00.000Z",
                     archivedAt: null,
                   } as unknown as PersonalBotThread)
+                : Option.none(),
+            ),
+          getChatTitleScope: ({ threadId }) =>
+            Effect.succeed(
+              options?.personalBotThread === true && threadId === "thread-1"
+                ? Option.some({
+                    botId: PersonalBotId.make("bot-1"),
+                    archived: false,
+                    peerTitles: options.peerChatTitles ?? [],
+                  })
                 : Option.none(),
             ),
         }),
@@ -4741,6 +4754,29 @@ describe("ProviderRuntimeIngestion", () => {
       providerTitle(harness, "evt-opencode-title-2", "Something else");
 
       expect(await readTitle(harness)).toBe("Weekly plan");
+    });
+
+    it("gives a provider-reported title a number when another open chat of the bot has it", async () => {
+      const harness = await createHarness({
+        threadTitle: PERSONAL_THREAD_TITLE,
+        personalBotThread: true,
+        peerChatTitles: ["weekly   PLAN"],
+      });
+      await sendUserMessage(harness, MessageId.make("user-first"), "plan my week");
+      await harness.dispatch({
+        type: "thread.title.generate.complete",
+        commandId: CommandId.make(`server:${PERSONAL_TITLE_SEED_COMMAND_TAG}:seed-peer`),
+        threadId,
+        title: "plan my week",
+        expectedTitle: PERSONAL_THREAD_TITLE,
+        expectedVersion: null,
+        needsRefinement: false,
+      });
+
+      providerTitle(harness, "evt-opencode-title-peer", "Weekly plan");
+
+      await waitForThread(harness.readModel, (entry) => entry.title === "Weekly plan 2");
+      expect(await readTitle(harness)).toBe("Weekly plan 2");
     });
 
     it("never renames a task or routine chat", async () => {

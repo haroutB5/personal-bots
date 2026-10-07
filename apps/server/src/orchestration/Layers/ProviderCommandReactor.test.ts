@@ -541,6 +541,8 @@ describe("ProviderCommandReactor", () => {
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
+    const runSqlEffect = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+      runtime!.runPromise(effect);
 
     await Effect.runPromise(
       engine.dispatch({
@@ -689,6 +691,7 @@ describe("ProviderCommandReactor", () => {
       drain,
       startReactor,
       runEffect,
+      runSqlEffect,
       runSql: <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
         runtime!.runPromise(effect),
       reactor,
@@ -2860,6 +2863,91 @@ describe("ProviderCommandReactor", () => {
 
       expect(harness.generateThreadTitle).not.toHaveBeenCalled();
       expect((await readThread(harness))?.title).toBe("Groceries");
+    });
+
+    /** Another open chat of the same bot, already named `title`. */
+    const addPeerChat = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      title: string,
+      threadId = "thread-peer",
+    ) =>
+      harness.runSqlEffect(
+        Effect.gen(function* () {
+          yield* harness.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`cmd-create-${threadId}`),
+            threadId: ThreadId.make(threadId),
+            projectId: asProjectId("project-1"),
+            title,
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          });
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
+            VALUES (${threadId}, 'bot-1', '2026-01-01T00:00:00.000Z')
+          `;
+        }),
+      );
+
+    it("gives the first-message seed a number when another open chat of the bot has that name, and the AI title still replaces it", async () => {
+      const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
+      await addPeerChat(harness, "  plan the WEEKLY grocery   run ");
+      const release = await harness.runEffect(Deferred.make<void>());
+      harness.generateThreadTitle.mockReturnValue(
+        Deferred.await(release).pipe(Effect.as({ title: "Weekly groceries" })),
+      );
+
+      await startPersonalFirstTurn(harness, asMessageId("user-message-personal-clash"));
+      await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+      expect((await readThread(harness))?.title).toBe(`${personalSeed} 2`);
+
+      await harness.runEffect(Deferred.succeed(release, undefined));
+      await waitFor(async () => (await readThread(harness))?.title === "Weekly groceries");
+    });
+
+    it("gives an AI title a number when another open chat of the bot has it", async () => {
+      const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
+      await addPeerChat(harness, "Weekly groceries");
+      await addPeerChat(harness, "Weekly groceries 2", "thread-peer-2");
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "weekly groceries" }));
+
+      await startPersonalFirstTurn(harness, asMessageId("user-message-personal-ai-clash"));
+      await waitFor(async () => (await readThread(harness))?.title === "weekly groceries 3");
+      await harness.drain();
+      expect((await readThread(harness))?.titleState?.source).toBe("generated");
+    });
+
+    it("leaves another bot's chat names out of the check", async () => {
+      const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
+      await harness.runSqlEffect(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO personal_bots (
+              bot_id, name, avatar_shape, avatar_color, model_selection_json, created_at, updated_at
+            ) VALUES (
+              'bot-2', 'Other', 'blob', '#1A73E8', '{}',
+              '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+            )
+          `;
+        }),
+      );
+      await addPeerChat(harness, personalSeed);
+      await harness.runSqlEffect(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`UPDATE personal_bot_threads SET bot_id = 'bot-2' WHERE thread_id = 'thread-peer'`;
+        }),
+      );
+
+      await startPersonalFirstTurn(harness, asMessageId("user-message-personal-other-bot"));
+      await waitFor(() => harness.generateThreadTitle.mock.calls.length >= 1);
+      expect((await readThread(harness))?.title).toBe(personalSeed);
     });
 
     it("does not seed a thread that is not a bot chat", async () => {

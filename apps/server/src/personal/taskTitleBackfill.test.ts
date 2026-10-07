@@ -285,6 +285,39 @@ describe("task title backfill", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("gives a title a number when another open chat of the same bot already has it", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      // Two chats of one bot whose tasks share a title.
+      yield* sql`UPDATE personal_tasks SET title = 'Fix the login bug' WHERE task_id = 'task-routine'`;
+      yield* sql`
+        INSERT OR IGNORE INTO personal_bots (
+          bot_id, name, avatar_shape, avatar_color, model_selection_json, created_at, updated_at
+        ) VALUES (
+          'bot-a', 'Bot A', 'blob', '#1A73E8', '{}',
+          '2026-09-01T09:00:00.000Z', '2026-09-01T09:00:00.000Z'
+        )
+      `;
+      for (const threadId of [T.delegation, T.routine]) {
+        yield* sql`
+          INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
+          VALUES (${threadId}, 'bot-a', '2026-09-01T10:00:00.000Z')
+        `;
+      }
+
+      const result = yield* runTaskTitleBackfill();
+
+      assert.deepEqual(result, {
+        renamed: 3,
+        skipped: { gone: 0, manual: 0, changed: 0 },
+        failed: 0,
+      });
+      assert.equal((yield* threadShell(T.delegation)).title, "Fix the login bug");
+      assert.equal((yield* threadShell(T.routine)).title, "Fix the login bug 2");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect("renames through the engine without moving any chat or touching updatedAt", () =>
     Effect.gen(function* () {
       yield* seed;

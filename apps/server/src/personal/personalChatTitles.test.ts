@@ -29,6 +29,7 @@ import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
+import * as PersonalTaskChatArchive from "./PersonalTaskChatArchiveService.ts";
 import {
   chatNameIsTaken,
   isPlaceholderChatTitle,
@@ -90,7 +91,8 @@ const claudeSnapshot = (): ServerProvider =>
 // The real engine and projections, so the open names the rule reads are the
 // ones the title commands actually wrote.
 const makeLayer = () =>
-  PersonalBotService.layer.pipe(
+  PersonalTaskChatArchive.layer.pipe(
+    Layer.provideMerge(PersonalBotService.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         OrchestrationEngineLive.pipe(
@@ -398,6 +400,58 @@ describe("unarchive", () => {
         yield* unarchivedChatTitle(repository, { threadId: one, title: "Same" }),
         null,
       );
+    }).pipe(Effect.provide(makeLayer())),
+  );
+});
+
+describe("a fixed automatic title (relay posts)", () => {
+  it.effect("is made unique like any machine title, and stays a metadata (manual) title", () =>
+    Effect.gen(function* () {
+      const { bots, botA, titleOf, snapshots } = yield* services;
+      const make = (title: string) =>
+        Effect.gen(function* () {
+          const threadId = nextThreadId();
+          yield* bots.createThread({ botId: botA, threadId, title, lockTitle: true });
+          return threadId;
+        });
+      const one = yield* make("Weekly upstream sync report");
+      const two = yield* make("Weekly upstream sync report");
+      assert.strictEqual(yield* titleOf(one), "Weekly upstream sync report");
+      assert.strictEqual(yield* titleOf(two), "Weekly upstream sync report 2");
+      const shell = yield* snapshots.getThreadShellById(two);
+      assert.strictEqual(Option.isSome(shell) ? shell.value.titleState?.source : null, "manual");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+});
+
+describe("a turn starting in an archived chat", () => {
+  it.effect("unarchives it under the lowest free number when its name is taken meanwhile", () =>
+    Effect.gen(function* () {
+      const { owner, bots, botA, titleOf, repository } = yield* services;
+      const archive = yield* PersonalTaskChatArchive.PersonalTaskChatArchive;
+      const old = yield* owner(botA, "Main");
+      yield* bots.archiveThread({ threadId: old, archived: true });
+      yield* owner(botA, "main");
+      assert.isTrue(yield* archive.unarchiveForTurn(old));
+      assert.strictEqual(yield* titleOf(old), "Main 2");
+      const link = yield* repository.getThreadLink({ threadId: old });
+      assert.isTrue(Option.isSome(link) && link.value.archivedAt === null);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("keeps the name when it is still free, and an open chat is never renamed", () =>
+    Effect.gen(function* () {
+      const { owner, auto, bots, botA, titleOf } = yield* services;
+      const archive = yield* PersonalTaskChatArchive.PersonalTaskChatArchive;
+      const old = yield* owner(botA, "Main");
+      yield* bots.archiveThread({ threadId: old, archived: true });
+      assert.isTrue(yield* archive.unarchiveForTurn(old));
+      assert.strictEqual(yield* titleOf(old), "Main");
+      // A turn in a chat that is open already changes nothing.
+      const dup = yield* auto(botA, "Main");
+      assert.strictEqual(yield* titleOf(dup), "Main 2");
+      assert.isFalse(yield* archive.unarchiveForTurn(dup));
+      assert.strictEqual(yield* titleOf(dup), "Main 2");
     }).pipe(Effect.provide(makeLayer())),
   );
 });
