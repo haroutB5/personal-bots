@@ -261,17 +261,17 @@ export function TokenUsageCard({
               </ul>
               <div
                 data-testid="token-usage-providers-total"
-                className="flex items-baseline justify-between gap-3 border-t border-[var(--personal-border)] pt-2 text-[15px] leading-5 font-semibold text-[var(--personal-text)]"
+                className="flex flex-col gap-0.5 border-t border-[var(--personal-border)] pt-2"
               >
-                <span>All providers</span>
-                <span className="flex items-baseline gap-2 tabular-nums">
-                  <span
-                    data-testid="token-usage-providers-total-cost"
-                    className="text-[12px] leading-4 font-normal text-[var(--personal-text-secondary)]"
-                  >
-                    {formatCostFull(table.totalCost)}
-                  </span>
-                  <span>{formatTokenCount(table.total)}</span>
+                <span className="flex items-baseline justify-between gap-3 text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+                  <span>All providers</span>
+                  <span className="tabular-nums">{formatTokenCount(table.total)}</span>
+                </span>
+                <span
+                  data-testid="token-usage-providers-total-cost"
+                  className="text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums"
+                >
+                  {formatCostFull(table.totalCost)}
                 </span>
               </div>
               <p
