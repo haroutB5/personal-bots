@@ -18,7 +18,9 @@ export const WARM_ROUTES = [
 ] as const;
 
 export interface RoutePreloader {
-  readonly preloadRoute: (options: { readonly to: string }) => Promise<unknown>;
+  readonly routesByPath: object;
+  /** Undefined when the route's code is already loaded. */
+  readonly loadRouteChunk: (route: never) => Promise<unknown> | undefined;
 }
 
 interface WarmDeps {
@@ -37,9 +39,11 @@ const browserDeps: WarmDeps = {
 };
 
 /**
- * Once the app is quiet (the same wait as its deferred dialogs), preloads the
- * personal screens one at a time. A failure is ignored: it only means that screen
- * is fetched when it is opened, as before. Returns a cancel function.
+ * Once the app is quiet (the same wait as its deferred dialogs), loads the
+ * personal screens' code one at a time. Only the route's split chunks: not
+ * `preloadRoute`, which also runs route guards and loaders, so a future loader
+ * can never fetch data from here. A failure is ignored: it only means that
+ * screen is fetched when it is opened, as before. Returns a cancel function.
  * Kill switch: bots:perf-off = "warm-routes".
  */
 export function warmPersonalRoutes(
@@ -52,8 +56,10 @@ export function warmPersonalRoutes(
     void (async () => {
       for (const to of WARM_ROUTES) {
         if (cancelled || !deps.isOnline() || deps.saveData()) return;
+        const route = (router.routesByPath as Record<string, unknown>)[to];
+        if (route === undefined) continue;
         try {
-          await router.preloadRoute({ to });
+          await router.loadRouteChunk(route as never);
         } catch {
           // Opened (and fetched) on demand instead.
         }

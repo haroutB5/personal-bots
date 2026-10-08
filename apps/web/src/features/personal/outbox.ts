@@ -193,8 +193,8 @@ function parseEntry(value: unknown): OutboxEntry | null {
   };
 }
 
-function readRemovedIds(): ReadonlySet<string> {
-  const removed = new Set<string>(unwrittenRemovals);
+function readDurableRemovedIds(): ReadonlySet<string> {
+  const removed = new Set<string>();
   try {
     const raw = storage()?.getItem(OUTBOX_REMOVED_STORAGE_KEY) ?? null;
     const parsed: unknown = raw === null ? [] : JSON.parse(raw);
@@ -207,13 +207,27 @@ function readRemovedIds(): ReadonlySet<string> {
   return removed;
 }
 
-function load(): ReadonlyArray<OutboxEntry> {
+function readRemovedIds(): ReadonlySet<string> {
+  return new Set<string>([...unwrittenRemovals, ...readDurableRemovedIds()]);
+}
+
+/**
+ * `launch` is true for the first read of a page. Marks left by an earlier page
+ * mean the queue on disk still holds text that was cancelled there, so they
+ * become pending removals again: the filtered queue is rewritten (with the same
+ * retries as a fresh refusal) and a mark is only dropped once that write landed.
+ */
+function load(launch = false): ReadonlyArray<OutboxEntry> {
   try {
     const raw = storage()?.getItem(OUTBOX_STORAGE_KEY) ?? null;
     if (raw === null) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const removed = readRemovedIds();
+    if (launch && removed.size > 0) {
+      for (const id of removed) unwrittenRemovals.add(id);
+      scheduleRemovalRetry();
+    }
     const seen = new Set<string>(removed);
     const entries: OutboxEntry[] = [];
     for (const item of parsed) {
@@ -303,7 +317,7 @@ export function unwrittenOutboxRemovals(): number {
 }
 
 function current(): OutboxSnapshot {
-  if (snapshot === null) snapshot = { entries: load(), sending: NO_SENDING };
+  if (snapshot === null) snapshot = { entries: load(true), sending: NO_SENDING };
   return snapshot;
 }
 

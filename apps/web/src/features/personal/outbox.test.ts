@@ -290,6 +290,66 @@ describe("a removal the device refuses to write", () => {
     expect(device.values.has(OUTBOX_REMOVED_STORAGE_KEY)).toBe(false);
   });
 
+  it("after a reload with a writable device, the marks become pending cleanup and the queue is rewritten", () => {
+    vi.useFakeTimers();
+    // Page one: the queue write for the cancel is refused (write 3), the mark fits.
+    const device = flakyStorage((key, call) => key === OUTBOX_STORAGE_KEY && call === 3);
+    resetOutboxForTesting(device.storage);
+    enqueueOutboxEntry(entry("keep"));
+    enqueueOutboxEntry(entry("cancel me", "t1", { text: "private words" }));
+    removeOutboxEntry("cancel me");
+    expect(device.values.get(OUTBOX_STORAGE_KEY)).toContain("private words");
+    expect(device.values.has(OUTBOX_REMOVED_STORAGE_KEY)).toBe(true);
+
+    // Page two (a reload): storage writes fine now. Nothing shows in the queue...
+    resetOutboxForTesting(device.storage);
+    expect(getOutboxSnapshot().entries.map((item) => item.id)).toEqual(["keep"]);
+    // ...the cleanup is pending again and not yet claimed as done...
+    expect(unwrittenOutboxRemovals()).toBe(1);
+    expect(device.values.get(OUTBOX_STORAGE_KEY)).toContain("private words");
+    expect(device.values.has(OUTBOX_REMOVED_STORAGE_KEY)).toBe(true);
+
+    // ...and the retry rewrites the filtered queue, then clears the mark.
+    vi.advanceTimersByTime(500);
+    expect(queueIds(device.values)).toEqual(["keep"]);
+    expect(device.values.get(OUTBOX_STORAGE_KEY)).not.toContain("private words");
+    expect(unwrittenOutboxRemovals()).toBe(0);
+    expect(device.values.has(OUTBOX_REMOVED_STORAGE_KEY)).toBe(false);
+
+    // A third page has nothing left to do.
+    const writes = device.calls.get(OUTBOX_STORAGE_KEY);
+    resetOutboxForTesting(device.storage);
+    expect(getOutboxSnapshot().entries.map((item) => item.id)).toEqual(["keep"]);
+    vi.advanceTimersByTime(120_000);
+    expect(device.calls.get(OUTBOX_STORAGE_KEY)).toBe(writes);
+  });
+
+  it("after a reload the mark stays until the rewrite lands, retrying while the device refuses", () => {
+    vi.useFakeTimers();
+    let open = false;
+    const device = flakyStorage(
+      (key, call) => key === OUTBOX_STORAGE_KEY && (call === 3 || (call > 3 && !open)),
+    );
+    resetOutboxForTesting(device.storage);
+    enqueueOutboxEntry(entry("keep"));
+    enqueueOutboxEntry(entry("cancel me", "t1", { text: "private words" }));
+    removeOutboxEntry("cancel me");
+
+    resetOutboxForTesting(device.storage); // reload, device still refuses the queue key
+    expect(getOutboxSnapshot().entries.map((item) => item.id)).toEqual(["keep"]);
+    vi.advanceTimersByTime(500);
+    vi.advanceTimersByTime(2_000);
+    expect(unwrittenOutboxRemovals()).toBe(1);
+    expect(device.values.has(OUTBOX_REMOVED_STORAGE_KEY)).toBe(true);
+    expect(getOutboxSnapshot().entries.map((item) => item.id)).toEqual(["keep"]);
+
+    open = true;
+    vi.advanceTimersByTime(8_000);
+    expect(device.values.get(OUTBOX_STORAGE_KEY)).not.toContain("private words");
+    expect(unwrittenOutboxRemovals()).toBe(0);
+    expect(device.values.has(OUTBOX_REMOVED_STORAGE_KEY)).toBe(false);
+  });
+
   it("ignores a damaged removed-ids key", () => {
     const device = flakyStorage(() => false);
     device.values.set(OUTBOX_REMOVED_STORAGE_KEY, "{not json");
