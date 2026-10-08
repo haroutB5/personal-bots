@@ -324,7 +324,7 @@ describe("1.66.7: the 'Replaced a note/rule' line", () => {
     expect(
       noteUndoSettled("unreplace", {
         kind: "note",
-        supersededAt: "2026-10-08T09:00:00Z",
+        supersededAt: "x" as never,
         supersededReason: "Forgotten at the user's request.",
       }),
     ).toBe("Archived");
