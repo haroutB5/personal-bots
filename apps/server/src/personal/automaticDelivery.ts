@@ -19,6 +19,7 @@ import type * as PersonalBotRepository from "./PersonalBotRepository.ts";
  *   title the target had); several: the most recently active; none by that
  *   title: the bot's most recently active open chat (unless `sameTitleOnly`);
  *   the bot has no open chat at all: `new-chat`, and the caller makes one.
+ *   With `archivedOnly` a chat with no link row is not traced (`unknown`).
  *   With `sameTitleOnly` the fallback to another chat is off: no chat of that
  *   name means `new-chat` (a routine's output does not belong in a stranger).
  *   The archived chat is never touched, so it keeps its place and its name.
@@ -92,7 +93,7 @@ export const chooseOpenChat = (
 export const resolveDeliveryThread = Effect.fn("resolveDeliveryThread")(function* (
   deps: DeliveryDeps,
   threadId: ThreadId,
-  options?: { readonly sameTitleOnly?: boolean },
+  options?: { readonly sameTitleOnly?: boolean; readonly archivedOnly?: boolean },
 ) {
   const link = yield* deps.repository
     .getThreadLink({ threadId })
@@ -104,6 +105,11 @@ export const resolveDeliveryThread = Effect.fn("resolveDeliveryThread")(function
     Option.isSome(link) &&
     (link.value.archivedAt !== null || (Option.isSome(shell) && shell.value.archivedAt != null));
   if (Option.isSome(link) && !archived) return { kind: "open", threadId } satisfies DeliveryTarget;
+  // A thread nothing links to a bot: an ordinary T3 thread, or (with
+  // `archivedOnly`) a chat the caller only wants judged while it still has a link.
+  if (Option.isNone(link) && options?.archivedOnly === true) {
+    return { kind: "unknown" } satisfies DeliveryTarget;
+  }
   // A thread that exists but has no bot link is an ordinary T3 thread.
   if (Option.isNone(link) && Option.isSome(shell))
     return { kind: "unknown" } satisfies DeliveryTarget;

@@ -387,7 +387,8 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
       { repository: botRepository, projections: snapshots },
       task.threadId,
       // A routine's output only goes to a chat of the same name (as at creation).
-      { sameTitleOnly: task.source === "routine" },
+      // A task on a chat that was deleted is cancelled with it; only a live link is judged.
+      { sameTitleOnly: task.source === "routine", archivedOnly: true },
     ).pipe(Effect.orElseSucceed(() => ({ kind: "unknown" }) as const));
     if (target.kind === "open" || target.kind === "unknown") {
       return { threadId: task.threadId, note: null };
