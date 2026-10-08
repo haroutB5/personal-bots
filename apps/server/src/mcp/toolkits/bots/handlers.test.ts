@@ -1631,3 +1631,253 @@ describe("notify_user", () => {
     ),
   );
 });
+
+// --- list_bot_chats and delegate_task continueChatId (1.66.12) ------------------------
+
+describe("handing work into a bot's existing chat (1.66.12)", () => {
+  const CHAT = ThreadId.make("chat-developer-review");
+
+  /** A chat between the owner and `bot`, projected with a title and one exchange. */
+  const seedChat = (
+    threadId: ThreadId,
+    title: string,
+    bot = "developer",
+    lastMessageAt = "2026-10-08T10:00:00.000Z",
+  ) =>
+    Effect.gen(function* () {
+      const bots = yield* PersonalBotService.PersonalBotService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* bots.createThread({ botId: botId(bot), threadId, title });
+      yield* sql`
+        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+        VALUES (${threadId}, 'project', ${title}, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages
+          (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+        VALUES (${`m-${threadId}`}, ${threadId}, NULL, 'user', 'earlier talk', 0, ${lastMessageAt}, ${lastMessageAt})
+      `;
+    });
+
+  const moveDeveloperToDevTeam = Effect.gen(function* () {
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* bots.update({ botId: botId("developer"), team: "dev", lead: true });
+  });
+
+  it.effect(
+    "list_bot_chats lists the direct chats newest first with the archived and busy flags",
+    () =>
+      withHarness((harness) =>
+        Effect.gen(function* () {
+          const { call } = yield* setup(harness);
+          const bots = yield* PersonalBotService.PersonalBotService;
+          yield* seedChat(CHAT, "Memory article review", "developer", "2026-10-08T10:00:00.000Z");
+          yield* seedChat(
+            ThreadId.make("chat-developer-old"),
+            "Old plan",
+            "developer",
+            "2026-09-01T10:00:00.000Z",
+          );
+          yield* seedChat(
+            ThreadId.make("chat-developer-mid"),
+            "Mid chat",
+            "developer",
+            "2026-10-02T10:00:00.000Z",
+          );
+          yield* bots.archiveThread({
+            threadId: ThreadId.make("chat-developer-old"),
+            archived: true,
+          });
+          // A turn is running in the newest one.
+          harness.sessions.set(CHAT, runningSession(CHAT));
+          // Chats of other bots never show.
+          yield* seedChat(ThreadId.make("chat-researcher"), "Research", "researcher");
+
+          const result = yield* call("list_bot_chats", { bot: "Developer" });
+
+          expect(result.botName).toBe("Developer");
+          expect(
+            result.chats.map((chat) => [chat.chatId, chat.title, chat.archived, chat.busy]),
+          ).toEqual([
+            [CHAT, "Memory article review", false, true],
+            ["chat-developer-mid", "Mid chat", false, false],
+            ["chat-developer-old", "Old plan", true, false],
+          ]);
+          expect(result.chats[0]!.lastActivityAt).toBe("2026-10-08T10:00:00.000Z");
+          // Titles and times only: no message text.
+          expect(Object.keys(result.chats[0]!).toSorted()).toEqual([
+            "archived",
+            "busy",
+            "chatId",
+            "lastActivityAt",
+            "title",
+          ]);
+          const limited = yield* call("list_bot_chats", { bot: "developer", limit: 1 });
+          expect(limited.chats.map((chat) => chat.chatId)).toEqual([CHAT]);
+        }),
+      ),
+  );
+
+  it.effect("list_bot_chats leaves out group, task, routine and deleted chats", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const sql = yield* SqlClient.SqlClient;
+        yield* seedChat(CHAT, "Real talk");
+        yield* seedChat(ThreadId.make("chat-relay"), "Group side");
+        yield* sql`
+          INSERT INTO personal_groups (group_id, name, thread_id, max_bot_turns, created_at, updated_at)
+          VALUES ('g-1', 'Team', 'g-thread', 8, '2026-09-25T00:00:00.000Z', '2026-09-25T00:00:00.000Z')
+        `;
+        yield* sql`
+          INSERT INTO personal_group_members (group_id, bot_id, thread_id, role, sort_order, joined_at)
+          VALUES ('g-1', ${botId("developer")}, 'chat-relay', 'member', 0, '2026-09-25T00:00:00.000Z')
+        `;
+        yield* seedChat(ThreadId.make("chat-gone"), "Deleted one");
+        yield* sql`UPDATE projection_threads SET deleted_at = '2026-10-03T00:00:00.000Z' WHERE thread_id = 'chat-gone'`;
+        yield* seedChat(ThreadId.make("chat-routine"), "Digest");
+        yield* sql`
+          INSERT INTO personal_routines
+            (routine_id, bot_id, title, prompt, schedule_json, created_at, updated_at, thread_id)
+          VALUES ('r-1', ${botId("developer")}, 'Digest', 'Digest.', '{}',
+            '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', 'chat-routine')
+        `;
+        // A chat made for a delegated task: the task came first, the thread after.
+        yield* seedChat(ThreadId.make("chat-task"), "Fix the bug");
+        yield* sql`
+          UPDATE personal_bot_threads SET created_at = '2026-10-05T00:00:00.000Z' WHERE thread_id = 'chat-task'
+        `;
+        yield* sql`
+          INSERT INTO personal_tasks
+            (task_id, root_task_id, parent_task_id, bot_id, thread_id, title, objective, acceptance_criteria,
+             expected_output, status, source, idempotency_key, depth, max_depth, max_children,
+             created_at, updated_at)
+          VALUES ('t-1', 't-1', NULL, ${botId("developer")}, 'chat-task', 'Fix the bug', 'Fix.', '', '',
+            'completed', 'delegation', 'k-1', 0, 2, 4,
+            '2026-10-04T00:00:00.000Z', '2026-10-04T00:00:00.000Z')
+        `;
+
+        const result = yield* call("list_bot_chats", { bot: "developer" });
+
+        expect(result.chats.map((chat) => chat.chatId)).toEqual([CHAT]);
+      }),
+    ),
+  );
+
+  it.effect(
+    "list_bot_chats follows the delegation team rules and never lists the caller's own",
+    () =>
+      withHarness((harness) =>
+        Effect.gen(function* () {
+          const { call } = yield* setup(harness);
+          yield* seedChat(CHAT, "Real talk");
+          yield* moveDeveloperToDevTeam;
+
+          const self = yield* call("list_bot_chats", { bot: "assistant" }).pipe(Effect.flip);
+          expect(self.message).toContain("yours already");
+          const unknown = yield* call("list_bot_chats", { bot: "nobody" }).pipe(Effect.flip);
+          expect(unknown.message).toContain("No enabled bot is called 'nobody'");
+          // The other team is out of reach until the owner's own latest message names it.
+          const refused = yield* call("list_bot_chats", { bot: "developer" }).pipe(Effect.flip);
+          expect(refused.message).toContain("not yours");
+          harness.messages.set(CALLER_THREAD, [
+            { messageId: personalTaskMessageId("task-1", 1), role: "user", text: "Ask Developer." },
+          ]);
+          const brief = yield* call("list_bot_chats", { bot: "developer" }).pipe(Effect.flip);
+          expect(brief.message).toContain("not yours");
+          harness.messages.set(CALLER_THREAD, [
+            { messageId: "msg-1", role: "user", text: "Ask Developer to carry on the review." },
+          ]);
+          const allowed = yield* call("list_bot_chats", { bot: "developer" });
+          expect(allowed.chats.map((chat) => chat.chatId)).toEqual([CHAT]);
+        }),
+      ),
+  );
+
+  it.effect("list_bot_chats says so when the bot has no direct chat", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const result = yield* call("list_bot_chats", { bot: "researcher" });
+        expect(result.chats).toEqual([]);
+        expect(result.note).toContain("no direct chat");
+      }),
+    ),
+  );
+
+  it.effect("delegate_task with continueChatId hands the work into that chat", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        yield* seedChat(CHAT, "Memory article review");
+        yield* TestClock.adjust("1 minute");
+
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Implement the review findings.",
+          continueChatId: CHAT,
+        });
+        const again = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Implement the review findings.",
+          continueChatId: CHAT,
+        });
+
+        expect(child.note).toContain("into that chat");
+        expect(again.childTaskId).toBe(child.childTaskId);
+        const detail = yield* tasks.get({ taskId: child.childTaskId as never });
+        expect(detail.task.threadId).toBe(CHAT);
+        expect(detail.task.botId).toBe(botId("developer"));
+        // The same words without the chat are another delegation, with a chat of its own.
+        const plain = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Implement the review findings.",
+        });
+        expect(plain.childTaskId).not.toBe(child.childTaskId);
+        expect(plain.note).toBe(DELEGATE_NOTE);
+      }),
+    ),
+  );
+
+  it.effect("delegate_task refuses a chat that is another bot's, with the reason", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* seedChat(ThreadId.make("chat-researcher"), "Research", "researcher");
+
+        const wrongBot = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Carry on.",
+          continueChatId: "chat-researcher",
+        }).pipe(Effect.flip);
+        const unknown = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Carry on.",
+          continueChatId: "not-a-chat",
+        }).pipe(Effect.flip);
+
+        expect(wrongBot.message).toContain("not a chat of the bot you are delegating to");
+        expect(unknown.message).toContain("There is no chat");
+      }),
+    ),
+  );
+
+  it.effect("delegate_task with a chat still follows the team rules", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* seedChat(CHAT, "Real talk");
+        yield* moveDeveloperToDevTeam;
+
+        const error = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Carry on.",
+          continueChatId: CHAT,
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain("not yours");
+      }),
+    ),
+  );
+});

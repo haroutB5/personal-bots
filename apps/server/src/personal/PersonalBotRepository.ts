@@ -140,6 +140,27 @@ export interface PersonalOpenChat {
   readonly taskChat: boolean;
 }
 
+/**
+ * What a lead needs to know about one chat of a bot before it hands work into
+ * it (`getChatFacts`, `listDirectChats`). A chat is "direct" when it is none of
+ * `groupRelay`, `taskChat`, `routineChat` and not `deleted`.
+ */
+export interface PersonalChatFacts {
+  readonly threadId: ThreadId;
+  readonly botId: PersonalBotId;
+  readonly title: string;
+  /** Last message time (ISO), else when the chat was made. */
+  readonly activityAt: string;
+  readonly archived: boolean;
+  readonly deleted: boolean;
+  /** The member's transcript inside a group, now or once. */
+  readonly groupRelay: boolean;
+  /** Made for a delegated task or a routine run (the thread came after the task). */
+  readonly taskChat: boolean;
+  /** The chat a routine posts into. */
+  readonly routineChat: boolean;
+}
+
 export interface PersonalBotFallbackState {
   readonly botId: PersonalBotId;
   readonly fallbackModel: ModelSelectionType;
@@ -304,6 +325,23 @@ export class PersonalBotRepository extends Context.Service<
       readonly botId: PersonalBotId;
       readonly exceptThreadId?: ThreadId;
     }) => Effect.Effect<ReadonlyArray<PersonalOpenChat>, PersonalBotRepositoryError>;
+    /**
+     * One bot chat with the facts that decide whether work may be handed into
+     * it. None when the thread has no bot link or no projection (never made,
+     * or removed). Deleted, archived and group-relay chats are returned and
+     * flagged, so a caller can say why it refuses them.
+     */
+    readonly getChatFacts: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<Option.Option<PersonalChatFacts>, PersonalBotRepositoryError>;
+    /**
+     * The bot's direct chats (see {@link PersonalChatFacts}), archived ones
+     * included, newest activity first, at most `limit`.
+     */
+    readonly listDirectChats: (input: {
+      readonly botId: PersonalBotId;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<PersonalChatFacts>, PersonalBotRepositoryError>;
     /**
      * Who a removed chat belonged to and what it was called, read from what
      * outlives the link row: a task or routine that was bound to it, and the
@@ -1524,6 +1562,117 @@ export const make = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listOpenChats:query")),
     );
 
+  // One query for both chat reads, so "direct" means the same thing in the
+  // list a lead picks from and in the check that follows. An empty `threadId`
+  // or `botId` filter matches every row; `directOnly` keeps just the chats a
+  // lead may hand work into. A task chat is told by the thread coming after the
+  // task (or a routine relay post), the same markers the 48 h auto-archive uses
+  // (taskChatAutoArchivePolicy.ts), so a chat that was continued by a task is
+  // never one: its task came after the chat.
+  const chatFactsRows = (input: {
+    readonly threadId: string;
+    readonly botId: string;
+    readonly directOnly: boolean;
+    readonly limit: number;
+  }) =>
+    sql<{
+      readonly threadId: string;
+      readonly botId: string;
+      readonly title: string;
+      readonly activityAt: string;
+      readonly archived: number;
+      readonly deleted: number;
+      readonly groupRelay: number;
+      readonly taskChat: number;
+      readonly routineChat: number;
+    }>`
+      SELECT * FROM (
+        SELECT
+          t.thread_id AS "threadId",
+          t.bot_id AS "botId",
+          p.title AS "title",
+          COALESCE(
+            (
+              SELECT max(a.created_at)
+              FROM projection_thread_messages a
+              WHERE a.thread_id = t.thread_id AND a.role NOT IN ('system', 'reasoning')
+            ),
+            p.created_at,
+            t.created_at
+          ) AS "activityAt",
+          (t.archived_at IS NOT NULL OR p.archived_at IS NOT NULL) AS "archived",
+          (p.deleted_at IS NOT NULL) AS "deleted",
+          EXISTS (
+            SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = t.thread_id
+          ) AS "groupRelay",
+          EXISTS (
+            SELECT 1 FROM personal_tasks d
+            WHERE d.thread_id = t.thread_id
+              AND (
+                (d.source IN ('delegation', 'routine') AND d.created_at <= t.created_at)
+                OR (d.source = 'routine' AND EXISTS (
+                  SELECT 1 FROM projection_thread_messages relay
+                  WHERE relay.thread_id = t.thread_id
+                    AND relay.role = 'assistant' AND relay.message_id LIKE 'personal-relay-%'
+                ))
+              )
+          ) AS "taskChat",
+          EXISTS (
+            SELECT 1 FROM personal_routines r WHERE r.thread_id = t.thread_id
+          ) AS "routineChat"
+        FROM personal_bot_threads t
+        JOIN projection_threads p ON p.thread_id = t.thread_id
+        JOIN personal_bots b ON b.bot_id = t.bot_id AND b.deleted_at IS NULL
+        WHERE (${input.threadId} = '' OR t.thread_id = ${input.threadId})
+          AND (${input.botId} = '' OR t.bot_id = ${input.botId})
+      )
+      WHERE ${input.directOnly ? 1 : 0} = 0
+        OR ("deleted" = 0 AND "groupRelay" = 0 AND "taskChat" = 0 AND "routineChat" = 0)
+      ORDER BY "activityAt" DESC, "threadId" ASC
+      LIMIT ${input.limit}
+    `;
+
+  const toChatFacts = (row: {
+    readonly threadId: string;
+    readonly botId: string;
+    readonly title: string;
+    readonly activityAt: string;
+    readonly archived: number;
+    readonly deleted: number;
+    readonly groupRelay: number;
+    readonly taskChat: number;
+    readonly routineChat: number;
+  }): PersonalChatFacts => ({
+    threadId: row.threadId as ThreadId,
+    botId: row.botId as PersonalBotId,
+    title: row.title,
+    activityAt: row.activityAt,
+    archived: Number(row.archived) === 1,
+    deleted: Number(row.deleted) === 1,
+    groupRelay: Number(row.groupRelay) === 1,
+    taskChat: Number(row.taskChat) === 1,
+    routineChat: Number(row.routineChat) === 1,
+  });
+
+  const getChatFacts: PersonalBotRepository["Service"]["getChatFacts"] = (input) =>
+    chatFactsRows({ threadId: input.threadId, botId: "", directOnly: false, limit: 1 }).pipe(
+      Effect.map((rows) =>
+        rows[0] === undefined ? Option.none() : Option.some(toChatFacts(rows[0])),
+      ),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.getChatFacts:query")),
+    );
+
+  const listDirectChats: PersonalBotRepository["Service"]["listDirectChats"] = (input) =>
+    chatFactsRows({
+      threadId: "",
+      botId: input.botId,
+      directOnly: true,
+      limit: Math.max(1, Math.trunc(input.limit)),
+    }).pipe(
+      Effect.map((rows) => rows.map(toChatFacts)),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listDirectChats:query")),
+    );
+
   const getRemovedChatOrigin: PersonalBotRepository["Service"]["getRemovedChatOrigin"] = (input) =>
     Effect.gen(function* () {
       const [owner] = yield* sql<{ readonly botId: string }>`
@@ -1814,6 +1963,8 @@ export const make = Effect.gen(function* () {
     listThreadLinks,
     listOpenChatTitles,
     listOpenChats,
+    getChatFacts,
+    listDirectChats,
     getRemovedChatOrigin,
     getChatTitleScope,
     listGroupPresence,

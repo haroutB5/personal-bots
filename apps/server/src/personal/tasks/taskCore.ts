@@ -198,6 +198,43 @@ export const makeTaskCore = () =>
       );
 
     /**
+     * A delegation into a chat the owner already talks in carries the marks both ways.
+     * What the delegating side saw goes onto the chat itself (its brief and the bot's
+     * answer become part of a conversation that outlives the task, so the chat's own
+     * key is what the egress guard and the memory rules read later), and what the chat
+     * saw goes onto the tree it reports to. Fails closed: if either mark cannot be
+     * carried, nothing is delegated.
+     */
+    const carryExposureToChat = (parent: PersonalTask, chatThreadId: ThreadId) =>
+      Option.match(workStore, {
+        onNone: () => Effect.void,
+        onSome: ({ exposures }) =>
+          exposures
+            .copySources(
+              [
+                rootExposureKey(parent.rootTaskId),
+                ...(parent.threadId === null ? [] : [threadExposureKey(parent.threadId)]),
+              ],
+              threadExposureKey(chatThreadId),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                fail(
+                  "Personal tasks could not carry the delegating chat's sensitive-site mark to the chat, so nothing was delegated. Try again.",
+                  cause,
+                ),
+              ),
+            ),
+      });
+
+    const carryExposureFromChat = (chatThreadId: ThreadId, root: PersonalTask) =>
+      carryExposure(
+        [threadExposureKey(chatThreadId)],
+        root.taskId,
+        "Personal tasks could not carry the chat's sensitive-site mark to the new task, so nothing was delegated. Try again.",
+      );
+
+    /**
      * A steer carries what the steering chat has seen, the same way a delegation does: a
      * chat can open a sensitive site after it delegated, then steer with text from it.
      * Fails closed: the steer is refused when the mark cannot be carried.
@@ -425,6 +462,26 @@ export const makeTaskCore = () =>
       yield* writeTask(changed, parent.value, { status: "queued" });
     });
 
+    /**
+     * Whether a delegated task runs in a chat that already existed when it was
+     * created (`continueThreadId`): a task's own chat is made after the task, so
+     * a chat older than the task is the owner's conversation the task continues.
+     * The same order the auto-archive and open-chat rules judge by. False for
+     * every other task, and when either time cannot be read.
+     */
+    const continuesExistingChat = Effect.fn("PersonalTaskService.continuesExistingChat")(function* (
+      task: PersonalTask,
+    ) {
+      if (task.source !== "delegation" || task.threadId === null) return false;
+      const link = yield* botRepository
+        .getThreadLink({ threadId: task.threadId })
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      return (
+        Option.isSome(link) &&
+        DateTime.toEpochMillis(link.value.createdAt) < DateTime.toEpochMillis(task.createdAt)
+      );
+    });
+
     /** Hands a terminal child's outcome to its parent's handoff row. */
     const returnToParent = Effect.fn("PersonalTaskService.returnToParent")(function* (
       changed: Changed,
@@ -484,7 +541,10 @@ export const makeTaskCore = () =>
       backgroundByThread,
       botRepository,
       bots,
+      carryExposureFromChat,
+      continuesExistingChat,
       carryExposureFromSteerer,
+      carryExposureToChat,
       carryExposureToTree,
       engine,
       externalSlots,

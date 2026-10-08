@@ -55,6 +55,7 @@ import {
   threadExposureKey,
 } from "../browser/sensitiveExposureStore.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
+import { TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL } from "../taskChatAutoArchivePolicy.ts";
 
 /**
  * Stand-ins for the orchestration side: commands are recorded, and the
@@ -3864,3 +3865,355 @@ it.effect(
     }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(10))));
   },
 );
+
+// --- handing work into a chat the owner already talks in (1.66.12) ----------------
+
+describe("a delegated task continuing the owner's chat (1.66.12)", () => {
+  const CHAT = "chat-owner-talk" as ThreadId;
+
+  /** A chat between the owner and `bot`: linked, projected, with an earlier exchange in it. */
+  const seedOwnerChat = (
+    harness: Harness,
+    threadId: ThreadId,
+    title: string,
+    bot: BotKey = "developer",
+  ) =>
+    Effect.gen(function* () {
+      const bots = yield* PersonalBotService.PersonalBotService;
+      const sql = yield* SqlClient.SqlClient;
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* bots.createThread({ botId: botId(bot), threadId, title });
+      yield* sql`
+        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+        VALUES (${threadId}, 'project', ${title}, ${now}, ${now})
+      `;
+      harness.titles.set(threadId, title);
+      yield* setSession(
+        harness,
+        makeSession({ threadId, status: "ready", activeTurnId: null, updatedAt: now }),
+      );
+    });
+
+  /** A root request of the assistant whose turn is open, so it can delegate. */
+  const leadRequest = (harness: Harness, key: string) =>
+    Effect.gen(function* () {
+      const root = yield* createRoot(key);
+      const rootThread = threadOf(root);
+      const turnId = yield* beginTurn(harness, rootThread);
+      return { root, rootThread, turnId };
+    });
+
+  const continueInto = (parent: PersonalTask, chat: ThreadId, bot: BotKey = "developer") =>
+    Effect.gen(function* () {
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      return yield* service.delegate({
+        parentTaskId: parent.taskId,
+        targetBotId: botId(bot),
+        brief: brief("Implement the review"),
+        continueThreadId: chat,
+      });
+    });
+
+  it.effect(
+    "runs as a new turn in that chat, shown as the lead's brief, and the result goes back to the lead",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        yield* seedOwnerChat(harness, CHAT, "Memory article review");
+        yield* TestClock.adjust("1 minute");
+        const { root, rootThread, turnId } = yield* leadRequest(harness, "continue-1");
+        const createsBefore = threadCreates(harness).length;
+
+        const child = yield* continueInto(root, CHAT);
+        yield* endTurn(harness, rootThread, turnId, "Handed to Developer.");
+        yield* service.drain;
+
+        const running = yield* reload(child.taskId);
+        expect(running.status).toBe("running");
+        expect(running.threadId).toBe(CHAT);
+        expect(running.source).toBe("delegation");
+        const starts = startsOn(harness, CHAT);
+        expect(starts).toHaveLength(1);
+        // The brief is the lead's, not the owner's: a task message id and marker.
+        expect(starts[0]!.message.messageId.startsWith("personal-task-")).toBe(true);
+        expect(starts[0]!.message.text).toContain("[Delegated task from Assistant]");
+        expect(starts[0]!.message.text).toContain("Implement the review objective");
+        const marker = starts[0]!.message.context as unknown as {
+          readonly records: ReadonlyArray<{
+            readonly payload: { readonly source: string; readonly delegatorBotId: string | null };
+          }>;
+        };
+        expect(marker.records[0]!.payload).toMatchObject({
+          source: "delegation",
+          delegatorBotId: botId("assistant"),
+        });
+        // No second chat is made, and the chat keeps its name.
+        expect(threadCreates(harness).length).toBe(createsBefore);
+        expect(
+          harness.dispatched.some(
+            (command) =>
+              (command.type === "thread.meta.update" ||
+                command.type === "thread.title.generate.complete") &&
+              command.threadId === CHAT,
+          ),
+        ).toBe(false);
+
+        yield* runTurn(harness, CHAT, "The word from our talk was kiwi.");
+        yield* service.drain;
+        const done = yield* reload(child.taskId);
+        expect(done.status).toBe("completed");
+        expect(done.result?.summary).toBe("The word from our talk was kiwi.");
+        // The lead is woken in its own chat with the result.
+        const wake = startsOn(harness, rootThread).at(-1)!;
+        expect(wake.message.text).toContain("The word from our talk was kiwi.");
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("waits while a turn runs in the chat, then starts when it is idle", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      yield* seedOwnerChat(harness, CHAT, "Memory article review");
+      yield* TestClock.adjust("1 minute");
+      const { root } = yield* leadRequest(harness, "continue-busy");
+      const ownerTurn = yield* beginTurn(harness, CHAT);
+
+      const child = yield* continueInto(root, CHAT);
+      yield* service.drain;
+      expect((yield* reload(child.taskId)).status).toBe("queued");
+      expect(startsOn(harness, CHAT)).toHaveLength(0);
+
+      yield* endTurn(harness, CHAT, ownerTurn, "Owner's own turn.");
+      yield* service.drain;
+      expect((yield* reload(child.taskId)).status).toBe("running");
+      expect(startsOn(harness, CHAT)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("an archived chat is continued like any chat: the new turn goes into it", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* seedOwnerChat(harness, CHAT, "Old review");
+      yield* TestClock.adjust("1 minute");
+      yield* bots.archiveThread({ threadId: CHAT, archived: true });
+      const { root } = yield* leadRequest(harness, "continue-archived");
+
+      const child = yield* continueInto(root, CHAT);
+      yield* service.drain;
+
+      expect((yield* reload(child.taskId)).threadId).toBe(CHAT);
+      expect(startsOn(harness, CHAT)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect(
+    "refuses a chat that is not a plain conversation of that bot, with a clear reason",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const { root } = yield* leadRequest(harness, "continue-refused");
+        const refusal = (chat: ThreadId, bot: BotKey = "developer") =>
+          continueInto(root, chat, bot).pipe(
+            Effect.flip,
+            Effect.map((error) => error.message),
+          );
+
+        expect(yield* refusal("no-such-chat" as ThreadId)).toContain("There is no chat");
+
+        // Another bot's chat.
+        yield* seedOwnerChat(harness, "chat-researcher" as ThreadId, "Research", "researcher");
+        expect(yield* refusal("chat-researcher" as ThreadId)).toContain(
+          "not a chat of the bot you are delegating to",
+        );
+
+        // A deleted chat.
+        yield* seedOwnerChat(harness, "chat-deleted" as ThreadId, "Gone");
+        yield* sql`UPDATE projection_threads SET deleted_at = ${"2026-10-01T00:00:00.000Z"} WHERE thread_id = 'chat-deleted'`;
+        expect(yield* refusal("chat-deleted" as ThreadId)).toContain("was deleted");
+
+        // A group member's relay thread.
+        yield* seedOwnerChat(harness, "chat-relay" as ThreadId, "In a group");
+        yield* sql`
+        INSERT INTO personal_groups (group_id, name, thread_id, max_bot_turns, created_at, updated_at)
+        VALUES ('g-1', 'Team', 'g-thread', 8, '2026-09-25T00:00:00.000Z', '2026-09-25T00:00:00.000Z')
+      `;
+        yield* sql`
+        INSERT INTO personal_group_members (group_id, bot_id, thread_id, role, sort_order, joined_at)
+        VALUES ('g-1', ${botId("developer")}, 'chat-relay', 'member', 0, '2026-09-25T00:00:00.000Z')
+      `;
+        expect(yield* refusal("chat-relay" as ThreadId)).toContain("group conversation");
+
+        // A chat made for another delegated task.
+        const other = yield* service.delegate({
+          parentTaskId: root.taskId,
+          targetBotId: botId("developer"),
+          brief: brief("Some other job"),
+        });
+        yield* service.drain;
+        const taskChat = threadOf(yield* reload(other.taskId));
+        yield* sql`
+        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+        VALUES (${taskChat}, 'project', 'Some other job', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')
+      `;
+        expect(yield* refusal(taskChat)).toContain("made for a delegated task");
+
+        // A routine's chat.
+        yield* seedOwnerChat(harness, "chat-routine" as ThreadId, "Daily digest");
+        yield* sql`
+        INSERT INTO personal_routines
+          (routine_id, bot_id, title, prompt, schedule_json, created_at, updated_at, thread_id)
+        VALUES ('r-1', ${botId("developer")}, 'Daily digest', 'Digest.', '{}',
+          '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', 'chat-routine')
+      `;
+        expect(yield* refusal("chat-routine" as ThreadId)).toContain("where a routine posts");
+
+        // Nothing was queued by any refusal.
+        const tasksNow = (yield* service.list({})).tasks;
+        expect(tasksNow.filter((task) => task.title === "Implement the review")).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "the chat stays an ordinary chat: not an auto-archive candidate, not a task chat, still listed",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const repository = yield* PersonalBotRepository.PersonalBotRepository;
+        const sql = yield* SqlClient.SqlClient;
+        yield* seedOwnerChat(harness, CHAT, "Memory article review");
+        yield* TestClock.adjust("1 minute");
+        const { root, rootThread, turnId } = yield* leadRequest(harness, "continue-ordinary");
+
+        // A control: an ordinary delegated task with a chat of its own.
+        const control = yield* service.delegate({
+          parentTaskId: root.taskId,
+          targetBotId: botId("researcher"),
+          brief: brief("Control job"),
+        });
+        const child = yield* continueInto(root, CHAT);
+        yield* endTurn(harness, rootThread, turnId, "Handed over.");
+        yield* service.drain;
+        const controlChat = threadOf(yield* reload(control.taskId));
+        yield* sql`
+          INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+          VALUES (${controlChat}, 'project', 'Control job', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')
+        `;
+        yield* runTurn(harness, CHAT, "Done in the chat.");
+        yield* runTurn(harness, controlChat, "Done in its own chat.");
+        yield* service.drain;
+        expect((yield* reload(child.taskId)).status).toBe("completed");
+        expect((yield* reload(control.taskId)).status).toBe("completed");
+
+        const candidates = yield* sql.unsafe<{ readonly threadId: string }>(
+          TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL,
+        );
+        const candidateIds = candidates.map((row) => row.threadId);
+        expect(candidateIds).toContain(controlChat);
+        expect(candidateIds).not.toContain(CHAT);
+
+        const open = yield* repository.listOpenChats({ botId: botId("developer") });
+        expect(open.find((chat) => chat.threadId === CHAT)?.taskChat).toBe(false);
+        const direct = yield* repository.listDirectChats({ botId: botId("developer"), limit: 10 });
+        expect(direct.map((chat) => chat.threadId)).toEqual([CHAT]);
+        const researcher = yield* repository.listDirectChats({
+          botId: botId("researcher"),
+          limit: 10,
+        });
+        expect(researcher.map((chat) => chat.threadId)).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "steer_task reopens it in the same chat and keeps the conversation instead of a fresh session",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        yield* seedOwnerChat(harness, CHAT, "Memory article review");
+        yield* TestClock.adjust("1 minute");
+        const { root, rootThread, turnId } = yield* leadRequest(harness, "continue-reopen");
+        const child = yield* continueInto(root, CHAT);
+        yield* endTurn(harness, rootThread, turnId, "Handed over.");
+        yield* service.drain;
+        yield* service.updateWorkRecord({
+          taskId: child.taskId,
+          patch: { decisions: ["Keep the cache."], nextStep: "Second half" },
+        });
+        yield* runTurn(harness, CHAT, "Half done.");
+        yield* service.drain;
+        yield* runTurn(harness, rootThread, "Reported.");
+        yield* service.drain;
+        // A long chat: a task in its own chat would start a fresh session here.
+        yield* reportContextTokens(CHAT, 120_000);
+        const startsBefore = startsOn(harness, CHAT).length;
+
+        const steered = yield* service.steer({
+          taskId: child.taskId,
+          fromName: "Assistant",
+          message: "Now do the second half.",
+        });
+        yield* service.drain;
+
+        expect(steered.outcome).toBe("reopened");
+        const starts = startsOn(harness, CHAT);
+        expect(starts).toHaveLength(startsBefore + 1);
+        const continuation = starts.at(-1)!;
+        expect(continuation.message.text).toContain(
+          "Update from Assistant: Now do the second half.",
+        );
+        expect(continuation.message.text).not.toContain(PersonalTaskService.FRESH_SESSION_NOTE);
+        expect(continuation.message.text).not.toContain("Work record");
+        expect(markerOf(continuation).fresh).toBeUndefined();
+        expect((yield* reload(child.taskId)).threadId).toBe(CHAT);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("carries the sensitive-site marks both ways", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      const exposures = makeSensitiveExposureStore(sql);
+      yield* seedOwnerChat(harness, CHAT, "Bank questions");
+      yield* seedOwnerChat(harness, "chat-clean" as ThreadId, "Clean chat");
+      yield* TestClock.adjust("1 minute");
+      const { root } = yield* leadRequest(harness, "continue-exposure");
+
+      // The delegating tree saw a sensitive site: the chat takes the mark.
+      yield* exposures.record([rootExposureKey(root.rootTaskId)], "source", "https://bank.example");
+      yield* continueInto(root, CHAT);
+      expect([...(yield* exposures.read([threadExposureKey(CHAT)])).sources]).toEqual([
+        "https://bank.example",
+      ]);
+
+      // The chat had seen a different one: the tree takes that too, so nothing of it is kept.
+      const second = yield* createRoot("continue-exposure-2");
+      yield* exposures.record([threadExposureKey("chat-clean")], "source", "https://mail.example");
+      const fromMail = yield* continueInto(second, "chat-clean" as ThreadId);
+      expect([...(yield* exposures.read([rootExposureKey(fromMail.rootTaskId)])).sources]).toEqual([
+        "https://mail.example",
+      ]);
+      const refused = yield* Effect.flip(
+        service.updateWorkRecord({ taskId: fromMail.taskId, patch: { nextStep: "x" } }),
+      );
+      expect(refused.message).toContain("sensitive");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+});

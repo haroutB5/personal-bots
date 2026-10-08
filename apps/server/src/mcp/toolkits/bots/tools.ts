@@ -93,8 +93,48 @@ export const DelegateTaskInput = Schema.Struct({
   expectedOutput: Schema.optional(
     Schema.String.annotate({ description: "The shape of the answer you want back." }),
   ),
+  continueChatId: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "A chat id from list_bot_chats. Give it when the work follows up on something this bot already discussed with the user in that chat: the task then runs as a new turn in that chat, so the bot answers with the earlier conversation in its context, instead of starting from nothing in a new task chat.",
+    }),
+  ),
 });
 export type DelegateTaskInput = typeof DelegateTaskInput.Type;
+
+export const ListBotChatsInput = Schema.Struct({
+  bot: TrimmedNonEmptyString.annotate({
+    description: "The bot whose chats to list: its name (as list_bots shows it) or its botId.",
+  }),
+  limit: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 })).annotate({
+      description: "How many chats, 1 to 25. Defaults to 10.",
+    }),
+  ),
+});
+export type ListBotChatsInput = typeof ListBotChatsInput.Type;
+
+export const BotChatEntry = Schema.Struct({
+  chatId: Schema.String.annotate({ description: "Pass this as continueChatId to delegate_task." }),
+  title: Schema.String,
+  lastActivityAt: Schema.String.annotate({ description: "Time of the last message (ISO, UTC)." }),
+  archived: Schema.Boolean.annotate({
+    description: "An archived chat can still be continued; the new turn reopens it.",
+  }),
+  busy: Schema.Boolean.annotate({
+    description: "A turn is running in it now; work handed in waits until it is idle.",
+  }),
+});
+export type BotChatEntry = typeof BotChatEntry.Type;
+
+export const ListBotChatsResult = Schema.Struct({
+  botId: Schema.String,
+  botName: Schema.String,
+  /** Newest activity first. */
+  chats: Schema.Array(BotChatEntry),
+  note: Schema.String,
+});
+export type ListBotChatsResult = typeof ListBotChatsResult.Type;
 
 export const DelegateTaskResult = Schema.Struct({
   childTaskId: Schema.String,
@@ -573,9 +613,23 @@ const ListBotsTool = Tool.make("list_bots", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const ListBotChatsTool = Tool.make("list_bot_chats", {
+  description:
+    "List the recent direct chats between the user and one of the bots you can delegate to: chat id, title, last activity, whether it is archived and whether a turn is running in it. Call it before delegate_task when the work follows up on something that bot discussed with the user (a review, a plan, an earlier build), then pass the chat's id as continueChatId so the bot keeps that conversation. Only chats the user talks in are listed: group conversations, chats made for delegated tasks or routine runs and deleted chats are left out. Same reach as delegate_task: a bot on your team, or one on the other team only once the user's own latest message names it; never yourself. It shows titles and times only, never message text.",
+  parameters: ListBotChatsInput,
+  success: ListBotChatsResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "List a bot's chats")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Hand a self-contained piece of work to another bot on your team. The other bot starts from nothing but what you pass here, so put what it needs in objective, context, constraints, acceptanceCriteria and expectedOutput. It runs in the background; you receive its result in a follow-up message, so end your turn after delegating instead of waiting. Calling again with the same bot and objective in the same turn returns the same task. Refused for: a bot on the other team, unless the user's own latest message names it; a bot already working above you on this request (handing work back to the bot that took the original request is allowed); and past the request's limits, by default two levels of delegation and four delegated tasks per request.",
+    "Hand a self-contained piece of work to another bot on your team. By default the other bot starts from nothing but what you pass here, so put what it needs in objective, context, constraints, acceptanceCriteria and expectedOutput. When the work follows up on something that bot already discussed with the user in one of its chats (a review it did, a plan it drew up), prefer continuing that chat: find it with list_bot_chats and pass its id as continueChatId. The task then runs as a new turn in that chat, so the bot answers with the whole earlier conversation in its context, your brief shows there as coming from you (not from the user), and the chat stays an ordinary chat afterwards. It starts once the chat is idle, and an archived chat reopens. Refused for a chat of another bot, a group conversation, a chat made for a task or routine run, and a deleted chat. It runs in the background; you receive its result in a follow-up message, so end your turn after delegating instead of waiting. steer_task, stop_task and get_task work on it as on any task. Calling again with the same bot and objective in the same turn returns the same task. Refused for: a bot on the other team, unless the user's own latest message names it; a bot already working above you on this request (handing work back to the bot that took the original request is allowed); and past the request's limits, by default two levels of delegation and four delegated tasks per request.",
   parameters: DelegateTaskInput,
   success: DelegateTaskResult,
   failure: BotsToolFailure,
@@ -673,7 +727,7 @@ const StopTaskTool = Tool.make("stop_task", {
 
 const SteerTaskTool = Tool.make("steer_task", {
   description:
-    "Send an update into a task that is still unfinished, without restarting it: the bot keeps its context and everything it has done so far. A running task gets it in its live turn now; a queued or waiting task gets it at the start of its next turn (a queued task starts with it as part of its brief). Prefer this over stop_task to narrow, correct or add to the work. The update shows in that bot's chat and on the task (get_task). It also reopens a task that has ended (completed, failed, interrupted or cancelled): the same bot continues in the same chat and session from where it stopped, with your update, and its new result comes back to you like the first one. Reopen when a task stopped short (it was paused or interrupted, ended with a mid-work line, or missed part of the brief) and the same work should carry on; this does not count against the delegation limit, so do not delegate a new task or make a routine for it. Delegate a new task only for genuinely new work. You can steer tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team, whoever started it; a finished one you can reopen within 24 hours if it was delegated from this chat, or, for a team lead, if its bot is on your team. Never your own task, and not a task of a deleted bot.",
+    "Send an update into a task that is still unfinished, without restarting it: the bot keeps its context and everything it has done so far. A running task gets it in its live turn now; a queued or waiting task gets it at the start of its next turn (a queued task starts with it as part of its brief). Prefer this over stop_task to narrow, correct or add to the work. The update shows in that bot's chat and on the task (get_task). It also reopens a task that has ended (completed, failed, interrupted or cancelled): the same bot continues in the same chat and session from where it stopped, with your update, and its new result comes back to you like the first one (for a task you handed into a bot's existing chat with continueChatId that is the user's chat, and the earlier conversation stays in the bot's context). Reopen when a task stopped short (it was paused or interrupted, ended with a mid-work line, or missed part of the brief) and the same work should carry on; this does not count against the delegation limit, so do not delegate a new task or make a routine for it. Delegate a new task only for genuinely new work. You can steer tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team, whoever started it; a finished one you can reopen within 24 hours if it was delegated from this chat, or, for a team lead, if its bot is on your team. Never your own task, and not a task of a deleted bot.",
   parameters: SteerTaskInput,
   success: SteerTaskResult,
   failure: BotsToolFailure,
@@ -833,6 +887,7 @@ const RemoveBotTool = Tool.make("remove_bot", {
 
 export const BotsToolkit = Toolkit.make(
   ListBotsTool,
+  ListBotChatsTool,
   DelegateTaskTool,
   GetTaskTool,
   UpdateWorkRecordTool,

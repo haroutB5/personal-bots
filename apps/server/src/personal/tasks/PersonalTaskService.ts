@@ -118,6 +118,16 @@ export interface PersonalTaskDelegateInput {
   /** Defaults to a hash of parent, target and brief, so a retried tool call dedupes. */
   readonly idempotencyKey?: string;
   readonly dependencies?: ReadonlyArray<PersonalTaskId>;
+  /**
+   * Run the task as a new turn in this existing chat of the target bot (a
+   * direct chat between the owner and the bot) instead of a chat of its own,
+   * so the bot answers with that conversation in its context. The service
+   * checks the chat is the bot's, live and a plain conversation (not a group
+   * relay, a task or routine chat), and carries the sensitive-site marks both
+   * ways. The task waits for the chat to be idle, like a routine posting into
+   * its chat. The chat stays an ordinary chat when the task ends.
+   */
+  readonly continueThreadId?: ThreadId;
 }
 
 export interface PersonalTaskSteerInput {

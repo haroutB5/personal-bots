@@ -56,6 +56,7 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
     backgroundByThread,
     botRepository,
     bots,
+    continuesExistingChat,
     engine,
     externalSlots,
     idleWaitThreadIds,
@@ -284,6 +285,10 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
   ) {
     const threshold = reopenFreshTokens();
     if (!reopened || threshold <= 0 || delivered.length > 0) return null;
+    // A task continuing the owner's own conversation keeps that conversation in
+    // its session on a reopen: the point of handing work into the chat is that the
+    // bot remembers it, and a work record would not carry the earlier talk.
+    if (yield* continuesExistingChat(task)) return null;
     const record = yield* readWorkRecord(task.taskId).pipe(Effect.orElseSucceed(() => null));
     if (record === null || !workRecordHasContent(record)) return null;
     const used = yield* latestContextTokens(attempt.providerThreadId);

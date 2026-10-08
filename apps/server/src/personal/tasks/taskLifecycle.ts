@@ -10,6 +10,7 @@ import {
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PersonalTaskId,
   ThreadId,
+  type PersonalBotId,
   type PersonalTask,
   type PersonalTaskAttempt,
 } from "@t3tools/contracts";
@@ -28,7 +29,10 @@ export const makeTaskLifecycle = (
   glue: { readonly worker: { readonly enqueue: (item: WorkItem) => Effect.Effect<void> } },
 ) => {
   const {
+    botRepository,
     bots,
+    carryExposureFromChat,
+    carryExposureToChat,
     carryExposureToTree,
     engine,
     fail,
@@ -207,6 +211,51 @@ export const makeTaskLifecycle = (
       );
     }).pipe(toPublic("relay"));
 
+  /**
+   * A chat a delegated task may run in instead of its own: a plain conversation
+   * between the owner and the target bot. Refused with a reason a lead can act on
+   * for a chat that is missing, deleted, another bot's, a group's transcript, or
+   * made for a task or routine. An archived chat is allowed: its first new turn
+   * unarchives it, as any new turn does.
+   */
+  const requireContinuableChat = Effect.fn("PersonalTaskService.requireContinuableChat")(function* (
+    botId: PersonalBotId,
+    threadId: ThreadId,
+  ) {
+    const facts = yield* botRepository
+      .getChatFacts({ threadId })
+      .pipe(Effect.mapError((cause) => fail("Personal tasks could not read that chat.", cause)));
+    if (Option.isNone(facts)) {
+      return yield* fail(
+        `There is no chat '${threadId}'. It may have been deleted or the id is wrong; list_bot_chats shows the bot's chats.`,
+      );
+    }
+    const chat = facts.value;
+    if (chat.deleted) {
+      return yield* fail(`The chat '${threadId}' was deleted, so nothing can be handed into it.`);
+    }
+    if (chat.botId !== botId) {
+      return yield* fail(
+        `The chat '${threadId}' is not a chat of the bot you are delegating to. Use list_bot_chats with that bot to see its own chats.`,
+      );
+    }
+    if (chat.groupRelay) {
+      return yield* fail(
+        `The chat '${threadId}' is the bot's side of a group conversation, not a direct chat with the user. Answer in the group, or hand the bot a normal task.`,
+      );
+    }
+    if (chat.taskChat) {
+      return yield* fail(
+        `The chat '${threadId}' was made for a delegated task or a routine run, not a conversation with the user. To carry on that work, reopen the task with steer_task; for new work, delegate without continueChatId.`,
+      );
+    }
+    if (chat.routineChat) {
+      return yield* fail(
+        `The chat '${threadId}' is where a routine posts its runs, so work cannot be handed into it. Delegate without continueChatId, or pick another chat.`,
+      );
+    }
+  });
+
   const delegate: PersonalTaskService["Service"]["delegate"] = (input) =>
     lock
       .withPermit(
@@ -262,7 +311,14 @@ export const makeTaskLifecycle = (
               `Delegation loop: bot '${input.targetBotId}' is already working on this request.`,
             );
           }
+          if (input.continueThreadId !== undefined) {
+            yield* requireContinuableChat(input.targetBotId, input.continueThreadId);
+          }
           yield* carryExposureToTree(parent, root);
+          if (input.continueThreadId !== undefined) {
+            yield* carryExposureFromChat(input.continueThreadId, root);
+            yield* carryExposureToChat(parent, input.continueThreadId);
+          }
           const now = yield* DateTime.now;
           const taskId = PersonalTaskId.make(NodeCrypto.randomUUID());
           const child: PersonalTask = {
@@ -270,7 +326,7 @@ export const makeTaskLifecycle = (
             rootTaskId: root.taskId,
             parentTaskId: parent.taskId,
             botId: input.targetBotId,
-            threadId: null,
+            threadId: input.continueThreadId ?? null,
             title: input.brief.title,
             objective: input.brief.objective,
             acceptanceCriteria: input.brief.acceptanceCriteria ?? "",

@@ -10,10 +10,10 @@ import {
   personalBotTeamLabel,
   personalSecretEnvVar,
   personalSecretPlaceholder,
+  ThreadId,
   type PersonalBot,
   type PersonalDelegationBrief,
   type PersonalTask,
-  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -32,6 +32,7 @@ import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginSe
 import * as PersonalLoginRequestService from "../../../personal/secrets/PersonalLoginRequestService.ts";
 import { cleanNotifyMessage } from "../../../personal/push/notifyDecision.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
+import { sessionIsBusy } from "../../../personal/tasks/taskSessionPolicy.ts";
 import { renderWorkRecord } from "../../../personal/tasks/workRecord.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
@@ -61,6 +62,11 @@ const MCP_SESSION_ID = "mcp";
 
 export const DELEGATE_NOTE =
   "You will receive the result in a follow-up message; end your turn now.";
+export const DELEGATE_CONTINUE_NOTE =
+  "The work goes into that chat as a new turn once the chat is idle (an archived chat reopens), and the bot answers with the earlier conversation in its context. You will receive the result in a follow-up message; end your turn now.";
+export const LIST_BOT_CHATS_NOTE =
+  "Newest first. Pass the chatId of the one the work follows up on as continueChatId in delegate_task; titles and times only, so pick by title and recency, and delegate without continueChatId if none fits.";
+export const LIST_BOT_CHATS_DEFAULT_LIMIT = 10;
 export const CALL_VOTE_NOTE =
   "The vote is open. Cast your own ballot now with cast_vote, then end your turn: the others answer in their own turns. Nothing happens until the user approves the result.";
 export const CAST_VOTE_OPEN_NOTE =
@@ -118,10 +124,19 @@ const PERSONAL_TASK_STATUSES_OPEN = PersonalTaskStatus.literals.filter(
 /** The service errors carry messages written for people; they read fine to a model too. */
 const readable = (error: { readonly message: string }) => toolError(error.message);
 
-/** Same bot + objective in the same turn is one delegation, however often the model retries. */
-export const delegationIdempotencyKey = (turnId: string, targetBotId: string, objective: string) =>
+/**
+ * Same bot + objective in the same turn is one delegation, however often the model
+ * retries. Into a chat, the chat is part of the identity: the same words handed to
+ * two chats are two tasks. Without a chat the key is what it always was.
+ */
+export const delegationIdempotencyKey = (
+  turnId: string,
+  targetBotId: string,
+  objective: string,
+  continueChatId?: string,
+) =>
   `delegate:${turnId}:${targetBotId}:${NodeCrypto.createHash("sha256")
-    .update(objective)
+    .update(continueChatId === undefined ? objective : `${continueChatId}\n${objective}`)
     .digest("hex")
     .slice(0, 24)}`;
 
@@ -267,6 +282,42 @@ const make = Effect.gen(function* () {
   ) {
     const latest = yield* latestOwnerMessage(threadId);
     return latest !== undefined && messageNamesBot(latest.text, target);
+  });
+
+  /**
+   * The bot a caller may hand work to, or look at the chats of. Resolved across
+   * both teams on purpose: a bot that exists but is out of reach deserves a
+   * better answer than "no such bot". Never the caller itself; a bot on the other
+   * team only once the owner's own latest message names it.
+   */
+  const reachableBot = Effect.fn("BotsToolkit.reachableBot")(function* (
+    caller: { readonly threadId: ThreadId; readonly botId: string; readonly team: string },
+    ref: string,
+    selfMessage: string,
+  ) {
+    const bots = yield* listBots;
+    const target = resolveTargetBot(bots, ref);
+    const teamMates = (all: ReadonlyArray<PersonalBot>) =>
+      all
+        .filter((bot) => bot.enabled && bot.botId !== caller.botId && isBotOnTeam(bot, caller.team))
+        .map((bot) => bot.name);
+    if (target === null) {
+      return yield* toolError(
+        `No enabled bot is called '${ref}'. Available: ${teamMates(bots).join(", ") || "none"}.`,
+      );
+    }
+    if (target.botId === caller.botId) {
+      return yield* toolError(selfMessage);
+    }
+    if (!isBotOnTeam(target, caller.team)) {
+      const asked = yield* ownerNamedBot(caller.threadId, target);
+      if (!asked) {
+        return yield* toolError(
+          `${target.name} is on the ${personalBotTeamLabel(botTeam(target))}, not yours, so you cannot hand work over. Tell the user what you need from ${target.name} and ask them to request it; once their own latest message names ${target.name}, this works. On your team you can ask: ${teamMates(bots).join(", ") || "nobody"}.`,
+        );
+      }
+    }
+    return target;
   });
 
   /**
@@ -493,49 +544,70 @@ const make = Effect.gen(function* () {
             })),
         };
       }),
+    list_bot_chats: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        const target = yield* reachableBot(
+          caller,
+          input.bot,
+          "You cannot list your own chats this way: they are yours already.",
+        );
+        const limit = input.limit ?? LIST_BOT_CHATS_DEFAULT_LIMIT;
+        const chats = yield* botRepository
+          .listDirectChats({ botId: target.botId, limit })
+          .pipe(Effect.mapError(() => toolError("Could not read that bot's chats; try again.")));
+        const entries = yield* Effect.forEach(chats, (chat) =>
+          snapshots.getThreadShellById(chat.threadId).pipe(
+            Effect.map((shell) => (Option.isSome(shell) ? shell.value.session : null)),
+            Effect.orElseSucceed(() => null),
+            Effect.map((session) => ({
+              chatId: chat.threadId as string,
+              title: chat.title,
+              lastActivityAt: chat.activityAt,
+              archived: chat.archived,
+              busy: sessionIsBusy(session),
+            })),
+          ),
+        );
+        return {
+          botId: target.botId as string,
+          botName: target.name,
+          chats: entries,
+          note:
+            entries.length === 0
+              ? `${target.name} has no direct chat with the user to continue. Delegate without continueChatId.`
+              : LIST_BOT_CHATS_NOTE,
+        };
+      }),
     delegate_task: (input) =>
       Effect.gen(function* () {
         const caller = yield* callerTask();
-        // Resolved across both teams on purpose: a bot that exists but is out
-        // of reach deserves a better answer than "no such bot".
-        const target = resolveTargetBot(yield* listBots, input.targetBot);
-        const teamMates = (bots: ReadonlyArray<PersonalBot>) =>
-          bots
-            .filter(
-              (bot) => bot.enabled && bot.botId !== caller.botId && isBotOnTeam(bot, caller.team),
-            )
-            .map((bot) => bot.name);
-        if (target === null) {
-          const available = teamMates(yield* listBots);
-          return yield* toolError(
-            `No enabled bot is called '${input.targetBot}'. Available: ${available.join(", ") || "none"}.`,
-          );
-        }
-        if (target.botId === caller.botId) {
-          return yield* toolError("You cannot delegate a task to yourself.");
-        }
-        if (!isBotOnTeam(target, caller.team)) {
-          const asked = yield* ownerNamedBot(caller.threadId, target);
-          if (!asked) {
-            const available = teamMates(yield* listBots);
-            return yield* toolError(
-              `${target.name} is on the ${personalBotTeamLabel(botTeam(target))}, not yours, so you cannot hand work over. Tell the user what you need from ${target.name} and ask them to request it; once their own latest message names ${target.name}, this works. On your team you can ask: ${available.join(", ") || "nobody"}.`,
-            );
-          }
-        }
+        const target = yield* reachableBot(
+          caller,
+          input.targetBot,
+          "You cannot delegate a task to yourself.",
+        );
+        const continueThreadId =
+          input.continueChatId === undefined ? undefined : ThreadId.make(input.continueChatId);
         const child = yield* tasks
           .delegate({
             parentTaskId: caller.task.taskId,
             targetBotId: target.botId,
             brief: briefOf(input),
-            idempotencyKey: delegationIdempotencyKey(caller.turnId, target.botId, input.objective),
+            idempotencyKey: delegationIdempotencyKey(
+              caller.turnId,
+              target.botId,
+              input.objective,
+              input.continueChatId,
+            ),
+            ...(continueThreadId === undefined ? {} : { continueThreadId }),
           })
           .pipe(Effect.mapError(readable));
         return {
           childTaskId: child.taskId,
           targetBotId: target.botId,
           status: child.status,
-          note: DELEGATE_NOTE,
+          note: continueThreadId === undefined ? DELEGATE_NOTE : DELEGATE_CONTINUE_NOTE,
         };
       }),
     get_task: (input) =>

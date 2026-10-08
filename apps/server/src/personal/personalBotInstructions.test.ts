@@ -75,6 +75,14 @@ describe("personalBotSystemInstructions", () => {
     assert.match(text, /other team[\s\S]*ask the user to name that bot|let them name it/u);
   });
 
+  // 1.66.12: a follow-up goes into the chat where the bot discussed it, not into a new task chat.
+  it("tells a bot to continue the chat a follow-up belongs to", () => {
+    const text = personalBotSystemInstructions(persona(""));
+
+    assert.include(text, "list_bot_chats");
+    assert.include(text, "continueChatId");
+  });
+
   it("still gives a bot with blank instructions and title its name and the app rules", () => {
     const text = personalBotSystemInstructions(persona("   ", " "));
 
