@@ -14,7 +14,7 @@ import * as NodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { expect } from "./expect.mjs";
-import { composer, openBots, startChatFromSheet, transcript } from "./lib.mjs";
+import { composer, newChatOnBotScreen, openBots, transcript } from "./lib.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -131,8 +131,9 @@ async function offlineQueue({ page, origin, step, server, root }) {
       { timeout: 40_000 },
     )
     .toBe(true);
-  await page.getByText("Planner", { exact: true }).first().tap();
-  await startChatFromSheet(page, title);
+  // Through the bot's own page: in the full gate, earlier journeys have already given other bots chats (and the fake CLI replays a delegating chat), so a tap on a bot's
+  // row no longer opens the name sheet. Researcher is the bot no earlier journey sends messages to.
+  await newChatOnBotScreen(page, origin, "Researcher", title);
   await typeAndSend(page, ONLINE);
   await expect(transcript(page).getByText("Got it.")).toBeVisible();
   // The first reply loads the code-highlighting chunks while it is written. Let the page go quiet, as a phone

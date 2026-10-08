@@ -8,12 +8,12 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const whenServerBack = vi.fn((_callback: () => void) => () => undefined);
-vi.mock("../lib/chunkLoadRecovery", () => ({
+vi.mock("~/lib/chunkLoadRecovery", () => ({
   chunkRecovery: () => ({ whenServerBack }),
 }));
 
 const reloadOnce = vi.fn(() => true);
-vi.mock("../lib/chunkReloadGuard", () => ({
+vi.mock("~/lib/chunkReloadGuard", () => ({
   reloadOnceForChunkLoadError: () => reloadOnce(),
 }));
 

@@ -2,9 +2,9 @@ import { ErrorComponent, type ErrorComponentProps, useRouter } from "@tanstack/r
 import { WifiOff } from "lucide-react";
 import { useEffect } from "react";
 
-import { isChunkLoadError } from "../lib/chunkLoadError";
-import { chunkRecovery } from "../lib/chunkLoadRecovery";
-import { reloadOnceForChunkLoadError } from "../lib/chunkReloadGuard";
+import { isChunkLoadError } from "~/lib/chunkLoadError";
+import { chunkRecovery } from "~/lib/chunkLoadRecovery";
+import { reloadOnceForChunkLoadError } from "~/lib/chunkReloadGuard";
 
 /**
  * The router's default error screen for a page that fails to load or render.

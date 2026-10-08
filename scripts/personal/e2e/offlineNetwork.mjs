@@ -24,7 +24,6 @@ import {
   newChatOnBotScreen,
   openBots,
   pairContext,
-  startChatFromSheet,
   transcript,
 } from "./lib.mjs";
 import { sendButton, typeAndSend, userMessages, waitingRows } from "./offlineQueue.mjs";
@@ -103,8 +102,7 @@ async function warmChat(page, origin, title) {
       { timeout: 40_000 },
     )
     .toBe(true);
-  await page.getByText("Planner", { exact: true }).first().tap();
-  await startChatFromSheet(page, title);
+  await newChatOnBotScreen(page, origin, "Researcher", title);
   await typeAndSend(page, ONLINE);
   await expect(transcript(page).getByText("Got it.")).toBeVisible();
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
@@ -196,7 +194,7 @@ async function coldLoadDrop({ page, context, origin, step, root }) {
   const title = "E2E cold load drop";
   const message = "Sent after the signal dropped on a cold start";
   // The chat exists already; the phone below opens it from nothing: no service worker, no cached chunks.
-  await newChatOnBotScreen(page, origin, "Planner", title);
+  await newChatOnBotScreen(page, origin, "Researcher", title);
   await typeAndSend(page, ONLINE);
   await expect(transcript(page).getByText("Got it.")).toBeVisible();
   const chatUrl = page.url();

@@ -1,6 +1,6 @@
 import { createRouter, RouterHistory } from "@tanstack/react-router";
 
-import { RouteLoadError } from "./components/RouteLoadError";
+import { RouteLoadError } from "./features/personal/RouteLoadError";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter(history: RouterHistory) {
