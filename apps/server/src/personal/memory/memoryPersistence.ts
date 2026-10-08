@@ -230,7 +230,10 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       if (existing !== undefined && targets.length === 0) return { ...existing, created: false };
       const memoryId = existing?.memoryId ?? PersonalMemoryId.make(NodeCrypto.randomUUID());
       const nowIso = DateTime.formatIso(yield* DateTime.now);
-      const archivedIds: Array<string> = [];
+      // What this call archived, read inside the transaction that archives it: the
+      // receipt a chat line's Undo is bound to is this save's own (replacing entry
+      // and version), never whatever a later save or restore made of the entry.
+      const archivedEntries: Array<PersonalMemoryEntry> = [];
       yield* Effect.gen(function* () {
         if (existing === undefined) {
           yield* sql`
@@ -253,15 +256,18 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
             WHERE memory_id = ${target.memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
             RETURNING memory_id AS "id"
           `;
-          if (archived.length > 0) archivedIds.push(target.memoryId);
+          if (archived.length > 0) {
+            archivedEntries.push(yield* readEntry(PersonalMemoryId.make(target.memoryId)));
+          }
         }
       }).pipe(sql.withTransaction);
-      // What this call archived, as it is now: a save into an entry that was
-      // already there still changed these, so the chat can offer their Undo.
-      const archived = yield* Effect.forEach(archivedIds, (id) =>
-        readEntry(PersonalMemoryId.make(id)),
-      );
-      return { ...(yield* readEntry(memoryId)), created: existing === undefined, archived };
+      // A save into an entry that was already there still changed these, so the
+      // chat can offer their Undo.
+      return {
+        ...(yield* readEntry(memoryId)),
+        created: existing === undefined,
+        archived: archivedEntries,
+      };
     }).pipe(storageFailure("save"));
 
   const forget: PersonalMemoryService["Service"]["forget"] = (input) =>

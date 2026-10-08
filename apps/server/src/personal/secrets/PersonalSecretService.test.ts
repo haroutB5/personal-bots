@@ -28,7 +28,9 @@ import {
 } from "@t3tools/contracts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Logger from "effect/Logger";
@@ -1917,6 +1919,215 @@ describe("brokered secrets", () => {
       }),
     ),
   );
+
+  describe("Security round 2 (1.66.7)", () => {
+    const VERCEL = "https://api.vercel.com";
+    const GITHUB = "https://api.github.com";
+
+    it.effect.each([
+      ["origin", { mode: "brokered", origins: [GITHUB] }],
+      ["mode", { mode: "env" }],
+      ["placement", { mode: "brokered", origins: [VERCEL], placement: { anywhere: true } }],
+    ] as const)(
+      "owner rows merged by sharing keep one policy: a rotation changing the %s is refused",
+      ([_what, change]) =>
+        withLayer((harness) =>
+          Effect.gen(function* () {
+            yield* seedBots;
+            const bots = yield* PersonalBotService.PersonalBotService;
+            const secrets = yield* PersonalSecretService.PersonalSecretService;
+            const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+            const reader = yield* runningTask(harness, "merged-owner", "assistant");
+            yield* bots.createThread({ botId: botId("assistant"), threadId: reader.threadId });
+            const save = (value: string, shared: boolean, over: object) =>
+              secrets.create({
+                name: "MERGED_OWNER",
+                value: Redacted.make(value),
+                shared,
+                mode: "brokered",
+                origins: [VERCEL],
+                ...over,
+              });
+            // A shared and a private owner row, the same policy and value; sharing then merges them.
+            yield* save("merged-owner-old-0123", true, {});
+            yield* save("merged-owner-old-0123", false, {});
+            yield* secrets.setSharing({ name: "MERGED_OWNER", shared: true });
+            // Rotating through one of them must not leave the new bytes under the other's policy.
+            const refused = yield* save("merged-owner-new-0456", true, change).pipe(Effect.result);
+            expect(refused._tag).toBe("Failure");
+            expect(text(refused)).toContain("different access");
+            expect((yield* access.secretsForThread(reader.threadId))[0]).toEqual(
+              expect.objectContaining({
+                mode: "brokered",
+                origins: [VERCEL],
+                value: "merged-owner-old-0123",
+              }),
+            );
+            expect((yield* access.forThread(reader.threadId)).environment).toEqual({});
+            // Giving the key one new access in Settings clears the way: both rows move together.
+            yield* secrets.setMode({
+              name: "MERGED_OWNER",
+              mode: change.mode,
+              ...("origins" in change ? { origins: change.origins } : {}),
+              ...("placement" in change ? { placement: change.placement } : {}),
+            });
+            yield* save("merged-owner-new-0456", true, change);
+            const repository = yield* PersonalSecretRepository.PersonalSecretRepository;
+            const rows = yield* repository.listByStatus("fulfilled");
+            expect(
+              new Set(rows.map((row) => JSON.stringify([row.mode, row.origins, row.placement])))
+                .size,
+            ).toBe(1);
+            if (change.mode === "env") {
+              expect((yield* access.forThread(reader.threadId)).environment).toEqual({
+                PB_SECRET_MERGED_OWNER: "merged-owner-new-0456",
+              });
+            } else {
+              expect((yield* access.secretsForThread(reader.threadId))[0]).toEqual(
+                expect.objectContaining({
+                  mode: "brokered",
+                  origins: change.origins,
+                  value: "merged-owner-new-0456",
+                }),
+              );
+            }
+          }),
+        ),
+    );
+
+    it.live("an owner rotation tightens the access before the bytes change and opens it last", () =>
+      withLayer(() =>
+        Effect.gen(function* () {
+          const secrets = yield* PersonalSecretService.PersonalSecretService;
+          const store = yield* ServerSecretStore.ServerSecretStore;
+          const repository = writable(yield* PersonalSecretRepository.PersonalSecretRepository);
+          const key = PersonalSecretService.personalSecretStoreKey("ORDERED_ROTATION");
+          yield* secrets.create({
+            name: "ORDERED_ROTATION",
+            value: Redacted.make("ordered-old-0123"),
+            shared: true,
+            mode: "env",
+          });
+          const original = repository.setRowAccess;
+          const seen: Array<{ mode: string | undefined; origins: number; bytes: string }> = [];
+          // What a crash at each step would leave behind: the row's access beside the stored bytes.
+          repository.setRowAccess = (input) =>
+            Effect.gen(function* () {
+              const [row] = yield* repository.listByStatus("fulfilled");
+              const bytes = yield* store.get(key).pipe(Effect.orDie);
+              seen.push({
+                mode: row?.mode,
+                origins: row?.origins?.length ?? 0,
+                bytes: Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : "",
+              });
+              yield* original(input);
+            });
+          yield* secrets.create({
+            name: "ORDERED_ROTATION",
+            value: Redacted.make("ordered-new-0456"),
+            shared: true,
+            mode: "brokered",
+            origins: [VERCEL],
+          });
+          repository.setRowAccess = original;
+          // Before the closing write: the old row and old bytes. Before the final write: the row
+          // is closed to everyone (brokered, no origin) and the new bytes are in. Never the new
+          // bytes beside the old env access.
+          expect(seen).toEqual([
+            { mode: "env", origins: 0, bytes: "ordered-old-0123" },
+            { mode: "brokered", origins: 0, bytes: "ordered-new-0456" },
+          ]);
+        }),
+      ),
+    );
+
+    /** Runs an owner rotation, interrupts its fiber while the final access write is pending, then lets that write go. */
+    const interruptedRotation = (failFinalWrite: boolean) =>
+      withLayer((harness) =>
+        Effect.gen(function* () {
+          yield* seedBots;
+          const bots = yield* PersonalBotService.PersonalBotService;
+          const secrets = yield* PersonalSecretService.PersonalSecretService;
+          const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+          const repository = writable(yield* PersonalSecretRepository.PersonalSecretRepository);
+          const reader = yield* runningTask(harness, "interrupted", "assistant");
+          yield* bots.createThread({ botId: botId("assistant"), threadId: reader.threadId });
+          yield* secrets.create({
+            name: "INTERRUPTED_ROTATION",
+            value: Redacted.make("interrupted-env-old-0123"),
+            shared: true,
+            mode: "env",
+          });
+          const original = repository.setRowAccess;
+          const reached = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          // The final access write (it names an origin) waits; the closing one before it does not.
+          repository.setRowAccess = (input) =>
+            input.mode === "brokered" && input.origins.length > 0
+              ? Deferred.succeed(reached, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(
+                    failFinalWrite
+                      ? Effect.fail(
+                          new PersistenceSqlError({
+                            operation: "test.setRowAccess",
+                            cause: "boom",
+                          }),
+                        )
+                      : original(input),
+                  ),
+                )
+              : original(input);
+          const rotation = yield* Effect.forkChild(
+            secrets.create({
+              name: "INTERRUPTED_ROTATION",
+              value: Redacted.make("interrupted-brokered-new-0456"),
+              shared: true,
+              mode: "brokered",
+              origins: [VERCEL],
+            }),
+          );
+          yield* Deferred.await(reached);
+          // A closed socket or an RPC Interrupt arrives between the new bytes and their access.
+          const interrupting = yield* Effect.forkChild(Fiber.interrupt(rotation));
+          yield* Effect.sleep("50 millis");
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(interrupting);
+          repository.setRowAccess = original;
+          return {
+            environment: (yield* access.forThread(reader.threadId)).environment,
+            secrets: yield* access.secretsForThread(reader.threadId),
+          };
+        }),
+      );
+
+    it.live("an interrupted owner rotation still publishes its bytes with their access", () =>
+      Effect.gen(function* () {
+        const after = yield* interruptedRotation(false);
+        // The new bytes are never readable as an environment variable.
+        expect(after.environment).toEqual({});
+        expect(after.secrets[0]).toEqual(
+          expect.objectContaining({
+            mode: "brokered",
+            origins: [VERCEL],
+            value: "interrupted-brokered-new-0456",
+          }),
+        );
+      }),
+    );
+
+    it.live(
+      "an interrupted owner rotation whose access write fails still puts the old key back",
+      () =>
+        Effect.gen(function* () {
+          const after = yield* interruptedRotation(true);
+          expect(after.environment).toEqual({
+            PB_SECRET_INTERRUPTED_ROTATION: "interrupted-env-old-0123",
+          });
+          expect(text(after.secrets)).not.toContain("interrupted-brokered-new-0456");
+        }),
+    );
+  });
 
   it.effect("a pending request flags the origins the app cannot vouch for", () =>
     withLayer((harness) =>

@@ -10,11 +10,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { makeMemoryCore } from "./memoryCore.ts";
+import { makeMemoryPersistence } from "./memoryPersistence.ts";
 import { localDay } from "./memoryTidy.ts";
 import {
   PersonalMemoryService,
@@ -1287,4 +1290,71 @@ it.effect("1.66.7: forgetting an entry that is archived another way changes noth
     expect(second.supersededReason).toBe(first.supersededReason);
     expect(second.version).toBe(first.version);
   }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "Security round 2 (1.66.7): the receipt of a Replaced line is read in the archive transaction, so a restore and a later replacement cannot slip in between",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const memory = yield* PersonalMemoryService;
+      const sql = yield* SqlClient.SqlClient;
+      const old = yield* memory.save({ ...NOTE, content: "Synthetic receipt old" });
+      const first = yield* memory.save({ ...NOTE, content: "Synthetic receipt first" });
+      const second = yield* memory.save({ ...NOTE, content: "Synthetic receipt second" });
+      const core = yield* makeMemoryCore();
+      let slippedIn = false;
+      // The first save commits its archive; at the next read of the archived entry outside that
+      // transaction, an owner Restore and another chat's save replacing the same entry run.
+      const interleaved = makeMemoryPersistence({
+        ...core,
+        readEntry: (id) =>
+          Effect.gen(function* () {
+            const inTransaction = Option.isSome(
+              yield* Effect.serviceOption(sql.transactionService),
+            );
+            const current = yield* core.readEntry(id);
+            if (
+              !inTransaction &&
+              !slippedIn &&
+              id === old.memoryId &&
+              current.supersededBy === first.memoryId
+            ) {
+              slippedIn = true;
+              yield* memory.restore({ memoryId: old.memoryId });
+              yield* memory.save({
+                ...NOTE,
+                content: second.content,
+                replaces: [old.memoryId],
+                actorBotId: BOT_A,
+              });
+            }
+            return yield* core.readEntry(id);
+          }),
+      });
+      const firstSave = yield* interleaved.save({
+        ...NOTE,
+        content: first.content,
+        replaces: [old.memoryId],
+        actorBotId: BOT_A,
+      });
+      // No archived entry is read once the transaction has committed, so nothing could slip in.
+      expect(slippedIn).toBe(false);
+      expect(firstSave.archived?.map((entry) => entry.supersededBy)).toEqual([first.memoryId]);
+      const firstUndo = yield* noticeFor(firstSave.archived![0]!);
+
+      // Then the same two events happen after the save returned.
+      yield* memory.restore({ memoryId: old.memoryId });
+      yield* memory.save({
+        ...NOTE,
+        content: second.content,
+        replaces: [old.memoryId],
+        actorBotId: BOT_A,
+      });
+      expect((yield* memory.get(old.memoryId)).supersededBy).toBe(second.memoryId);
+      // The first line's Undo is bound to the first save and cannot restore the later archive.
+      const refused = yield* memory.undoNote(firstUndo).pipe(Effect.result);
+      expect(refused._tag).toBe("Failure");
+      expect((yield* memory.get(old.memoryId)).supersededBy).toBe(second.memoryId);
+    }).pipe(Effect.provide(TestLayer)),
 );
