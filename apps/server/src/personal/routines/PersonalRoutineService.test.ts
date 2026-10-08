@@ -273,25 +273,98 @@ it.effect("resume fails cleanly after an exhausted one-off is deleted", () =>
   }).pipe(Effect.provide(makeLayer())),
 );
 
-it.effect("resume deletes a paused one-off after its scheduled time has passed", () =>
+it.effect(
+  "1.66.7: resume of a paused one-off whose time has passed keeps it and asks for a new time",
+  () =>
+    Effect.gen(function* () {
+      yield* setNow("2026-09-14T10:00:00Z");
+      yield* seedBot;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      const routineId = PersonalRoutineId.make("paused-one-off");
+      yield* routines.create({
+        routineId,
+        botId: BOT,
+        title: "Paused once",
+        prompt: "Run once.",
+        schedule: { kind: "once", at: "2026-09-14T11:30" },
+      });
+      yield* routines.pause({ routineId });
+      yield* setNow("2026-09-14T12:00:00Z");
+
+      const error = yield* Effect.flip(routines.resume({ routineId }));
+      expect(error.message).toContain("already passed");
+      expect(error.message).toContain("Pick a new time");
+      // Not deleted: still listed, paused, with its prompt.
+      expect(yield* listedRoutineIds).toContain(routineId);
+      const kept = (yield* routines.list()).routines.find((entry) => entry.routineId === routineId);
+      expect(kept).toMatchObject({ enabled: false, prompt: "Run once." });
+      // The next tick leaves it alone too.
+      yield* tickAndDrain;
+      expect(yield* listedRoutineIds).toContain(routineId);
+
+      // Giving it a new time makes it resumable.
+      yield* routines.update({
+        routineId,
+        schedule: { kind: "once", at: "2026-09-14T15:00" },
+      });
+      const resumed = yield* routines.resume({ routineId });
+      expect(resumed.enabled).toBe(true);
+      expect(yield* nextDueIso("paused-one-off")).toBe("2026-09-14T14:00:00.000Z");
+    }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect(
+  "1.66.7: a paused one-off edited to a time in the past (or another zone) survives the next tick",
+  () =>
+    Effect.gen(function* () {
+      yield* setNow("2026-09-14T10:00:00Z");
+      yield* seedBot;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      for (const [id, edit] of [
+        ["edit-past", { schedule: { kind: "once", at: "2026-09-14T08:00" } }],
+        ["edit-zone", { timeZone: "Pacific/Auckland" }],
+      ] as const) {
+        const routineId = PersonalRoutineId.make(id);
+        yield* routines.create({
+          routineId,
+          botId: BOT,
+          title: id,
+          prompt: `Prompt of ${id}.`,
+          schedule: { kind: "once", at: "2026-09-14T11:30" },
+        });
+        yield* routines.pause({ routineId });
+        // A paused routine may be edited to an expired slot...
+        const edited = yield* routines.update({ routineId, ...edit });
+        expect(edited.enabled).toBe(false);
+        expect(edited.nextDueAt ?? null).toBeNull();
+        // ...and the scheduler no longer deletes it.
+        yield* tickAndDrain;
+        yield* tickAndDrain;
+        expect(yield* listedRoutineIds, id).toContain(routineId);
+        const kept = (yield* routines.list()).routines.find((r) => r.routineId === routineId);
+        expect(kept, id).toMatchObject({ enabled: false, prompt: `Prompt of ${id}.` });
+      }
+    }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("1.66.7: an enabled routine edited to a past time is still refused", () =>
   Effect.gen(function* () {
     yield* setNow("2026-09-14T10:00:00Z");
     yield* seedBot;
     const routines = yield* PersonalRoutineService.PersonalRoutineService;
-    const routineId = PersonalRoutineId.make("paused-one-off");
+    const routineId = PersonalRoutineId.make("enabled-past");
     yield* routines.create({
       routineId,
       botId: BOT,
-      title: "Paused once",
+      title: "Live",
       prompt: "Run once.",
       schedule: { kind: "once", at: "2026-09-14T11:30" },
     });
-    yield* routines.pause({ routineId });
-    yield* setNow("2026-09-14T12:00:00Z");
-
-    const error = yield* Effect.flip(routines.resume({ routineId }));
-    expect(error.message).toContain("was not found");
-    expect(yield* listedRoutineIds).not.toContain(routineId);
+    const error = yield* Effect.flip(
+      routines.update({ routineId, schedule: { kind: "once", at: "2026-09-14T08:00" } }),
+    );
+    expect(error.message).toContain("already passed");
+    expect(yield* nextDueIso("enabled-past")).toBe("2026-09-14T10:30:00.000Z");
   }).pipe(Effect.provide(makeLayer())),
 );
 

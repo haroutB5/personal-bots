@@ -552,6 +552,10 @@ export const make = Effect.gen(function* () {
     // Event routines never appear in the sweep; they have no slots to miss and
     // no exhaustion to be deleted for. Belt and braces with the tick's filter.
     if (routine.schedule === null) return;
+    // A paused routine is never swept: a one-off whose time passed while it was
+    // paused (or was edited to a past time) stays, paused, until the owner
+    // reschedules or deletes it.
+    if (!routine.enabled) return;
     const schedule = routine.schedule;
     const next = nextRoutineSlot(schedule, routine.timeZone, nowMs);
     if (routine.nextDueAt === null) {
@@ -612,10 +616,12 @@ export const make = Effect.gen(function* () {
         // `trigger_kind` first: an event routine has next_due_utc NULL forever,
         // and the NULL branch is what deletes an exhausted schedule. Without
         // this filter every event routine would be swept away on the next tick.
+        // Only enabled routines are swept: a paused one with no next slot (a
+        // one-off whose time passed) is kept for the owner to reschedule.
         const rows = yield* sql`
           SELECT ${sql.literal(ROUTINE_COLUMNS)} FROM personal_routines
-          WHERE trigger_kind = 'schedule'
-            AND (next_due_utc IS NULL OR (enabled = 1 AND next_due_utc <= ${nowIso}))
+          WHERE trigger_kind = 'schedule' AND enabled = 1
+            AND (next_due_utc IS NULL OR next_due_utc <= ${nowIso})
           ORDER BY next_due_utc ASC
         `;
         for (const raw of rows) {
@@ -850,8 +856,11 @@ export const make = Effect.gen(function* () {
             DateTime.toEpochMillis(now),
           );
           if (next === null) {
-            yield* deleteRoutine(current.routineId);
-            return yield* fail(`Routine '${input.routineId}' was not found.`);
+            // The time has passed while it was paused: keep it, paused, so the
+            // owner can pick a new time (or delete it) instead of losing it.
+            return yield* fail(
+              `The time for '${current.title}' has already passed in ${current.timeZone}. Pick a new time for it, then resume it.`,
+            );
           }
           const nowIso = DateTime.formatIso(now);
           yield* sql`
