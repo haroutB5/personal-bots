@@ -261,6 +261,37 @@ function QueuedMessage({
   );
 }
 
+/**
+ * The waiting messages on their own, for a chat that has not loaded yet: the
+ * app was opened again while the laptop is still away, so the transcript is not
+ * here but what was typed is, and it still goes out on reconnect.
+ */
+export function QueuedMessageList({
+  rows,
+  onCancel,
+  onEdit,
+  onRetry,
+}: {
+  rows: ReadonlyArray<OutboxRow>;
+  onCancel: ((id: string) => void) | undefined;
+  onEdit: ((entry: OutboxEntry) => void) | undefined;
+  onRetry: ((id: string) => void) | undefined;
+}) {
+  return (
+    <div className="flex w-full max-w-[var(--personal-reading-column)] flex-col gap-3 text-left">
+      {rows.map((row) => (
+        <QueuedMessage
+          key={row.entry.id}
+          row={row}
+          onCancel={onCancel}
+          onEdit={onEdit}
+          onRetry={onRetry}
+        />
+      ))}
+    </div>
+  );
+}
+
 const UserMessage = memo(function UserMessage({
   environmentId,
   message,

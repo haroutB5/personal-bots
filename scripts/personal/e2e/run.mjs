@@ -1,13 +1,17 @@
 // Runs the phone e2e smoke journeys against one throwaway server.
 //   node run.mjs --url <http://127.0.0.1:port> --pair <pairing link> --bin <dist\bin.mjs> --out <dir>
 //                [--journeys id,id] [--channel chrome|msedge]
+//                [--name <throwaway name> --tw <throwaway-server.ps1> --root <its root>]  (journeys that stop and
+//                restart the server, e.g. offline-queue, need these three)
 // Normally started by scripts\personal\e2e-smoke.ps1, which owns the server (start, stop, root
 // deletion). Exit code: 0 all passed, 1 a journey failed, 2 setup failed.
 // A journey also fails on any uncaught page error or unhandled rejection that is not on the explicit
 // allowlist in page-errors.mjs (empty by default).
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 import { JOURNEYS, SELFTEST_JOURNEYS } from "./journeys.mjs";
+import { OFFLINE_JOURNEYS } from "./offlineQueue.mjs";
 import { describePageErrors, splitPageErrors } from "./page-errors.mjs";
 import {
   JOURNEY_LIMIT_MS,
@@ -48,8 +52,32 @@ const wanted = args.journeys
       .filter(Boolean)
   : null;
 const selected = wanted
-  ? [...JOURNEYS, ...SELFTEST_JOURNEYS].filter((journey) => wanted.includes(journey.id))
+  ? [...JOURNEYS, ...OFFLINE_JOURNEYS, ...SELFTEST_JOURNEYS].filter((journey) =>
+      wanted.includes(journey.id),
+    )
   : JOURNEYS;
+
+/**
+ * Takes the throwaway server away and brings it back (same root, same port) for a journey that needs the
+ * laptop to disappear. Only the recorded PID is stopped, by throwaway-server.ps1 itself.
+ */
+function serverControl() {
+  if (!args.name || !args.tw) return null;
+  const run = (flag) => {
+    const result = NodeChildProcess.spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", args.tw, flag, args.name],
+      { encoding: "utf8", timeout: 240_000 },
+    );
+    if (result.status !== 0) {
+      throw new Error(
+        `throwaway-server.ps1 ${flag} ${args.name} failed (exit ${result.status}): ${(result.stdout + result.stderr).trim().slice(-300)}`,
+      );
+    }
+  };
+  return { down: async () => run("-Down"), up: async () => run("-Up") };
+}
+const server = serverControl();
 if (selected.length === 0) {
   console.error(
     `No journey matches ${args.journeys}. Known: ${JOURNEYS.map((j) => j.id).join(", ")}`,
@@ -79,13 +107,11 @@ try {
     const { context, page, errors } = await openPhone(browser, origin, storageState);
     let failure = null;
     try {
+      const limitMs = journey.limitMs ?? JOURNEY_LIMIT_MS;
       await Promise.race([
-        journey.run({ page, context, origin, step }),
+        journey.run({ page, context, origin, step, server, root: args.root }),
         new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`journey exceeded ${JOURNEY_LIMIT_MS} ms`)),
-            JOURNEY_LIMIT_MS,
-          ),
+          setTimeout(() => reject(new Error(`journey exceeded ${limitMs} ms`)), limitMs),
         ),
       ]);
       // Give a background throw or rejection a moment to surface before judging the journey.

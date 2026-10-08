@@ -15,6 +15,9 @@ Stop   (-Stop <n>): stops only the PID recorded in the root and its child tree (
        command line still names that release and root), then deletes the root. Reparse points (junctions, symlinks) inside the
        root are unlinked and never followed. Nothing else is touched; nothing is killed by name.
 Pair   (-Pair <n>): prints a fresh single-use pairing link for a running throwaway server.
+Down   (-Down <n>): stops only the recorded server (same PID check as -Stop) and KEEPS the root, so a test can lose the
+       laptop on purpose (the phone's offline send queue). The browser's pairing and the data stay valid.
+Up     (-Up <n>): starts the same root again on the same port and waits until it answers. Pair with -Down.
 List   (-List): the throwaway roots under %TEMP% and whether their server runs.
 
 Two fake Claude CLIs are copied from scripts\personal\testing\fake-claude into <root>\fake:
@@ -35,10 +38,12 @@ param(
     [Parameter(ParameterSetName = 'Start', Mandatory = $true)][string]$Name,
     [Parameter(ParameterSetName = 'Start', Mandatory = $true)][string]$Release,
     [Parameter(ParameterSetName = 'Start')][int]$Port = 0,
-    [Parameter(ParameterSetName = 'Start')][int]$StartTimeoutSeconds = 300,
-    [Parameter(ParameterSetName = 'Start')][string]$Node,
+    [Parameter(ParameterSetName = 'Start')][Parameter(ParameterSetName = 'Up')][int]$StartTimeoutSeconds = 300,
+    [Parameter(ParameterSetName = 'Start')][Parameter(ParameterSetName = 'Up')][Parameter(ParameterSetName = 'Pair')][string]$Node,
     [Parameter(ParameterSetName = 'Stop', Mandatory = $true)][string]$Stop,
     [Parameter(ParameterSetName = 'Pair', Mandatory = $true)][string]$Pair,
+    [Parameter(ParameterSetName = 'Down', Mandatory = $true)][string]$Down,
+    [Parameter(ParameterSetName = 'Up', Mandatory = $true)][string]$Up,
     [Parameter(ParameterSetName = 'List', Mandatory = $true)][switch]$List,
     [switch]$Json
 )
@@ -186,6 +191,53 @@ function Show-Result {
     foreach ($key in $Info.Keys) { Write-Output ('{0,-9} {1}' -f ($key + ':'), $Info[$key]) }
 }
 
+# Starts the server for a root (fresh or resumed) and returns the process. The environment is the test default:
+# a Sonnet seed, the fake CLIs' pid dir, a headless browser, no auto connect.
+function Start-TwServer {
+    param([string]$TwName, [string]$TwRoot, [string]$NodeExe, [string]$Bin, [int]$ServerPort)
+    $pidDir = Join-Path $TwRoot 'fake-pids'
+    Clear-DevOriginEnv
+    $envSet = [ordered]@{
+        PERSONAL_SEED_MODEL               = 'claude-sonnet-5-5'
+        FAKE_CLAUDE_PID_DIR               = $pidDir
+        T3CODE_PERSONAL_BROWSER_HEADLESS  = '1'
+        T3CODE_AUTO_CONNECT               = 'false'
+        T3CODE_ENVIRONMENT_LABEL          = ('throwaway ' + $TwName)
+    }
+    $previousEnv = @{}
+    foreach ($key in $envSet.Keys) {
+        $previousEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+        [Environment]::SetEnvironmentVariable($key, [string]$envSet[$key], 'Process')
+    }
+    try {
+        # The detached cmd.exe launch the release scripts use: output goes to the log from inside cmd.
+        # A process started with redirected handles would hold the pipe of a caller that captures this
+        # script's output ($info = script.ps1 -Json | ConvertFrom-Json) open until the server exits.
+        return (Start-PbServeProcess -NodeExe $NodeExe -BinPath $Bin -BaseDir $TwRoot -LogFile (Join-Path $TwRoot 'server.log') `
+                -WorkingDirectory $TwRoot -Port $ServerPort -HostName '127.0.0.1')
+    } finally {
+        foreach ($key in $envSet.Keys) {
+            [Environment]::SetEnvironmentVariable($key, $previousEnv[$key], 'Process')
+        }
+    }
+}
+
+# True once the server answers /version.txt; false when the process exited or the time ran out.
+function Wait-TwUp {
+    param($Proc, [string]$Origin, [int]$TimeoutSeconds)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($Proc.HasExited) { return $false }
+        try {
+            $response = Invoke-WebRequest -Uri ($Origin + '/version.txt') -UseBasicParsing -TimeoutSec 2
+            if ($response.StatusCode -eq 200) { return $true }
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    return $false
+}
+
 # ---------------------------------------------------------------- List
 if ($List) {
     $temp = [System.IO.Path]::GetTempPath().TrimEnd('\')
@@ -237,6 +289,54 @@ if ($PSCmdlet.ParameterSetName -eq 'Stop') {
     exit 0
 }
 
+# ---------------------------------------------------------------- Down
+if ($PSCmdlet.ParameterSetName -eq 'Down') {
+    $root = Get-TwRoot -TwName $Down
+    $record = Read-TwRecord -Root $root
+    if (-not $record) { throw "No throwaway root for '$Down'." }
+    if (-not (Test-TwRunning -Record $record)) {
+        Write-Output "'$Down' is not running (PID $($record.pid) is not this server). Nothing stopped."
+        exit 0
+    }
+    if (-not (Stop-PbProcessTree -ProcessId ([int]$record.pid))) {
+        Write-Error "PID $($record.pid) is still alive after taskkill."
+        exit 1
+    }
+    # The port must be free before a caller treats the laptop as gone.
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline -and @(Get-NetTCPConnection -LocalPort ([int]$record.port) -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
+        Start-Sleep -Milliseconds 200
+    }
+    Write-Output "Down '$Down': stopped PID $($record.pid); the root is kept."
+    exit 0
+}
+
+# ---------------------------------------------------------------- Up
+if ($PSCmdlet.ParameterSetName -eq 'Up') {
+    $root = Get-TwRoot -TwName $Up
+    $record = Read-TwRecord -Root $root
+    if (-not $record) { throw "No throwaway root for '$Up'." }
+    if (Test-TwRunning -Record $record) {
+        Write-Output "'$Up' is already running (PID $($record.pid))."
+        exit 0
+    }
+    $nodeExe = Resolve-NodeExe -Node $Node
+    $origin = 'http://127.0.0.1:' + $record.port
+    $proc = Start-TwServer -TwName $Up -TwRoot $root -NodeExe $nodeExe -Bin ([string]$record.bin) -ServerPort ([int]$record.port)
+    $record.pid = $proc.Id
+    $record.startedAt = (Get-Date).ToString('o')
+    Write-TwText -Path (Join-Path $root $RecordName) -Text ($record | ConvertTo-Json)
+    if (-not (Wait-TwUp -Proc $proc -Origin $origin -TimeoutSeconds $StartTimeoutSeconds)) {
+        Write-Error "'$Up' did not come back on $origin."
+        exit 1
+    }
+    $listener = @(Get-NetTCPConnection -LocalPort ([int]$record.port) -State Listen -ErrorAction SilentlyContinue)
+    $record | Add-Member -NotePropertyName serverPid -NotePropertyValue $(if ($listener.Count -gt 0) { $listener[0].OwningProcess } else { $null }) -Force
+    Write-TwText -Path (Join-Path $root $RecordName) -Text ($record | ConvertTo-Json)
+    Write-Output "Up '$Up': PID $($proc.Id) on $origin."
+    exit 0
+}
+
 # ---------------------------------------------------------------- Pair
 if ($PSCmdlet.ParameterSetName -eq 'Pair') {
     $root = Get-TwRoot -TwName $Pair
@@ -262,31 +362,7 @@ New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
 New-TwFakeClaude -Root $root -NodeExe $nodeExe
 Write-TwSettings -Root $root
 
-Clear-DevOriginEnv
-$envSet = [ordered]@{
-    PERSONAL_SEED_MODEL               = 'claude-sonnet-5-5'
-    FAKE_CLAUDE_PID_DIR               = $pidDir
-    T3CODE_PERSONAL_BROWSER_HEADLESS  = '1'
-    T3CODE_AUTO_CONNECT               = 'false'
-    T3CODE_ENVIRONMENT_LABEL          = ('throwaway ' + $Name)
-}
-$previousEnv = @{}
-foreach ($key in $envSet.Keys) {
-    $previousEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
-    [Environment]::SetEnvironmentVariable($key, [string]$envSet[$key], 'Process')
-}
-$proc = $null
-try {
-    # The detached cmd.exe launch the release scripts use: output goes to the log from inside cmd.
-    # A process started with redirected handles would hold the pipe of a caller that captures this
-    # script's output ($info = script.ps1 -Json | ConvertFrom-Json) open until the server exits.
-    $proc = Start-PbServeProcess -NodeExe $nodeExe -BinPath $bin -BaseDir $root -LogFile (Join-Path $root 'server.log') `
-        -WorkingDirectory $root -Port $Port -HostName '127.0.0.1'
-} finally {
-    foreach ($key in $envSet.Keys) {
-        [Environment]::SetEnvironmentVariable($key, $previousEnv[$key], 'Process')
-    }
-}
+$proc = Start-TwServer -TwName $Name -TwRoot $root -NodeExe $nodeExe -Bin $bin -ServerPort $Port
 
 $record = [ordered]@{
     name      = $Name
@@ -299,17 +375,7 @@ $record = [ordered]@{
 }
 Write-TwText -Path (Join-Path $root $RecordName) -Text ($record | ConvertTo-Json)
 
-$up = $false
-$deadline = (Get-Date).AddSeconds($StartTimeoutSeconds)
-while ((Get-Date) -lt $deadline) {
-    if ($proc.HasExited) { break }
-    try {
-        $response = Invoke-WebRequest -Uri ($origin + '/version.txt') -UseBasicParsing -TimeoutSec 2
-        if ($response.StatusCode -eq 200) { $up = $true; break }
-    } catch {
-        Start-Sleep -Milliseconds 500
-    }
-}
+$up = Wait-TwUp -Proc $proc -Origin $origin -TimeoutSeconds $StartTimeoutSeconds
 if (-not $up) {
     $tail = ''
     foreach ($log in @('server.log')) {

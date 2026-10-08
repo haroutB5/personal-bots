@@ -181,6 +181,7 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
   let again = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  const isDisposed = () => disposed;
 
   const trigger = (): void => {
     if (disposed) return;
@@ -199,8 +200,8 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
         do {
           again = false;
           result = await runOutboxPass(deps);
-        } while (again && !disposed && deps.isConnected());
-        if (result.retryInMs !== null && !disposed && deps.isConnected()) {
+        } while (again && !isDisposed() && deps.isConnected());
+        if (result.retryInMs !== null && !isDisposed() && deps.isConnected()) {
           timer = setTimeout(trigger, result.retryInMs);
         }
       } finally {

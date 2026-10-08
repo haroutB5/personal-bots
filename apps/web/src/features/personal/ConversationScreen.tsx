@@ -143,7 +143,7 @@ import {
   serverTurnLabel,
   waitingLabelsByThread,
 } from "./delegationModel";
-import { MessageList, type PendingOutgoingMessage } from "./MessageList";
+import { MessageList, type PendingOutgoingMessage, QueuedMessageList } from "./MessageList";
 import {
   deriveQuestionCards,
   deriveUserInputResolutions,
@@ -1629,7 +1629,17 @@ export function ConversationScreen({
               onRetry={retryThread}
             />
           ) : (
-            <p aria-live="polite">Loading chat</p>
+            <div className="flex w-full flex-col items-center gap-4">
+              <p aria-live="polite">Loading chat</p>
+              {queuedMessages.rows.length > 0 ? (
+                <QueuedMessageList
+                  rows={queuedMessages.rows}
+                  onCancel={queuedMessages.onCancel}
+                  onEdit={queuedMessages.onEdit}
+                  onRetry={queuedMessages.onRetry}
+                />
+              ) : null}
+            </div>
           )}
         </div>
       )}

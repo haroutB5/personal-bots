@@ -55,6 +55,30 @@ the network. Add an entry only for an error that a current run actually prints, 
 and keeps its artifacts. `selftest-pageerror` and `selftest-rejection` pass their own steps, then raise one uncaught
 error or one unhandled rejection: each must exit `1` with the page-error line above.
 
+## `offline-queue`: the phone's send queue against a server that really goes away (1.66.10)
+
+Not one of the five, because it stops and restarts the throwaway server and takes about a minute:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\e2e-smoke.ps1 -Release <sha12> -Journey offline-queue
+```
+
+The service worker saves the app shell first (as on a phone that has been open a while), then
+`throwaway-server.ps1 -Down <name>` stops the server (only its recorded PID; the root is kept) and `-Up <name>` starts the
+same root again on the same port. In between, the journey, in a 390x844 dark phone:
+
+1. sees the banner and composer say messages are kept, with Send still enabled;
+2. sends three messages (each shows "Waiting to send", the banner counts them), cancels one, edits one and retypes it;
+3. reloads the page while the server is down (the queue is still in `localStorage` on the device);
+4. brings the server back and reads **the server's own database** (`orchestration_events`, read only): the surviving
+   messages arrived in the order typed, one message and one turn each, nothing cancelled or edited-away arrived, and
+   the queue on the device is empty;
+5. routes the phone's socket (`routeWebSocket`) so the server receives a message but its reply never reaches the phone,
+   then drops the socket: the phone resends under the same ids and the database still holds one message and one turn.
+
+Journeys get `server` (`down()`, `up()`) and `root` from `run.mjs` (`--name`, `--tw`, `--root`, passed by
+`e2e-smoke.ps1`); a journey may set `limitMs` above the 30 s default.
+
 ## How build and release call it
 
 - **Builder / CTO, before handing a release to DevOps:** `build.ps1 -CopyExternals -E2E` (a build only stages; `-Activate`

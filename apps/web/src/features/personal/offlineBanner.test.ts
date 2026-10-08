@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { offlineBannerText } from "./offlineBanner";
+import { offlineBannerHint, offlineBannerText, offlineComposerNotice } from "./offlineBanner";
 import {
   applicationServerKeyFrom,
   isNavigablePath,
@@ -28,6 +28,32 @@ describe("offlineBannerText", () => {
       "Laptop offline · last contact Yesterday",
     );
     expect(offlineBannerText("offline", null, NOW)).toBe("Laptop offline");
+  });
+});
+
+describe("what the banner and composer promise while the laptop is away", () => {
+  it("the composer says a sent message is kept and goes out on reconnect, never that it is blocked", () => {
+    expect(offlineComposerNotice("connected")).toBeNull();
+    for (const phase of ["offline", "error"] as const) {
+      expect(offlineComposerNotice(phase)).toBe(
+        "Your laptop is offline. Messages you send now are saved on this device and go out when it reconnects.",
+      );
+    }
+    for (const phase of ["connecting", "reconnecting", "available"] as const) {
+      expect(offlineComposerNotice(phase)).toBe(
+        "Reconnecting to your laptop. Messages you send now are saved here and go out when it's back.",
+      );
+    }
+  });
+
+  it("the banner hint says messages send when it reconnects, and counts the waiting ones", () => {
+    expect(offlineBannerHint(0)).toBe("Messages you send will go out when it reconnects.");
+    expect(offlineBannerHint(1)).toBe(
+      "1 message is waiting to send. It goes out when it reconnects.",
+    );
+    expect(offlineBannerHint(3)).toBe(
+      "3 messages are waiting to send. They go out when it reconnects.",
+    );
   });
 });
 

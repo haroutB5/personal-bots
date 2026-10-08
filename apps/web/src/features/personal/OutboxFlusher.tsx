@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -171,15 +171,21 @@ export function OutboxFlusher(): null {
     sendEntryRef.current = sendEntry;
   });
 
-  const flusher = useMemo(() => {
-    if (environmentId === null) return null;
-    return createOutboxFlusher({
+  // One flusher per laptop, made in an effect (it reads the refs above only when it runs).
+  const flusherRef = useRef<ReturnType<typeof createOutboxFlusher> | null>(null);
+  useEffect(() => {
+    if (environmentId === null) return;
+    const flusher = createOutboxFlusher({
       environmentId,
       isConnected: () => connectedRef.current,
       send: (entry) => sendEntryRef.current(environmentId, entry),
     });
+    flusherRef.current = flusher;
+    return () => {
+      flusher.dispose();
+      flusherRef.current = null;
+    };
   }, [environmentId]);
-  useEffect(() => () => flusher?.dispose(), [flusher]);
 
   // Anything runnable: waiting entries of this laptop. A new message, or the
   // connection coming back, starts a pass; a failed entry waits for its Retry.
@@ -188,9 +194,9 @@ export function OutboxFlusher(): null {
     .map((entry) => entry.id)
     .join("|");
   useEffect(() => {
-    if (!connected || flusher === null || runnableKey.length === 0) return;
-    flusher.trigger();
-  }, [connected, flusher, runnableKey]);
+    if (!connected || runnableKey.length === 0) return;
+    flusherRef.current?.trigger();
+  }, [connected, environmentId, runnableKey]);
 
   // Bytes of messages that left the queue without their cleanup (a crash).
   const idsKey = entries.map((entry) => entry.id).join("|");

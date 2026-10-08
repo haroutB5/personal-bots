@@ -2,6 +2,9 @@ import type { JSX } from "react";
 
 import { WifiOff } from "lucide-react";
 
+import { offlineBannerHint } from "./offlineBanner";
+import { useOutboxCount } from "./outbox";
+
 /**
  * Cold launch with no way to reach the laptop (phone offline, tunnel down,
  * laptop asleep). Replaces the upstream crash screen, which dumps a stack
@@ -9,6 +12,9 @@ import { WifiOff } from "lucide-react";
  * Rendered by the root error boundary for personal paths only.
  */
 export function PersonalUnreachableScreen({ onRetry }: { onRetry: () => void }): JSX.Element {
+  // Messages typed while the laptop was away are still on this device (outbox.ts):
+  // say so, because the app closing and opening again must not look like losing them.
+  const waiting = useOutboxCount();
   return (
     <div className="personal-app flex h-dvh flex-col items-center justify-center bg-[var(--personal-bg)] px-8 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-center">
       <div
@@ -21,6 +27,9 @@ export function PersonalUnreachableScreen({ onRetry }: { onRetry: () => void }):
           Bots could not reach your laptop. Check it is on and online, and that this phone has a
           connection.
         </p>
+        {waiting > 0 ? (
+          <p className="text-[15px] leading-[1.45] font-medium">{offlineBannerHint(waiting)}</p>
+        ) : null}
       </div>
       <button
         type="button"

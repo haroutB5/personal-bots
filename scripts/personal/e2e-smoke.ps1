@@ -13,7 +13,7 @@ scripts\personal\e2e\journeys.mjs:
   chats-search      Chats search finds a sent message and opens its chat
   long-press-reply  long-press a message -> Reply -> the sent message carries its quote
 
-Each journey must finish inside 30 s and the whole suite inside -SuiteTimeoutSeconds (default 180). It always stops its
+Each journey must finish inside 30 s and the whole suite inside -SuiteTimeoutSeconds (default 180; 420 when -Journey names offline-queue). It always stops its
 server by PID and deletes its root (throwaway-server.ps1 -Stop), checks the root and the port are gone, and removes its
 artifacts on a pass. On a failure it keeps a screenshot and the page text per failed journey in the artifacts folder.
 It never touches a live data root or the real Claude account (the fake CLI answers everything), and the browser is
@@ -28,7 +28,8 @@ Chrome (set E2E_BROWSER_CHANNEL=msedge for Edge).
 A release folder (has dist\bin.mjs), a built worktree (apps\server\dist\bin.mjs) or a sha12 under ~\.personal-bots\releases.
 
 .PARAMETER Journey
-Comma-separated journey ids to run instead of all five (for a re-test of one failure).
+Comma-separated journey ids to run instead of all five (for a re-test of one failure). `offline-queue` is not one of
+the five: it stops and restarts the throwaway server to prove the phone's offline send queue (e2e\offlineQueue.mjs).
 
 .PARAMETER Json
 Prints one JSON line with the result at the end (for a release waiter or a gate).
@@ -44,7 +45,7 @@ param(
     [string]$Name,
     [string]$ArtifactsDir,
     [string]$Node,
-    [int]$SuiteTimeoutSeconds = 180,
+    [int]$SuiteTimeoutSeconds = 0,
     [switch]$Json
 )
 
@@ -52,6 +53,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $twScript = Join-Path $PSScriptRoot 'throwaway-server.ps1'
+# The five smoke journeys fit 180 s. A journey that stops and restarts the server (offline-queue) needs longer.
+if ($SuiteTimeoutSeconds -le 0) { $SuiteTimeoutSeconds = if ($Journey -match 'offline-queue') { 420 } else { 180 } }
 $runner = Join-Path $PSScriptRoot 'e2e\run.mjs'
 $nodeExe = Resolve-NodeExe -Node $Node
 if (-not $Name) { $Name = 'e2e-{0}-{1}' -f (Get-Date -Format 'MMddHHmmss'), $PID }
@@ -89,7 +92,8 @@ try {
     New-Item -ItemType Directory -Force -Path $ArtifactsDir | Out-Null
     $stdout = Join-Path $ArtifactsDir 'runner.out.txt'
     $stderr = Join-Path $ArtifactsDir 'runner.err.txt'
-    $runnerArgs = @($runner, '--url', $server.URL, '--pair', $server.Pairing, '--bin', [string]$record.bin, '--out', $ArtifactsDir)
+    $runnerArgs = @($runner, '--url', $server.URL, '--pair', $server.Pairing, '--bin', [string]$record.bin, '--out', $ArtifactsDir,
+        '--name', $Name, '--tw', $twScript, '--root', [string]$server.Root)
     if ($Journey) { $runnerArgs += @('--journeys', $Journey) }
     if ($env:E2E_BROWSER_CHANNEL) { $runnerArgs += @('--channel', $env:E2E_BROWSER_CHANNEL) }
     $quoted = ($runnerArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '

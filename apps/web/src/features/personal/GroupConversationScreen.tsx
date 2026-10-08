@@ -57,6 +57,7 @@ import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
 import { threadLoadProblem } from "./threadLoadProblem";
 import {
   MessageList,
+  QueuedMessageList,
   type GroupSpeakerPresentation,
   type PendingOutgoingMessage,
 } from "./MessageList";
@@ -820,7 +821,17 @@ export function GroupConversationScreen({
               onRetry={retryThread}
             />
           ) : (
-            <p aria-live="polite">Loading group</p>
+            <div className="flex w-full flex-col items-center gap-4">
+              <p aria-live="polite">Loading group</p>
+              {queuedMessages.rows.length > 0 ? (
+                <QueuedMessageList
+                  rows={queuedMessages.rows}
+                  onCancel={queuedMessages.onCancel}
+                  onEdit={queuedMessages.onEdit}
+                  onRetry={queuedMessages.onRetry}
+                />
+              ) : null}
+            </div>
           )}
         </div>
       )}
