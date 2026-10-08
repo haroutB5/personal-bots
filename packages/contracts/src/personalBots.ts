@@ -12,6 +12,7 @@ import {
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection, OrchestrationMessageRole } from "./orchestration.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { UsageProviderKind } from "./usage.ts";
 
 /**
  * Driver kinds whose adapter actually carries a personal bot's persona to
@@ -646,9 +647,23 @@ export const PersonalBotTokenUsageModel = Schema.Struct({
 });
 export type PersonalBotTokenUsageModel = typeof PersonalBotTokenUsageModel.Type;
 
+/**
+ * API price estimate for a group of tokens (USD, LiteLLM list rates, cached
+ * input at the cached rate; a provider's own reported cost where it gives one).
+ * `costUsd` covers only the priced tokens; `unpricedTokens` are the tokens of
+ * models with no rate (e.g. a brand new or free model), which add nothing to
+ * `costUsd` and are never guessed. A flat subscription is not charged this.
+ */
+export const PersonalBotTokenUsageCost = Schema.Struct({
+  costUsd: Schema.Number,
+  unpricedTokens: NonNegativeInt,
+});
+export type PersonalBotTokenUsageCost = typeof PersonalBotTokenUsageCost.Type;
+
 export const PersonalBotTokenUsageRow = Schema.Struct({
   botId: PersonalBotId,
   totals: PersonalBotTokenUsageTotals,
+  ...PersonalBotTokenUsageCost.fields,
   /** Models the bot's chats ran on in the window, most tokens first (at most five). */
   models: Schema.Array(PersonalBotTokenUsageModel),
   /** Distinct provider sessions that used tokens in the window. */
@@ -659,9 +674,19 @@ export type PersonalBotTokenUsageRow = typeof PersonalBotTokenUsageRow.Type;
 /** A sum with no bot behind it: tokens of sessions no live chat points to. */
 export const PersonalBotTokenUsageSum = Schema.Struct({
   totals: PersonalBotTokenUsageTotals,
+  ...PersonalBotTokenUsageCost.fields,
   sessions: NonNegativeInt,
 });
 export type PersonalBotTokenUsageSum = typeof PersonalBotTokenUsageSum.Type;
+
+/** One provider's tokens and estimate in a window: Claude, Codex or OpenCode. Counts every session, Outside Bots included. */
+export const PersonalBotTokenUsageProviderRow = Schema.Struct({
+  provider: UsageProviderKind,
+  totals: PersonalBotTokenUsageTotals,
+  ...PersonalBotTokenUsageCost.fields,
+  sessions: NonNegativeInt,
+});
+export type PersonalBotTokenUsageProviderRow = typeof PersonalBotTokenUsageProviderRow.Type;
 
 export const PersonalBotTokenUsageWindow = Schema.Struct({
   id: PersonalBotTokenUsageWindowId,
@@ -670,6 +695,8 @@ export const PersonalBotTokenUsageWindow = Schema.Struct({
   untilDay: TrimmedNonEmptyString,
   /** Bots that used tokens in the window, no particular order. Bots with none have no row. */
   rows: Schema.Array(PersonalBotTokenUsageRow),
+  /** One row per provider that used tokens, most tokens first. Their tokens add up to `total`. */
+  providers: Schema.Array(PersonalBotTokenUsageProviderRow),
   /** Sessions that map to no bot (deleted chats, work outside the app). */
   other: PersonalBotTokenUsageSum,
   /** Everything counted: the bots' rows plus `other`. */

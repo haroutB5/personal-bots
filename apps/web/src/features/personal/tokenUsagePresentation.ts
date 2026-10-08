@@ -1,9 +1,11 @@
 import type {
+  PersonalBotTokenUsageCost,
   PersonalBotTokenUsageResult,
   PersonalBotTokenUsageStatus,
   PersonalBotTokenUsageTotals,
   PersonalBotTokenUsageWindow,
   PersonalBotTokenUsageWindowId,
+  UsageProviderKind,
 } from "@t3tools/contracts";
 
 /**
@@ -88,6 +90,100 @@ export function formatSplit(split: TokenSplit): string {
   return `in ${formatTokenCount(split.input)} · cached ${formatTokenCount(split.cached)} · out ${formatTokenCount(split.output)}`;
 }
 
+/**
+ * The API price estimate beside a token count. `partial` is a count where some
+ * tokens have a price and some do not; `unpriced` is one where none do; `none`
+ * is no tokens at all, or a server that sent no cost.
+ */
+export type TokenCostView =
+  | { readonly kind: "none" }
+  | { readonly kind: "unpriced" }
+  | { readonly kind: "priced"; readonly usd: number }
+  | { readonly kind: "partial"; readonly usd: number };
+
+/**
+ * `$0.42`, `<$0.01` for a real but tiny amount, `$12.40`, `$1,234` from a
+ * thousand (cents stop mattering), `$12.3k` from ten thousand. Short enough for
+ * the 64 px column beside a bot's tokens.
+ */
+export function formatUsd(usd: number): string {
+  const value = Number.isFinite(usd) && usd > 0 ? usd : 0;
+  if (value === 0) return "$0.00";
+  if (value < 0.005) return "<$0.01";
+  if (value < 1000) return `$${value.toFixed(2)}`;
+  if (value < 10_000) return `$${Math.round(value).toLocaleString("en-US")}`;
+  return `$${(value / 1000).toFixed(1)}k`;
+}
+
+/** Cost view for `tokens` tokens of which `cost.unpricedTokens` have no price. */
+export function costViewOf(
+  tokens: number,
+  cost: Partial<PersonalBotTokenUsageCost> | undefined,
+): TokenCostView {
+  if (tokens <= 0 || cost === undefined) return { kind: "none" };
+  const usd = cost.costUsd;
+  const unpriced = cost.unpricedTokens;
+  if (typeof usd !== "number" || typeof unpriced !== "number") return { kind: "none" };
+  if (unpriced >= tokens) return { kind: "unpriced" };
+  return unpriced > 0 ? { kind: "partial", usd } : { kind: "priced", usd };
+}
+
+/** Short: `$12.40`, `$12.40+` (some tokens unpriced), `not priced`. Empty for none. */
+export function formatCostCompact(view: TokenCostView): string {
+  switch (view.kind) {
+    case "none":
+      return "";
+    case "unpriced":
+      return "not priced";
+    case "priced":
+      return formatUsd(view.usd);
+    case "partial":
+      return `${formatUsd(view.usd)}+`;
+  }
+}
+
+/** Full: `$12.40 + unpriced`. For the places that have the width. */
+export function formatCostFull(view: TokenCostView): string {
+  return view.kind === "partial" ? `${formatUsd(view.usd)} + unpriced` : formatCostCompact(view);
+}
+
+/** For a screen reader: the same figure in words. */
+export function costAriaLabel(view: TokenCostView): string {
+  switch (view.kind) {
+    case "none":
+      return "";
+    case "unpriced":
+      return "estimated cost not priced";
+    case "priced":
+      return `estimated cost ${formatUsd(view.usd)}`;
+    case "partial":
+      return `estimated cost ${formatUsd(view.usd)} plus tokens that are not priced`;
+  }
+}
+
+const PROVIDER_LABELS: Readonly<Record<UsageProviderKind, string>> = {
+  claude: "Claude",
+  codex: "GPT / Codex",
+  opencode: "OpenCode",
+  cursor: "Cursor",
+  grok: "Grok",
+  antigravity: "Antigravity",
+};
+
+export function providerLabel(provider: UsageProviderKind): string {
+  return PROVIDER_LABELS[provider];
+}
+
+export interface TokenUsageProviderView {
+  readonly provider: UsageProviderKind;
+  readonly label: string;
+  readonly tokens: number;
+  /** Share of everything counted in the window (Outside Bots included), 0 to 100. */
+  readonly sharePercent: number;
+  readonly cost: TokenCostView;
+  readonly split: TokenSplit;
+}
+
 export interface TokenUsageBot {
   readonly botId: string;
   readonly name: string;
@@ -103,15 +199,20 @@ export interface TokenUsageRowView {
   readonly rank: 1 | 2 | 3 | null;
   readonly split: TokenSplit;
   readonly sessions: number;
+  readonly cost: TokenCostView;
 }
 
 export interface TokenUsageTable {
   readonly rows: ReadonlyArray<TokenUsageRowView>;
+  /** Tokens by provider, most first. They add up to `total`. */
+  readonly providers: ReadonlyArray<TokenUsageProviderView>;
+  /** The estimate for everything counted. */
+  readonly totalCost: TokenCostView;
   /**
    * Outside Bots: tokens of sessions no bot owns (the owner's own Claude Code,
    * older and deleted sessions), plus any bot this screen does not list.
    */
-  readonly other: { readonly tokens: number };
+  readonly other: { readonly tokens: number; readonly cost: TokenCostView };
   /** What the listed bots used. Rows' shares and bars are over this. */
   readonly botsTotal: number;
   /** Everything counted: the bots plus Outside Bots. */
@@ -151,16 +252,26 @@ export function buildTokenUsageTable(input: {
 
   const used = new Map<
     string,
-    { tokens: number; totals: PersonalBotTokenUsageTotals; sessions: number }
+    {
+      tokens: number;
+      totals: PersonalBotTokenUsageTotals;
+      sessions: number;
+      cost: Partial<PersonalBotTokenUsageCost>;
+    }
   >();
   let otherTokens = totalOf(window.other.totals);
+  // A removed bot's use joins Outside Bots, estimate included.
+  let otherUsd = window.other.costUsd ?? 0;
+  let otherUnpriced = window.other.unpricedTokens ?? 0;
   for (const row of window.rows) {
     const tokens = totalOf(row.totals);
     if (tokens === 0) continue;
     if (byId.has(row.botId)) {
-      used.set(row.botId, { tokens, totals: row.totals, sessions: row.sessions });
+      used.set(row.botId, { tokens, totals: row.totals, sessions: row.sessions, cost: row });
     } else {
       otherTokens += tokens;
+      otherUsd += row.costUsd ?? 0;
+      otherUnpriced += row.unpricedTokens ?? 0;
     }
   }
 
@@ -177,6 +288,7 @@ export function buildTokenUsageTable(input: {
       tokens: entry?.tokens ?? 0,
       totals: entry?.totals ?? EMPTY_TOTALS,
       sessions: entry?.sessions ?? 0,
+      cost: costViewOf(entry?.tokens ?? 0, entry?.cost),
     };
   });
   unranked.sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
@@ -192,12 +304,33 @@ export function buildTokenUsageTable(input: {
       rank,
       split: splitOf(entry.totals),
       sessions: entry.sessions,
+      cost: entry.cost,
     };
   });
 
+  const providers = (window.providers ?? [])
+    .map((entry): TokenUsageProviderView => {
+      const tokens = totalOf(entry.totals);
+      return {
+        provider: entry.provider,
+        label: providerLabel(entry.provider),
+        tokens,
+        sharePercent: share(tokens, total),
+        cost: costViewOf(tokens, entry),
+        split: splitOf(entry.totals),
+      };
+    })
+    .filter((entry) => entry.tokens > 0)
+    .toSorted((a, b) => b.tokens - a.tokens || a.label.localeCompare(b.label));
+
   return {
     rows,
-    other: { tokens: otherTokens },
+    providers,
+    totalCost: costViewOf(total, window.total),
+    other: {
+      tokens: otherTokens,
+      cost: costViewOf(otherTokens, { costUsd: otherUsd, unpricedTokens: otherUnpriced }),
+    },
     botsTotal,
     total,
     sinceDay: window.sinceDay,
@@ -244,7 +377,15 @@ export const TOKEN_USAGE_MAX_POLLS = 30;
 export function tokenUsageRowLabel(row: TokenUsageRowView): string {
   if (row.tokens === 0) return `${row.name}: no tokens used. Open ${row.name}.`;
   const rank = row.rank === null ? "" : `Number ${row.rank} user. `;
-  return `${row.name}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of the bots' use. ${rank}${formatSplit(row.split)}. Open ${row.name}.`;
+  const cost = costAriaLabel(row.cost);
+  const costSentence = cost === "" ? "" : ` ${cost[0]!.toUpperCase()}${cost.slice(1)}.`;
+  return `${row.name}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of the bots' use. ${rank}${formatSplit(row.split)}.${costSentence} Open ${row.name}.`;
+}
+
+/** What a provider row reads as to a screen reader. */
+export function tokenUsageProviderLabel(row: TokenUsageProviderView): string {
+  const cost = costAriaLabel(row.cost);
+  return `${row.label}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of all use${cost === "" ? "" : `, ${cost}`}.`;
 }
 
 /** `5 Sep to 4 Oct`, or `4 Oct` for a single day: what the window covers, for the hint line. */

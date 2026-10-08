@@ -56,8 +56,11 @@ function windowOf(
     sinceDay: id === "today" ? "2026-10-04" : id === "week" ? "2026-09-28" : "2026-09-05",
     untilDay: "2026-10-04",
     rows: rows.map(([botId, t]) => ({ botId, totals: t, models: [], sessions: 2 }) as never),
-    other: { totals: other, sessions: 1 },
+    providers: [],
+    other: { totals: other, costUsd: 0, unpricedTokens: 0, sessions: 1 },
     total: {
+      costUsd: 0,
+      unpricedTokens: 0,
       totals: {
         uncachedInputTokens: add((t) => t.uncachedInputTokens),
         cachedInputTokens: add((t) => t.cachedInputTokens),
@@ -86,6 +89,53 @@ const READY: PersonalBotTokenUsageResult = {
     ),
     windowOf("month", [["cto", totals(9_000_000, 400_000_000, 30_000_000)]], totals(1_000_000)),
   ],
+};
+
+/** The week window with providers and prices: Claude fully priced, GPT / Codex partly and not at all. */
+const PRICED: PersonalBotTokenUsageResult = {
+  ...READY,
+  windows: READY.windows.map((window) => {
+    if (window.id !== "week") return window;
+    const cost: Record<string, { costUsd: number; unpricedTokens: number }> = {
+      cto: { costUsd: 210.5, unpricedTokens: 0 },
+      backend: { costUsd: 18.25, unpricedTokens: 5_000_000 },
+      qa: { costUsd: 0, unpricedTokens: 32_000_000 },
+      designer: { costUsd: 12.34, unpricedTokens: 0 },
+    };
+    const claudeTotals = totals(
+      5_000_000 + 500_000 + 100_000,
+      100_000_000 + 4_000_000 + 800_000,
+      15_400_000 + 500_000 + 100_000,
+    );
+    const codexTotals = totals(
+      1_000_000 + 3_000_000,
+      30_000_000 + 60_000_000,
+      1_000_000 + 2_000_000,
+    );
+    return {
+      ...window,
+      rows: window.rows.map((row) => ({ ...row, ...cost[row.botId as string] })),
+      providers: [
+        // Codex first in the payload on purpose: the card sorts by tokens.
+        {
+          provider: "codex",
+          totals: codexTotals,
+          costUsd: 18.25,
+          unpricedTokens: 37_000_000,
+          sessions: 4,
+        },
+        {
+          provider: "claude",
+          totals: claudeTotals,
+          costUsd: 223.74,
+          unpricedTokens: 0,
+          sessions: 6,
+        },
+      ],
+      other: { ...window.other, costUsd: 0.9, unpricedTokens: 0 },
+      total: { ...window.total, costUsd: 241.99, unpricedTokens: 37_000_000 },
+    } as unknown as PersonalBotTokenUsageWindow;
+  }),
 };
 
 let renderer: ReactTestRenderer | undefined;
@@ -287,5 +337,96 @@ describe("TokenUsageCard", () => {
     expect(textOf(tree.root.findByType("section"))).toContain("No bot used tokens in this period.");
     expect(rowsOf(tree)).toHaveLength(5);
     expect(byTestId(tree, "token-usage-rank")).toHaveLength(0);
+  });
+
+  describe("by provider and the API price estimate", () => {
+    const providerRows = (tree: ReactTestRenderer) =>
+      tree.root.findAll(
+        (n) => n.props["data-provider-usage-row"] !== undefined && n.type === "div",
+      );
+
+    it("puts the provider block under the range switch and above the bot rows", async () => {
+      const tree = await render({ result: PRICED });
+      const text = textOf(tree.root.findByType("section"));
+      expect(text.indexOf("By provider")).toBeGreaterThan(text.indexOf("30 days"));
+      expect(text.indexOf("By provider")).toBeLessThan(text.indexOf("By bot"));
+      expect(text.indexOf("By bot")).toBeLessThan(text.indexOf("CTO"));
+    });
+
+    it("lists each provider with tokens, share and estimate, most tokens first", async () => {
+      const tree = await render({ result: PRICED });
+      const rows = providerRows(tree);
+      expect(rows.map((row) => row.props["data-provider-usage-row"])).toEqual(["claude", "codex"]);
+      const claude = textOf(rows[0]!);
+      expect(claude).toContain("Claude");
+      expect(claude).toContain("126.4M");
+      expect(claude).toContain("$223.74");
+      expect(claude).toContain("57%");
+      const codex = textOf(rows[1]!);
+      expect(codex).toContain("GPT / Codex");
+      expect(codex).toContain("97.0M");
+      expect(codex).toContain("$18.25 + unpriced");
+      expect(codex).toContain("43%");
+      expect(rows[0]!.props["aria-label"]).toBe(
+        "Claude: 126.4M tokens, 57% of all use, estimated cost $223.74.",
+      );
+    });
+
+    it("adds the providers up to the same total the bot table ends with", async () => {
+      const tree = await render({ result: PRICED });
+      const providersTotal = textOf(byTestId(tree, "token-usage-providers-total")[0]!);
+      expect(providersTotal).toContain("All providers");
+      expect(providersTotal).toContain("223.4M");
+      expect(providersTotal).toContain("$241.99 + unpriced");
+      expect(textOf(byTestId(tree, "token-usage-total")[0]!)).toBe("223.4M");
+    });
+
+    it("says the estimate is a list-price estimate, not money charged", async () => {
+      const tree = await render({ result: PRICED });
+      const note = textOf(byTestId(tree, "token-usage-price-note")[0]!);
+      expect(note).toContain("API price estimate");
+      expect(note).toContain("list API prices");
+      expect(note).toContain("not money charged");
+      expect(note).toContain("subscriptions are flat");
+    });
+
+    it("shows the estimate under each bot's share: priced, part priced, not priced, none", async () => {
+      const tree = await render({ result: PRICED });
+      const costOf = (botId: string) =>
+        rowsOf(tree)
+          .find((row) => row.props["data-bot-usage-row"] === botId)!
+          .findAll((n) => n.props["data-testid"] === "token-usage-row-cost")
+          .map(textOf);
+      expect(costOf("cto")).toEqual(["$210.50"]);
+      expect(costOf("backend")).toEqual(["$18.25+"]);
+      expect(costOf("qa")).toEqual(["not priced"]);
+      expect(costOf("designer")).toEqual(["$12.34"]);
+      // Listed but unused: no estimate to show.
+      expect(costOf("watcher")).toEqual([]);
+      const cto = rowsOf(tree).find((row) => row.props["data-bot-usage-row"] === "cto")!;
+      expect(cto.props["aria-label"]).toContain("Estimated cost $210.50.");
+    });
+
+    it("keeps the right column the width it was", async () => {
+      const tree = await render({ result: PRICED });
+      const cto = rowsOf(tree).find((row) => row.props["data-bot-usage-row"] === "cto")!;
+      const column = cto.findAll((n) => n.props.className?.toString().includes("w-[64px]"));
+      expect(column).toHaveLength(1);
+    });
+
+    it("gives Outside Bots and the total their own estimate", async () => {
+      const tree = await render({ result: PRICED });
+      expect(textOf(byTestId(tree, "token-usage-outside-cost")[0]!)).toBe("$0.90");
+      expect(textOf(byTestId(tree, "token-usage-total-cost")[0]!)).toBe("$241.99+");
+    });
+
+    it("shows no provider block, note or estimate for a window the server sent none for", async () => {
+      const tree = await render({ result: PRICED });
+      await act(async () => radios(tree)[0]!.props.onClick());
+      expect(byTestId(tree, "token-usage-providers")).toHaveLength(0);
+      expect(byTestId(tree, "token-usage-price-note")).toHaveLength(0);
+      expect(textOf(tree.root.findByType("section"))).not.toContain("By bot");
+      expect(byTestId(tree, "token-usage-row-cost")).toHaveLength(0);
+    });
   });
 });

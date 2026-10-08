@@ -41,6 +41,8 @@ const ADA_CELL: BotUsageCell = {
     outputTokens: 20,
   },
   records: 1,
+  costUsd: 0.5,
+  unpricedTokens: 0,
 };
 const ORPHAN_CELL: BotUsageCell = { ...ADA_CELL, sessionId: "claude-session-deleted-chat" };
 
@@ -171,6 +173,11 @@ it.effect("serves the finished scan with sessions attributed to bots and the res
     expect(today.rows[0]?.totals.outputTokens).toBe(20);
     expect(today.other.sessions).toBe(1);
     expect(today.total.totals.outputTokens).toBe(40);
+    // Per provider, with the estimate: both cells are Claude, 0.5 each.
+    expect(today.providers).toHaveLength(1);
+    expect(today.providers[0]).toMatchObject({ provider: "claude", costUsd: 1, unpricedTokens: 0 });
+    expect(today.rows[0]).toMatchObject({ costUsd: 0.5, unpricedTokens: 0 });
+    expect(today.total).toMatchObject({ costUsd: 1, unpricedTokens: 0 });
     // The payload is valid against the contract: numbers and bot ids, nothing else.
     expect(() => encodeResult(ready)).not.toThrow();
     expect(toJsonString(ready)).not.toContain("claude-session");

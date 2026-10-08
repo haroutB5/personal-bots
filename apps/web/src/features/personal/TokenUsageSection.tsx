@@ -18,6 +18,8 @@ import {
   buildTokenUsageTable,
   DEFAULT_TOKEN_USAGE_WINDOW,
   findTokenUsageWindow,
+  formatCostCompact,
+  formatCostFull,
   formatShare,
   formatSplit,
   formatTokenCount,
@@ -28,7 +30,10 @@ import {
   TOKEN_USAGE_MAX_POLLS,
   TOKEN_USAGE_POLL_MS,
   TOKEN_USAGE_WINDOWS,
+  tokenUsageProviderLabel,
   tokenUsageRowLabel,
+  type TokenCostView,
+  type TokenUsageProviderView,
   type TokenUsageRowView,
 } from "./tokenUsagePresentation";
 
@@ -239,6 +244,50 @@ export function TokenUsageCard({
 
       {table !== null ? (
         <>
+          {table.providers.length > 0 ? (
+            <div
+              data-testid="token-usage-providers"
+              className="flex flex-col gap-1 border-b border-[var(--personal-border)] pb-3"
+            >
+              <h3 className="text-[13px] leading-[18px] font-medium text-[var(--personal-text-secondary)]">
+                By provider
+              </h3>
+              <ul className="flex flex-col">
+                {table.providers.map((provider) => (
+                  <li key={provider.provider}>
+                    <TokenUsageProviderRow row={provider} />
+                  </li>
+                ))}
+              </ul>
+              <div
+                data-testid="token-usage-providers-total"
+                className="flex items-baseline justify-between gap-3 border-t border-[var(--personal-border)] pt-2 text-[15px] leading-5 font-semibold text-[var(--personal-text)]"
+              >
+                <span>All providers</span>
+                <span className="flex items-baseline gap-2 tabular-nums">
+                  <span
+                    data-testid="token-usage-providers-total-cost"
+                    className="text-[12px] leading-4 font-normal text-[var(--personal-text-secondary)]"
+                  >
+                    {formatCostFull(table.totalCost)}
+                  </span>
+                  <span>{formatTokenCount(table.total)}</span>
+                </span>
+              </div>
+              <p
+                data-testid="token-usage-price-note"
+                className="text-[12px] leading-4 text-[var(--personal-text-secondary)]"
+              >
+                API price estimate: what these tokens would cost at list API prices, not money
+                charged (subscriptions are flat). + means some tokens have no price.
+              </p>
+            </div>
+          ) : null}
+          {table.providers.length > 0 ? (
+            <h3 className="-mb-1 text-[13px] leading-[18px] font-medium text-[var(--personal-text-secondary)]">
+              By bot
+            </h3>
+          ) : null}
           {table.botsTotal === 0 ? (
             <p className="py-1 text-[15px] leading-snug text-[var(--personal-text-secondary)]">
               No bot used tokens {windowId === "today" ? "today" : "in this period"}.
@@ -267,14 +316,18 @@ export function TokenUsageCard({
                   your own Claude Code and older sessions
                 </span>
               </span>
-              <span className="shrink-0 tabular-nums" data-testid="token-usage-outside">
-                {formatTokenCount(table.other.tokens)}
+              <span className="flex shrink-0 flex-col items-end tabular-nums">
+                <span data-testid="token-usage-outside">
+                  {formatTokenCount(table.other.tokens)}
+                </span>
+                <CostLine cost={table.other.cost} testId="token-usage-outside-cost" />
               </span>
             </div>
             <div className="flex items-baseline justify-between gap-3 text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
               <span>Total</span>
-              <span className="tabular-nums" data-testid="token-usage-total">
-                {formatTokenCount(table.total)}
+              <span className="flex flex-col items-end tabular-nums">
+                <span data-testid="token-usage-total">{formatTokenCount(table.total)}</span>
+                <CostLine cost={table.totalCost} testId="token-usage-total-cost" />
               </span>
             </div>
             {selected === null ? null : (
@@ -404,7 +457,72 @@ function TokenUsageRow({
         <span className="text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
           {formatShare(row.sharePercent)}
         </span>
+        <CostLine cost={row.cost} testId="token-usage-row-cost" />
       </span>
     </Link>
+  );
+}
+
+/** The estimate under a count, in the secondary colour; nothing when there is no cost to show. */
+function CostLine({
+  cost,
+  testId,
+}: {
+  readonly cost: TokenCostView;
+  readonly testId: string;
+}): JSX.Element | null {
+  const text = formatCostCompact(cost);
+  if (text === "") return null;
+  return (
+    <span
+      data-testid={testId}
+      className={cn(
+        "text-[12px] leading-4 tabular-nums",
+        cost.kind === "unpriced"
+          ? "text-[var(--personal-text-tertiary)]"
+          : "text-[var(--personal-text-secondary)]",
+      )}
+    >
+      {text}
+    </span>
+  );
+}
+
+/** One provider: name and tokens, a bar over everything counted, then the estimate and the share. */
+function TokenUsageProviderRow({ row }: { readonly row: TokenUsageProviderView }): JSX.Element {
+  const barPercent = Math.max(1.5, Math.min(100, row.sharePercent));
+  return (
+    <div
+      role="group"
+      aria-label={tokenUsageProviderLabel(row)}
+      data-provider-usage-row={row.provider}
+      className="flex min-h-11 flex-col justify-center gap-1 py-1.5"
+    >
+      <span aria-hidden="true" className="flex items-baseline justify-between gap-3">
+        <span className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+          {row.label}
+        </span>
+        <span className="shrink-0 text-[16px] leading-5 font-semibold text-[var(--personal-text)] tabular-nums">
+          {formatTokenCount(row.tokens)}
+        </span>
+      </span>
+      <span
+        aria-hidden="true"
+        className="block h-[3px] overflow-hidden rounded-full bg-[var(--personal-track)]"
+      >
+        <span
+          data-testid="token-usage-provider-bar"
+          className="block h-full rounded-full bg-[var(--personal-primary)]"
+          style={{ width: `${barPercent}%` }}
+        />
+      </span>
+      <span
+        aria-hidden="true"
+        className="flex items-baseline justify-between gap-3 text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums"
+      >
+        <span data-testid="token-usage-provider-cost">{formatCostFull(row.cost)}</span>
+        <span>{formatShare(row.sharePercent)}</span>
+      </span>
+    </div>
   );
 }

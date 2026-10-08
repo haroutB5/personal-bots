@@ -72,7 +72,19 @@ const setup = Effect.gen(function* () {
   return { home, claudeDir, codexDir };
 });
 
-const layers = (home: string, counters: { http: number }) =>
+const LITELLM_DOCUMENT = {
+  "claude-opus-5-5": {
+    input_cost_per_token: 3e-6,
+    output_cost_per_token: 15e-6,
+    cache_read_input_token_cost: 0.3e-6,
+  },
+};
+
+const layers = (
+  home: string,
+  counters: { http: number; urls?: string[] },
+  document: unknown = {},
+) =>
   ServerConfig.layerTest(process.cwd(), { prefix: "usage-session-test" }).pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcessPlatform, "linux")),
@@ -90,7 +102,8 @@ const layers = (home: string, counters: { http: number }) =>
         HttpClient.make((request) =>
           Effect.sync(() => {
             counters.http += 1;
-            return HttpClientResponse.fromWeb(request, Response.json({}));
+            counters.urls?.push(request.url);
+            return HttpClientResponse.fromWeb(request, Response.json(document));
           }),
         ),
       ),
@@ -113,7 +126,7 @@ describe("UsageService.readSessionUsage", () => {
   it.live("returns tokens per day, session and model, counting a repeated message once", () =>
     Effect.gen(function* () {
       const { home, claudeDir, codexDir } = yield* setup;
-      const counters = { http: 0 };
+      const counters = { http: 0, urls: [] as string[] };
       const service = yield* UsageService.make.pipe(Effect.provide(layers(home, counters)));
 
       yield* Effect.promise(async () => {
@@ -163,8 +176,39 @@ describe("UsageService.readSessionUsage", () => {
         outputTokens: 40,
       });
       assert.strictEqual(result.scannedFiles >= 4, true);
-      // No rate table and no Cursor account request for a token count.
-      assert.strictEqual(counters.http, 0);
+      // Only the LiteLLM rate table is fetched (for the estimate): no Cursor account request.
+      assert.isAtMost(counters.http, 1);
+      for (const url of counters.urls) assert.include(url, "litellm");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("prices each cell from the rate table and leaves a model with no rate unpriced", () =>
+    Effect.gen(function* () {
+      const { home, claudeDir, codexDir } = yield* setup;
+      const counters = { http: 0, urls: [] as string[] };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layers(home, counters, LITELLM_DOCUMENT)),
+      );
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          NodePath.join(claudeDir, "a.jsonl"),
+          claudeLine({ id: 1, session: "claude-a", at: "2026-08-01T10:00:00Z", output: 50 }),
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(codexDir, "rollout-1.jsonl"),
+          codexRollout("codex-1"),
+        );
+      });
+
+      const result = yield* service.readSessionUsage(WINDOW);
+      const claude = result.cells.find((cell) => cell.provider === "claude");
+      const codex = result.cells.find((cell) => cell.provider === "codex");
+      // 10 input at 3e-6, 100 cached at the cached rate 0.3e-6, 50 output at 15e-6.
+      assert.closeTo(claude!.costUsd, 10 * 3e-6 + 100 * 0.3e-6 + 50 * 15e-6, 1e-12);
+      assert.strictEqual(claude!.unpricedTokens, 0);
+      // gpt-6-astra is not in the table: not priced, never zero dollars.
+      assert.strictEqual(codex!.costUsd, 0);
+      assert.strictEqual(codex!.unpricedTokens, 1040);
     }).pipe(Effect.scoped),
   );
 

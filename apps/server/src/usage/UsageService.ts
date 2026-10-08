@@ -125,7 +125,8 @@ export class UsageService extends Context.Service<
     /**
      * Tokens per `(day, session, provider, model)` over a day window, from the
      * same transcripts and per-file cache as `readSummary`, for attributing
-     * sessions to bots. Claude, Codex and OpenCode only; never touches
+     * sessions to bots, each cell with its API price estimate (same rates and
+     * custom prices as the usage page). Claude, Codex and OpenCode only; never touches
      * Cursor's network or Antigravity. Time sliced, so a cold scan does not
      * hold the event loop.
      */
@@ -1000,6 +1001,10 @@ export const make = Effect.gen(function* () {
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureScanCacheLoaded;
 
+    // The rate table is needed once records are folded; a failed fetch leaves
+    // the cached table (or none, and then every record reads as unpriced).
+    yield* ensureRates(false);
+
     const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     const scannedDirs = [
       ...(yield* collectTranscriptDirs(
@@ -1015,6 +1020,8 @@ export const make = Effect.gen(function* () {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
+      rates,
+      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
     const slice = makeSliceYield();
     let scannedFiles = 0;

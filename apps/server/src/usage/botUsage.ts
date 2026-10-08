@@ -18,6 +18,7 @@
  */
 import type { UsageProviderKind } from "@t3tools/contracts";
 
+import { priceUsage, type RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
 /** The four buckets the usage page shows. Reasoning is inside output. */
@@ -36,6 +37,15 @@ export interface BotUsageCell {
   readonly sessionId: string;
   readonly totals: BotUsageTotals;
   readonly records: number;
+  /**
+   * API price estimate of the priced records, USD: LiteLLM list rates (cached
+   * input at the cached rate), a custom price override, or the provider's own
+   * reported cost. Records with no rate add nothing here, only to
+   * `unpricedTokens`.
+   */
+  readonly costUsd: number;
+  /** Tokens (all four buckets) of records no rate or reported cost covers. */
+  readonly unpricedTokens: number;
 }
 
 const MINUTE_MS = 60_000;
@@ -72,6 +82,10 @@ export interface BotUsageAggregatorOptions {
   /** First and last day to keep, `YYYY-MM-DD` in `timeZone`, both inclusive. */
   readonly sinceDay: string;
   readonly untilDay: string;
+  /** LiteLLM rates. Without them no record is priced (all of it is `unpricedTokens`). */
+  readonly rates?: RateTable;
+  /** Custom prices from settings, applied before the table. */
+  readonly priceOverrides?: RateTable;
 }
 
 /** What one transcript file feeds in; see {@link UsageBotAggregator.beginFile}. */
@@ -86,6 +100,8 @@ export class UsageBotAggregator {
   readonly #toDay: (timestampMs: number) => string;
   readonly #sinceDay: string;
   readonly #untilDay: string;
+  readonly #rates: RateTable;
+  readonly #priceOverrides: RateTable | undefined;
   #duplicatesDropped = 0;
   #outOfWindow = 0;
 
@@ -93,6 +109,8 @@ export class UsageBotAggregator {
     this.#toDay = makeDayFormatter(options.timeZone);
     this.#sinceDay = options.sinceDay;
     this.#untilDay = options.untilDay;
+    this.#rates = options.rates ?? new Map();
+    this.#priceOverrides = options.priceOverrides;
   }
 
   get duplicatesDropped(): number {
@@ -160,6 +178,8 @@ export class UsageBotAggregator {
           outputTokens: 0,
         },
         records: 0,
+        costUsd: 0,
+        unpricedTokens: 0,
       };
       this.#cells.set(key, cell);
     }
@@ -168,6 +188,13 @@ export class UsageBotAggregator {
     cell.totals.cacheCreationTokens += record.totals.cacheCreationTokens;
     cell.totals.outputTokens += record.totals.outputTokens;
     cell.records += 1;
+    // Priced per record, because speed and reported cost can differ inside one cell.
+    const priced = priceUsage(this.#rates, record, this.#priceOverrides);
+    if (priced.costSource === "unpriced") {
+      cell.unpricedTokens += botUsageTotalTokens(record.totals);
+    } else {
+      cell.costUsd += priced.costUsd;
+    }
     return true;
   }
 
@@ -189,6 +216,8 @@ interface MutableCell {
   readonly sessionId: string;
   readonly totals: BotUsageTotals;
   records: number;
+  costUsd: number;
+  unpricedTokens: number;
 }
 
 function codexContentKey(record: UsageRecord): string {

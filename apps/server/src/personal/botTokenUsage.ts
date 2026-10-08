@@ -14,6 +14,7 @@
  */
 import type {
   PersonalBotTokenUsageModel,
+  PersonalBotTokenUsageProviderRow,
   PersonalBotTokenUsageRow,
   PersonalBotTokenUsageSum,
   PersonalBotTokenUsageTotals,
@@ -145,10 +146,18 @@ interface Accumulator {
   readonly totals: MutableTotals;
   readonly models: Map<string, number>;
   readonly sessions: Set<string>;
+  costUsd: number;
+  unpricedTokens: number;
 }
 
 function newAccumulator(): Accumulator {
-  return { totals: emptyTotals(), models: new Map(), sessions: new Set() };
+  return {
+    totals: emptyTotals(),
+    models: new Map(),
+    sessions: new Set(),
+    costUsd: 0,
+    unpricedTokens: 0,
+  };
 }
 
 /**
@@ -167,6 +176,7 @@ export function computeTokenUsageWindows(input: {
 }): ReadonlyArray<PersonalBotTokenUsageWindow> {
   return tokenUsageWindowRanges(input.today).map((range) => {
     const perBot = new Map<string, Accumulator>();
+    const perProvider = new Map<UsageProviderKind, Accumulator>();
     const other = newAccumulator();
     const total = newAccumulator();
 
@@ -187,9 +197,16 @@ export function computeTokenUsageWindows(input: {
         }
         target = existing;
       }
+      let provider = perProvider.get(cell.provider);
+      if (provider === undefined) {
+        provider = newAccumulator();
+        perProvider.set(cell.provider, provider);
+      }
       const tokens = botUsageTotalTokens(cell.totals);
-      for (const accumulator of [target, total]) {
+      for (const accumulator of [target, total, provider]) {
         addInto(accumulator.totals, cell.totals);
+        accumulator.costUsd += cell.costUsd;
+        accumulator.unpricedTokens += cell.unpricedTokens;
         accumulator.models.set(cell.model, (accumulator.models.get(cell.model) ?? 0) + tokens);
         if (key !== null) accumulator.sessions.add(key);
       }
@@ -200,6 +217,8 @@ export function computeTokenUsageWindows(input: {
       rows.push({
         botId: PersonalBotId.make(botId),
         totals: accumulator.totals,
+        costUsd: accumulator.costUsd,
+        unpricedTokens: accumulator.unpricedTokens,
         models: topModels(accumulator.models),
         sessions: accumulator.sessions.size,
       });
@@ -209,11 +228,27 @@ export function computeTokenUsageWindows(input: {
       (a, b) => rowTokens(b) - rowTokens(a) || String(a.botId).localeCompare(String(b.botId)),
     );
 
+    const providers: PersonalBotTokenUsageProviderRow[] = [...perProvider].map(
+      ([provider, accumulator]) => ({
+        provider,
+        totals: accumulator.totals,
+        costUsd: accumulator.costUsd,
+        unpricedTokens: accumulator.unpricedTokens,
+        sessions: accumulator.sessions.size,
+      }),
+    );
+    providers.sort(
+      (a, b) =>
+        botUsageTotalTokens(b.totals) - botUsageTotalTokens(a.totals) ||
+        a.provider.localeCompare(b.provider),
+    );
+
     return {
       id: range.id,
       sinceDay: range.sinceDay,
       untilDay: range.untilDay,
       rows,
+      providers,
       other: toSum(other),
       total: toSum(total),
     };
@@ -225,7 +260,12 @@ function rowTokens(row: PersonalBotTokenUsageRow): number {
 }
 
 function toSum(accumulator: Accumulator): PersonalBotTokenUsageSum {
-  return { totals: accumulator.totals, sessions: accumulator.sessions.size };
+  return {
+    totals: accumulator.totals,
+    costUsd: accumulator.costUsd,
+    unpricedTokens: accumulator.unpricedTokens,
+    sessions: accumulator.sessions.size,
+  };
 }
 
 function topModels(models: ReadonlyMap<string, number>): PersonalBotTokenUsageModel[] {

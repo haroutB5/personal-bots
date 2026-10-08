@@ -24,6 +24,8 @@ function cell(overrides: Partial<BotUsageCell> = {}): BotUsageCell {
       outputTokens: 20,
     },
     records: 1,
+    costUsd: 1,
+    unpricedTokens: 0,
     ...overrides,
   };
 }
@@ -116,6 +118,76 @@ describe("days", () => {
   });
 });
 
+describe("provider and cost totals", () => {
+  const mixed = [
+    // Ada, Claude: priced.
+    cell({ costUsd: 2.5 }),
+    // Ada, Claude, a model with no rate.
+    cell({ sessionId: "s-ada-2", model: "claude-new", costUsd: 0, unpricedTokens: 135 }),
+    // Bo, Codex: priced and unpriced models in the same bot.
+    cell({ provider: "codex", sessionId: "s-bo", model: "gpt-6.1-sol", costUsd: 4 }),
+    cell({
+      provider: "codex",
+      sessionId: "s-bo",
+      model: "gpt-6-astra",
+      costUsd: 0,
+      unpricedTokens: 1000,
+      totals: bigTotals(1000),
+    }),
+    // Outside Bots, OpenCode, free model.
+    cell({
+      provider: "opencode",
+      sessionId: "s-unknown",
+      model: "muse-spark",
+      costUsd: 0,
+      unpricedTokens: 50,
+      totals: bigTotals(50),
+    }),
+  ];
+
+  it("totals tokens per provider, most first, and they add up to the window total", () => {
+    const [today] = windows(mixed);
+    expect(today?.providers.map((row) => row.provider)).toEqual(["codex", "claude", "opencode"]);
+    const claude = today?.providers.find((row) => row.provider === "claude");
+    expect(tokens(claude!.totals)).toBe(270);
+    expect(claude?.sessions).toBe(2);
+    const sum = today!.providers.reduce((n, row) => n + tokens(row.totals), 0);
+    expect(sum).toBe(tokens(today!.total.totals));
+    // The per-bot table's total is the same figure.
+    const rows = today!.rows.reduce((n, row) => n + tokens(row.totals), 0);
+    expect(rows + tokens(today!.other.totals)).toBe(sum);
+  });
+
+  it("carries the estimate and the unpriced tokens to providers, bots, other and the total", () => {
+    const [today] = windows(mixed);
+    const provider = (name: string) => today!.providers.find((row) => row.provider === name)!;
+    expect(provider("claude")).toMatchObject({ costUsd: 2.5, unpricedTokens: 135 });
+    expect(provider("codex")).toMatchObject({ costUsd: 4, unpricedTokens: 1000 });
+    expect(provider("opencode")).toMatchObject({ costUsd: 0, unpricedTokens: 50 });
+    const bot = (id: string) => today!.rows.find((row) => String(row.botId) === id)!;
+    expect(bot("bot-ada")).toMatchObject({ costUsd: 2.5, unpricedTokens: 135 });
+    expect(bot("bot-bo")).toMatchObject({ costUsd: 4, unpricedTokens: 1000 });
+    expect(today?.other).toMatchObject({ costUsd: 0, unpricedTokens: 50 });
+    expect(today?.total).toMatchObject({ costUsd: 6.5, unpricedTokens: 1185 });
+    const providerCost = today!.providers.reduce((n, row) => n + row.costUsd, 0);
+    expect(providerCost).toBeCloseTo(today!.total.costUsd, 9);
+  });
+
+  it("counts each window's own days only", () => {
+    const [today, week] = windows([
+      cell({ day: "2026-10-04", costUsd: 1 }),
+      cell({ day: "2026-09-30", costUsd: 2 }),
+    ]);
+    expect(today?.total.costUsd).toBe(1);
+    expect(week?.total.costUsd).toBe(3);
+    expect(today?.providers).toHaveLength(1);
+  });
+
+  it("has no provider rows for an empty window", () => {
+    expect(windows([])[0]?.providers).toEqual([]);
+  });
+});
+
 describe("windows", () => {
   it("puts each day in the windows that cover it", () => {
     const result = windows([
@@ -159,6 +231,8 @@ describe("windows", () => {
         cacheCreationTokens: 0,
         outputTokens: 0,
       },
+      costUsd: 0,
+      unpricedTokens: 0,
       sessions: 0,
     });
   });

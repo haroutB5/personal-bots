@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { UsageBotAggregator } from "./botUsage.ts";
+import { createOverrideRateTable, parseRateTable } from "./usagePricing.ts";
 import { initialCodexScanState, parseCodexLine, type UsageRecord } from "./usageTranscripts.ts";
 
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
@@ -26,6 +27,163 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
 function aggregator(timeZone = "UTC", sinceDay = "2026-08-01", untilDay = "2026-08-31") {
   return new UsageBotAggregator({ timeZone, sinceDay, untilDay });
 }
+
+const RATES = parseRateTable({
+  // $/token: input 3e-6, output 15e-6, cache read 0.3e-6, cache write 3.75e-6.
+  "claude-opus-5-5": {
+    input_cost_per_token: 3e-6,
+    output_cost_per_token: 15e-6,
+    cache_read_input_token_cost: 0.3e-6,
+    cache_creation_input_token_cost: 3.75e-6,
+  },
+  // No cache read rate: cached input prices as plain input.
+  "gpt-6.1-sol": { input_cost_per_token: 2e-6, output_cost_per_token: 10e-6 },
+});
+
+describe("UsageBotAggregator cost", () => {
+  const priced = (options: { rates?: typeof RATES; priceOverrides?: typeof RATES } = {}) =>
+    new UsageBotAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      ...options,
+    });
+
+  it("prices the four buckets at the LiteLLM rates, cached input at the cached rate", () => {
+    const agg = priced({ rates: RATES });
+    agg.add(record());
+    const [cell] = agg.finish();
+    // 100*3e-6 + 1000*0.3e-6 + 10*3.75e-6 + 50*15e-6
+    expect(cell?.costUsd).toBeCloseTo(100 * 3e-6 + 1000 * 0.3e-6 + 10 * 3.75e-6 + 50 * 15e-6, 12);
+    expect(cell?.costUsd).toBeCloseTo(0.0013875, 10);
+    expect(cell?.unpricedTokens).toBe(0);
+  });
+
+  it("does not price cached input as free, or at the full input rate, when a cached rate exists", () => {
+    const agg = priced({ rates: RATES });
+    agg.add(
+      record({
+        totals: {
+          uncachedInputTokens: 0,
+          cachedInputTokens: 1_000_000,
+          cacheCreationTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+        },
+      }),
+    );
+    expect(agg.finish()[0]?.costUsd).toBeCloseTo(0.3, 9);
+  });
+
+  it("prices cached input as plain input where LiteLLM has no cached rate", () => {
+    const agg = priced({ rates: RATES });
+    agg.add(
+      record({
+        provider: "codex",
+        model: "gpt-6.1-sol",
+        totals: {
+          uncachedInputTokens: 0,
+          cachedInputTokens: 1_000_000,
+          cacheCreationTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+        },
+      }),
+    );
+    expect(agg.finish()[0]?.costUsd).toBeCloseTo(2, 9);
+  });
+
+  it("leaves a model with no rate unpriced: no cost, and its tokens counted as unpriced", () => {
+    const agg = priced({ rates: RATES });
+    agg.add(record({ provider: "codex", model: "gpt-6-astra" }));
+    agg.add(record({ provider: "opencode", model: "muse-spark-1.3-contributor-free" }));
+    const cells = agg.finish();
+    expect(cells).toHaveLength(2);
+    for (const cell of cells) {
+      expect(cell.costUsd).toBe(0);
+      expect(cell.unpricedTokens).toBe(1160);
+    }
+  });
+
+  it("keeps priced and unpriced records apart inside one table", () => {
+    const agg = priced({ rates: RATES });
+    agg.add(record());
+    agg.add(record({ model: "claude-unknown-9" }));
+    const cells = agg.finish();
+    const known = cells.find((cell) => cell.model === "claude-opus-5-5");
+    const unknown = cells.find((cell) => cell.model === "claude-unknown-9");
+    expect(known).toMatchObject({ unpricedTokens: 0 });
+    expect(known!.costUsd).toBeGreaterThan(0);
+    expect(unknown).toMatchObject({ costUsd: 0, unpricedTokens: 1160 });
+  });
+
+  it("without a rate table nothing is priced", () => {
+    const agg = priced();
+    agg.add(record());
+    expect(agg.finish()[0]).toMatchObject({ costUsd: 0, unpricedTokens: 1160 });
+  });
+
+  it("takes a provider's own reported cost over the table, and counts it as priced", () => {
+    const agg = priced({ rates: RATES });
+    agg.add(record({ provider: "opencode", model: "some-paid-model", reportedCostUsd: 0.25 }));
+    expect(agg.finish()[0]).toMatchObject({ costUsd: 0.25, unpricedTokens: 0 });
+  });
+
+  it("applies a custom price ahead of the table", () => {
+    const agg = priced({
+      rates: RATES,
+      priceOverrides: createOverrideRateTable({
+        "gpt-6-astra": { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 4 },
+      }),
+    });
+    agg.add(
+      record({
+        provider: "codex",
+        model: "gpt-6-astra",
+        totals: {
+          uncachedInputTokens: 1_000_000,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          outputTokens: 1_000_000,
+          reasoningTokens: 0,
+        },
+      }),
+    );
+    const [cell] = agg.finish();
+    expect(cell?.costUsd).toBeCloseTo(5, 9);
+    expect(cell?.unpricedTokens).toBe(0);
+  });
+
+  it("prices each record at its own speed inside one cell", () => {
+    const table = parseRateTable({
+      "claude-opus-5-5": {
+        input_cost_per_token: 1e-6,
+        output_cost_per_token: 5e-6,
+        provider_specific_entry: { fast: 2 },
+      },
+    });
+    const agg = priced({ rates: table });
+    const output = {
+      uncachedInputTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 1_000_000,
+      reasoningTokens: 0,
+    };
+    agg.add(record({ totals: output }));
+    agg.add(record({ totals: output, speed: "fast" }));
+    const cells = agg.finish();
+    expect(cells).toHaveLength(1);
+    expect(cells[0]?.costUsd).toBeCloseTo(5 + 10, 9);
+  });
+
+  it("does not count a dropped duplicate twice", () => {
+    const agg = priced({ rates: RATES });
+    agg.add(record({ dedupeKey: "m:r" }));
+    agg.add(record({ dedupeKey: "m:r" }));
+    expect(agg.finish()[0]?.costUsd).toBeCloseTo(0.0013875, 10);
+  });
+});
 
 describe("UsageBotAggregator", () => {
   it("sums the four buckets per (day, session, provider, model)", () => {

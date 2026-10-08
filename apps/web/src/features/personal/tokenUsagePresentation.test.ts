@@ -3,14 +3,20 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildTokenUsageTable,
+  costViewOf,
   findTokenUsageWindow,
+  formatCostCompact,
+  formatCostFull,
   formatShare,
   formatSplit,
   formatTokenCount,
   formatUpdated,
+  formatUsd,
   formatWindowRange,
   isTokenUsagePending,
+  providerLabel,
   splitOf,
+  tokenUsageProviderLabel,
   tokenUsageRowLabel,
   totalOf,
 } from "./tokenUsagePresentation";
@@ -48,8 +54,9 @@ function windowOf(
     sinceDay: "2026-09-28",
     untilDay: "2026-10-04",
     rows,
-    other: { totals: other, sessions: 0 },
-    total: { totals: all, sessions: rows.length },
+    providers: [],
+    other: { totals: other, costUsd: 0, unpricedTokens: 0, sessions: 0 },
+    total: { totals: all, costUsd: 0, unpricedTokens: 0, sessions: rows.length },
   };
 }
 
@@ -81,6 +88,151 @@ describe("formatTokenCount", () => {
     expect(formatTokenCount(-5)).toBe("0");
     expect(formatTokenCount(Number.NaN)).toBe("0");
     expect(formatTokenCount(Number.POSITIVE_INFINITY)).toBe("0");
+  });
+});
+
+describe("the API price estimate", () => {
+  it("formats dollars compactly: cents to a thousand, whole dollars to ten thousand, then k", () => {
+    expect(formatUsd(0)).toBe("$0.00");
+    expect(formatUsd(0.001)).toBe("<$0.01");
+    expect(formatUsd(0.004)).toBe("<$0.01");
+    expect(formatUsd(0.005)).toBe("$0.01");
+    expect(formatUsd(0.42)).toBe("$0.42");
+    expect(formatUsd(12.4)).toBe("$12.40");
+    expect(formatUsd(999.99)).toBe("$999.99");
+    expect(formatUsd(1234.56)).toBe("$1,235");
+    expect(formatUsd(12_345)).toBe("$12.3k");
+    expect(formatUsd(Number.NaN)).toBe("$0.00");
+    expect(formatUsd(-3)).toBe("$0.00");
+  });
+
+  it("tells priced, partly priced, not priced and nothing apart", () => {
+    expect(costViewOf(1000, { costUsd: 12.4, unpricedTokens: 0 })).toEqual({
+      kind: "priced",
+      usd: 12.4,
+    });
+    expect(costViewOf(1000, { costUsd: 12.4, unpricedTokens: 400 })).toEqual({
+      kind: "partial",
+      usd: 12.4,
+    });
+    // Every token unpriced: not priced, never $0.00.
+    expect(costViewOf(1000, { costUsd: 0, unpricedTokens: 1000 })).toEqual({ kind: "unpriced" });
+    expect(costViewOf(0, { costUsd: 0, unpricedTokens: 0 })).toEqual({ kind: "none" });
+    // A server that sends no cost (an older one) shows none, not zero.
+    expect(costViewOf(1000, undefined)).toEqual({ kind: "none" });
+    expect(costViewOf(1000, {})).toEqual({ kind: "none" });
+  });
+
+  it("words a partly priced total as '$12.40 + unpriced', short as '$12.40+'", () => {
+    const partial = costViewOf(1000, { costUsd: 12.4, unpricedTokens: 1 });
+    expect(formatCostFull(partial)).toBe("$12.40 + unpriced");
+    expect(formatCostCompact(partial)).toBe("$12.40+");
+    const none = costViewOf(1000, { costUsd: 0, unpricedTokens: 1000 });
+    expect(formatCostFull(none)).toBe("not priced");
+    expect(formatCostCompact(none)).toBe("not priced");
+    expect(formatCostCompact({ kind: "none" })).toBe("");
+    expect(formatCostFull(costViewOf(1000, { costUsd: 3, unpricedTokens: 0 }))).toBe("$3.00");
+  });
+
+  it("names the providers the way the team talks about them", () => {
+    expect(providerLabel("claude")).toBe("Claude");
+    expect(providerLabel("codex")).toBe("GPT / Codex");
+    expect(providerLabel("opencode")).toBe("OpenCode");
+  });
+});
+
+describe("providers in the table", () => {
+  const listed = new Set(BOTS.map((bot) => bot.botId));
+  const costs = (costUsd: number, unpricedTokens = 0) => ({ costUsd, unpricedTokens });
+  const costed = (botId: string, t: PersonalBotTokenUsageTotals, cost: ReturnType<typeof costs>) =>
+    ({ botId, totals: t, models: [], sessions: 1, ...cost }) as never;
+  const providerRow = (
+    provider: "claude" | "codex" | "opencode",
+    t: PersonalBotTokenUsageTotals,
+    cost: ReturnType<typeof costs>,
+  ) => ({ provider, totals: t, ...cost, sessions: 1 });
+
+  const window = (): PersonalBotTokenUsageWindow => ({
+    ...windowOf(
+      [
+        costed("cto", totals(0, 0, 0, 600), costs(6)),
+        costed("qa", totals(0, 0, 0, 300), costs(0, 300)),
+      ],
+      totals(0, 0, 0, 100),
+    ),
+    providers: [
+      // Deliberately out of order: the table sorts.
+      providerRow("opencode", totals(0, 0, 0, 100), costs(0, 100)),
+      providerRow("claude", totals(0, 0, 0, 600), costs(6)),
+      providerRow("codex", totals(0, 0, 0, 300), costs(0, 300)),
+    ],
+    other: { totals: totals(0, 0, 0, 100), ...costs(0, 100), sessions: 1 },
+    total: { totals: totals(0, 0, 0, 1000), ...costs(6, 400), sessions: 3 },
+  });
+
+  it("lists providers most tokens first, with their share of everything counted", () => {
+    const table = buildTokenUsageTable({ window: window(), bots: BOTS, listedBotIds: listed });
+    expect(table.providers.map((p) => [p.label, p.tokens, p.sharePercent])).toEqual([
+      ["Claude", 600, 60],
+      ["GPT / Codex", 300, 30],
+      ["OpenCode", 100, 10],
+    ]);
+  });
+
+  it("adds up to the table's total, the same figure the bot rows and Outside Bots make", () => {
+    const table = buildTokenUsageTable({ window: window(), bots: BOTS, listedBotIds: listed });
+    const providerSum = table.providers.reduce((n, p) => n + p.tokens, 0);
+    expect(providerSum).toBe(table.total);
+    expect(table.botsTotal + table.other.tokens).toBe(table.total);
+  });
+
+  it("shows each provider's estimate, a model with no rate as not priced, and the total as partly priced", () => {
+    const table = buildTokenUsageTable({ window: window(), bots: BOTS, listedBotIds: listed });
+    expect(table.providers.map((p) => formatCostFull(p.cost))).toEqual([
+      "$6.00",
+      "not priced",
+      "not priced",
+    ]);
+    expect(formatCostFull(table.totalCost)).toBe("$6.00 + unpriced");
+    expect(formatCostCompact(table.rows[0]!.cost)).toBe("$6.00");
+    expect(formatCostCompact(table.rows[1]!.cost)).toBe("not priced");
+    // A listed bot with no use has no estimate to show.
+    expect(table.rows.at(-1)!.cost).toEqual({ kind: "none" });
+    expect(formatCostCompact(table.other.cost)).toBe("not priced");
+  });
+
+  it("folds a removed bot's estimate into Outside Bots with its tokens", () => {
+    const table = buildTokenUsageTable({
+      window: {
+        ...window(),
+        rows: [
+          costed("cto", totals(0, 0, 0, 600), costs(6)),
+          costed("removed", totals(0, 0, 0, 50), costs(2.5)),
+        ],
+        other: { totals: totals(0, 0, 0, 100), ...costs(1), sessions: 1 },
+      },
+      bots: BOTS,
+      listedBotIds: listed,
+    });
+    expect(table.other.tokens).toBe(150);
+    expect(table.other.cost).toEqual({ kind: "priced", usd: 3.5 });
+  });
+
+  it("has no provider rows from a server that sends none, and no cost either", () => {
+    const old = windowOf([row("cto", totals(0, 0, 0, 600))]);
+    const bare = { ...old, providers: undefined } as never;
+    const table = buildTokenUsageTable({ window: bare, bots: BOTS, listedBotIds: listed });
+    expect(table.providers).toEqual([]);
+    expect(table.rows[0]!.cost).toEqual({ kind: "none" });
+  });
+
+  it("reads a provider and a priced bot to a screen reader with the estimate in words", () => {
+    const table = buildTokenUsageTable({ window: window(), bots: BOTS, listedBotIds: listed });
+    expect(tokenUsageProviderLabel(table.providers[0]!)).toBe(
+      "Claude: 600 tokens, 60% of all use, estimated cost $6.00.",
+    );
+    expect(tokenUsageProviderLabel(table.providers[1]!)).toContain("estimated cost not priced");
+    expect(tokenUsageRowLabel(table.rows[0]!)).toContain("Estimated cost $6.00.");
   });
 });
 
@@ -141,7 +293,7 @@ describe("buildTokenUsageTable", () => {
     });
     expect(table.rows.map((r) => r.sharePercent)).toEqual([75, 25]);
     expect(table.botsTotal).toBe(1000);
-    expect(table.other).toEqual({ tokens: 9000 });
+    expect(table.other.tokens).toBe(9000);
     // The grand total still counts everything.
     expect(table.total).toBe(10_000);
   });
@@ -198,7 +350,7 @@ describe("buildTokenUsageTable", () => {
     expect(table.rows.every((r) => r.tokens === 0 && r.sharePercent === 0 && r.rank === null)).toBe(
       true,
     );
-    expect(table.other).toEqual({ tokens: 0 });
+    expect(table.other.tokens).toBe(0);
     expect(table.botsTotal).toBe(0);
   });
 
