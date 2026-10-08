@@ -46,12 +46,12 @@ about 35 s with the server start and stop.
 
 Not one of the five (it has its own file, `continueChat.mjs`, and a 120 s limit) but part of the default gate. The
 fake CLI keeps what each provider session was told, so `WHATWORD` answers with a codeword said earlier in the same
-session. Steps: the Developer's own chat is told "The codeword is kiwi"; the Planner calls `list_bot_chats` (the chat
+session. Steps: the Researcher's own chat is told "The codeword is kiwi"; the Assistant calls `list_bot_chats` (the chat
 id and title are in the result); `delegate_task` with `continueChatId` and the objective `WHATWORD`; the result card
-in the Planner's chat says "The codeword was kiwi." (so the turn ran in that conversation's session); the Developer's
-chat keeps its name, shows "Task from Planner: E2E continue" and the answer, and its chat list gains no task chat;
+in the Assistant's chat says "The codeword was kiwi." (so the turn ran in that conversation's session); the Researcher's
+chat keeps its name, shows "Task from Assistant: E2E continue" and the answer, and its chat list gains no task chat;
 `steer_task` reopens the task and it answers again in the same chat. `MCPONCE` is `MCPTOOL` that does not repeat when
-the delegating chat resumes after the result.
+the delegating chat resumes after the result. It uses the Assistant and the Researcher on purpose: a bot's finished tasks reach its later chats as memory notes, and the fake reacts to trigger words inside them (the Developer carries `TASKDONE` from the `delegate-task` journey).
 
 ## When it fails
 
