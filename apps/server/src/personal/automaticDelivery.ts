@@ -1,6 +1,7 @@
 import { normalizeChatName, type PersonalBotId, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 
 import type * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { isPlaceholderChatTitle } from "./personalChatTitles.ts";
@@ -95,12 +96,24 @@ export const resolveDeliveryThread = Effect.fn("resolveDeliveryThread")(function
   threadId: ThreadId,
   options?: { readonly sameTitleOnly?: boolean; readonly archivedOnly?: boolean },
 ) {
-  const link = yield* deps.repository
-    .getThreadLink({ threadId })
-    .pipe(Effect.orElseSucceed(() => Option.none()));
-  const shell = yield* deps.projections
-    .getThreadShellById(threadId)
-    .pipe(Effect.orElseSucceed(() => Option.none()));
+  // A lookup that fails is not a lookup that found nothing: both failing means
+  // the chat's state is unknown, and "unknown" must not read as "removed" (which
+  // would send the message to another chat or open a new one).
+  const linkResult = yield* Effect.result(deps.repository.getThreadLink({ threadId }));
+  const shellResult = yield* Effect.result(deps.projections.getThreadShellById(threadId));
+  if (Result.isFailure(linkResult) && Result.isFailure(shellResult)) {
+    yield* Effect.logWarning(
+      "personal delivery could not read a chat's link or shell; leaving it where it is",
+      {
+        threadId,
+        linkError: String(linkResult.failure),
+        shellError: String(shellResult.failure),
+      },
+    );
+    return { kind: "unknown" } satisfies DeliveryTarget;
+  }
+  const link = Result.isSuccess(linkResult) ? linkResult.success : Option.none();
+  const shell = Result.isSuccess(shellResult) ? shellResult.success : Option.none();
   const archived =
     Option.isSome(link) &&
     (link.value.archivedAt !== null || (Option.isSome(shell) && shell.value.archivedAt != null));

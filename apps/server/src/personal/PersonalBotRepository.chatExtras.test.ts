@@ -265,6 +265,10 @@ it.live(
         VALUES ('g-1', ${BOT}, 't-relay', 'member', 0, ${T0})
       `;
       expect(yield* repository.updateThreadState({ threadId: relay, pinnedAt: T0 })).toBe(false);
+      // isGroupRelay: a member's relay thread, and nothing else.
+      expect(yield* repository.isGroupRelay({ threadId: relay })).toBe(true);
+      expect(yield* repository.isGroupRelay({ threadId: live })).toBe(false);
+      expect(yield* repository.isGroupRelay({ threadId: ThreadId.make("nope") })).toBe(false);
       expect(
         yield* repository.updateThreadState({ threadId: ThreadId.make("nope"), pinnedAt: T0 }),
       ).toBe(false);

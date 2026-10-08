@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { ThreadId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 
-import { chooseOpenChat } from "./automaticDelivery.ts";
+import { chooseOpenChat, resolveDeliveryThread, type DeliveryDeps } from "./automaticDelivery.ts";
 import type { PersonalOpenChat } from "./PersonalBotRepository.ts";
 
 const chat = (
@@ -92,5 +95,65 @@ describe("chooseOpenChat", () => {
       chat("a", "Main", "2026-10-08T12:00:00.000Z"),
     ]);
     expect(chosen).toEqual({ threadId: "a", reason: "same-title" });
+  });
+});
+
+describe("resolveDeliveryThread when the chat cannot be read", () => {
+  const boom = Effect.fail({ message: "database is locked" } as never);
+  const deps = (overrides: {
+    link?: DeliveryDeps["repository"]["getThreadLink"];
+    shell?: DeliveryDeps["projections"]["getThreadShellById"];
+  }): DeliveryDeps => ({
+    repository: {
+      getThreadLink: overrides.link ?? (() => boom),
+      listOpenChats: () => Effect.succeed([chat("other", "Main", "2026-10-08T12:00:00.000Z")]),
+      getRemovedChatOrigin: () =>
+        Effect.succeed(Option.some({ botId: "bot" as never, title: "Main" })),
+    },
+    projections: { getThreadShellById: overrides.shell ?? (() => boom) },
+  });
+
+  it.effect("both lookups failing is logged and answers unknown, never 'removed'", () => {
+    const logs: Array<string> = [];
+    return Effect.gen(function* () {
+      const target = yield* resolveDeliveryThread(deps({}), "chat-1" as ThreadId);
+      // Reading it as removed would have redirected to "other" or opened a new chat.
+      expect(target).toEqual({ kind: "unknown" });
+      expect(logs.some((line) => line.includes("could not read a chat's link or shell"))).toBe(
+        true,
+      );
+      expect(logs.join(" ")).toContain("chat-1");
+    }).pipe(
+      Effect.provide(
+        Logger.layer([
+          Logger.make((options) => {
+            logs.push(`${String(options.message)} ${JSON.stringify(options.message)}`);
+          }),
+        ]),
+      ),
+    );
+  });
+
+  it.effect("one failing lookup does not log that warning", () => {
+    const logs: Array<string> = [];
+    return Effect.gen(function* () {
+      const target = yield* resolveDeliveryThread(
+        deps({ link: () => Effect.succeed(Option.none()) }),
+        "chat-1" as ThreadId,
+      );
+      // The link is plainly absent and the shell unreadable: the long-standing "removed" path.
+      expect(target.kind).not.toBe("open");
+      expect(logs.some((line) => line.includes("could not read a chat's link or shell"))).toBe(
+        false,
+      );
+    }).pipe(
+      Effect.provide(
+        Logger.layer([
+          Logger.make((options) => {
+            logs.push(`${String(options.message)} ${JSON.stringify(options.message)}`);
+          }),
+        ]),
+      ),
+    );
   });
 });

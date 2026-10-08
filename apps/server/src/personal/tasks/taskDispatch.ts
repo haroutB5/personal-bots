@@ -383,6 +383,12 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
     if (task.threadId === null || (task.source !== "user" && task.source !== "routine")) {
       return { threadId: task.threadId, note: null };
     }
+    // A group member's relay thread is the group's transcript, not a chat the
+    // owner archives or has a "next chat" for: nothing is judged or moved there.
+    const groupRelay = yield* botRepository
+      .isGroupRelay({ threadId: task.threadId })
+      .pipe(Effect.orElseSucceed(() => false));
+    if (groupRelay) return { threadId: task.threadId, note: null };
     const target = yield* resolveDeliveryThread(
       { repository: botRepository, projections: snapshots },
       task.threadId,
@@ -391,6 +397,26 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
       { sameTitleOnly: task.source === "routine", archivedOnly: true },
     ).pipe(Effect.orElseSucceed(() => ({ kind: "unknown" }) as const));
     if (target.kind === "open" || target.kind === "unknown") {
+      return { threadId: task.threadId, note: null };
+    }
+    // The chat the resolver chose must belong to the task's own bot. It always
+    // does while the data is consistent (the resolver looks at the source chat's
+    // bot); if a task and its chat ever disagree, nothing is redirected and the
+    // task stays where it was, rather than putting one bot's work in another's chat.
+    const targetBotId =
+      target.kind === "redirect"
+        ? yield* botRepository.getThreadLink({ threadId: target.threadId }).pipe(
+            Effect.map((link) => (Option.isSome(link) ? link.value.botId : null)),
+            Effect.orElseSucceed(() => null),
+          )
+        : target.botId;
+    if (targetBotId !== task.botId) {
+      yield* Effect.logWarning("personal task delivery refused: the chat belongs to another bot", {
+        taskId: task.taskId,
+        threadId: task.threadId,
+        taskBotId: task.botId,
+        chatBotId: targetBotId,
+      });
       return { threadId: task.threadId, note: null };
     }
     return target.kind === "redirect"

@@ -1370,6 +1370,51 @@ it.effect(
   },
 );
 
+it.effect(
+  "a group member's relay thread as the source chat is never written into or moved out of: the run opens its own chat",
+  () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    const relay = "chat-relay" as ThreadId;
+    const open = "chat-main-open" as ThreadId;
+    const shells: ShellSessions = new Map([
+      [relay, { status: "ready", title: "Main" }],
+      [open, { status: "ready", title: "Main" }],
+    ]);
+    return Effect.gen(function* () {
+      const bots = yield* PersonalBotService.PersonalBotService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* setNow("2026-09-25T15:00:00Z");
+      yield* seedBot;
+      yield* seedChat(relay);
+      yield* seedChat(open);
+      yield* seedProjectedChats([
+        [relay, "Main"],
+        [open, "Main"],
+      ]);
+      yield* createInChat("relay-routine", { threadId: relay });
+      yield* sql`
+        INSERT INTO personal_groups (group_id, name, thread_id, max_bot_turns, created_at, updated_at)
+        VALUES ('g-1', 'Team', 'g-thread', 8, '2026-09-25T00:00:00.000Z', '2026-09-25T00:00:00.000Z')
+      `;
+      yield* sql`
+        INSERT INTO personal_group_members (group_id, bot_id, thread_id, role, sort_order, joined_at)
+        VALUES ('g-1', ${BOT}, ${relay}, 'member', 0, '2026-09-25T00:00:00.000Z')
+      `;
+      yield* bots.archiveThread({ threadId: relay, archived: true });
+      dispatched.length = 0;
+
+      yield* setNow(FIRE_AT);
+      yield* tickAndDrain;
+
+      const [task] = yield* routineTasks("relay-routine");
+      // Not redirected to the bot's open chat with the same name, and not into the relay.
+      expect([relay, open]).not.toContain(task?.threadId);
+      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(relay);
+      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(open);
+    }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+  },
+);
+
 it.effect("newChatEachRun opts out, and an edit can turn it back off", () => {
   const dispatched: Array<OrchestrationCommand> = [];
   const shells: ShellSessions = new Map([[CHAT, { status: "ready" }]]);

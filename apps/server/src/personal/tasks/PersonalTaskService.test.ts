@@ -1829,6 +1829,84 @@ describe("a task bound to a chat the owner archived", () => {
     },
   );
 
+  it.effect(
+    "a task whose chat belongs to another bot is not moved into that bot's open chat",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        // The chats are the assistant's; the task is the developer's.
+        yield* seedChats(harness, [
+          [OLD, "Main"],
+          [NEW, "Main"],
+        ]);
+        yield* bots.archiveThread({ threadId: OLD, archived: true });
+        const before = turnStarts(harness).length;
+
+        yield* service.createTask({
+          idempotencyKey: "user:wake:other-bot",
+          botId: botId("developer"),
+          title: "Wake",
+          objective: "Report back.",
+          source: "user",
+          threadId: OLD,
+        });
+        yield* service.drain;
+
+        const started = turnStarts(harness)
+          .slice(before)
+          .map((command) => command.threadId);
+        // Never the assistant's open chat.
+        expect(started).not.toContain(NEW);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "a group member's relay thread is not judged: the task stays in it, archived or not",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const sql = yield* SqlClient.SqlClient;
+        yield* seedChats(harness, [
+          [OLD, "Main"],
+          [NEW, "Main"],
+        ]);
+        yield* sql`
+          INSERT INTO personal_groups (group_id, name, thread_id, max_bot_turns, created_at, updated_at)
+          VALUES ('g-1', 'Team', 'g-thread', 8, '2026-09-25T00:00:00.000Z', '2026-09-25T00:00:00.000Z')
+        `;
+        yield* sql`
+          INSERT INTO personal_group_members (group_id, bot_id, thread_id, role, sort_order, joined_at)
+          VALUES ('g-1', ${botId("assistant")}, ${OLD}, 'member', 0, '2026-09-25T00:00:00.000Z')
+        `;
+        yield* bots.archiveThread({ threadId: OLD, archived: true });
+        const before = turnStarts(harness).length;
+
+        yield* service.createTask({
+          idempotencyKey: "user:wake:relay",
+          botId: botId("assistant"),
+          title: "Wake",
+          objective: "Report back.",
+          source: "user",
+          threadId: OLD,
+        });
+        yield* service.drain;
+
+        expect(
+          turnStarts(harness)
+            .slice(before)
+            .map((command) => command.threadId),
+        ).toEqual([OLD]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
   it.effect("a delegated task's own chat is its work item and is left where it is", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

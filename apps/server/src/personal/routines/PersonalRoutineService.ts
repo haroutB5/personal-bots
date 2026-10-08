@@ -369,6 +369,8 @@ export const make = Effect.gen(function* () {
       if (sourceThreadId === null || routine.newChatEachRun === true) return undefined;
       const link = yield* bots.getThreadLink({ threadId: sourceThreadId });
       if (Option.isSome(link) && link.value.botId !== routine.botId) return undefined;
+      // A group member's relay thread is never a chat a routine writes into or moves out of.
+      if (yield* bots.isGroupRelay({ threadId: sourceThreadId })) return undefined;
       let threadId = sourceThreadId;
       if (Option.isNone(link) || link.value.archivedAt !== null) {
         // Same title only: a routine's output does not belong in an unrelated
@@ -379,6 +381,20 @@ export const make = Effect.gen(function* () {
           { sameTitleOnly: true },
         );
         if (resolved.kind !== "redirect") return undefined;
+        // The chat found must be this routine's bot's own: never another bot's chat.
+        const target = yield* bots.getThreadLink({ threadId: resolved.threadId });
+        if (Option.isNone(target) || target.value.botId !== routine.botId) {
+          yield* Effect.logWarning(
+            "personal routine run refused: the chat belongs to another bot",
+            {
+              routineId: routine.routineId,
+              threadId: resolved.threadId,
+              routineBotId: routine.botId,
+              chatBotId: Option.isSome(target) ? target.value.botId : null,
+            },
+          );
+          return undefined;
+        }
         yield* Effect.logInfo("personal routine run goes to the bot's open chat of the same name", {
           routineId: routine.routineId,
           from: sourceThreadId,

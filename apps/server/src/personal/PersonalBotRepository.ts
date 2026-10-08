@@ -218,6 +218,14 @@ export class PersonalBotRepository extends Context.Service<
     readonly getThreadLink: (
       input: GetPersonalBotThreadInput,
     ) => Effect.Effect<Option.Option<PersonalBotThread>, PersonalBotRepositoryError>;
+    /**
+     * True when the thread is, or ever was, a group member's relay thread (the
+     * member's transcript inside a group). Such a thread is never a chat the
+     * owner opens, so no automatic message is moved out of it or into it.
+     */
+    readonly isGroupRelay: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<boolean, PersonalBotRepositoryError>;
     readonly setThreadArchived: (
       input: SetPersonalBotThreadArchivedInput,
     ) => Effect.Effect<Option.Option<PersonalBotThread>, PersonalBotRepositoryError>;
@@ -1321,6 +1329,14 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const isGroupRelay: PersonalBotRepository["Service"]["isGroupRelay"] = (input) =>
+    sql<{ readonly one: number }>`
+      SELECT 1 AS "one" FROM personal_group_members WHERE thread_id = ${input.threadId} LIMIT 1
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.isGroupRelay:query")),
+    );
+
   const setThreadArchived: PersonalBotRepository["Service"]["setThreadArchived"] = (input) =>
     setThreadArchivedRow(input).pipe(
       Effect.mapError(
@@ -1785,6 +1801,7 @@ export const make = Effect.gen(function* () {
     clearTeamLead,
     insertThreadLink,
     getThreadLink,
+    isGroupRelay,
     setThreadArchived,
     recordThreadViewed,
     listFallbackStates,
