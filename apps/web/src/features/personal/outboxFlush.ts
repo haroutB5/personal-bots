@@ -84,6 +84,27 @@ export const OUTBOX_MAX_UNANSWERED = 3;
 /** Waits between passes while the laptop is connected but not answering. */
 export const OUTBOX_RETRY_DELAYS_MS = [1_500, 4_000, 10_000] as const;
 
+/**
+ * A send that has not been answered by now counts as unanswered, so one hung request cannot hold up every
+ * chat's queue. The next pass resends it under the same ids; the server answers a repeat from its receipt.
+ * A message with photos or files gets longer: its uploads are part of the attempt.
+ */
+export const OUTBOX_SEND_TIMEOUT_MS = 45_000;
+export const OUTBOX_UPLOAD_SEND_TIMEOUT_MS = 6 * 60_000;
+
+function answeredWithin(send: () => Promise<SendOutcome>, ms: number): Promise<SendOutcome> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ kind: "unknown" }), ms);
+    const settle = (outcome: SendOutcome) => {
+      clearTimeout(timer);
+      resolve(outcome);
+    };
+    Promise.resolve()
+      .then(send)
+      .then(settle, () => settle({ kind: "unknown" }));
+  });
+}
+
 const GAVE_UP = "Couldn't send: your laptop didn't answer. Try again.";
 
 export interface OutboxPassResult {
@@ -127,14 +148,11 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
     }
     tried.add(entry.id);
     setOutboxSending(entry.id, true);
-    let outcome: SendOutcome;
-    try {
-      outcome = await deps.send(entry);
-    } catch {
-      outcome = { kind: "unknown" };
-    } finally {
-      setOutboxSending(entry.id, false);
-    }
+    const outcome = await answeredWithin(
+      () => deps.send(entry),
+      entry.attachments.length > 0 ? OUTBOX_UPLOAD_SEND_TIMEOUT_MS : OUTBOX_SEND_TIMEOUT_MS,
+    );
+    setOutboxSending(entry.id, false);
     switch (outcome.kind) {
       case "sent": {
         removeOutboxEntry(entry.id);

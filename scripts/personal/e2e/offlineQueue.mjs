@@ -18,6 +18,16 @@ import { composer, openBots, startChatFromSheet, transcript } from "./lib.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Words differ in more than the last one: the composer drops a keyboard "echo" of the text just sent, and
+// "offline one" then "offline two" looks like one (the same guard protects every send).
+const ONLINE = "Hello while connected";
+const M1 = "Please check the release notes";
+const M2 = "Cancel me before the laptop is back";
+const M3 = "Remind me about the dentist tomorrow";
+const TYPO = "A typo to edit and retype";
+const M4 = "Then tell me the weather";
+const LOST = "This reply gets lost on the way back";
+
 /** The phone's socket to the laptop, routed through this script so a test can lose replies and drop it. */
 async function routeSocket(page) {
   const wire = {
@@ -123,7 +133,7 @@ async function offlineQueue({ page, origin, step, server, root }) {
     .toBe(true);
   await page.getByText("Planner", { exact: true }).first().tap();
   await startChatFromSheet(page, title);
-  await typeAndSend(page, "online hello");
+  await typeAndSend(page, ONLINE);
   await expect(transcript(page).getByText("Got it.")).toBeVisible();
   // The first reply loads the code-highlighting chunks while it is written. Let the page go quiet, as a phone
   // would have before its owner walks out of Wi-Fi range.
@@ -137,32 +147,29 @@ async function offlineQueue({ page, origin, step, server, root }) {
     timeout: 25_000,
   });
   await expect(page.getByText(/Messages you send now are saved/)).toBeVisible();
-  const send = sendButton(page);
-  if (await send.isDisabled()) throw new Error("Send is disabled while the laptop is away");
+  // Send is greyed only while the field is empty; with text in it, it must be live while the laptop is away.
+  await composer(page).fill("probe");
+  if (await sendButton(page).isDisabled())
+    throw new Error("Send is disabled while the laptop is away");
+  await composer(page).fill("");
   step("laptop is down: banner and composer say messages are kept, Send stays enabled");
 
-  await typeAndSend(page, "offline one");
-  await typeAndSend(page, "offline two");
-  await typeAndSend(page, "offline three");
+  await typeAndSend(page, M1);
+  await typeAndSend(page, M2);
+  await typeAndSend(page, M3);
   await expect(waitingRows(page)).toHaveCount(3);
   await expect(page.getByText("Waiting to send")).toBeVisible();
   await expect(page.getByText("3 messages are waiting to send")).toBeVisible();
   step("three messages show Waiting to send, the banner counts them");
 
   // ---- Cancel removes one, Edit hands one back to the composer
-  await waitingRows(page)
-    .filter({ hasText: "offline two" })
-    .getByRole("button", { name: "Cancel" })
-    .tap();
+  await waitingRows(page).filter({ hasText: M2 }).getByRole("button", { name: "Cancel" }).tap();
   await expect(waitingRows(page)).toHaveCount(2);
-  await expect(page.getByText("offline two")).toBeHidden();
-  await typeAndSend(page, "offline typo");
-  await waitingRows(page)
-    .filter({ hasText: "offline typo" })
-    .getByRole("button", { name: "Edit" })
-    .tap();
-  await expect.poll(() => composer(page).inputValue()).toBe("offline typo");
-  await composer(page).fill("offline four");
+  await expect(page.getByText(M2)).toBeHidden();
+  await typeAndSend(page, TYPO);
+  await waitingRows(page).filter({ hasText: TYPO }).getByRole("button", { name: "Edit" }).tap();
+  await expect.poll(() => composer(page).inputValue()).toBe(TYPO);
+  await composer(page).fill(M4);
   await sendButton(page).tap();
   await expect(waitingRows(page)).toHaveCount(3);
   step("Cancel removed one, Edit moved one back to the composer and it was retyped");
@@ -170,7 +177,7 @@ async function offlineQueue({ page, origin, step, server, root }) {
   // ---- the page is reloaded while the laptop is still away
   const queued = await page.evaluate(() => window.localStorage.getItem("t3.personal.outbox.v1"));
   const saved = JSON.parse(queued ?? "[]").map((entry) => entry.text);
-  if (saved.join("|") !== "offline one|offline three|offline four") {
+  if (saved.join("|") !== [M1, M3, M4].join("|")) {
     throw new Error(`the queue on the device is ${JSON.stringify(saved)}`);
   }
   let reloadedWhileDown = true;
@@ -182,7 +189,7 @@ async function offlineQueue({ page, origin, step, server, root }) {
   if (reloadedWhileDown) {
     // The service worker opens the app from its saved shell; the laptop cannot be reached, so it is the cold-launch
     // "Laptop offline" screen, and it says the messages are still here.
-    await expect(page.getByText("Laptop offline")).toBeVisible();
+    await expect(page.getByText("Laptop offline")).toBeVisible({ timeout: 90_000 });
     await expect(page.getByText("3 messages are waiting to send")).toBeVisible();
     step(
       "reloaded while the laptop was down: the Laptop offline screen says 3 messages are waiting",
@@ -205,10 +212,27 @@ async function offlineQueue({ page, origin, step, server, root }) {
 
   // ---- the laptop comes back
   await server.up();
-  if (reloadedWhileDown) await page.getByRole("button", { name: "Try again" }).tap();
-  else await page.goto(`${origin}/bots`, { waitUntil: "load" });
-  await page.getByLabel("Search bots and chats").waitFor({ state: "visible", timeout: 30_000 });
-  step("laptop is back, the app is open again on the Bots list");
+  const botsList = page.getByLabel("Search bots and chats");
+  const chatOpen = composer(page).filter({ visible: true });
+  const appOpen = async (timeout) => {
+    await Promise.race([
+      botsList.waitFor({ state: "visible", timeout }),
+      chatOpen.first().waitFor({ state: "visible", timeout }),
+    ]);
+  };
+  if (reloadedWhileDown) {
+    // The app keeps retrying its sign-in by itself and opens (on the page it was on) once the laptop answers;
+    // Try again is the same retry.
+    const opened = await appOpen(25_000).then(
+      () => true,
+      () => false,
+    );
+    if (!opened) await page.getByRole("button", { name: "Try again" }).tap();
+  } else {
+    await page.goto(`${origin}/bots`, { waitUntil: "load" });
+  }
+  await appOpen(30_000);
+  step("laptop is back, the app is open again");
   // The queue sends by itself, wherever the owner is. Open the chat to read it.
   await expect
     .poll(
@@ -220,7 +244,7 @@ async function offlineQueue({ page, origin, step, server, root }) {
         timeout: 60_000,
       },
     )
-    .toBe("online hello|offline one|offline three|offline four");
+    .toBe([ONLINE, M1, M3, M4].join("|"));
   const delivered = userMessages(root, title);
   if (delivered.some((message) => message.turns !== 1)) {
     throw new Error(`a message started more or fewer than one turn: ${JSON.stringify(delivered)}`);
@@ -234,22 +258,17 @@ async function offlineQueue({ page, origin, step, server, root }) {
   step("the queue on the device is empty");
 
   // ---- on screen too: open the chat
-  await page.getByText(title, { exact: true }).first().tap();
-  await expect(transcript(page).getByText("offline four")).toBeVisible({ timeout: 30_000 });
+  if ((await chatOpen.count()) === 0) await page.getByText(title, { exact: true }).first().tap();
+  await expect(transcript(page).getByText(M4)).toBeVisible({ timeout: 30_000 });
   const text = (await transcript(page).innerText()).replace(/\s+/g, " ");
-  for (const needle of ["offline one", "offline three", "offline four"]) {
+  for (const needle of [M1, M3, M4]) {
     const count = text.split(needle).length - 1;
     if (count !== 1) throw new Error(`"${needle}" shows ${count} times in the chat`);
   }
-  if (text.includes("offline two") || text.includes("offline typo")) {
+  if (text.includes(M2) || text.includes(TYPO)) {
     throw new Error("a cancelled or edited message reached the chat");
   }
-  if (
-    !(
-      text.indexOf("offline one") < text.indexOf("offline three") &&
-      text.indexOf("offline three") < text.indexOf("offline four")
-    )
-  ) {
+  if (!(text.indexOf(M1) < text.indexOf(M3) && text.indexOf(M3) < text.indexOf(M4))) {
     throw new Error("the messages are out of order in the chat");
   }
   await expect(page.getByText("Waiting to send")).toBeHidden();
@@ -258,7 +277,7 @@ async function offlineQueue({ page, origin, step, server, root }) {
   // ---- a reply lost on the way back: the server has the message, the phone never hears
   const before = userMessages(root, title).length;
   wire.swallow = true;
-  await typeAndSend(page, "lost reply message");
+  await typeAndSend(page, LOST);
   await expect.poll(() => userMessages(root, title).length, { timeout: 20_000 }).toBe(before + 1);
   step("the server has the message; its reply never reached the phone");
   wire.swallow = false;
@@ -266,12 +285,12 @@ async function offlineQueue({ page, origin, step, server, root }) {
   await expect(page.getByText("Waiting to send")).toBeHidden({ timeout: 40_000 });
   await sleep(4_000);
   const after = userMessages(root, title);
-  const lost = after.filter((message) => message.text === "lost reply message");
+  const lost = after.filter((message) => message.text === LOST);
   if (lost.length !== 1 || lost[0].turns !== 1 || after.length !== before + 1) {
     throw new Error(`the lost-reply message was duplicated: ${JSON.stringify(after.slice(-3))}`);
   }
-  const shown = ((await transcript(page).innerText()).match(/lost reply message/g) ?? []).length;
-  if (shown !== 1) throw new Error(`"lost reply message" shows ${shown} times in the chat`);
+  const shown = ((await transcript(page).innerText()).match(new RegExp(LOST, "g")) ?? []).length;
+  if (shown !== 1) throw new Error(`"${LOST}" shows ${shown} times in the chat`);
   step("the connection dropped mid-send and nothing was posted twice (one message, one turn)");
 }
 

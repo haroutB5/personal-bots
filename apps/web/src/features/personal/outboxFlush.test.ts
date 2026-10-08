@@ -14,6 +14,7 @@ import {
   classifySendFailure,
   createOutboxFlusher,
   OUTBOX_MAX_UNANSWERED,
+  OUTBOX_SEND_TIMEOUT_MS,
   runOutboxPass,
   type SendOutcome,
 } from "./outboxFlush";
@@ -247,6 +248,34 @@ describe("one pass over the queue", () => {
     });
     expect(sent).toEqual(["one"]);
     expect(ids()).toEqual([]);
+  });
+});
+
+describe("a send that never answers", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("is counted as unanswered after the timeout and does not hold up another chat", async () => {
+    enqueueOutboxEntry(entry("hung", "t1"));
+    enqueueOutboxEntry(entry("fine", "t2"));
+    const sent: string[] = [];
+    const pass = runOutboxPass({
+      environmentId: "env",
+      isConnected: () => true,
+      send: (item) => {
+        sent.push(item.id);
+        return item.id === "hung"
+          ? new Promise<SendOutcome>(() => {})
+          : Promise.resolve({ kind: "sent" });
+      },
+    });
+    await vi.advanceTimersByTimeAsync(OUTBOX_SEND_TIMEOUT_MS);
+    const result = await pass;
+    expect(sent).toEqual(["hung", "fine"]);
+    expect(ids()).toEqual(["hung"]);
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({ attempts: 1, status: "waiting" });
+    expect(getOutboxSnapshot().sending.size).toBe(0);
+    expect(result.retryInMs).not.toBeNull();
   });
 });
 
