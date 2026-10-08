@@ -325,6 +325,98 @@ async function screensKeepContent({ page, context, origin, step }) {
   });
   step("network back: the banner goes away");
   assertNoPageErrors("offline-screens", watch);
+
+  // A phone that has never opened Team, Memory or Files: the app fetched their code on its own while it was quiet,
+  // so they still open when the network is gone.
+  const fresh = await coldPhone(context, origin);
+  try {
+    const p2 = fresh.page;
+    const h = (name) => p2.getByRole("heading", { name, exact: true });
+    const t = (name) => p2.getByRole("navigation", { name: "Primary" }).getByRole("link", { name });
+    await p2.goto(`${origin}/bots`, { waitUntil: "load" });
+    await p2.getByLabel("Search bots and chats").waitFor({ state: "visible" });
+    // The app warms its screens once it is quiet: wait until Team, Memory and Files have been fetched.
+    await expect
+      .poll(
+        () =>
+          p2.evaluate(() => {
+            const names = performance.getEntriesByType("resource").map((entry) => entry.name);
+            return [/TeamScreen-/, /settings_\.memory-/, /_personal\.files-/].every((re) =>
+              names.some((name) => re.test(name)),
+            );
+          }),
+        { timeout: 60_000 },
+      )
+      .toBe(true);
+    await p2.waitForTimeout(1_000);
+    await fresh.context.setOffline(true);
+    await expect(p2.getByText(/Reconnecting to your laptop|Laptop offline/)).toBeVisible({
+      timeout: 30_000,
+    });
+    await p2.getByRole("link", { name: "Team" }).first().tap();
+    await expect(h("Team")).toBeVisible();
+    await t("Chats").tap();
+    await p2.getByRole("link", { name: "Settings" }).first().tap();
+    await p2
+      .getByRole("link", { name: /^Memory/ })
+      .first()
+      .tap();
+    await expect(h("Memory")).toBeVisible();
+    for (let i = 0; i < 3 && (await t("Files").count()) === 0; i += 1) await p2.goBack();
+    await t("Files").tap();
+    await expect(h("Files")).toBeVisible();
+    if ((await p2.getByText("This screen isn't on your phone yet").count()) > 0) {
+      throw new Error("a screen was not warmed before the network went");
+    }
+    await expectNoFallback(p2);
+    step(
+      "a phone that never opened them: Team, Memory and Files still open with no network (warmed while quiet)",
+    );
+
+    // A screen that is not warmed (Notifications) cannot open without the network: it says so in place, nothing
+    // reloads, and it opens by itself when the network is back.
+    for (
+      let i = 0;
+      i < 3 && (await p2.getByRole("link", { name: /^Notifications/ }).count()) === 0;
+      i += 1
+    ) {
+      await p2.goBack();
+      await p2.waitForTimeout(400);
+      if (
+        (await t("Chats").count()) > 0 &&
+        (await p2.getByRole("link", { name: "Settings" }).count()) > 0
+      ) {
+        await p2.getByRole("link", { name: "Settings" }).first().tap();
+      }
+    }
+    const loadsBefore2 = fresh.watch.loads();
+    await p2
+      .getByRole("link", { name: /^Notifications/ })
+      .first()
+      .tap();
+    await expect(p2.getByText("This screen isn't on your phone yet")).toBeVisible({
+      timeout: 20_000,
+    });
+    await expectNoFallback(p2);
+    await p2.waitForTimeout(8_000);
+    if (fresh.watch.loads() !== loadsBefore2)
+      throw new Error("an unopened screen reloaded the app while offline");
+    await expect(p2.getByText(/Reconnecting to your laptop|Laptop offline/)).toBeVisible();
+    step(
+      "a screen that cannot be fetched offline says so in place (banner stays), and nothing reloads",
+    );
+    await fresh.context.setOffline(false);
+    await expect(h("Notifications")).toBeVisible({ timeout: 60_000 });
+    step("network back: the screen opened by itself");
+    assertNoPageErrors("offline-screens", fresh.watch);
+  } catch (error) {
+    const text = await fresh.page.evaluate(() => document.body.innerText).catch(() => "");
+    throw new Error(`${error.message}
+  second phone url ${fresh.page.url()}, failed: ${fresh.watch.failedSummary()}
+  its text: ${text.replace(/\s+/g, " ").slice(0, 500)}`);
+  } finally {
+    await fresh.context.close().catch(() => undefined);
+  }
 }
 
 async function staleDeploy({ context, origin, step }) {
@@ -426,7 +518,7 @@ export const NETWORK_JOURNEYS = [
     id: "offline-screens",
     title:
       "Bots list, Team, Memory and Files keep their content and the banner when the network drops",
-    limitMs: 150_000,
+    limitMs: 200_000,
     run: screensKeepContent,
   },
   {

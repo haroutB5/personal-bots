@@ -1,8 +1,11 @@
 # hbots phone e2e smoke
 
-Five phone journeys in a real Chrome against a throwaway hbots server. It is the release gate's "does the app
-still work on a phone" check: it catches a white screen, a chat that cannot send, a broken New chat sheet,
-delegation, search or long-press, in about 35 seconds, with no real model and no live data.
+Phone journeys in a real Chrome against a throwaway hbots server. It is the release gate's "does the app
+still work on a phone" check: five smoke journeys (a white screen, a chat that cannot send, a broken New chat sheet,
+delegation, search, long-press; about 35 seconds), then, since 1.66.11, the offline journeys: `offline-queue` (the
+server goes away) and the phone-loses-network journeys below (about 4 minutes in all). No real model, no live data.
+**The default gate now runs all of them** (suite limit 600 s); `-Journey` picks some, and a re-test of only the five
+smoke journeys keeps the 180 s limit.
 
 ```powershell
 # a staged release (folder), a built worktree, or a sha12 under ~\.personal-bots\releases
@@ -11,7 +14,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\e2e-smoke.p
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\e2e-smoke.ps1 -Release <sha12> -Journey chats-search -Json
 ```
 
-Exit code: `0` all five passed, `1` a journey failed, `2` setup failed (server, browser or pairing), `3` something was
+Exit code: `0` all passed, `1` a journey failed, `2` setup failed (server, browser or pairing), `3` something was
 left behind (root or port) or the suite hit its 180 s limit.
 
 ## What it does
@@ -78,6 +81,23 @@ same root again on the same port. In between, the journey, in a 390x844 dark pho
 
 Journeys get `server` (`down()`, `up()`) and `root` from `run.mjs` (`--name`, `--tw`, `--root`, passed by
 `e2e-smoke.ps1`); a journey may set `limitMs` above the 30 s default.
+
+## The phone loses its network (1.66.11)
+
+`e2e\offlineNetwork.mjs`, in the default gate. The server stays up and the browser loses everything
+(`context.setOffline(true)`: pages, chunks, the socket), as a phone in a tube does. All in a 390x844 dark phone;
+"exactly once" is read from the server's database as in `offline-queue`.
+
+| Journey           | What it proves                                                                                                                                                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `offline-network` | a chat open for a while keeps its composer and the "Reconnecting" banner when all network goes; a message sent there shows "Waiting to send"; 20 s offline: no reload, no root "Laptop offline" screen; back online it arrives once |
+| `cold-load-drop`  | the same when the network goes a few seconds after a COLD load (no service worker, no cached chunks; the deferred dialogs fail): no reload into the root fallback, the message still arrives once                                   |
+| `offline-screens` | Bots list, Team, Memory and Files keep their content and the banner offline, with no reload; and a phone that never opened them still opens them offline (the app fetched their code while quiet, `warmRoutes.ts`)                  |
+| `stale-deploy`    | with the server answering, a newer release named by `/version.txt` reloads the app once (2 loads, no loop), and a lazy chunk that 404s reloads it once and recovers                                                                 |
+| `revoked-session` | a session revoked from the laptop (the server's own `auth session revoke`) signs the phone out to `/pair`                                                                                                                           |
+
+Before 1.66.11 `cold-load-drop` failed ("the page reloaded while offline"): a chunk that failed to load with no network
+triggered `vite:preloadError`, which reloaded the page into the saved shell and the root "Laptop offline" screen.
 
 ## How build and release call it
 

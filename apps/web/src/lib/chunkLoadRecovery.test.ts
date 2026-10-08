@@ -93,6 +93,33 @@ describe("a chunk that fails to load", () => {
   });
 });
 
+describe("away", () => {
+  it("is true with no network, while a check is out, and for a minute after a failed one", async () => {
+    vi.useFakeTimers();
+    try {
+      const { world, recovery } = setup({ reachable: false });
+      expect(recovery.away()).toBe(false);
+      const outcome = recovery.onPreloadError();
+      expect(recovery.away()).toBe(true); // the check is out
+      if (outcome.kind === "check") await outcome.settled;
+      expect(recovery.away()).toBe(true); // it failed a moment ago
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(recovery.away()).toBe(false);
+      world.online = false;
+      expect(recovery.away()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is false again once a check finds the server", async () => {
+    const { recovery } = setup({ reachable: true });
+    const outcome = recovery.onPreloadError();
+    if (outcome.kind === "check") await outcome.settled;
+    expect(recovery.away()).toBe(false);
+  });
+});
+
 describe("waiting for the server to come back", () => {
   it("runs the callback once the server answers, and stops watching", async () => {
     const { world, recovery } = setup({ online: false, reachable: false });

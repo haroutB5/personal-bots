@@ -70,14 +70,24 @@ export type ChunkErrorOutcome =
 export interface ChunkRecovery {
   /** The decision for one `vite:preloadError`. Never throws. */
   readonly onPreloadError: () => ChunkErrorOutcome;
+  /**
+   * The server looks unreachable right now: the phone has no network, a check is still
+   * out, or the last check failed a moment ago. Anything that would reload the page
+   * for a missing chunk must hold off while this is true.
+   */
+  readonly away: () => boolean;
   /** Resolves once no connection check is running. */
   readonly idle: () => Promise<void>;
   /** Runs `callback` once the server answers again (immediately when a probe already succeeds). */
   readonly whenServerBack: (callback: () => void) => () => void;
 }
 
+/** After a failed check the server counts as away for this long, so a second failing chunk does not reload. */
+export const CHUNK_AWAY_MEMORY_MS = 60_000;
+
 export function createChunkRecovery(env: ChunkRecoveryEnv): ChunkRecovery {
   let pending = 0;
+  let awayUntil = 0;
   let idleWaiters: Array<() => void> = [];
   const waitingCallbacks = new Set<() => void>();
   let stopWatching: (() => void) | null = null;
@@ -108,9 +118,11 @@ export function createChunkRecovery(env: ChunkRecoveryEnv): ChunkRecovery {
         probing = false;
         if (waitingCallbacks.size === 0) return;
         if (!reachable) {
+          awayUntil = Date.now() + CHUNK_AWAY_MEMORY_MS;
           if (askAgain) checkBack();
           return;
         }
+        awayUntil = 0;
         const callbacks = [...waitingCallbacks];
         waitingCallbacks.clear();
         stopWatching?.();
@@ -141,7 +153,11 @@ export function createChunkRecovery(env: ChunkRecoveryEnv): ChunkRecovery {
       .probe()
       .catch(() => false)
       .then((reachable): "reloaded" | "away" => {
-        if (!reachable) return "away";
+        if (!reachable) {
+          awayUntil = Date.now() + CHUNK_AWAY_MEMORY_MS;
+          return "away";
+        }
+        awayUntil = 0;
         return env.reloadOnce() ? "reloaded" : "away";
       })
       .finally(settle);
@@ -150,6 +166,7 @@ export function createChunkRecovery(env: ChunkRecoveryEnv): ChunkRecovery {
 
   return {
     onPreloadError,
+    away: () => !env.isOnline() || pending > 0 || Date.now() < awayUntil,
     idle: () =>
       pending === 0 ? Promise.resolve() : new Promise((resolve) => idleWaiters.push(resolve)),
     whenServerBack,

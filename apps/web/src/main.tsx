@@ -15,6 +15,7 @@ import {
 import { AppRoot } from "./AppRoot";
 import { chunkRecovery } from "./lib/chunkLoadRecovery";
 import { clearChunkReloadGuard } from "./lib/chunkReloadGuard";
+import { installRouterChunkReloadGuard } from "./lib/routerChunkReloadGuard";
 import {
   isStandaloneDisplay,
   registerPersonalServiceWorker,
@@ -88,6 +89,9 @@ window.addEventListener("vite:preloadError", () => {
     else if (!reloadStarted) reloadScheduled = false;
   });
 });
+
+// The router's own reload for a missing route chunk gets the same rule.
+installRouterChunkReloadGuard(() => chunkRecovery().away());
 
 const app = <AppRoot router={router} />;
 
