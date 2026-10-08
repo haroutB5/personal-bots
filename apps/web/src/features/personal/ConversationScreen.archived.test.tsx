@@ -1096,6 +1096,133 @@ describe("the sheet on the open chat", () => {
     expect(lastMessageListProps().errorText).toBe("The reply failed.");
   });
 
+  describe("when the open chat goes away, the bot's next open chat opens", () => {
+    /** The chat switch a chip tap makes: replaces history, so Back is unchanged. */
+    const switchedTo = (threadId: string) =>
+      expect.objectContaining({
+        to: "/bots/$botId/$threadId",
+        params: { botId: "bot-a", threadId },
+        replace: true,
+      });
+
+    it("Archive chat with another chat open goes to that chat, not the chat list", async () => {
+      openChat();
+      state.twoChats = true;
+      state.chipModel = CHIPS;
+      await renderScreen();
+      await openOwnSheet();
+      await chooseRow("archive");
+      expect(state.archive).toHaveBeenCalledWith({
+        environmentId: "env-1",
+        input: { threadId: "thread-1", archived: true },
+      });
+      expect(state.navigate).toHaveBeenCalledTimes(1);
+      expect(state.navigate).toHaveBeenCalledWith(switchedTo("thread-2"));
+    });
+
+    it("Archive chat with no other chat open goes to the bot's chats as before", async () => {
+      openChat();
+      state.chipModel = {
+        ...CHIPS,
+        chips: [CHIP_ONE],
+        ownerChips: [CHIP_ONE],
+        openCount: 1,
+        visible: false,
+      };
+      await renderScreen();
+      await openOwnSheet();
+      await chooseRow("archive");
+      expect(state.navigate).toHaveBeenCalledTimes(1);
+      expect(state.navigate).toHaveBeenCalledWith({
+        to: "/bots/$botId",
+        params: { botId: "bot-a" },
+        replace: true,
+      });
+    });
+
+    it("Delete chat with another chat open goes to that chat", async () => {
+      openChat();
+      state.twoChats = true;
+      state.chipModel = CHIPS;
+      await renderScreen();
+      await openOwnSheet();
+      await chooseRow("delete");
+      expect(state.deleteChat).toHaveBeenCalledWith("thread-1", {
+        title: undefined,
+        name: "Plans",
+        working: false,
+      });
+      expect(state.navigate).toHaveBeenCalledTimes(1);
+      expect(state.navigate).toHaveBeenCalledWith(switchedTo("thread-2"));
+    });
+
+    it("Delete chat with no other chat open goes to the bot's chats as before", async () => {
+      openChat();
+      await renderScreen();
+      await openOwnSheet();
+      await chooseRow("delete");
+      expect(state.navigate).toHaveBeenCalledWith({
+        to: "/bots/$botId",
+        params: { botId: "bot-a" },
+        replace: true,
+      });
+    });
+
+    it("a hold on the open chat's own chip archives from there and moves on the same way", async () => {
+      openChat();
+      state.twoChats = true;
+      state.chipModel = CHIPS;
+      await renderScreen();
+      await holdChip("thread-1");
+      expect(sheetOpen()).toBe(true);
+      await chooseRow("archive");
+      expect(state.archive).toHaveBeenCalledWith({
+        environmentId: "env-1",
+        input: { threadId: "thread-1", archived: true },
+      });
+      expect(state.navigate).toHaveBeenCalledWith(switchedTo("thread-2"));
+    });
+
+    it("the next chat is the first chip: a pinned chat goes ahead of newer ones", async () => {
+      openChat();
+      state.twoChats = true;
+      const pinned = { ...chipOf("thread-pinned", "Pinned", false), pinned: true };
+      const middle = chipOf("thread-1", "Plans", true);
+      state.chipModel = {
+        ...CHIPS,
+        chips: [pinned, middle, CHIP_TWO],
+        ownerChips: [pinned, middle, CHIP_TWO],
+        openCount: 3,
+      };
+      await renderScreen();
+      await openOwnSheet();
+      await chooseRow("archive");
+      expect(state.navigate).toHaveBeenCalledWith(switchedTo("thread-pinned"));
+    });
+
+    it("a failed Archive stays on the chat", async () => {
+      openChat();
+      state.twoChats = true;
+      state.chipModel = CHIPS;
+      state.archive = vi.fn(async () => ({ _tag: "Failure" }));
+      await renderScreen();
+      await openOwnSheet();
+      await chooseRow("archive");
+      expect(state.navigate).not.toHaveBeenCalled();
+    });
+
+    it("a cancelled Delete stays on the chat even with another chat open", async () => {
+      openChat();
+      state.twoChats = true;
+      state.chipModel = CHIPS;
+      state.deleteChat = vi.fn(async (): Promise<Outcome> => ({ status: "cancelled" }));
+      await renderScreen();
+      await openOwnSheet();
+      await chooseRow("delete");
+      expect(state.navigate).not.toHaveBeenCalled();
+    });
+  });
+
   it("a snoozed chat opened from Snoozed offers Wake now, which wakes it in place", async () => {
     openChat();
     state.linkSnoozedUntil = Date.now() + 3_600_000;

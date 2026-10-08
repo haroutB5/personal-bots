@@ -43,7 +43,10 @@ import * as PersonalRoutineService from "./PersonalRoutineService.ts";
  * A thread missing here reads as deleted or archived, as the real
  * `getThreadShellById` returns nothing for either.
  */
-type ShellSessions = Map<string, { readonly status: string; readonly activeTurnId?: string }>;
+type ShellSessions = Map<
+  string,
+  { readonly status: string; readonly activeTurnId?: string; readonly title?: string }
+>;
 
 /** Orchestration is a recorder: routines only need tasks to be created. */
 const makeLayer = (
@@ -86,6 +89,9 @@ const makeLayer = (
               ? Option.none()
               : Option.some({
                   id: threadId,
+                  ...(session.title === undefined
+                    ? {}
+                    : { title: session.title, archivedAt: null }),
                   session: {
                     threadId,
                     status: session.status,
@@ -1272,6 +1278,94 @@ it.effect(
         expect([CHAT, archived, deleted]).not.toContain(task?.threadId);
       }
       expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(CHAT);
+    }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+  },
+);
+
+/** The projection rows a bot's open chats are listed from (the harness has no projector). */
+const seedProjectedChats = (chats: ReadonlyArray<readonly [ThreadId, string]>) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    for (const [threadId, title] of chats) {
+      yield* sql`
+        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+        VALUES (${threadId}, 'project', ${title}, '2026-09-25T00:00:00.000Z', '2026-09-25T00:00:00.000Z')
+      `;
+    }
+  });
+
+it.effect(
+  "an archived source chat is not revived: the run goes to the bot's open chat with the same name",
+  () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    const archived = "chat-main-archived" as ThreadId;
+    const open = "chat-main-open" as ThreadId;
+    const shells: ShellSessions = new Map([
+      [archived, { status: "ready", title: "Main" }],
+      [open, { status: "ready", title: "Main" }],
+    ]);
+    return Effect.gen(function* () {
+      const bots = yield* PersonalBotService.PersonalBotService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* setNow("2026-09-25T15:00:00Z");
+      yield* seedBot;
+      yield* seedChat(archived);
+      yield* seedChat(open);
+      yield* seedProjectedChats([
+        [archived, "Main"],
+        [open, "Main"],
+      ]);
+      yield* createInChat("main-routine", { threadId: archived });
+      yield* bots.archiveThread({ threadId: archived, archived: true });
+      dispatched.length = 0;
+
+      yield* setNow(FIRE_AT);
+      yield* tickAndDrain;
+
+      const [task] = yield* routineTasks("main-routine");
+      expect(task?.threadId).toBe(open);
+      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).toEqual([open]);
+      // The archived chat stays archived and is not renamed.
+      const [link] = yield* sql<{ readonly archivedAt: string | null }>`
+        SELECT archived_at AS "archivedAt" FROM personal_bot_threads WHERE thread_id = ${archived}
+      `;
+      expect(link?.archivedAt).not.toBeNull();
+      expect(dispatched.filter((command) => command.type === "thread.meta.update")).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+  },
+);
+
+it.effect(
+  "an archived source chat with no open chat of its name keeps the run in its own new chat, not a stranger's",
+  () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    const archived = "chat-main-archived" as ThreadId;
+    const stranger = "chat-other-open" as ThreadId;
+    const shells: ShellSessions = new Map([
+      [archived, { status: "ready", title: "Main" }],
+      [stranger, { status: "ready", title: "matchday" }],
+    ]);
+    return Effect.gen(function* () {
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* setNow("2026-09-25T15:00:00Z");
+      yield* seedBot;
+      yield* seedChat(archived);
+      yield* seedChat(stranger);
+      yield* seedProjectedChats([
+        [archived, "Main"],
+        [stranger, "matchday"],
+      ]);
+      yield* createInChat("main-routine", { threadId: archived });
+      yield* bots.archiveThread({ threadId: archived, archived: true });
+      dispatched.length = 0;
+
+      yield* setNow(FIRE_AT);
+      yield* tickAndDrain;
+
+      const [task] = yield* routineTasks("main-routine");
+      expect([archived, stranger]).not.toContain(task?.threadId);
+      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(archived);
+      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(stranger);
     }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
   },
 );

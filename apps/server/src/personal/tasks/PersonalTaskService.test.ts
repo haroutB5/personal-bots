@@ -66,6 +66,8 @@ interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly sessions: Map<string, OrchestrationSession>;
   readonly messages: Map<string, Array<ProjectionThreadMessage>>;
+  /** Titles the projection reports for chats (a chat without one has no title key). */
+  readonly titles: Map<string, string>;
   sequence: number;
 }
 
@@ -81,6 +83,7 @@ const makeHarness = (): Harness => ({
   dispatched: [],
   sessions: new Map(),
   messages: new Map(),
+  titles: new Map(),
   sequence: 0,
 });
 
@@ -137,7 +140,14 @@ const makeLayer = (
         getThreadShellById: (threadId: ThreadId) =>
           Effect.sync(() => {
             const session = harness.sessions.get(threadId);
-            return session === undefined ? Option.none() : Option.some({ id: threadId, session });
+            const title = harness.titles.get(threadId);
+            return session === undefined
+              ? Option.none()
+              : Option.some({
+                  id: threadId,
+                  session,
+                  ...(title === undefined ? {} : { title, archivedAt: null }),
+                });
           }),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
@@ -1713,6 +1723,142 @@ it.effect("a routine run into the chat it was made in leaves that chat's title a
       ),
     ).toBe(false);
   }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+describe("a task bound to a chat the owner archived", () => {
+  const OLD = "chat-main-old" as ThreadId;
+  const NEW = "chat-main-new" as ThreadId;
+
+  const seedChats = (harness: Harness, chats: ReadonlyArray<readonly [ThreadId, string]>) =>
+    Effect.gen(function* () {
+      const bots = yield* PersonalBotService.PersonalBotService;
+      const sql = yield* SqlClient.SqlClient;
+      const now = DateTime.formatIso(yield* DateTime.now);
+      for (const [threadId, title] of chats) {
+        yield* bots.createThread({ botId: botId("assistant"), threadId });
+        yield* sql`
+          INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+          VALUES (${threadId}, 'project', ${title}, ${now}, ${now})
+        `;
+        harness.titles.set(threadId, title);
+        yield* setSession(
+          harness,
+          makeSession({ threadId, status: "ready", activeTurnId: null, updatedAt: now }),
+        );
+      }
+    });
+
+  const archivedAt = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const [row] = yield* sql<{ readonly archivedAt: string | null }>`
+        SELECT archived_at AS "archivedAt" FROM personal_bot_threads WHERE thread_id = ${threadId}
+      `;
+      return row?.archivedAt ?? null;
+    });
+
+  const renames = (harness: Harness) =>
+    harness.dispatched.filter((command) => command.type === "thread.meta.update");
+
+  it.effect(
+    "a chat request waiting on its children wakes in the bot's open chat of the same name, and the archived chat stays archived",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        yield* seedChats(harness, [
+          [OLD, "Main"],
+          [NEW, "Main"],
+        ]);
+        yield* bots.archiveThread({ threadId: OLD, archived: true });
+        const before = turnStarts(harness).length;
+
+        const task = yield* service.createTask({
+          idempotencyKey: "user:wake:1",
+          botId: botId("assistant"),
+          title: "Wake",
+          objective: "Report back.",
+          source: "user",
+          threadId: OLD,
+        });
+        yield* service.drain;
+
+        const started = turnStarts(harness).slice(before);
+        expect(started.map((command) => command.threadId)).toEqual([NEW]);
+        const running = yield* reload(task.taskId);
+        expect(running.threadId).toBe(NEW);
+        expect(yield* archivedAt(OLD)).not.toBeNull();
+        expect(renames(harness)).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "with no open chat at all the task gets one new chat and the archived chat stays put",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        yield* seedChats(harness, [[OLD, "Main"]]);
+        yield* bots.archiveThread({ threadId: OLD, archived: true });
+        const before = turnStarts(harness).length;
+        const createsBefore = threadCreates(harness).length;
+
+        const task = yield* service.createTask({
+          idempotencyKey: "user:wake:2",
+          botId: botId("assistant"),
+          title: "Wake",
+          objective: "Report back.",
+          source: "user",
+          threadId: OLD,
+        });
+        yield* service.drain;
+
+        const started = turnStarts(harness).slice(before);
+        expect(started).toHaveLength(1);
+        expect(started[0]!.threadId).not.toBe(OLD);
+        expect(threadCreates(harness).length).toBe(createsBefore + 1);
+        expect((yield* reload(task.taskId)).threadId).toBe(started[0]!.threadId);
+        expect(yield* archivedAt(OLD)).not.toBeNull();
+        expect(renames(harness)).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("a delegated task's own chat is its work item and is left where it is", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* seedChats(harness, [
+        [OLD, "Build it"],
+        [NEW, "Build it"],
+      ]);
+      yield* bots.archiveThread({ threadId: OLD, archived: true });
+      const before = turnStarts(harness).length;
+
+      yield* service.createTask({
+        idempotencyKey: "delegation:work:1",
+        botId: botId("assistant"),
+        title: "Build it",
+        objective: "Build.",
+        source: "delegation",
+        threadId: OLD,
+      });
+      yield* service.drain;
+
+      expect(
+        turnStarts(harness)
+          .slice(before)
+          .map((command) => command.threadId),
+      ).toEqual([OLD]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
 });
 
 const claudeOpus = {

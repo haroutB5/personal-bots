@@ -11,6 +11,7 @@ import { keepBotsBehindChats } from "./botsBackStack";
 import {
   CHIP_EDGE_CLEARANCE,
   chatSwitchNavigation,
+  nextOpenChatAfterRemoval,
   scrollLeftToReveal,
 } from "./chatChipNavigation";
 
@@ -115,6 +116,41 @@ describe("chat chip switching", () => {
     await open(router, `/bots/${BOT}/thread-a`);
     await switchTo(router, "thread-b");
     expect(await back(router)).toBe("/bots");
+  });
+});
+
+describe("nextOpenChatAfterRemoval", () => {
+  const chip = (threadId: string, kind = "chat") => ({ threadId, kind });
+
+  it("is the first chip that is not the chat going away", () => {
+    expect(nextOpenChatAfterRemoval([chip("pinned"), chip("a"), chip("b")], "a")).toBe("pinned");
+    expect(nextOpenChatAfterRemoval([chip("a"), chip("b"), chip("c")], "a")).toBe("b");
+  });
+
+  it("skips a temporary task or archived chip, which is not one of the owner's chats", () => {
+    expect(nextOpenChatAfterRemoval([chip("task", "task"), chip("a"), chip("b")], "task")).toBe(
+      "a",
+    );
+    expect(nextOpenChatAfterRemoval([chip("old", "archived"), chip("a")], "old")).toBe("a");
+  });
+
+  it("is null when the bot has no other open chat", () => {
+    expect(nextOpenChatAfterRemoval([chip("a")], "a")).toBeNull();
+    expect(nextOpenChatAfterRemoval([], "a")).toBeNull();
+    expect(nextOpenChatAfterRemoval([chip("task", "task"), chip("a")], "a")).toBeNull();
+  });
+
+  it("lands on the chat with Back still one tap to /bots, or to Team from Team", async () => {
+    for (const origin of ["/bots", "/bots/team"]) {
+      const router = createTestRouter([origin]);
+      await router.load();
+      await open(router, `/bots/${BOT}/thread-a`);
+      const next = nextOpenChatAfterRemoval([chip("thread-a"), chip("thread-b")], "thread-a");
+      expect(next).toBe("thread-b");
+      await switchTo(router, next!);
+      expect(router.state.location.pathname).toBe(`/bots/${BOT}/thread-b`);
+      expect(await back(router)).toBe(origin);
+    }
   });
 });
 

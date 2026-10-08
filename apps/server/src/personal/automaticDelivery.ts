@@ -77,7 +77,7 @@ export const chooseOpenChat = (
   readonly threadId: ThreadId;
   readonly reason: "same-title" | "most-recent";
 } | null => {
-  if (title !== null && !isPlaceholderChatTitle(title)) {
+  if (typeof title === "string" && !isPlaceholderChatTitle(title)) {
     const wanted = normalizeChatName(title);
     const same = openChats
       .filter((chat) => normalizeChatName(chat.title) === wanted)

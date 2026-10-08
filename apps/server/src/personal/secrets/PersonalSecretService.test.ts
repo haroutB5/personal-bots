@@ -68,6 +68,7 @@ import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import * as PersonalSecretService from "./PersonalSecretService.ts";
+import { secretAccessLock } from "./secretAccessLock.ts";
 import * as PersonalSessionAccess from "./PersonalSessionAccess.ts";
 import { SecretBrokerConfig } from "./secretBroker.ts";
 import { TEST_TLS_CERT, TEST_TLS_KEY } from "./secretBrokerTestCert.ts";
@@ -2128,6 +2129,72 @@ describe("brokered secrets", () => {
         }),
     );
   });
+
+  it.live("the presence check of a repeated request waits for a key change in flight", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const { task, threadId } = yield* runningTask(harness, "presence", "assistant");
+        yield* secrets.create({
+          name: "PRESENCE_KEY",
+          value: Redacted.make("presence-value-0123"),
+          shared: true,
+          mode: "env",
+        });
+        const held = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        // A save or removal that has the access lock and is still working.
+        const writer = yield* Effect.forkChild(
+          secretAccessLock.withPermit(
+            Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          ),
+        );
+        yield* Deferred.await(held);
+        const asking = yield* Effect.forkChild(
+          secrets.request({
+            task,
+            threadId,
+            botId: botId("assistant"),
+            name: "PRESENCE_KEY",
+            label: "key",
+            purpose: "Test.",
+          }),
+        );
+        yield* Effect.sleep("150 millis");
+        // Not answered from a half-written key: it waits for the lock.
+        expect(asking.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(release, undefined);
+        const answered = yield* Fiber.join(asking);
+        yield* Fiber.join(writer);
+        expect(answered.status).toBe("fulfilled");
+      }),
+    ),
+  );
+
+  it.live(
+    "the startup redactor load takes the access lock, waits its turn and never deadlocks",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeHarness();
+        const held = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const writer = yield* Effect.forkChild(
+          secretAccessLock.withPermit(
+            Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          ),
+        );
+        yield* Deferred.await(held);
+        // The whole service stack starts while a key change holds the lock.
+        const starting = yield* Effect.forkChild(Effect.scoped(Layer.build(makeLayer(harness))));
+        yield* Effect.sleep("300 millis");
+        expect(starting.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(writer);
+        // Free again: startup finishes by itself.
+        yield* Fiber.join(starting);
+      }),
+  );
 
   it.effect("a pending request flags the origins the app cannot vouch for", () =>
     withLayer((harness) =>
