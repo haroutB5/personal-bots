@@ -33,13 +33,36 @@ export class BotsToolError extends Schema.TaggedError<BotsToolError>()("BotsTool
 export const BotsToolFailure = Schema.Union([McpCapabilityUnavailableError, BotsToolError]);
 export type BotsToolFailure = typeof BotsToolFailure.Type;
 
+/** Present only while a bot runs on its usage-limit fallback model instead of its own. */
+export const BotFallbackEntry = Schema.Struct({
+  provider: Schema.String.annotate({ description: "Provider instance the fallback runs on." }),
+  model: Schema.String.annotate({ description: "The model the bot's turns use right now." }),
+  fromProvider: Schema.String.annotate({ description: "The provider that hit its usage limit." }),
+  since: Schema.String.annotate({ description: "When it switched (ISO, UTC)." }),
+  resetAt: Schema.optional(
+    Schema.String.annotate({
+      description: "When the original limit resets (ISO, UTC), if reported.",
+    }),
+  ),
+  label: Schema.String.annotate({
+    description:
+      'One line to quote, for example "fallback: claude-sonnet-5-5 until 2026-10-08T08:00:40.000Z".',
+  }),
+});
+
 export const BotEntry = Schema.Struct({
   botId: Schema.String,
   name: Schema.String,
   description: Schema.String,
-  provider: Schema.String.annotate({ description: "Provider instance the bot runs on." }),
-  model: Schema.String,
+  provider: Schema.String.annotate({
+    description: "Provider instance of the model the bot is set to (its own, not a fallback).",
+  }),
+  model: Schema.String.annotate({
+    description:
+      "The model the bot is set to. While `fallback` is present it runs on that instead.",
+  }),
   isYou: Schema.Boolean.annotate({ description: "True for the bot making this call." }),
+  fallback: Schema.optional(BotFallbackEntry),
 });
 export type BotEntry = typeof BotEntry.Type;
 
@@ -539,7 +562,7 @@ export type LeadBotResult = typeof LeadBotResult.Type;
 
 const ListBotsTool = Tool.make("list_bots", {
   description:
-    "List the personal bots on your team, the ones you can delegate work to: each one's name, what it is for, the provider and model it runs on, and which entry is you. Bots on the other team are left out; delegate_task accepts one of them only once the user's own latest message names it. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
+    "List the personal bots on your team, the ones you can delegate work to: each one's name, what it is for, the provider and model it is set to, a fallback entry while a usage limit has it on its fallback model (the model doing its work right now, and until when), and which entry is you. Bots on the other team are left out; delegate_task accepts one of them only once the user's own latest message names it. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
   success: ListBotsResult,
   failure: BotsToolFailure,
   dependencies,

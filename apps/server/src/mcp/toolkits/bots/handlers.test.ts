@@ -324,6 +324,53 @@ describe("bots toolkit handlers", () => {
     ),
   );
 
+  it.effect("1.66.7: list_bots shows the fallback a bot runs on, and only while it does", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const repository = yield* PersonalBotRepository.PersonalBotRepository;
+
+        const before = yield* call("list_bots", {});
+        expect(before.bots.every((bot) => bot.fallback === undefined)).toBe(true);
+
+        // The Developer is on its usage-limit fallback until 08:00:40 UTC.
+        yield* repository.startFallback({
+          botId: botId("developer"),
+          fallbackModel: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-5-5",
+          },
+          fromInstanceId: "codex",
+          fromProvider: "Codex",
+          reason: "usage limit",
+          startedAt: "2026-10-08T05:00:00.000Z",
+          resetAt: "2026-10-08T08:00:40.000Z",
+          noticeThreadId: null,
+        });
+        const during = yield* call("list_bots", {});
+        const developer = during.bots.find((bot) => bot.botId === botId("developer"));
+        // The home model stays what the owner saved; the fallback says what runs now.
+        expect(developer).toMatchObject({ provider: "codex", model: "gpt-test" });
+        expect(developer?.fallback).toEqual({
+          provider: "claudeAgent",
+          model: "claude-sonnet-5-5",
+          fromProvider: "Codex",
+          since: "2026-10-08T05:00:00.000Z",
+          resetAt: "2026-10-08T08:00:40.000Z",
+          label: "fallback: claude-sonnet-5-5 until 2026-10-08T08:00:40.000Z (Codex usage limit)",
+        });
+        expect(
+          during.bots.filter((bot) => bot.botId !== botId("developer")).map((bot) => bot.fallback),
+        ).toEqual([undefined, undefined, undefined]);
+
+        // Back on its own model: no fallback entry.
+        yield* repository.endFallback(botId("developer"));
+        const after = yield* call("list_bots", {});
+        expect(after.bots.every((bot) => bot.fallback === undefined)).toBe(true);
+      }),
+    ),
+  );
+
   it.effect("delegate_task creates exactly one child per turn, target and objective", () =>
     withHarness((harness) =>
       Effect.gen(function* () {

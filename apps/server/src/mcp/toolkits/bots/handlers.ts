@@ -1,6 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  botFallbackActive,
   botTeam,
   DEFAULT_PERSONAL_BOT_TEAM,
   isBotOnTeam,
@@ -448,6 +449,29 @@ const make = Effect.gen(function* () {
       : { botId: pick.botId as string, bot: pick };
   });
 
+  /**
+   * What a bot runs on while its usage limit has it on the fallback model: the web UI shows the
+   * same fact as "on fallback until about 14:30"; a lead needs it to know which model does the work.
+   */
+  const fallbackEntry = (bot: PersonalBot) => {
+    const active = botFallbackActive(bot);
+    if (active === null) return {};
+    const resetAt = active.resetAt === undefined ? undefined : DateTime.formatIso(active.resetAt);
+    const provider = active.fromProvider.trim();
+    return {
+      fallback: {
+        provider: active.modelSelection.instanceId as string,
+        model: active.modelSelection.model,
+        fromProvider: active.fromProvider,
+        since: DateTime.formatIso(active.since),
+        ...(resetAt === undefined ? {} : { resetAt }),
+        label: `fallback: ${active.modelSelection.model}${
+          resetAt === undefined ? "" : ` until ${resetAt}`
+        }${provider === "" ? "" : ` (${provider} usage limit)`}`,
+      },
+    };
+  };
+
   return BotsToolkit.of({
     list_bots: () =>
       Effect.gen(function* () {
@@ -465,6 +489,7 @@ const make = Effect.gen(function* () {
               provider: bot.modelSelection.instanceId,
               model: bot.modelSelection.model,
               isYou: bot.botId === caller.botId,
+              ...fallbackEntry(bot),
             })),
         };
       }),
