@@ -18,6 +18,7 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import { personalBotSystemInstructions } from "../personalBotInstructions.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import { personalSecretStoreKey } from "./PersonalSecretService.ts";
+import { secretAccessLock } from "./secretAccessLock.ts";
 
 /** What a provider session on one thread gets for being a personal bot's thread. */
 export interface PersonalSessionGrant {
@@ -104,73 +105,98 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  /** The secrets a bot can use: its own and every shared one, read from the store. */
+  /**
+   * The secrets a bot can use: its own and every shared one, read from the
+   * store. Each secret is the bytes of one physical storage slot together with
+   * one access policy: rows that address the same slot (every shared row of a
+   * name, a bot's private rows of a name, or a pre-scoping row that falls back
+   * to the shared slot) are read as a group. If they disagree (rows saved before
+   * the save paths refused that), a brokered row decides over an env one, and
+   * the newest brokered row decides among them, so the bytes are never put in
+   * a process environment or sent to an origin a row only allowed brokered.
+   * Held under the access lock: a save writes bytes and policy in two steps.
+   */
   const readSecrets = (botId: PersonalBotId) =>
-    Effect.gen(function* () {
-      const fulfilled = yield* secrets.listByStatus("fulfilled");
-      // One value per name: the bot's own unshared row wins over a shared one
-      // when both exist, so an unshared value is never shadowed by a shared one.
-      type Row = (typeof fulfilled)[number];
-      const fulfilledMs = (row: Row) =>
-        row.fulfilledAt === null ? 0 : DateTime.toEpochMillis(row.fulfilledAt);
-      const own = new Map<string, Row>();
-      const sharedRows = new Map<string, Array<Row>>();
-      for (const entry of fulfilled) {
-        if (entry.shared)
-          sharedRows.set(entry.name, [...(sharedRows.get(entry.name) ?? []), entry]);
-        else if (entry.botId === botId && !own.has(entry.name)) own.set(entry.name, entry);
-      }
-      const byName = new Map<string, Row>(own);
-      for (const [name, rows] of sharedRows) {
-        if (byName.has(name)) continue;
-        // Shared rows address one stored value. The save paths keep their
-        // access identical; if rows saved before that guard disagree, never let
-        // an env row expose a value another row saved brokered-only: the newest
-        // brokered row decides, otherwise the bot's own row, otherwise the first.
-        const brokered = rows.filter((row) => row.mode === "brokered");
-        byName.set(
-          name,
-          brokered.length > 0
-            ? brokered.reduce((best, row) => (fulfilledMs(row) >= fulfilledMs(best) ? row : best))
-            : (rows.find((row) => row.botId === botId) ?? rows[0]!),
+    secretAccessLock.withPermit(
+      Effect.gen(function* () {
+        const fulfilled = yield* secrets.listByStatus("fulfilled");
+        type Row = (typeof fulfilled)[number];
+        const fulfilledMs = (row: Row) =>
+          row.fulfilledAt === null ? 0 : DateTime.toEpochMillis(row.fulfilledAt);
+        const accessibleNames = new Set(
+          fulfilled.filter((row) => row.shared || row.botId === botId).map((row) => row.name),
         );
-      }
-      const accessible: Array<PersonalSessionSecret> = [];
-      for (const entry of byName.values()) {
-        const value = yield* store
-          .get(
-            personalSecretStoreKey({
-              name: entry.name,
-              botId: entry.botId,
-              shared: entry.shared,
-            }),
-          )
-          .pipe(
-            Effect.flatMap((found) =>
-              // Secrets fulfilled before scoping live at the legacy name-only key.
-              Option.isSome(found)
-                ? Effect.succeed(found)
-                : store.get(personalSecretStoreKey(entry.name)),
-            ),
-            Effect.catch(() =>
-              // The name only: the value is never logged.
-              Effect.logWarning("personal secret unreadable; starting the session without it", {
-                name: entry.name,
-              }).pipe(Effect.as(Option.none<Uint8Array>())),
-            ),
-          );
-        if (Option.isSome(value)) {
+        const reads = new Map<string, Option.Option<Uint8Array>>();
+        const readKey = (key: string) =>
+          Effect.gen(function* () {
+            const known = reads.get(key);
+            if (known !== undefined) return known;
+            const found = yield* store.get(key).pipe(
+              Effect.catch(() =>
+                // The key name only: the value is never logged.
+                Effect.logWarning("personal secret unreadable; starting the session without it", {
+                  key,
+                }).pipe(Effect.as(Option.none<Uint8Array>())),
+              ),
+            );
+            reads.set(key, found);
+            return found;
+          });
+        /** The slot a row's bytes live in: its own key, else (fulfilled before scoping) the name-only key. */
+        const slotOf = (row: Row) =>
+          Effect.gen(function* () {
+            const own = personalSecretStoreKey({
+              name: row.name,
+              botId: row.botId,
+              shared: row.shared,
+            });
+            const found = yield* readKey(own);
+            if (Option.isSome(found)) return { slot: own, bytes: found.value };
+            const legacy = personalSecretStoreKey(row.name);
+            const fallback = legacy === own ? found : yield* readKey(legacy);
+            return Option.isSome(fallback) ? { slot: legacy, bytes: fallback.value } : null;
+          });
+        const rowSlots = new Map<Row, { slot: string; bytes: Uint8Array } | null>();
+        const slotRows = new Map<string, Array<Row>>();
+        for (const row of fulfilled) {
+          if (!accessibleNames.has(row.name)) continue;
+          const resolved = yield* slotOf(row);
+          rowSlots.set(row, resolved);
+          if (resolved === null) continue;
+          slotRows.set(resolved.slot, [...(slotRows.get(resolved.slot) ?? []), row]);
+        }
+        /** The one row whose policy governs a slot's bytes. */
+        const governing = (rows: ReadonlyArray<Row>) => {
+          const brokered = rows.filter((row) => row.mode === "brokered");
+          const pool = brokered.length > 0 ? brokered : rows;
+          return pool.reduce((best, row) => (fulfilledMs(row) >= fulfilledMs(best) ? row : best));
+        };
+        // One value per name: the bot's own unshared row wins over a shared one
+        // when both exist, so an unshared value is never shadowed by a shared one.
+        const chosen = new Map<string, Row>();
+        for (const row of fulfilled) {
+          if (!row.shared && row.botId === botId && !chosen.has(row.name))
+            chosen.set(row.name, row);
+        }
+        for (const row of fulfilled) {
+          if (row.shared && !chosen.has(row.name)) chosen.set(row.name, row);
+        }
+        const accessible: Array<PersonalSessionSecret> = [];
+        for (const [name, row] of chosen) {
+          const resolved = rowSlots.get(row);
+          if (resolved === null || resolved === undefined) continue;
+          const policy = governing(slotRows.get(resolved.slot) ?? [row]);
           accessible.push({
-            name: entry.name,
-            mode: entry.mode ?? "env",
-            origins: entry.origins ?? [],
-            placement: entry.placement ?? {},
-            value: decoder.decode(value.value),
+            name,
+            mode: policy.mode ?? "env",
+            origins: policy.origins ?? [],
+            placement: policy.placement ?? {},
+            value: decoder.decode(resolved.bytes),
           });
         }
-      }
-      return accessible;
-    });
+        return accessible;
+      }),
+    );
 
   const forThread: PersonalSessionAccess["Service"]["forThread"] = (threadId) =>
     Effect.gen(function* () {

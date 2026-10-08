@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import * as Semaphore from "effect/Semaphore";
 
 import {
   personalSecretPlaceholder,
@@ -36,6 +35,7 @@ import {
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
+import { secretAccessLock } from "./secretAccessLock.ts";
 import { secretRedactor } from "./secretRedaction.ts";
 
 /**
@@ -213,7 +213,6 @@ export const make = Effect.gen(function* () {
   const repository = yield* PersonalSecretRepository.PersonalSecretRepository;
   const store = yield* ServerSecretStore.ServerSecretStore;
   const tasks = yield* PersonalTaskService.PersonalTaskService;
-  const mutationLock = yield* Semaphore.make(1);
 
   // Causes are kept for server-side diagnostics; none of them can hold a
   // value (store errors carry the key and a platform error, SQL never sees it).
@@ -281,13 +280,17 @@ export const make = Effect.gen(function* () {
   ) => db("mode", repository.setMode({ name, ...access }));
 
   /**
-   * Fails when a shared row of `name` (other than the owner's own saved one,
-   * which a new owner save replaces) already grants different access than
-   * `access`. Shared rows address one stored value, so they must agree.
+   * Fails when another fulfilled row addressing the same stored value (the
+   * shared slot of `name`, or the private slot of `name` for `botId`) grants
+   * different access than `access`. Rows on one slot read the same bytes, so
+   * they must agree: a new save must never inherit an older row's broader
+   * mode or origins, nor leave its bytes under them. Nothing is written first.
+   * The owner's own saved row is rotated in place by `create`, so `create`
+   * passes `ignoreOwnerSaved`.
    */
-  const requireSharedAccessMatch = Effect.fn("PersonalSecretService.requireSharedAccessMatch")(
+  const requireSlotAccessMatch = Effect.fn("PersonalSecretService.requireSlotAccessMatch")(
     function* (
-      name: string,
+      slot: { readonly name: string; readonly botId: PersonalBotId; readonly shared: boolean },
       access: {
         readonly mode: PersonalSecretMode;
         readonly origins: ReadonlyArray<string>;
@@ -297,13 +300,15 @@ export const make = Effect.gen(function* () {
     ) {
       const rows = (yield* db("lookup", repository.listByStatus("fulfilled"))).filter(
         (row) =>
-          row.name === name &&
-          row.shared &&
+          row.name === slot.name &&
+          (slot.shared ? row.shared : !row.shared && row.botId === slot.botId) &&
           !(options?.ignoreOwnerSaved === true && row.botId === OWNER_SAVED_BOT_ID),
       );
       if (rows.some((row) => !samePolicy(row, access))) {
         return yield* fail(
-          `A shared key called ${name} is already saved with different access. Save this one with the same mode and origins, or change the saved key's access in Settings > API keys first, so one value never has two sets of permissions.`,
+          slot.shared
+            ? `A shared key called ${slot.name} is already saved with different access. Save this one with the same mode and origins, or change the saved key's access in Settings > API keys first, so one value never has two sets of permissions.`
+            : `This bot already has a key called ${slot.name} saved with different access. Save this one with the same mode and origins, or change the saved key's access in Settings > API keys first, so one value never has two sets of permissions.`,
         );
       }
     },
@@ -445,9 +450,10 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  const fulfill: PersonalSecretService["Service"]["fulfill"] = Effect.fn(
-    "PersonalSecretService.fulfill",
-  )(function* (input) {
+  /** The locked part of a fulfilment: check, bytes, row. The task is resumed after the lock is released. */
+  const saveFulfilment = Effect.fn("PersonalSecretService.fulfill")(function* (
+    input: PersonalSecretFulfillInput,
+  ) {
     const pending = yield* requirePending(input.requestId);
     const bytes = new TextEncoder().encode(Redacted.value(input.value));
     if (bytes.byteLength === 0) {
@@ -462,13 +468,12 @@ export const make = Effect.gen(function* () {
       origins: input.origins ?? (pending.origins?.length ? pending.origins : undefined),
       placement: input.placement,
     });
-    // A shared value lives in one slot for every bot, so it must carry one
-    // access policy. A second save with different access would overwrite the
-    // bytes while an older row kept its (maybe broader) mode and origins, so
-    // it is refused before anything is written; the request stays pending.
-    if (shared) {
-      yield* requireSharedAccessMatch(pending.name, access);
-    }
+    // A stored value lives in one slot (every bot's for a shared key, one bot's
+    // otherwise) and so carries one access policy. A second save with different
+    // access would overwrite the bytes while an older row kept its (maybe
+    // broader) mode and origins, so it is refused before anything is written;
+    // the request stays pending.
+    yield* requireSlotAccessMatch({ name: pending.name, botId: pending.botId, shared }, access);
     yield* store
       .set(personalSecretStoreKey({ name: pending.name, botId: pending.botId, shared }), bytes)
       .pipe(Effect.mapError((cause) => fail("Could not store the secret.", cause)));
@@ -505,7 +510,6 @@ export const make = Effect.gen(function* () {
     );
     // Only this row carries the access the owner chose: another bot's row (or
     // the owner's own saved key) of the same name keeps its mode and origins.
-    yield* resumeTaskIfReady(fulfilled);
     return fulfilled;
   });
 
@@ -608,9 +612,21 @@ export const make = Effect.gen(function* () {
     );
     if (rows.length === 0) return yield* fail("Saved secret not found.");
     if (rows.every((row) => row.shared === input.shared)) return yield* list();
-    if (input.shared && rows.some((row) => !samePolicy(row, rows[0]!)))
+    // Sharing joins every row into one slot; unsharing copies the shared slot's
+    // bytes into one slot per bot. Either way the rows that end up reading the
+    // same bytes must already agree on access, or one of them would gain bytes
+    // it was not approved for (an env row reading a brokered-only save).
+    const disagree = (group: ReadonlyArray<(typeof rows)[number]>) =>
+      group.some((row) => !samePolicy(row, group[0]!));
+    const afterSplit = Map.groupBy(rows, (row) => row.botId);
+    if (
+      input.shared
+        ? disagree(rows)
+        : disagree(rows.filter((row) => row.shared)) ||
+          [...afterSplit.values()].some((group) => disagree(group))
+    )
       return yield* fail(
-        "Bots have different access (mode or origins) for this key. Set the same access for it before enabling access for all bots.",
+        "Bots have different access (mode or origins) for this key. Set the same access for it in Settings > API keys before changing which bots can use it.",
       );
     const values = yield* Effect.forEach(rows, (row) => getStored(row));
     if (values.some(Option.isNone))
@@ -696,28 +712,51 @@ export const make = Effect.gen(function* () {
       origins: input.origins,
       placement: input.placement,
     });
-    // The owner's own saved row is rotated in place, but a bot's shared row of
-    // this name addresses the same stored value: refuse before writing it when
-    // that row grants different access.
-    if (shared) {
-      yield* requireSharedAccessMatch(input.name, access, { ignoreOwnerSaved: true });
-    }
+    // The owner's own saved row is rotated in place, but a bot's row on the same
+    // slot reads the same bytes: refuse before writing when it grants different access.
+    yield* requireSlotAccessMatch({ name: input.name, botId: OWNER_SAVED_BOT_ID, shared }, access, {
+      ignoreOwnerSaved: true,
+    });
     const storeKey = personalSecretStoreKey({
       name: input.name,
       botId: OWNER_SAVED_BOT_ID,
       shared,
     });
+    // The owner's own row is the one rotated. Without it, a shared save may take
+    // over a bot's shared row (one slot); an unshared one never touches a bot's.
+    const sameScope = (yield* db("lookup", repository.listByStatus("fulfilled"))).filter(
+      (entry) => entry.name === input.name && entry.shared === shared,
+    );
+    const existing =
+      sameScope.find((entry) => entry.botId === OWNER_SAVED_BOT_ID) ??
+      (shared ? sameScope[0] : undefined);
+    const previous =
+      existing === undefined
+        ? Option.none<Uint8Array>()
+        : yield* store
+            .get(storeKey)
+            .pipe(Effect.mapError((cause) => fail("Could not read the secret store.", cause)));
     yield* store
       .set(storeKey, bytes)
       .pipe(Effect.mapError((cause) => fail("Could not store the secret.", cause)));
     secretRedactor.set(input.name, Redacted.value(input.value), storeKey);
 
-    const existing = (yield* db("lookup", repository.listByStatus("fulfilled"))).find(
-      (entry) => entry.name === input.name && entry.shared === shared,
-    );
     if (existing !== undefined) {
-      // Rotating this row's value: its own access changes, no other row's.
-      yield* db("mode", repository.setRowAccess({ requestId: existing.requestId, ...access }));
+      // Rotating this row's value: its own access changes, no other row's. The
+      // lock keeps readers from seeing the new bytes before the new access;
+      // if the access cannot be written, the old bytes go back (or the value is
+      // removed), so new bytes are never left under the old policy.
+      yield* db("mode", repository.setRowAccess({ requestId: existing.requestId, ...access })).pipe(
+        Effect.tapError(() =>
+          (Option.isSome(previous)
+            ? store.set(storeKey, previous.value)
+            : store.remove(storeKey)
+          ).pipe(
+            Effect.catch(() => store.remove(storeKey)),
+            Effect.ignore,
+          ),
+        ),
+      );
       return { ...existing, ...access };
     }
 
@@ -757,13 +796,19 @@ export const make = Effect.gen(function* () {
   return {
     request,
     listPending,
-    fulfill: (input) => mutationLock.withPermit(fulfill(input)),
+    fulfill: (input) =>
+      Effect.gen(function* () {
+        const fulfilled = yield* secretAccessLock.withPermit(saveFulfilment(input));
+        // Resuming restarts the task's session, which reads secrets: not under the lock.
+        yield* resumeTaskIfReady(fulfilled);
+        return fulfilled;
+      }),
     cancel,
     list,
-    create: (input) => mutationLock.withPermit(create(input)),
-    remove: (input) => mutationLock.withPermit(remove(input)),
-    setSharing: (input) => mutationLock.withPermit(setSharing(input)),
-    setMode: (input) => mutationLock.withPermit(setMode(input)),
+    create: (input) => secretAccessLock.withPermit(create(input)),
+    remove: (input) => secretAccessLock.withPermit(remove(input)),
+    setSharing: (input) => secretAccessLock.withPermit(setSharing(input)),
+    setMode: (input) => secretAccessLock.withPermit(setMode(input)),
   } satisfies PersonalSecretService["Service"];
 });
 
