@@ -2,12 +2,13 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { NoteNoticeRow, noteUndoSettled } from "./NoteNoticeRow";
+import { NoteNoticeRow, noteUndoSettled, readPredatesNotice } from "./NoteNoticeRow";
 
 const calls = vi.hoisted(() => ({
   undoNote: [] as unknown[],
   restore: [] as unknown[],
   refresh: 0,
+  readAt: null as number | null,
   result: { _tag: "Success", value: {} } as { readonly _tag: string; readonly cause?: unknown },
   entry: null as null | {
     kind?: string;
@@ -24,6 +25,7 @@ vi.mock("./usePersonalAutomation", () => ({
   personalMemoryRestore: { name: "restore" },
   usePersonalMemoryEntry: () => ({
     data: calls.entry,
+    dataUpdatedAt: calls.readAt,
     error: null,
     refresh: () => {
       calls.refresh += 1;
@@ -44,6 +46,7 @@ afterEach(() => {
   calls.undoNote = [];
   calls.restore = [];
   calls.refresh = 0;
+  calls.readAt = null;
   calls.entry = null;
 });
 
@@ -446,5 +449,140 @@ describe("1.66.7 (QA): a Replaced line written in the same chat shows a working 
       ),
     ).toBe("Archived");
     expect(noteUndoSettled("unreplace", entry({ version: 1 }), "note", receipt)).toBeNull();
+  });
+});
+
+describe("1.66.7 (QA round 2): every kind of line re-reads an entry cached before it", () => {
+  const REPLACED = "Replaced by a newer save.";
+  const NOTE_FORGOT = "Forgotten at the user's request.";
+  const RULE_FORGOT = "Forgotten by a bot at the user's word.";
+  const READ_AT = 1_000;
+  const NOTICE_AT = 2_000;
+  const at = (ms: number) => new Date(ms).toISOString();
+
+  const element = (undo: "archive" | "restore" | "unreplace", label: string) => (
+    <NoteNoticeRow
+      environmentId={"env-1" as EnvironmentId}
+      label={label}
+      memoryId="m-1"
+      undo={undo}
+      threadId="thread-1"
+      noticeMessageId="personal-notice-memory-3"
+      noticeCreatedAt={at(NOTICE_AT)}
+    />
+  );
+  const mount = (undo: "archive" | "restore", label: string) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    act(() => {
+      renderer = create(element(undo, label));
+    });
+    return renderer!.root;
+  };
+  const text = () => JSON.stringify(renderer!.toJSON());
+
+  it.each([
+    ["note", "Forgot a note: Old fact.", "note", NOTE_FORGOT],
+    ["rule", "Forgot a rule: Quote coin prices in USD.", "preference", RULE_FORGOT],
+  ] as const)(
+    "a Forgot %s line written after A's Replaced line shows Undo at once, not 'Archived'",
+    async (_what, label, kind, reason) => {
+      // Save A, save B, B replacing A, forget A: A was last read for the Replaced line.
+      calls.entry = {
+        kind,
+        source: "user",
+        supersededAt: "2026-10-08T09:00:00Z",
+        supersededReason: REPLACED,
+        supersededBy: "m-2",
+        version: 2,
+      };
+      calls.readAt = READ_AT;
+      const root = mount("restore", label);
+      expect(text()).not.toContain("Archived");
+      expect(undoButton(root)).toBeDefined();
+      expect(calls.refresh).toBe(1);
+      // The entry is read again: forgotten (version 3), and the Undo stays.
+      calls.entry = {
+        kind,
+        source: "user",
+        supersededAt: "2026-10-08T09:01:00Z",
+        supersededReason: reason,
+        supersededBy: null,
+        version: 3,
+      };
+      calls.readAt = NOTICE_AT + 500;
+      act(() => renderer!.update(element("restore", label)));
+      expect(text()).not.toContain("Archived");
+      expect(undoButton(root)).toBeDefined();
+      expect(calls.refresh).toBe(1);
+      await act(async () => undoButton(root)!.props.onClick());
+      expect(calls.undoNote).toEqual([
+        { environmentId: "env-1", input: { memoryId: "m-1", undo: "restore" } },
+      ]);
+      expect(text()).toContain("Restored");
+    },
+  );
+
+  it("a Saved line ignores an older read too, and settles once the entry is read after the line", () => {
+    calls.entry = {
+      kind: "note",
+      supersededAt: "2026-10-08T09:00:00Z",
+      supersededReason: REPLACED,
+      version: 2,
+    };
+    calls.readAt = READ_AT;
+    const root = mount("archive", "Saved a note: Old fact.");
+    expect(undoButton(root)).toBeDefined();
+    expect(calls.refresh).toBe(1);
+    // Read after the line: the entry is believed, and it is archived another way.
+    calls.readAt = NOTICE_AT + 1;
+    act(() => renderer!.update(element("archive", "Saved a note: Old fact.")));
+    expect(undoButton(root)).toBeUndefined();
+    expect(text()).toContain("Archived");
+    expect(calls.refresh).toBe(1);
+  });
+
+  it("an entry read after the line is believed at once, with no second read", () => {
+    calls.entry = {
+      kind: "note",
+      supersededAt: "2026-10-08T09:00:00Z",
+      supersededReason: REPLACED,
+      version: 2,
+    };
+    calls.readAt = NOTICE_AT + 1;
+    const root = mount("restore", "Forgot a note: Old fact.");
+    expect(undoButton(root)).toBeUndefined();
+    expect(text()).toContain("Archived");
+    expect(calls.refresh).toBe(0);
+  });
+
+  it("a phone clock behind the server cannot keep the Undo up forever: the re-read counts once it lands", () => {
+    calls.entry = {
+      kind: "note",
+      supersededAt: "2026-10-08T09:00:00Z",
+      supersededReason: REPLACED,
+      version: 2,
+    };
+    calls.readAt = READ_AT;
+    const root = mount("restore", "Forgot a note: Old fact.");
+    expect(calls.refresh).toBe(1);
+    // The re-read lands but is still stamped before the server's line time.
+    calls.readAt = READ_AT + 100;
+    act(() => renderer!.update(element("restore", "Forgot a note: Old fact.")));
+    expect(undoButton(root)).toBeUndefined();
+    expect(text()).toContain("Archived");
+    expect(calls.refresh).toBe(1);
+  });
+
+  it("no entry yet, or no line time, changes nothing", () => {
+    expect(readPredatesNotice(null, NOTICE_AT)).toBe(false);
+    expect(readPredatesNotice(READ_AT, null)).toBe(false);
+    expect(readPredatesNotice(READ_AT, Number.NaN)).toBe(false);
+    expect(readPredatesNotice(READ_AT, NOTICE_AT)).toBe(true);
+    expect(readPredatesNotice(NOTICE_AT, NOTICE_AT)).toBe(false);
+    // The older rows in this file render without a line time: nothing is re-read.
+    calls.entry = { kind: "note", supersededAt: null, supersededReason: null };
+    calls.readAt = READ_AT;
+    render("restore");
+    expect(calls.refresh).toBe(0);
   });
 });

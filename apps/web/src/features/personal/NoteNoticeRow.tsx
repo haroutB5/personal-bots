@@ -45,6 +45,26 @@ export function entryPredatesReceipt(
 }
 
 /**
+ * Whether the entry we hold was read before this line was written (1.66.7, QA round 2): the
+ * line records a change to the entry, so a read older than the line cannot say whether its Undo
+ * still applies. Times are epoch ms; either one unknown means "not known to be older".
+ */
+export function readPredatesNotice(
+  readAt: number | null | undefined,
+  noticeAt: number | null | undefined,
+): boolean {
+  return (
+    readAt !== null &&
+    readAt !== undefined &&
+    noticeAt !== null &&
+    noticeAt !== undefined &&
+    Number.isFinite(readAt) &&
+    Number.isFinite(noticeAt) &&
+    readAt < noticeAt
+  );
+}
+
+/**
  * What the line says instead of Undo once there is nothing to undo, from the
  * entry as it is now (so a reload still shows a used Undo as done), or null
  * while Undo still applies or the entry is not loaded. A "Saved a rule" line
@@ -117,6 +137,7 @@ export function NoteNoticeRow({
   receipt,
   threadId,
   noticeMessageId,
+  noticeCreatedAt,
   readOnly = false,
 }: {
   environmentId: EnvironmentId;
@@ -128,6 +149,8 @@ export function NoteNoticeRow({
   /** This line's chat and message: a Replaced Undo is only honoured from the line it belongs to. */
   threadId?: string;
   noticeMessageId?: string;
+  /** When this line was written: an entry read before then is read again, whatever kind of line it is. */
+  noticeCreatedAt?: string;
   /** An archived chat: the line reads as it did, with no Undo (like its cards). */
   readOnly?: boolean;
 }): JSX.Element {
@@ -137,16 +160,31 @@ export function NoteNoticeRow({
   const current = usePersonalMemoryEntry(environmentId, memoryId);
   // "Saved a rule: ..." / "Forgot a rule: ..." (1.60.42) read the entry as a rule; a note line never does.
   const what = /^(?:Saved|Forgot|Replaced) a rule\b/.test(label) ? "rule" : "note";
-  const settled = noteUndoSettled(undo, current.data ?? null, what, receipt);
-  // A line written after the entry was first read (save A, save B, then B replacing A in this
-  // chat) finds the earlier read in the cache: read it again, once, instead of waiting for a reload.
-  const stale = undo === "unreplace" && entryPredatesReceipt(current.data ?? null, receipt);
-  const refreshedFor = useRef<string | null>(null);
+  // Any line (Saved, Forgot, Replaced) is written after the change it records. An entry read
+  // before that (save A, save B, B replacing A, forget A in one chat leaves A's Replaced read in
+  // the cache) says nothing about what the line's Undo does: show the Undo (the server decides)
+  // and read the entry again, once, instead of waiting for a reload.
+  const readAt = current.dataUpdatedAt;
+  const noticeAt = noticeCreatedAt === undefined ? null : Date.parse(noticeCreatedAt);
+  const refreshedFrom = useRef<{
+    readonly memoryId: string;
+    readonly readAt: number | null;
+  } | null>(null);
+  // Once our re-read has landed (the read time moved) it counts, even if a phone clock runs behind the server's.
+  const reread =
+    refreshedFrom.current !== null &&
+    refreshedFrom.current.memoryId === memoryId &&
+    refreshedFrom.current.readAt !== readAt;
+  const stale =
+    current.data != null &&
+    ((!reread && readPredatesNotice(readAt, noticeAt)) ||
+      (undo === "unreplace" && entryPredatesReceipt(current.data, receipt)));
+  const settled = stale ? null : noteUndoSettled(undo, current.data ?? null, what, receipt);
   useEffect(() => {
-    if (!stale || refreshedFor.current === memoryId) return;
-    refreshedFor.current = memoryId;
+    if (!stale || refreshedFrom.current?.memoryId === memoryId) return;
+    refreshedFrom.current = { memoryId, readAt };
     current.refresh();
-  }, [stale, memoryId, current]);
+  }, [stale, memoryId, readAt, current]);
 
   const onUndo = async () => {
     if (state !== "idle" || readOnly) return;

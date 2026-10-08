@@ -1034,6 +1034,7 @@ export function MessageList({
                       {...(noteUndo.receipt === undefined ? {} : { receipt: noteUndo.receipt })}
                       threadId={String(threadRef.threadId)}
                       noticeMessageId={String(item.message.id)}
+                      noticeCreatedAt={String(item.message.createdAt)}
                       readOnly={readOnly}
                     />
                   );
