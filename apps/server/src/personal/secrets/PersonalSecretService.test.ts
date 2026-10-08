@@ -1498,6 +1498,9 @@ describe("brokered secrets", () => {
       ),
   );
 
+  /** A service object whose methods a test may swap, to run something at one await boundary. */
+  const writable = <T extends object>(service: T) => service as { -readonly [K in keyof T]: T[K] };
+
   /** Two pending requests for one name from the same bot, as two of its tasks would leave them. */
   const samePendingBot = (harness: Harness, name: string) =>
     Effect.gen(function* () {
@@ -1832,7 +1835,7 @@ describe("brokered secrets", () => {
           const bots = yield* PersonalBotService.PersonalBotService;
           const secrets = yield* PersonalSecretService.PersonalSecretService;
           const access = yield* PersonalSessionAccess.PersonalSessionAccess;
-          const repository = yield* PersonalSecretRepository.PersonalSecretRepository;
+          const repository = writable(yield* PersonalSecretRepository.PersonalSecretRepository);
           const reader = yield* runningTask(harness, "owner-read", "assistant");
           yield* bots.createThread({ botId: botId("assistant"), threadId: reader.threadId });
           yield* secrets.create({
@@ -1881,7 +1884,7 @@ describe("brokered secrets", () => {
         const bots = yield* PersonalBotService.PersonalBotService;
         const secrets = yield* PersonalSecretService.PersonalSecretService;
         const access = yield* PersonalSessionAccess.PersonalSessionAccess;
-        const repository = yield* PersonalSecretRepository.PersonalSecretRepository;
+        const repository = writable(yield* PersonalSecretRepository.PersonalSecretRepository);
         const reader = yield* runningTask(harness, "owner-fail", "assistant");
         yield* bots.createThread({ botId: botId("assistant"), threadId: reader.threadId });
         yield* secrets.create({

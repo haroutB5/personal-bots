@@ -1,9 +1,16 @@
-import { botRuleSource, isBotRuleSource, PersonalBotId, ThreadId } from "@t3tools/contracts";
+import {
+  botRuleSource,
+  isBotRuleSource,
+  PersonalBotId,
+  ThreadId,
+  type PersonalMemoryEntry,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -42,6 +49,59 @@ const linkThreads = Effect.gen(function* () {
     `;
   }
 });
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+let noticeCount = 0;
+
+/**
+ * The chat line a save into an existing entry writes for one entry it archived, as the projection
+ * stores it, and the Undo input that line sends: its receipt (the replacing entry and the archived
+ * entry's version) and where it lives.
+ */
+const noticeFor = (archived: PersonalMemoryEntry, threadId: ThreadId = THREAD_A) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    noticeCount += 1;
+    const messageId = `personal-notice-memory-test-${noticeCount}`;
+    const context = {
+      version: 1,
+      records: [
+        {
+          version: 1,
+          contextId: "personal-chat-notice",
+          label: "Chat notice",
+          kind: "personal-chat-notice",
+          payload: {
+            notice: "memory-saved",
+            provider: "Memory",
+            memoryId: archived.memoryId,
+            undo: "unreplace",
+            replacedBy: archived.supersededBy,
+            version: archived.version,
+          },
+        },
+      ],
+    };
+    yield* sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at, context_json
+      )
+      VALUES (
+        ${messageId}, ${threadId}, NULL, 'assistant', 'Replaced a note', 0, ${now}, ${now},
+        ${encodeJson(context)}
+      )
+    `;
+    return {
+      memoryId: archived.memoryId,
+      undo: "unreplace" as const,
+      replacedBy: archived.supersededBy!,
+      version: archived.version,
+      threadId,
+      noticeMessageId: messageId,
+    };
+  });
 
 const block = (threadId: ThreadId, query = "anything") =>
   Effect.flatMap(PersonalMemoryService, (memory) =>
@@ -1012,7 +1072,8 @@ it.effect(
 
         // Its Undo is the restore of the archived entry: the destination is untouched.
         const versionBefore = (yield* memory.get(destination.memoryId)).version;
-        const restored = yield* memory.undoNote({ memoryId: older.memoryId, undo: "unreplace" });
+        const undo = yield* noticeFor(saved.archived![0]!);
+        const restored = yield* memory.undoNote(undo);
         expect(restored.supersededAt ?? null).toBeNull();
         const live = (yield* memory.list({})).map((entry) => entry.memoryId);
         expect(live).toContain(older.memoryId);
@@ -1021,7 +1082,7 @@ it.effect(
         expect(after.supersededAt ?? null).toBeNull();
         expect(after.version).toBe(versionBefore);
         // Pressing it again changes nothing.
-        const twice = yield* memory.undoNote({ memoryId: older.memoryId, undo: "unreplace" });
+        const twice = yield* memory.undoNote(undo);
         expect(twice.supersededAt ?? null).toBeNull();
         expect(twice.version).toBe(restored.version);
       }
@@ -1044,7 +1105,7 @@ it.effect("1.66.7: a Replaced line's Undo brings back only an entry a replacemen
       content: "The staging box is on port 3300.",
       source: `bot:${BOT_A}`,
     });
-    yield* memory.save({
+    const replacing = yield* memory.save({
       ...SHARED,
       kind: "note",
       content: "The staging box is on port 3310.",
@@ -1052,11 +1113,10 @@ it.effect("1.66.7: a Replaced line's Undo brings back only an entry a replacemen
       replaces: [older.memoryId],
       actorBotId: BOT_A,
     });
+    const olderUndo = yield* noticeFor(replacing.archived![0]!);
     // The owner then forgets the old entry for good: its Undo does not bring it back.
     yield* memory.remove({ memoryId: older.memoryId });
-    const gone = yield* memory
-      .undoNote({ memoryId: older.memoryId, undo: "unreplace" })
-      .pipe(Effect.result);
+    const gone = yield* memory.undoNote(olderUndo).pipe(Effect.result);
     expect(gone._tag).toBe("Failure");
     expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([kept.memoryId]);
 
@@ -1068,8 +1128,163 @@ it.effect("1.66.7: a Replaced line's Undo brings back only an entry a replacemen
       source: `bot:${BOT_A}`,
     });
     yield* memory.forget({ memoryId: plain.memoryId, actorBotId: BOT_A });
-    const still = yield* memory.undoNote({ memoryId: plain.memoryId, undo: "unreplace" });
-    expect(still.supersededAt).not.toBeNull();
+    const still = yield* memory
+      .undoNote({ memoryId: plain.memoryId, undo: "unreplace" })
+      .pipe(Effect.result);
+    expect(still._tag).toBe("Failure");
+    expect((yield* memory.get(plain.memoryId)).supersededAt).not.toBeNull();
     // And the Forgot-a-note Undo still refuses a replaced entry (1.60.22 Security).
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+const NOTE = { scope: "shared", scopeId: null, kind: "note", source: `bot:${BOT_A}` } as const;
+
+it.effect("1.66.7: an old Replaced line's Undo cannot restore an entry a later save archived", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const old = yield* memory.save({ ...NOTE, content: "Synthetic old fact" });
+    const first = yield* memory.save({ ...NOTE, content: "Synthetic first fact" });
+    const second = yield* memory.save({ ...NOTE, content: "Synthetic second fact" });
+
+    // Save A archives the old entry, its Undo brings it back.
+    const saveA = yield* memory.save({
+      ...NOTE,
+      content: first.content,
+      replaces: [old.memoryId],
+      actorBotId: BOT_A,
+    });
+    const undoA = yield* noticeFor(saveA.archived![0]!);
+    yield* memory.undoNote(undoA);
+    expect((yield* memory.get(old.memoryId)).supersededAt ?? null).toBeNull();
+
+    // Save B archives it again, into another entry.
+    const saveB = yield* memory.save({
+      ...NOTE,
+      content: second.content,
+      replaces: [old.memoryId],
+      actorBotId: BOT_A,
+    });
+    const undoB = yield* noticeFor(saveB.archived![0]!);
+    expect((yield* memory.get(old.memoryId)).supersededBy).toBe(second.memoryId);
+
+    // Replaying A's Undo is refused and leaves B's archive in place.
+    const replay = yield* memory.undoNote(undoA).pipe(Effect.result);
+    expect(replay._tag).toBe("Failure");
+    const after = yield* memory.get(old.memoryId);
+    expect(after.supersededAt).not.toBeNull();
+    expect(after.supersededBy).toBe(second.memoryId);
+
+    // B's own Undo still works.
+    const restored = yield* memory.undoNote(undoB);
+    expect(restored.supersededAt ?? null).toBeNull();
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("1.66.7: the same destination replacing the same entry twice gets a new receipt", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const old = yield* memory.save({ ...NOTE, content: "Synthetic old fact" });
+    const kept = yield* memory.save({ ...NOTE, content: "Synthetic kept fact" });
+    const request = {
+      ...NOTE,
+      content: kept.content,
+      replaces: [old.memoryId],
+      actorBotId: BOT_A,
+    };
+    const undoFirst = yield* noticeFor((yield* memory.save(request)).archived![0]!);
+    yield* memory.undoNote(undoFirst);
+    const undoSecond = yield* noticeFor((yield* memory.save(request)).archived![0]!);
+    // Same entry, same replacing entry, but a newer version: the first line is out of date.
+    expect(undoSecond.version).toBeGreaterThan(undoFirst.version);
+    expect((yield* memory.undoNote(undoFirst).pipe(Effect.result))._tag).toBe("Failure");
+    expect((yield* memory.get(old.memoryId)).supersededAt).not.toBeNull();
+    expect((yield* memory.undoNote(undoSecond)).supersededAt ?? null).toBeNull();
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("1.66.7: a Replaced line's Undo needs its receipt and works only from its own chat", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const old = yield* memory.save({ ...NOTE, content: "Synthetic old fact" });
+    const kept = yield* memory.save({ ...NOTE, content: "Synthetic kept fact" });
+    const saved = yield* memory.save({
+      ...NOTE,
+      content: kept.content,
+      replaces: [old.memoryId],
+      actorBotId: BOT_A,
+    });
+    const undo = yield* noticeFor(saved.archived![0]!, THREAD_A);
+    const refused = (input: Parameters<typeof memory.undoNote>[0]) =>
+      memory.undoNote(input).pipe(Effect.result);
+    // No receipt at all (an id alone), a receipt without its line, another chat, a made-up line.
+    expect((yield* refused({ memoryId: old.memoryId, undo: "unreplace" }))._tag).toBe("Failure");
+    expect(
+      (yield* refused({
+        memoryId: old.memoryId,
+        undo: "unreplace",
+        replacedBy: kept.memoryId,
+        version: undo.version,
+      }))._tag,
+    ).toBe("Failure");
+    expect((yield* refused({ ...undo, threadId: THREAD_B }))._tag).toBe("Failure");
+    expect(
+      (yield* refused({ ...undo, noticeMessageId: "personal-notice-memory-missing" }))._tag,
+    ).toBe("Failure");
+    // A line whose receipt names another version or replacement is not this line.
+    expect((yield* refused({ ...undo, version: undo.version + 1 }))._tag).toBe("Failure");
+    expect((yield* refused({ ...undo, replacedBy: old.memoryId }))._tag).toBe("Failure");
+    expect((yield* memory.get(old.memoryId)).supersededAt).not.toBeNull();
+    // The real line works.
+    expect((yield* memory.undoNote(undo)).supersededAt ?? null).toBeNull();
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("1.66.7: forgetting an entry a save replaced revokes its Replaced Undo", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const old = yield* memory.save({ ...NOTE, content: "Synthetic old fact" });
+    const kept = yield* memory.save({ ...NOTE, content: "Synthetic kept fact" });
+    const saved = yield* memory.save({
+      ...NOTE,
+      content: kept.content,
+      replaces: [old.memoryId],
+      actorBotId: BOT_A,
+    });
+    const undo = yield* noticeFor(saved.archived![0]!);
+
+    const forgotten = yield* memory.forget({ memoryId: old.memoryId, actorBotId: BOT_A });
+    // The replacement link is gone and the reason is the forget, with a newer version.
+    expect(forgotten.supersededBy ?? null).toBeNull();
+    expect(forgotten.supersededReason).not.toBe("Replaced by a newer save.");
+    expect(forgotten.version).toBeGreaterThan(undo.version);
+
+    const revived = yield* memory.undoNote(undo).pipe(Effect.result);
+    expect(revived._tag).toBe("Failure");
+    expect((yield* memory.get(old.memoryId)).supersededAt).not.toBeNull();
+    expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([kept.memoryId]);
+
+    // The forget keeps its own Undo, scoped by its reason (the "Forgot a note" line).
+    const back = yield* memory.undoNote({ memoryId: old.memoryId, undo: "restore" });
+    expect(back.supersededAt ?? null).toBeNull();
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("1.66.7: forgetting an entry that is archived another way changes nothing", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const note = yield* memory.save({ ...NOTE, content: "Synthetic note to forget twice" });
+    const first = yield* memory.forget({ memoryId: note.memoryId, actorBotId: BOT_A });
+    const second = yield* memory.forget({
+      memoryId: note.memoryId,
+      actorBotId: BOT_A,
+      reason: "A different reason.",
+    });
+    expect(second.supersededReason).toBe(first.supersededReason);
+    expect(second.version).toBe(first.version);
   }).pipe(Effect.provide(TestLayer)),
 );

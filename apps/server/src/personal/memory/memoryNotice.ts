@@ -43,6 +43,9 @@ export const writeNoteNotice = (
     readonly line: string;
     readonly memoryId: string;
     readonly undo: "archive" | "restore" | "unreplace";
+    /** unreplace: the entry that replaced this one and this one's version after that save. */
+    readonly replacedBy?: string;
+    readonly version?: number;
   },
 ) =>
   Effect.gen(function* () {
@@ -54,6 +57,8 @@ export const writeNoteNotice = (
       provider: "Memory",
       memoryId: input.memoryId,
       undo: input.undo,
+      ...(input.replacedBy === undefined ? {} : { replacedBy: input.replacedBy }),
+      ...(input.version === undefined ? {} : { version: input.version }),
     };
     const context: OrchestrationMessageContext = {
       version: 1,

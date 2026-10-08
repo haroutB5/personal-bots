@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   type EnvironmentId,
@@ -11,6 +11,7 @@ import {
 import { cn } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import type { UnreplaceReceipt } from "./chatNotices";
 import { commandFailureMessage } from "./commandFeedback";
 import { personalMemoryUndoNote, usePersonalMemoryEntry } from "./usePersonalAutomation";
 
@@ -30,6 +31,19 @@ const REPLACED_REASON = "Replaced by a newer save.";
 /** The server's reason for a rule a bot forgot at the owner's word (1.60.42): only this brings a rule back. */
 const RULE_FORGOTTEN_REASON = "Forgotten by a bot at the user's word.";
 
+/** Whether the entry we hold is older than the save a Replaced line records (the cache was filled before it). */
+export function entryPredatesReceipt(
+  entry: { readonly version?: number } | null,
+  receipt: UnreplaceReceipt | undefined,
+): boolean {
+  return (
+    entry !== null &&
+    receipt !== undefined &&
+    entry.version !== undefined &&
+    entry.version < receipt.version
+  );
+}
+
 /**
  * What the line says instead of Undo once there is nothing to undo, from the
  * entry as it is now (so a reload still shows a used Undo as done), or null
@@ -44,18 +58,29 @@ export function noteUndoSettled(
   entry:
     | (Pick<PersonalMemoryEntry, "kind" | "supersededAt" | "supersededReason"> & {
         readonly source?: string;
+        readonly version?: number;
+        readonly supersededBy?: string | null | undefined;
       })
     | null,
   line: "note" | "rule" = "note",
+  receipt?: UnreplaceReceipt,
 ): string | null {
   if (entry === null) return null;
   if (undo === "unreplace") {
-    // "Replaced a note/rule" (1.66.7): Undo brings back the entry a save archived, only while a replacement still holds it.
+    // "Replaced a note/rule" (1.66.7): Undo brings back the entry a save archived, only while
+    // that very save (its replacing entry and version) still holds it.
     if (entry.kind !== (line === "rule" ? "preference" : "note")) {
       return line === "rule" ? "No longer a rule" : "No longer a note";
     }
+    // Cached before the save this line came from: it says nothing yet, so the Undo
+    // shows (the server decides) while the entry is read again.
+    if (entryPredatesReceipt(entry, receipt)) return null;
     if (entry.supersededAt == null) return "Restored";
-    return entry.supersededReason === REPLACED_REASON ? null : "Archived";
+    if (entry.supersededReason !== REPLACED_REASON) return "Archived";
+    if (receipt === undefined) return null;
+    return entry.supersededBy === receipt.replacedBy && entry.version === receipt.version
+      ? null
+      : "Changed since";
   }
   if (line === "rule") {
     if (entry.kind !== "preference") return "No longer a rule";
@@ -89,12 +114,20 @@ export function NoteNoticeRow({
   label,
   memoryId,
   undo,
+  receipt,
+  threadId,
+  noticeMessageId,
   readOnly = false,
 }: {
   environmentId: EnvironmentId;
   label: string;
   memoryId: string;
   undo: "archive" | "restore" | "unreplace";
+  /** Replaced lines: the save this line records, sent back so the server checks the entry is still as that save left it. */
+  receipt?: UnreplaceReceipt;
+  /** This line's chat and message: a Replaced Undo is only honoured from the line it belongs to. */
+  threadId?: string;
+  noticeMessageId?: string;
   /** An archived chat: the line reads as it did, with no Undo (like its cards). */
   readOnly?: boolean;
 }): JSX.Element {
@@ -104,7 +137,16 @@ export function NoteNoticeRow({
   const current = usePersonalMemoryEntry(environmentId, memoryId);
   // "Saved a rule: ..." / "Forgot a rule: ..." (1.60.42) read the entry as a rule; a note line never does.
   const what = /^(?:Saved|Forgot|Replaced) a rule\b/.test(label) ? "rule" : "note";
-  const settled = noteUndoSettled(undo, current.data ?? null, what);
+  const settled = noteUndoSettled(undo, current.data ?? null, what, receipt);
+  // A line written after the entry was first read (save A, save B, then B replacing A in this
+  // chat) finds the earlier read in the cache: read it again, once, instead of waiting for a reload.
+  const stale = undo === "unreplace" && entryPredatesReceipt(current.data ?? null, receipt);
+  const refreshedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!stale || refreshedFor.current === memoryId) return;
+    refreshedFor.current = memoryId;
+    current.refresh();
+  }, [stale, memoryId, current]);
 
   const onUndo = async () => {
     if (state !== "idle" || readOnly) return;
@@ -113,7 +155,18 @@ export function NoteNoticeRow({
     // Both directions go through the note-only Undo, never the generic restore.
     const result = await undoNote({
       environmentId,
-      input: { memoryId: PersonalMemoryId.make(memoryId), undo },
+      input: {
+        memoryId: PersonalMemoryId.make(memoryId),
+        undo,
+        ...(undo === "unreplace" && receipt !== undefined && threadId && noticeMessageId
+          ? {
+              replacedBy: PersonalMemoryId.make(receipt.replacedBy),
+              version: receipt.version,
+              threadId,
+              noticeMessageId,
+            }
+          : {}),
+      },
     });
     const message = commandFailureMessage(result, "Could not undo that.");
     setState(message === null ? "done" : "idle");

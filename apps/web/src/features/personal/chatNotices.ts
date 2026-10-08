@@ -28,12 +28,32 @@ export function readChatNotice(message: {
   return null;
 }
 
-/** What a note line's Undo does, or null for a line without one. */
-export function chatNoticeUndo(
-  notice: PersonalChatNoticeMarker,
-): { readonly memoryId: string; readonly undo: "archive" | "restore" | "unreplace" } | null {
+/** The save a "Replaced" line belongs to: the entry that replaced it and the archived entry's version after that save. */
+export interface UnreplaceReceipt {
+  readonly replacedBy: string;
+  readonly version: number;
+}
+
+/**
+ * What a note line's Undo does, or null for a line without one. A "Replaced"
+ * line's Undo is tied to its save by a receipt (1.66.7); one without a receipt
+ * is shown as a plain line.
+ */
+export function chatNoticeUndo(notice: PersonalChatNoticeMarker): {
+  readonly memoryId: string;
+  readonly undo: "archive" | "restore" | "unreplace";
+  readonly receipt?: UnreplaceReceipt;
+} | null {
   if (notice.notice !== "memory-saved") return null;
   if (notice.memoryId === undefined || notice.undo === undefined) return null;
+  if (notice.undo === "unreplace") {
+    if (notice.replacedBy === undefined || notice.version === undefined) return null;
+    return {
+      memoryId: notice.memoryId,
+      undo: notice.undo,
+      receipt: { replacedBy: notice.replacedBy, version: notice.version },
+    };
+  }
   return { memoryId: notice.memoryId, undo: notice.undo };
 }
 

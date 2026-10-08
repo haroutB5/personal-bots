@@ -221,6 +221,15 @@ export const PersonalMemoryUndoNoteInput = Schema.Struct({
    * unreplace: a "Replaced a note" line, which brings back the one entry a save archived.
    */
   undo: Schema.optional(Schema.Literals(["archive", "restore", "unreplace"])),
+  /**
+   * unreplace only: the receipt on the chat line (see PersonalChatNoticeMarker) and the line
+   * itself. The server restores the entry only while its version and replacement are still those
+   * of that save, and only when the line is in that chat.
+   */
+  replacedBy: Schema.optional(PersonalMemoryId),
+  version: Schema.optional(Schema.Number),
+  threadId: Schema.optional(TrimmedNonEmptyString),
+  noticeMessageId: Schema.optional(TrimmedNonEmptyString),
 });
 export type PersonalMemoryUndoNoteInput = typeof PersonalMemoryUndoNoteInput.Type;
 

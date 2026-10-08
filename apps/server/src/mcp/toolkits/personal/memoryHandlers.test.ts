@@ -177,6 +177,9 @@ function saveMemory(input: {
                             content: gone.content,
                           }),
                           memoryId: PersonalMemoryId.make(gone.id),
+                          // As the store leaves an entry a save archived: linked to the saved entry, one version on.
+                          supersededBy: PersonalMemoryId.make("0123abcd-memory-1"),
+                          version: 2,
                         })),
                       }),
                 };
@@ -1628,7 +1631,12 @@ describe("1.66.7: a save into an entry that already exists still shows what it a
       .filter((command) => command.type === "thread.message.assistant.delta")
       .map((delta) => ({
         text: delta.delta as string,
-        payload: delta.context.records[0].payload as { memoryId: string; undo: string },
+        payload: delta.context.records[0].payload as {
+          memoryId: string;
+          undo: string;
+          replacedBy?: string;
+          version?: number;
+        },
       }));
 
   it.effect("a note saved into an existing note posts one Replaced line per archived entry", () =>
@@ -1651,11 +1659,22 @@ describe("1.66.7: a save into an entry that already exists still shows what it a
       expect(noticesOf(notices)).toEqual([
         {
           text: "Replaced a note: The backup runs at 02:00.",
-          payload: expect.objectContaining({ memoryId: "old-note-1", undo: "unreplace" }),
+          // The line carries the receipt of this save: the replacing entry and the archived version.
+          payload: expect.objectContaining({
+            memoryId: "old-note-1",
+            undo: "unreplace",
+            replacedBy: "0123abcd-memory-1",
+            version: 2,
+          }),
         },
         {
           text: "Replaced a note: The backup runs around 2.",
-          payload: expect.objectContaining({ memoryId: "old-note-2", undo: "unreplace" }),
+          payload: expect.objectContaining({
+            memoryId: "old-note-2",
+            undo: "unreplace",
+            replacedBy: "0123abcd-memory-1",
+            version: 2,
+          }),
         },
       ]);
     }),
@@ -1712,7 +1731,12 @@ describe("1.66.7: a save into an entry that already exists still shows what it a
         expect(noticesOf(notices)).toEqual([
           {
             text: "Replaced a rule: Quote coin prices in USD, not pounds.",
-            payload: expect.objectContaining({ memoryId: "old-rule-1", undo: "unreplace" }),
+            payload: expect.objectContaining({
+              memoryId: "old-rule-1",
+              undo: "unreplace",
+              replacedBy: "0123abcd-memory-1",
+              version: 2,
+            }),
           },
         ]);
       }),

@@ -6,11 +6,13 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
   PERSONAL_MEMORY_LIST_DEFAULT_LIMIT,
   PersonalMemoryId,
+  PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
   type PersonalMemoryEntry,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -39,6 +41,8 @@ import {
 import { entrySnapshotsJson, localDay } from "./memoryTidy.ts";
 import { encodeTraceJson, TRACE_KEEP_DAYS, type MemoryTurnTrace } from "./memoryTurnTrace.ts";
 import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
+
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 export const makeMemoryPersistence = (core: MemoryCore) => {
   const {
@@ -270,13 +274,20 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       if (current.kind === "task_summary") {
         return yield* fail("Task summaries are removed from the Memory screen, not by a bot.");
       }
-      if (current.supersededAt != null) return current;
+      // Archived another way (forgotten, undone, ...): nothing to forget. An entry a
+      // save replaced is different: the owner's explicit forget is the last word, so
+      // the replacement link goes, the reason becomes the forget and the version
+      // moves, and no earlier "Replaced" Undo can bring the entry back.
+      if (current.supersededAt != null && current.supersededReason !== REPLACED_REASON) {
+        return current;
+      }
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       yield* sql`
         UPDATE personal_memory
         SET superseded_at = ${nowIso}, superseded_by = NULL,
             superseded_reason = ${input.reason ?? FORGOTTEN_REASON}, version = version + 1
-        WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
+        WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL
+          AND (superseded_at IS NULL OR superseded_reason = ${REPLACED_REASON})
       `;
       return yield* readEntry(input.memoryId);
     }).pipe(storageFailure("forget"));
@@ -295,27 +306,103 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
     }).pipe(storageFailure("restore"));
 
   /**
-   * The Undo of a "Replaced a note/rule" chat line: a save into an entry that already existed archived
-   * this one (see `save`). Only an entry that is still archived by a replacement comes back; the entry
-   * that replaced it is not touched. Kind and reason are part of the update itself, so one that was
-   * restored, forgotten, deleted or archived any other way since changes nothing.
+   * Whether `noticeMessageId` is a "Replaced" line in `threadId` carrying exactly this receipt: the
+   * Undo is only honoured from the chat whose line it is.
    */
-  const unreplace = (memoryId: PersonalMemoryId) =>
+  const noticeInChat = (input: {
+    readonly threadId: string;
+    readonly noticeMessageId: string;
+    readonly memoryId: PersonalMemoryId;
+    readonly replacedBy: string;
+    readonly version: number;
+  }) =>
     Effect.gen(function* () {
+      const rows = yield* sql<{ readonly contextJson: string | null }>`
+        SELECT context_json AS "contextJson" FROM projection_thread_messages
+        WHERE message_id = ${input.noticeMessageId} AND thread_id = ${input.threadId}
+      `;
+      for (const row of rows) {
+        const parsed = decodeJson(row.contextJson ?? "null");
+        if (Option.isNone(parsed)) continue;
+        const records = (parsed.value as { readonly records?: ReadonlyArray<unknown> } | null)
+          ?.records;
+        for (const record of records ?? []) {
+          const { kind, payload } = record as {
+            readonly kind?: string;
+            readonly payload?: Record<string, unknown>;
+          };
+          if (
+            kind === PERSONAL_CHAT_NOTICE_CONTEXT_KIND &&
+            payload?.notice === "memory-saved" &&
+            payload.undo === "unreplace" &&
+            payload.memoryId === input.memoryId &&
+            payload.replacedBy === input.replacedBy &&
+            payload.version === input.version
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
+    });
+
+  /**
+   * The Undo of a "Replaced a note/rule" chat line: a save into an entry that already existed archived
+   * this one (see `save`). The line carries a receipt (the replacing entry and the archived entry's
+   * version right after that save) and the Undo is tied to it: the entry comes back only while it is
+   * still archived by that very replacement at that very version, so a line from an earlier save, or
+   * one the entry has moved on from (restored and replaced again, forgotten), changes nothing and is
+   * refused. The entry that replaced it is not touched. Kind, reason, replacement and version are part
+   * of the update itself.
+   */
+  const unreplace = (input: {
+    readonly memoryId: PersonalMemoryId;
+    readonly replacedBy?: PersonalMemoryId | undefined;
+    readonly version?: number | undefined;
+    readonly threadId?: string | undefined;
+    readonly noticeMessageId?: string | undefined;
+  }) =>
+    Effect.gen(function* () {
+      const { replacedBy, version, threadId, noticeMessageId } = input;
+      if (
+        replacedBy === undefined ||
+        version === undefined ||
+        threadId === undefined ||
+        noticeMessageId === undefined
+      ) {
+        return yield* fail(
+          "That Undo does not say which save it belongs to. Restore the entry from Archived on the Memory screen.",
+        );
+      }
+      const inChat = yield* noticeInChat({
+        threadId,
+        noticeMessageId,
+        memoryId: input.memoryId,
+        replacedBy,
+        version,
+      });
+      if (!inChat) return yield* fail("That Undo does not belong to this chat.");
       yield* sql`
         UPDATE personal_memory
         SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
             version = version + 1
-        WHERE memory_id = ${memoryId} AND kind IN ('note', 'preference') AND deleted_at IS NULL
-          AND superseded_at IS NOT NULL AND superseded_by IS NOT NULL
-          AND superseded_reason = ${REPLACED_REASON}
+        WHERE memory_id = ${input.memoryId} AND kind IN ('note', 'preference') AND deleted_at IS NULL
+          AND superseded_at IS NOT NULL AND superseded_by = ${replacedBy}
+          AND superseded_reason = ${REPLACED_REASON} AND version = ${version}
       `;
-      return yield* readEntry(memoryId);
+      const now = yield* readEntry(input.memoryId);
+      // Already back (a second tap): nothing to do. Archived but no longer by that save: refused.
+      if (now.supersededAt != null) {
+        return yield* fail(
+          "That Undo is out of date: the entry changed after the save it belongs to.",
+        );
+      }
+      return now;
     });
 
   const undoNote: PersonalMemoryService["Service"]["undoNote"] = (input) =>
     Effect.gen(function* () {
-      if (input.undo === "unreplace") return yield* unreplace(input.memoryId);
+      if (input.undo === "unreplace") return yield* unreplace(input);
       const current = yield* readEntry(input.memoryId);
       // Two rule Undos (1.60.42), see undoRoute.
       const route = undoRoute(current, input.undo);

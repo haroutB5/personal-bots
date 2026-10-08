@@ -213,6 +213,25 @@ describe("1.60.22: a note line carries its Undo", () => {
     expect(chatNoticeLabel(notice, "Saved a note: Likes tea.", 0)).toBe("Saved a note: Likes tea.");
   });
 
+  it("1.66.7: a Replaced line's Undo needs the receipt of its save", () => {
+    const marker = {
+      notice: "memory-saved",
+      provider: "Memory",
+      memoryId: "m-1",
+      undo: "unreplace",
+    };
+    const withReceipt = readChatNotice({
+      context: context({ ...marker, replacedBy: "m-2", version: 3 }),
+    } as never)!;
+    expect(chatNoticeUndo(withReceipt)).toEqual({
+      memoryId: "m-1",
+      undo: "unreplace",
+      receipt: { replacedBy: "m-2", version: 3 },
+    });
+    // Without it the server would refuse, so the line is plain.
+    expect(chatNoticeUndo(readChatNotice({ context: context(marker) } as never)!)).toBeNull();
+  });
+
   it("an older memory line without an id has no Undo", () => {
     const notice = readChatNotice({
       context: context({ notice: "memory-saved", provider: "Memory" }),

@@ -169,6 +169,11 @@ export class PersonalMemoryService extends Context.Service<
     readonly undoNote: (input: {
       readonly memoryId: PersonalMemoryId;
       readonly undo?: "archive" | "restore" | "unreplace" | undefined;
+      /** unreplace: the receipt and the chat line it came from (see PersonalMemoryUndoNoteInput). */
+      readonly replacedBy?: PersonalMemoryId | undefined;
+      readonly version?: number | undefined;
+      readonly threadId?: string | undefined;
+      readonly noticeMessageId?: string | undefined;
     }) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
     /**
      * Current notes and preferences a bot can see that read like the same

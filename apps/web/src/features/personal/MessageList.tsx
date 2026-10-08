@@ -1031,6 +1031,9 @@ export function MessageList({
                       label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
                       memoryId={noteUndo.memoryId}
                       undo={noteUndo.undo}
+                      {...(noteUndo.receipt === undefined ? {} : { receipt: noteUndo.receipt })}
+                      threadId={String(threadRef.threadId)}
+                      noticeMessageId={String(item.message.id)}
                       readOnly={readOnly}
                     />
                   );

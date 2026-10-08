@@ -59,5 +59,12 @@ export const PersonalChatNoticeMarker = Schema.Struct({
    * unreplace an entry a save into an existing entry archived (1.66.7).
    */
   undo: Schema.optional(Schema.Literals(["archive", "restore", "unreplace"])),
+  /**
+   * memory-saved, unreplace: the receipt of the save that archived the entry. `replacedBy` is the
+   * entry that replaced it and `version` the archived entry's version right after, so an Undo only
+   * applies while the entry is exactly as that save left it (1.66.7).
+   */
+  replacedBy: Schema.optional(Schema.String),
+  version: Schema.optional(Schema.Number),
 });
 export type PersonalChatNoticeMarker = typeof PersonalChatNoticeMarker.Type;

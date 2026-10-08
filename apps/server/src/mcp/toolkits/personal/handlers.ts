@@ -242,6 +242,9 @@ const make = Effect.gen(function* () {
               ),
               memoryId: gone.memoryId,
               undo: "unreplace",
+              ...(gone.supersededBy == null
+                ? {}
+                : { replacedBy: gone.supersededBy, version: gone.version }),
             }),
           { discard: true },
         );
