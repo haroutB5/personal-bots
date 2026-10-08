@@ -18,7 +18,14 @@
  * (a crash in between loses the post, and the log says so). A notice with no
  * thread id, an unreadable one, or one naming a chat that is not a bot chat is
  * moved to `rejected/` and posts nothing.
+ *
+ * A notice never brings back an archived chat (1.66.8). When the chat it names
+ * is archived or deleted, it goes to the same bot's open chat with the same
+ * title (else its most recently active open chat; a new chat only when the bot
+ * has none open), and the archived chat keeps its place and its name
+ * (`resolveDeliveryThread`). The log line says which chat took it.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -45,8 +52,10 @@ import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalBotService from "../PersonalBotService.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
 
 export const RELEASE_NOTICE_DIR = "release-notices";
@@ -155,6 +164,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
+  const botService = yield* PersonalBotService.PersonalBotService;
   const inbox = NodePath.join(config.baseDir, "personal", RELEASE_NOTICE_DIR);
   const lock = yield* Semaphore.make(1);
 
@@ -195,17 +205,23 @@ export const make = Effect.gen(function* () {
       const notice = decoded.value;
       const rawThreadId = (notice.threadId ?? "").trim();
       if (rawThreadId.length === 0) return yield* reject(fileName, "no thread id");
-      const threadId = ThreadId.make(rawThreadId);
+      const requestedThreadId = ThreadId.make(rawThreadId);
       // Only a bot chat: the inbox is local, but it still never reaches an
-      // ordinary T3 thread or a chat that is gone.
-      const link = yield* bots
-        .getThreadLink({ threadId })
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      const shell = yield* projections
-        .getThreadShellById(threadId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isNone(link) || Option.isNone(shell)) {
+      // ordinary T3 thread or a chat nobody can trace to a bot.
+      const target = yield* resolveDeliveryThread(
+        { repository: bots, projections },
+        requestedThreadId,
+      );
+      if (target.kind === "unknown") {
         return yield* reject(fileName, `thread ${rawThreadId} is not a bot chat`);
+      }
+      if (target.kind === "open") {
+        const gone = yield* projections
+          .getThreadShellById(requestedThreadId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isNone(gone)) {
+          return yield* reject(fileName, `thread ${rawThreadId} is not a bot chat`);
+        }
       }
       // Out of the inbox first: a second sweep or a restart never posts it again.
       const moved = yield* moveTo(fileName, "posted");
@@ -217,12 +233,41 @@ export const make = Effect.gen(function* () {
         return { status: "rejected", reason: `claim failed (${moved})` } as const;
       }
       const noticeId = noticeIdOf(fileName);
+      // The bot has no open chat at all: the one chat made for it, named like
+      // the one it replaces.
+      const threadId =
+        target.kind === "new-chat"
+          ? yield* botService
+              .createThread({
+                botId: target.botId,
+                threadId: ThreadId.make(NodeCrypto.randomUUID()),
+                ...(target.title !== null ? { title: target.title } : {}),
+              })
+              .pipe(Effect.map((created) => created.threadId))
+          : target.threadId;
+      if (target.kind === "redirect") {
+        yield* Effect.logInfo("release notice sent to the bot's open chat instead", {
+          file: fileName,
+          requestedThreadId,
+          threadId,
+          reason: target.reason,
+        });
+      } else if (target.kind === "new-chat") {
+        yield* Effect.logInfo("release notice sent to a new chat: the bot has none open", {
+          file: fileName,
+          requestedThreadId,
+          threadId,
+        });
+      }
+      const shell = yield* projections
+        .getThreadShellById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
       const modelSelection = yield* botModelSelectionForThread(
         bots,
         threadId,
-        shell.value.modelSelection,
+        Option.getOrUndefined(shell)?.modelSelection,
       );
-      // An archived chat is unarchived by its turn start (PersonalTaskChatArchive).
+      // The chat is open (or new), so its turn start has nothing to unarchive.
       yield* engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make(`personal-release-notice:${noticeId}:turn.start`),
@@ -235,8 +280,8 @@ export const make = Effect.gen(function* () {
           attachments: [],
           context: noticeContext,
         },
-        runtimeMode: shell.value.runtimeMode,
-        interactionMode: shell.value.interactionMode,
+        runtimeMode: Option.getOrUndefined(shell)?.runtimeMode ?? "full-access",
+        interactionMode: Option.getOrUndefined(shell)?.interactionMode ?? "default",
         createdAt: DateTime.formatIso(yield* DateTime.now),
       });
       yield* Effect.logInfo("release notice posted", {

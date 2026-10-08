@@ -35,7 +35,7 @@ import {
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
-import { withSecretAccessLock } from "./secretAccessLock.ts";
+import { secretAccessLock, withSecretAccessLock } from "./secretAccessLock.ts";
 import { secretRedactor } from "./secretRedaction.ts";
 
 /**
@@ -348,7 +348,11 @@ export const make = Effect.gen(function* () {
         Effect.mapError((cause) => fail("Could not read the secret store.", cause)),
       );
 
-  const isStored = (row: SecretOwnerScope) => getStored(row).pipe(Effect.map(Option.isSome));
+  // Presence check for `request`, which never runs inside a locked section: it
+  // takes the access lock like every other read of a saved key (1.66.8). Do not
+  // call it from a writer; `getStored` is the unlocked read those use.
+  const isStored = (row: SecretOwnerScope) =>
+    secretAccessLock.withPermit(getStored(row)).pipe(Effect.map(Option.isSome));
 
   const hydrateRedactor = Effect.gen(function* () {
     const fulfilled = yield* db("hydrate", repository.listByStatus("fulfilled"));
@@ -810,7 +814,9 @@ export const make = Effect.gen(function* () {
   // The redactor learns every saved value at startup (and from then on from
   // fulfil / create / remove above). A value that cannot be read is simply not
   // masked; the name is logged, never the value.
-  yield* hydrateRedactor.pipe(
+  // Under the access lock too (1.66.8): at startup nothing holds it, and a
+  // save that races the load finishes first instead of being read half-done.
+  yield* secretAccessLock.withPermit(hydrateRedactor).pipe(
     Effect.catch((error) =>
       Effect.logWarning("personal secret redactor could not load every saved key", {
         reason: error.message,

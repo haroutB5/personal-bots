@@ -43,6 +43,7 @@ import {
 import { timingSafeEqualBase64Url } from "../../auth/utils.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { buildEventRoutinePrompt, formatHookPayload } from "./eventPrompt.ts";
@@ -356,22 +357,36 @@ export const make = Effect.gen(function* () {
   /**
    * The chat a model run goes into: the routine's source chat while it is
    * still a live, unarchived chat of the routine's bot and not a group
-   * member's transcript; otherwise undefined, and the run opens a new chat as
-   * it always did (also for opted-out and Scheduled-screen routines).
+   * member's transcript. When the owner archived it (or it is gone), the run
+   * goes to the same bot's open chat with the same title instead (1.66.8), so
+   * a run never brings an archived chat back. Otherwise undefined, and the run
+   * opens a new chat as it always did (also for opted-out and Scheduled-screen
+   * routines, and when no open chat of the bot has the source chat's name).
    */
   const runThreadFor = (routine: PersonalRoutine) =>
     Effect.gen(function* () {
-      const threadId = routine.threadId ?? null;
-      if (threadId === null || routine.newChatEachRun === true) return undefined;
-      const link = yield* bots.getThreadLink({ threadId });
-      if (
-        Option.isNone(link) ||
-        link.value.botId !== routine.botId ||
-        link.value.archivedAt !== null
-      ) {
-        return undefined;
+      const sourceThreadId = routine.threadId ?? null;
+      if (sourceThreadId === null || routine.newChatEachRun === true) return undefined;
+      const link = yield* bots.getThreadLink({ threadId: sourceThreadId });
+      if (Option.isSome(link) && link.value.botId !== routine.botId) return undefined;
+      let threadId = sourceThreadId;
+      if (Option.isNone(link) || link.value.archivedAt !== null) {
+        // Same title only: a routine's output does not belong in an unrelated
+        // chat, so with no match the run keeps opening its own chat.
+        const resolved = yield* resolveDeliveryThread(
+          { repository: bots, projections: snapshots },
+          sourceThreadId,
+          { sameTitleOnly: true },
+        );
+        if (resolved.kind !== "redirect") return undefined;
+        yield* Effect.logInfo("personal routine run goes to the bot's open chat of the same name", {
+          routineId: routine.routineId,
+          from: sourceThreadId,
+          threadId: resolved.threadId,
+        });
+        threadId = resolved.threadId;
       }
-      // Absent for a deleted or archived chat.
+      // Absent for a deleted chat.
       const shell = yield* snapshots.getThreadShellById(threadId);
       if (Option.isNone(shell)) return undefined;
       const members = yield* sql<{ readonly one: number }>`

@@ -129,6 +129,17 @@ export const SetPersonalMetaInput = Schema.Struct({
 export type SetPersonalMetaInput = typeof SetPersonalMetaInput.Type;
 
 /** One row of `personal_bot_fallbacks`: a bot running on its fallback model. */
+/** One open chat of a bot, as an automatic delivery sees it (`listOpenChats`). */
+export interface PersonalOpenChat {
+  readonly threadId: ThreadId;
+  readonly title: string;
+  /** Last message time (ISO), else when the chat was made. */
+  readonly activityAt: string;
+  readonly pinnedAt: string | null;
+  /** Made for a delegated task or a routine run, not a conversation. */
+  readonly taskChat: boolean;
+}
+
 export interface PersonalBotFallbackState {
   readonly botId: PersonalBotId;
   readonly fallbackModel: ModelSelectionType;
@@ -274,6 +285,28 @@ export class PersonalBotRepository extends Context.Service<
       readonly botId: PersonalBotId;
       readonly exceptThreadId?: ThreadId;
     }) => Effect.Effect<ReadonlyArray<string>, PersonalBotRepositoryError>;
+    /**
+     * The bot's open chats (same definition as `listOpenChatTitles`) with what
+     * an automatic delivery picks by: last message time (newest first is the
+     * caller's job), pinned, and whether the chat was made for a delegated
+     * task or routine run. Where a message goes when the chat it was meant for
+     * is archived or gone.
+     */
+    readonly listOpenChats: (input: {
+      readonly botId: PersonalBotId;
+      readonly exceptThreadId?: ThreadId;
+    }) => Effect.Effect<ReadonlyArray<PersonalOpenChat>, PersonalBotRepositoryError>;
+    /**
+     * Who a removed chat belonged to and what it was called, read from what
+     * outlives the link row: a task or routine that was bound to it, and the
+     * soft-deleted thread projection. None when nothing ties it to a bot.
+     */
+    readonly getRemovedChatOrigin: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<
+      Option.Option<{ readonly botId: PersonalBotId; readonly title: string | null }>,
+      PersonalBotRepositoryError
+    >;
     /**
      * The naming scope of one existing chat: its bot, whether the chat is
      * archived, and the titles of the bot's other open chats. None when the
@@ -1425,6 +1458,79 @@ export const make = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listOpenChatTitles:query")),
     );
 
+  const listOpenChats: PersonalBotRepository["Service"]["listOpenChats"] = (input) =>
+    sql<{
+      readonly threadId: string;
+      readonly title: string;
+      readonly activityAt: string;
+      readonly pinnedAt: string | null;
+      readonly taskChat: number;
+    }>`
+      SELECT
+        t.thread_id AS "threadId",
+        p.title AS "title",
+        COALESCE(
+          (
+            SELECT max(a.created_at)
+            FROM projection_thread_messages a
+            WHERE a.thread_id = t.thread_id AND a.role NOT IN ('system', 'reasoning')
+          ),
+          p.created_at,
+          t.created_at
+        ) AS "activityAt",
+        t.pinned_at AS "pinnedAt",
+        EXISTS (
+          SELECT 1 FROM personal_tasks d
+          WHERE d.thread_id = t.thread_id
+            AND d.source IN ('delegation', 'routine')
+            AND d.created_at <= t.created_at
+        ) AS "taskChat"
+      FROM personal_bot_threads t
+      JOIN projection_threads p ON p.thread_id = t.thread_id
+      WHERE t.bot_id = ${input.botId}
+        AND t.thread_id <> ${input.exceptThreadId ?? ""}
+        AND t.archived_at IS NULL
+        AND p.archived_at IS NULL
+        AND p.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
+        )
+    `.pipe(
+      Effect.map((rows) =>
+        rows.map((row): PersonalOpenChat => ({
+          threadId: row.threadId as ThreadId,
+          title: row.title,
+          activityAt: row.activityAt,
+          pinnedAt: row.pinnedAt,
+          taskChat: Number(row.taskChat) === 1,
+        })),
+      ),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listOpenChats:query")),
+    );
+
+  const getRemovedChatOrigin: PersonalBotRepository["Service"]["getRemovedChatOrigin"] = (input) =>
+    Effect.gen(function* () {
+      const [owner] = yield* sql<{ readonly botId: string }>`
+        SELECT bot_id AS "botId" FROM (
+          SELECT bot_id, created_at FROM personal_tasks WHERE thread_id = ${input.threadId}
+          UNION ALL
+          SELECT bot_id, created_at FROM personal_routines WHERE thread_id = ${input.threadId}
+        )
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+      if (owner === undefined) return Option.none();
+      const [thread] = yield* sql<{ readonly title: string }>`
+        SELECT title FROM projection_threads WHERE thread_id = ${input.threadId}
+      `;
+      return Option.some({
+        botId: owner.botId as PersonalBotId,
+        title: thread?.title ?? null,
+      });
+    }).pipe(
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.getRemovedChatOrigin:query")),
+    );
+
   const getChatTitleScope: PersonalBotRepository["Service"]["getChatTitleScope"] = (input) =>
     Effect.gen(function* () {
       const [self] = yield* sql<{ readonly botId: string; readonly archived: number }>`
@@ -1690,6 +1796,8 @@ export const make = Effect.gen(function* () {
     deleteThreadLink,
     listThreadLinks,
     listOpenChatTitles,
+    listOpenChats,
+    getRemovedChatOrigin,
     getChatTitleScope,
     listGroupPresence,
     getMeta,

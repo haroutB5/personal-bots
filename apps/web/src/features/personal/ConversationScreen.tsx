@@ -75,7 +75,7 @@ import {
   pendingWrapupStep,
   rememberChipsShown,
 } from "./chatChipHandoff";
-import { chatSwitchNavigation } from "./chatChipNavigation";
+import { chatSwitchNavigation, nextOpenChatAfterRemoval } from "./chatChipNavigation";
 import { useFrozenChipOrder } from "./chatChipOrder";
 import { buildChatChips, type ChatChip } from "./chatChipRows";
 import {
@@ -777,6 +777,20 @@ export function ConversationScreen({
   const goToChatList = async () => {
     await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
   };
+  /**
+   * The open chat was archived or deleted: open the bot's next open chat (the
+   * first chip, as a tap on it would, so Back is still one tap and the Team
+   * origin is kept). The bot's chat list only when no other chat is open.
+   */
+  const leaveRemovedChat = async () => {
+    const next = nextOpenChatAfterRemoval(chipRow, threadIdParam);
+    if (next === null) {
+      await goToChatList();
+      return;
+    }
+    markChatSwitched();
+    await navigate(chatSwitchNavigation(botId, next));
+  };
   /** Pin, Unpin, Snooze, Wake or Mark unread on one chat. Returns whether it worked. */
   const runStateAction = async (
     target: ChatSettingsTarget,
@@ -826,7 +840,7 @@ export function ConversationScreen({
     }
     setActionError(null);
     if (other) announce(chatActionAnnouncement("archive", target.title));
-    else await goToChatList();
+    else await leaveRemovedChat();
   };
 
   const [unarchiving, setUnarchiving] = useState(false);
@@ -855,7 +869,7 @@ export function ConversationScreen({
   };
 
   const deleteChat = useDeleteChat(environmentId);
-  /** Confirms, then deletes one chat. The open chat then goes to the All list; another chat stays. */
+  /** Confirms, then deletes one chat. The open chat then goes to the bot's next open chat (the chat list when none); another chat stays. */
   const deleteChatNow = async (
     id: ThreadId,
     options: DeleteChatOptions | undefined,
@@ -871,7 +885,7 @@ export function ConversationScreen({
     }
     if (outcome.status === "cancelled") return;
     setActionError(null);
-    if (leaves) await goToChatList();
+    if (leaves) await leaveRemovedChat();
     else if (announceAs !== undefined) announce(chatActionAnnouncement("delete", announceAs));
   };
   const onDeleteChat = () => deleteChatNow(threadId, { name: chatTitle }, true);

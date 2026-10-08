@@ -13,6 +13,7 @@ import {
   type PersonalTaskAttempt,
   type PersonalTaskMessageMarker,
 } from "@t3tools/contracts";
+import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import { personalTaskThreadTitle } from "../personalThreadTitles.ts";
 import {
@@ -366,12 +367,45 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
     });
   });
 
-  const claim = Effect.fn("PersonalTaskService.claim")(function* (task: PersonalTask) {
+  /**
+   * The chat this task's next turn goes to. Normally its own. A task that
+   * lives in a conversation (a chat request the bot is waiting on children
+   * for, or a routine posting into its chat) must not bring that chat back
+   * once the owner archived it (1.66.8): it goes to the bot's open chat with
+   * the same title instead, and the task is bound there from now on. A
+   * delegated task's own chat is its work item, so it stays where it is (a
+   * reopen or retry there is the task's own session, not a message to the
+   * owner). A bot with no open chat gets a new one, made by `startTurn`.
+   */
+  const deliveryThreadFor = Effect.fn("PersonalTaskService.deliveryThreadFor")(function* (
+    task: PersonalTask,
+  ) {
+    if (task.threadId === null || (task.source !== "user" && task.source !== "routine")) {
+      return { threadId: task.threadId, note: null };
+    }
+    const target = yield* resolveDeliveryThread(
+      { repository: botRepository, projections: snapshots },
+      task.threadId,
+      // A routine's output only goes to a chat of the same name (as at creation).
+      { sameTitleOnly: task.source === "routine" },
+    ).pipe(Effect.orElseSucceed(() => ({ kind: "unknown" }) as const));
+    if (target.kind === "open" || target.kind === "unknown") {
+      return { threadId: task.threadId, note: null };
+    }
+    return target.kind === "redirect"
+      ? { threadId: target.threadId, note: target.reason }
+      : { threadId: ThreadId.make(NodeCrypto.randomUUID()), note: "new-chat" as const };
+  });
+
+  const claim = Effect.fn("PersonalTaskService.claim")(function* (
+    task: PersonalTask,
+    deliveryThreadId: ThreadId | null,
+  ) {
     const changed: Changed = [];
     const claimed = yield* repository.transaction(
       Effect.gen(function* () {
         const now = yield* DateTime.now;
-        const threadId = task.threadId ?? ThreadId.make(NodeCrypto.randomUUID());
+        const threadId = deliveryThreadId ?? ThreadId.make(NodeCrypto.randomUUID());
         const running = yield* writeTask(changed, task, {
           status: "running",
           threadId,
@@ -469,26 +503,46 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
       // runs there (the user chatting in that chat): starting now would land
       // in the middle of it. It stays queued, so it still counts as unfinished.
       let next: PersonalTask | undefined;
+      let nextThreadId: ThreadId | null = null;
+      let nextNote: string | null = null;
       idleWaitThreadIds.clear();
       for (const task of candidates) {
         if (task.threadId === null) {
           next = task;
           break;
         }
-        if (busyThreads.has(task.threadId)) continue;
-        if (yield* heldByOtherTurn(task, task.threadId)) {
-          idleWaitThreadIds.add(task.threadId);
+        const delivery = yield* deliveryThreadFor(task);
+        const threadId = delivery.threadId;
+        if (threadId === null) continue;
+        if (busyThreads.has(threadId)) continue;
+        if (yield* heldByOtherTurn(task, threadId)) {
+          idleWaitThreadIds.add(threadId);
           continue;
         }
         next = task;
+        nextThreadId = threadId;
+        nextNote = delivery.note;
         break;
       }
       if (next === undefined) {
         return;
       }
-      const claimed = yield* claim(next);
+      const claimed = yield* claim(next, nextThreadId);
       if (claimed === null) {
         continue;
+      }
+      if (nextNote !== null) {
+        yield* Effect.logInfo(
+          nextNote === "new-chat"
+            ? "personal task goes to a new chat: its chat is archived or gone and the bot has none open"
+            : "personal task goes to the bot's open chat: its chat is archived or gone",
+          {
+            taskId: claimed.task.taskId,
+            from: next.threadId,
+            threadId: claimed.attempt.providerThreadId,
+            reason: nextNote,
+          },
+        );
       }
       yield* startTurn(
         claimed.task,

@@ -14,6 +14,25 @@ export function chatSwitchNavigation(botId: string, threadId: string) {
   } as const;
 }
 
+/**
+ * Where the owner goes when the chat he is inside is archived or deleted
+ * (1.66.8): the bot's next open chat, the first of the chips that is not the
+ * one going away, so pinned chats come first, then the newest activity, the
+ * same order the chip row shows. Task, routine and archived chats are not
+ * candidates (only the owner's own chats are `kind: "chat"`). Null when the
+ * bot has no other open chat: the caller then goes to the bot's chat list, as
+ * it did before.
+ */
+export function nextOpenChatAfterRemoval(
+  chips: ReadonlyArray<{ readonly threadId: string; readonly kind: string }>,
+  removedThreadId: string,
+): string | null {
+  return (
+    chips.find((chip) => chip.kind === "chat" && chip.threadId !== removedThreadId)?.threadId ??
+    null
+  );
+}
+
 /** The row's open chat: the one element in the chip row that carries aria-current. */
 export const CURRENT_CHIP_SELECTOR = '[aria-current="page"]';
 
