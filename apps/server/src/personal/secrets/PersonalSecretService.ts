@@ -121,6 +121,35 @@ const widestPlacement = (
   };
 };
 
+/**
+ * Whether two rows grant the same access: mode, origins (as a set) and placement.
+ * Rows that share one stored value must agree, so the value is only ever
+ * reachable the way its own save allowed.
+ */
+const samePolicy = (
+  left: {
+    readonly mode?: PersonalSecretMode | undefined;
+    readonly origins?: ReadonlyArray<string> | undefined;
+    readonly placement?: PersonalSecretPlacement | undefined;
+  },
+  right: {
+    readonly mode?: PersonalSecretMode | undefined;
+    readonly origins?: ReadonlyArray<string> | undefined;
+    readonly placement?: PersonalSecretPlacement | undefined;
+  },
+): boolean => {
+  const key = (access: typeof left) =>
+    JSON.stringify([
+      access.mode ?? "env",
+      [...new Set(access.origins ?? [])].toSorted(),
+      access.placement?.header ?? null,
+      access.placement?.anywhere === true,
+      access.placement?.pathPrefix ?? null,
+      [...(access.placement?.methods ?? [])].toSorted(),
+    ]);
+  return key(left) === key(right);
+};
+
 /** Switch for the 1.66.0 default; `PERSONAL_SECRET_DEFAULT_MODE=env` restores the old default. */
 export const defaultNewSecretMode = (env: NodeJS.ProcessEnv = process.env): PersonalSecretMode =>
   (env.PERSONAL_SECRET_DEFAULT_MODE ?? env.T3CODE_PERSONAL_SECRET_DEFAULT_MODE)
@@ -250,6 +279,35 @@ export const make = Effect.gen(function* () {
       readonly placement: PersonalSecretPlacement;
     },
   ) => db("mode", repository.setMode({ name, ...access }));
+
+  /**
+   * Fails when a shared row of `name` (other than the owner's own saved one,
+   * which a new owner save replaces) already grants different access than
+   * `access`. Shared rows address one stored value, so they must agree.
+   */
+  const requireSharedAccessMatch = Effect.fn("PersonalSecretService.requireSharedAccessMatch")(
+    function* (
+      name: string,
+      access: {
+        readonly mode: PersonalSecretMode;
+        readonly origins: ReadonlyArray<string>;
+        readonly placement: PersonalSecretPlacement;
+      },
+      options?: { readonly ignoreOwnerSaved?: boolean },
+    ) {
+      const rows = (yield* db("lookup", repository.listByStatus("fulfilled"))).filter(
+        (row) =>
+          row.name === name &&
+          row.shared &&
+          !(options?.ignoreOwnerSaved === true && row.botId === OWNER_SAVED_BOT_ID),
+      );
+      if (rows.some((row) => !samePolicy(row, access))) {
+        return yield* fail(
+          `A shared key called ${name} is already saved with different access. Save this one with the same mode and origins, or change the saved key's access in Settings > API keys first, so one value never has two sets of permissions.`,
+        );
+      }
+    },
+  );
 
   /** A pending request as the owner's card shows it: the origins the app cannot vouch for are flagged. */
   const withUnverifiedOrigins = (row: PersonalSecretRequest): PersonalSecretRequest => {
@@ -404,6 +462,13 @@ export const make = Effect.gen(function* () {
       origins: input.origins ?? (pending.origins?.length ? pending.origins : undefined),
       placement: input.placement,
     });
+    // A shared value lives in one slot for every bot, so it must carry one
+    // access policy. A second save with different access would overwrite the
+    // bytes while an older row kept its (maybe broader) mode and origins, so
+    // it is refused before anything is written; the request stays pending.
+    if (shared) {
+      yield* requireSharedAccessMatch(pending.name, access);
+    }
     yield* store
       .set(personalSecretStoreKey({ name: pending.name, botId: pending.botId, shared }), bytes)
       .pipe(Effect.mapError((cause) => fail("Could not store the secret.", cause)));
@@ -543,6 +608,10 @@ export const make = Effect.gen(function* () {
     );
     if (rows.length === 0) return yield* fail("Saved secret not found.");
     if (rows.every((row) => row.shared === input.shared)) return yield* list();
+    if (input.shared && rows.some((row) => !samePolicy(row, rows[0]!)))
+      return yield* fail(
+        "Bots have different access (mode or origins) for this key. Set the same access for it before enabling access for all bots.",
+      );
     const values = yield* Effect.forEach(rows, (row) => getStored(row));
     if (values.some(Option.isNone))
       return yield* fail("A saved key could not be read. Save it again before changing access.");
@@ -627,6 +696,12 @@ export const make = Effect.gen(function* () {
       origins: input.origins,
       placement: input.placement,
     });
+    // The owner's own saved row is rotated in place, but a bot's shared row of
+    // this name addresses the same stored value: refuse before writing it when
+    // that row grants different access.
+    if (shared) {
+      yield* requireSharedAccessMatch(input.name, access, { ignoreOwnerSaved: true });
+    }
     const storeKey = personalSecretStoreKey({
       name: input.name,
       botId: OWNER_SAVED_BOT_ID,

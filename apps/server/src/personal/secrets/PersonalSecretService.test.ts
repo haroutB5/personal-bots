@@ -1230,6 +1230,273 @@ describe("brokered secrets", () => {
     ),
   );
 
+  /** Two bots, each with a pending request for the same shared-capable key name. */
+  const twoPendingRequests = (harness: Harness, name: string) =>
+    Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotService.PersonalBotService;
+      const secrets = yield* PersonalSecretService.PersonalSecretService;
+      const assistant = yield* runningTask(harness, `${name}-a`, "assistant");
+      const developer = yield* runningTask(harness, `${name}-b`, "developer");
+      yield* bots.createThread({ botId: botId("assistant"), threadId: assistant.threadId });
+      yield* bots.createThread({ botId: botId("developer"), threadId: developer.threadId });
+      const ask = (task: PersonalTask, threadId: ThreadId, bot: string) =>
+        secrets.request({
+          task,
+          threadId,
+          botId: botId(bot),
+          name,
+          label: name,
+          purpose: "Test.",
+        });
+      const first = yield* ask(assistant.task, assistant.threadId, "assistant");
+      const second = yield* ask(developer.task, developer.threadId, "developer");
+      expect([first.status, second.status]).toEqual(["pending", "pending"]);
+      return { assistant, developer, first: first.request, second: second.request };
+    });
+
+  it.effect(
+    "a second shared fulfilment with different access is refused and never reaches the first row's env",
+    () =>
+      withLayer((harness) =>
+        Effect.gen(function* () {
+          const secrets = yield* PersonalSecretService.PersonalSecretService;
+          const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+          const { assistant, developer, first, second } = yield* twoPendingRequests(
+            harness,
+            "SHARED_POLICY",
+          );
+
+          yield* secrets.fulfill({
+            requestId: first.requestId,
+            value: Redacted.make("first-env-value-0123"),
+            shared: true,
+            mode: "env",
+          });
+          // The second request is approved as brokered-only, bound to one origin.
+          const refused = yield* secrets
+            .fulfill({
+              requestId: second.requestId,
+              value: Redacted.make("second-brokered-value-0456"),
+              shared: true,
+              mode: "brokered",
+              origins: ["https://api.vercel.com"],
+            })
+            .pipe(Effect.result);
+          expect(refused._tag).toBe("Failure");
+          expect(text(refused)).toContain("different access");
+          expect(text(refused)).not.toContain("second-brokered-value-0456");
+
+          // Nothing was written: the request stays pending and the first value stands.
+          expect((yield* secrets.listPending()).requests.map((entry) => entry.requestId)).toEqual([
+            second.requestId,
+          ]);
+          for (const thread of [assistant.threadId, developer.threadId]) {
+            const seen = (yield* access.secretsForThread(thread)).find(
+              (entry) => entry.name === "SHARED_POLICY",
+            );
+            expect(seen).toEqual(
+              expect.objectContaining({ mode: "env", value: "first-env-value-0123" }),
+            );
+          }
+          expect((yield* access.forThread(assistant.threadId)).environment).toEqual({
+            PB_SECRET_SHARED_POLICY: "first-env-value-0123",
+          });
+
+          // The same access is fine: it is a rotation under one policy.
+          yield* secrets.fulfill({
+            requestId: second.requestId,
+            value: Redacted.make("second-env-value-0456"),
+            shared: true,
+            mode: "env",
+          });
+          expect((yield* access.forThread(assistant.threadId)).environment).toEqual({
+            PB_SECRET_SHARED_POLICY: "second-env-value-0456",
+          });
+        }),
+      ),
+  );
+
+  it.effect(
+    "brokered shared bytes never reach PB_SECRET_* when another save was env or bound elsewhere",
+    () =>
+      withLayer((harness) =>
+        Effect.gen(function* () {
+          const secrets = yield* PersonalSecretService.PersonalSecretService;
+          const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+          const { assistant, developer, first, second } = yield* twoPendingRequests(
+            harness,
+            "SHARED_BROKERED",
+          );
+          yield* secrets.fulfill({
+            requestId: first.requestId,
+            value: Redacted.make("first-brokered-value-0123"),
+            shared: true,
+            mode: "brokered",
+            origins: ["https://api.one.example.com"],
+          });
+          // Brokered to another origin: refused. As env: refused.
+          for (const attempt of [
+            { mode: "brokered" as const, origins: ["https://api.two.example.com"] },
+            { mode: "env" as const, origins: undefined },
+          ]) {
+            const refused = yield* secrets
+              .fulfill({
+                requestId: second.requestId,
+                value: Redacted.make("second-value-0456"),
+                shared: true,
+                ...attempt,
+              })
+              .pipe(Effect.result);
+            expect(refused._tag).toBe("Failure");
+          }
+          expect((yield* access.forThread(assistant.threadId)).environment).toEqual({});
+          expect((yield* access.forThread(developer.threadId)).environment).toEqual({});
+          expect((yield* access.secretsForThread(developer.threadId))[0]).toEqual(
+            expect.objectContaining({
+              mode: "brokered",
+              origins: ["https://api.one.example.com"],
+              value: "first-brokered-value-0123",
+            }),
+          );
+          // The same mode, origins and placement are the same access: a rotation.
+          yield* secrets.fulfill({
+            requestId: second.requestId,
+            value: Redacted.make("second-brokered-value-0456"),
+            shared: true,
+            mode: "brokered",
+            origins: ["https://api.one.example.com"],
+          });
+          expect((yield* access.secretsForThread(assistant.threadId))[0]).toEqual(
+            expect.objectContaining({ mode: "brokered", value: "second-brokered-value-0456" }),
+          );
+        }),
+      ),
+  );
+
+  it.effect(
+    "shared rows saved before the guard that disagree grant the brokered row, never env",
+    () =>
+      withLayer(() =>
+        Effect.gen(function* () {
+          yield* seedBots;
+          const bots = yield* PersonalBotService.PersonalBotService;
+          const repository = yield* PersonalSecretRepository.PersonalSecretRepository;
+          const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+          const store = yield* ServerSecretStore.ServerSecretStore;
+          const assistantThread = ThreadId.make("thread-legacy-a");
+          const developerThread = ThreadId.make("thread-legacy-b");
+          yield* bots.createThread({ botId: botId("assistant"), threadId: assistantThread });
+          yield* bots.createThread({ botId: botId("developer"), threadId: developerThread });
+          // Two fulfilled shared rows of one name as 1.66.6 could leave them: the
+          // older says env, the newer brokered, and the one stored value is the newer save's.
+          const insert = (key: string, bot: string, at: string, mode: "env" | "brokered") =>
+            Effect.gen(function* () {
+              const requestId = PersonalSecretRequestId.make(`request-${key}`);
+              yield* repository.insertRequest({
+                requestId,
+                taskId: null,
+                rootTaskId: null,
+                threadId: bot === "assistant" ? assistantThread : developerThread,
+                botId: botId(bot),
+                name: "LEGACY_SHARED",
+                label: "legacy",
+                purpose: "Test.",
+                status: "pending",
+                shared: false,
+                createdAt: DateTime.makeUnsafe(at),
+                fulfilledAt: null,
+              });
+              yield* repository.writeStatus({
+                requestId,
+                expectedStatus: "pending",
+                status: "fulfilled",
+                shared: true,
+                fulfilledAt: DateTime.makeUnsafe(at),
+                mode,
+                origins: mode === "brokered" ? ["https://api.vercel.com"] : [],
+                placement: {},
+              });
+            });
+          yield* insert("old-env", "assistant", "2026-10-01T10:00:00.000Z", "env");
+          yield* insert("new-brokered", "developer", "2026-10-02T10:00:00.000Z", "brokered");
+          yield* store.set(
+            PersonalSecretService.personalSecretStoreKey("LEGACY_SHARED"),
+            new TextEncoder().encode("brokered-only-bytes-0123"),
+          );
+
+          for (const thread of [assistantThread, developerThread]) {
+            expect((yield* access.forThread(thread)).environment).toEqual({});
+            expect((yield* access.secretsForThread(thread))[0]).toEqual(
+              expect.objectContaining({
+                mode: "brokered",
+                origins: ["https://api.vercel.com"],
+                value: "brokered-only-bytes-0123",
+              }),
+            );
+          }
+        }),
+      ),
+  );
+
+  it.effect(
+    "the owner's Settings save and the sharing switch also keep shared access in one policy",
+    () =>
+      withLayer((harness) =>
+        Effect.gen(function* () {
+          const secrets = yield* PersonalSecretService.PersonalSecretService;
+          const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+          const { assistant, first, second } = yield* twoPendingRequests(harness, "OWNER_SHARED");
+          yield* secrets.fulfill({
+            requestId: first.requestId,
+            value: Redacted.make("bots-shared-env-value-0123"),
+            shared: true,
+            mode: "env",
+          });
+          // The owner typing the same name shared and brokered would otherwise
+          // put brokered bytes under the bot row's env access.
+          const refusedCreate = yield* secrets
+            .create({
+              name: "OWNER_SHARED",
+              value: Redacted.make("owners-brokered-value-0456"),
+              shared: true,
+              mode: "brokered",
+              origins: ["https://api.vercel.com"],
+            })
+            .pipe(Effect.result);
+          expect(refusedCreate._tag).toBe("Failure");
+          expect((yield* access.forThread(assistant.threadId)).environment).toEqual({
+            PB_SECRET_OWNER_SHARED: "bots-shared-env-value-0123",
+          });
+          // The same access rotates it.
+          yield* secrets.create({
+            name: "OWNER_SHARED",
+            value: Redacted.make("owners-env-value-0456"),
+            shared: true,
+            mode: "env",
+          });
+          expect((yield* access.forThread(assistant.threadId)).environment).toEqual({
+            PB_SECRET_OWNER_SHARED: "owners-env-value-0456",
+          });
+
+          // An unshared pair with different access cannot be switched to shared.
+          yield* secrets.fulfill({
+            requestId: second.requestId,
+            value: Redacted.make("owners-env-value-0456"),
+            shared: false,
+            mode: "brokered",
+            origins: ["https://api.vercel.com"],
+          });
+          yield* secrets.setSharing({ name: "OWNER_SHARED", shared: false });
+          const refusedShare = yield* secrets
+            .setSharing({ name: "OWNER_SHARED", shared: true })
+            .pipe(Effect.result);
+          expect(refusedShare._tag).toBe("Failure");
+          expect(text(refusedShare)).toContain("different access");
+        }),
+      ),
+  );
+
   it.effect("a pending request flags the origins the app cannot vouch for", () =>
     withLayer((harness) =>
       Effect.gen(function* () {

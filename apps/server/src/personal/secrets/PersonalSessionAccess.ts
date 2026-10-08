@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -107,15 +108,32 @@ export const make = Effect.gen(function* () {
   const readSecrets = (botId: PersonalBotId) =>
     Effect.gen(function* () {
       const fulfilled = yield* secrets.listByStatus("fulfilled");
-      // One value per name: the bot's own row wins over a shared one when
-      // both exist, so an unshared value is never shadowed by a shared one.
-      const byName = new Map<string, (typeof fulfilled)[number]>();
+      // One value per name: the bot's own unshared row wins over a shared one
+      // when both exist, so an unshared value is never shadowed by a shared one.
+      type Row = (typeof fulfilled)[number];
+      const fulfilledMs = (row: Row) =>
+        row.fulfilledAt === null ? 0 : DateTime.toEpochMillis(row.fulfilledAt);
+      const own = new Map<string, Row>();
+      const sharedRows = new Map<string, Array<Row>>();
       for (const entry of fulfilled) {
-        if (entry.botId !== botId && !entry.shared) continue;
-        const previous = byName.get(entry.name);
-        if (previous === undefined || (entry.botId === botId && previous.botId !== botId)) {
-          byName.set(entry.name, entry);
-        }
+        if (entry.shared)
+          sharedRows.set(entry.name, [...(sharedRows.get(entry.name) ?? []), entry]);
+        else if (entry.botId === botId && !own.has(entry.name)) own.set(entry.name, entry);
+      }
+      const byName = new Map<string, Row>(own);
+      for (const [name, rows] of sharedRows) {
+        if (byName.has(name)) continue;
+        // Shared rows address one stored value. The save paths keep their
+        // access identical; if rows saved before that guard disagree, never let
+        // an env row expose a value another row saved brokered-only: the newest
+        // brokered row decides, otherwise the bot's own row, otherwise the first.
+        const brokered = rows.filter((row) => row.mode === "brokered");
+        byName.set(
+          name,
+          brokered.length > 0
+            ? brokered.reduce((best, row) => (fulfilledMs(row) >= fulfilledMs(best) ? row : best))
+            : (rows.find((row) => row.botId === botId) ?? rows[0]!),
+        );
       }
       const accessible: Array<PersonalSessionSecret> = [];
       for (const entry of byName.values()) {
