@@ -10,6 +10,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
+import { CONTINUE_JOURNEYS } from "./continueChat.mjs";
 import { JOURNEYS, SELFTEST_JOURNEYS } from "./journeys.mjs";
 import { NETWORK_JOURNEYS } from "./offlineNetwork.mjs";
 import { OFFLINE_JOURNEYS } from "./offlineQueue.mjs";
@@ -54,7 +55,12 @@ const wanted = args.journeys
   : null;
 // The default gate runs the five smoke journeys, the offline send queue (the server really goes away) and the
 // phone-loses-network journeys. Self-tests only run by name.
-const DEFAULT_JOURNEYS = [...JOURNEYS, ...OFFLINE_JOURNEYS, ...NETWORK_JOURNEYS];
+const DEFAULT_JOURNEYS = [
+  ...JOURNEYS,
+  ...CONTINUE_JOURNEYS,
+  ...OFFLINE_JOURNEYS,
+  ...NETWORK_JOURNEYS,
+];
 const selected = wanted
   ? [...DEFAULT_JOURNEYS, ...SELFTEST_JOURNEYS].filter((journey) => wanted.includes(journey.id))
   : DEFAULT_JOURNEYS;

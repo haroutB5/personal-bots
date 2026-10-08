@@ -42,6 +42,17 @@ works from a `run\release-tools-<version>\` copy.
 Each journey must finish inside 30 s (it fails otherwise). Typical run: about 5 s per journey, 25 s for the suite,
 about 35 s with the server start and stop.
 
+## `continue-chat`: a lead hands work into a bot's existing chat (1.66.12)
+
+Not one of the five (it has its own file, `continueChat.mjs`, and a 120 s limit) but part of the default gate. The
+fake CLI keeps what each provider session was told, so `WHATWORD` answers with a codeword said earlier in the same
+session. Steps: the Developer's own chat is told "The codeword is kiwi"; the Planner calls `list_bot_chats` (the chat
+id and title are in the result); `delegate_task` with `continueChatId` and the objective `WHATWORD`; the result card
+in the Planner's chat says "The codeword was kiwi." (so the turn ran in that conversation's session); the Developer's
+chat keeps its name, shows "Task from Planner: E2E continue" and the answer, and its chat list gains no task chat;
+`steer_task` reopens the task and it answers again in the same chat. `MCPONCE` is `MCPTOOL` that does not repeat when
+the delegating chat resumes after the result.
+
 ## When it fails
 
 The artifacts folder (`%TEMP%\hbots-e2e\<name>`, printed at the end; removed on a pass) keeps, per failed journey, a

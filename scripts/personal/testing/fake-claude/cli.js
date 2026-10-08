@@ -20,6 +20,10 @@
 //     Bash does), shows it as a tool call and result, then says it in a streamed reply split into small
 //     pieces. A key saved as an environment variable (PB_SECRET_<NAME>) must come out masked; a brokered
 //     key is not in the process, so the shell prints nothing.
+//   MCPONCE <name> <one-line json>  as MCPTOOL, but not repeated when its own task resumes after a delegated result.
+//   WHATWORD  answers "The codeword was <word>." from an earlier prompt of THIS provider session that said
+//     "the codeword is <word>" (the fake keeps each session's prompts in <pidDir>/sessions), else "I have no
+//     codeword in this session." Proves a turn ran in the session an earlier talk happened in (1.66.12).
 //   anything else  "Got it." plus the reply quote it received, if any.
 // Usage-probe flags (files in <pidDir>, so a test flips them while the server runs; all off by default):
 //   usage-weekly  adds a seven_day window (31%, resets in 3 days) beside the five-hour one.
@@ -301,6 +305,20 @@ lines.on("line", async (line) => {
       ? content
       : (content ?? []).map((part) => part.text ?? "").join(" ");
   log(`prompt ${JSON.stringify(text.slice(0, 6000))}`);
+  // What this session was told before this prompt (the fake's only memory; see WHATWORD).
+  const memoryFile = `${pidDir}/sessions/${sessionId}.jsonl`;
+  NodeFS.mkdirSync(`${pidDir}/sessions`, { recursive: true });
+  const earlierPrompts = (() => {
+    try {
+      return NodeFS.readFileSync(memoryFile, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((entry) => JSON.parse(entry));
+    } catch {
+      return [];
+    }
+  })();
+  NodeFS.appendFileSync(memoryFile, JSON.stringify(text) + "\n");
   init();
   // Home provider simulation: until the time in the limit-until file, every prompt is refused
   // with a rejected 5-hour usage window (what the real adapter turns into a usage-limit pause).
@@ -323,6 +341,19 @@ lines.on("line", async (line) => {
   const quote = text.match(/\[Replying to [^\]]*\]/)?.[0];
   const fence = "```";
   log(`${NAME} handles prompt`);
+  // A prompt that is itself an MCPTOOL/MCPONCE call may quote the trigger word in its arguments.
+  if (text.includes("WHATWORD") && !/MCP(?:TOOL|ONCE) /.test(text)) {
+    const word = earlierPrompts
+      .map((earlier) => /codeword is (\w+)/i.exec(earlier)?.[1])
+      .filter((found) => found !== undefined)
+      .at(-1);
+    const reply =
+      word === undefined ? "I have no codeword in this session." : `The codeword was ${word}.`;
+    log(`whatword ${reply}`);
+    assistant(reply);
+    finish(reply, false);
+    return;
+  }
   if (text.includes("CHOICES6")) {
     assistant(
       `Which area should I look at first?\n\n${fence}choices\nLogin page\nBilling and invoices, including the refund flow that failed last week for two customers\nSearch\nNotifications\nSettings\nNone of these\n${fence}`,
@@ -443,7 +474,12 @@ lines.on("line", async (line) => {
     finish(reply, false);
     return;
   }
-  const tool = text.match(/MCPTOOL (\w+) (\{.*\})/);
+  // MCPONCE is MCPTOOL that does not run again when its own task resumes: a delegating chat's
+  // continuation turn quotes the request, and a fake that repeated the call would delegate again.
+  const tool =
+    text.includes("MCPONCE ") && text.startsWith("[Task continuation]")
+      ? null
+      : text.match(/MCP(?:TOOL|ONCE) (\w+) (\{.*\})/);
   if (tool) {
     let toolArgs;
     try {
