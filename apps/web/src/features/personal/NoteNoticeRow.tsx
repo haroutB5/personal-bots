@@ -24,6 +24,9 @@ const FORGOTTEN_REASONS: ReadonlySet<string> = new Set([
   "Forgotten by a bot (a note it found out of date).",
 ]);
 
+/** The server's reason for an entry a save into an existing entry replaced (1.66.7): only this is brought back by "Replaced a note". */
+const REPLACED_REASON = "Replaced by a newer save.";
+
 /** The server's reason for a rule a bot forgot at the owner's word (1.60.42): only this brings a rule back. */
 const RULE_FORGOTTEN_REASON = "Forgotten by a bot at the user's word.";
 
@@ -37,7 +40,7 @@ const RULE_FORGOTTEN_REASON = "Forgotten by a bot at the user's word.";
  * became a rule since, or a rule saved another way, has no such Undo.
  */
 export function noteUndoSettled(
-  undo: "archive" | "restore",
+  undo: "archive" | "restore" | "unreplace",
   entry:
     | (Pick<PersonalMemoryEntry, "kind" | "supersededAt" | "supersededReason"> & {
         readonly source?: string;
@@ -46,6 +49,14 @@ export function noteUndoSettled(
   line: "note" | "rule" = "note",
 ): string | null {
   if (entry === null) return null;
+  if (undo === "unreplace") {
+    // "Replaced a note/rule" (1.66.7): Undo brings back the entry a save archived, only while a replacement still holds it.
+    if (entry.kind !== (line === "rule" ? "preference" : "note")) {
+      return line === "rule" ? "No longer a rule" : "No longer a note";
+    }
+    if (entry.supersededAt == null) return "Restored";
+    return entry.supersededReason === REPLACED_REASON ? null : "Archived";
+  }
   if (line === "rule") {
     if (entry.kind !== "preference") return "No longer a rule";
     const archived = entry.supersededAt != null;
@@ -83,7 +94,7 @@ export function NoteNoticeRow({
   environmentId: EnvironmentId;
   label: string;
   memoryId: string;
-  undo: "archive" | "restore";
+  undo: "archive" | "restore" | "unreplace";
   /** An archived chat: the line reads as it did, with no Undo (like its cards). */
   readOnly?: boolean;
 }): JSX.Element {
@@ -92,7 +103,7 @@ export function NoteNoticeRow({
   const [error, setError] = useState<string | null>(null);
   const current = usePersonalMemoryEntry(environmentId, memoryId);
   // "Saved a rule: ..." / "Forgot a rule: ..." (1.60.42) read the entry as a rule; a note line never does.
-  const what = /^(?:Saved|Forgot) a rule\b/.test(label) ? "rule" : "note";
+  const what = /^(?:Saved|Forgot|Replaced) a rule\b/.test(label) ? "rule" : "note";
   const settled = noteUndoSettled(undo, current.data ?? null, what);
 
   const onUndo = async () => {

@@ -38,7 +38,7 @@ afterEach(() => {
 });
 
 const render = (
-  undo: "archive" | "restore",
+  undo: "archive" | "restore" | "unreplace",
   readOnly = false,
   label = "Saved a note: Likes tea.",
 ) => {
@@ -286,5 +286,62 @@ describe("1.60.42: the lines for a rule", () => {
     const root = render("archive", true, SAVED);
     expect(undoButton(root)).toBeUndefined();
     expect(JSON.stringify(renderer!.toJSON())).toContain(SAVED);
+  });
+});
+
+describe("1.66.7: the 'Replaced a note/rule' line", () => {
+  const REPLACED = "Replaced by a newer save.";
+
+  it("offers Undo while a replacement still holds the entry, and sends the unreplace Undo", async () => {
+    calls.entry = {
+      kind: "note",
+      supersededAt: "2026-10-08T09:00:00Z",
+      supersededReason: REPLACED,
+    };
+    const root = render("unreplace", false, "Replaced a note: The backup runs at 02:00.");
+    expect(undoButton(root)!.props["aria-label"]).toBe("Undo: restore this note");
+    await act(async () => undoButton(root)!.props.onClick());
+    expect(calls.undoNote).toEqual([
+      { environmentId: "env-1", input: { memoryId: "m-1", undo: "unreplace" } },
+    ]);
+    expect(calls.restore).toEqual([]);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Restored");
+  });
+
+  it("reads a rule line as a rule, and settles from the entry as it is now", () => {
+    calls.entry = {
+      kind: "preference",
+      source: "user",
+      supersededAt: "2026-10-08T09:00:00Z",
+      supersededReason: REPLACED,
+    };
+    const root = render("unreplace", false, "Replaced a rule: Quote coin prices in USD.");
+    expect(undoButton(root)!.props["aria-label"]).toBe("Undo: restore this rule");
+    expect(
+      noteUndoSettled("unreplace", { kind: "note", supersededAt: null, supersededReason: null }),
+    ).toBe("Restored");
+    // Archived some other way since: nothing to undo.
+    expect(
+      noteUndoSettled("unreplace", {
+        kind: "note",
+        supersededAt: "2026-10-08T09:00:00Z",
+        supersededReason: "Forgotten at the user's request.",
+      }),
+    ).toBe("Archived");
+    // Became another kind since.
+    expect(
+      noteUndoSettled("unreplace", {
+        kind: "preference",
+        supersededAt: null,
+        supersededReason: null,
+      }),
+    ).toBe("No longer a note");
+    expect(
+      noteUndoSettled(
+        "unreplace",
+        { kind: "note", supersededAt: null, supersededReason: null },
+        "rule",
+      ),
+    ).toBe("No longer a rule");
   });
 });

@@ -18,7 +18,7 @@ import {
 import { forkParked } from "../../serverActivation.ts";
 import { rootExposureKey, threadExposureKey } from "../browser/sensitiveExposureStore.ts";
 import { looksLikeSecret, redactSecrets } from "../secretText.ts";
-import { appsToJson } from "./memoryApps.ts";
+import { appsToJson, normaliseApps } from "./memoryApps.ts";
 import type { MemoryCore } from "./memoryCore.ts";
 import { tracePruneDue } from "./memoryAgeingPolicy.ts";
 import { undoRoute } from "./memoryProvenancePolicy.ts";
@@ -184,22 +184,49 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       return targets;
     });
 
+  /** The same apps, whatever their order; null and an empty list are both global. */
+  const appsKey = (apps: ReadonlyArray<string> | null | undefined) =>
+    JSON.stringify([...(normaliseApps(apps) ?? [])].toSorted());
+
   const save: PersonalMemoryService["Service"]["save"] = (input) =>
     Effect.gen(function* () {
       const content = input.content.trim();
       yield* rejectUnsafe(content);
-      // Saving the same fact twice in one scope returns the first entry.
-      const duplicate = yield* sql`
+      // Saving the same fact twice in one scope returns the first entry. What
+      // "the same" means depends on the kind: a note is the same as any live
+      // entry with its text (a rule is never demoted by a note save), but a
+      // rule is the same only as a live rule with the same text and the same
+      // apps. A note with the rule's text, or a rule limited to other apps, is
+      // not: the rule is saved and that entry is replaced by it (below).
+      const sameText = yield* sql`
         SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
         WHERE m.deleted_at IS NULL AND m.superseded_at IS NULL AND m.scope = ${input.scope}
           AND m.scope_id IS ${input.scopeId} AND m.content = ${content}
-        LIMIT 1
+        ORDER BY m.seq ASC
       `.pipe(Effect.flatMap(decodeAll));
-      const existing = duplicate[0];
-      const targets = yield* replaceTargets(input, existing?.memoryId ?? null);
+      const wantedApps = appsKey(input.apps);
+      const existing = sameText.find(
+        (entry) =>
+          input.kind !== "preference" ||
+          (entry.kind === "preference" && appsKey(entry.apps) === wantedApps),
+      );
+      const explicit = yield* replaceTargets(input, existing?.memoryId ?? null);
+      // Entries with this very text that a new rule supersedes: a note it
+      // promotes, or the same rule limited to other apps. With `replaces`
+      // naming one of them it is already a target.
+      const implicit =
+        existing === undefined && input.kind === "preference"
+          ? sameText.filter(
+              (entry) =>
+                (entry.kind === "note" || entry.kind === "preference") &&
+                !explicit.some((target) => target.memoryId === entry.memoryId),
+            )
+          : [];
+      const targets = [...explicit, ...implicit];
       if (existing !== undefined && targets.length === 0) return { ...existing, created: false };
       const memoryId = existing?.memoryId ?? PersonalMemoryId.make(NodeCrypto.randomUUID());
       const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const archivedIds: Array<string> = [];
       yield* Effect.gen(function* () {
         if (existing === undefined) {
           yield* sql`
@@ -215,15 +242,22 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
           `;
         }
         for (const target of targets) {
-          yield* sql`
+          const archived = yield* sql<{ readonly id: string }>`
             UPDATE personal_memory
             SET superseded_at = ${nowIso}, superseded_by = ${memoryId},
                 superseded_reason = ${REPLACED_REASON}, version = version + 1
             WHERE memory_id = ${target.memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
+            RETURNING memory_id AS "id"
           `;
+          if (archived.length > 0) archivedIds.push(target.memoryId);
         }
       }).pipe(sql.withTransaction);
-      return { ...(yield* readEntry(memoryId)), created: existing === undefined };
+      // What this call archived, as it is now: a save into an entry that was
+      // already there still changed these, so the chat can offer their Undo.
+      const archived = yield* Effect.forEach(archivedIds, (id) =>
+        readEntry(PersonalMemoryId.make(id)),
+      );
+      return { ...(yield* readEntry(memoryId)), created: existing === undefined, archived };
     }).pipe(storageFailure("save"));
 
   const forget: PersonalMemoryService["Service"]["forget"] = (input) =>
@@ -260,8 +294,28 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       return yield* readEntry(input.memoryId);
     }).pipe(storageFailure("restore"));
 
+  /**
+   * The Undo of a "Replaced a note/rule" chat line: a save into an entry that already existed archived
+   * this one (see `save`). Only an entry that is still archived by a replacement comes back; the entry
+   * that replaced it is not touched. Kind and reason are part of the update itself, so one that was
+   * restored, forgotten, deleted or archived any other way since changes nothing.
+   */
+  const unreplace = (memoryId: PersonalMemoryId) =>
+    Effect.gen(function* () {
+      yield* sql`
+        UPDATE personal_memory
+        SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
+            version = version + 1
+        WHERE memory_id = ${memoryId} AND kind IN ('note', 'preference') AND deleted_at IS NULL
+          AND superseded_at IS NOT NULL AND superseded_by IS NOT NULL
+          AND superseded_reason = ${REPLACED_REASON}
+      `;
+      return yield* readEntry(memoryId);
+    });
+
   const undoNote: PersonalMemoryService["Service"]["undoNote"] = (input) =>
     Effect.gen(function* () {
+      if (input.undo === "unreplace") return yield* unreplace(input.memoryId);
       const current = yield* readEntry(input.memoryId);
       // Two rule Undos (1.60.42), see undoRoute.
       const route = undoRoute(current, input.undo);
@@ -325,7 +379,7 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
   const undoRule = (
     input: {
       readonly memoryId: PersonalMemoryId;
-      readonly undo?: "archive" | "restore" | undefined;
+      readonly undo?: "archive" | "restore" | "unreplace" | undefined;
     },
     current: PersonalMemoryEntry,
   ) =>
@@ -352,12 +406,12 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
           RETURNING memory_id AS "id"
         `;
         if (archived.length === 0) return;
-        // The rules this rule's own save replaced come back.
+        // The rules and notes (a note the rule promoted, say) this rule's own save replaced come back.
         yield* sql`
           UPDATE personal_memory
           SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
               version = version + 1
-          WHERE superseded_by = ${input.memoryId} AND kind = 'preference'
+          WHERE superseded_by = ${input.memoryId} AND kind IN ('preference', 'note')
             AND superseded_reason = ${REPLACED_REASON} AND deleted_at IS NULL
         `;
       }).pipe(sql.withTransaction);

@@ -218,6 +218,34 @@ const make = Effect.gen(function* () {
   const noteLine = (input: Parameters<typeof writeNoteNotice>[1]) =>
     Option.isSome(engine) ? writeNoteNotice(engine.value, input) : Effect.void;
 
+  /**
+   * A save into an entry that was already there still archived what it replaced
+   * (the entry's own "Saved" line only exists for a new one). Each archived
+   * entry gets its own line whose Undo brings that entry back and leaves the
+   * existing destination alone.
+   */
+  const replacedLines = (
+    threadId: ThreadId,
+    saved: { readonly created?: boolean; readonly archived?: ReadonlyArray<PersonalMemoryEntry> },
+  ) =>
+    saved.created === true
+      ? Effect.void
+      : Effect.forEach(
+          saved.archived ?? [],
+          (gone) =>
+            noteLine({
+              threadId,
+              line: noteChangedLine(
+                "replaced",
+                gone.content,
+                gone.kind === "preference" ? "rule" : "note",
+              ),
+              memoryId: gone.memoryId,
+              undo: "unreplace",
+            }),
+          { discard: true },
+        );
+
   const refuse = (reason: string) => new PersonalToolError({ reason });
   /**
    * A save or forget closed because the chat had a sensitive site open. It is
@@ -429,6 +457,7 @@ const make = Effect.gen(function* () {
         undo: "archive",
       });
     }
+    yield* replacedLines(threadId, entry);
     const replaced = replaceIds.filter((id) => id !== entry.memoryId);
     // Close matches are advice: a failed lookup never fails the save.
     const similar = yield* memory
@@ -967,6 +996,7 @@ const make = Effect.gen(function* () {
               undo: "archive",
             });
           }
+          yield* replacedLines(invocation.threadId, entry);
           return {
             memoryId: PersonalMemoryService.memoryRef(entry),
             scope: entry.scope,

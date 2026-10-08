@@ -106,7 +106,16 @@ function saveMemory(input: {
     readonly kind?: "note" | "preference";
   };
   /** What the store hands back for the save (e.g. an identical preference already saved). */
-  readonly savedAs?: { readonly kind?: "note" | "preference"; readonly created?: boolean };
+  readonly savedAs?: {
+    readonly kind?: "note" | "preference";
+    readonly created?: boolean;
+    /** Entries the save archived (1.66.7), as the store reports them. */
+    readonly archived?: ReadonlyArray<{
+      readonly id: string;
+      readonly kind: "note" | "preference";
+      readonly content: string;
+    }>;
+  };
   /** Where the turn came from, as the store reports it. */
   readonly origin?: {
     readonly origin: "chat" | "task" | "routine" | "bot" | "app";
@@ -158,6 +167,18 @@ function saveMemory(input: {
                 return {
                   ...entryFor({ ...entry, kind: input.savedAs?.kind ?? entry.kind }),
                   created: input.savedAs?.created ?? true,
+                  ...(input.savedAs?.archived === undefined
+                    ? {}
+                    : {
+                        archived: input.savedAs.archived.map((gone) => ({
+                          ...entryFor({
+                            scope: entry.scope,
+                            kind: gone.kind,
+                            content: gone.content,
+                          }),
+                          memoryId: PersonalMemoryId.make(gone.id),
+                        })),
+                      }),
                 };
               }),
         ownerMessages: () =>
@@ -1598,4 +1619,102 @@ describe("1.60.42: a rule the user states is saved at once, from their own words
     const forget = PersonalToolkit.tools.forget_memory.description ?? "";
     expect(forget).toContain("forgotten at once, with a line and an Undo");
   });
+});
+
+describe("1.66.7: a save into an entry that already exists still shows what it archived", () => {
+  const noticesOf = (notices: ReturnType<typeof vi.fn>) =>
+    notices.mock.calls
+      .map((call) => call[0])
+      .filter((command) => command.type === "thread.message.assistant.delta")
+      .map((delta) => ({
+        text: delta.delta as string,
+        payload: delta.context.records[0].payload as { memoryId: string; undo: string },
+      }));
+
+  it.effect("a note saved into an existing note posts one Replaced line per archived entry", () =>
+    Effect.gen(function* () {
+      const { notices } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        scope: "shared",
+        content: "The backup runs at 03:00.",
+        replaces: ["0123abcd"],
+        target: { scope: "shared", kind: "note", content: "The backup runs at 02:00." },
+        savedAs: {
+          created: false,
+          archived: [
+            { id: "old-note-1", kind: "note", content: "The backup runs at 02:00." },
+            { id: "old-note-2", kind: "note", content: "The backup runs around 2." },
+          ],
+        },
+      });
+      expect(noticesOf(notices)).toEqual([
+        {
+          text: "Replaced a note: The backup runs at 02:00.",
+          payload: expect.objectContaining({ memoryId: "old-note-1", undo: "unreplace" }),
+        },
+        {
+          text: "Replaced a note: The backup runs around 2.",
+          payload: expect.objectContaining({ memoryId: "old-note-2", undo: "unreplace" }),
+        },
+      ]);
+    }),
+  );
+
+  it.effect("a brand-new note keeps its single Saved line, whose Undo already restores them", () =>
+    Effect.gen(function* () {
+      const { notices } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        scope: "shared",
+        content: "The backup runs at 03:00.",
+        replaces: ["0123abcd"],
+        target: { scope: "shared", kind: "note", content: "The backup runs at 02:00." },
+        savedAs: {
+          created: true,
+          archived: [{ id: "old-note-1", kind: "note", content: "The backup runs at 02:00." }],
+        },
+      });
+      expect(noticesOf(notices).map((line) => line.text)).toEqual([
+        "Saved a note: The backup runs at 03:00.",
+      ]);
+    }),
+  );
+
+  it.effect(
+    "a rule saved into an existing rule posts a Replaced a rule line with the unreplace Undo",
+    () =>
+      Effect.gen(function* () {
+        delete process.env[MEMORY_AUTO_APPLY_ENV];
+        const { notices } = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          userRequest: "Please remember to quote all coin prices in USD, not in pounds.",
+          kind: "preference",
+          content: "Quote coin prices in USD, not in pounds.",
+          replaces: ["0123abcd"],
+          target: {
+            scope: "team",
+            kind: "preference",
+            content: "Quote coin prices in USD, not pounds.",
+          },
+          savedAs: {
+            created: false,
+            archived: [
+              {
+                id: "old-rule-1",
+                kind: "preference",
+                content: "Quote coin prices in USD, not pounds.",
+              },
+            ],
+          },
+        });
+        expect(noticesOf(notices)).toEqual([
+          {
+            text: "Replaced a rule: Quote coin prices in USD, not pounds.",
+            payload: expect.objectContaining({ memoryId: "old-rule-1", undo: "unreplace" }),
+          },
+        ]);
+      }),
+  );
 });

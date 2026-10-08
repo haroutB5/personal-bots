@@ -54,7 +54,10 @@ export const PersonalChatNoticeMarker = Schema.Struct({
   resumeAt: Schema.optional(Schema.String),
   /** memory-saved: the note the line is about. */
   memoryId: Schema.optional(Schema.String),
-  /** memory-saved: what Undo does: archive a saved note, or restore a forgotten one. */
-  undo: Schema.optional(Schema.Literals(["archive", "restore"])),
+  /**
+   * memory-saved: what Undo does: archive a saved note, restore a forgotten one, or
+   * unreplace an entry a save into an existing entry archived (1.66.7).
+   */
+  undo: Schema.optional(Schema.Literals(["archive", "restore", "unreplace"])),
 });
 export type PersonalChatNoticeMarker = typeof PersonalChatNoticeMarker.Type;

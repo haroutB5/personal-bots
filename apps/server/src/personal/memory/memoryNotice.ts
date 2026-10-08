@@ -21,13 +21,14 @@ const SHOWN_CHARS = 80;
 
 /** "Saved a note: <first 80 chars>" / "Forgot a rule: ...", on one line. */
 export function noteChangedLine(
-  action: "saved" | "forgot",
+  action: "saved" | "forgot" | "replaced",
   content: string,
   kind: "note" | "rule" = "note",
 ): string {
   const text = content.replace(/\s+/g, " ").trim();
   const shown = text.length > SHOWN_CHARS ? `${text.slice(0, SHOWN_CHARS).trimEnd()}...` : text;
-  return `${action === "saved" ? "Saved" : "Forgot"} a ${kind}: ${shown}`;
+  const verb = action === "saved" ? "Saved" : action === "replaced" ? "Replaced" : "Forgot";
+  return `${verb} a ${kind}: ${shown}`;
 }
 
 /**
@@ -41,7 +42,7 @@ export const writeNoteNotice = (
     readonly threadId: ThreadId;
     readonly line: string;
     readonly memoryId: string;
-    readonly undo: "archive" | "restore";
+    readonly undo: "archive" | "restore" | "unreplace";
   },
 ) =>
   Effect.gen(function* () {

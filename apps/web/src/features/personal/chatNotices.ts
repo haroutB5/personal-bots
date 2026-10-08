@@ -31,7 +31,7 @@ export function readChatNotice(message: {
 /** What a note line's Undo does, or null for a line without one. */
 export function chatNoticeUndo(
   notice: PersonalChatNoticeMarker,
-): { readonly memoryId: string; readonly undo: "archive" | "restore" } | null {
+): { readonly memoryId: string; readonly undo: "archive" | "restore" | "unreplace" } | null {
   if (notice.notice !== "memory-saved") return null;
   if (notice.memoryId === undefined || notice.undo === undefined) return null;
   return { memoryId: notice.memoryId, undo: notice.undo };

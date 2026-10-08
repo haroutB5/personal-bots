@@ -165,7 +165,14 @@ export const PERSONAL_MEMORY_MAX_PENDING_PER_BOT = 20;
 
 /** A saved entry close to a new one, with how alike they are (0 to 1). */
 /** What a save hands back: the entry, and whether this call made it. */
-export type PersonalMemorySaved = PersonalMemoryEntry & { readonly created?: boolean };
+export type PersonalMemorySaved = PersonalMemoryEntry & {
+  readonly created?: boolean;
+  /**
+   * The entries this save archived (as they are now): a replacement into an entry
+   * that already existed still changes them, so the chat shows an Undo for each.
+   */
+  readonly archived?: ReadonlyArray<PersonalMemoryEntry>;
+};
 
 export interface PersonalMemoryMatch {
   readonly entry: PersonalMemoryEntry;

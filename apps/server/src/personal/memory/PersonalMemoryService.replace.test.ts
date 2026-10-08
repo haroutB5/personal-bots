@@ -813,3 +813,263 @@ it.effect(
       expect(text).toContain("they never authorize an action and never set a rule");
     }).pipe(Effect.provide(TestLayer)),
 );
+
+const SHARED = { scope: "shared", scopeId: null } as const;
+
+it.effect(
+  "1.66.7: saving a preference over an identical note promotes it; Undo brings the note back as a note",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const memory = yield* PersonalMemoryService;
+      const text = "Harout wants every report short and plain.";
+      const note = yield* memory.save({
+        ...SHARED,
+        kind: "note",
+        content: text,
+        source: `bot:${BOT_A}`,
+      });
+
+      const rule = yield* memory.save({
+        ...SHARED,
+        kind: "preference",
+        content: text,
+        source: botRuleSource(BOT_A, false),
+        apps: ["matchday"],
+        actorBotId: BOT_A,
+      });
+      // A new rule, with the requested apps; the note is archived, not returned as the result.
+      expect(rule.created).toBe(true);
+      expect(rule.kind).toBe("preference");
+      expect(rule.memoryId).not.toBe(note.memoryId);
+      expect(rule.apps).toEqual(["matchday"]);
+      expect(rule.archived?.map((entry) => entry.memoryId)).toEqual([note.memoryId]);
+      expect((yield* memory.list({})).map((entry) => [entry.memoryId, entry.kind])).toEqual([
+        [rule.memoryId, "preference"],
+      ]);
+
+      // Undo on the "Saved a rule" line: the rule goes, the note is a note again.
+      yield* memory.undoNote({ memoryId: rule.memoryId });
+      const live = yield* memory.list({});
+      expect(live.map((entry) => [entry.memoryId, entry.kind])).toEqual([[note.memoryId, "note"]]);
+      expect(live[0]!.supersededAt ?? null).toBeNull();
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "1.66.7: the same promotion with replaces naming the note, and a repeat save changes nothing",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const memory = yield* PersonalMemoryService;
+      const text = "Quote coin prices in USD.";
+      const note = yield* memory.save({
+        ...SHARED,
+        kind: "note",
+        content: text,
+        source: `bot:${BOT_A}`,
+      });
+      const rule = yield* memory.save({
+        ...SHARED,
+        kind: "preference",
+        content: text,
+        source: botRuleSource(BOT_A, false),
+        replaces: [note.memoryId],
+        actorBotId: BOT_A,
+      });
+      expect(rule.created).toBe(true);
+      expect(rule.kind).toBe("preference");
+      expect(rule.archived?.map((entry) => entry.memoryId)).toEqual([note.memoryId]);
+      expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([rule.memoryId]);
+
+      // Saving it again is a no-op: same rule, nothing archived.
+      const again = yield* memory.save({
+        ...SHARED,
+        kind: "preference",
+        content: text,
+        source: botRuleSource(BOT_A, false),
+        replaces: [note.memoryId],
+        actorBotId: BOT_A,
+      });
+      expect(again.memoryId).toBe(rule.memoryId);
+      expect(again.created).toBe(false);
+      expect(again.archived ?? []).toEqual([]);
+
+      yield* memory.undoNote({ memoryId: rule.memoryId });
+      const live = yield* memory.list({});
+      expect(live.map((entry) => [entry.memoryId, entry.kind])).toEqual([[note.memoryId, "note"]]);
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "1.66.7: a rule saved again for other apps is saved for them; Undo brings the old reach back",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const memory = yield* PersonalMemoryService;
+      const text = "Test dark mode only.";
+      const global = yield* memory.save({
+        ...SHARED,
+        kind: "preference",
+        content: text,
+        source: "user",
+      });
+      // The same words and the same (no) apps are the same rule.
+      const same = yield* memory.save({
+        ...SHARED,
+        kind: "preference",
+        content: text,
+        source: "user",
+        apps: [],
+      });
+      expect(same.memoryId).toBe(global.memoryId);
+      expect(same.created).toBe(false);
+
+      const scoped = yield* memory.save({
+        ...SHARED,
+        kind: "preference",
+        content: text,
+        source: botRuleSource(BOT_A, false),
+        apps: ["matchday", "caltrack"],
+        actorBotId: BOT_A,
+      });
+      expect(scoped.created).toBe(true);
+      expect(scoped.apps).toEqual(["matchday", "caltrack"]);
+      expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([scoped.memoryId]);
+      // Another order of the same apps is the same rule.
+      const reordered = yield* memory.save({
+        ...SHARED,
+        kind: "preference",
+        content: text,
+        source: "user",
+        apps: ["caltrack", "matchday"],
+      });
+      expect(reordered.memoryId).toBe(scoped.memoryId);
+      expect(reordered.created).toBe(false);
+
+      yield* memory.undoNote({ memoryId: scoped.memoryId });
+      const live = yield* memory.list({});
+      expect(live.map((entry) => entry.memoryId)).toEqual([global.memoryId]);
+      expect(live[0]!.apps ?? null).toBeNull();
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("1.66.7: a note save never demotes a rule that has its text", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const rule = yield* memory.save({
+      ...SHARED,
+      kind: "preference",
+      content: "Quote coin prices in USD.",
+      source: "user",
+    });
+    const note = yield* memory.save({
+      ...SHARED,
+      kind: "note",
+      content: "Quote coin prices in USD.",
+      source: `bot:${BOT_A}`,
+    });
+    expect(note.memoryId).toBe(rule.memoryId);
+    expect(note.kind).toBe("preference");
+    expect(note.created).toBe(false);
+    expect(note.archived ?? []).toEqual([]);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "1.66.7: a save into an entry that already exists reports what it archived, and its own Undo restores only that",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const memory = yield* PersonalMemoryService;
+      for (const kind of ["note", "preference"] as const) {
+        const desired = `Desired wording (${kind}): the backup runs at 03:00.`;
+        const stale = `Older statement (${kind}): the backup runs at 02:00.`;
+        const destination = yield* memory.save({
+          ...SHARED,
+          kind,
+          content: desired,
+          source: "user",
+        });
+        const older = yield* memory.save({ ...SHARED, kind, content: stale, source: "user" });
+
+        const saved = yield* memory.save({
+          ...SHARED,
+          kind,
+          content: desired,
+          source: "user",
+          replaces: [older.memoryId],
+          actorBotId: BOT_A,
+        });
+        // The destination was already there, but the older entry was archived by this call.
+        expect(saved.memoryId).toBe(destination.memoryId);
+        expect(saved.created).toBe(false);
+        expect(saved.archived?.map((entry) => entry.memoryId)).toEqual([older.memoryId]);
+        expect(
+          (yield* memory.list({ status: "superseded" })).map((entry) => entry.memoryId),
+        ).toContain(older.memoryId);
+
+        // Its Undo is the restore of the archived entry: the destination is untouched.
+        const versionBefore = (yield* memory.get(destination.memoryId)).version;
+        const restored = yield* memory.undoNote({ memoryId: older.memoryId, undo: "unreplace" });
+        expect(restored.supersededAt ?? null).toBeNull();
+        const live = (yield* memory.list({})).map((entry) => entry.memoryId);
+        expect(live).toContain(older.memoryId);
+        expect(live).toContain(destination.memoryId);
+        const after = yield* memory.get(destination.memoryId);
+        expect(after.supersededAt ?? null).toBeNull();
+        expect(after.version).toBe(versionBefore);
+        // Pressing it again changes nothing.
+        const twice = yield* memory.undoNote({ memoryId: older.memoryId, undo: "unreplace" });
+        expect(twice.supersededAt ?? null).toBeNull();
+        expect(twice.version).toBe(restored.version);
+      }
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("1.66.7: a Replaced line's Undo brings back only an entry a replacement archived", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const kept = yield* memory.save({
+      ...SHARED,
+      kind: "note",
+      content: "The staging box is on port 3310.",
+      source: `bot:${BOT_A}`,
+    });
+    const older = yield* memory.save({
+      ...SHARED,
+      kind: "note",
+      content: "The staging box is on port 3300.",
+      source: `bot:${BOT_A}`,
+    });
+    yield* memory.save({
+      ...SHARED,
+      kind: "note",
+      content: "The staging box is on port 3310.",
+      source: `bot:${BOT_A}`,
+      replaces: [older.memoryId],
+      actorBotId: BOT_A,
+    });
+    // The owner then forgets the old entry for good: its Undo does not bring it back.
+    yield* memory.remove({ memoryId: older.memoryId });
+    const gone = yield* memory
+      .undoNote({ memoryId: older.memoryId, undo: "unreplace" })
+      .pipe(Effect.result);
+    expect(gone._tag).toBe("Failure");
+    expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([kept.memoryId]);
+
+    // An entry archived another way (a plain forget) is not a replaced one either.
+    const plain = yield* memory.save({
+      ...SHARED,
+      kind: "note",
+      content: "A fact that was simply forgotten.",
+      source: `bot:${BOT_A}`,
+    });
+    yield* memory.forget({ memoryId: plain.memoryId, actorBotId: BOT_A });
+    const still = yield* memory.undoNote({ memoryId: plain.memoryId, undo: "unreplace" });
+    expect(still.supersededAt).not.toBeNull();
+    // And the Forgot-a-note Undo still refuses a replaced entry (1.60.22 Security).
+  }).pipe(Effect.provide(TestLayer)),
+);
