@@ -2075,6 +2075,86 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("a queued phone message sent twice with the same ids posts once; a fresh command id for the same message id is not deduped", async () => {
+    // The phone's send queue (1.66.10) relies on the first half: it resends a
+    // message whose reply was lost under the SAME message id and command id.
+    // The second half is why it must: `thread.turn.start` itself does not
+    // refuse a message id it already holds (a Retry of a failed turn reuses one
+    // on purpose), so a resend under a new command id would start a second turn.
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-queue-project-create"),
+        projectId: asProjectId("project-queue"),
+        title: "Queue Project",
+        workspaceRoot: "/tmp/project-queue",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-queue-thread-create"),
+        threadId: ThreadId.make("thread-queue"),
+        projectId: asProjectId("project-queue"),
+        title: "queue",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    const turnStart = (commandId: string) =>
+      ({
+        type: "thread.turn.start",
+        commandId: CommandId.make(commandId),
+        threadId: ThreadId.make("thread-queue"),
+        message: {
+          messageId: asMessageId("msg-queued"),
+          role: "user",
+          text: "sent from the train",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }) as const;
+    const countTurnStarts = async () =>
+      (
+        await system.run(
+          Stream.runCollect(engine.readEvents(0)).pipe(
+            Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+          ),
+        )
+      ).filter((event) => event.type === "thread.turn-start-requested").length;
+
+    const first = await system.run(engine.dispatch(turnStart("outbox:msg-queued")));
+    // Attempt two: the first attempt landed but its reply never reached the phone.
+    const again = await system.run(engine.dispatch(turnStart("outbox:msg-queued")));
+    const third = await system.run(engine.dispatch(turnStart("outbox:msg-queued")));
+    expect(again.sequence).toBe(first.sequence);
+    expect(third.sequence).toBe(first.sequence);
+    expect(await countTurnStarts()).toBe(1);
+
+    // A different command id is a different command, even with the same message id.
+    await system.run(engine.dispatch(turnStart("some-other-command")));
+    expect(await countTurnStarts()).toBe(2);
+
+    await system.dispose();
+  });
+
   it("rejects reusing an accepted command id for a different aggregate", async () => {
     const createdAt = now();
     const system = await createOrchestrationSystem();

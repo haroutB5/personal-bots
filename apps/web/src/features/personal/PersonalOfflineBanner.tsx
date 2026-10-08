@@ -6,7 +6,13 @@ import { WifiOff } from "lucide-react";
 
 import { useEnvironment } from "~/state/environments";
 
-import { offlineBannerText, readLastContact, writeLastContact } from "./offlineBanner";
+import {
+  offlineBannerHint,
+  offlineBannerText,
+  readLastContact,
+  writeLastContact,
+} from "./offlineBanner";
+import { useOutboxCount } from "./outbox";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
 
 /** The laptop's connection phase ("available" until an environment is paired). */
@@ -30,6 +36,7 @@ export function PersonalOfflineBanner(): JSX.Element | null {
   const environmentId = usePersonalEnvironmentId();
   const phase = usePersonalConnectionPhase();
   const [now, setNow] = useState(() => Date.now());
+  const waiting = useOutboxCount();
   const [banner, setBanner] = useState({ phase, visible: false });
   if (banner.phase !== phase) setBanner({ phase, visible: false });
 
@@ -66,10 +73,15 @@ export function PersonalOfflineBanner(): JSX.Element | null {
   return (
     <div
       role="status"
-      className="flex min-h-10 items-center gap-2 border-b border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] px-5 text-[14px] font-medium text-[var(--personal-text)]"
+      className="flex min-h-10 items-center gap-2 border-b border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] px-5 py-1.5 text-[14px] font-medium text-[var(--personal-text)]"
     >
       <WifiOff aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
-      <span className="min-w-0 truncate">{text}</span>
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate">{text}</span>
+        <span className="text-[12px] leading-snug font-normal text-[var(--personal-text-secondary)]">
+          {offlineBannerHint(waiting)}
+        </span>
+      </span>
     </div>
   );
 }

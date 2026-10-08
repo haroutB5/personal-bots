@@ -1,9 +1,17 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 
 import type { AttachmentUploadState } from "~/lib/attachmentUploadState";
 import type { Thread } from "~/types";
+import {
+  getOutboxSnapshot,
+  type OutboxStorage,
+  resetOutboxForTesting,
+  retryOutboxEntry,
+} from "./outbox";
+import { setOutboxBlobBackendForTesting } from "./outboxBlobs";
 import { isSentTextEcho, PersonalComposer } from "./PersonalComposer";
 
 vi.mock("./AttachmentPreview", () => ({
@@ -94,7 +102,20 @@ const props = {
   onPendingChange: vi.fn(),
 };
 
+function memoryStorage(): OutboxStorage {
+  let value: string | null = null;
+  return { getItem: () => value, setItem: (_key, next) => (value = next) };
+}
+
+/** A failure the way the laptop answers a refused command. */
+const refusal = (message: string) =>
+  ({
+    _tag: "Failure",
+    cause: Cause.fail({ _tag: "OrchestrationDispatchCommandError", message }),
+  }) as never;
+
 beforeEach(async () => {
+  resetOutboxForTesting(memoryStorage());
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   state.draft = {
@@ -117,6 +138,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => renderer.unmount());
   vi.unstubAllGlobals();
+  resetOutboxForTesting(undefined);
+  setOutboxBlobBackendForTesting();
 });
 
 describe("personal composer sends", () => {
@@ -139,16 +162,42 @@ describe("personal composer sends", () => {
   });
   it("retains text and attachments when the server keeps rejecting a message", async () => {
     vi.useFakeTimers();
+    state.start.mockResolvedValue(refusal("Thread is deleted."));
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+      await vi.runAllTimersAsync();
+    });
+    // A refusal is the laptop's answer: one attempt, no retries, the draft comes back.
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.draft.prompt).toBe("Send this");
+    expect(state.draft.files).toHaveLength(1);
+    expect(state.release).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("keeps trying a send that gets no answer, then queues it instead of losing it", async () => {
+    vi.useFakeTimers();
+    state.draft.files = [];
+    await act(async () => renderer.update(<PersonalComposer {...props} />));
     state.start.mockResolvedValue({ _tag: "Failure" });
     await act(async () => {
       void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
       await vi.runAllTimersAsync();
     });
-    // The first attempt plus the three retries, then it gives up.
+    // The first attempt plus the three retries, then it goes on the queue.
     expect(state.start).toHaveBeenCalledTimes(4);
-    expect(state.draft.prompt).toBe("Send this");
-    expect(state.draft.files).toHaveLength(1);
-    expect(state.release).not.toHaveBeenCalled();
+    const [queued] = getOutboxSnapshot().entries;
+    expect(queued?.text).toBe("Send this");
+    expect(queued?.attempts).toBe(1);
+    expect(state.draft.prompt).toBe("");
+    expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    // Every attempt, and the queued copy, carry the same message id and command id.
+    const sent = state.start.mock.calls.map((call) => call[0].input);
+    expect(new Set(sent.map((input) => input.commandId)).size).toBe(1);
+    expect(new Set(sent.map((input) => input.message.messageId)).size).toBe(1);
+    expect(queued?.id).toBe(sent[0].message.messageId);
+    expect(queued?.commandId).toBe(sent[0].commandId);
     vi.useRealTimers();
   });
 
@@ -202,17 +251,15 @@ describe("personal composer sends", () => {
   });
 
   it("puts the text and attachments back when the send fails, keeping what was typed since", async () => {
-    vi.useFakeTimers();
-    state.start.mockResolvedValue({ _tag: "Failure" });
+    let land!: (value: unknown) => void;
+    state.start.mockReturnValue(new Promise((resolve) => (land = resolve)));
     await act(async () => {
       void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
       await Promise.resolve();
     });
     expect(state.draft.prompt).toBe("");
     state.draft.prompt = "and one more thing";
-    await act(async () => {
-      await vi.runAllTimersAsync();
-    });
+    await act(async () => land(refusal("Thread is deleted.")));
     expect(state.draft.prompt).toBe("Send this\nand one more thing");
     expect(renderer.root.findAllByProps({ "aria-label": "Open notes.txt" })).toHaveLength(1);
     vi.useRealTimers();
@@ -569,7 +616,7 @@ describe("personal composer replies", () => {
   });
 
   it("keeps the quote when the send fails, so Send can be tapped again", async () => {
-    state.start.mockResolvedValue({ _tag: "Failure" });
+    state.start.mockResolvedValue(refusal("Thread is deleted."));
     vi.useFakeTimers();
     const onClearReply = vi.fn();
     await renderReply({ onClearReply });
@@ -670,7 +717,7 @@ describe("personal composer quick send (a tapped choice)", () => {
   });
 
   it("reports a send that failed, so the buttons can be tried again", async () => {
-    state.start.mockResolvedValue({ _tag: "Failure" });
+    state.start.mockResolvedValue(refusal("Thread is deleted."));
     vi.useFakeTimers();
     await renderQuick();
     let result: boolean | undefined;
@@ -703,5 +750,187 @@ describe("isSentTextEcho", () => {
     expect(isSentTextEcho("something else", "saying the issue")).toBe(false);
     expect(isSentTextEcho("", "saying the issue")).toBe(false);
     expect(isSentTextEcho("Hi", "Hello")).toBe(false);
+  });
+});
+
+describe("personal composer offline send queue", () => {
+  const OFFLINE = "Your laptop is offline. Messages you send now are saved on this device.";
+
+  async function renderOffline(overrides: Record<string, unknown> = {}) {
+    state.draft.prompt = "Sent from the train";
+    state.draft.files = [];
+    await act(async () =>
+      renderer.update(<PersonalComposer {...props} offlineNotice={OFFLINE} {...overrides} />),
+    );
+  }
+  const tapSend = () =>
+    act(async () =>
+      renderer.root
+        .findAll(
+          (node) =>
+            node.type === "button" &&
+            typeof node.props["aria-label"] === "string" &&
+            node.props["aria-label"].startsWith("Send"),
+        )[0]!
+        .props.onClick(),
+    );
+
+  it("keeps Send enabled while the laptop is away and says what will happen", async () => {
+    await renderOffline();
+    const send = renderer.root.findByProps({
+      "aria-label": "Send, waits here until your laptop reconnects",
+    });
+    expect(send.props.disabled).toBe(false);
+    expect(JSON.stringify(renderer.toJSON())).toContain(OFFLINE);
+    // Said as a status, not an alert: nothing is wrong, the message is just kept.
+    expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+  });
+
+  it("queues the message on the device instead of sending it, and empties the field", async () => {
+    const onPendingChange = vi.fn();
+    await renderOffline({ onPendingChange });
+    await tapSend();
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.draft.prompt).toBe("");
+    const [queued] = getOutboxSnapshot().entries;
+    expect(queued).toMatchObject({
+      kind: "turn",
+      environmentId: "test-env",
+      threadId: "test-thread",
+      text: "Sent from the train",
+      sendText: "Sent from the train",
+      status: "waiting",
+      replyTo: null,
+      attachments: [],
+    });
+    expect(queued?.commandId).toBe(`outbox:${queued?.id}`);
+    expect(queued?.turn).toMatchObject({
+      modelSelection: { instanceId: "claude", model: "test" },
+      titleSeed: "Sent from the train",
+    });
+    // The queue draws its own "Waiting to send" row, not the optimistic "Sending" one.
+    expect(onPendingChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps the order: a second message queues behind the first, even once the laptop is back", async () => {
+    await renderOffline();
+    await tapSend();
+    state.draft.prompt = "Second";
+    await act(async () => renderer.update(<PersonalComposer {...props} offlineNotice={null} />));
+    await tapSend();
+    // The laptop is connected again, but the first message has not gone out yet:
+    // the second must not overtake it.
+    expect(state.start).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries.map((entry) => entry.text)).toEqual([
+      "Sent from the train",
+      "Second",
+    ]);
+  });
+
+  it("a tapped choice is queued too, without touching the draft", async () => {
+    const quickSendRef: { current: ((text: string) => Promise<boolean>) | null } = {
+      current: null,
+    };
+    await renderOffline({ quickSendRef });
+    let result: boolean | undefined;
+    await act(async () => {
+      result = await quickSendRef.current!("Yes, ship it");
+    });
+    expect(result).toBe(true);
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.draft.prompt).toBe("Sent from the train");
+    expect(getOutboxSnapshot().entries.map((entry) => entry.text)).toEqual(["Yes, ship it"]);
+  });
+
+  it("a reply keeps its quote in the queue and drops it from the composer", async () => {
+    const quote = { messageId: "bot-msg-1", name: "Mori", excerpt: "All green." };
+    const onClearReply = vi.fn();
+    await renderOffline({ replyTo: quote, onClearReply });
+    await tapSend();
+    expect(getOutboxSnapshot().entries[0]?.replyTo).toEqual(quote);
+    expect(onClearReply).toHaveBeenCalledOnce();
+  });
+
+  it("a group message is queued for the group, not as a turn", async () => {
+    await renderOffline({ send: state.groupSend, mentionCandidates: [], groupId: "group-1" });
+    await tapSend();
+    expect(state.groupSend).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      kind: "group",
+      groupId: "group-1",
+      turn: null,
+      threadId: "test-thread",
+    });
+  });
+
+  it("queues photos and files with their bytes, and takes them out of the composer", async () => {
+    const stored = new Map<string, Blob>();
+    setOutboxBlobBackendForTesting({
+      put: async (key, blob) => void stored.set(key, blob),
+      get: async (key) => stored.get(key) ?? null,
+      deletePrefix: async (prefix) => {
+        for (const key of [...stored.keys()]) if (key.startsWith(prefix)) stored.delete(key);
+      },
+      keys: async () => [...stored.keys()],
+    });
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    await renderOffline();
+    state.draft.files = [
+      { type: "file", id: "file-9", name: "notes.txt", mimeType: "text/plain", sizeBytes: 5, file },
+    ] as never;
+    await act(async () => renderer.update(<PersonalComposer {...props} offlineNotice={OFFLINE} />));
+    await tapSend();
+    const [queued] = getOutboxSnapshot().entries;
+    expect(queued?.attachments).toEqual([
+      { id: "file-9", kind: "file", name: "notes.txt", mimeType: "text/plain", sizeBytes: 5 },
+    ]);
+    expect([...stored.keys()]).toEqual([`${queued?.id}/file-9`]);
+    expect(state.draft.files).toEqual([]);
+    expect(state.release).toHaveBeenCalledOnce();
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("says so, and keeps the draft, when the attachments are too big to wait", async () => {
+    await renderOffline();
+    state.draft.files = [
+      {
+        type: "file",
+        id: "file-big",
+        name: "movie.mov",
+        mimeType: "video/quicktime",
+        sizeBytes: 40 * 1024 * 1024,
+        file: new File(["x"], "movie.mov"),
+      },
+    ] as never;
+    await act(async () => renderer.update(<PersonalComposer {...props} offlineNotice={OFFLINE} />));
+    await tapSend();
+    expect(getOutboxSnapshot().entries).toEqual([]);
+    expect(JSON.stringify(renderer.toJSON())).toContain("too big to wait for the laptop");
+    expect(state.draft.prompt).toBe("Sent from the train");
+    expect(state.draft.files).toHaveLength(1);
+  });
+
+  it("keeps the draft and says why when this device cannot keep the message", async () => {
+    resetOutboxForTesting({
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("QuotaExceededError");
+      },
+    });
+    await renderOffline();
+    await tapSend();
+    expect(getOutboxSnapshot().entries).toEqual([]);
+    expect(state.draft.prompt).toBe("Sent from the train");
+    expect(JSON.stringify(renderer.toJSON())).toContain(
+      "Couldn't save that message on this device",
+    );
+  });
+
+  it("Retry on a waiting message leaves it for the queue to send", async () => {
+    await renderOffline();
+    await tapSend();
+    const id = getOutboxSnapshot().entries[0]!.id;
+    retryOutboxEntry(id);
+    expect(getOutboxSnapshot().entries[0]?.status).toBe("waiting");
   });
 });

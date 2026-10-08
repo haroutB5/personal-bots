@@ -177,6 +177,8 @@ import { PersonalComposer } from "./PersonalComposer";
 import { ProgressNoteLine } from "./ProgressNoteLine";
 import { deriveLatestProgressNote } from "./latestProgress";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
+import { offlineComposerNotice } from "./offlineBanner";
+import { useQueuedMessages } from "./useQueuedMessages";
 import { useNewChatPrompt } from "./useNewChatPrompt";
 import { usePersonalRelatedTasks, usePersonalTasks } from "./usePersonalAutomation";
 import { usePrewarmChatSession } from "./usePrewarmChatSession";
@@ -990,14 +992,16 @@ export function ConversationScreen({
     session: thread?.session ?? null,
     lastMessageTurnStarted: retryTarget?.turnStarted ?? null,
   });
-  // Offline: sending is blocked and the draft stays in this device's draft store.
-  const disabledReason = laptopOffline
-    ? connectionPhase === "offline" || connectionPhase === "error"
-      ? "Your laptop is offline. This draft is saved on this device and has not been sent."
-      : "Connecting to your laptop. Your draft is saved on this device."
-    : provider !== null && bot !== null && !provider.available
+  // What stops the composer from sending at all: the bot's provider is down.
+  // A laptop that is away does not: a message sent then is saved on this device
+  // and goes out when the connection is back (`offlineNotice`, `outbox.ts`).
+  const sendBlockedReason =
+    provider !== null && bot !== null && !provider.available
       ? `${provider.label} can't run right now, so ${bot.name} can't reply. Fix it on your computer or edit the bot.`
       : null;
+  const offlineNotice = offlineComposerNotice(connectionPhase);
+  // Actions that need the laptop right now (wrapup, chat settings that start a turn) stay off while it is away.
+  const disabledReason = offlineNotice ?? sendBlockedReason;
   // Reply: the quote waits in the composer for this chat; a tapped choice goes
   // out through the composer's own send (`quickSendRef`).
   const [replyState, setReplyState] = useState<{
@@ -1010,6 +1014,12 @@ export function ConversationScreen({
     [threadId],
   );
   const onClearReply = useCallback(() => setReplyState(null), []);
+  const queuedMessages = useQueuedMessages({
+    environmentId,
+    threadId,
+    messages,
+    onRestoreReply: onReply,
+  });
   const quickSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
   const onChoose = useCallback(
     (text: string) => quickSendRef.current?.(text) ?? Promise.resolve(false),
@@ -1482,6 +1492,10 @@ export function ConversationScreen({
             showContextUsed
             items={items}
             pending={visiblePending}
+            queued={queuedMessages.rows}
+            onCancelQueued={archived ? undefined : queuedMessages.onCancel}
+            onEditQueued={archived ? undefined : queuedMessages.onEdit}
+            onRetryQueued={archived ? undefined : queuedMessages.onRetry}
             latestMessageStatus={latestMessageStatus}
             working={working}
             botName={botName ?? "Bot"}
@@ -1529,7 +1543,7 @@ export function ConversationScreen({
             readOnly={archived}
             onReply={archived ? undefined : onReply}
             onChoose={archived ? undefined : onChoose}
-            choicesBusy={turnBusy || disabledReason !== null}
+            choicesBusy={turnBusy || sendBlockedReason !== null}
           />
           <ConversationDesktopLine
             environmentId={environmentId}
@@ -1572,7 +1586,8 @@ export function ConversationScreen({
               thread={thread}
               botName={botName}
               botModelSelection={botTurnModel}
-              disabledReason={disabledReason}
+              disabledReason={sendBlockedReason}
+              offlineNotice={offlineNotice}
               working={turnBusy}
               queuedNotice={false}
               canInterrupt={interruptInput !== null}

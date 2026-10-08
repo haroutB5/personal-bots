@@ -66,6 +66,8 @@ import { useQuietSince } from "./chatSilence";
 import { QuietNoticeLine } from "./QuietNoticeLine";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
+import { offlineComposerNotice } from "./offlineBanner";
+import { useQueuedMessages } from "./useQueuedMessages";
 import { useReportViewingThread } from "./useReportViewingThread";
 import { pendingForThread } from "./pendingOutgoing";
 import { useLeaveResumedChatIfGone } from "./resumeLastChat";
@@ -556,19 +558,23 @@ export function GroupConversationScreen({
     [groupId],
   );
   const onClearReply = useCallback(() => setReplyState(null), []);
+  const queuedMessages = useQueuedMessages({
+    environmentId,
+    threadId,
+    messages,
+    onRestoreReply: onReply,
+  });
   const quickSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
   const onChoose = useCallback(
     (text: string) => quickSendRef.current?.(text) ?? Promise.resolve(false),
     [],
   );
 
-  const disabledReason = laptopOffline
-    ? connectionPhase === "offline" || connectionPhase === "error"
-      ? "Your laptop is offline. This draft is saved on this device and has not been sent."
-      : "Connecting to your laptop. Your draft is saved on this device."
-    : members.length === 0
-      ? "This group has no bots in it yet. Add one in Group settings."
-      : null;
+  // A laptop that is away does not stop a send: the message is saved on this
+  // device and goes out when the connection is back (`outbox.ts`).
+  const sendBlockedReason =
+    members.length === 0 ? "This group has no bots in it yet. Add one in Group settings." : null;
+  const offlineNotice = offlineComposerNotice(connectionPhase);
 
   return (
     <div
@@ -691,6 +697,10 @@ export function GroupConversationScreen({
             threadRef={threadRef}
             items={items}
             pending={visiblePending}
+            queued={queuedMessages.rows}
+            onCancelQueued={archived ? undefined : queuedMessages.onCancel}
+            onEditQueued={archived ? undefined : queuedMessages.onEdit}
+            onRetryQueued={archived ? undefined : queuedMessages.onRetry}
             working={live}
             botName={group.name}
             workspaceRoot={undefined}
@@ -716,7 +726,7 @@ export function GroupConversationScreen({
             readOnly={archived}
             onReply={archived ? undefined : onReply}
             onChoose={archived ? undefined : onChoose}
-            choicesBusy={live || disabledReason !== null}
+            choicesBusy={live || sendBlockedReason !== null}
           />
           {vote !== null && !archived ? (
             /* The same slot as the round card, and never at the same time as
@@ -756,7 +766,9 @@ export function GroupConversationScreen({
               threadId={ThreadId.make(group.threadId)}
               thread={thread}
               botName={group.name}
-              disabledReason={disabledReason}
+              disabledReason={sendBlockedReason}
+              offlineNotice={offlineNotice}
+              groupId={groupId}
               working={live}
               botLastSpokeAtMs={null}
               canInterrupt={live}

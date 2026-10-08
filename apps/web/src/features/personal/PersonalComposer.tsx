@@ -8,7 +8,9 @@ import type {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  CommandId,
   type EnvironmentId,
   type ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -48,6 +50,14 @@ import type { Thread } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import type { PendingOutgoingMessage } from "./MessageList";
+import {
+  enqueueOutboxEntry,
+  hasOutboxForThread,
+  outboxCommandId,
+  recordOutboxUnanswered,
+} from "./outbox";
+import { deleteOutboxBlobs, OUTBOX_MAX_ATTACHMENT_BYTES, putOutboxBlobs } from "./outboxBlobs";
+import { classifySendFailure, type SendOutcome } from "./outboxFlush";
 import { attachmentChipUploadPresentation } from "./attachmentChipUploadPresentation";
 import { chatTurnModelSelection } from "./chatModelSelection";
 import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
@@ -79,10 +89,11 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * True when a failed send actually landed. The decider refuses a second message
- * with an id already on the thread, so a retry of a send whose *reply* was lost
- * comes back as this failure: the message is on the thread, and re-sending it
- * under a fresh id would post it twice.
+ * True when a failed send actually landed. Some paths (a worktree bootstrap's
+ * `thread.message.user.append`) refuse a second message with an id already on
+ * the thread, so a repeat of a send whose *reply* was lost comes back as this
+ * failure: the message is on the thread. (A plain turn start answers a repeat
+ * from the server's command receipt instead, see `send`.)
  */
 export function sendFailedBecauseItAlreadyLanded(failure: unknown): boolean {
   return /already exists on thread/i.test(describeUnknown(failure));
@@ -99,6 +110,20 @@ function describeUnknown(value: unknown, depth = 0): string {
     parts.push(describeUnknown(nested, depth + 1));
   }
   return parts.join(" ");
+}
+
+/** What a settled send came to: sent, never left the device, unanswered, or refused. */
+function outcomeOf(result: { readonly _tag: string }): SendOutcome {
+  if (result._tag !== "Failure") return { kind: "sent" };
+  const cause = (
+    result as { readonly cause?: Parameters<typeof squashAtomCommandFailure>[0]["cause"] }
+  ).cause;
+  if (cause === undefined) return { kind: "unknown" };
+  try {
+    return classifySendFailure(squashAtomCommandFailure({ cause }));
+  } catch {
+    return { kind: "unknown" };
+  }
 }
 
 function isCoarsePointer(): boolean {
@@ -140,6 +165,8 @@ export function PersonalComposer({
   botName,
   botModelSelection = null,
   disabledReason,
+  offlineNotice = null,
+  groupId,
   working,
   botLastSpokeAtMs = null,
   queuedNotice = true,
@@ -165,6 +192,14 @@ export function PersonalComposer({
   botModelSelection?: ModelSelection | null;
   /** Why sending is impossible right now (e.g. provider unavailable), or null. */
   disabledReason: string | null;
+  /**
+   * Set while the laptop is not connected: what a send does now ("saved on this
+   * device, goes out when it reconnects"). A message sent then is queued
+   * (`outbox.ts`), not refused. Null when connected.
+   */
+  offlineNotice?: string | null;
+  /** The group this composer sends to; its queued messages go to `personalGroups.sendMessage`. */
+  groupId?: string;
   working: boolean;
   /** When the bot last produced output, in epoch ms; null if it has not yet. */
   botLastSpokeAtMs?: number | null;
@@ -225,6 +260,10 @@ export function PersonalComposer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
+  const offlineRef = useRef(offlineNotice !== null);
+  useEffect(() => {
+    offlineRef.current = offlineNotice !== null;
+  }, [offlineNotice]);
   const [preparing, setPreparing] = useState(false);
   const preparingRef = useRef(false);
   const [stopping, setStopping] = useState(false);
@@ -461,6 +500,74 @@ export function PersonalComposer({
     retryAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
   };
 
+  /**
+   * Saves a message on this device, to go out when the laptop is connected
+   * (see `outbox.ts`). Resolves to null once it is queued, or to the sentence
+   * that says why it could not be (the caller keeps the draft then).
+   */
+  const queueMessage = async (input: {
+    readonly messageId: string;
+    readonly text: string;
+    readonly quote: PersonalReplyQuote | null;
+    readonly snapshot: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+    readonly createdAt: string;
+    readonly titleSeed: string;
+    /** The unanswered first attempt, when a send that dropped mid-way is queued. */
+    readonly unanswered?: boolean;
+  }): Promise<string | null> => {
+    const { messageId, text, quote, snapshot, createdAt, titleSeed } = input;
+    const bytes = snapshot.reduce((total, attachment) => total + attachment.sizeBytes, 0);
+    if (bytes > OUTBOX_MAX_ATTACHMENT_BYTES) {
+      return "Those photos and files are too big to wait for the laptop. Remove some, or send them once it is back.";
+    }
+    const files: Array<{ readonly id: string; readonly blob: Blob }> = [];
+    for (const attachment of snapshot) {
+      // A draft restored after a reload may hold only the server-side upload, not the bytes.
+      if (!(attachment.file instanceof Blob) || attachment.file.size === 0) {
+        return "An attachment can't wait on this device. Remove it and add it again.";
+      }
+      files.push({ id: attachment.id, blob: attachment.file });
+    }
+    try {
+      if (files.length > 0) await putOutboxBlobs(messageId, files);
+    } catch {
+      return "Couldn't save the photos or files on this device. Your draft is still here.";
+    }
+    const entry = enqueueOutboxEntry({
+      id: messageId,
+      kind: groupId === undefined ? "turn" : "group",
+      environmentId,
+      threadId,
+      groupId: groupId ?? null,
+      text,
+      sendText: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      createdAt,
+      replyTo: quote,
+      turn:
+        groupId === undefined
+          ? {
+              modelSelection: chatTurnModelSelection(botModelSelection, thread.modelSelection),
+              titleSeed,
+              runtimeMode: thread.runtimeMode,
+              interactionMode: thread.interactionMode,
+            }
+          : null,
+      attachments: snapshot.map((attachment) => ({
+        id: attachment.id,
+        kind: attachment.type,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+      })),
+    });
+    if (entry === null) {
+      deleteOutboxBlobs(messageId);
+      return "Couldn't save that message on this device. Your draft is still here.";
+    }
+    if (input.unanswered === true) recordOutboxUnanswered(messageId, true);
+    return null;
+  };
+
   const send = async (quick?: string): Promise<boolean> => {
     // A tapped choice: its own text, no draft, no attachments, no reply quote.
     const isQuick = quick !== undefined;
@@ -480,16 +587,25 @@ export function PersonalComposer({
     const snapshotIds = new Set(snapshot.map((attachment) => attachment.id));
     const messageId = newMessageId();
     const midTurn = working;
+    const titleSeed = truncate(
+      text ||
+        (snapshot[0]
+          ? `${snapshot[0].type === "image" ? "Image" : "File"}: ${snapshot[0].name}`
+          : "New chat"),
+    );
     setSending(true);
     setError(null);
     setQueuedAtMs(null);
     // The composer empties the moment Send is tapped, draft store included;
     // a failed send puts everything back below.
-    if (!isQuick) {
+    let draftCleared = false;
+    const clearDraft = () => {
+      if (isQuick) return;
+      draftCleared = true;
       setPrompt(threadRef, "");
       sentEchoRef.current =
         text.length > 0 ? { text: sentPrompt, until: Date.now() + SENT_ECHO_WINDOW_MS } : null;
-    }
+    };
     if (snapshotIds.size > 0) {
       setInFlightIds((current) => new Set([...current, ...snapshotIds]));
     }
@@ -504,14 +620,45 @@ export function PersonalComposer({
     const restoreDraft = () => {
       sentEchoRef.current = null;
       releaseInFlight();
-      if (sentPrompt.trim().length === 0) return;
+      // A draft that was never emptied (the queue could not keep the message) is still there.
+      if (!draftCleared || sentPrompt.trim().length === 0) return;
       const typedSince = useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "";
       setPrompt(
         threadRef,
         typedSince.trim().length === 0 ? sentPrompt : `${sentPrompt}\n${typedSince}`,
       );
     };
+    /** The message is on the queue: the composer is done with it. */
+    const handOffToQueue = () => {
+      clearDraft();
+      for (const attachment of snapshot) removeAttachment(attachment);
+      releaseInFlight();
+      if (quote !== null) onClearReply?.();
+    };
     try {
+      // The laptop is not connected, or an earlier message of this chat is still
+      // waiting for it: this one goes on the queue behind it, so it can never
+      // arrive first.
+      if (offlineRef.current || hasOutboxForThread(threadId)) {
+        const createdAt = new Date().toISOString();
+        const problem = await queueMessage({
+          messageId,
+          text,
+          quote,
+          snapshot,
+          createdAt,
+          titleSeed,
+        });
+        if (problem !== null) {
+          restoreDraft();
+          setError(problem);
+          return false;
+        }
+        handOffToQueue();
+        return true;
+      }
+
+      clearDraft();
       for (const attachment of snapshot) {
         startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
       }
@@ -526,12 +673,6 @@ export function PersonalComposer({
       }
 
       const createdAt = new Date().toISOString();
-      const titleSeed = truncate(
-        text ||
-          (snapshot[0]
-            ? `${snapshot[0].type === "image" ? "Image" : "File"}: ${snapshot[0].name}`
-            : "New chat"),
-      );
       onPendingChange((pending) => [
         ...pending,
         {
@@ -547,26 +688,35 @@ export function PersonalComposer({
       // The server names a new chat from `titleSeed` when the turn starts, as
       // a replaceable title the AI title then refines once. A metadata rename
       // here would count as the user's own title and block the AI title.
-      // Retries keep the same message id on purpose. The server refuses an id
-      // it already holds, so a retry can never post the message twice, and that
-      // refusal is itself proof the first attempt landed.
+      // Every attempt sends the same message id AND the same command id. The
+      // server keeps a receipt of each command id it has handled and answers a
+      // repeat from it, so a retry of a send whose *reply* was lost can never
+      // post the message twice. (The message id alone is not enough: the
+      // server accepts a second `thread.turn.start` under an id it already
+      // holds, which is what a Retry of a failed turn relies on.)
       // A dropped connection throws rather than returning a failure, and that
       // is the case worth retrying most, so it is folded in here.
-      const attempt = async (): Promise<{ readonly _tag: string }> => {
+      const commandId = CommandId.make(outboxCommandId(messageId));
+      const attempt = async (): Promise<{
+        readonly result: { readonly _tag: string };
+        readonly outcome: SendOutcome;
+      }> => {
         try {
           if (sendOverride !== undefined) {
             // A group opens a round instead of starting a turn; the message id
             // is still the client's, so a resend opens no second round.
-            return await sendOverride({
+            const result = await sendOverride({
               messageId,
               text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
               createdAt,
               ...(quote !== null ? { replyTo: quote } : {}),
             });
+            return { result, outcome: outcomeOf(result) };
           }
-          return await startTurn({
+          const result = await startTurn({
             environmentId,
             input: {
+              commandId,
               threadId,
               message: {
                 messageId,
@@ -582,22 +732,48 @@ export function PersonalComposer({
               createdAt,
             },
           });
+          return { result, outcome: outcomeOf(result) };
         } catch (thrown) {
-          return { _tag: "Failure", thrown } as { readonly _tag: string };
+          return {
+            result: { _tag: "Failure", thrown } as { readonly _tag: string },
+            outcome: { kind: "unknown" },
+          };
         }
       };
 
-      let result = await attempt();
+      let { result, outcome } = await attempt();
       for (const wait of SEND_RETRY_DELAYS_MS) {
         if (result._tag !== "Failure" || sendFailedBecauseItAlreadyLanded(result)) break;
+        // Refused by the laptop: another try says the same. Gone from the laptop
+        // (not connected): the queue is the better place to wait.
+        if (outcome.kind === "rejected" || offlineRef.current) break;
         setRetrying(true);
         await delay(wait);
-        result = await attempt();
+        ({ result, outcome } = await attempt());
       }
       setRetrying(false);
       setSending(false);
       const landed = result._tag !== "Failure" || sendFailedBecauseItAlreadyLanded(result);
       if (!landed) {
+        // Not refused: it never went out, or it went out and no answer came
+        // back. Either way the same ids can go out again, so keep the message
+        // on the queue instead of giving it back as a draft.
+        if (outcome.kind === "not-sent" || outcome.kind === "unknown") {
+          const problem = await queueMessage({
+            messageId,
+            text,
+            quote,
+            snapshot,
+            createdAt,
+            titleSeed,
+            unanswered: outcome.kind === "unknown",
+          });
+          if (problem === null) {
+            onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
+            handOffToQueue();
+            return true;
+          }
+        }
         onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
         restoreDraft();
         setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
@@ -698,6 +874,11 @@ export function PersonalComposer({
       {retrying ? (
         <p role="status" className="px-1 pb-2 text-sm text-[var(--personal-text-secondary)]">
           That didn't send. Trying again...
+        </p>
+      ) : null}
+      {offlineNotice !== null && statusText === null && !retrying ? (
+        <p role="status" className="px-1 pb-2 text-sm text-[var(--personal-text-secondary)]">
+          {offlineNotice}
         </p>
       ) : null}
       {queued && !retrying && statusText === null ? (
@@ -883,7 +1064,13 @@ export function PersonalComposer({
             onClick={() => void send()}
             disabled={!canSend}
             aria-busy={sending}
-            aria-label={working ? "Send, queued until the bot takes it in" : "Send"}
+            aria-label={
+              offlineNotice !== null
+                ? "Send, waits here until your laptop reconnects"
+                : working
+                  ? "Send, queued until the bot takes it in"
+                  : "Send"
+            }
             className={`${ROUND_BUTTON} bg-[var(--personal-primary)] text-[var(--personal-primary-text)] disabled:opacity-30`}
           >
             <ArrowUp aria-hidden="true" className="size-[22px]" strokeWidth={2} />

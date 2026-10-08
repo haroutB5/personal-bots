@@ -47,6 +47,7 @@ import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
 import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
 import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
+import type { OutboxEntry, OutboxRow } from "./outbox";
 
 /** A message the user sent that the server has not echoed back yet. */
 export interface PendingOutgoingMessage {
@@ -125,6 +126,137 @@ function UserBubble({
     <div className={cn("flex min-w-0 flex-col gap-1.5", widthClass, USER_BUBBLE_CLASS)}>
       <ReplyQuoteChip quote={quote} onJump={onJump} />
       <p>{text}</p>
+    </div>
+  );
+}
+
+/**
+ * The notice card under the transcript: a turn that failed ("Couldn't send:
+ * ...") and a queued message the laptop refused share it, so both read and
+ * retry the same way.
+ */
+function ErrorNotice({
+  text,
+  detail = null,
+  tone,
+  retry = null,
+  cancel = null,
+}: {
+  text: string;
+  detail?: string | null | undefined;
+  tone: "danger" | "info";
+  retry?: { readonly onRetry: () => void; readonly busy: boolean } | null | undefined;
+  cancel?: { readonly onCancel: () => void } | null | undefined;
+}) {
+  return (
+    <div
+      role={tone === "info" ? "status" : "alert"}
+      data-tone={tone}
+      className={cn(
+        "max-w-[90%] rounded-[var(--personal-radius-card)] border px-3.5 py-2.5 text-sm break-words",
+        tone === "info"
+          ? "border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)]"
+          : "border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] text-[var(--personal-danger)]",
+      )}
+    >
+      <p>{text}</p>
+      {detail ? (
+        <details className="mt-1.5">
+          <summary className="cursor-pointer text-[12px] font-medium select-none">Details</summary>
+          <p className="mt-1 text-[12px] leading-snug break-words opacity-80">{detail}</p>
+        </details>
+      ) : null}
+      {tone === "danger" && (retry !== null || cancel !== null) ? (
+        <div className="mt-2 flex gap-2">
+          {retry !== null ? (
+            <button
+              type="button"
+              onClick={retry.onRetry}
+              disabled={retry.busy}
+              className="min-h-9 rounded-[var(--personal-radius-button)] border border-[var(--personal-danger-border)] px-3 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-danger)] active:opacity-70 disabled:opacity-50"
+            >
+              {retry.busy ? "Retrying…" : "Retry"}
+            </button>
+          ) : null}
+          {cancel !== null ? (
+            <button
+              type="button"
+              onClick={cancel.onCancel}
+              className="min-h-9 rounded-[var(--personal-radius-button)] border border-[var(--personal-danger-border)] px-3 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-danger)] active:opacity-70"
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const QUEUED_ACTION_CLASS =
+  "min-h-9 px-2 text-xs font-medium text-[var(--personal-text-secondary)] underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-70";
+
+/**
+ * A message typed while the laptop was away, on the device and not sent yet.
+ * It reads like a sent one, dimmed, with its state in the same small status
+ * line "Queued"/"Read" use, and Edit and Cancel until it goes out. A message
+ * the laptop refused shows the failed-turn card with Retry.
+ */
+function QueuedMessage({
+  row,
+  onCancel,
+  onEdit,
+  onRetry,
+}: {
+  row: OutboxRow;
+  onCancel: ((id: string) => void) | undefined;
+  onEdit: ((entry: OutboxEntry) => void) | undefined;
+  onRetry: ((id: string) => void) | undefined;
+}) {
+  const { entry, state } = row;
+  return (
+    <div className="flex flex-col items-end gap-1" data-queued-message={entry.id}>
+      <div className="flex flex-col items-end gap-1 opacity-70">
+        {entry.attachments.map((attachment) => (
+          <span
+            key={attachment.id}
+            className="flex max-w-[78%] items-center gap-1.5 rounded-xl border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 py-2 text-sm"
+          >
+            <FileText aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
+            <span className="truncate">{attachment.name}</span>
+          </span>
+        ))}
+        {entry.text.length > 0 ? <UserBubble text={entry.text} quote={entry.replyTo} /> : null}
+      </div>
+      {state === "failed" ? (
+        <ErrorNotice
+          text={entry.error ?? "Couldn't send: try again."}
+          tone="danger"
+          retry={onRetry === undefined ? null : { onRetry: () => onRetry(entry.id), busy: false }}
+          cancel={onCancel === undefined ? null : { onCancel: () => onCancel(entry.id) }}
+        />
+      ) : (
+        <span
+          role="status"
+          className="flex items-center gap-1 text-xs text-[var(--personal-text-tertiary)]"
+        >
+          <span>{state === "sending" ? "Sending" : "Waiting to send"}</span>
+          {state === "waiting" && onEdit !== undefined && entry.attachments.length === 0 ? (
+            <button type="button" className={QUEUED_ACTION_CLASS} onClick={() => onEdit(entry)}>
+              Edit
+            </button>
+          ) : null}
+          {state === "waiting" && onCancel !== undefined ? (
+            <button
+              type="button"
+              className={QUEUED_ACTION_CLASS}
+              onClick={() => onCancel(entry.id)}
+            >
+              Cancel
+            </button>
+          ) : null}
+        </span>
+      )}
     </div>
   );
 }
@@ -497,6 +629,7 @@ function ApprovalCard({
 }
 
 const NO_PINNED_APPROVALS: ReadonlyArray<PendingApproval> = [];
+const NO_QUEUED: ReadonlyArray<OutboxRow> = [];
 
 /**
  * Where each reply's tap-to-answer block stands, by item id (only replies that
@@ -554,6 +687,10 @@ export function MessageList({
   threadRef,
   items,
   pending,
+  queued = NO_QUEUED,
+  onCancelQueued,
+  onEditQueued,
+  onRetryQueued,
   latestMessageStatus = null,
   working,
   botName,
@@ -604,6 +741,15 @@ export function MessageList({
    */
   groupSpeaker?: (botId: string) => GroupSpeakerPresentation | null;
   pending: ReadonlyArray<PendingOutgoingMessage>;
+  /**
+   * Messages typed while the laptop was away, still on this device (the send
+   * queue, `outbox.ts`). Drawn after the transcript with their own state and
+   * Edit/Cancel/Retry; a screen without a queue leaves them out.
+   */
+  queued?: ReadonlyArray<OutboxRow>;
+  onCancelQueued?: ((id: string) => void) | undefined;
+  onEditQueued?: ((entry: OutboxEntry) => void) | undefined;
+  onRetryQueued?: ((id: string) => void) | undefined;
   /** "Queued"/"Read" under the owner's latest message; a bot chat passes it, a group does not. */
   latestMessageStatus?: LatestMessageReadStatus | null;
   working: boolean;
@@ -899,7 +1045,7 @@ export function MessageList({
     return null;
   }, [items, working]);
 
-  const empty = items.length === 0 && pending.length === 0;
+  const empty = items.length === 0 && pending.length === 0 && queued.length === 0;
   // A chat chip switch eases the new transcript in (chatChipHandoff.ts).
   const [enterClass] = useState(() => (consumeChatSwitched() ? "personal-chat-enter" : undefined));
 
@@ -1242,39 +1388,23 @@ export function MessageList({
             />
           ))}
 
+          {queued.map((row) => (
+            <QueuedMessage
+              key={row.entry.id}
+              row={row}
+              onCancel={onCancelQueued}
+              onEdit={onEditQueued}
+              onRetry={onRetryQueued}
+            />
+          ))}
+
           {errorText !== null ? (
-            <div
-              role={errorTone === "info" ? "status" : "alert"}
-              data-tone={errorTone}
-              className={cn(
-                "max-w-[90%] rounded-[var(--personal-radius-card)] border px-3.5 py-2.5 text-sm break-words",
-                errorTone === "info"
-                  ? "border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)]"
-                  : "border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] text-[var(--personal-danger)]",
-              )}
-            >
-              <p>{errorText}</p>
-              {errorDetail ? (
-                <details className="mt-1.5">
-                  <summary className="cursor-pointer text-[12px] font-medium select-none">
-                    Details
-                  </summary>
-                  <p className="mt-1 text-[12px] leading-snug break-words opacity-80">
-                    {errorDetail}
-                  </p>
-                </details>
-              ) : null}
-              {errorTone === "danger" && errorRetry !== null ? (
-                <button
-                  type="button"
-                  onClick={errorRetry.onRetry}
-                  disabled={errorRetry.busy}
-                  className="mt-2 min-h-9 rounded-[var(--personal-radius-button)] border border-[var(--personal-danger-border)] px-3 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-danger)] active:opacity-70 disabled:opacity-50"
-                >
-                  {errorRetry.busy ? "Retrying…" : "Retry"}
-                </button>
-              ) : null}
-            </div>
+            <ErrorNotice
+              text={errorText}
+              detail={errorDetail}
+              tone={errorTone}
+              retry={errorRetry}
+            />
           ) : null}
         </div>
       </div>

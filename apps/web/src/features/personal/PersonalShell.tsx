@@ -16,6 +16,7 @@ import {
   useChatSidePanel,
 } from "./desktopColumns";
 import { InAppNotifications } from "./InAppNotifications";
+import { OutboxFlusher } from "./OutboxFlusher";
 import { useKeptBotsList, useKeptBotsListScroll } from "./keptBotsList";
 import { whenIdle } from "./perfFlags";
 import { installPerfRum } from "./perfRum";
@@ -123,6 +124,7 @@ export function PersonalShell(): JSX.Element {
           </main>
           {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
           <InAppNotifications />
+          <OutboxFlusher />
         </div>
         {swipeBack.layers}
       </>
@@ -187,6 +189,7 @@ export function PersonalShell(): JSX.Element {
         </div>
       </main>
       <InAppNotifications />
+      <OutboxFlusher />
     </div>
   );
 }
