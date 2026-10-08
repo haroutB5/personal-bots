@@ -156,7 +156,7 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
     switch (outcome.kind) {
       case "sent": {
         removeOutboxEntry(entry.id);
-        deleteOutboxBlobs(entry.id);
+        void deleteOutboxBlobs(entry.id);
         break;
       }
       case "rejected": {

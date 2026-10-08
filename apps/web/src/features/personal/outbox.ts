@@ -30,6 +30,15 @@ import { randomUUID } from "~/lib/utils";
  */
 
 export const OUTBOX_STORAGE_KEY = "t3.personal.outbox.v1";
+/**
+ * Ids cancelled (or sent) whose removal the device refused to write: the queue
+ * on disk still holds them, so a reload would bring the text back and send it.
+ * A small second key that load() honours until the queue itself can be written.
+ */
+export const OUTBOX_REMOVED_STORAGE_KEY = "t3.personal.outbox.removed.v1";
+const REMOVED_KEEP = 200;
+/** Retries of a refused removal: quick at first (a full disk often frees up), then every minute. */
+const REMOVAL_RETRY_MS = [500, 2_000, 8_000, 30_000, 60_000] as const;
 
 /** What a queued attachment is: its bytes are in IndexedDB under (entry id, attachment id). */
 export interface OutboxAttachment {
@@ -103,6 +112,7 @@ const NO_SENDING: ReadonlySet<string> = new Set();
 export interface OutboxStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
 }
 
 function defaultStorage(): OutboxStorage | null {
@@ -117,6 +127,10 @@ let storageOverride: OutboxStorage | null | undefined;
 let snapshot: OutboxSnapshot | null = null;
 const listeners = new Set<() => void>();
 let storageListening = false;
+/** Removals the queue on disk does not show yet (see persistRemoval). */
+const unwrittenRemovals = new Set<string>();
+let removalRetry: ReturnType<typeof setTimeout> | null = null;
+let removalAttempts = 0;
 
 function storage(): OutboxStorage | null {
   return storageOverride === undefined ? defaultStorage() : storageOverride;
@@ -179,13 +193,28 @@ function parseEntry(value: unknown): OutboxEntry | null {
   };
 }
 
+function readRemovedIds(): ReadonlySet<string> {
+  const removed = new Set<string>(unwrittenRemovals);
+  try {
+    const raw = storage()?.getItem(OUTBOX_REMOVED_STORAGE_KEY) ?? null;
+    const parsed: unknown = raw === null ? [] : JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      for (const id of parsed) if (typeof id === "string") removed.add(id);
+    }
+  } catch {
+    // Damaged data: nothing is known to be removed.
+  }
+  return removed;
+}
+
 function load(): ReadonlyArray<OutboxEntry> {
   try {
     const raw = storage()?.getItem(OUTBOX_STORAGE_KEY) ?? null;
     if (raw === null) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    const seen = new Set<string>();
+    const removed = readRemovedIds();
+    const seen = new Set<string>(removed);
     const entries: OutboxEntry[] = [];
     for (const item of parsed) {
       const entry = parseEntry(item);
@@ -210,10 +239,67 @@ function persist(entries: ReadonlyArray<OutboxEntry>): boolean {
   if (target === null) return true;
   try {
     target.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(entries));
-    return true;
   } catch {
     return false;
   }
+  // The queue on disk is now the truth, so removals that were waiting are written.
+  if (unwrittenRemovals.size > 0 || readRemovedIds().size > 0) clearRemovedMarks(target);
+  return true;
+}
+
+function clearRemovedMarks(target: OutboxStorage): void {
+  unwrittenRemovals.clear();
+  stopRemovalRetry();
+  try {
+    if (target.removeItem) target.removeItem(OUTBOX_REMOVED_STORAGE_KEY);
+    else target.setItem(OUTBOX_REMOVED_STORAGE_KEY, "[]");
+  } catch {
+    // The marks only hide ids that are gone from the queue; leftovers are harmless.
+  }
+}
+
+function stopRemovalRetry(): void {
+  if (removalRetry !== null) clearTimeout(removalRetry);
+  removalRetry = null;
+  removalAttempts = 0;
+}
+
+/**
+ * A removal the device would not write. The entry is gone from this page, but
+ * the queue on disk still holds it, and a reload would read the cancelled text
+ * back and send it. So the id is also marked removed in a tiny second key (a
+ * few bytes fit where the queue did not), and the full write is retried until
+ * it lands. If even the mark is refused, the id stays in memory and the retry
+ * keeps going; nothing can be made durable on a device that refuses every write.
+ */
+function persistRemoval(id: string): void {
+  unwrittenRemovals.add(id);
+  const target = storage();
+  if (target !== null) {
+    try {
+      const ids = [...readRemovedIds()].slice(-REMOVED_KEEP);
+      target.setItem(OUTBOX_REMOVED_STORAGE_KEY, JSON.stringify(ids));
+    } catch {
+      // Retried below with the rest.
+    }
+  }
+  scheduleRemovalRetry();
+}
+
+function scheduleRemovalRetry(): void {
+  if (removalRetry !== null || unwrittenRemovals.size === 0) return;
+  const delay = REMOVAL_RETRY_MS[Math.min(removalAttempts, REMOVAL_RETRY_MS.length - 1)] ?? 60_000;
+  removalRetry = setTimeout(() => {
+    removalRetry = null;
+    removalAttempts += 1;
+    if (unwrittenRemovals.size === 0) return;
+    if (!persist(current().entries)) scheduleRemovalRetry();
+  }, delay);
+}
+
+/** Removals the device has not taken yet (a refused write is being retried). */
+export function unwrittenOutboxRemovals(): number {
+  return unwrittenRemovals.size;
 }
 
 function current(): OutboxSnapshot {
@@ -257,6 +343,8 @@ export function getOutboxSnapshot(): OutboxSnapshot {
 export function resetOutboxForTesting(override?: OutboxStorage | null): void {
   storageOverride = override;
   snapshot = null;
+  unwrittenRemovals.clear();
+  stopRemovalRetry();
   for (const listener of listeners) listener();
 }
 
@@ -291,8 +379,9 @@ export function removeOutboxEntry(id: string): OutboxEntry | null {
   if (removed === null) return null;
   const nextSending = new Set(sending);
   nextSending.delete(id);
-  persist(entries.filter((entry) => entry.id !== id));
-  publish({ entries: entries.filter((entry) => entry.id !== id), sending: nextSending });
+  const remaining = entries.filter((entry) => entry.id !== id);
+  if (!persist(remaining)) persistRemoval(id);
+  publish({ entries: remaining, sending: nextSending });
   return removed;
 }
 

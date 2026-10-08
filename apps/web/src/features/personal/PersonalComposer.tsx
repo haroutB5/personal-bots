@@ -561,7 +561,7 @@ export function PersonalComposer({
       })),
     });
     if (entry === null) {
-      deleteOutboxBlobs(messageId);
+      void deleteOutboxBlobs(messageId);
       return "Couldn't save that message on this device. Your draft is still here.";
     }
     if (input.unanswered === true) recordOutboxUnanswered(messageId, true);

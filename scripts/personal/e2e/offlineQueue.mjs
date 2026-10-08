@@ -62,7 +62,7 @@ function openDatabase(root) {
 }
 
 /** User messages of the chat with this title, oldest first, and how many turns each started. */
-function userMessages(root, threadTitle) {
+export function userMessages(root, threadTitle) {
   const db = openDatabase(root);
   try {
     const thread = db
@@ -94,15 +94,15 @@ function userMessages(root, threadTitle) {
   }
 }
 
-const sendButton = (page) =>
+export const sendButton = (page) =>
   page.getByRole("button", { name: /^Send/ }).filter({ visible: true }).first();
 
-async function typeAndSend(page, text) {
+export async function typeAndSend(page, text) {
   await composer(page).fill(text);
   await sendButton(page).tap();
 }
 
-const waitingRows = (page) => page.locator("[data-queued-message]");
+export const waitingRows = (page) => page.locator("[data-queued-message]");
 
 async function offlineQueue({ page, origin, step, server, root }) {
   if (!server || !root) {

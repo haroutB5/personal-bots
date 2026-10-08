@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type JSX } from "react";
 import { RefreshCw, X } from "lucide-react";
 
 import { Sheet, SheetClose, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui/sheet";
+import { ChunkLoadBoundary } from "~/lib/ChunkLoadBoundary";
 import { cn } from "~/lib/utils";
 import { primaryServerProvidersAtom, serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -237,15 +238,17 @@ function UsageCardView({
         </p>
       )}
       {environmentId !== null && resetCredits !== null && creditsShown ? (
-        <Suspense fallback={null}>
-          <PersonalResetCredits
-            environmentId={environmentId}
-            title={card.title}
-            resetCredits={resetCredits}
-            now={now}
-            onRedeemed={onRedeemed}
-          />
-        </Suspense>
+        <ChunkLoadBoundary>
+          <Suspense fallback={null}>
+            <PersonalResetCredits
+              environmentId={environmentId}
+              title={card.title}
+              resetCredits={resetCredits}
+              now={now}
+              onRedeemed={onRedeemed}
+            />
+          </Suspense>
+        </ChunkLoadBoundary>
       ) : null}
       <UsageCardFooter card={card} now={now} checking={checking} />
     </article>

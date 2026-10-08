@@ -17,7 +17,7 @@ import { deleteOutboxBlobs } from "./outboxBlobs";
 /** Drops a queued message and the bytes kept for it. */
 export function discardQueuedMessage(id: string): OutboxEntry | null {
   const removed = removeOutboxEntry(id);
-  if (removed !== null) deleteOutboxBlobs(id);
+  if (removed !== null) void deleteOutboxBlobs(id);
   return removed;
 }
 

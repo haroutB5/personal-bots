@@ -2,6 +2,8 @@ import { type ReactNode, Suspense, useEffect, useState } from "react";
 
 import { perfOptimizationOn, whenIdle } from "~/features/personal/perfFlags";
 
+import { ChunkLoadBoundary } from "./ChunkLoadBoundary";
+
 /**
  * How long after mount the deferred boot pieces wait at the least. Long enough
  * that an owner who opens a chat soon after launch (a few seconds in, before
@@ -65,5 +67,11 @@ export function DeferredMount({ children }: { readonly children: ReactNode }): R
     if (ready) return;
     return whenQuiet(() => setReady(true));
   }, [ready]);
-  return ready ? <Suspense fallback={null}>{children}</Suspense> : null;
+  // A chunk that cannot be fetched (the phone lost its network after the page
+  // opened) leaves its piece out; it must not replace the screen with an error.
+  return ready ? (
+    <ChunkLoadBoundary>
+      <Suspense fallback={null}>{children}</Suspense>
+    </ChunkLoadBoundary>
+  ) : null;
 }

@@ -29,6 +29,20 @@ export function reloadOnceForChunkLoadError(
   return true;
 }
 
+/**
+ * True when this failure streak has had its reload (or storage is blocked, so a
+ * reload could loop): the next failure must surface instead of reloading.
+ */
+export function peekChunkReloadGuard(
+  getStorage: () => Storage = () => window.sessionStorage,
+): boolean {
+  try {
+    return getStorage().getItem(CHUNK_RELOAD_GUARD_KEY) === "1";
+  } catch {
+    return true;
+  }
+}
+
 /** Clears the guard after a successful boot so a later stale deploy can reload again. */
 export function clearChunkReloadGuard(getStorage: () => Storage = () => window.sessionStorage) {
   try {

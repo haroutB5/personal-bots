@@ -1,8 +1,9 @@
 import type { CSSProperties, JSX } from "react";
 import { Activity, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
-import { Outlet, useLocation, useParams, useRouterState } from "@tanstack/react-router";
+import { Outlet, useLocation, useParams, useRouter, useRouterState } from "@tanstack/react-router";
 
+import { ChunkLoadBoundary } from "~/lib/ChunkLoadBoundary";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 
 import { ChatsScreen } from "./ChatsScreen";
@@ -30,6 +31,7 @@ import {
 import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
 import { PersonalTabBar } from "./PersonalTabBar";
 import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
+import { warmPersonalRoutes } from "./warmRoutes";
 
 // Desktop home pane only: the phone never shows it, so it stays off the
 // chats list's startup path.
@@ -68,6 +70,8 @@ export function PersonalShell(): JSX.Element {
   const isWide = useMediaQuery("md");
   const activeTab = activeTabFor(pathname);
   useHiddenRootAttribute();
+  const router = useRouter();
+  useEffect(() => warmPersonalRoutes(router), [router]);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidth = usePersonalNumberPreference("sidebarWidth");
   const sidePanel = useChatSidePanel();
@@ -177,9 +181,11 @@ export function PersonalShell(): JSX.Element {
         <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
           {showsHome ? (
             <div className={PANE_CONTENT_CLASS.column}>
-              <Suspense fallback={null}>
-                <TeamScreen showBack={false} />
-              </Suspense>
+              <ChunkLoadBoundary>
+                <Suspense fallback={null}>
+                  <TeamScreen showBack={false} />
+                </Suspense>
+              </ChunkLoadBoundary>
             </div>
           ) : (
             <div className={PANE_CONTENT_CLASS[layout]}>

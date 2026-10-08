@@ -3,6 +3,8 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useLocation, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 
+import { ChunkLoadBoundary } from "~/lib/ChunkLoadBoundary";
+
 import { behindOfState } from "./botsBackStack";
 import { ChatsScreen } from "./ChatsScreen";
 import {
@@ -266,9 +268,11 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
             className="min-h-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]"
           >
             {behindTeam ? (
-              <Suspense fallback={null}>
-                <TeamScreen />
-              </Suspense>
+              <ChunkLoadBoundary>
+                <Suspense fallback={null}>
+                  <TeamScreen />
+                </Suspense>
+              </ChunkLoadBoundary>
             ) : (
               <ChatsScreen />
             )}

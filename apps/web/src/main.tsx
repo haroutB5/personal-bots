@@ -13,7 +13,8 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { chunkRecovery } from "./lib/chunkLoadRecovery";
+import { clearChunkReloadGuard } from "./lib/chunkReloadGuard";
 import {
   isStandaloneDisplay,
   registerPersonalServiceWorker,
@@ -71,14 +72,21 @@ if (isElectron) {
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
 // A failed split-chunk fetch usually means the hashed assets went stale under
-// a deploy; one guarded reload picks up the fresh index.html.
+// a deploy; one guarded reload picks up the fresh index.html. Only while the
+// server answers: with no network (or no laptop) a reload would boot the saved
+// shell into the root "Laptop offline" screen and take the open chat with it,
+// so the page stays where it is and nothing reloads (lib/chunkLoadRecovery).
 let chunkLoadFailed = false;
-window.addEventListener("vite:preloadError", (event) => {
+let reloadStarted = false;
+window.addEventListener("vite:preloadError", () => {
   chunkLoadFailed = true;
-  if (reloadOnceForChunkLoadError()) {
-    reloadScheduled = true;
-    event.preventDefault();
-  }
+  const outcome = chunkRecovery().onPreloadError();
+  if (outcome.kind !== "check") return;
+  reloadScheduled = true;
+  void outcome.settled.then((result) => {
+    if (result === "reloaded") reloadStarted = true;
+    else if (!reloadStarted) reloadScheduled = false;
+  });
 });
 
 const app = <AppRoot router={router} />;
@@ -103,7 +111,10 @@ export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
   router.load(),
 ])
-  .then(([ManagedAuthShell]) => {
+  .then(async ([ManagedAuthShell]) => {
+    // A chunk that failed while the page loaded is still being judged (stale
+    // deploy, or no network): paint only once it is known whether a reload is coming.
+    await chunkRecovery().idle();
     // A route chunk failure still resolves router.load(): the error is parked in
     // the lazy component and surfaces through the route error boundary. Skip the
     // paint when a reload is on its way, and only re-arm the guard after a boot

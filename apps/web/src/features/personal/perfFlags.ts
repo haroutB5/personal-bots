@@ -70,7 +70,11 @@ export type PerfOptimization =
   // A launch on a Bots path boots without the Clerk (T3 Connect sign-in) shell:
   // no Clerk chunk, no cross-origin Clerk scripts or calls (cloud/managedAuthBoot,
   // 1.67.0); off: Clerk loads on every launch, as before.
-  | "skip-clerk";
+  | "skip-clerk"
+  // Once the app is quiet it preloads the personal screens' code (Team, Settings,
+  // Memory, Files, Tasks, Computer) so they still open when the phone loses its
+  // network (warmRoutes.ts, 1.66.11); off: each is fetched when first opened.
+  | "warm-routes";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

@@ -2,7 +2,7 @@
 //   node run.mjs --url <http://127.0.0.1:port> --pair <pairing link> --bin <dist\bin.mjs> --out <dir>
 //                [--journeys id,id] [--channel chrome|msedge]
 //                [--name <throwaway name> --tw <throwaway-server.ps1> --root <its root>]  (journeys that stop and
-//                restart the server, e.g. offline-queue, need these three)
+//                restart the server, e.g. offline-queue, need these three; --bin lets a journey mint a fresh pairing link)
 // Normally started by scripts\personal\e2e-smoke.ps1, which owns the server (start, stop, root
 // deletion). Exit code: 0 all passed, 1 a journey failed, 2 setup failed.
 // A journey also fails on any uncaught page error or unhandled rejection that is not on the explicit
@@ -11,6 +11,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import { JOURNEYS, SELFTEST_JOURNEYS } from "./journeys.mjs";
+import { NETWORK_JOURNEYS } from "./offlineNetwork.mjs";
 import { OFFLINE_JOURNEYS } from "./offlineQueue.mjs";
 import { describePageErrors, splitPageErrors } from "./page-errors.mjs";
 import {
@@ -51,11 +52,12 @@ const wanted = args.journeys
       .map((id) => id.trim())
       .filter(Boolean)
   : null;
+// The default gate runs the five smoke journeys, the offline send queue (the server really goes away) and the
+// phone-loses-network journeys. Self-tests only run by name.
+const DEFAULT_JOURNEYS = [...JOURNEYS, ...OFFLINE_JOURNEYS, ...NETWORK_JOURNEYS];
 const selected = wanted
-  ? [...JOURNEYS, ...OFFLINE_JOURNEYS, ...SELFTEST_JOURNEYS].filter((journey) =>
-      wanted.includes(journey.id),
-    )
-  : JOURNEYS;
+  ? [...DEFAULT_JOURNEYS, ...SELFTEST_JOURNEYS].filter((journey) => wanted.includes(journey.id))
+  : DEFAULT_JOURNEYS;
 
 /**
  * Takes the throwaway server away and brings it back (same root, same port) for a journey that needs the
@@ -78,9 +80,53 @@ function serverControl() {
   return { down: async () => run("-Down"), up: async () => run("-Up") };
 }
 const server = serverControl();
+
+/**
+ * What a journey that needs a session of its own can do to the throwaway server's auth, through the server's
+ * own CLI (the way the owner revokes a phone from the laptop): a fresh single-use pairing link, the list of
+ * active sessions, and revoking one.
+ */
+function authControl() {
+  if (!args.bin || !args.root) return null;
+  const cli = (extra) => {
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      [args.bin, ...extra, "--base-dir", args.root],
+      {
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    return {
+      status: result.status,
+      out: `${result.stdout}
+${result.stderr}`,
+    };
+  };
+  return {
+    pairingLink: async () => {
+      const token = /^\s*Token:\s*(\S+)/m.exec(cli(["pair"]).out);
+      if (!token) throw new Error("could not mint a pairing link");
+      return `${origin}/pair#token=${token[1]}`;
+    },
+    sessionIds: async () => {
+      const { status, out } = cli(["auth", "session", "list", "--json"]);
+      const start = out.indexOf("[");
+      if (status !== 0 || start < 0) throw new Error(`could not list sessions (exit ${status})`);
+      return JSON.parse(out.slice(start, out.lastIndexOf("]") + 1)).map(
+        (session) => session.sessionId,
+      );
+    },
+    revokeSession: async (sessionId) => {
+      const { status, out } = cli(["auth", "session", "revoke", sessionId]);
+      if (status !== 0 || !/Revoked session/.test(out))
+        throw new Error(`could not revoke ${sessionId}: ${out.trim().slice(-200)}`);
+    },
+  };
+}
 if (selected.length === 0) {
   console.error(
-    `No journey matches ${args.journeys}. Known: ${JOURNEYS.map((j) => j.id).join(", ")}`,
+    `No journey matches ${args.journeys}. Known: ${DEFAULT_JOURNEYS.map((j) => j.id).join(", ")}`,
   );
   process.exit(2);
 }
@@ -109,7 +155,7 @@ try {
     try {
       const limitMs = journey.limitMs ?? JOURNEY_LIMIT_MS;
       await Promise.race([
-        journey.run({ page, context, origin, step, server, root: args.root }),
+        journey.run({ page, context, origin, step, server, root: args.root, auth: authControl() }),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error(`journey exceeded ${limitMs} ms`)), limitMs),
         ),

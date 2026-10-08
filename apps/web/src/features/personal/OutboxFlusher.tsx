@@ -204,7 +204,12 @@ export function OutboxFlusher(): null {
   useEffect(() => {
     if (sweptRef.current || !connected) return;
     sweptRef.current = true;
-    void sweepOutboxBlobs(new Set(idsKey.length === 0 ? [] : idsKey.split("|")));
+    void sweepOutboxBlobs(new Set(idsKey.length === 0 ? [] : idsKey.split("|"))).then(
+      (complete) => {
+        // A refused delete is tried again on the next change, not forgotten.
+        if (!complete) sweptRef.current = false;
+      },
+    );
   }, [connected, idsKey]);
 
   return null;

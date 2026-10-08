@@ -53,8 +53,13 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $twScript = Join-Path $PSScriptRoot 'throwaway-server.ps1'
-# The five smoke journeys fit 180 s. A journey that stops and restarts the server (offline-queue) needs longer.
-if ($SuiteTimeoutSeconds -le 0) { $SuiteTimeoutSeconds = if ($Journey -match 'offline-queue') { 420 } else { 180 } }
+# The default gate runs the five smoke journeys (fit 180 s), the offline send queue (stops and restarts the server) and the
+# phone-loses-network journeys, so it needs longer; a re-test of one of the five keeps the 180 s.
+$smokeFive = 'bots-list-chat|new-chat-named|delegate-task|chats-search|long-press-reply'
+if ($SuiteTimeoutSeconds -le 0) {
+    $onlySmoke = $Journey -and (@($Journey -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch "^($smokeFive)$" }).Count -eq 0)
+    $SuiteTimeoutSeconds = if ($onlySmoke) { 180 } else { 600 }
+}
 $runner = Join-Path $PSScriptRoot 'e2e\run.mjs'
 $nodeExe = Resolve-NodeExe -Node $Node
 if (-not $Name) { $Name = 'e2e-{0}-{1}' -f (Get-Date -Format 'MMddHHmmss'), $PID }
