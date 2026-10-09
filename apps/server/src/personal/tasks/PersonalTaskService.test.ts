@@ -4216,4 +4216,151 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
       expect(refused.message).toContain("sensitive");
     }).pipe(Effect.provide(makeLayer(harness)));
   });
+
+  it.effect(
+    "a mark that arrives by a steer stays with the chat: a later delegation into it from a clean request keeps it",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const exposures = makeSensitiveExposureStore(sql);
+        yield* seedOwnerChat(harness, CHAT, "Clean chat");
+        yield* TestClock.adjust("1 minute");
+
+        // 1. Delegate into a clean chat and let the task finish.
+        const { root, rootThread, turnId } = yield* leadRequest(harness, "steer-persist");
+        const first = yield* continueInto(root, CHAT);
+        yield* endTurn(harness, rootThread, turnId, "Handed over.");
+        yield* service.drain;
+        yield* runTurn(harness, CHAT, "Half done.");
+        yield* service.drain;
+        yield* runTurn(harness, rootThread, "Reported.");
+        yield* service.drain;
+        expect([...(yield* exposures.read([threadExposureKey(CHAT)])).sources]).toEqual([]);
+
+        // 2. A chat that opened a sensitive site steers it: the update reaches the chat.
+        const steerer = yield* createRoot("steer-persist-steerer");
+        yield* exposures.record(
+          [threadExposureKey(threadOf(steerer))],
+          "source",
+          "https://bank.example",
+        );
+        yield* exposures.record(
+          [threadExposureKey(threadOf(steerer))],
+          "approved",
+          "https://ok.example",
+        );
+        const steered = yield* service.steer({
+          taskId: first.taskId,
+          fromName: "CTO",
+          message: "The balance is 1,234, carry on.",
+          fromThreadId: threadOf(steerer),
+        });
+        expect(steered.outcome).toBe("reopened");
+        // The chat itself carries the mark (not the approval), not only the old tree.
+        const onChat = yield* exposures.read([threadExposureKey(CHAT)]);
+        expect([...onChat.sources]).toEqual(["https://bank.example"]);
+        expect([...onChat.approved]).toEqual([]);
+        yield* service.drain;
+        yield* runTurn(harness, CHAT, "Second half done.");
+        yield* service.drain;
+
+        // 3. A clean request delegates into the same chat: its tree starts with the mark.
+        const clean = yield* createRoot("steer-persist-clean");
+        expect([...(yield* exposures.read([rootExposureKey(clean.rootTaskId)])).sources]).toEqual(
+          [],
+        );
+        const second = yield* continueInto(clean, CHAT);
+        const carried = yield* exposures.read([rootExposureKey(second.rootTaskId)]);
+        expect([...carried.sources]).toEqual(["https://bank.example"]);
+        expect([...carried.approved]).toEqual([]);
+        const refused = yield* Effect.flip(
+          service.updateWorkRecord({ taskId: second.taskId, patch: { nextStep: "x" } }),
+        );
+        expect(refused.message).toContain("sensitive");
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "a mark that reaches the tree after the delegation is put on the chat before its next turn starts",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const exposures = makeSensitiveExposureStore(sql);
+        yield* seedOwnerChat(harness, CHAT, "Clean chat");
+        yield* TestClock.adjust("1 minute");
+        const { root, rootThread, turnId } = yield* leadRequest(harness, "claim-persist");
+        yield* continueInto(root, CHAT);
+        // A sibling of the task browsed a sensitive site after the delegation was made.
+        yield* exposures.record(
+          [rootExposureKey(root.rootTaskId)],
+          "source",
+          "https://bank.example",
+        );
+        expect([...(yield* exposures.read([threadExposureKey(CHAT)])).sources]).toEqual([]);
+
+        yield* endTurn(harness, rootThread, turnId, "Handed over.");
+        yield* service.drain;
+
+        expect(startsOn(harness, CHAT)).toHaveLength(1);
+        expect([...(yield* exposures.read([threadExposureKey(CHAT)])).sources]).toEqual([
+          "https://bank.example",
+        ]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "a mark that cannot be written keeps the update back, and the task off the chat",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const exposures = makeSensitiveExposureStore(sql);
+        yield* seedOwnerChat(harness, CHAT, "Clean chat");
+        yield* TestClock.adjust("1 minute");
+        const { root, rootThread, turnId } = yield* leadRequest(harness, "persist-closed");
+        const first = yield* continueInto(root, CHAT);
+        yield* endTurn(harness, rootThread, turnId, "Handed over.");
+        yield* service.drain;
+        yield* runTurn(harness, CHAT, "Half done.");
+        yield* service.drain;
+        yield* runTurn(harness, rootThread, "Reported.");
+        yield* service.drain;
+        const steerer = yield* createRoot("persist-closed-steerer");
+        yield* exposures.record(
+          [threadExposureKey(threadOf(steerer))],
+          "source",
+          "https://bank.example",
+        );
+        // Only writes to the chat's own key fail; the tree's key is fine.
+        yield* sql.unsafe(`
+        CREATE TRIGGER fail_chat_mark BEFORE INSERT ON personal_sensitive_exposures
+        WHEN NEW.exposure_key = '${threadExposureKey(CHAT)}'
+        BEGIN SELECT RAISE(ABORT, 'no chat marks'); END
+      `);
+        const startsBefore = startsOn(harness, CHAT).length;
+        const refused = yield* Effect.flip(
+          service.steer({
+            taskId: first.taskId,
+            fromName: "CTO",
+            message: "The balance is 1,234, carry on.",
+            fromThreadId: threadOf(steerer),
+          }),
+        );
+        expect(refused.message).toContain("update was not sent");
+        yield* service.drain;
+        expect(startsOn(harness, CHAT)).toHaveLength(startsBefore);
+        expect((yield* reload(first.taskId)).status).toBe("completed");
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
 });

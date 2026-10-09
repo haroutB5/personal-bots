@@ -227,12 +227,53 @@ export const makeTaskCore = () =>
             ),
       });
 
+    /**
+     * What a chat has effectively seen: its own key, plus the tree of the task running in
+     * it now or last (the same two keys the browser guard reads for that chat).
+     */
+    const chatExposureKeys = (chatThreadId: ThreadId) =>
+      Effect.gen(function* () {
+        const active = yield* activeAttemptForThread(chatThreadId);
+        const own =
+          active !== null
+            ? yield* repository.getTask(active.taskId)
+            : yield* repository.latestTaskForThread(chatThreadId);
+        return [
+          threadExposureKey(chatThreadId),
+          ...(Option.isSome(own) ? [rootExposureKey(own.value.rootTaskId)] : []),
+        ];
+      });
+
     const carryExposureFromChat = (chatThreadId: ThreadId, root: PersonalTask) =>
-      carryExposure(
-        [threadExposureKey(chatThreadId)],
-        root.taskId,
-        "Personal tasks could not carry the chat's sensitive-site mark to the new task, so nothing was delegated. Try again.",
-      );
+      Effect.gen(function* () {
+        // A record that cannot be read refuses the delegation (the error is not swallowed).
+        const fromKeys = yield* chatExposureKeys(chatThreadId);
+        yield* carryExposure(
+          fromKeys,
+          root.taskId,
+          "Personal tasks could not carry the chat's sensitive-site mark to the new task, so nothing was delegated. Try again.",
+        );
+      });
+
+    /**
+     * Persists what is reaching a task onto the chat it works in. A task that continues a
+     * chat the owner already talks in leaves its content in that chat, which outlives the
+     * task: the chat's own key is what a later delegation into it, its browser guard and
+     * its memory rules read, while a tree key goes with the request. Approvals do not
+     * travel. Fails closed: nothing is delivered when the mark cannot be written.
+     */
+    const persistExposureOnChat = (
+      fromKeys: ReadonlyArray<string>,
+      chatThreadId: ThreadId,
+      refusal: string,
+    ) =>
+      Option.match(workStore, {
+        onNone: () => Effect.void,
+        onSome: ({ exposures }) =>
+          exposures
+            .copySources(fromKeys, threadExposureKey(chatThreadId))
+            .pipe(Effect.mapError((cause) => fail(refusal, cause))),
+      });
 
     /**
      * A steer carries what the steering chat has seen, the same way a delegation does: a
@@ -246,14 +287,18 @@ export const makeTaskCore = () =>
           active !== null
             ? yield* repository.getTask(active.taskId)
             : yield* repository.latestTaskForThread(threadId);
-        yield* carryExposure(
-          [
-            threadExposureKey(threadId),
-            ...(Option.isSome(own) ? [rootExposureKey(own.value.rootTaskId)] : []),
-          ],
-          target.rootTaskId,
-          "Personal tasks could not carry the chat's sensitive-site mark to the task, so the update was not sent. Try again.",
-        );
+        const fromKeys = [
+          threadExposureKey(threadId),
+          ...(Option.isSome(own) ? [rootExposureKey(own.value.rootTaskId)] : []),
+        ];
+        const refusal =
+          "Personal tasks could not carry the chat's sensitive-site mark to the task, so the update was not sent. Try again.";
+        yield* carryExposure(fromKeys, target.rootTaskId, refusal);
+        // A task in a chat the owner already talks in leaves the update there for good, so
+        // the chat takes the mark too (the tree's key ends with the request).
+        if (target.threadId !== null) {
+          yield* persistExposureOnChat(fromKeys, target.threadId, refusal);
+        }
       });
 
     /** The latest context size the thread's provider reported, in tokens. */
@@ -546,6 +591,7 @@ export const makeTaskCore = () =>
       carryExposureFromSteerer,
       carryExposureToChat,
       carryExposureToTree,
+      persistExposureOnChat,
       engine,
       externalSlots,
       fail,

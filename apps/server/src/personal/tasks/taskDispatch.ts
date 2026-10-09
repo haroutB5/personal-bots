@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
+import { rootExposureKey } from "../browser/sensitiveExposureStore.ts";
 import { personalTaskThreadTitle } from "../personalThreadTitles.ts";
 import {
   estimateTokens,
@@ -58,6 +59,7 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
     bots,
     continuesExistingChat,
     engine,
+    persistExposureOnChat,
     externalSlots,
     idleWaitThreadIds,
     latestContextTokens,
@@ -550,6 +552,31 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
         if (yield* heldByOtherTurn(task, threadId)) {
           idleWaitThreadIds.add(threadId);
           continue;
+        }
+        // A task continuing the owner's chat leaves whatever reaches it (a child's result,
+        // a steer, a reopen) in a chat that outlives the request, so the tree's marks go
+        // onto the chat before its turn starts. Fails closed: a task whose chat cannot be
+        // marked stays queued and is tried again at the next pump.
+        if (task.source === "delegation") {
+          const marked = yield* persistExposureOnChat(
+            [rootExposureKey(task.rootTaskId)],
+            threadId,
+            "The chat's sensitive-site mark could not be written.",
+          ).pipe(
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.failCause(cause)
+                : Effect.logWarning(
+                    "personal task waits: its chat could not take the tree's sensitive-site mark",
+                    {
+                      taskId: task.taskId,
+                      cause: Cause.pretty(cause).slice(0, 1_000),
+                    },
+                  ).pipe(Effect.as(false)),
+            ),
+          );
+          if (!marked) continue;
         }
         next = task;
         nextThreadId = threadId;
