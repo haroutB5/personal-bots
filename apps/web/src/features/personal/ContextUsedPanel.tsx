@@ -175,7 +175,7 @@ export function ContextUsedView({
                     <div
                       className="mt-2 flex flex-wrap gap-2"
                       role="group"
-                      aria-label="Rank this lower next time"
+                      aria-label="Change how this memory is used"
                     >
                       {(["outdated", "not_relevant"] as const).map((signal) => (
                         <button
@@ -216,7 +216,8 @@ export function ContextUsedView({
                   {plainMemoryText(entry.snippet)}
                 </span>
                 <span className="block text-[12px] text-[var(--personal-text-tertiary)]">
-                  {noteKindLabel(entry.kind)} Ã‚Â· {entry.reason}
+                  {noteKindLabel(entry.kind)} · {entry.reason}
+                  {entry.provenance ? <span className="block">{entry.provenance}</span> : null}
                 </span>
               </li>
             ))}
@@ -303,7 +304,7 @@ export function ContextUsed({
         <span>
           Context used
           {open && context !== null && context !== undefined
-            ? ` Ã‚Â· ${contextUsedSummary(context)}`
+            ? ` · ${contextUsedSummary(context)}`
             : ""}
         </span>
         <ChevronDown
@@ -318,7 +319,7 @@ export function ContextUsed({
             {turn.error !== null
               ? turn.error
               : turn.isPending
-                ? "LoadingÃ¢â‚¬Â¦"
+                ? "Loading…"
                 : "No memory was recorded for this turn (none was given, or it is older than 14 days)."}
           </p>
         ) : (

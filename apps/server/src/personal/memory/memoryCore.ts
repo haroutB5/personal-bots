@@ -64,13 +64,26 @@ export const makeMemoryCore = () =>
     const decodeAll = (rows: ReadonlyArray<unknown>) =>
       Effect.forEach(rows, (row) =>
         decodeMemoryRow(row).pipe(
-          Effect.map(({ appsJson, demotedSignal, evidenceJson, temporalKind, ...entry }): PersonalMemoryEntry => ({
-            temporalKind: temporalKind === "stable" || temporalKind === "historical" || temporalKind === "changing" ? temporalKind : null,
-            evidence: parseEvidence(evidenceJson),
-            ...entry,
-            apps: parseAppsJson(appsJson),
-            demoted: demotedSignal,
-          })),
+          Effect.map(
+            ({
+              appsJson,
+              demotedSignal,
+              evidenceJson,
+              temporalKind,
+              ...entry
+            }): PersonalMemoryEntry => ({
+              temporalKind:
+                temporalKind === "stable" ||
+                temporalKind === "historical" ||
+                temporalKind === "changing"
+                  ? temporalKind
+                  : null,
+              evidence: parseEvidence(evidenceJson),
+              ...entry,
+              apps: parseAppsJson(appsJson),
+              demoted: demotedSignal,
+            }),
+          ),
         ),
       );
 

@@ -227,6 +227,26 @@ describe("ContextUsedView", () => {
     expect(text).toContain("A rule is not marked here");
   });
 
+  it("shows recorded evidence, freshness and unresolved conflicts beside the claim", () => {
+    const current = context();
+    const text = flat(
+      render({
+        ...current,
+        notes: [
+          {
+            ...current.notes[0]!,
+            provenance:
+              "UNRESOLVED CONFLICT | observed: 2026-10-01 | evidence: https://example.com/checklist | recheck the source",
+          },
+        ],
+      }).toJSON(),
+    );
+    expect(text).toContain("UNRESOLVED CONFLICT");
+    expect(text).toContain("observed: 2026-10-01");
+    expect(text).toContain("https://example.com/checklist");
+    expect(text).toContain("recheck the source");
+  });
+
   it("shows no raw ** markdown in left-out rows, notes or rules", () => {
     const base = context();
     const text = flat(

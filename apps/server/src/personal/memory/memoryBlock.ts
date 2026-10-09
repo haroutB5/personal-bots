@@ -141,7 +141,11 @@ export function formatMemoryBlock(input: {
       `- ${leftOut.length} rules for this chat's apps did not fit the per-turn limit and are not listed: ${named}${leftOut.length > LEFT_OUT_NAMED ? `; and ${leftOut.length - LEFT_OUT_NAMED} more` : ""}. Call search_memory to read them.`,
     );
   }
-  lines.push(...input.relevant.filter((entry) => entry.demoted !== "outdated" && entry.supersededAt == null).map(memoryLine));
+  lines.push(
+    ...input.relevant
+      .filter((entry) => entry.demoted !== "outdated" && entry.supersededAt == null)
+      .map(memoryLine),
+  );
   if (lines.length === 0) return null;
   return [MEMORY_BLOCK_HEADER, ...lines].join("\n");
 }

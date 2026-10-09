@@ -45,6 +45,7 @@ export const MemoryTurnTrace = Schema.Struct({
       reason: Schema.String,
       snippet: Schema.String,
       provenance: Schema.optional(Schema.String),
+      provenance: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -67,5 +68,5 @@ export function snippetOf(text: string, max: number): string {
   if (flat.length <= max) return flat;
   const cut = flat.slice(0, max);
   const space = cut.lastIndexOf(" ");
-  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}â€¦`;
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }

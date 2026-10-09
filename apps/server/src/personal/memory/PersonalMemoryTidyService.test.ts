@@ -90,11 +90,11 @@ const seed = Effect.gen(function* () {
       return entry.memoryId;
     });
   return {
-    oldModels: yield* save("Dev team models (27 Sep): use Opus 5.5 medium.", 5, { kind: "preference" }),
-    newModels: yield* save("Dev team models (1 Oct): use Backend Opus 5.5, QA GPT-6.1 Sol.", 1, { kind: "preference" }),
+    oldModels: yield* save("Dev team models (27 Sep): use Opus 5.5 medium.", 5),
+    newModels: yield* save("Dev team models (1 Oct): use Backend Opus 5.5, QA GPT-6.1 Sol.", 1),
     capA: yield* save("At most 5 bots run at once, per bot.", 6, { kind: "preference" }),
     capB: yield* save("At most 5 bots run at once in total.", 5, { kind: "preference" }),
-    building: yield* save("Until 1.47.3, follow the temporary Back rule being built.", 5, { kind: "preference" }),
+    building: yield* save("Until 1.47.3, follow the temporary Back rule being built.", 5),
     unsure: yield* save("Crypto prices in USD.", 4, { kind: "preference" }),
     tea: yield* save("Favourite drink is green tea.", 20),
     pasta: yield* save("Cooks 90 g of dry pasta per portion.", 20),
@@ -105,6 +105,14 @@ const seed = Effect.gen(function* () {
     }),
     teamNote: yield* save("Dev team models (team copy): everyone on Sonnet.", 6, { scope: "team" }),
   };
+});
+
+// Nightly transforms instructions only; import tests retain their note fixtures.
+const seedRules = Effect.gen(function* () {
+  const ids = yield* seed;
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE personal_memory SET kind = 'preference' WHERE memory_id IN (${ids.oldModels}, ${ids.newModels}, ${ids.building})`;
+  return ids;
 });
 
 const answers = (ref: (needle: string) => string): TidyJudgeOutput["decisions"] => [
@@ -145,7 +153,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       prompts.length = 0;
-      const ids = yield* seed;
+      const ids = yield* seedRules;
       const memory = yield* PersonalMemoryService;
       const tidy = yield* PersonalMemoryTidy;
       const before = yield* countRows;
@@ -186,7 +194,7 @@ it.effect(
 
 it.effect("approving a merge makes one entry and archives both; rejecting is not asked again", () =>
   Effect.gen(function* () {
-    const ids = yield* seed;
+    const ids = yield* seedRules;
     const memory = yield* PersonalMemoryService;
     const tidy = yield* PersonalMemoryTidy;
     const run = yield* tidy.run({ dryRun: false });
@@ -227,7 +235,7 @@ it.effect("approving a merge makes one entry and archives both; rejecting is not
 
 it.effect("a preview lists everything and changes nothing", () =>
   Effect.gen(function* () {
-    yield* seed;
+    yield* seedRules;
     const memory = yield* PersonalMemoryService;
     const tidy = yield* PersonalMemoryTidy;
     const before = yield* memory.list({});
@@ -248,7 +256,7 @@ it.effect("a preview lists everything and changes nothing", () =>
 
 it.effect("a model error fails the run and changes nothing", () =>
   Effect.gen(function* () {
-    yield* seed;
+    yield* seedRules;
     const memory = yield* PersonalMemoryService;
     const tidy = yield* PersonalMemoryTidy;
     const run = yield* tidy.run({ dryRun: false });
@@ -347,7 +355,7 @@ it.effect(
       const after = yield* memory.list({});
       const moved = after.find((entry) => entry.memoryId === ids.newModels)!;
       expect([moved.scope, moved.scopeId, moved.kind]).toEqual(["team", "dev", "note"]);
-      expect(moved.content).toBe("Dev team models (1 Oct): Backend Opus 5.5, QA on GPT-6.1 Sol.");
+      expect(moved.content).toBe("Dev team models (1 Oct): use Backend Opus 5.5, QA GPT-6.1 Sol.");
       const promoted = after.find((entry) => entry.memoryId === ids.building)!;
       expect([promoted.kind, promoted.scope]).toEqual(["preference", "team"]);
       // Reach: the dev bot still gets it, the assistant's bot no longer does.

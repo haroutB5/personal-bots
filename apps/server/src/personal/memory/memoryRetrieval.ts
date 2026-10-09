@@ -166,11 +166,18 @@ const VERSION = /\b\d+\.\d+\.\d+\b/;
  * where the note says which version, or where an app, task or routine (not the
  * owner or a chat) wrote it.
  */
-export function isStatusLike(entry: Pick<RankEntry, "kind" | "content" | "source" | "temporalKind">): boolean {
+export function isStatusLike(
+  entry: Pick<RankEntry, "kind" | "content" | "source" | "temporalKind">,
+): boolean {
   if (entry.temporalKind != null) return entry.temporalKind !== "stable";
   if (entry.kind === "task_summary") return true;
   if (entry.kind !== "note") return false;
-  if (/\b(?:currently|current (?:balance|status|price|version)|balance|available|availability|in stock|remaining|quota|expires|pending|waiting for|runs on|running on)\b/i.test(entry.content)) return true;
+  if (
+    /\b(?:currently|current (?:balance|status|price|version)|balance|available|availability|in stock|remaining|quota|expires|pending|waiting for|runs on|running on)\b/i.test(
+      entry.content,
+    )
+  )
+    return true;
   if (!STATUS_WORDS.test(entry.content)) return false;
   return VERSION.test(entry.content) || /;from=(?:app|task|routine)/.test(entry.source);
 }
@@ -197,12 +204,18 @@ export function statedDateMs(content: string): number | null {
 
 /** 1 for a durable entry; for a status entry 0.5 per half-life since it happened (or was last written), floored. */
 export function ageWeight(
-  entry: Pick<RankEntry, "kind" | "content" | "source" | "updatedAtMs" | "temporalKind" | "observedAt" | "verifiedAt">,
+  entry: Pick<
+    RankEntry,
+    "kind" | "content" | "source" | "updatedAtMs" | "temporalKind" | "observedAt" | "verifiedAt"
+  >,
   nowMs: number,
 ): number {
   if (!isStatusLike(entry)) return 1;
   const explicit = entry.verifiedAt ?? entry.observedAt;
-  const stated = explicit && Number.isFinite(Date.parse(explicit)) ? Date.parse(explicit) : statedDateMs(entry.content);
+  const stated =
+    explicit && Number.isFinite(Date.parse(explicit))
+      ? Date.parse(explicit)
+      : statedDateMs(entry.content);
   const happenedMs = stated === null ? entry.updatedAtMs : Math.min(entry.updatedAtMs, stated);
   const days = Math.max(0, (nowMs - happenedMs) / DAY_MS);
   return Math.max(STATUS_MIN_WEIGHT, 0.5 ** (days / STATUS_HALF_LIFE_DAYS));

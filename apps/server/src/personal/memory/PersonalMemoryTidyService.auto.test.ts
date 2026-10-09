@@ -61,17 +61,25 @@ const seed = Effect.gen(function* () {
       return entry.memoryId;
     });
   return {
-    oldModels: yield* save("Dev team models (27 Sep): use Opus 5.5 medium.", 5, "preference"),
-    newModels: yield* save("Dev team models (1 Oct): use Backend Opus 5.5, QA GPT-6.1 Sol.", 1, "preference"),
+    oldModels: yield* save("Dev team models (27 Sep): use Opus 5.5 medium.", 5),
+    newModels: yield* save("Dev team models (1 Oct): use Backend Opus 5.5, QA GPT-6.1 Sol.", 1),
     capA: yield* save("At most 5 bots run at once, per bot.", 6, "preference"),
     capB: yield* save("At most 5 bots run at once in total.", 5, "preference"),
-    building: yield* save("Until 1.47.3, follow the temporary Back rule being built.", 5, "preference"),
+    building: yield* save("Until 1.47.3, follow the temporary Back rule being built.", 5),
     unsure: yield* save("Crypto prices in USD.", 4, "preference"),
     tea: yield* save("Favourite drink is green tea.", 20),
     pasta: yield* save("Cooks 90 g of dry pasta per portion.", 20),
     flooring: yield* save("Home is mostly hard flooring with one carpet.", 20),
     watch: yield* save("Owns a Garmin Venu 3 watch.", 20),
   };
+});
+
+// Nightly transforms instructions only; import tests retain their note fixtures.
+const seedInstructions = Effect.gen(function* () {
+  const ids = yield* seed;
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE personal_memory SET kind = 'preference' WHERE memory_id IN (${ids.oldModels}, ${ids.newModels}, ${ids.building})`;
+  return ids;
 });
 
 const answers = (ref: (needle: string) => string): TidyJudgeOutput["decisions"] => [
@@ -109,7 +117,7 @@ const currentIds = Effect.gen(function* () {
 describe("the nightly run makes its changes itself", () => {
   it.effect("merges and retirements are made, each applied with an Undo, nothing waits", () =>
     Effect.gen(function* () {
-      const ids = yield* seed;
+      const ids = yield* seedInstructions;
       const memory = yield* PersonalMemoryService;
       const tidy = yield* PersonalMemoryTidy;
       const run = yield* tidy.run({ dryRun: false });
@@ -145,7 +153,7 @@ describe("the nightly run makes its changes itself", () => {
 
   it.effect("a preview lists what it would do and changes nothing", () =>
     Effect.gen(function* () {
-      yield* seed;
+      yield* seedInstructions;
       const tidy = yield* PersonalMemoryTidy;
       const before = yield* currentIds;
       const run = yield* tidy.run({ dryRun: true });
@@ -158,7 +166,7 @@ describe("the nightly run makes its changes itself", () => {
 
   it.effect("Undo of a supersede, a merge and a retirement puts every entry back", () =>
     Effect.gen(function* () {
-      const ids = yield* seed;
+      const ids = yield* seedInstructions;
       const tidy = yield* PersonalMemoryTidy;
       const run = yield* tidy.run({ dryRun: false });
       const [supersede, merge, retire] = run.changes.filter(
@@ -191,7 +199,7 @@ describe("the nightly run makes its changes itself", () => {
     "an Undo needs the log's hash, works once, and never touches a change that was not made",
     () =>
       Effect.gen(function* () {
-        yield* seed;
+        yield* seedInstructions;
         const tidy = yield* PersonalMemoryTidy;
         const run = yield* tidy.run({ dryRun: false });
         const applied = run.changes.find((change) => change.status === "applied")!;
@@ -210,7 +218,7 @@ describe("the nightly run makes its changes itself", () => {
 
   it.effect("what was undone is not made again by the next run; the rest is left alone", () =>
     Effect.gen(function* () {
-      const ids = yield* seed;
+      const ids = yield* seedInstructions;
       const tidy = yield* PersonalMemoryTidy;
       const first = yield* tidy.run({ dryRun: false });
       const merge = first.changes.find((change) => change.action === "merge")!;

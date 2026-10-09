@@ -485,6 +485,9 @@ const make = Effect.gen(function* () {
         scope: match.scope,
         content: match.content,
         savedOn: PersonalMemoryService.memoryDay(match),
+        freshness: memoryProvenanceLabel(match),
+        source: match.source,
+        outdated: match.demoted === "outdated",
       })),
       ...(similar.length === 0
         ? {}
@@ -1002,7 +1005,7 @@ const make = Effect.gen(function* () {
               content: input.content,
               source: botRuleSource(botId, webSeen),
               originThreadId: invocation.threadId,
-              originMessageId: origin.messageId,
+              originMessageId: owner.messageIds?.[owner.texts.indexOf(source)] ?? origin.messageId,
               apps: input.apps ?? null,
               replaces: replaceIds,
               actorBotId: botId,

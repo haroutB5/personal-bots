@@ -196,24 +196,39 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
     Effect.gen(function* () {
       const content = input.content.trim();
       yield* rejectUnsafe(content);
-      if ((input.evidence?.length ?? 0) > 8) return yield* fail("At most 8 evidence references are allowed.");
+      if ((input.evidence?.length ?? 0) > 8)
+        return yield* fail("At most 8 evidence references are allowed.");
       for (const ref of input.evidence ?? []) {
         yield* rejectUnsafe(ref);
         if (ref.length > 500 || /https?:\/\/[^\s]*[?#]/i.test(ref)) {
-          return yield* fail("Evidence references must be at most 500 characters; URL queries and fragments are not stored.");
+          return yield* fail(
+            "Evidence references must be at most 500 characters; URL queries and fragments are not stored.",
+          );
         }
       }
       const now = yield* DateTime.now;
       for (const date of [input.observedAt, input.verifiedAt]) {
-        if (date !== undefined && (!Number.isFinite(Date.parse(date)) || Date.parse(date) > DateTime.toEpochMillis(now))) {
-          return yield* fail("Observation and verification dates must be valid dates, not in the future.");
+        if (
+          date !== undefined &&
+          (!Number.isFinite(Date.parse(date)) || Date.parse(date) > DateTime.toEpochMillis(now))
+        ) {
+          return yield* fail(
+            "Observation and verification dates must be valid dates, not in the future.",
+          );
         }
       }
       if (input.temporalKind === "changing" && (!input.observedAt || !input.evidence?.length)) {
-        return yield* fail("Changing facts need observedAt and evidence identifying a source to recheck.");
+        return yield* fail(
+          "Changing facts need observedAt and evidence identifying a source to recheck.",
+        );
       }
-      if (input.verifiedAt && !input.evidence?.length) return yield* fail("Verification needs an evidence reference.");
-      if (input.observedAt && input.verifiedAt && Date.parse(input.verifiedAt) < Date.parse(input.observedAt)) {
+      if (input.verifiedAt && !input.evidence?.length)
+        return yield* fail("Verification needs an evidence reference.");
+      if (
+        input.observedAt &&
+        input.verifiedAt &&
+        Date.parse(input.verifiedAt) < Date.parse(input.observedAt)
+      ) {
         return yield* fail("Verification cannot precede the observation.");
       }
       // Saving the same fact twice in one scope returns the first entry. What
@@ -229,16 +244,14 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
         ORDER BY m.seq ASC
       `.pipe(Effect.flatMap(decodeAll));
       const wantedApps = appsKey(input.apps);
-      const existing = sameText.find(
-        (entry) =>
-          input.kind === "preference"
-            ? entry.kind === "preference" && appsKey(entry.apps) === wantedApps
-            : entry.kind === "preference" || (
-                entry.temporalKind === (input.temporalKind ?? null) &&
-                entry.observedAt === (input.observedAt ?? null) &&
-                entry.verifiedAt === (input.verifiedAt ?? null) &&
-                encodeMemoryIds(entry.evidence ?? []) === encodeMemoryIds(input.evidence ?? [])
-              ),
+      const existing = sameText.find((entry) =>
+        input.kind === "preference"
+          ? entry.kind === "preference" && appsKey(entry.apps) === wantedApps
+          : entry.kind === "preference" ||
+            (entry.temporalKind === (input.temporalKind ?? null) &&
+              entry.observedAt === (input.observedAt ?? null) &&
+              entry.verifiedAt === (input.verifiedAt ?? null) &&
+              encodeMemoryIds(entry.evidence ?? []) === encodeMemoryIds(input.evidence ?? [])),
       );
       const explicit = yield* replaceTargets(input, existing?.memoryId ?? null);
       // Entries with this very text that a new rule supersedes: a note it
@@ -253,6 +266,15 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
             )
           : [];
       const targets = [...explicit, ...implicit];
+      if (
+        input.kind === "note" &&
+        targets.some((entry) => entry.conflict) &&
+        (!input.verifiedAt || !input.evidence?.length)
+      ) {
+        return yield* fail(
+          "A conflicted factual claim needs a source-checked correction with verifiedAt and evidence. Replace all resolved claims together.",
+        );
+      }
       if (existing !== undefined && targets.length === 0) return { ...existing, created: false };
       const memoryId = existing?.memoryId ?? PersonalMemoryId.make(NodeCrypto.randomUUID());
       const nowIso = DateTime.formatIso(yield* DateTime.now);
@@ -553,6 +575,9 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
         UPDATE personal_memory
         SET content = ${content},
             kind = ${input.kind ?? current.kind},
+            verified_at = ${content === current.content ? (current.verifiedAt ?? null) : null},
+            observed_at = ${content === current.content ? (current.observedAt ?? null) : null},
+            evidence_json = ${content === current.content ? encodeMemoryIds(current.evidence ?? []) : null},
             updated_at = ${nowIso},
             version = version + 1
         WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL
@@ -567,7 +592,9 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       yield* sql`
         UPDATE personal_memory
-        SET content = '', deleted_at = ${nowIso}, updated_at = ${nowIso}, version = version + 1
+        SET content = '', evidence_json = NULL, observed_at = NULL, verified_at = NULL, conflict = NULL,
+            origin_thread_id = NULL, origin_message_id = NULL,
+            deleted_at = ${nowIso}, updated_at = ${nowIso}, version = version + 1
         WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL
       `;
     }).pipe(storageFailure("delete"));

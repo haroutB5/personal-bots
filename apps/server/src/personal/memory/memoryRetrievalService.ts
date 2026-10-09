@@ -326,6 +326,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           kind: row.entry.kind,
           reason: "over the per-turn character limit",
           snippet: snippetOf(row.entry.content, TRACE_LEFT_OUT_SNIPPET_CHARS),
+          provenance: memoryProvenanceLabel(row.entry),
         })),
         ...[...notes.leftOut, ...summaries.leftOut].map((row) => ({
           memoryId: row.entry.memoryId,
@@ -335,6 +336,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
               ? `matched much less than the best entries (${row.why.join(", ")})`
               : "matched much less than the best entries",
           snippet: snippetOf(row.entry.content, TRACE_LEFT_OUT_SNIPPET_CHARS),
+          provenance: memoryProvenanceLabel(row.entry),
         })),
       ].slice(0, TRACE_LEFT_OUT_MAX);
       return {
@@ -651,13 +653,18 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           score: entry.score,
           feedback: byId.get(entry.memoryId)?.entry.demoted ?? null,
           current: isCurrent(entry.memoryId),
-          provenance: entry.provenance ?? (byId.get(entry.memoryId) ? memoryProvenanceLabel(byId.get(entry.memoryId)!.entry) : "provenance unavailable"),
+          provenance:
+            entry.provenance ??
+            (byId.get(entry.memoryId)
+              ? memoryProvenanceLabel(byId.get(entry.memoryId)!.entry)
+              : "provenance unavailable"),
         })),
         leftOut: trace.leftOut.map((entry) => ({
           memoryId: PersonalMemoryId.make(entry.memoryId),
           kind: entry.kind as PersonalMemoryKind,
           snippet: entry.snippet,
           reason: entry.reason,
+          provenance: entry.provenance ?? "provenance unavailable",
         })),
         query: { terms: [...trace.query.terms], followUp: trace.query.followUp },
       } satisfies PersonalMemoryTurnContext;

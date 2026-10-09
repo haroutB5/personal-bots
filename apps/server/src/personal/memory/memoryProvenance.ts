@@ -20,8 +20,8 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
     Effect.gen(function* () {
       // App-written user-role messages all carry a "personal-" id (task and
       // steer briefs, routine runs, group relays, notices, lead answers).
-      const recent = yield* sql<{ readonly text: string }>`
-        SELECT text FROM projection_thread_messages
+      const recent = yield* sql<{ readonly text: string; readonly messageId: string }>`
+        SELECT text, message_id AS "messageId" FROM projection_thread_messages
         WHERE thread_id = ${threadId} AND role = 'user' AND message_id NOT LIKE 'personal-%'
         ORDER BY created_at DESC LIMIT 30
       `;
@@ -43,6 +43,7 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
       return {
         startedByOwner: first[0] !== undefined && isOwnerMessageId(first[0].messageId),
         texts: recent.map((row) => row.text),
+        messageIds: recent.map((row) => row.messageId),
         current:
           latest[0] === undefined
             ? null

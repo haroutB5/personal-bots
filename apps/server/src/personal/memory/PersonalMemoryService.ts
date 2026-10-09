@@ -130,6 +130,7 @@ export class PersonalMemoryService extends Context.Service<
     readonly ownerMessages: (threadId: ThreadId) => Effect.Effect<{
       readonly startedByOwner: boolean;
       readonly texts: ReadonlyArray<string>;
+      readonly messageIds?: ReadonlyArray<string>;
       /** The user-role message that started the current turn, and whether the owner wrote it. */
       readonly current: { readonly text: string; readonly byOwner: boolean } | null;
     }>;

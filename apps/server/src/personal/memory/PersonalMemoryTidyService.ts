@@ -989,7 +989,11 @@ export const make = Effect.gen(function* () {
                 WHERE ${sql.in("memory_id", conflict.memoryIds)} AND kind = 'note'
                   AND deleted_at IS NULL AND superseded_at IS NULL
               `;
-              if (rows.length !== conflict.memoryIds.length || rows.some((row) => row.version !== versions.get(row.memoryId))) return;
+              if (
+                rows.length !== conflict.memoryIds.length ||
+                rows.some((row) => row.version !== versions.get(row.memoryId))
+              )
+                return;
               yield* sql`
                 UPDATE personal_memory SET conflict = ${safeText(conflict.reason).slice(0, 600)}, version = version + 1
                 WHERE ${sql.in("memory_id", conflict.memoryIds)} AND kind = 'note'

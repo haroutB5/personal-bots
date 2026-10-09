@@ -259,11 +259,24 @@ describe("prompt and model output", () => {
   it("keeps conflicting factual claims until a source-checked correction, even with autoAll", () => {
     const facts = [
       entry("old", "The balance is £500.", { evidence: ["https://example.com/statement/1"] }),
-      entry("new", "The balance is £800.", { createdAtMs: NOW - DAY, evidence: ["https://example.com/statement/2"] }),
+      entry("new", "The balance is £800.", {
+        createdAtMs: NOW - DAY,
+        evidence: ["https://example.com/statement/2"],
+      }),
     ];
     for (const decision of [
-      { action: "supersede" as const, memoryIds: ["old"], by: "new", reason: "Saved more recently." },
-      { action: "merge" as const, memoryIds: ["old", "new"], content: "The balance is £800.", reason: "Newest wins." },
+      {
+        action: "supersede" as const,
+        memoryIds: ["old"],
+        by: "new",
+        reason: "Saved more recently.",
+      },
+      {
+        action: "merge" as const,
+        memoryIds: ["old", "new"],
+        content: "The balance is £800.",
+        reason: "Newest wins.",
+      },
     ]) {
       const result = validateDecisions(facts, [decision], NOW, undefined, { autoAll: true });
       expect(result.auto).toEqual([]);
@@ -272,19 +285,49 @@ describe("prompt and model output", () => {
       expect(result.left[0]?.reason).toContain("saved recency is not proof");
     }
     expect(facts[0]?.evidence).toEqual(["https://example.com/statement/1"]);
-    const retired = validateDecisions(facts, [{ action: "supersede", memoryIds: ["old"], by: null, reason: "Old." }], NOW, undefined, { autoAll: true });
+    const retired = validateDecisions(
+      facts,
+      [{ action: "supersede", memoryIds: ["old"], by: null, reason: "Old." }],
+      NOW,
+      undefined,
+      { autoAll: true },
+    );
     expect(retired.auto).toEqual([]);
   });
 
   it("never deduplicates distinct evidence or observation dates, or crosses app scope", () => {
     const facts = [
-      entry("old", "Service is healthy.", { observedAt: "2026-09-20T00:00:00Z", evidence: ["https://example.com/check/1"] }),
-      entry("new", "Service is healthy.", { createdAtMs: NOW - DAY, observedAt: "2026-09-21T00:00:00Z", evidence: ["https://example.com/check/2"] }),
+      entry("old", "Service is healthy.", {
+        observedAt: "2026-09-20T00:00:00Z",
+        evidence: ["https://example.com/check/1"],
+      }),
+      entry("new", "Service is healthy.", {
+        createdAtMs: NOW - DAY,
+        observedAt: "2026-09-21T00:00:00Z",
+        evidence: ["https://example.com/check/2"],
+      }),
     ];
     expect(exactDuplicateDecisions(facts)).toEqual([]);
-    expect(validateDecisions(facts, [{ action: "supersede", memoryIds: ["old"], by: "new", reason: "Same text." }], NOW, undefined, { autoAll: true }).auto).toEqual([]);
-    const scoped = facts.map((fact, index) => ({ ...fact, apps: index === 0 ? '["hbots"]' : '["matchday"]' }));
-    const result = validateDecisions(scoped, [{ action: "supersede", memoryIds: ["old"], by: "new", reason: "Same text." }], NOW, undefined, { autoAll: true });
+    expect(
+      validateDecisions(
+        facts,
+        [{ action: "supersede", memoryIds: ["old"], by: "new", reason: "Same text." }],
+        NOW,
+        undefined,
+        { autoAll: true },
+      ).auto,
+    ).toEqual([]);
+    const scoped = facts.map((fact, index) => ({
+      ...fact,
+      apps: index === 0 ? '["hbots"]' : '["matchday"]',
+    }));
+    const result = validateDecisions(
+      scoped,
+      [{ action: "supersede", memoryIds: ["old"], by: "new", reason: "Same text." }],
+      NOW,
+      undefined,
+      { autoAll: true },
+    );
     expect(result.auto).toEqual([]);
     expect(result.conflicts).toEqual([]);
     expect(result.left[0]?.reason).toContain("scope");
@@ -292,21 +335,54 @@ describe("prompt and model output", () => {
 
   it("maps explicit conflicts to durable markers and includes provenance in judge data", () => {
     const facts = [
-      entry("old", "Service is healthy.", { evidence: ["https://example.com/check"], observedAt: "2026-09-20T00:00:00Z", verifiedAt: "2026-09-20T00:01:00Z", conflict: "Check current service health." }),
+      entry("old", "Service is healthy.", {
+        evidence: ["https://example.com/check"],
+        observedAt: "2026-09-20T00:00:00Z",
+        verifiedAt: "2026-09-20T00:01:00Z",
+        conflict: "Check current service health.",
+      }),
       entry("new", "Service is down."),
     ];
-    const { prompt, refs } = buildTidyPrompt({ entries: facts, todayIso: "2026-10-02", appVersion: null });
+    const { prompt, refs } = buildTidyPrompt({
+      entries: facts,
+      todayIso: "2026-10-02",
+      appVersion: null,
+    });
     expect(prompt).toContain('"source":"bot:cto"');
     expect(prompt).toContain('"evidence":["https://example.com/check"]');
     expect(prompt).toContain('"observedAt":"2026-09-20T00:00:00Z"');
     expect(prompt).toContain('"verifiedAt":"2026-09-20T00:01:00Z"');
     expect(prompt).toContain('"conflict":"Check current service health."');
     expect(prompt).toContain("The latest user instruction wins");
-    const decisions = decisionsFromJudge({ decisions: [{ action: "conflict", memoryIds: ["E1", "E2"], reason: "Check the service health endpoint." }] }, refs);
+    const decisions = decisionsFromJudge(
+      {
+        decisions: [
+          {
+            action: "conflict",
+            memoryIds: ["E1", "E2"],
+            reason: "Check the service health endpoint.",
+          },
+        ],
+      },
+      refs,
+    );
     const result = validateDecisions(facts, decisions, NOW);
-    expect(result.conflicts).toEqual([{ memoryIds: ["old", "new"], reason: "Check the service health endpoint." }]);
+    expect(result.conflicts).toEqual([
+      { memoryIds: ["old", "new"], reason: "Check the service health endpoint." },
+    ]);
     expect(result.auto).toEqual([]);
-    const invalid = validateDecisions(facts, [{ action: "leave", conflict: true, memoryIds: ["old", "unknown"], reason: "Untrusted ref." }], NOW);
+    const invalid = validateDecisions(
+      facts,
+      [
+        {
+          action: "leave",
+          conflict: true,
+          memoryIds: ["old", "unknown"],
+          reason: "Untrusted ref.",
+        },
+      ],
+      NOW,
+    );
     expect(invalid.conflicts).toEqual([]);
   });
 

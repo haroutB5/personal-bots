@@ -156,6 +156,7 @@ function saveMemory(input: {
           }),
         noteOrigin: () =>
           Effect.succeed({
+            messageId: "current-input",
             threadReadWeb: input.origin?.readWeb ?? false,
             ...(input.origin ?? { origin: "chat" as const, readWeb: false }),
           }),
@@ -188,6 +189,7 @@ function saveMemory(input: {
           Effect.succeed({
             startedByOwner: input.startedByOwner ?? true,
             texts,
+            messageIds: texts.map((_, index) => `owner-message-${index}`),
             current:
               input.current === undefined
                 ? texts[0] === undefined
@@ -1114,6 +1116,56 @@ describe("Security (1.60.22): a note records where it came from", () => {
 });
 
 describe("1.60.40: app scopes on save_memory and search_memory", () => {
+  it.effect(
+    "attaches the actual owner message automatically when saving an earlier quoted rule",
+    () =>
+      Effect.gen(function* () {
+        delete process.env[MEMORY_AUTO_APPLY_ENV];
+        const { saved } = yield* saveMemory({
+          memoryAutoSave: true,
+          exposure: [],
+          userRequest: "Always use plain words.",
+          content: "Always use plain words.",
+          kind: "preference",
+          ownerTexts: ["Thanks for the update.", "Always use plain words."],
+        });
+        expect(saved.mock.calls[0]?.[0]).toMatchObject({
+          originThreadId: "thread",
+          originMessageId: "owner-message-1",
+        });
+      }),
+  );
+  it.effect(
+    "search labels outdated claims and returns evidence and origin instead of bare facts",
+    () =>
+      Effect.gen(function* () {
+        const note = {
+          ...entryFor({
+            scope: "shared",
+            kind: "note",
+            content: "Appointment is Tuesday.",
+            source: "bot:cfo;from=chat",
+          }),
+          demoted: "outdated" as const,
+          evidence: ["https://example.com/calendar"],
+          observedAt: "2026-09-22T00:00:00.000Z",
+          originThreadId: "source-chat",
+          originMessageId: "owner-message",
+        };
+        const { encoded } = yield* saveMemory({
+          memoryAutoSave: true,
+          exposure: [],
+          tool: "search_memory",
+          query: "appointment",
+          found: [note],
+        });
+        expect(encoded).toContain('"outdated":true');
+        expect(encoded).toContain("OUTDATED: do not rely on this claim");
+        expect(encoded).toContain("https://example.com/calendar");
+        expect(encoded).toContain("owner-message");
+        expect(encoded).toContain("bot:cfo;from=chat");
+      }),
+  );
   const rule = (id: string, content: string, apps: ReadonlyArray<string>) => ({
     ...entryFor({ scope: "shared", kind: "preference", content }),
     memoryId: PersonalMemoryId.make(id),

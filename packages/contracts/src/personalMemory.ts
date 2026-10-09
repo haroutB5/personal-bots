@@ -41,7 +41,9 @@ export const PersonalMemoryEntry = Schema.Struct({
   /** Where it came from: `user`, `bot:<botId>`, `task:<taskId>`. */
   source: Schema.String,
   sensitivity: Schema.String,
-  temporalKind: Schema.optional(Schema.NullOr(Schema.Literals(["stable", "historical", "changing"]))),
+  temporalKind: Schema.optional(
+    Schema.NullOr(Schema.Literals(["stable", "historical", "changing"])),
+  ),
   observedAt: Schema.optional(Schema.NullOr(Schema.String)),
   verifiedAt: Schema.optional(Schema.NullOr(Schema.String)),
   evidence: Schema.optional(Schema.Array(Schema.String)),
@@ -530,7 +532,7 @@ export const PersonalMemoryTurnContext = Schema.Struct({
       feedback: Schema.NullOr(PersonalMemoryFeedbackSignal),
       /** False when it has been replaced, forgotten or deleted since. */
       current: Schema.Boolean,
-  provenance: Schema.optional(Schema.String),
+      provenance: Schema.optional(Schema.String),
     }),
   ),
   leftOut: Schema.Array(

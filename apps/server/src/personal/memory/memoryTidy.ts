@@ -95,13 +95,14 @@ const normalised = (content: string) => content.trim().replace(/\s+/g, " ").toLo
 const newestFirst = (a: TidyEntry, b: TidyEntry) => b.createdAtMs - a.createdAtMs;
 
 /** Equal wording is not enough to discard a different observation or evidence trail. */
-const factMetadata = (entry: TidyEntry) => JSON.stringify({
-  source: entry.source,
-  evidence: [...(entry.evidence ?? [])].toSorted(),
-  observedAt: entry.observedAt ?? null,
-  verifiedAt: entry.verifiedAt ?? null,
-  conflict: entry.conflict ?? null,
-});
+const factMetadata = (entry: TidyEntry) =>
+  JSON.stringify({
+    source: entry.source,
+    evidence: [...(entry.evidence ?? [])].toSorted(),
+    observedAt: entry.observedAt ?? null,
+    verifiedAt: entry.verifiedAt ?? null,
+    conflict: entry.conflict ?? null,
+  });
 
 /**
  * Same text (ignoring case and spacing) saved more than once: the newest copy
@@ -194,7 +195,10 @@ export function validateDecisions(
   readonly auto: ReadonlyArray<TidyDecision>;
   readonly pending: ReadonlyArray<TidyDecision>;
   readonly left: ReadonlyArray<TidyDecision>;
-  readonly conflicts: ReadonlyArray<{ readonly memoryIds: ReadonlyArray<string>; readonly reason: string }>;
+  readonly conflicts: ReadonlyArray<{
+    readonly memoryIds: ReadonlyArray<string>;
+    readonly reason: string;
+  }>;
 } {
   const byId = new Map(entries.map((entry) => [entry.memoryId, entry]));
   const used = new Set<string>();
@@ -216,9 +220,23 @@ export function validateDecisions(
       if (decision.conflict) {
         const notes = [...new Set(decision.memoryIds)].map((id) => byId.get(id));
         const first = notes[0];
-        if (notes.length >= 2 && first && decision.reason.trim() && !looksLikeSecret(decision.reason) && notes.every((entry) =>
-          entry?.kind === "note" && entry.scope === first.scope && entry.scopeId === first.scopeId && entry.apps === first.apps
-        )) conflicts.push({ memoryIds: notes.map((entry) => entry!.memoryId), reason: decision.reason });
+        if (
+          notes.length >= 2 &&
+          first &&
+          decision.reason.trim() &&
+          !looksLikeSecret(decision.reason) &&
+          notes.every(
+            (entry) =>
+              entry?.kind === "note" &&
+              entry.scope === first.scope &&
+              entry.scopeId === first.scopeId &&
+              entry.apps === first.apps,
+          )
+        )
+          conflicts.push({
+            memoryIds: notes.map((entry) => entry!.memoryId),
+            reason: decision.reason,
+          });
       }
       if (decision.memoryIds.some((id) => byId.has(id))) leave(decision, "");
       continue;
@@ -258,10 +276,17 @@ export function validateDecisions(
     }
     const touched = by === null ? ids : [...ids, by];
     const first = byId.get(ids[0]!)!;
-    if (touched.some((id) => {
-      const entry = byId.get(id)!;
-      return entry.scope !== first.scope || entry.scopeId !== first.scopeId || entry.apps !== first.apps || entry.kind !== first.kind;
-    })) {
+    if (
+      touched.some((id) => {
+        const entry = byId.get(id)!;
+        return (
+          entry.scope !== first.scope ||
+          entry.scopeId !== first.scopeId ||
+          entry.apps !== first.apps ||
+          entry.kind !== first.kind
+        );
+      })
+    ) {
       leave(decision, "Changes kind or scope; entries stay separate");
       continue;
     }
@@ -281,7 +306,11 @@ export function validateDecisions(
       }
       continue;
     }
-    if (first.kind === "preference" && by !== null && ids.some((id) => byId.get(id)!.createdAtMs >= byId.get(by)!.createdAtMs)) {
+    if (
+      first.kind === "preference" &&
+      by !== null &&
+      ids.some((id) => byId.get(id)!.createdAtMs >= byId.get(by)!.createdAtMs)
+    ) {
       leave(decision, "The latest user instruction wins; an older rule cannot replace it");
       continue;
     }
