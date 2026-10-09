@@ -45,7 +45,6 @@ export const MemoryTurnTrace = Schema.Struct({
       reason: Schema.String,
       snippet: Schema.String,
       provenance: Schema.optional(Schema.String),
-      provenance: Schema.optional(Schema.String),
     }),
   ),
 });
