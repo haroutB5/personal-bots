@@ -822,7 +822,7 @@ it.effect("1.60.22 Security: a turn's origin and web reading, for a note's sourc
     const memory = yield* PersonalMemoryService;
     const sql = yield* SqlClient.SqlClient;
     yield* runningTurn("4b1c-owner-message");
-    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({
+    expect(yield* memory.noteOrigin(THREAD_A)).toMatchObject({
       origin: "chat",
       readWeb: false,
       threadReadWeb: false,
@@ -830,7 +830,7 @@ it.effect("1.60.22 Security: a turn's origin and web reading, for a note's sourc
     yield* runningTurn("personal-task-t1-1", [
       { type: "command_execution", summary: "Ran command" },
     ]);
-    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({
+    expect(yield* memory.noteOrigin(THREAD_A)).toMatchObject({
       origin: "task",
       readWeb: false,
       threadReadWeb: false,
@@ -844,13 +844,13 @@ it.effect("1.60.22 Security: a turn's origin and web reading, for a note's sourc
     yield* runningTurn("personal-task-t2-1", [
       { type: "mcp_tool_call", summary: "t3-code · read_pages" },
     ]);
-    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({
+    expect(yield* memory.noteOrigin(THREAD_A)).toMatchObject({
       origin: "routine",
       readWeb: true,
       threadReadWeb: true,
     });
     yield* runningTurn("personal-relay-abc", [{ type: "web_search", summary: "Web search" }]);
-    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({
+    expect(yield* memory.noteOrigin(THREAD_A)).toMatchObject({
       origin: "bot",
       readWeb: true,
       threadReadWeb: true,

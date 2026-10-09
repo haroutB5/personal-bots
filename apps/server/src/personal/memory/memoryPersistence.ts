@@ -196,6 +196,26 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
     Effect.gen(function* () {
       const content = input.content.trim();
       yield* rejectUnsafe(content);
+      if ((input.evidence?.length ?? 0) > 8) return yield* fail("At most 8 evidence references are allowed.");
+      for (const ref of input.evidence ?? []) {
+        yield* rejectUnsafe(ref);
+        if (ref.length > 500 || /https?:\/\/[^\s]*[?#]/i.test(ref)) {
+          return yield* fail("Evidence references must be at most 500 characters; URL queries and fragments are not stored.");
+        }
+      }
+      const now = yield* DateTime.now;
+      for (const date of [input.observedAt, input.verifiedAt]) {
+        if (date !== undefined && (!Number.isFinite(Date.parse(date)) || Date.parse(date) > DateTime.toEpochMillis(now))) {
+          return yield* fail("Observation and verification dates must be valid dates, not in the future.");
+        }
+      }
+      if (input.temporalKind === "changing" && (!input.observedAt || !input.evidence?.length)) {
+        return yield* fail("Changing facts need observedAt and evidence identifying a source to recheck.");
+      }
+      if (input.verifiedAt && !input.evidence?.length) return yield* fail("Verification needs an evidence reference.");
+      if (input.observedAt && input.verifiedAt && Date.parse(input.verifiedAt) < Date.parse(input.observedAt)) {
+        return yield* fail("Verification cannot precede the observation.");
+      }
       // Saving the same fact twice in one scope returns the first entry. What
       // "the same" means depends on the kind: a note is the same as any live
       // entry with its text (a rule is never demoted by a note save), but a
@@ -211,8 +231,14 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       const wantedApps = appsKey(input.apps);
       const existing = sameText.find(
         (entry) =>
-          input.kind !== "preference" ||
-          (entry.kind === "preference" && appsKey(entry.apps) === wantedApps),
+          input.kind === "preference"
+            ? entry.kind === "preference" && appsKey(entry.apps) === wantedApps
+            : entry.kind === "preference" || (
+                entry.temporalKind === (input.temporalKind ?? null) &&
+                entry.observedAt === (input.observedAt ?? null) &&
+                entry.verifiedAt === (input.verifiedAt ?? null) &&
+                encodeMemoryIds(entry.evidence ?? []) === encodeMemoryIds(input.evidence ?? [])
+              ),
       );
       const explicit = yield* replaceTargets(input, existing?.memoryId ?? null);
       // Entries with this very text that a new rule supersedes: a note it
@@ -239,12 +265,15 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
           yield* sql`
             INSERT INTO personal_memory (
               memory_id, scope, scope_id, kind, content, source, sensitivity,
-              created_at, updated_at, deleted_at, version, apps_json
+              created_at, updated_at, deleted_at, version, apps_json,
+              temporal_kind, observed_at, verified_at, evidence_json, origin_thread_id, origin_message_id
             )
             VALUES (
               ${memoryId}, ${input.scope}, ${input.scopeId}, ${input.kind}, ${content},
               ${input.source}, 'normal', ${nowIso}, ${nowIso}, NULL, 1,
-              ${input.kind === "preference" ? appsToJson(input.apps) : null}
+              ${input.kind === "preference" ? appsToJson(input.apps) : null},
+              ${input.temporalKind ?? null}, ${input.observedAt ?? null}, ${input.verifiedAt ?? null},
+              ${encodeMemoryIds(input.evidence ?? [])}, ${input.originThreadId ?? null}, ${input.originMessageId ?? null}
             )
           `;
         }

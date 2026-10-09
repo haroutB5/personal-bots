@@ -15,6 +15,7 @@ import {
   PERSONAL_MEMORY_RULES_WARN_SHARE,
 } from "@t3tools/contracts";
 
+import { memoryProvenanceLabel } from "./memoryEvidence.ts";
 import { redactSecrets } from "../secretText.ts";
 import {
   APP_SIGNAL_RECENT_CHARS,
@@ -226,7 +227,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
               ranked: true,
               limit: PERSONAL_MEMORY_CONTEXT_SUMMARY_LIMIT,
             });
-        const entries = [...notes, ...summaries];
+        const entries = [...notes, ...summaries].filter((entry) => entry.demoted !== "outdated");
         return {
           ...empty,
           entries,
@@ -236,6 +237,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
             score: 0,
             why: ["keyword match (legacy retrieval)"],
             snippet: snippetOf(entry.content, TRACE_PICKED_SNIPPET_CHARS),
+            provenance: memoryProvenanceLabel(entry),
           })),
         };
       }
@@ -346,6 +348,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           score: Number(row.score.toFixed(3)),
           why: row.why,
           snippet: snippetOf(row.entry.content, TRACE_PICKED_SNIPPET_CHARS),
+          provenance: memoryProvenanceLabel(row.entry),
         })),
         leftOut,
         query,
@@ -622,6 +625,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           content: item === undefined || item.deleted ? "" : item.entry.content,
           apps: item?.entry.apps ?? null,
           current: isCurrent(id),
+          provenance: item ? memoryProvenanceLabel(item.entry) : "provenance unavailable",
         };
       };
       return {
@@ -647,6 +651,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           score: entry.score,
           feedback: byId.get(entry.memoryId)?.entry.demoted ?? null,
           current: isCurrent(entry.memoryId),
+          provenance: entry.provenance ?? (byId.get(entry.memoryId) ? memoryProvenanceLabel(byId.get(entry.memoryId)!.entry) : "provenance unavailable"),
         })),
         leftOut: trace.leftOut.map((entry) => ({
           memoryId: PersonalMemoryId.make(entry.memoryId),

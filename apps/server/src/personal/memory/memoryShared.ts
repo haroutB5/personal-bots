@@ -65,6 +65,14 @@ export const MemoryDbRow = Schema.Struct({
   supersededBy: Schema.NullOr(PersonalMemoryId),
   supersededReason: Schema.NullOr(Schema.String),
   appsJson: Schema.NullOr(Schema.String),
+  temporalKind: Schema.NullOr(Schema.String),
+  observedAt: Schema.NullOr(Schema.String),
+  verifiedAt: Schema.NullOr(Schema.String),
+  evidenceJson: Schema.NullOr(Schema.String),
+  originThreadId: Schema.NullOr(Schema.String),
+  originMessageId: Schema.NullOr(Schema.String),
+  conflict: Schema.NullOr(Schema.String),
+
   demotedSignal: Schema.NullOr(Schema.Literals(["outdated", "not_relevant"])),
 });
 export const decodeMemoryRow = Schema.decodeUnknownEffect(MemoryDbRow);
@@ -99,10 +107,24 @@ export const MEMORY_COLUMNS = `
   m.superseded_by AS "supersededBy",
   m.superseded_reason AS "supersededReason",
   m.apps_json AS "appsJson",
+  m.temporal_kind AS "temporalKind",
+  m.observed_at AS "observedAt",
+  m.verified_at AS "verifiedAt",
+  m.evidence_json AS "evidenceJson",
+  m.origin_thread_id AS "originThreadId",
+  m.origin_message_id AS "originMessageId",
+  m.conflict AS "conflict",
+
   (SELECT f.signal FROM personal_memory_feedback f WHERE f.memory_id = m.memory_id) AS "demotedSignal"
 `;
 
 export interface PersonalMemorySaveInput {
+  readonly temporalKind?: "stable" | "historical" | "changing" | undefined;
+  readonly observedAt?: string | undefined;
+  readonly verifiedAt?: string | undefined;
+  readonly evidence?: ReadonlyArray<string> | undefined;
+  readonly originThreadId?: string | undefined;
+  readonly originMessageId?: string | undefined;
   readonly scope: PersonalMemoryScope;
   readonly scopeId: string | null;
   readonly kind: "note" | "preference";

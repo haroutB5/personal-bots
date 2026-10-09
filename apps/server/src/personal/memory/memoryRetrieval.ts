@@ -149,6 +149,9 @@ export interface RankEntry {
   readonly content: string;
   readonly source: string;
   readonly updatedAtMs: number;
+  readonly temporalKind?: "stable" | "historical" | "changing" | null | undefined;
+  readonly observedAt?: string | null | undefined;
+  readonly verifiedAt?: string | null | undefined;
 }
 
 const STATUS_WORDS =
@@ -163,9 +166,11 @@ const VERSION = /\b\d+\.\d+\.\d+\b/;
  * where the note says which version, or where an app, task or routine (not the
  * owner or a chat) wrote it.
  */
-export function isStatusLike(entry: Pick<RankEntry, "kind" | "content" | "source">): boolean {
+export function isStatusLike(entry: Pick<RankEntry, "kind" | "content" | "source" | "temporalKind">): boolean {
+  if (entry.temporalKind != null) return entry.temporalKind !== "stable";
   if (entry.kind === "task_summary") return true;
   if (entry.kind !== "note") return false;
+  if (/\b(?:currently|current (?:balance|status|price|version)|balance|available|availability|in stock|remaining|quota|expires|pending|waiting for|runs on|running on)\b/i.test(entry.content)) return true;
   if (!STATUS_WORDS.test(entry.content)) return false;
   return VERSION.test(entry.content) || /;from=(?:app|task|routine)/.test(entry.source);
 }
@@ -192,11 +197,12 @@ export function statedDateMs(content: string): number | null {
 
 /** 1 for a durable entry; for a status entry 0.5 per half-life since it happened (or was last written), floored. */
 export function ageWeight(
-  entry: Pick<RankEntry, "kind" | "content" | "source" | "updatedAtMs">,
+  entry: Pick<RankEntry, "kind" | "content" | "source" | "updatedAtMs" | "temporalKind" | "observedAt" | "verifiedAt">,
   nowMs: number,
 ): number {
   if (!isStatusLike(entry)) return 1;
-  const stated = statedDateMs(entry.content);
+  const explicit = entry.verifiedAt ?? entry.observedAt;
+  const stated = explicit && Number.isFinite(Date.parse(explicit)) ? Date.parse(explicit) : statedDateMs(entry.content);
   const happenedMs = stated === null ? entry.updatedAtMs : Math.min(entry.updatedAtMs, stated);
   const days = Math.max(0, (nowMs - happenedMs) / DAY_MS);
   return Math.max(STATUS_MIN_WEIGHT, 0.5 ** (days / STATUS_HALF_LIFE_DAYS));
@@ -281,7 +287,7 @@ export function rankCandidates<T extends RankEntry>(
     }
     const mark = options.demoted?.get(entry.memoryId);
     if (mark !== undefined) {
-      weight *= DEMOTION_WEIGHT[mark];
+      weight *= mark === "outdated" ? 0 : DEMOTION_WEIGHT[mark];
       why.push(mark === "outdated" ? "you marked it outdated" : "you marked it not relevant");
     }
     return { entry, bm25, weight, score: -bm25 * weight, why };

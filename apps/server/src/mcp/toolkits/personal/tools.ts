@@ -239,6 +239,15 @@ export const SearchMemoryResult = Schema.Struct({
       scope: Schema.String,
       content: Schema.String,
       updatedAt: Schema.String,
+      source: Schema.String,
+      freshness: Schema.String,
+      outdated: Schema.Boolean,
+      evidence: Schema.Array(Schema.String),
+      observedAt: Schema.NullOr(Schema.String),
+      verifiedAt: Schema.NullOr(Schema.String),
+      conflict: Schema.NullOr(Schema.String),
+      originThreadId: Schema.NullOr(Schema.String),
+      originMessageId: Schema.NullOr(Schema.String),
       /** App slugs a rule is limited to; absent for a global rule or a note. */
       apps: Schema.optional(Schema.Array(Schema.String)),
     }),
@@ -247,9 +256,13 @@ export const SearchMemoryResult = Schema.Struct({
 export type SearchMemoryResult = typeof SearchMemoryResult.Type;
 
 export const SaveMemoryInput = Schema.Struct({
+  temporalKind: Schema.optional(Schema.Literals(["stable", "historical", "changing"]).annotate({description: "stable: durable fact; historical: past event, never current status; changing: state that must be rechecked, with observedAt and evidence."})),
+  observedAt: Schema.optional(TrimmedNonEmptyString),
+  verifiedAt: Schema.optional(TrimmedNonEmptyString),
+  evidence: Schema.optional(Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(500))).check(Schema.isMaxLength(8)).annotate({description: "Evidence references, such as a public source URL or a file path and commit. Never secrets or signed URLs. An assertion by another bot is not independent verification."})),
   content: TrimmedNonEmptyString.annotate({
     description:
-      "One fact or rule per entry, as one self-contained sentence, dated when it can change (e.g. '(2026-10-02) Backend runs Opus 5.5.'), under about 300 characters.",
+      "For notes, supply temporalKind: stable for durable facts, historical for past events, changing for current state (with observedAt and evidence). Only set verifiedAt after checking the source, never because another bot repeated a claim. One fact or rule per entry, as one self-contained sentence, dated when it can change (e.g. '(2026-10-02) Backend runs Opus 5.5.'), under about 300 characters.",
   }),
   userRequest: Schema.optional(
     TrimmedNonEmptyString.annotate({

@@ -1,3 +1,4 @@
+import { parseEvidence } from "./memoryEvidence.ts";
 import * as NodeCrypto from "node:crypto";
 
 import * as Cause from "effect/Cause";
@@ -438,6 +439,10 @@ const EntryRow = Schema.Struct({
   updatedAt: Schema.String,
   version: Schema.Number,
   appsJson: Schema.NullOr(Schema.String),
+  evidenceJson: Schema.NullOr(Schema.String),
+  observedAt: Schema.NullOr(Schema.String),
+  verifiedAt: Schema.NullOr(Schema.String),
+  conflict: Schema.NullOr(Schema.String),
 });
 const decodeEntryRows = Schema.decodeUnknownEffect(Schema.Array(EntryRow));
 const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -535,7 +540,8 @@ export const make = Effect.gen(function* () {
   // Shared and team entries; bot-only entries are left to the bot that owns them.
   const readEntries = sql`
     SELECT memory_id AS "memoryId", scope, scope_id AS "scopeId", kind, content, source,
-      created_at AS "createdAt", updated_at AS "updatedAt", version, apps_json AS "appsJson"
+      created_at AS "createdAt", updated_at AS "updatedAt", version, apps_json AS "appsJson",
+      evidence_json AS "evidenceJson", observed_at AS "observedAt", verified_at AS "verifiedAt", conflict
     FROM personal_memory
     WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope IN ('shared', 'team')
       AND kind IN ('note', 'preference')
@@ -554,6 +560,10 @@ export const make = Effect.gen(function* () {
         updatedAtMs: Date.parse(row.updatedAt),
         version: row.version,
         apps: row.appsJson,
+        evidence: parseEvidence(row.evidenceJson),
+        observedAt: row.observedAt,
+        verifiedAt: row.verifiedAt,
+        conflict: row.conflict,
       })),
     ),
   );
@@ -897,6 +907,7 @@ export const make = Effect.gen(function* () {
           auto: plans.flatMap((planned) => planned.auto),
           pending: plans.flatMap((planned) => planned.pending),
           left: plans.flatMap((planned) => planned.left),
+          conflicts: plans.flatMap((planned) => planned.conflicts),
           error: plans.find((planned) => planned.error !== null)?.error ?? null,
         };
         const reachOf = (decision: TidyDecision) => {
@@ -968,6 +979,24 @@ export const make = Effect.gen(function* () {
           );
           pending += 1;
           if (decision.action === "merge") mergesProposed += 1;
+        }
+        if (!dryRun) {
+          for (const conflict of proposal.conflicts) {
+            // A conflict annotates both claims, never elects a winner. Concurrent edits win.
+            yield* Effect.gen(function* () {
+              const rows = yield* sql<{ readonly memoryId: string; readonly version: number }>`
+                SELECT memory_id AS "memoryId", version FROM personal_memory
+                WHERE ${sql.in("memory_id", conflict.memoryIds)} AND kind = 'note'
+                  AND deleted_at IS NULL AND superseded_at IS NULL
+              `;
+              if (rows.length !== conflict.memoryIds.length || rows.some((row) => row.version !== versions.get(row.memoryId))) return;
+              yield* sql`
+                UPDATE personal_memory SET conflict = ${safeText(conflict.reason).slice(0, 600)}, version = version + 1
+                WHERE ${sql.in("memory_id", conflict.memoryIds)} AND kind = 'note'
+                  AND deleted_at IS NULL AND superseded_at IS NULL
+              `;
+            }).pipe(sql.withTransaction);
+          }
         }
         for (const decision of proposal.left) {
           yield* recordChange(

@@ -41,6 +41,14 @@ export const PersonalMemoryEntry = Schema.Struct({
   /** Where it came from: `user`, `bot:<botId>`, `task:<taskId>`. */
   source: Schema.String,
   sensitivity: Schema.String,
+  temporalKind: Schema.optional(Schema.NullOr(Schema.Literals(["stable", "historical", "changing"]))),
+  observedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  verifiedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  evidence: Schema.optional(Schema.Array(Schema.String)),
+  originThreadId: Schema.optional(Schema.NullOr(Schema.String)),
+  originMessageId: Schema.optional(Schema.NullOr(Schema.String)),
+  conflict: Schema.optional(Schema.NullOr(Schema.String)),
+
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   version: Schema.Number,
@@ -481,6 +489,7 @@ const TurnContextRule = Schema.Struct({
   apps: Schema.NullOr(Schema.Array(Schema.String)),
   /** False when the rule has been replaced or forgotten since the turn. */
   current: Schema.Boolean,
+  provenance: Schema.optional(Schema.String),
 });
 
 /**
@@ -521,6 +530,7 @@ export const PersonalMemoryTurnContext = Schema.Struct({
       feedback: Schema.NullOr(PersonalMemoryFeedbackSignal),
       /** False when it has been replaced, forgotten or deleted since. */
       current: Schema.Boolean,
+  provenance: Schema.optional(Schema.String),
     }),
   ),
   leftOut: Schema.Array(
@@ -529,6 +539,7 @@ export const PersonalMemoryTurnContext = Schema.Struct({
       kind: PersonalMemoryKind,
       snippet: Schema.String,
       reason: Schema.String,
+      provenance: Schema.optional(Schema.String),
     }),
   ),
   query: Schema.Struct({

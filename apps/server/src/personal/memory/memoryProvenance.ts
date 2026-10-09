@@ -106,7 +106,7 @@ export const makeMemoryProvenance = (core: MemoryCore) => {
         LIMIT 2000
       `;
       const readWeb = usedWebTool(tools);
-      return { origin, readWeb, threadReadWeb: threadReadWeb || readWeb };
+      return { origin, messageId: id, readWeb, threadReadWeb: threadReadWeb || readWeb };
     }).pipe(
       Effect.orElseSucceed(() => ({
         origin: "app" as const,

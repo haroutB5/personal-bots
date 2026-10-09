@@ -95,6 +95,7 @@ export function ContextUsedView({
                   {rule.current
                     ? plainMemoryText(rule.content)
                     : "(replaced or forgotten since this turn)"}
+                  <span className="mt-1 block text-xs break-words">{rule.provenance}</span>
                   {rule.apps !== null && rule.apps.length > 0 ? (
                     <span className="mt-0.5 block text-[12px] text-[var(--personal-text-tertiary)]">
                       Only: {appsLabel(rule.apps)}
@@ -160,6 +161,7 @@ export function ContextUsedView({
                   </p>
                   <p className="mt-1 text-[14px] leading-snug break-words text-[var(--personal-text)]">
                     {plainMemoryText(note.snippet)}
+                    <span className="mt-1 block text-xs break-words">{note.provenance}</span>
                   </p>
                   <ul className="mt-1.5 flex flex-wrap gap-1.5">
                     {/* Traces kept from before the server named it: a note with no other reason matched on words. */}
@@ -214,7 +216,7 @@ export function ContextUsedView({
                   {plainMemoryText(entry.snippet)}
                 </span>
                 <span className="block text-[12px] text-[var(--personal-text-tertiary)]">
-                  {noteKindLabel(entry.kind)} · {entry.reason}
+                  {noteKindLabel(entry.kind)} Ã‚Â· {entry.reason}
                 </span>
               </li>
             ))}
@@ -301,7 +303,7 @@ export function ContextUsed({
         <span>
           Context used
           {open && context !== null && context !== undefined
-            ? ` · ${contextUsedSummary(context)}`
+            ? ` Ã‚Â· ${contextUsedSummary(context)}`
             : ""}
         </span>
         <ChevronDown
@@ -316,7 +318,7 @@ export function ContextUsed({
             {turn.error !== null
               ? turn.error
               : turn.isPending
-                ? "Loading…"
+                ? "LoadingÃ¢â‚¬Â¦"
                 : "No memory was recorded for this turn (none was given, or it is older than 14 days)."}
           </p>
         ) : (

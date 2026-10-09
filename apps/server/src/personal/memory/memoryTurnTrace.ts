@@ -35,6 +35,7 @@ export const MemoryTurnTrace = Schema.Struct({
       why: Schema.Array(Schema.String),
       /** The opening of the entry as it was given. */
       snippet: Schema.String,
+      provenance: Schema.optional(Schema.String),
     }),
   ),
   leftOut: Schema.Array(
@@ -43,6 +44,7 @@ export const MemoryTurnTrace = Schema.Struct({
       kind: Schema.String,
       reason: Schema.String,
       snippet: Schema.String,
+      provenance: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -65,5 +67,5 @@ export function snippetOf(text: string, max: number): string {
   if (flat.length <= max) return flat;
   const cut = flat.slice(0, max);
   const space = cut.lastIndexOf(" ");
-  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`;
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}â€¦`;
 }

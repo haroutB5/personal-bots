@@ -62,6 +62,10 @@ export interface TidyEntry {
   readonly version: number;
   /** The apps column as stored (JSON array of slugs); null is global. */
   readonly apps: string | null;
+  readonly evidence?: ReadonlyArray<string>;
+  readonly observedAt?: string | null;
+  readonly verifiedAt?: string | null;
+  readonly conflict?: string | null;
 }
 
 export type TidyDecision =
@@ -82,12 +86,22 @@ export type TidyDecision =
       readonly action: "leave";
       readonly memoryIds: ReadonlyArray<string>;
       readonly reason: string;
+      readonly conflict?: boolean;
     };
 
 const normalised = (content: string) => content.trim().replace(/\s+/g, " ").toLowerCase();
 
 /** Newest first by when saved. */
 const newestFirst = (a: TidyEntry, b: TidyEntry) => b.createdAtMs - a.createdAtMs;
+
+/** Equal wording is not enough to discard a different observation or evidence trail. */
+const factMetadata = (entry: TidyEntry) => JSON.stringify({
+  source: entry.source,
+  evidence: [...(entry.evidence ?? [])].toSorted(),
+  observedAt: entry.observedAt ?? null,
+  verifiedAt: entry.verifiedAt ?? null,
+  conflict: entry.conflict ?? null,
+});
 
 /**
  * Same text (ignoring case and spacing) saved more than once: the newest copy
@@ -98,7 +112,7 @@ export function exactDuplicateDecisions(
 ): ReadonlyArray<TidyDecision> {
   const byText = new Map<string, Array<TidyEntry>>();
   for (const entry of entries) {
-    const key = `${entry.scope}:${entry.scopeId ?? ""}:${entry.kind}:${entry.apps ?? ""}\n${normalised(entry.content)}`;
+    const key = `${entry.scope}:${entry.scopeId ?? ""}:${entry.kind}:${entry.apps ?? ""}\n${normalised(entry.content)}\n${entry.kind === "note" ? factMetadata(entry) : ""}`;
     const twins = byText.get(key);
     if (twins === undefined) byText.set(key, [entry]);
     else twins.push(entry);
@@ -150,6 +164,8 @@ export function isAutoChange(
       older.kind === successor.kind &&
       older.scope === successor.scope &&
       older.scopeId === successor.scopeId &&
+      older.apps === successor.apps &&
+      (older.kind !== "note" || factMetadata(older) === factMetadata(successor)) &&
       older.createdAtMs < successor.createdAtMs &&
       normalised(older.content) === normalised(successor.content)
     );
@@ -178,12 +194,14 @@ export function validateDecisions(
   readonly auto: ReadonlyArray<TidyDecision>;
   readonly pending: ReadonlyArray<TidyDecision>;
   readonly left: ReadonlyArray<TidyDecision>;
+  readonly conflicts: ReadonlyArray<{ readonly memoryIds: ReadonlyArray<string>; readonly reason: string }>;
 } {
   const byId = new Map(entries.map((entry) => [entry.memoryId, entry]));
   const used = new Set<string>();
   const auto: Array<TidyDecision> = [];
   const pending: Array<TidyDecision> = [];
   const left: Array<TidyDecision> = [];
+  const conflicts: Array<{ memoryIds: ReadonlyArray<string>; reason: string }> = [];
   const changeLimit = Math.max(1, Math.floor(entries.length * MAX_CHANGED_SHARE));
   let changed = 0;
   const leave = (decision: TidyDecision, why: string) =>
@@ -195,6 +213,13 @@ export function validateDecisions(
 
   for (const decision of proposed) {
     if (decision.action === "leave") {
+      if (decision.conflict) {
+        const notes = [...new Set(decision.memoryIds)].map((id) => byId.get(id));
+        const first = notes[0];
+        if (notes.length >= 2 && first && decision.reason.trim() && !looksLikeSecret(decision.reason) && notes.every((entry) =>
+          entry?.kind === "note" && entry.scope === first.scope && entry.scopeId === first.scopeId && entry.apps === first.apps
+        )) conflicts.push({ memoryIds: notes.map((entry) => entry!.memoryId), reason: decision.reason });
+      }
       if (decision.memoryIds.some((id) => byId.has(id))) leave(decision, "");
       continue;
     }
@@ -232,12 +257,32 @@ export function validateDecisions(
       }
     }
     const touched = by === null ? ids : [...ids, by];
+    const first = byId.get(ids[0]!)!;
+    if (touched.some((id) => {
+      const entry = byId.get(id)!;
+      return entry.scope !== first.scope || entry.scopeId !== first.scopeId || entry.apps !== first.apps || entry.kind !== first.kind;
+    })) {
+      leave(decision, "Changes kind or scope; entries stay separate");
+      continue;
+    }
     if (touched.some((id) => used.has(id))) {
       leave(decision, "Overlaps an earlier change in this run");
       continue;
     }
     if (ids.some((id) => isRecentUserEdit(byId.get(id)!, nowMs))) {
       leave(decision, "You edited one of these in the last day; your edit wins");
+      continue;
+    }
+    if (first.kind === "note" && !isAutoChange(decision, byId)) {
+      const reason = "Factual claims require source verification; saved recency is not proof";
+      leave(decision, reason);
+      if (touched.length >= 2 && !looksLikeSecret(decision.reason)) {
+        conflicts.push({ memoryIds: touched, reason: `${reason} (${decision.reason})` });
+      }
+      continue;
+    }
+    if (first.kind === "preference" && by !== null && ids.some((id) => byId.get(id)!.createdAtMs >= byId.get(by)!.createdAtMs)) {
+      leave(decision, "The latest user instruction wins; an older rule cannot replace it");
       continue;
     }
     if (changed + ids.length > changeLimit) {
@@ -276,7 +321,7 @@ export function validateDecisions(
     if (isAuto) auto.push(accepted);
     else pending.push(accepted);
   }
-  return { auto, pending, left };
+  return { auto, pending, left, conflicts };
 }
 
 /** The most entries put in front of the model at once (newest kept). */
@@ -320,6 +365,11 @@ export function buildTidyPrompt(input: {
       kind: entry.kind,
       saved: localDay(entry.createdAtMs),
       text: entry.content.replace(/\s+/g, " "),
+      source: entry.source,
+      evidence: entry.evidence ?? [],
+      observedAt: entry.observedAt ?? null,
+      verifiedAt: entry.verifiedAt ?? null,
+      conflict: entry.conflict ?? null,
     });
   });
   const prompt = [
@@ -331,15 +381,16 @@ export function buildTidyPrompt(input: {
     "ENTRIES>>>",
     "",
     "Propose operations on these entries only, by ref:",
-    '- "supersede" with by = a ref: the older entries (memoryIds) are fully covered or contradicted by a NEWER entry on the same subject (by), which stays word for word. Example: an older list of which model each bot runs, when a newer list covers the same bots; a rule later restated or changed.',
-    '- "supersede" with by = null: the entry says itself it stopped applying, and the other entries or the app version show that happened (e.g. "being built in 1.47.3" while the app is past 1.47.3). It is made at once, and the owner can undo it: propose it only when the entry says so itself.',
-    '- "merge": two or more entries of the same kind state the same fact or rule, each with details worth keeping. content: one entry that keeps every detail still true, starts with the newest date it carries, under 300 characters where possible. It is made at once, and the owner can undo it: merge only entries that really state the same thing, and never change what a rule asks for.',
+    '- "supersede" with by = a ref: preferences only, when a NEWER user instruction on the same subject replaces an older rule. The latest user instruction wins. Notes may only supersede exact duplicates with identical evidence and observation metadata.',
+    '- "supersede" with by = null: preferences only, when the rule itself explicitly says it stopped applying. Never retire a factual claim or historical event based on a newer saved date or the app version.',
+    '- "merge": preferences only, keeping the user\'s own wording and all constraints. Never merge factual notes: preserve their individual evidence and observation dates.',
+    '- "conflict": factual notes that disagree or might supersede one another. Name every involved ref, explain what source must be checked, and keep both claims and their evidence. A later saved date is not evidence of truth. Only a source-checked correction can resolve a factual conflict.',
     '- "leave": entries you looked at and are unsure about, with why.',
     "Rules:",
     "- Only list entries you change or are unsure about. Entries you do not mention stay as they are.",
     "- Never put the same ref in two operations. Never invent refs.",
     "- Same subject only: entries that share words but are about different people, apps, bots or decisions stay separate.",
-    "- Prefer supersede over merge whenever the newer entry already says everything that is still true.",
+    "- For preferences, prefer supersede over merge when the newer user instruction covers the older one. For facts, do not choose a winner from recency, confidence, or a bare evidence reference: leave both claims and mark the conflict until a source resolves it.",
     "- Chat wrap-ups and dated logs of past events are history: leave them unless two say the same thing. Never archive a short single fact in favour of a long wrap-up that mentions it; the short fact is the better memory.",
     "- Never change a note into a preference. Never invent facts. Never copy a password, token or key.",
     "- Every operation needs a short reason a person can check.",
@@ -351,7 +402,7 @@ export function buildTidyPrompt(input: {
 export const TidyJudgeOutput = Schema.Struct({
   decisions: Schema.Array(
     Schema.Struct({
-      action: Schema.Literals(["merge", "supersede", "leave"]),
+      action: Schema.Literals(["merge", "supersede", "leave", "conflict"]),
       memoryIds: Schema.Array(Schema.String),
       by: Schema.optional(Schema.NullOr(Schema.String)),
       content: Schema.optional(Schema.NullOr(Schema.String)),
@@ -389,6 +440,8 @@ export function decisionsFromJudge(
         };
       case "leave":
         return { action: "leave", memoryIds, reason: decision.reason };
+      case "conflict":
+        return { action: "leave", memoryIds, reason: decision.reason, conflict: true };
     }
   });
 }

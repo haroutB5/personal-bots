@@ -66,14 +66,14 @@ describe("exactDuplicateDecisions", () => {
 
 describe("validateDecisions", () => {
   const entries = [
-    entry("a", "Rule A", { createdAtMs: NOW - 9 * DAY }),
-    entry("b", "Rule A, restated", { createdAtMs: NOW - 3 * DAY }),
-    entry("c", "Rule C", { createdAtMs: NOW - 8 * DAY }),
-    entry("d", "Rule D", { createdAtMs: NOW - 2 * DAY }),
+    entry("a", "Rule A", { kind: "preference", createdAtMs: NOW - 9 * DAY }),
+    entry("b", "Rule A, restated", { kind: "preference", createdAtMs: NOW - 3 * DAY }),
+    entry("c", "Rule C", { kind: "preference", createdAtMs: NOW - 8 * DAY }),
+    entry("d", "Rule D", { kind: "preference", createdAtMs: NOW - 2 * DAY }),
     entry("e", "Rule E", { createdAtMs: NOW - 1 * DAY }),
-    entry("f", "Rule F", { createdAtMs: NOW - 7 * DAY }),
+    entry("f", "Rule F", { kind: "preference", createdAtMs: NOW - 7 * DAY }),
     entry("p", "Pref P", { kind: "preference", createdAtMs: NOW - 1 * DAY }),
-    entry("g", "Rule G"),
+    entry("g", "Rule G", { kind: "preference" }),
   ];
 
   it("archives on its own only an exact older copy (case and spacing aside); everything else waits for approval", () => {
@@ -107,7 +107,7 @@ describe("validateDecisions", () => {
       {
         action: "merge" as const,
         memoryIds: ["c", "d"],
-        content: "Rules C and D.",
+        content: "Rule C. Rule D.",
         reason: "Same rule.",
       },
       { action: "supersede" as const, memoryIds: ["f"], by: null, reason: "Says it ended." },
@@ -137,20 +137,21 @@ describe("validateDecisions", () => {
     ).toBeLessThanOrEqual(MAX_AUTO_PER_NIGHT);
   });
 
-  it("asks first when the successor is older, or of another kind", () => {
+  it("leaves an older successor and changes of kind", () => {
     const result = validateDecisions(
       entries,
       [
         { action: "supersede", memoryIds: ["d"], by: "c", reason: "Older wins?" },
-        { action: "supersede", memoryIds: ["f"], by: "p", reason: "A note made a rule." },
+        { action: "supersede", memoryIds: ["e"], by: "p", reason: "A note made a rule." },
       ],
       NOW,
     );
     expect(result.auto).toEqual([]);
-    expect(result.pending).toHaveLength(2);
+    expect(result.pending).toHaveLength(0);
+    expect(result.left).toHaveLength(2);
   });
 
-  it("asks first before folding a short fact into a long wrap-up", () => {
+  it("preserves a short fact instead of folding it into a long wrap-up", () => {
     const withWrapUp = [
       ...entries,
       entry("w", `Chat wrap-up: ${"details ".repeat(120)}home has hard floors.`, {
@@ -159,11 +160,12 @@ describe("validateDecisions", () => {
     ];
     const result = validateDecisions(
       withWrapUp,
-      [{ action: "supersede", memoryIds: ["g"], by: "w", reason: "Covered by the wrap-up." }],
+      [{ action: "supersede", memoryIds: ["e"], by: "w", reason: "Covered by the wrap-up." }],
       NOW,
     );
     expect(result.auto).toEqual([]);
-    expect(result.pending).toHaveLength(1);
+    expect(result.pending).toHaveLength(0);
+    expect(result.conflicts[0]?.memoryIds).toEqual(["e", "w"]);
   });
 
   it("never merges a note with a preference", () => {
@@ -210,7 +212,7 @@ describe("validateDecisions", () => {
         { action: "merge", memoryIds: ["b", "c"], content: "B and C.", reason: "Overlaps." },
         { action: "merge", memoryIds: ["c", "d"], content: "token: abc123", reason: "Leaky." },
         { action: "supersede", memoryIds: ["c", "f"], by: "d", reason: "Fine." },
-        { action: "supersede", memoryIds: ["e", "g"], by: null, reason: "Too many." },
+        { action: "supersede", memoryIds: ["p", "g"], by: null, reason: "Too many." },
       ],
       NOW,
     );
@@ -254,6 +256,60 @@ describe("validateDecisions", () => {
 });
 
 describe("prompt and model output", () => {
+  it("keeps conflicting factual claims until a source-checked correction, even with autoAll", () => {
+    const facts = [
+      entry("old", "The balance is £500.", { evidence: ["https://example.com/statement/1"] }),
+      entry("new", "The balance is £800.", { createdAtMs: NOW - DAY, evidence: ["https://example.com/statement/2"] }),
+    ];
+    for (const decision of [
+      { action: "supersede" as const, memoryIds: ["old"], by: "new", reason: "Saved more recently." },
+      { action: "merge" as const, memoryIds: ["old", "new"], content: "The balance is £800.", reason: "Newest wins." },
+    ]) {
+      const result = validateDecisions(facts, [decision], NOW, undefined, { autoAll: true });
+      expect(result.auto).toEqual([]);
+      expect(result.pending).toEqual([]);
+      expect(result.conflicts[0]?.memoryIds).toEqual(["old", "new"]);
+      expect(result.left[0]?.reason).toContain("saved recency is not proof");
+    }
+    expect(facts[0]?.evidence).toEqual(["https://example.com/statement/1"]);
+    const retired = validateDecisions(facts, [{ action: "supersede", memoryIds: ["old"], by: null, reason: "Old." }], NOW, undefined, { autoAll: true });
+    expect(retired.auto).toEqual([]);
+  });
+
+  it("never deduplicates distinct evidence or observation dates, or crosses app scope", () => {
+    const facts = [
+      entry("old", "Service is healthy.", { observedAt: "2026-09-20T00:00:00Z", evidence: ["https://example.com/check/1"] }),
+      entry("new", "Service is healthy.", { createdAtMs: NOW - DAY, observedAt: "2026-09-21T00:00:00Z", evidence: ["https://example.com/check/2"] }),
+    ];
+    expect(exactDuplicateDecisions(facts)).toEqual([]);
+    expect(validateDecisions(facts, [{ action: "supersede", memoryIds: ["old"], by: "new", reason: "Same text." }], NOW, undefined, { autoAll: true }).auto).toEqual([]);
+    const scoped = facts.map((fact, index) => ({ ...fact, apps: index === 0 ? '["hbots"]' : '["matchday"]' }));
+    const result = validateDecisions(scoped, [{ action: "supersede", memoryIds: ["old"], by: "new", reason: "Same text." }], NOW, undefined, { autoAll: true });
+    expect(result.auto).toEqual([]);
+    expect(result.conflicts).toEqual([]);
+    expect(result.left[0]?.reason).toContain("scope");
+  });
+
+  it("maps explicit conflicts to durable markers and includes provenance in judge data", () => {
+    const facts = [
+      entry("old", "Service is healthy.", { evidence: ["https://example.com/check"], observedAt: "2026-09-20T00:00:00Z", verifiedAt: "2026-09-20T00:01:00Z", conflict: "Check current service health." }),
+      entry("new", "Service is down."),
+    ];
+    const { prompt, refs } = buildTidyPrompt({ entries: facts, todayIso: "2026-10-02", appVersion: null });
+    expect(prompt).toContain('"source":"bot:cto"');
+    expect(prompt).toContain('"evidence":["https://example.com/check"]');
+    expect(prompt).toContain('"observedAt":"2026-09-20T00:00:00Z"');
+    expect(prompt).toContain('"verifiedAt":"2026-09-20T00:01:00Z"');
+    expect(prompt).toContain('"conflict":"Check current service health."');
+    expect(prompt).toContain("The latest user instruction wins");
+    const decisions = decisionsFromJudge({ decisions: [{ action: "conflict", memoryIds: ["E1", "E2"], reason: "Check the service health endpoint." }] }, refs);
+    const result = validateDecisions(facts, decisions, NOW);
+    expect(result.conflicts).toEqual([{ memoryIds: ["old", "new"], reason: "Check the service health endpoint." }]);
+    expect(result.auto).toEqual([]);
+    const invalid = validateDecisions(facts, [{ action: "leave", conflict: true, memoryIds: ["old", "unknown"], reason: "Untrusted ref." }], NOW);
+    expect(invalid.conflicts).toEqual([]);
+  });
+
   it("passes entries as quoted data with dates and maps refs back, keeping unknown refs visible", () => {
     const { prompt, refs } = buildTidyPrompt({
       entries: [

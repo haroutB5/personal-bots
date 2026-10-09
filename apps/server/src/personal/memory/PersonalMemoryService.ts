@@ -140,6 +140,7 @@ export class PersonalMemoryService extends Context.Service<
      */
     readonly noteOrigin: (threadId: ThreadId) => Effect.Effect<{
       readonly origin: PersonalMemoryNoteOrigin;
+      readonly messageId?: string | undefined;
       readonly readWeb: boolean;
       /** The same for any turn of the thread: a page read earlier can still steer what a bot writes now. */
       readonly threadReadWeb: boolean;

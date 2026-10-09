@@ -1,3 +1,4 @@
+import { parseEvidence } from "./memoryEvidence.ts";
 // The memory service's shared parts: its dependencies, how rows are read and filtered by scope, the full-text
 // helpers and the in-memory state of a running server (what each chat's session was last given).
 import * as Effect from "effect/Effect";
@@ -63,7 +64,9 @@ export const makeMemoryCore = () =>
     const decodeAll = (rows: ReadonlyArray<unknown>) =>
       Effect.forEach(rows, (row) =>
         decodeMemoryRow(row).pipe(
-          Effect.map(({ appsJson, demotedSignal, ...entry }): PersonalMemoryEntry => ({
+          Effect.map(({ appsJson, demotedSignal, evidenceJson, temporalKind, ...entry }): PersonalMemoryEntry => ({
+            temporalKind: temporalKind === "stable" || temporalKind === "historical" || temporalKind === "changing" ? temporalKind : null,
+            evidence: parseEvidence(evidenceJson),
             ...entry,
             apps: parseAppsJson(appsJson),
             demoted: demotedSignal,

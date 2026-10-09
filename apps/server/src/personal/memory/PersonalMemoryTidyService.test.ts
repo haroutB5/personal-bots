@@ -90,11 +90,11 @@ const seed = Effect.gen(function* () {
       return entry.memoryId;
     });
   return {
-    oldModels: yield* save("Dev team models (27 Sep): everyone on Opus 5.5 medium.", 5),
-    newModels: yield* save("Dev team models (1 Oct): Backend Opus 5.5, QA on GPT-6.1 Sol.", 1),
+    oldModels: yield* save("Dev team models (27 Sep): use Opus 5.5 medium.", 5, { kind: "preference" }),
+    newModels: yield* save("Dev team models (1 Oct): use Backend Opus 5.5, QA GPT-6.1 Sol.", 1, { kind: "preference" }),
     capA: yield* save("At most 5 bots run at once, per bot.", 6, { kind: "preference" }),
     capB: yield* save("At most 5 bots run at once in total.", 5, { kind: "preference" }),
-    building: yield* save("hbots Back rule, being built in 1.47.3.", 5),
+    building: yield* save("Until 1.47.3, follow the temporary Back rule being built.", 5, { kind: "preference" }),
     unsure: yield* save("Crypto prices in USD.", 4, { kind: "preference" }),
     tea: yield* save("Favourite drink is green tea.", 20),
     pasta: yield* save("Cooks 90 g of dry pasta per portion.", 20),

@@ -1,3 +1,4 @@
+import { memoryProvenanceLabel } from "../../../personal/memory/memoryEvidence.ts";
 import * as NodeCrypto from "node:crypto";
 
 import {
@@ -445,6 +446,12 @@ const make = Effect.gen(function* () {
         kind: "note",
         content: input.content,
         source: botNoteSource(botId, from.origin, from.readWeb),
+        temporalKind: input.temporalKind,
+        observedAt: input.observedAt,
+        verifiedAt: input.verifiedAt,
+        evidence: input.evidence,
+        originThreadId: threadId,
+        originMessageId: from.messageId,
         replaces: replaceIds,
         actorBotId: botId,
         actorTeam: team ?? undefined,
@@ -833,6 +840,15 @@ const make = Effect.gen(function* () {
             scope: entry.scope,
             content: entry.content,
             updatedAt: DateTime.formatIso(entry.updatedAt),
+            source: entry.source,
+            freshness: memoryProvenanceLabel(entry),
+            outdated: entry.demoted === "outdated",
+            evidence: [...(entry.evidence ?? [])],
+            observedAt: entry.observedAt ?? null,
+            verifiedAt: entry.verifiedAt ?? null,
+            conflict: entry.conflict ?? null,
+            originThreadId: entry.originThreadId ?? null,
+            originMessageId: entry.originMessageId ?? null,
             ...(entry.apps == null ? {} : { apps: [...entry.apps] }),
           })),
         };
@@ -985,6 +1001,8 @@ const make = Effect.gen(function* () {
               kind: "preference",
               content: input.content,
               source: botRuleSource(botId, webSeen),
+              originThreadId: invocation.threadId,
+              originMessageId: origin.messageId,
               apps: input.apps ?? null,
               replaces: replaceIds,
               actorBotId: botId,

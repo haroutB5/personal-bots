@@ -609,7 +609,7 @@ describe("Context used: what a turn was given, and the owner's marks (1.60.41)",
       yield* recorded("hello", "m-rule");
       yield* memory.forget({ memoryId: old.memoryId, actorBotId: BOT_A });
       const view = yield* memory.turnContext({ threadId: THREAD_A, messageId: "m-rule" });
-      expect(view!.rules.items).toEqual([
+      expect(view!.rules.items).toMatchObject([
         { memoryId: old.memoryId, content: "Quote prices in USD.", apps: null, current: false },
       ]);
     }).pipe(Effect.provide(TestLayer)),
