@@ -3466,6 +3466,92 @@ const fallbackProviders = (claudeUsedPercent: number) => [
 ];
 
 it.effect(
+  "a task parked on exhausted Claude resumes once on recovered Codex, keeping the same task and claim guards",
+  () => {
+    const harness = makeHarness();
+    const providers: Array<unknown> = fallbackProviders(10);
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const fallback = Option.getOrThrow(
+        yield* Effect.serviceOption(PersonalModelFallback.PersonalModelFallback),
+      );
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("early-reset-task", "developer");
+      const thread = threadOf(root);
+      const turn = yield* beginTurn(harness, thread);
+      const now = yield* DateTime.now;
+      yield* waitOnProvider(harness, thread, turn, {
+        ...providerWait("rate_limited", now, 6 * 60 * 60_000),
+        provider: "codex",
+      });
+      yield* TestClock.adjust("2 seconds");
+      yield* service.sweep;
+      yield* service.drain;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      yield* postAttemptMessage(harness, root.taskId, thread, 2);
+      const at = DateTime.formatIso(yield* DateTime.now);
+      const second = TurnId.make("fallback-limited-turn");
+      yield* setSession(
+        harness,
+        makeSession({
+          threadId: thread,
+          status: "running",
+          activeTurnId: second,
+          providerInstanceId: "claudeAgent",
+          updatedAt: at,
+        }),
+      );
+      yield* TestClock.adjust("1 second");
+      const limitedAt = yield* DateTime.now;
+      yield* setSession(
+        harness,
+        makeSession({
+          threadId: thread,
+          status: "error",
+          activeTurnId: null,
+          providerInstanceId: "claudeAgent",
+          lastError: "Claude usage limit reached.",
+          providerRetry: providerWait("rate_limited", limitedAt, 3 * 60 * 60_000),
+          updatedAt: DateTime.formatIso(limitedAt),
+        }),
+      );
+      expect((yield* reload(root.taskId)).status).toBe("rate_limited");
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: botId("developer") })).fallbackActive,
+      ).toBeDefined();
+      const startsBefore = turnStarts(harness).length;
+      yield* TestClock.adjust("1 minute");
+      const checkedAt = DateTime.formatIso(yield* DateTime.now);
+      providers[0] = {
+        instanceId: "codex",
+        driver: "codex",
+        enabled: true,
+        installed: true,
+        status: "ready",
+        usageLimits: {
+          checkedAt,
+          windows: [{ id: "primary", kind: "weekly", label: "weekly", usedPercent: 5 }],
+        },
+      };
+      yield* fallback.sweep;
+      yield* service.sweep;
+      yield* service.drain;
+      yield* fallback.sweep;
+      yield* service.sweep;
+      yield* service.drain;
+      const starts = turnStarts(harness).slice(startsBefore);
+      expect(starts).toHaveLength(1);
+      expect(starts[0]?.modelSelection).toMatchObject({ instanceId: "codex", model: "gpt-test" });
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      const detail = yield* service.get({ taskId: root.taskId });
+      expect(detail.attempts).toHaveLength(3);
+      expect(detail.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, providers)));
+  },
+);
+
+it.effect(
   "a Codex limit on a task moves its bot to the fallback model and the task runs again at once",
   () => {
     const harness = makeHarness();

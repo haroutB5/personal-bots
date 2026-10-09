@@ -48,6 +48,7 @@ import {
   modelFallbackEnabledByEnv,
   usageRoom,
   type FallbackDecisionInput,
+  type SwitchBackInput,
 } from "./personalModelFallbackPolicy.ts";
 import { PERSONAL_CHAT_FALLBACK_RESUME_PROMPT } from "./personalChatResumePolicy.ts";
 import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
@@ -299,6 +300,92 @@ describe("helpers", () => {
   });
 });
 
+describe("confirmed early recovery", () => {
+  const now = NOW + 60_000;
+  const recovered = { ...usage([{ id: "primary", used: 5 }]), checkedAt: isoAt(now) };
+  const base: SwitchBackInput = {
+    killSwitchOn: true,
+    botFallbackEnabled: true,
+    nowMs: now,
+    startedAtMs: NOW,
+    resetAtMs: RESET,
+    home: HOME,
+    idle: true,
+    recoveryProviderReady: true,
+    homeProvider: snapshot("codex", "codex", recovered),
+  };
+  it("overrides a future reset only at idle, including unreported resets", () => {
+    expect(decideSwitchBack(base)).toEqual({ kind: "back", reason: "recovered" });
+    expect(decideSwitchBack({ ...base, idle: false })).toEqual({ kind: "wait" });
+    expect(decideSwitchBack({ ...base, resetAtMs: null })).toEqual({
+      kind: "back",
+      reason: "recovered",
+    });
+  });
+  it("rejects stale, failed, unavailable, missing, future and pre-hit readings", () => {
+    for (const limits of [
+      undefined,
+      { ...recovered, checkedAt: isoAt(NOW) },
+      { ...recovered, checkedAt: isoAt(now + 1) },
+      { ...recovered, checkedAt: "invalid" },
+      { ...recovered, refreshFailed: { at: isoAt(now) } },
+      { ...recovered, unavailable: { reason: "probeFailed" as const } },
+      { ...recovered, windows: [] },
+    ]) {
+      expect(decideSwitchBack({ ...base, homeProvider: { usageLimits: limits } })).toEqual({
+        kind: "wait",
+      });
+    }
+    expect(decideSwitchBack({ ...base, nowMs: now + 120_001 })).toEqual({ kind: "wait" });
+    expect(decideSwitchBack({ ...base, recoveryProviderReady: false })).toEqual({ kind: "wait" });
+  });
+  it("requires explicit room in the exhausted pool; expired spent windows are not early recovery", () => {
+    for (const windows of [
+      [{ id: "primary", used: 100, resetsAt: isoAt(NOW - 1) }],
+      [
+        { id: "primary", used: 5 },
+        { id: "secondary", used: 100 },
+      ],
+      [{ id: "seven_day_sonnet", used: 5 }],
+    ]) {
+      expect(
+        decideSwitchBack({
+          ...base,
+          homeProvider: { usageLimits: { ...usage(windows), checkedAt: isoAt(now) } },
+        }),
+      ).toEqual({ kind: "wait" });
+    }
+    const opus = {
+      ...base,
+      home: { instanceId: CLAUDE, model: "claude-opus-5-5" } as ModelSelection,
+      limitReason: "seven_day_opus",
+    };
+    expect(
+      decideSwitchBack({
+        ...opus,
+        homeProvider: {
+          usageLimits: { ...usage([{ id: "five_hour", used: 5 }]), checkedAt: isoAt(now) },
+        },
+      }),
+    ).toEqual({ kind: "wait" });
+    expect(
+      decideSwitchBack({
+        ...opus,
+        homeProvider: {
+          usageLimits: {
+            ...usage([
+              { id: "five_hour", used: 5 },
+              { id: "seven_day_opus", used: 5 },
+              { id: "seven_day_sonnet", used: 100 },
+            ]),
+            checkedAt: isoAt(now),
+          },
+        },
+      }),
+    ).toEqual({ kind: "back", reason: "recovered" });
+  });
+});
+
 // --- the service, over a real database ------------------------------------------
 
 const BOT = PersonalBotId.make("bot-it");
@@ -310,6 +397,7 @@ interface Harness {
   readonly refreshed: string[];
   readonly running: Set<string>;
   sequence: number;
+  onRefresh?: () => void;
 }
 
 const makeHarness = (): Harness => ({
@@ -343,6 +431,7 @@ const makeLayer = (harness: Harness, env: Record<string, string> = {}) =>
         refreshInstance: (instanceId: string) =>
           Effect.sync(() => {
             harness.refreshed.push(instanceId);
+            harness.onRefresh?.();
             return harness.providers;
           }),
       } as unknown as ProviderRegistry.ProviderRegistryShape),
@@ -871,3 +960,197 @@ it.effect("a late hit from the home provider is no longer treated as in flight",
     expect(yield* hit()).toEqual({ switched: false, skipped: "already_on_fallback" });
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect("recovery isolates old provider waits and rolls back a failed wake", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    yield* hit();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* bots.insertThreadLink({
+      botId: BOT,
+      threadId: ThreadId.make("chat-other-account"),
+      createdAt: DateTime.makeUnsafe(NOW),
+    });
+    yield* sql`INSERT INTO projection_thread_sessions (thread_id, status, runtime_mode, updated_at, provider_instance_id)
+      VALUES ('chat-other-account', 'error', 'full-access', ${isoAt(NOW)}, 'other-account')`;
+    yield* sql`INSERT INTO personal_chat_resumes (resume_id, thread_id, hit_key, provider, hit_at, resume_at, status)
+      VALUES ('own-wait', ${CHAT}, 'own-wait', 'claudeAgent', ${isoAt(NOW)}, ${isoAt(RESET)}, 'scheduled'),
+      ('other-wait', 'chat-other-account', 'other-wait', 'codex', ${isoAt(NOW)}, ${isoAt(RESET)}, 'scheduled')`;
+    yield* sql`INSERT INTO personal_tasks (
+      task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+      depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
+    ) VALUES
+      ('own-task', 'own-task', ${BOT}, 't', 'o', 'rate_limited', 'user', 'own-task', 0, 2, 5, ${isoAt(RESET)}, ${isoAt(NOW)}, ${isoAt(NOW)}, ${CHAT}),
+      ('other-task', 'other-task', ${BOT}, 't', 'o', 'rate_limited', 'user', 'other-task', 0, 2, 5, ${isoAt(RESET)}, ${isoAt(NOW)}, ${isoAt(NOW)}, 'chat-other-account')`;
+    const at = NOW + 60_000;
+    yield* TestClock.setTime(at);
+    harness.providers = [
+      snapshot("codex", "codex", { ...usage([{ id: "primary", used: 5 }]), checkedAt: isoAt(at) }),
+    ];
+    yield* sql.unsafe(
+      "CREATE TRIGGER fail_recovery_wake BEFORE UPDATE ON personal_chat_resumes BEGIN SELECT RAISE(ABORT, 'test wake failure'); END",
+    );
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(1);
+    expect(yield* sql`SELECT available_at FROM personal_tasks WHERE task_id = 'own-task'`).toEqual([
+      { available_at: isoAt(RESET) },
+    ]);
+    yield* sql.unsafe("DROP TRIGGER fail_recovery_wake");
+    yield* service.sweep;
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+    expect(yield* sql`SELECT task_id, available_at FROM personal_tasks ORDER BY task_id`).toEqual([
+      { task_id: "other-task", available_at: isoAt(RESET) },
+      { task_id: "own-task", available_at: isoAt(at) },
+    ]);
+    expect(
+      yield* sql`SELECT resume_id, resume_at FROM personal_chat_resumes ORDER BY resume_id`,
+    ).toEqual([
+      { resume_id: "other-wait", resume_at: isoAt(RESET) },
+      { resume_id: "own-wait", resume_at: isoAt(at) },
+    ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+for (const provider of ["codex", "claudeAgent"] as const) {
+  it.effect(
+    `${provider} early redemption is found by a probe despite a future reset; busy waits, idle returns once`,
+    () => {
+      const harness = makeHarness();
+      const home = provider === "codex" ? HOME : FALLBACK;
+      const fallback = provider === "codex" ? FALLBACK : HOME;
+      const recoveryAt = NOW + 60_000;
+      return Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        yield* seedBot();
+        const bots = yield* PersonalBotRepository.PersonalBotRepository;
+        yield* bots.updateBot({
+          botId: BOT,
+          modelSelection: home,
+          fallbackModelSelection: fallback,
+          updatedAt: DateTime.makeUnsafe(NOW),
+        });
+        yield* bots.startFallback({
+          botId: BOT,
+          fallbackModel: fallback,
+          fromInstanceId: home.instanceId,
+          fromProvider: provider,
+          reason: "usage_limit",
+          startedAt: isoAt(NOW),
+          resetAt: isoAt(RESET),
+          noticeThreadId: CHAT,
+        });
+        const service = yield* PersonalModelFallback.PersonalModelFallback;
+        harness.providers = [
+          snapshot(
+            home.instanceId,
+            provider,
+            usage([{ id: "primary", used: 100, resetsAt: isoAt(RESET) }]),
+          ),
+        ];
+        harness.onRefresh = () => {
+          harness.providers = [
+            snapshot(home.instanceId, provider, {
+              ...usage([{ id: "primary", used: 5 }]),
+              checkedAt: isoAt(recoveryAt),
+            }),
+          ];
+        };
+        yield* TestClock.setTime(recoveryAt);
+        yield* setBusy(true);
+        yield* service.sweep;
+        expect(harness.refreshed).toEqual([home.instanceId]);
+        expect(yield* bots.listFallbackStates()).toHaveLength(1);
+        yield* setBusy(false);
+        yield* service.sweep;
+        yield* service.sweep;
+        expect(yield* bots.listFallbackStates()).toHaveLength(0);
+        expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(home);
+        expect(lines(harness)).toHaveLength(1);
+        expect(yield* hit({ instanceId: home.instanceId })).toMatchObject({ skipped: "cooldown" });
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+}
+
+it.effect("stale or unavailable primary and another account's recovery keep the fallback", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    yield* hit();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    const at = NOW + 60_000;
+    yield* TestClock.setTime(at);
+    const fresh = { ...usage([{ id: "primary", used: 5 }]), checkedAt: isoAt(at) };
+    for (const own of [
+      undefined,
+      usage([{ id: "primary", used: 5 }]),
+      { ...fresh, refreshFailed: { at: isoAt(at) } },
+      { ...fresh, unavailable: { reason: "unsupported" as const } },
+      {
+        ...fresh,
+        windows: [
+          {
+            id: "primary",
+            kind: "weekly" as const,
+            label: "primary",
+            usedPercent: 100,
+            resetsAt: isoAt(RESET),
+          },
+        ],
+      },
+    ]) {
+      harness.providers = [
+        snapshot("codex", "codex", own),
+        snapshot("other-account", "codex", fresh),
+      ];
+      yield* service.sweep;
+      expect(yield* bots.listFallbackStates()).toHaveLength(1);
+    }
+    expect(lines(harness)).toHaveLength(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a chat parked on the exhausted fallback resumes exactly once on the recovered primary",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      yield* hit();
+      const sql = yield* SqlClient.SqlClient;
+      const fallback = yield* PersonalModelFallback.PersonalModelFallback;
+      const chat = yield* PersonalChatResume.PersonalChatResume;
+      yield* sql`
+      INSERT INTO personal_chat_resumes (resume_id, thread_id, hit_key, provider, hit_at, resume_at, status, fallback)
+      VALUES ('fallback-wait', ${CHAT}, 'fallback-wait', 'claudeAgent', ${isoAt(NOW)}, ${isoAt(RESET)}, 'scheduled', 0)
+    `;
+      yield* sql`UPDATE projection_thread_sessions SET provider_instance_id = 'claudeAgent' WHERE thread_id = ${CHAT}`;
+      const at = NOW + 60_000;
+      yield* TestClock.setTime(at);
+      harness.providers = [
+        snapshot("codex", "codex", {
+          ...usage([{ id: "primary", used: 5 }]),
+          checkedAt: isoAt(at),
+        }),
+      ];
+      yield* fallback.sweep;
+      yield* chat.sweep;
+      yield* fallback.sweep;
+      yield* chat.sweep;
+      const starts = harness.dispatched.filter((command) => command.type === "thread.turn.start");
+      expect(starts).toHaveLength(1);
+      expect(starts[0]?.modelSelection).toEqual(HOME);
+      expect(
+        yield* sql`SELECT status FROM personal_chat_resumes WHERE resume_id = 'fallback-wait'`,
+      ).toEqual([{ status: "resumed" }]);
+    }).pipe(Effect.provide(makeChatLayer(harness)));
+  },
+);

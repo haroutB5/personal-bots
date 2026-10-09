@@ -363,9 +363,9 @@ export const make = Effect.gen(function* () {
 
   const probe = (bot: PersonalBot, instanceId: string, now: number) =>
     Effect.gen(function* () {
-      const last = lastProbeAtMs.get(bot.botId);
+      const last = lastProbeAtMs.get(instanceId);
       if (last !== undefined && now - last < PROBE_MIN_GAP_MS) return;
-      lastProbeAtMs.set(bot.botId, now);
+      lastProbeAtMs.set(instanceId, now);
       yield* providers
         .refreshInstance(instanceId as ProviderInstanceId)
         .pipe(Effect.timeoutOption(PROBE_TIMEOUT), Effect.asVoid);
@@ -387,7 +387,37 @@ export const make = Effect.gen(function* () {
     now: number,
   ) =>
     Effect.gen(function* () {
-      const ended = yield* bots.endFallback(state.botId);
+      // Persist the switch and wakeups together: a restart cannot lose the
+      // release after the fallback row has disappeared. Workers keep ownership
+      // of claiming tasks and chats; this never starts a turn itself.
+      const ended = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          if (!(yield* botIsIdle(state.botId))) return false;
+          const ended = yield* bots.endFallback(state.botId);
+          if (!ended || bot === undefined || reason === "disabled") return ended;
+          yield* sql`
+          UPDATE personal_tasks SET available_at = ${iso(now)}
+          WHERE bot_id = ${state.botId} AND status = 'rate_limited'
+            AND (available_at IS NULL OR available_at > ${iso(now)})
+            AND NOT EXISTS (
+              SELECT 1 FROM projection_thread_sessions s WHERE s.thread_id = personal_tasks.thread_id
+                AND s.provider_instance_id IS NOT NULL
+                AND s.provider_instance_id NOT IN (${state.fromInstanceId}, ${state.fallbackModel.instanceId})
+            )
+        `;
+          yield* sql`
+          UPDATE personal_chat_resumes SET resume_at = ${iso(now)}, fallback = 0
+          WHERE status = 'scheduled' AND resume_at > ${iso(now)}
+            AND thread_id IN (SELECT thread_id FROM personal_bot_threads WHERE bot_id = ${state.botId})
+            AND NOT EXISTS (
+              SELECT 1 FROM projection_thread_sessions s WHERE s.thread_id = personal_chat_resumes.thread_id
+                AND s.provider_instance_id IS NOT NULL
+                AND s.provider_instance_id NOT IN (${state.fromInstanceId}, ${state.fallbackModel.instanceId})
+            )
+        `;
+          return ended;
+        }),
+      );
       if (!ended) return;
       lastSwitchBackAtMs.set(state.botId, now);
       yield* Effect.logInfo("personal model fallback ended", {
@@ -408,7 +438,7 @@ export const make = Effect.gen(function* () {
   const sweepOnce = Effect.gen(function* () {
     const states = yield* bots.listFallbackStates();
     if (states.length === 0) return;
-    const now = yield* nowMs;
+    let now = yield* nowMs;
     const on = yield* killSwitchOn;
     for (const state of states) {
       const botOption = yield* bots.getBotById({ botId: state.botId });
@@ -421,6 +451,10 @@ export const make = Effect.gen(function* () {
       const enabled = bot.fallback?.enabled !== false;
       const startedAtMs = Date.parse(state.startedAt);
       const resetAtMs = state.resetAt === null ? null : Date.parse(state.resetAt);
+      // Early redemption can happen outside this app. Probe on the same bounded
+      // cadence even when the recorded reset is still days away.
+      if (on && enabled) yield* probe(bot, bot.modelSelection.instanceId, now);
+      now = yield* nowMs;
       const idle = yield* botIsIdle(state.botId);
       const evaluate = (list: ReadonlyArray<ServerProvider>) =>
         decideSwitchBack({
@@ -430,17 +464,18 @@ export const make = Effect.gen(function* () {
           startedAtMs,
           resetAtMs: resetAtMs !== null && Number.isFinite(resetAtMs) ? resetAtMs : null,
           home: bot.modelSelection,
+          recoveryProviderReady:
+            state.fromInstanceId === bot.modelSelection.instanceId &&
+            providerReady(
+              list.find((candidate) => candidate.instanceId === bot.modelSelection.instanceId),
+            ),
+          limitReason: state.reason,
           homeProvider: list.find(
             (candidate) => candidate.instanceId === bot.modelSelection.instanceId,
           ),
           idle,
         });
-      let decision = evaluate(yield* providers.getProviders);
-      // The reset has probably passed: ask the provider once more before going back.
-      if (decision.kind === "back" && decision.reason !== "disabled") {
-        yield* probe(bot, bot.modelSelection.instanceId, now);
-        decision = evaluate(yield* providers.getProviders);
-      }
+      const decision = evaluate(yield* providers.getProviders);
       if (decision.kind === "extend") {
         yield* bots.updateFallbackReset({ botId: state.botId, resetAt: iso(decision.resetAtMs) });
         continue;

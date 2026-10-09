@@ -28,6 +28,8 @@ export const FALLBACK_DEFAULT_HOLD_MS = 5 * 60 * 60_000;
 export const FALLBACK_MAX_RESET_MS = 8 * 24 * 60 * 60_000;
 /** After a switch back, a limit hit within this time is not switched again (no ping-pong). */
 export const FALLBACK_RESWITCH_COOLDOWN_MS = 60_000;
+/** Only recent, successful readings can override a future recorded reset. */
+export const FALLBACK_RECOVERY_FRESH_MS = 2 * 60_000;
 
 export type ModelFamily = "opus" | "sonnet" | "haiku" | "fable" | "other";
 
@@ -192,7 +194,10 @@ export type SwitchBackDecision =
   | { readonly kind: "wait" }
   /** The reset moved: remember the later time. */
   | { readonly kind: "extend"; readonly resetAtMs: number }
-  | { readonly kind: "back"; readonly reason: "reset" | "recheck" | "hold_over" | "disabled" };
+  | {
+      readonly kind: "back";
+      readonly reason: "recovered" | "reset" | "recheck" | "hold_over" | "disabled";
+    };
 
 export interface SwitchBackInput {
   readonly killSwitchOn: boolean;
@@ -206,6 +211,41 @@ export interface SwitchBackInput {
   readonly homeProvider: Pick<ServerProvider, "usageLimits"> | undefined;
   /** No turn of the bot is running and no task is running for it. */
   readonly idle: boolean;
+  /** Service verifies that this is still the original, ready provider instance. */
+  readonly recoveryProviderReady?: boolean;
+  readonly limitReason?: string | null;
+}
+
+export function primaryUsageRecovered(input: SwitchBackInput): boolean {
+  const usage = input.homeProvider?.usageLimits;
+  if (
+    !input.recoveryProviderReady ||
+    usage === undefined ||
+    usage.unavailable ||
+    usage.refreshFailed
+  ) {
+    return false;
+  }
+  const checked = Date.parse(usage.checkedAt);
+  if (
+    !Number.isFinite(checked) ||
+    checked <= input.startedAtMs ||
+    checked > input.nowMs ||
+    input.nowMs - checked > FALLBACK_RECOVERY_FRESH_MS ||
+    input.nowMs - input.startedAtMs < FALLBACK_SWITCH_BACK_GRACE_MS
+  )
+    return false;
+  const windows = usage.windows.filter((window) =>
+    windowAppliesToModel(window.id, input.home.model),
+  );
+  // A sparse update for another pool is not proof that the exhausted pool recovered.
+  return (
+    windows.some((window) => limitPool(window.id) === limitPool(input.limitReason)) &&
+    windows.every(
+      (window) =>
+        Number.isFinite(window.usedPercent) && window.usedPercent < FALLBACK_LIMITED_PERCENT,
+    )
+  );
 }
 
 /**
@@ -219,6 +259,10 @@ export interface SwitchBackInput {
 export function decideSwitchBack(input: SwitchBackInput): SwitchBackDecision {
   const off = !input.killSwitchOn || !input.botFallbackEnabled;
   if (off) return input.idle ? { kind: "back", reason: "disabled" } : { kind: "wait" };
+
+  if (primaryUsageRecovered(input)) {
+    return input.idle ? { kind: "back", reason: "recovered" } : { kind: "wait" };
+  }
 
   const readings = usageRoom(input.homeProvider?.usageLimits, input.home.model, input.nowMs);
   if (input.resetAtMs !== null) {
