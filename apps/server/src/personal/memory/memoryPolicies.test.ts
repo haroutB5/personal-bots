@@ -1,3 +1,4 @@
+import { memoryLine } from "./memoryBlock.ts";
 // Tests for the pure policies extracted from PersonalMemoryService in 1.66.2: who sees and replaces an entry, where a
 // note came from and which Undo it gets, which apps a chat carries and when the rules list is resent, how memory ages.
 import { describe, expect, it } from "@effect/vitest";
@@ -114,6 +115,16 @@ describe("memoryScopePolicy", () => {
     // Oldest of the kept first: the newest rule is last.
     expect(capped.kept.at(-1)?.memoryId).toBe("r-0");
     expect(capped.kept[0]?.memoryId).toBe(`r-${PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES - 1}`);
+  });
+
+  it("counts the complete rendered rule line against the character cap", () => {
+    const rule = entry({
+      id: "near-cap",
+      kind: "preference",
+      content: "x".repeat(PERSONAL_MEMORY_PREFERENCE_MAX_CHARS - 5),
+    });
+    expect(memoryLine(rule).length).toBeGreaterThan(PERSONAL_MEMORY_PREFERENCE_MAX_CHARS);
+    expect(capPreferences([rule]).kept).toEqual([]);
   });
 
   it("capPreferences never lets a shorter older rule jump the queue past one that did not fit, and counts duplicates once", () => {

@@ -246,8 +246,6 @@ export const SearchMemoryResult = Schema.Struct({
       observedAt: Schema.NullOr(Schema.String),
       verifiedAt: Schema.NullOr(Schema.String),
       conflict: Schema.NullOr(Schema.String),
-      originThreadId: Schema.NullOr(Schema.String),
-      originMessageId: Schema.NullOr(Schema.String),
       /** App slugs a rule is limited to; absent for a global rule or a note. */
       apps: Schema.optional(Schema.Array(Schema.String)),
     }),
@@ -265,7 +263,7 @@ export const SaveMemoryInput = Schema.Struct({
   observedAt: Schema.optional(TrimmedNonEmptyString),
   verifiedAt: Schema.optional(TrimmedNonEmptyString),
   evidence: Schema.optional(
-    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(500)))
+    Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)))
       .check(Schema.isMaxLength(8))
       .annotate({
         description:

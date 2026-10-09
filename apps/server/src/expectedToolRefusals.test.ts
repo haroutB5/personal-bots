@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as AiError from "effect/unstable/ai/AiError";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -53,6 +54,29 @@ const logged = (effect: Effect.Effect<unknown, Error>) => {
 const toolFailed = (error: Error) => Effect.fail(error).pipe(Effect.tapCause(Effect.logError));
 
 describe("expected tool refusals in the log", () => {
+  it.effect("save_memory schema refusals are WARN without raw input or stack", () =>
+    Effect.gen(function* () {
+      const lines = yield* logged(
+        toolFailed(
+          AiError.make({
+            module: "Toolkit",
+            method: "save_memory.handle",
+            reason: new AiError.ToolParameterValidationError({
+              toolName: "save_memory",
+              description: "synthetic private input",
+            }),
+          }),
+        ),
+      );
+      expect(lines).toEqual([
+        {
+          level: "Warn",
+          text: "tool call refused: MemoryInputValidation: save_memory input refused",
+          hasCause: false,
+        },
+      ]);
+    }),
+  );
   it.effect("the owner holding the browser is one INFO line without a stack", () =>
     Effect.gen(function* () {
       const lines = yield* logged(

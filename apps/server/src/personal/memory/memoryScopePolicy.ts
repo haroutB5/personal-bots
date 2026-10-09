@@ -1,3 +1,4 @@
+import { memoryLine } from "./memoryBlock.ts";
 // Who can see and replace a memory entry, and which rules fit a turn's caps. Pure.
 import type { PersonalBotId, PersonalMemoryEntry, PersonalMemoryScope } from "@t3tools/contracts";
 
@@ -68,14 +69,14 @@ export function capPreferences(entries: ReadonlyArray<PersonalMemoryEntry>): {
     if (
       full ||
       kept.length >= PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES ||
-      chars + entry.content.length > PERSONAL_MEMORY_PREFERENCE_MAX_CHARS
+      chars + memoryLine(entry).length + 1 > PERSONAL_MEMORY_PREFERENCE_MAX_CHARS
     ) {
       full = true;
       dropped += 1;
       continue;
     }
     kept.push(entry);
-    chars += entry.content.length;
+    chars += memoryLine(entry).length + 1;
   }
   return { kept: kept.toReversed(), dropped };
 }

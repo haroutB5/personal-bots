@@ -1135,36 +1135,36 @@ describe("1.60.40: app scopes on save_memory and search_memory", () => {
         });
       }),
   );
-  it.effect(
-    "search labels outdated claims and returns evidence and origin instead of bare facts",
-    () =>
-      Effect.gen(function* () {
-        const note = {
-          ...entryFor({
-            scope: "shared",
-            kind: "note",
-            content: "Appointment is Tuesday.",
-            source: "bot:cfo;from=chat",
-          }),
-          demoted: "outdated" as const,
-          evidence: ["https://example.com/calendar"],
-          observedAt: "2026-09-22T00:00:00.000Z",
-          originThreadId: "source-chat",
-          originMessageId: "owner-message",
-        };
-        const { encoded } = yield* saveMemory({
-          memoryAutoSave: true,
-          exposure: [],
-          tool: "search_memory",
-          query: "appointment",
-          found: [note],
-        });
-        expect(encoded).toContain('"outdated":true');
-        expect(encoded).toContain("OUTDATED: do not rely on this claim");
-        expect(encoded).toContain("https://example.com/calendar");
-        expect(encoded).toContain("owner-message");
-        expect(encoded).toContain("bot:cfo;from=chat");
-      }),
+  it.effect("search labels outdated claims and returns evidence but withholds origin ids", () =>
+    Effect.gen(function* () {
+      const note = {
+        ...entryFor({
+          scope: "shared",
+          kind: "note",
+          content: "Appointment is Tuesday.",
+          source: "bot:cfo;from=chat",
+        }),
+        demoted: "outdated" as const,
+        evidence: ["https://example.com/calendar"],
+        observedAt: "2026-09-22T00:00:00.000Z",
+        originThreadId: "source-chat",
+        originMessageId: "owner-message",
+      };
+      const { encoded } = yield* saveMemory({
+        memoryAutoSave: true,
+        exposure: [],
+        tool: "search_memory",
+        query: "appointment",
+        found: [note],
+      });
+      expect(encoded).toContain('"outdated":true');
+      expect(encoded).toContain("OUTDATED: do not rely on this claim");
+      expect(encoded).toContain("https://example.com/calendar");
+      expect(encoded).not.toContain("owner-message");
+      expect(encoded).not.toContain("originThreadId");
+      expect(encoded).not.toContain("originMessageId");
+      expect(encoded).toContain("bot:cfo;from=chat");
+    }),
   );
   const rule = (id: string, content: string, apps: ReadonlyArray<string>) => ({
     ...entryFor({ scope: "shared", kind: "preference", content }),

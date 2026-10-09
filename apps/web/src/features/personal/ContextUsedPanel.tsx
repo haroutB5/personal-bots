@@ -241,8 +241,8 @@ export function ContextUsedView({
       ) : null}
 
       <p className="text-[12px] leading-snug text-[var(--personal-text-tertiary)]">
-        Marking a note ranks it lower in later turns; nothing is deleted. A rule is not marked here:
-        tell the bot to change or forget it, or change it on the Memory screen.
+        Outdated stops automatic use; Not relevant ranks a note lower. Nothing is deleted. To change
+        a rule: tell the bot to change or forget it, or change it on the Memory screen.
       </p>
     </div>
   );

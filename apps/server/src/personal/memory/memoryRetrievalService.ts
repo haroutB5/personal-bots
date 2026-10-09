@@ -237,7 +237,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
             score: 0,
             why: ["keyword match (legacy retrieval)"],
             snippet: snippetOf(entry.content, TRACE_PICKED_SNIPPET_CHARS),
-            provenance: memoryProvenanceLabel(entry),
+            provenance: memoryProvenanceLabel(entry, true),
           })),
         };
       }
@@ -326,17 +326,18 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           kind: row.entry.kind,
           reason: "over the per-turn character limit",
           snippet: snippetOf(row.entry.content, TRACE_LEFT_OUT_SNIPPET_CHARS),
-          provenance: memoryProvenanceLabel(row.entry),
+          provenance: memoryProvenanceLabel(row.entry, true),
         })),
         ...[...notes.leftOut, ...summaries.leftOut].map((row) => ({
           memoryId: row.entry.memoryId,
           kind: row.entry.kind,
-          reason:
-            row.why.length > 0
+          reason: row.why.includes("you marked it outdated")
+            ? "you marked it outdated"
+            : row.why.length > 0
               ? `matched much less than the best entries (${row.why.join(", ")})`
               : "matched much less than the best entries",
           snippet: snippetOf(row.entry.content, TRACE_LEFT_OUT_SNIPPET_CHARS),
-          provenance: memoryProvenanceLabel(row.entry),
+          provenance: memoryProvenanceLabel(row.entry, true),
         })),
       ].slice(0, TRACE_LEFT_OUT_MAX);
       return {
@@ -350,7 +351,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           score: Number(row.score.toFixed(3)),
           why: row.why,
           snippet: snippetOf(row.entry.content, TRACE_PICKED_SNIPPET_CHARS),
-          provenance: memoryProvenanceLabel(row.entry),
+          provenance: memoryProvenanceLabel(row.entry, true),
         })),
         leftOut,
         query,
@@ -627,7 +628,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           content: item === undefined || item.deleted ? "" : item.entry.content,
           apps: item?.entry.apps ?? null,
           current: isCurrent(id),
-          provenance: item ? memoryProvenanceLabel(item.entry) : "provenance unavailable",
+          provenance: item ? memoryProvenanceLabel(item.entry, true) : "provenance unavailable",
         };
       };
       return {

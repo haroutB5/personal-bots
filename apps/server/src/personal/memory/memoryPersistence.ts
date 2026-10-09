@@ -200,7 +200,12 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
         return yield* fail("At most 8 evidence references are allowed.");
       for (const ref of input.evidence ?? []) {
         yield* rejectUnsafe(ref);
-        if (ref.length > 500 || /https?:\/\/[^\s]*[?#]/i.test(ref)) {
+        if (
+          ref.length > 500 ||
+          /[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(ref) ||
+          /[?#]/.test(ref) ||
+          /\b(?:sig|signature)\s*[:=]/i.test(ref)
+        ) {
           return yield* fail(
             "Evidence references must be at most 500 characters; URL queries and fragments are not stored.",
           );
@@ -210,13 +215,21 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       for (const date of [input.observedAt, input.verifiedAt]) {
         if (
           date !== undefined &&
-          (!Number.isFinite(Date.parse(date)) || Date.parse(date) > DateTime.toEpochMillis(now))
+          (date.length > 80 ||
+            !Number.isFinite(Date.parse(date)) ||
+            Date.parse(date) > DateTime.toEpochMillis(now))
         ) {
           return yield* fail(
             "Observation and verification dates must be valid dates, not in the future.",
           );
         }
       }
+      const observedAt = input.observedAt
+        ? DateTime.formatIso(DateTime.makeUnsafe(Date.parse(input.observedAt)))
+        : null;
+      const verifiedAt = input.verifiedAt
+        ? DateTime.formatIso(DateTime.makeUnsafe(Date.parse(input.verifiedAt)))
+        : null;
       if (input.temporalKind === "changing" && (!input.observedAt || !input.evidence?.length)) {
         return yield* fail(
           "Changing facts need observedAt and evidence identifying a source to recheck.",
@@ -249,8 +262,8 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
           ? entry.kind === "preference" && appsKey(entry.apps) === wantedApps
           : entry.kind === "preference" ||
             (entry.temporalKind === (input.temporalKind ?? null) &&
-              entry.observedAt === (input.observedAt ?? null) &&
-              entry.verifiedAt === (input.verifiedAt ?? null) &&
+              entry.observedAt === observedAt &&
+              entry.verifiedAt === verifiedAt &&
               encodeMemoryIds(entry.evidence ?? []) === encodeMemoryIds(input.evidence ?? [])),
       );
       const explicit = yield* replaceTargets(input, existing?.memoryId ?? null);
@@ -294,7 +307,7 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
               ${memoryId}, ${input.scope}, ${input.scopeId}, ${input.kind}, ${content},
               ${input.source}, 'normal', ${nowIso}, ${nowIso}, NULL, 1,
               ${input.kind === "preference" ? appsToJson(input.apps) : null},
-              ${input.temporalKind ?? null}, ${input.observedAt ?? null}, ${input.verifiedAt ?? null},
+              ${input.temporalKind ?? null}, ${observedAt}, ${verifiedAt},
               ${encodeMemoryIds(input.evidence ?? [])}, ${input.originThreadId ?? null}, ${input.originMessageId ?? null}
             )
           `;

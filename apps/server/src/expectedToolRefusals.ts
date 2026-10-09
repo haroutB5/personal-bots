@@ -7,7 +7,9 @@
  * are logged at INFO, one line, no stack. Anything else (a defect, a tool that
  * broke, an error type not named here) stays ERROR.
  */
+import * as AiError from "effect/unstable/ai/AiError";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import * as Logger from "effect/Logger";
 
 /** Tool failures that are declared outcomes reported to the model. */
@@ -49,6 +51,14 @@ export function expectedToolRefusals(
   const refusals: Array<{ readonly tag: string; readonly message: string }> = [];
   for (const reason of cause.reasons) {
     if (!Cause.isFailReason(reason)) return null;
+    if (
+      Schema.is(AiError.AiError)(reason.error) &&
+      reason.error.reason._tag === "ToolParameterValidationError" &&
+      reason.error.reason.toolName === "save_memory"
+    ) {
+      refusals.push({ tag: "MemoryInputValidation", message: "save_memory input refused" });
+      continue;
+    }
     const tag = errorTag(reason.error);
     if (tag === undefined || !EXPECTED_TOOL_REFUSAL_TAGS.has(tag)) return null;
     refusals.push({ tag, message: errorText(reason.error) });
@@ -66,7 +76,7 @@ export const downgradeExpectedRefusals = <Output>(
     if (refusals === null) return logger.log(options);
     return logger.log({
       ...options,
-      logLevel: "Info",
+      logLevel: refusals.some((item) => item.tag === "MemoryInputValidation") ? "Warn" : "Info",
       cause: Cause.empty,
       message: [
         `tool call refused: ${refusals

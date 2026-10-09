@@ -7,7 +7,7 @@ import {
   type PersonalMemoryKind,
 } from "@t3tools/contracts";
 
-import { memoryProvenanceLabel } from "./memoryEvidence.ts";
+import { memoryProvenanceLabel, safeMemoryField } from "./memoryEvidence.ts";
 import { memoryQueryTerms } from "./memoryRetrieval.ts";
 import { BLOCK_ENTRY_MAX_CHARS } from "./memoryShared.ts";
 import { localDay } from "./memoryTidy.ts";
@@ -75,7 +75,8 @@ export const memoryLine = (entry: PersonalMemoryEntry) => {
       ? entry.content
       : clipAtSentence(entry.content, BLOCK_ENTRY_MAX_CHARS);
   const tag = entry.kind === "note" ? noteSourceTag(entry.source) : null;
-  return `- [${KIND_LABEL[entry.kind]}] [${memoryDay(entry)} · ${memoryRef(entry)}${tag === null ? "" : ` · ${tag}`}] ${content.replace(/\s+/g, " ")} [${memoryProvenanceLabel(entry)}]`;
+  const provenance = memoryProvenanceLabel(entry);
+  return `- [${KIND_LABEL[entry.kind]}] [${memoryDay(entry)} · ${memoryRef(entry)}${tag === null ? "" : ` · ${tag}`}] ${content.replace(/\s+/g, " ")}${provenance ? ` [${safeMemoryField(provenance, 5200)}]` : ""}`;
 };
 
 /** Left-out rules named in the block, at most this many with their words; the rest are counted. */

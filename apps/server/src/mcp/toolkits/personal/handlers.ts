@@ -850,8 +850,6 @@ const make = Effect.gen(function* () {
             observedAt: entry.observedAt ?? null,
             verifiedAt: entry.verifiedAt ?? null,
             conflict: entry.conflict ?? null,
-            originThreadId: entry.originThreadId ?? null,
-            originMessageId: entry.originMessageId ?? null,
             ...(entry.apps == null ? {} : { apps: [...entry.apps] }),
           })),
         };

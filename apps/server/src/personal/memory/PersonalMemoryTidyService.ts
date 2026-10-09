@@ -995,7 +995,10 @@ export const make = Effect.gen(function* () {
               )
                 return;
               yield* sql`
-                UPDATE personal_memory SET conflict = ${safeText(conflict.reason).slice(0, 600)}, version = version + 1
+                UPDATE personal_memory SET conflict = ${safeText(conflict.reason)
+                  .replace(/\s+/g, " ")
+                  .replace(/[\[\]\x00-\x1f\x7f-\x9f]/g, "")
+                  .slice(0, 600)}, version = version + 1
                 WHERE ${sql.in("memory_id", conflict.memoryIds)} AND kind = 'note'
                   AND deleted_at IS NULL AND superseded_at IS NULL
               `;
