@@ -144,8 +144,16 @@ const runtimeMock = {
       environment: NodeJS.ProcessEnv | undefined;
     }>,
     mcpAddCalls: [] as Array<unknown>,
+    // The model catalog `provider.list` answers with; null makes the call fail.
+    providerCatalog: null as Array<{
+      id: string;
+      models: Record<string, { limit?: { context: number; output: number } }>;
+    }> | null,
+    providerListCalls: 0,
   },
   reset() {
+    this.state.providerCatalog = null;
+    this.state.providerListCalls = 0;
     this.state.connectInputs.length = 0;
     this.state.mcpAddCalls.length = 0;
     this.state.startCalls.length = 0;
@@ -258,6 +266,17 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         list: async () => ({
           data: [{ name: "review", source: "command", hints: ["$ARGUMENTS"] }],
         }),
+      },
+      provider: {
+        list: async () => {
+          runtimeMock.state.providerListCalls += 1;
+          if (!runtimeMock.state.providerCatalog) {
+            throw new Error("provider.list unavailable");
+          }
+          return {
+            data: { all: runtimeMock.state.providerCatalog, default: {}, connected: [] },
+          };
+        },
       },
       session: {
         create: async (input: Record<string, unknown>) => {
@@ -3214,6 +3233,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const terminalUuidRelease = yield* Deferred.make<void>();
       let blockFirstStepWrite = true;
       let blockNextUuid = false;
+      let armOnFirstIdle = true;
       const nodeCrypto = yield* Crypto.Crypto;
       const gatedCrypto = {
         ...nodeCrypto,
@@ -3236,6 +3256,18 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
               return Deferred.succeed(firstStepWriteStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(firstStepWriteRelease)),
               );
+            }
+            // The step now emits its own context event, which draws an id first.
+            // Gate the id of the terminal event: arm once the first idle is logged,
+            // which is after that step has been handled.
+            const status = (
+              record as {
+                event?: { payload?: { properties?: { status?: { type?: unknown } } } };
+              }
+            ).event?.payload?.properties?.status?.type;
+            if (armOnFirstIdle && eventType === "session.status" && status === "idle") {
+              armOnFirstIdle = false;
+              blockNextUuid = true;
             }
             return Effect.void;
           },
@@ -3310,7 +3342,6 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         },
       });
       yield* Deferred.await(firstStepWriteStarted);
-      blockNextUuid = true;
       firstIdle.resolve({
         id: "evt-token-handoff-first-idle",
         type: "session.status",
@@ -7729,6 +7760,238 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped),
   );
+
+  // Context meter (thread.token-usage.updated); the block keeps its helpers local.
+  {
+    const sessionID = "http://127.0.0.1:9999/session";
+    const stepFinish = (
+      id: string,
+      messageID: string,
+      tokens: {
+        input: number;
+        output: number;
+        reasoning: number;
+        cache: { read: number; write: number };
+      },
+    ) => ({
+      type: "message.part.updated",
+      properties: {
+        sessionID,
+        part: { id, messageID, sessionID, type: "step-finish", reason: "stop", cost: 0, tokens },
+      },
+    });
+
+    const runTurn = (
+      threadId: ThreadId,
+      script: (input: {
+        readonly enqueue: (event: unknown) => void;
+        readonly promptMessageId: string;
+      }) => void,
+    ) =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const enqueue = makeOpenCodeEventQueue();
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId),
+          Stream.takeUntil((event) => event.type === "turn.completed"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Work through several steps",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode"),
+            "opencode/kimi-k3",
+          ),
+        });
+        const promptMessageId = (runtimeMock.state.promptCalls.at(-1) as { messageID: string })
+          .messageID;
+        script({ enqueue, promptMessageId });
+        enqueue({ type: "session.status", properties: { sessionID, status: { type: "idle" } } });
+        const events = yield* Fiber.join(eventsFiber);
+        yield* adapter.stopSession(threadId);
+        return Array.from(events);
+      });
+
+    it.effect("emits the latest step's prompt size with the catalog's context limit", () =>
+      Effect.gen(function* () {
+        runtimeMock.state.providerCatalog = [
+          {
+            id: "opencode",
+            models: { "kimi-k3": { limit: { context: 262_144, output: 32_000 } } },
+          },
+        ];
+        const events = yield* runTurn(asThreadId("thread-opencode-context-meter"), (turn) => {
+          turn.enqueue({
+            type: "message.updated",
+            properties: {
+              sessionID,
+              info: { id: "assistant-ctx", role: "assistant", parentID: turn.promptMessageId },
+            },
+          });
+          turn.enqueue(
+            stepFinish("step-ctx-1", "assistant-ctx", {
+              input: 1_200,
+              output: 80,
+              reasoning: 20,
+              cache: { read: 30_000, write: 500 },
+            }),
+          );
+          const second = stepFinish("step-ctx-2", "assistant-ctx", {
+            input: 300,
+            output: 150,
+            reasoning: 0,
+            cache: { read: 31_700, write: 0 },
+          });
+          turn.enqueue(second);
+          // OpenCode repeats part updates; a repeat must not move the meter again.
+          turn.enqueue(second);
+        });
+
+        const usages = events.flatMap((event) =>
+          event.type === "thread.token-usage.updated" ? [event.payload.usage] : [],
+        );
+        NodeAssert.deepStrictEqual(usages, [
+          {
+            usedTokens: 31_700,
+            lastUsedTokens: 31_700,
+            totalProcessedTokens: 31_800,
+            inputTokens: 31_700,
+            cachedInputTokens: 30_000,
+            outputTokens: 100,
+            reasoningOutputTokens: 20,
+            maxTokens: 262_144,
+          },
+          {
+            usedTokens: 32_000,
+            lastUsedTokens: 32_000,
+            totalProcessedTokens: 63_950,
+            inputTokens: 32_000,
+            cachedInputTokens: 31_700,
+            outputTokens: 150,
+            maxTokens: 262_144,
+          },
+        ]);
+        // The catalog is read once for the session and model, not once per step.
+        NodeAssert.equal(runtimeMock.state.providerListCalls, 1);
+        const completed = events.find((event) => event.type === "turn.completed");
+        NodeAssert.equal(completed?.payload.tokenUsage?.usageStatus, "complete");
+      }),
+    );
+
+    it.effect("leaves the maximum out when the catalog has no limit, and skips empty steps", () =>
+      Effect.gen(function* () {
+        // The catalog answers but lists no limit for the model.
+        runtimeMock.state.providerCatalog = [{ id: "opencode", models: { "kimi-k3": {} } }];
+        const events = yield* runTurn(asThreadId("thread-opencode-context-no-limit"), (turn) => {
+          turn.enqueue({
+            type: "message.updated",
+            properties: {
+              sessionID,
+              info: { id: "assistant-own", role: "assistant", parentID: turn.promptMessageId },
+            },
+          });
+          // Another conversation's step must not move this chat's number.
+          turn.enqueue({
+            type: "message.updated",
+            properties: {
+              sessionID,
+              info: { id: "assistant-other", role: "assistant", parentID: "msg_other_prompt" },
+            },
+          });
+          turn.enqueue(
+            stepFinish("step-other", "assistant-other", {
+              input: 9_000,
+              output: 10,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            }),
+          );
+          // A step that reports no prompt tokens is no data.
+          turn.enqueue(
+            stepFinish("step-empty", "assistant-own", {
+              input: 0,
+              output: 12,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            }),
+          );
+          turn.enqueue(
+            stepFinish("step-own", "assistant-own", {
+              input: 700,
+              output: 30,
+              reasoning: 0,
+              cache: { read: 4_300, write: 0 },
+            }),
+          );
+        });
+
+        const usages = events.flatMap((event) =>
+          event.type === "thread.token-usage.updated" ? [event.payload.usage] : [],
+        );
+        NodeAssert.deepStrictEqual(usages, [
+          {
+            usedTokens: 5_000,
+            lastUsedTokens: 5_000,
+            totalProcessedTokens: 5_042,
+            inputTokens: 5_000,
+            cachedInputTokens: 4_300,
+            outputTokens: 30,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("still reports the used count when the model catalog cannot be read", () =>
+      Effect.gen(function* () {
+        runtimeMock.state.providerCatalog = null;
+        const events = yield* runTurn(asThreadId("thread-opencode-context-no-catalog"), (turn) => {
+          turn.enqueue({
+            type: "message.updated",
+            properties: {
+              sessionID,
+              info: { id: "assistant-nc", role: "assistant", parentID: turn.promptMessageId },
+            },
+          });
+          turn.enqueue(
+            stepFinish("step-nc-1", "assistant-nc", {
+              input: 800,
+              output: 0,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            }),
+          );
+          turn.enqueue(
+            stepFinish("step-nc-2", "assistant-nc", {
+              input: 900,
+              output: 0,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            }),
+          );
+        });
+
+        const usages = events.flatMap((event) =>
+          event.type === "thread.token-usage.updated" ? [event.payload.usage] : [],
+        );
+        NodeAssert.deepStrictEqual(
+          usages.map((usage) => [usage.usedTokens, usage.maxTokens]),
+          [
+            [800, undefined],
+            [900, undefined],
+          ],
+        );
+        // A failed lookup is remembered for the session instead of retried per step.
+        NodeAssert.equal(runtimeMock.state.providerListCalls, 1);
+      }),
+    );
+  }
 
   it.effect("keeps completed text edits and clears removed parts across reconnects", () =>
     Effect.gen(function* () {

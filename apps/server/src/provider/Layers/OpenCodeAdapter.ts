@@ -9,6 +9,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
+  type ThreadTokenUsageSnapshot,
   type ToolLifecycleItemType,
   type TurnTokenUsage,
   TurnId,
@@ -62,6 +63,7 @@ import {
   openCodeRuntimeErrorDetail,
   loadOpenCodeCommands,
   parseOpenCodeModelSlug,
+  type ParsedOpenCodeModelSlug,
   runOpenCodeSdk,
   toOpenCodeFileParts,
   toOpenCodePermissionReply,
@@ -372,6 +374,10 @@ interface OpenCodeSessionContext {
   // until native removal or session teardown, but do not retain other part payloads.
   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
+  /** The model of the turn in flight: names the catalog entry that holds its context limit. */
+  activeModel: ParsedOpenCodeModelSlug | undefined;
+  /** Context limit per `provider/model`; `undefined` once looked up means the catalog has none. */
+  readonly contextLimits: Map<string, number | undefined>;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
@@ -434,17 +440,57 @@ function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumula
   };
 }
 
+/** Returns whether the step was new to the turn (a repeated part update counts once). */
 function accumulateOpenCodeStepUsage(
   accumulator: OpenCodeTurnTokenUsageAccumulator,
   part: OpenCodeStepUsage,
-): void {
-  if (accumulator.partIds.has(part.id)) return;
+): boolean {
+  if (accumulator.partIds.has(part.id)) return false;
   accumulator.partIds.add(part.id);
   accumulator.inputTokens += part.tokens.input + part.tokens.cache.read + part.tokens.cache.write;
   accumulator.cachedInputTokens += part.tokens.cache.read;
   accumulator.cacheCreationTokens += part.tokens.cache.write;
   accumulator.outputTokens += part.tokens.output + part.tokens.reasoning;
   accumulator.reasoningTokens += part.tokens.reasoning;
+  return true;
+}
+
+function openCodeTokenCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+}
+
+/**
+ * The context meter number for one OpenCode step: the prompt side of that
+ * step (input + cache read + cache write), which is what the model held in
+ * context for it. The turn sum would count the same history once per step.
+ * `undefined` when the step reports no prompt tokens, so nothing is guessed.
+ */
+function openCodeThreadTokenUsageSnapshot(
+  usage: OpenCodeTurnTokenUsageAccumulator,
+  step: OpenCodeStepUsage,
+  contextLimit: number | undefined,
+): ThreadTokenUsageSnapshot | undefined {
+  const cached = openCodeTokenCount(step.tokens.cache.read);
+  const cacheWrite = openCodeTokenCount(step.tokens.cache.write);
+  const prompt = openCodeTokenCount(step.tokens.input) + cached + cacheWrite;
+  if (prompt <= 0) {
+    return undefined;
+  }
+  const reasoning = openCodeTokenCount(step.tokens.reasoning);
+  const output = openCodeTokenCount(step.tokens.output) + reasoning;
+  const maxTokens = contextLimit !== undefined && contextLimit > 0 ? contextLimit : undefined;
+  const usedTokens = maxTokens !== undefined ? Math.min(prompt, maxTokens) : prompt;
+  const totalProcessedTokens = usage.inputTokens + usage.outputTokens;
+  return {
+    usedTokens,
+    lastUsedTokens: usedTokens,
+    ...(totalProcessedTokens > usedTokens ? { totalProcessedTokens } : {}),
+    inputTokens: prompt,
+    ...(cached > 0 ? { cachedInputTokens: cached } : {}),
+    ...(output > 0 ? { outputTokens: output } : {}),
+    ...(reasoning > 0 ? { reasoningOutputTokens: reasoning } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
 }
 
 function takeOpenCodeTurnTokenUsage(
@@ -1141,6 +1187,66 @@ export function makeOpenCodeAdapter(
       if (pending?.fiber) {
         yield* Fiber.interrupt(pending.fiber);
       }
+    });
+
+    // The model catalog's context limit for the turn's model, read once per
+    // session and model. A catalog that is unreachable or lists no limit leaves
+    // the meter without a maximum rather than guessing one.
+    const resolveOpenCodeContextLimit = Effect.fn("resolveOpenCodeContextLimit")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      const model = context.activeModel;
+      if (!model) {
+        return undefined;
+      }
+      const key = `${model.providerID}/${model.modelID}`;
+      if (context.contextLimits.has(key)) {
+        return context.contextLimits.get(key);
+      }
+      const limit = yield* runOpenCodeSdk("provider.list", (signal) =>
+        context.client.provider.list(undefined, { signal }),
+      ).pipe(
+        Effect.map((result) => {
+          const provider = result.data?.all.find((entry) => entry.id === model.providerID);
+          const value = provider?.models[model.modelID]?.limit?.context;
+          return typeof value === "number" && Number.isFinite(value) && value > 0
+            ? Math.round(value)
+            : undefined;
+        }),
+        Effect.timeout("3 seconds"),
+        Effect.orElseSucceed(() => undefined),
+      );
+      context.contextLimits.set(key, limit);
+      return limit;
+    });
+
+    // The context meter: one event per finished step with that step's prompt
+    // size. Only steps that count toward the turn get here, so subagent and
+    // other-session steps never move the main agent's number.
+    const emitOpenCodeThreadTokenUsage = Effect.fn("emitOpenCodeThreadTokenUsage")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId | undefined,
+      step: OpenCodeStepUsage,
+      raw: unknown,
+    ) {
+      const usage = context.turnTokenUsage;
+      if (!usage) {
+        return;
+      }
+      const contextLimit = yield* resolveOpenCodeContextLimit(context);
+      const snapshot = openCodeThreadTokenUsageSnapshot(usage, step, contextLimit);
+      if (!snapshot) {
+        return;
+      }
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          ...(turnId ? { turnId } : {}),
+          raw,
+        })),
+        type: "thread.token-usage.updated",
+        payload: { usage: snapshot },
+      });
     });
 
     const completeOpenCodeTurn = Effect.fn("completeOpenCodeTurn")(function* (
@@ -2409,12 +2515,18 @@ export function makeOpenCodeAdapter(
               usage.assistantOwnershipByMessageId.set(event.properties.info.id, ownership);
               if (ownership !== "unknown") {
                 const steps = usage.unresolvedStepsByMessageId.get(event.properties.info.id);
+                let latestCounted: OpenCodeStepUsage | undefined;
                 if (ownership === "owned" && steps) {
                   for (const step of steps.values()) {
-                    accumulateOpenCodeStepUsage(usage, step);
+                    if (accumulateOpenCodeStepUsage(usage, step)) {
+                      latestCounted = step;
+                    }
                   }
                 }
                 usage.unresolvedStepsByMessageId.delete(event.properties.info.id);
+                if (turnId && latestCounted) {
+                  yield* emitOpenCodeThreadTokenUsage(context, turnId, latestCounted, event);
+                }
               }
             }
             for (const part of context.textPartsByMessageId
@@ -2488,7 +2600,9 @@ export function makeOpenCodeAdapter(
             const usage = context.turnTokenUsage;
             const ownership = usage.assistantOwnershipByMessageId.get(part.messageID);
             if (ownership === "owned") {
-              accumulateOpenCodeStepUsage(usage, part);
+              if (accumulateOpenCodeStepUsage(usage, part)) {
+                yield* emitOpenCodeThreadTokenUsage(context, turnId, part, event);
+              }
             } else if (
               ownership === "unknown" ||
               (ownership === undefined &&
@@ -3120,6 +3234,8 @@ export function makeOpenCodeAdapter(
           textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
           turnTokenUsage: undefined,
+          activeModel: undefined,
+          contextLimits: new Map(),
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
@@ -3332,6 +3448,7 @@ export function makeOpenCodeAdapter(
             context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
           }
           context.turnTokenUsage?.promptMessageIds.add(messageId);
+          context.activeModel = parsedModel;
           context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
           context.activeVariant = variant;
           if (steeringTurnId === undefined) {

@@ -487,6 +487,37 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
+  it.effect("reports the context window from native usage updates on the active turn", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Summarise the repo" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      yield* h.emitNative({
+        _tag: "UsageUpdated",
+        usedTokens: 12_000,
+        maxTokens: 1_000_000,
+        rawPayload: {},
+      });
+      yield* h.emitNative({ _tag: "UsageUpdated", usedTokens: 18_500, rawPayload: {} });
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      const result = yield* Fiber.join(sending);
+      yield* h.waitForEvent((event) => event.type === "turn.completed");
+      const usages = h.seen.filter((event) => event.type === "thread.token-usage.updated");
+      expect(usages.map((event) => event.payload.usage)).toEqual([
+        { usedTokens: 12_000, lastUsedTokens: 12_000, maxTokens: 1_000_000 },
+        { usedTokens: 18_500, lastUsedTokens: 18_500 },
+      ]);
+      expect(usages.every((event) => event.turnId === result.turnId)).toBe(true);
+    }),
+  );
+
   it.effect("does not auto-approve a remaining native request in full access", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

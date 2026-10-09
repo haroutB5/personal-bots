@@ -63,6 +63,20 @@ describe("contextWindow", () => {
     });
   });
 
+  it("keeps the used count when a provider reports no context window size", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", { usedTokens: 42_000 }),
+    ]);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 42_000,
+      maxTokens: null,
+      remainingTokens: null,
+      usedPercentage: null,
+      remainingPercentage: null,
+    });
+  });
+
   it("formats compact token counts", () => {
     expect(formatContextWindowTokens(999)).toBe("999");
     expect(formatContextWindowTokens(1400)).toBe("1.4k");

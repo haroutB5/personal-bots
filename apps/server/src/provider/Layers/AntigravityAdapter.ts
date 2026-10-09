@@ -57,6 +57,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpThreadTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
@@ -583,6 +584,19 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             turnId: context.activeTurnId,
             itemId: event.itemId,
             lifecycle: event._tag === "AssistantItemStarted" ? "item.started" : "item.completed",
+          }),
+        );
+        return;
+      case "UsageUpdated":
+        yield* emit(
+          makeAcpThreadTokenUsageEvent({
+            stamp: yield* stamp,
+            provider: PROVIDER,
+            threadId: context.threadId,
+            turnId: context.activeTurnId,
+            usedTokens: event.usedTokens,
+            ...(event.maxTokens !== undefined ? { maxTokens: event.maxTokens } : {}),
+            rawPayload: sanitizeAntigravityToolPayload(event.rawPayload),
           }),
         );
         return;
