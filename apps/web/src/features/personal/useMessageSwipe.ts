@@ -15,6 +15,8 @@ import {
 export const SWIPE_TIME_OPACITY_VAR = "--message-time-opacity";
 /** Half the height of the time's two lines: it stays this far inside the message's top and bottom. */
 const TIME_HALF_HEIGHT_PX = 15;
+/** How long after the finger lifts the click that ends a swipe can still arrive. */
+const CLICK_AFTER_LIFT_MS = 350;
 const SPRING_BACK = `transform ${SWIPE_RELEASE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
 
 interface Drag {
@@ -118,7 +120,13 @@ export function useMessageSwipe({
   const end = useCallback(() => {
     const current = drag.current;
     drag.current = null;
-    if (current?.axis === "x") settle(current.reduceMotion);
+    if (current?.axis !== "x") return;
+    settle(current.reduceMotion);
+    // The click that ends the swipe arrives right after the lift, or not at all (iOS): do not
+    // let the flag wait for some later, unrelated click (a keyboard's) to swallow.
+    window.setTimeout(() => {
+      swallowClick.current = false;
+    }, CLICK_AFTER_LIFT_MS);
   }, [settle]);
 
   const onPointerDown = (event: ReactPointerEvent) => {
