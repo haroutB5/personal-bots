@@ -47,6 +47,8 @@ import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
 import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
 import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
+import { SwipeTimeRow } from "./MessageSwipeTime";
+import { parseSentAt } from "./messageTime";
 import type { OutboxEntry, OutboxRow } from "./outbox";
 
 /** A message the user sent that the server has not echoed back yet. */
@@ -308,6 +310,7 @@ const UserMessage = memo(function UserMessage({
   onJump?: ((messageId: string) => void) | undefined;
 }) {
   const quote = useMemo(() => readPersonalReplyQuote(message.context), [message.context]);
+  const sentAt = useMemo(() => parseSentAt(message.createdAt), [message.createdAt]);
   const resources = useMemo(
     () => selectMessageImageResources(message.attachments),
     [message.attachments],
@@ -399,7 +402,19 @@ const UserMessage = memo(function UserMessage({
       )}
       {message.text.trim().length > 0 ? (
         onReply === undefined ? (
-          <UserBubble text={message.text} quote={quote} onJump={onJump} />
+          // Nothing can be sent here (an archived chat), so no menu, but the time still shows.
+          sentAt === null ? (
+            <UserBubble text={message.text} quote={quote} onJump={onJump} />
+          ) : (
+            <SwipeTimeRow sentAt={sentAt} align="end" className="max-w-[78%]">
+              <UserBubble
+                text={message.text}
+                quote={quote}
+                onJump={onJump}
+                widthClass="max-w-full min-w-0"
+              />
+            </SwipeTimeRow>
+          )
         ) : (
           <ReplyableMessage
             messageId={String(message.id)}
@@ -407,6 +422,7 @@ const UserMessage = memo(function UserMessage({
             copyText={message.text}
             onReply={onReply}
             align="end"
+            sentAt={sentAt}
             className="max-w-[78%]"
           >
             <UserBubble
@@ -452,6 +468,7 @@ const AssistantMessage = memo(function AssistantMessage({
     () => (mayHaveChoices(message.text) ? splitChoices(message.text, message.streaming) : null),
     [message.streaming, message.text],
   );
+  const sentAt = useMemo(() => parseSentAt(message.createdAt), [message.createdAt]);
   if (message.text.length === 0) return null;
   // Without a state to draw them in, a block is left as the code block it is.
   const hasState = choices !== null && choices !== undefined;
@@ -476,7 +493,17 @@ const AssistantMessage = memo(function AssistantMessage({
       ) : null}
     </div>
   );
-  if (onReply === undefined || message.streaming) return content;
+  if (message.streaming) return content;
+  if (onReply === undefined) {
+    // Nothing can be sent here (an archived chat), so no menu, but the time still shows.
+    return sentAt === null ? (
+      content
+    ) : (
+      <SwipeTimeRow sentAt={sentAt} align="start">
+        {content}
+      </SwipeTimeRow>
+    );
+  }
   return (
     <ReplyableMessage
       messageId={String(message.id)}
@@ -487,6 +514,7 @@ const AssistantMessage = memo(function AssistantMessage({
       copyText={body}
       onReply={onReply}
       align="start"
+      sentAt={sentAt}
     >
       {content}
     </ReplyableMessage>

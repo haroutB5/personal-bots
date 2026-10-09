@@ -18,8 +18,10 @@ import {
   TAP_MAX_MS,
   type TapPoint,
 } from "./messageTextSelection";
+import { MessageSwipeTime, SWIPE_TOUCH_ACTION } from "./MessageSwipeTime";
 import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
 import { LONG_PRESS_MS, LONG_PRESS_SLOP_PX } from "./useLongPress";
+import { useMessageSwipe } from "./useMessageSwipe";
 
 /** What turns on a message's text: it is selectable, with iOS's own callout. */
 const SELECTABLE = "select-text [-webkit-touch-callout:default]";
@@ -50,6 +52,12 @@ type SelectTarget =
  * the sentence wanted. It ends when the selection is cleared, on a tap
  * elsewhere, or when the message scrolls out of view. The row is
  * touch-action: manipulation, so a double tap does not zoom the page.
+ *
+ * With `sentAt` the message also follows a sideways swipe towards its empty
+ * side (left for the owner's, right for a bot's) and shows when it was sent
+ * (useMessageSwipe.ts). The row is touch-action: pan-y then, which keeps the
+ * double tap from zooming too, and the swipe is off while the text is being
+ * selected or the menu is open. A message with no `sentAt` has no swipe.
  */
 export function ReplyableMessage({
   messageId,
@@ -57,6 +65,7 @@ export function ReplyableMessage({
   copyText,
   onReply,
   align,
+  sentAt = null,
   className,
   children,
 }: {
@@ -66,6 +75,8 @@ export function ReplyableMessage({
   onReply: (quote: PersonalReplyQuote) => void;
   /** Which edge the message hugs: the owner's right, a bot's left. */
   align: "start" | "end";
+  /** When the message was sent; null or absent: the swipe that shows it is off. */
+  sentAt?: Date | null;
   /** Width of the row, where the message inside does not fill the line. */
   className?: string;
   children: ReactNode;
@@ -90,6 +101,11 @@ export function ReplyableMessage({
     pressOrigin.current = null;
   }, []);
   useEffect(() => cancelPress, [cancelPress]);
+  const swipe = useMessageSwipe({
+    align,
+    enabled: sentAt !== null && !selecting && !open,
+    onSwipeStart: cancelPress,
+  });
 
   // The menu's popup is portaled out of the message, but React still bubbles its
   // events up through it: a tap on "Reply" must not start another long press.
@@ -156,6 +172,7 @@ export function ReplyableMessage({
   }, [selecting, stopSelecting]);
 
   const onPointerDown = (event: ReactPointerEvent) => {
+    swipe.handlers.onPointerDown(event);
     if (event.pointerType === "mouse" || !insideMessage(event)) return;
     const point = { t: performance.now(), x: event.clientX, y: event.clientY };
     fingerDown.current = point;
@@ -179,6 +196,7 @@ export function ReplyableMessage({
     }, LONG_PRESS_MS);
   };
   const onPointerUp = (event: ReactPointerEvent) => {
+    swipe.handlers.onPointerUp();
     cancelPress();
     // A short tap that stayed put can be the first half of a double tap.
     const down = fingerDown.current;
@@ -194,6 +212,7 @@ export function ReplyableMessage({
         : null;
   };
   const onPointerMove = (event: ReactPointerEvent) => {
+    swipe.handlers.onPointerMove(event);
     const origin = pressOrigin.current;
     if (origin === null) return;
     // Scrolling the chat is a drag, not a press.
@@ -217,7 +236,10 @@ export function ReplyableMessage({
       data-replyable=""
       data-selecting={selecting ? "" : undefined}
       className={cn(
-        "group/reply flex max-w-full items-start gap-1 rounded-[var(--personal-radius-bubble)] [@media(pointer:coarse)]:touch-manipulation",
+        "group/reply relative flex max-w-full items-start gap-1 rounded-[var(--personal-radius-bubble)]",
+        sentAt !== null && !selecting
+          ? SWIPE_TOUCH_ACTION
+          : "[@media(pointer:coarse)]:touch-manipulation",
         selecting ? SELECTABLE : TOUCH_LOCKED,
         align === "end" ? "flex-row-reverse" : "flex-row",
         className,
@@ -226,12 +248,15 @@ export function ReplyableMessage({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={() => {
+        swipe.handlers.onPointerCancel();
         cancelPress();
         fingerDown.current = null;
         lastTap.current = null;
       }}
       onClickCapture={(event) => {
-        if (!openedByPress.current || !insideMessage(event)) return;
+        if (!insideMessage(event)) return;
+        // The click that ends a long press or a swipe must not press what is under the finger.
+        if (!openedByPress.current && !swipe.consumeClick()) return;
         openedByPress.current = false;
         event.preventDefault();
         event.stopPropagation();
@@ -246,6 +271,9 @@ export function ReplyableMessage({
       <div ref={content} className="contents">
         {children}
       </div>
+      {sentAt !== null && swipe.reveal !== null ? (
+        <MessageSwipeTime sentAt={sentAt} align={align} top={swipe.reveal.top} />
+      ) : null}
       <Menu
         open={open}
         onOpenChange={(next, details) => {

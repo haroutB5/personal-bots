@@ -470,7 +470,10 @@ export function resolveConversationHeaderName(input: {
 
 const TIME_FORMAT_CACHE = new Map<string, Intl.DateTimeFormat>();
 
-function formatter(timeZone: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+export function formatter(
+  timeZone: string,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
   const key = `${timeZone}|${JSON.stringify(options)}`;
   let cached = TIME_FORMAT_CACHE.get(key);
   if (cached === undefined) {
@@ -486,7 +489,7 @@ function formatter(timeZone: string, options: Intl.DateTimeFormatOptions): Intl.
 const DAY_KEY_CACHE = new Map<string, string>();
 const DAY_KEY_CACHE_LIMIT = 1_000;
 
-function dayKey(date: Date, timeZone: string): string {
+export function dayKey(date: Date, timeZone: string): string {
   // Every real zone offset is a multiple of 15 minutes, so all instants in
   // one 15-minute UTC bucket fall on the same local day.
   const cacheKey = `${timeZone}|${Math.floor(date.getTime() / 900_000)}`;
@@ -504,12 +507,12 @@ function dayKey(date: Date, timeZone: string): string {
   return key;
 }
 
-function previousDayKey(key: string): string {
+export function previousDayKey(key: string): string {
   const [year, month, day] = key.split("-").map(Number);
   return new Date(Date.UTC(year!, month! - 1, day! - 1)).toISOString().slice(0, 10);
 }
 
-const SHORT_MONTHS = [
+export const SHORT_MONTHS = [
   "Jan",
   "Feb",
   "Mar",
