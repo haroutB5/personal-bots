@@ -302,6 +302,47 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("reports the context window from ACP usage updates on the turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-usage-update-thread");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_USAGE_UPDATE: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      const turn = yield* adapter.sendTurn({ threadId, input: "hello mock", attachments: [] });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const usages = runtimeEvents.filter((event) => event.type === "thread.token-usage.updated");
+      assert.deepStrictEqual(
+        usages.map((event) => event.payload.usage),
+        [
+          { usedTokens: 12_000, lastUsedTokens: 12_000, maxTokens: 200_000 },
+          { usedTokens: 18_500, lastUsedTokens: 18_500, maxTokens: 200_000 },
+        ],
+      );
+      assert.isTrue(usages.every((event) => event.turnId === turn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("sends skills in Cursor's native form and preserves exact slash command input", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

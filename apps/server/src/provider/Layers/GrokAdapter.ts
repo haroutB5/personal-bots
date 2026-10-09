@@ -56,6 +56,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpThreadTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
@@ -1445,6 +1446,19 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     }
                     return;
                   }
+                  case "UsageUpdated":
+                    yield* offerRuntimeEvent(
+                      makeAcpThreadTokenUsageEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: notificationTurnId,
+                        usedTokens: event.usedTokens,
+                        ...(event.maxTokens !== undefined ? { maxTokens: event.maxTokens } : {}),
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
                   case "ThoughtDelta":
                     yield* offerRuntimeEvent(
                       makeAcpContentDeltaEvent({

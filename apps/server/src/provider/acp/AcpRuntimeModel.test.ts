@@ -276,6 +276,45 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("projects ACP usage updates as the context in use and its window", () => {
+    const notification = {
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: 53_000, size: 200_000 },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(notification).events).toEqual([
+      { _tag: "UsageUpdated", usedTokens: 53_000, maxTokens: 200_000, rawPayload: notification },
+    ]);
+  });
+
+  it("caps usage at the window, and drops a window size that is not positive", () => {
+    const over = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: 210_000, size: 200_000 },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(over.events[0]).toMatchObject({
+      _tag: "UsageUpdated",
+      usedTokens: 200_000,
+      maxTokens: 200_000,
+    });
+
+    const noWindow = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: 4_200, size: 0 },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(noWindow.events).toHaveLength(1);
+    expect(noWindow.events[0]).toMatchObject({ _tag: "UsageUpdated", usedTokens: 4_200 });
+    expect(noWindow.events[0]).not.toHaveProperty("maxTokens");
+  });
+
+  it("ignores a usage update whose used count is not a usable number", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: -1, size: 200_000 },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(result.events).toEqual([]);
+  });
+
   it("projects typed ACP plan and content updates", () => {
     const planResult = parseSessionUpdateEvent({
       sessionId: "session-1",

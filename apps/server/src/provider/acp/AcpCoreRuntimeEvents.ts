@@ -204,6 +204,36 @@ export function makeAcpAssistantItemEvent(input: {
   };
 }
 
+export function makeAcpThreadTokenUsageEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly usedTokens: number;
+  readonly maxTokens?: number;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "thread.token-usage.updated",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      usage: {
+        usedTokens: input.usedTokens,
+        lastUsedTokens: input.usedTokens,
+        ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
+      },
+    },
+    raw: {
+      source: "acp.jsonrpc",
+      method: "session/update",
+      payload: input.rawPayload,
+    },
+  };
+}
+
 export function makeAcpContentDeltaEvent(input: {
   readonly stamp: AcpEventStamp;
   readonly provider: ProviderDriverKind;

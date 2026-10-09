@@ -123,6 +123,13 @@ export type AcpParsedSessionEvent =
       readonly _tag: "ThoughtDelta";
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      /** ACP `usage_update`: tokens now in the context window and the window size. */
+      readonly _tag: "UsageUpdated";
+      readonly usedTokens: number;
+      readonly maxTokens?: number;
+      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -874,6 +881,27 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         events.push({
           _tag: "ThoughtDelta",
           text: upd.content.text,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "usage_update": {
+      // `used` is what the context holds now, not a running total, so it is the
+      // meter number as sent. A non-numeric or negative `used` is no data; a
+      // missing or non-positive `size` leaves the window unknown.
+      const used = upd.used;
+      if (typeof used === "number" && Number.isFinite(used) && used >= 0) {
+        const size = upd.size;
+        const maxTokens =
+          typeof size === "number" && Number.isFinite(size) && size > 0
+            ? Math.round(size)
+            : undefined;
+        events.push({
+          _tag: "UsageUpdated",
+          usedTokens:
+            maxTokens !== undefined ? Math.min(Math.round(used), maxTokens) : Math.round(used),
+          ...(maxTokens !== undefined ? { maxTokens } : {}),
           rawPayload: params,
         });
       }
