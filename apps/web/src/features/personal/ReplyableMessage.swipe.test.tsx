@@ -363,6 +363,24 @@ describe("ReplyableMessage: swipe to see when it was sent", () => {
     expect(next.preventDefault).not.toHaveBeenCalled();
   });
 
+  it("stops swallowing clicks once the click that ends a swipe could no longer come", async () => {
+    const root = await render({ align: "end" });
+    await down(root, 300, 150);
+    await move(root, 240, 150);
+    await up(root, 240, 150);
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    const click = {
+      currentTarget: { contains: () => true },
+      target: {},
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    };
+    row(root).props.onClickCapture(click);
+    expect(click.preventDefault).not.toHaveBeenCalled();
+  });
+
   it("a cancelled touch (the browser took it to scroll) springs back like a release", async () => {
     const root = await render({ align: "end" });
     await down(root, 300, 150);
