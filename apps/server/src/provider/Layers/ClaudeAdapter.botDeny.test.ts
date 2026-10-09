@@ -42,10 +42,6 @@ const FAKE_CLI = [
   '    }) + "\\n");',
   "  }",
   "});",
-  // Like the real CLI, leave when the SDK closes stdin: newer SDKs wait for the
-  // child to exit instead of killing it at once, and a lingering child holds
-  // the temp folders open.
-  'lines.on("close", () => process.exit(0));',
   "setInterval(() => {}, 1_000);",
   "",
 ].join("\n");
