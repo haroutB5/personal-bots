@@ -224,7 +224,9 @@ describe("ContextUsedView", () => {
     expect(text).toContain(
       "Your message said little, so the chat's topic led the search: matchday, dots.",
     );
-    expect(text).toContain("A rule is not marked here");
+    expect(text).toContain("Outdated stops automatic use");
+    expect(text).toContain("Not relevant ranks a note lower");
+    expect(text).toContain("To change a rule:");
   });
 
   it("shows recorded evidence, freshness and unresolved conflicts beside the claim", () => {
