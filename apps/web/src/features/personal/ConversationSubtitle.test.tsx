@@ -53,6 +53,17 @@ describe("ConversationSubtitle", () => {
     expect(classOf(renderer, "Waiting on Planner")).toContain("max-w-full");
   });
 
+  it("keeps a working bot reading as working, however long it has been quiet", () => {
+    const renderer = render({ state: "working", status: "Working", modelLabel: "Sonnet 5.5 · M" });
+    const text = JSON.stringify(renderer.toJSON());
+    expect(text).toContain("Working");
+    expect(text).not.toContain("No response");
+    const dot = renderer.root.findAll(
+      (node) => node.type === "span" && node.props["aria-hidden"] === "true",
+    )[0];
+    expect(String(dot?.props.className)).toContain("--personal-live");
+  });
+
   it("omits the separator when the bot has no model", () => {
     const renderer = render({ state: "idle", status: "Idle", modelLabel: null });
     expect(

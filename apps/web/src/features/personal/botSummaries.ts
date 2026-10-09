@@ -101,17 +101,6 @@ function humanizeInstanceId(instanceId: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-/** "Claude", "Codex", "OpenCode": the provider's own name, without the app's "Claude Code" wording. */
-export function providerShortName(
-  instanceId: string,
-  providers: ReadonlyArray<ServerProvider>,
-): string {
-  const snapshot = providers.find((candidate) => candidate.instanceId === instanceId);
-  return snapshot === undefined
-    ? humanizeInstanceId(instanceId)
-    : resolveProviderInstanceDisplayName(snapshot);
-}
-
 export function resolveBotProvider(
   instanceId: string,
   providers: ReadonlyArray<ServerProvider>,

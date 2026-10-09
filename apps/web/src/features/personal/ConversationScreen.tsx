@@ -96,15 +96,8 @@ import { useBulkChatActions } from "./useBulkChatActions";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
 import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
 import { ConversationSubtitle } from "./ConversationSubtitle";
-import { QuietNoticeLine, type QuietNotice } from "./QuietNoticeLine";
-import { ownerCardPending, useQuietSince } from "./chatSilence";
 import { botMuteState } from "./botMuteModel";
-import {
-  conversationHeaderStatus,
-  providerShortName,
-  resolveBotProvider,
-  taskCardBotLine,
-} from "./botSummaries";
+import { conversationHeaderStatus, resolveBotProvider, taskCardBotLine } from "./botSummaries";
 import { botActiveModelShortLabel, fallbackNoteLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
@@ -561,21 +554,6 @@ export function ConversationScreen({
   const turnBusy =
     working || (providerWait && thread?.session !== null && thread?.session?.status !== "error");
   const latestTurn = thread?.latestTurn ?? null;
-  // A working bot that has sent nothing for 90 s: the header says so, with a
-  // live timer, in place of "Working". Time spent waiting on the owner (a
-  // secret, login or approval card) and time offline do not count.
-  const quietSinceMs = useQuietSince({
-    active: working && !laptopOffline && !ownerCardPending(items),
-    chatKey: threadId,
-    stamps: [thread?.updatedAt],
-  });
-  const quiet: QuietNotice | null =
-    quietSinceMs === null || bot === null
-      ? null
-      : {
-          provider: providerShortName(bot.modelSelection.instanceId, providers),
-          sinceMs: quietSinceMs,
-        };
   // One muted line of what the running turn is doing, for models that keep
   // their progress in thinking summaries and would otherwise read as blank.
   const progressNote = useMemo(
@@ -1242,10 +1220,7 @@ export function ConversationScreen({
                 color={bot.avatarColor}
                 size={48}
                 label={bot.name}
-                motion={motionForConversationState(
-                  quiet === null ? conversationState : "idle",
-                  turnThinking,
-                )}
+                motion={motionForConversationState(conversationState, turnThinking)}
                 comet={perfOptimizationOn("anim-comet")}
                 thought="header"
               />
@@ -1274,7 +1249,6 @@ export function ConversationScreen({
                       modelLabel={headerModelLabel}
                       modelNote={headerModelNote}
                       status={headerStatus}
-                      quiet={quiet}
                     />
                   ) : null}
                 </ConversationHeaderLine>
@@ -1307,10 +1281,7 @@ export function ConversationScreen({
               color={bot.avatarColor}
               size={48}
               label={bot.name}
-              motion={motionForConversationState(
-                quiet === null ? conversationState : "idle",
-                turnThinking,
-              )}
+              motion={motionForConversationState(conversationState, turnThinking)}
               comet={perfOptimizationOn("anim-comet")}
               thought="header"
             />
@@ -1327,7 +1298,6 @@ export function ConversationScreen({
                   modelLabel={headerModelLabel}
                   modelNote={headerModelNote}
                   status={headerStatus}
-                  quiet={quiet}
                 />
               ) : null}
             </div>
@@ -1478,11 +1448,7 @@ export function ConversationScreen({
         }}
       />
 
-      {quiet === null ? (
-        <ProgressNoteLine note={progressNote} />
-      ) : (
-        <QuietNoticeLine notice={quiet} />
-      )}
+      <ProgressNoteLine note={progressNote} />
 
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>
