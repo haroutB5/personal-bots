@@ -96,6 +96,7 @@ minimumReleaseAgeExclude:
   - "@shadcn/lint@0.1.5"
   - cn@0.3.2
   - "@anthropic-ai/claude-agent-sdk@0.3.292"
+  - "@anthropic-ai/claude-agent-sdk@0.3.295"
 
 overrides:
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
