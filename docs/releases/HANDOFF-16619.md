@@ -33,6 +33,8 @@ No separate QA or Security review was performed in this staging task, per the br
 
 ## Handoff to CTO / DevOps
 
+**Shipping blocker found on completion recheck:** the staged `/settings/providers` Add provider instance dialog does not offer DeepSeek. `apps/web/src/components/settings/providerDriverMeta.ts` omits DeepSeek from `PROVIDER_CLIENT_DEFINITIONS`, which supplies both the dialog and settings metadata. A fresh throwaway root therefore has no UI route through this dialog to add a DeepSeek instance and its sensitive key environment. The earlier dummy-key setup was configured outside the UI and must not be treated as UI key-setup proof. Dark 390 x 844 evidence: `C:/Users/Ht/.personal-bots/qa/backend-16619/add-provider-missing-deepseek-dark-390.png`. Resolve this code omission and verify key setup before shipping. This continuation was restricted to docs-only commits, so no code fix was made. The effort control's default High is visible in the existing form shots; changing effort options has not been proved. The recheck server `ds16619final` (port 55464, captured PID 10188) was stopped and its root deleted; the shared browser was closed. All existing passing gates remain valid for the unchanged binary, but do not cover this settings omission.
+
 Use the staged release and the pushed documentation commit after checking the notes and gate evidence. Preserve the separate 1.66.18 audit decision when integrating release branches. The builder stops before activation; DevOps owns any later shipping. Throwaway server shutdown, root removal, final checks and push results are recorded in `C:/Users/Ht/.personal-bots/qa/backend-16619/REPORT.md`.
 
 ## Gate evidence
