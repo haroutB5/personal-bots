@@ -1,0 +1,39 @@
+# HANDOFF 1.66.23
+
+## What changed
+
+1.66.23 is the re-cut of 1.66.22 (whose own release smoke rolled the app back after two `InterruptError: All fibers interrupted without error` lines appeared in the startup log during a loaded window; nothing in the build itself failed, and the lines came from the provider-maintenance capabilities lookup whose binary-path spawn stalled for 1.8 s under load) plus the fix for the reported iPhone typing jump. It carries:
+
+- From 1.66.22 (full detail in `HANDOFF-16622.md`): the DeepSeek balance and spent figures on the usage sheet card and the Team token usage card, read server-side with the spend priced from the instance's own transcripts at the published V4-Flash rates; and the temporary numbers-only typing-jump recorder (client-diag `type-*` lines; the phone's `bots:perf-off=rum` disables it).
+- The fix itself: `apps/web/src/features/personal/MessageList.tsx` now glides the composer-driven re-pin. When a typed line wraps, the composer field grows by a line, the transcript viewport shrinks, and the list re-pins to the bottom; that re-pin now animates over 120 ms with its own requestAnimationFrame tween instead of one instant 22 px write, which is exactly what read as the messages "jumping" on a phone-height transcript.
+- Guards on the tween: it runs only when the composer field's own height changed in the same step, the scroller's clientHeight moved the opposite way, `scrollHeight` did not change, the list is pinned, and `bots:perf-off=resize-pin-tween` is not set (reduced-motion also keeps the instant write). Reader input lands it immediately; content growth and any later resize cancel it; `endJump()` cancels it like `quoteSettleRef`, which covers `jumpToQuoted`, `jumpToLatest`, thread switch and unmount. Its own scroll events cannot un-stick the list, arm the Jump-to-latest button, or move the mounted window.
+
+## Verification
+
+- The mechanism, captured from the real iPhone by the recorder before the rollback: composer 44 to 110 px, transcript clientHeight 318 to 252, scrollTop 12389 to 12455 with 49 sampled changes; `window.scrollY` and `visualViewport` never moved. Only the re-pin moved, in one-line steps.
+- The fix, throwaway at 390x480 (the phone's short-transcript geometry), scrollTop sampled every rAF: wraps now move 22/22/22/20 px over 7/7/7/7 frames, each ending exactly at `scrollHeight - clientHeight`; with the kill switch set the same wraps move in 1 frame each (today's behaviour, kept as the fallback). 132 keystrokes, zero page errors. Evidence: `C:\Users\Ht\.personal-bots\qa\frontend-16623-resize-pin\` (`EVIDENCE.md`, `glide-on.json`, `glide-off.json`, `write-log.txt`).
+- Tests: `MessageList.resizePin.test.tsx` (17) plus the full web personal suite (2453 in 224 files) and both typechecks; the `MessageList.jump` / `searchJump` suites are byte-unchanged and green.
+
+Not verified: the physical iPhone (Harout's eyes are the test; the kill switch is the fallback), and the load-window `InterruptError` log noise remains (queued with the five stale provider tests as a small follow-up).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=77337da4bb7eac0c992d6ced8b322d6678b1e0a1 release=77337da4bb7e json-sha256=e79e79d95193208be339e45911c6c19a00fd89f6814d684ff97676697a7a122b result=PASS -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-10T23:01:56Z. Version 1.66.23, release `77337da4bb7e`, commit `77337da4bb7eac0c992d6ced8b322d6678b1e0a1` on `release/hbots-16619`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\77337da4bb7e\gate-evidence.json` (sha256 `e79e79d95193208be339e45911c6c19a00fd89f6814d684ff97676697a7a122b`) and the full gate logs in `releases\77337da4bb7e\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2509 tests passed, 0 failed, 3 skipped, in 179 files | 244.7   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 38.6    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2453 tests passed, 0 failed, 0 skipped, in 224 files | 32      |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 38.2    |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 58.5    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-deepseek-flash\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\77337da4bb7e" -Json` (in `.`)                                                                                                            | 0    | pass: 12/12 journeys passed                                | 272.7   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `77337da4bb7eac0c992d6ced8b322d6678b1e0a1`, at end `77337da4bb7eac0c992d6ced8b322d6678b1e0a1`; tracked files modified: none. Staged release: version 1.66.23, sha 77337da4bb7e, dirty False, externals copied; `dist/bin.mjs` sha256 `f8292a843a4cbd855d2c3cbd589e878f0b0ebebb381e257da321ddc41578fd3c`.
+<!-- gate-evidence:end -->
