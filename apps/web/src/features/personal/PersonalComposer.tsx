@@ -65,6 +65,7 @@ import { activeMentionDraft, applyMention, matchMentionCandidates } from "./ment
 import { MentionPopover, type MentionRow } from "./MentionPopover";
 import { COMPOSER_INPUT_ATTRIBUTE, consumeComposerRefocus } from "./composerRefocus";
 import { ReplyBar } from "./ReplyQuote";
+import { noteTypeJumpSent } from "./typeJumpDiag";
 
 const LINE_HEIGHT_PX = 22;
 const MAX_LINES = 5;
@@ -580,6 +581,10 @@ export function PersonalComposer({
     }
     if (sendingRef.current || preparingRef.current) return false;
     sendingRef.current = true;
+    // The typing capture (typeJumpDiag.ts) ends with the send: what moved while
+    // the field sat above the keyboard goes out as one diag batch, before the
+    // send itself can move anything else.
+    noteTypeJumpSent();
     const sentPrompt = isQuick ? "" : prompt;
     const text = isQuick ? quick.trim() : prompt.trim();
     const quote = isQuick ? null : replyTo;

@@ -165,6 +165,7 @@ import {
   useRefetchOnTurnsSettled,
 } from "./unreadChats";
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
+import { startTypeJumpWatch, stopTypeJumpWatch } from "./typeJumpDiag";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
 import { ProgressNoteLine } from "./ProgressNoteLine";
@@ -353,6 +354,14 @@ export function ConversationScreen({
     if (usableThreadId === null) return;
     reportChatUsable(window.location.pathname);
   }, [usableThreadId]);
+  // The on-phone capture for the iPhone "jumping" bug (typeJumpDiag.ts): while
+  // this chat is mounted, typing in the composer folds the viewport and scroll
+  // geometry into one diag batch per sent message. Keyed by thread: a chat
+  // switch closes the capture the same way a screen unmount does.
+  useEffect(() => {
+    startTypeJumpWatch();
+    return () => stopTypeJumpWatch();
+  }, [threadId]);
   useEffect(() => {
     observeChatMessages(threadId, messages);
   }, [threadId, messages]);

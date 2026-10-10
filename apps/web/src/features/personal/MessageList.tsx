@@ -1249,6 +1249,9 @@ export function MessageList({
           above the chat scrollable, so the whole chat drags up off screen. */}
       <div
         ref={scrollerRef}
+        // The chat's scroller, marked so the on-phone typing capture
+        // (typeJumpDiag.ts) can read its scrollTop and clientHeight.
+        data-chat-transcript=""
         className="personal-column personal-scroll-quiet relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
       >
         <div
