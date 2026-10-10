@@ -398,10 +398,14 @@ describe("ReplyableMessage: swipe to see when it was sent", () => {
     await down(root, 300, 150);
     await move(root, 240, 150);
     await up(root, 240, 150);
-    await act(async () => vi.advanceTimersByTime(200));
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
     await down(root, 300, 150);
     await move(root, 240, 150);
-    await act(async () => vi.advanceTimersByTime(151));
+    await act(async () => {
+      vi.advanceTimersByTime(151);
+    });
     await up(root, 240, 150);
     const click = {
       currentTarget: { contains: () => true },
