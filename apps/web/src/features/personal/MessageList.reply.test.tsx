@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { BOT_AVATAR_SHAPE_ORDER } from "./botAvatarShapes";
 import type { ConversationItem } from "./conversationModel";
 import { choicesStates, MessageList } from "./MessageList";
+import { requestMessageJump } from "./pendingMessageJump";
 
 const mocks = vi.hoisted(() => ({ jump: vi.fn() }));
 
@@ -120,6 +121,55 @@ const render = async (props: Partial<Parameters<typeof MessageList>[0]> = {}) =>
 
 const QUOTE: PersonalReplyQuote = { messageId: "bot-1", name: "Mori", excerpt: "All green." };
 const block = (...lines: string[]) => ["```choices", ...lines, "```"].join("\n");
+
+it("keeps mounted history bounded, pages back to the oldest row and forward again", async () => {
+  vi.stubGlobal("window", {});
+  const items = Array.from({ length: 1010 }, (_, index) =>
+    message(`m-${index}`, "user", `Row ${index}`),
+  );
+  const root = await render({ items });
+  const rows = () => root.findAll((node) => typeof node.props["data-transcript-row"] === "string");
+  expect(rows()).toHaveLength(80);
+  expect(rows()[0]?.props["data-transcript-row"]).toBe("m-930");
+  for (let page = 0; page < 24; page++) {
+    const earlier = root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Load earlier messages"));
+    if (earlier) await act(async () => earlier.props.onClick());
+    expect(rows().length).toBeLessThanOrEqual(80);
+  }
+  expect(rows()[0]?.props["data-transcript-row"]).toBe("m-0");
+  await act(async () =>
+    renderer!.update(
+      <MessageList
+        {...BASE_PROPS}
+        items={[...items, message("new", "assistant", "Incoming", { streaming: true })]}
+      />,
+    ),
+  );
+  expect(rows()[0]?.props["data-transcript-row"]).toBe("m-0");
+  for (let page = 0; page < 24; page++) {
+    const later = root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Load later messages"));
+    if (later) await act(async () => later.props.onClick());
+    expect(rows().length).toBeLessThanOrEqual(80);
+  }
+  expect(rows().at(-1)?.props["data-transcript-row"]).toBe("new");
+});
+
+it("materializes an old search target outside the initial window", async () => {
+  const items = Array.from({ length: 1010 }, (_, index) =>
+    message(`m-${index}`, "user", `Row ${index}`),
+  );
+  requestMessageJump("thread-1", "m-500");
+  mocks.jump.mockReturnValue(true);
+  const root = await render({ items });
+  expect(root.findAll((node) => node.props["data-transcript-row"] === "m-500")).toHaveLength(1);
+  expect(
+    root.findAll((node) => typeof node.props["data-transcript-row"] === "string"),
+  ).toHaveLength(80);
+});
 
 describe("reply quote on a sent message", () => {
   it("draws the quote above the text, and tapping it jumps to the original", async () => {
