@@ -58,21 +58,21 @@ All comparison data is synthetic. No paid call, redemption, real bot chat or own
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=cd7d822352b41bda545f361e31fd0ed03a5650bf release=cd7d822352b4 json-sha256=6e7deb339601c233fe08cf7b82777d88fd50ca154047ad083406dd02fe03d33e result=PASS -->
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-10T09:50:35Z. Version 1.66.18, release `cd7d822352b4`, commit `cd7d822352b41bda545f361e31fd0ed03a5650bf` on `fix/hbots-16618-audit`, working tree clean, result **PASS**.
+<!-- gate-evidence:begin sha=3611c8bc5580a171e49edc686a9891b50389d34a release=3611c8bc5580 json-sha256=64f2613b80fca9cc2713989ea707a8c3bf119894c16f2b227717171d611c4919 result=PASS -->
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-10T14:08:03Z. Version 1.66.18, release `3611c8bc5580`, commit `3611c8bc5580a171e49edc686a9891b50389d34a` on `fix/hbots-16618-audit`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\cd7d822352b4\gate-evidence.json` (sha256 `6e7deb339601c233fe08cf7b82777d88fd50ca154047ad083406dd02fe03d33e`) and the full gate logs in `releases\cd7d822352b4\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\3611c8bc5580\gate-evidence.json` (sha256 `64f2613b80fca9cc2713989ea707a8c3bf119894c16f2b227717171d611c4919`) and the full gate logs in `releases\3611c8bc5580\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate | Commands | Exit | Result | Seconds |
 | --- | --- | --- | --- | --- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`) | 0 | pass: 2509 tests passed, 0 failed, 3 skipped, in 179 files | 255.1 |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`) | 0 | pass: 2509 tests passed, 0 failed, 3 skipped, in 179 files | 292.8 |
 | server-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`) | 0 | pass: exit code only | 47.8 |
-| web-tests | `vp test run --project unit src/features/personal` (in `apps\web`) | 0 | pass: 2400 tests passed, 0 failed, 0 skipped, in 222 files | 30.6 |
-| web-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`) | 0 | pass: exit code only | 53.3 |
-| ps-tests | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0 | pass: 233 checks ok, 0 failed | 102.3 |
-| e2e | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16618-audit\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\cd7d822352b4" -Json` (in `.`) | 0 | pass: 12/12 journeys passed | 282.6 |
+| web-tests | `vp test run --project unit src/features/personal` (in `apps\web`) | 0 | pass: 2403 tests passed, 0 failed, 0 skipped, in 222 files | 28.9 |
+| web-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`) | 0 | pass: exit code only | 9.9 |
+| ps-tests | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0 | pass: 233 checks ok, 0 failed | 101.7 |
+| e2e | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16618-audit\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\3611c8bc5580" -Json` (in `.`) | 0 | pass: 12/12 journeys passed | 279.9 |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `cd7d822352b41bda545f361e31fd0ed03a5650bf`, at end `cd7d822352b41bda545f361e31fd0ed03a5650bf`; tracked files modified: none. Staged release: version 1.66.18, sha cd7d822352b4, dirty False, externals copied; `dist/bin.mjs` sha256 `4f0bce3672a12553586b24b5a3d758c035f76e3686d96b3ae12ddca728aeadb1`.
+Tree: HEAD at start `3611c8bc5580a171e49edc686a9891b50389d34a`, at end `3611c8bc5580a171e49edc686a9891b50389d34a`; tracked files modified: none. Staged release: version 1.66.18, sha 3611c8bc5580, dirty False, externals copied; `dist/bin.mjs` sha256 `4f0bce3672a12553586b24b5a3d758c035f76e3686d96b3ae12ddca728aeadb1`.
 <!-- gate-evidence:end -->
