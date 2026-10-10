@@ -668,6 +668,7 @@ describe("makeManagedServerProvider", () => {
   } as const;
   const freshLimits = {
     checkedAt: "2026-04-10T00:00:03.000Z",
+    fullReadAt: "2026-04-10T00:00:03.000Z",
     windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 62 }],
   } as const;
   const unsupportedLimits = {

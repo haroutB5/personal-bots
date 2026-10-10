@@ -15,6 +15,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationSession,
   type ServerProvider,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -32,6 +33,11 @@ import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEng
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import {
+  applyUsageLimitsUpdate,
+  resolveUsageLimitsAfterProbe,
+} from "../provider/providerUsageLimits.ts";
+import { codexRateLimitsToUpdate } from "../provider/Layers/codexUsageLimits.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
@@ -68,6 +74,7 @@ const RESET = Date.parse("2026-10-06T17:40:00.000Z");
 
 const usage = (windows: ReadonlyArray<{ id: string; used: number; resetsAt?: string }>) => ({
   checkedAt: isoAt(NOW),
+  fullReadAt: isoAt(NOW),
   windows: windows.map((window) => ({
     id: window.id,
     kind: window.id.includes("seven") ? ("weekly" as const) : ("session" as const),
@@ -80,7 +87,7 @@ const usage = (windows: ReadonlyArray<{ id: string; used: number; resetsAt?: str
 const snapshot = (
   instanceId: string,
   driver: string,
-  limits?: ReturnType<typeof usage>,
+  limits?: ServerProviderUsageLimits,
 ): ServerProvider =>
   ({
     instanceId,
@@ -302,7 +309,11 @@ describe("helpers", () => {
 
 describe("confirmed early recovery", () => {
   const now = NOW + 60_000;
-  const recovered = { ...usage([{ id: "primary", used: 5 }]), checkedAt: isoAt(now) };
+  const recovered = {
+    ...usage([{ id: "primary", used: 5 }]),
+    checkedAt: isoAt(now),
+    fullReadAt: isoAt(now),
+  };
   const base: SwitchBackInput = {
     killSwitchOn: true,
     botFallbackEnabled: true,
@@ -325,6 +336,8 @@ describe("confirmed early recovery", () => {
   it("rejects stale, failed, unavailable, missing, future and pre-hit readings", () => {
     for (const limits of [
       undefined,
+      { ...recovered, fullReadAt: undefined },
+      { ...recovered, fullReadAt: isoAt(NOW) },
       { ...recovered, checkedAt: isoAt(NOW) },
       { ...recovered, checkedAt: isoAt(now + 1) },
       { ...recovered, checkedAt: "invalid" },
@@ -351,7 +364,9 @@ describe("confirmed early recovery", () => {
       expect(
         decideSwitchBack({
           ...base,
-          homeProvider: { usageLimits: { ...usage(windows), checkedAt: isoAt(now) } },
+          homeProvider: {
+            usageLimits: { ...usage(windows), checkedAt: isoAt(now), fullReadAt: isoAt(now) },
+          },
         }),
       ).toEqual({ kind: "wait" });
     }
@@ -364,7 +379,11 @@ describe("confirmed early recovery", () => {
       decideSwitchBack({
         ...opus,
         homeProvider: {
-          usageLimits: { ...usage([{ id: "five_hour", used: 5 }]), checkedAt: isoAt(now) },
+          usageLimits: {
+            ...usage([{ id: "five_hour", used: 5 }]),
+            checkedAt: isoAt(now),
+            fullReadAt: isoAt(now),
+          },
         },
       }),
     ).toEqual({ kind: "wait" });
@@ -379,6 +398,7 @@ describe("confirmed early recovery", () => {
               { id: "seven_day_sonnet", used: 100 },
             ]),
             checkedAt: isoAt(now),
+            fullReadAt: isoAt(now),
           },
         },
       }),
@@ -387,6 +407,66 @@ describe("confirmed early recovery", () => {
 });
 
 // --- the service, over a real database ------------------------------------------
+
+it.effect("sparse runtime updates cannot wake waiting work; a full probe recovers once", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    yield* hit();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* sql`INSERT INTO personal_tasks (
+      task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+      depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
+    ) VALUES ('sparse-wait', 'sparse-wait', ${BOT}, 't', 'o', 'rate_limited', 'user',
+      'sparse-wait', 0, 2, 5, ${isoAt(RESET)}, ${isoAt(NOW)}, ${isoAt(NOW)}, ${CHAT})`;
+    const at = NOW + 60_000;
+    yield* TestClock.setTime(at);
+    const stale = resolveUsageLimitsAfterProbe({
+      published: usage([
+        { id: "primary", used: 20 },
+        { id: "secondary", used: 5 },
+      ]),
+      probed: undefined,
+      context: { checkedAt: isoAt(at), message: "test probe failed" },
+    });
+    const update = codexRateLimitsToUpdate({
+      limitId: "codex",
+      primary: { usedPercent: 21, windowDurationMins: 300 },
+    })!;
+    const merged = applyUsageLimitsUpdate({ previous: stale, update, checkedAt: isoAt(at) });
+    harness.providers = [snapshot("codex", "codex", merged)];
+    yield* service.sweep;
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(1);
+    expect(
+      yield* sql`SELECT available_at FROM personal_tasks WHERE task_id = 'sparse-wait'`,
+    ).toEqual([{ available_at: isoAt(RESET) }]);
+    expect(merged?.windows.find((window) => window.id === "secondary")?.usedPercent).toBe(5);
+    expect(merged?.fullReadAt).toBeUndefined();
+
+    const full = resolveUsageLimitsAfterProbe({
+      published: merged,
+      probed: {
+        ...usage([
+          { id: "primary", used: 21 },
+          { id: "secondary", used: 5 },
+        ]),
+        checkedAt: isoAt(at),
+      },
+    });
+    harness.providers = [snapshot("codex", "codex", full)];
+    yield* service.sweep;
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+    expect(
+      yield* sql`SELECT available_at FROM personal_tasks WHERE task_id = 'sparse-wait'`,
+    ).toEqual([{ available_at: isoAt(at) }]);
+    expect(lines(harness)).toHaveLength(2);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
 
 const BOT = PersonalBotId.make("bot-it");
 const CHAT = ThreadId.make("chat-it-1");
@@ -989,7 +1069,11 @@ it.effect("recovery isolates old provider waits and rolls back a failed wake", (
     const at = NOW + 60_000;
     yield* TestClock.setTime(at);
     harness.providers = [
-      snapshot("codex", "codex", { ...usage([{ id: "primary", used: 5 }]), checkedAt: isoAt(at) }),
+      snapshot("codex", "codex", {
+        ...usage([{ id: "primary", used: 5 }]),
+        checkedAt: isoAt(at),
+        fullReadAt: isoAt(at),
+      }),
     ];
     yield* sql.unsafe(
       "CREATE TRIGGER fail_recovery_wake BEFORE UPDATE ON personal_chat_resumes BEGIN SELECT RAISE(ABORT, 'test wake failure'); END",
@@ -1057,6 +1141,7 @@ for (const provider of ["codex", "claudeAgent"] as const) {
             snapshot(home.instanceId, provider, {
               ...usage([{ id: "primary", used: 5 }]),
               checkedAt: isoAt(recoveryAt),
+              fullReadAt: isoAt(recoveryAt),
             }),
           ];
         };
@@ -1087,7 +1172,11 @@ it.effect("stale or unavailable primary and another account's recovery keep the 
     const service = yield* PersonalModelFallback.PersonalModelFallback;
     const at = NOW + 60_000;
     yield* TestClock.setTime(at);
-    const fresh = { ...usage([{ id: "primary", used: 5 }]), checkedAt: isoAt(at) };
+    const fresh = {
+      ...usage([{ id: "primary", used: 5 }]),
+      checkedAt: isoAt(at),
+      fullReadAt: isoAt(at),
+    };
     for (const own of [
       undefined,
       usage([{ id: "primary", used: 5 }]),
@@ -1139,6 +1228,7 @@ it.effect(
         snapshot("codex", "codex", {
           ...usage([{ id: "primary", used: 5 }]),
           checkedAt: isoAt(at),
+          fullReadAt: isoAt(at),
         }),
       ];
       yield* fallback.sweep;

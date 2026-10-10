@@ -26,6 +26,7 @@ describe("codexRateLimitsToLimits", () => {
       }),
     ).toEqual({
       checkedAt,
+      fullReadAt: checkedAt,
       windows: [
         {
           id: "primary",

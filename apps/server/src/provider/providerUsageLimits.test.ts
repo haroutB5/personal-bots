@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyUsageLimitsUpdate,
+  makeUsageLimits,
   resolveUsageLimitsAfterProbe,
   seedUsageLimits,
   shortProbeFailureReason,
@@ -26,6 +27,24 @@ const weekly = {
 const published = { checkedAt, windows: [session, weekly] };
 
 describe("applyUsageLimitsUpdate", () => {
+  it("keeps full-read proof for an unchanged snapshot, but drops it on a runtime merge", () => {
+    const full = makeUsageLimits({ checkedAt, windows: [session, weekly] });
+    expect(full.fullReadAt).toBe(checkedAt);
+    expect(
+      applyUsageLimitsUpdate({ previous: full, checkedAt, update: { windows: [session] } }),
+    ).toBe(full);
+    const merged = applyUsageLimitsUpdate({
+      previous: full,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...session, usedPercent: 55 }] },
+    });
+    expect(merged?.fullReadAt).toBeUndefined();
+    const failed = { ...full, refreshFailed: { at: checkedAt } };
+    expect(
+      applyUsageLimitsUpdate({ previous: failed, checkedAt, update: { windows: [session] } })
+        ?.fullReadAt,
+    ).toBeUndefined();
+  });
   it("returns the published object itself when no window moved", () => {
     // Codex repeats the same numbers beside every token-usage tick; the
     // ingestion path relies on identity to skip the publish.
@@ -160,7 +179,10 @@ describe("resolveUsageLimitsAfterProbe", () => {
   it("a probe that reads usage replaces the reading and its failure note", () => {
     const fresh = { checkedAt: probeAt, windows: [session] };
     const noted = { ...published, refreshFailed: { at: probeAt } };
-    expect(resolveUsageLimitsAfterProbe({ published: noted, probed: fresh })).toBe(fresh);
+    expect(resolveUsageLimitsAfterProbe({ published: noted, probed: fresh })).toEqual({
+      ...fresh,
+      fullReadAt: probeAt,
+    });
   });
 
   it("lets authoritative answers replace the reading", () => {

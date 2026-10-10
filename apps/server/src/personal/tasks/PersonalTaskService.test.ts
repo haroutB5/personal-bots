@@ -3531,6 +3531,7 @@ it.effect(
         status: "ready",
         usageLimits: {
           checkedAt,
+          fullReadAt: checkedAt,
           windows: [{ id: "primary", kind: "weekly", label: "weekly", usedPercent: 5 }],
         },
       };

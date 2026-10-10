@@ -218,11 +218,15 @@ export interface SwitchBackInput {
 
 export function primaryUsageRecovered(input: SwitchBackInput): boolean {
   const usage = input.homeProvider?.usageLimits;
+  // Only an unchanged full-probe snapshot can prove early recovery. The UI
+  // also publishes sparse runtime merges, whose aggregate age says nothing
+  // about an omitted allowance. Those snapshots carry no full-read proof.
   if (
     !input.recoveryProviderReady ||
     usage === undefined ||
     usage.unavailable ||
-    usage.refreshFailed
+    usage.refreshFailed ||
+    usage.fullReadAt !== usage.checkedAt
   ) {
     return false;
   }

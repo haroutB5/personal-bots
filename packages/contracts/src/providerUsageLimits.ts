@@ -54,6 +54,8 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
  */
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
+  /** Successful full probe for these exact windows. Sparse runtime merges drop this proof. */
+  fullReadAt: Schema.optional(IsoDateTime),
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   resetCredits: Schema.optional(ServerProviderResetCredits),
   unavailable: Schema.optional(

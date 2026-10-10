@@ -29,7 +29,11 @@ export function makeUsageLimits(input: {
   readonly checkedAt: string;
   readonly windows: Iterable<ServerProviderUsageWindow>;
 }): ServerProviderUsageLimits {
-  return { checkedAt: input.checkedAt, windows: sortWindows(input.windows) };
+  return {
+    checkedAt: input.checkedAt,
+    fullReadAt: input.checkedAt,
+    windows: sortWindows(input.windows),
+  };
 }
 
 export function makeUnavailableUsageLimits(input: {
@@ -99,7 +103,11 @@ export function applyUsageLimitsUpdate(input: {
     return previous;
   }
   return {
-    ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
+    // This snapshot mixes readings from different times. Preserve the UI
+    // merge, but never let it certify full allowance recovery. Even a
+    // changed event carrying every window is a runtime partial by contract.
+    checkedAt: input.checkedAt,
+    windows: sortWindows(merged.values()),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
   };
 }
@@ -173,7 +181,12 @@ export function resolveUsageLimitsAfterProbe(input: {
   if (context?.enabled === false || context?.installed === false) return probed;
   const read =
     probed !== undefined && probed.unavailable === undefined && probed.windows.length > 0;
-  if (read) return probed;
+  if (read) {
+    // Mark the authoritative probe boundary as well as the normalizers.
+    return probed.fullReadAt === probed.checkedAt
+      ? probed
+      : { ...probed, fullReadAt: probed.checkedAt };
+  }
   const lastGood =
     published !== undefined && published.unavailable === undefined && published.windows.length > 0;
   if (!lastGood) return probed;
