@@ -1,5 +1,9 @@
 # HANDOFF 1.66.16
 
+## Release hold, 10 October 2026
+
+**DO NOT DEPLOY candidate `07da41f9d033`.** Security found a reproduced Medium recovery blocker: sparse Codex runtime usage updates can stamp retained, stale allowance windows as fresh and prematurely clear fallback/wake waiting work. QA's scoped SHIP does not clear this separate blocker. The previous memory High is closed, but the combined candidate needs a corrected recovery build and focused QA/Security re-review. Report and cross-layer service reproduction: `C:/Claude/AI/dev-team/reviews/security-740ab636/REPORT.md`. Live remains unchanged.
+
 ## Changed behaviour
 
 A redeemed usage reset can now return an idle bot to its primary model before the reset date stored on its fallback row. The sweep probes the primary even while that date is in the future, at most once per provider instance every two minutes. Recovery requires a ready original instance, a successful reading newer than the fallback hit and no older than two minutes, explicit room in the exhausted pool, and room in every applicable window. Busy bots wait. Missing, failed, stale, future-dated, exhausted or unrelated-pool readings cannot establish early recovery. The existing natural-reset and unreported-reset hold rules remain.
