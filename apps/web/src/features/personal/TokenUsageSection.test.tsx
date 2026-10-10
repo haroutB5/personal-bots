@@ -431,7 +431,7 @@ describe("TokenUsageCard", () => {
   });
 
   describe("the DeepSeek balance line", () => {
-    const line = (overrides: Partial<Parameters<typeof TokenUsageCard>[0]> = {}) => ({
+    const line = (overrides: { readonly failure?: string | null } = {}) => ({
       balance: {
         currency: "USD",
         total: 12.34,
