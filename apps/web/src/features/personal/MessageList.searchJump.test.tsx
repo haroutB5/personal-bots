@@ -221,11 +221,15 @@ it("never fires for a request that has lapsed", async () => {
 it("a target requested during a latest jump stays put after the old animation and timer settle", async () => {
   await render();
   await act(async () => scroller.scrollToTop(100));
-  await act(async () => vi.advanceTimersByTime(1000));
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+  });
   const latest = renderer!.root.findByProps({ "aria-label": "Jump to latest message" });
   await act(async () => latest.props.onClick());
   expect(scroller.smoothTarget).not.toBeNull();
-  await act(async () => vi.advanceTimersByTime(180));
+  await act(async () => {
+    vi.advanceTimersByTime(180);
+  });
 
   mocks.jump.mockImplementation(() => {
     scroller.scrollTop = 200;
@@ -234,7 +238,9 @@ it("a target requested during a latest jump stays put after the old animation an
   requestMessageJump("thread-1", "m-42");
   await render("thread-1", []);
   await act(async () => scroller.settleSmoothScroll());
-  await act(async () => vi.advanceTimersByTime(2000));
+  await act(async () => {
+    vi.advanceTimersByTime(2000);
+  });
   scroller.scrollHeight = 1300;
   await act(async () => resize());
   expect(scroller.scrollTop).toBe(200);
