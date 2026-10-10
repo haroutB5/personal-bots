@@ -121,6 +121,8 @@ beforeEach(() => {
   windowListeners = new Listeners();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
+    requestAnimationFrame: (callback: () => void) => setTimeout(callback, 16),
+    cancelAnimationFrame: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
     matchMedia: (query: string) => ({ matches: reduceMotion && query.includes("reduce") }),
     addEventListener: (type: string, listener: (event: unknown) => void) =>
       windowListeners.add(type, listener),
@@ -237,6 +239,11 @@ it("a target requested during a latest jump stays put after the old animation an
   });
   requestMessageJump("thread-1", "m-42");
   await render("thread-1", []);
+  // A compositor offset already queued before cancellation can arrive late.
+  scroller.scrollTop = 400;
+  await act(async () => {
+    vi.advanceTimersByTime(16);
+  });
   await act(async () => scroller.settleSmoothScroll());
   await act(async () => {
     vi.advanceTimersByTime(2000);
@@ -251,4 +258,31 @@ it("a request for another chat is left alone", async () => {
   await render("thread-1");
   expect(mocks.jump).not.toHaveBeenCalled();
   expect(peekMessageJump("thread-2")).toBe("m-9");
+});
+
+it.each(["latest", "reader"])("%s intent cancels a queued quote landing", async (intent) => {
+  await render();
+  await act(async () => scroller.scrollToTop(100));
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+  });
+  const latest = () => renderer!.root.findByProps({ "aria-label": "Jump to latest message" });
+  await act(async () => latest().props.onClick());
+  mocks.jump.mockImplementation(() => {
+    scroller.scrollTop = 200;
+    return true;
+  });
+  requestMessageJump("thread-1", "m-42");
+  await render("thread-1", []);
+  const calls = mocks.jump.mock.calls.length;
+  await act(async () => {
+    if (intent === "latest") latest().props.onClick();
+    else scroller.fire("wheel");
+  });
+  scroller.scrollTop = 400;
+  await act(async () => {
+    vi.advanceTimersByTime(16);
+  });
+  expect(mocks.jump).toHaveBeenCalledTimes(calls);
+  expect(scroller.scrollTop).toBe(400);
 });
