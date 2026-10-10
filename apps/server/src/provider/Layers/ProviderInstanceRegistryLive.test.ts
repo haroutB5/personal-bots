@@ -28,6 +28,7 @@ import {
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
+  type DeepSeekSettings,
   type GrokSettings,
   type OpenCodeSettings,
   ProviderDriverKind,
@@ -52,6 +53,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
+import { DeepSeekDriver } from "../Drivers/DeepSeekDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -129,6 +131,14 @@ const makeCursorConfig = (overrides: Partial<CursorSettings>): CursorSettings =>
 const makeGrokConfig = (overrides: Partial<GrokSettings>): GrokSettings => ({
   enabled: false,
   binaryPath: "grok",
+  customModels: [],
+  ...overrides,
+});
+
+const makeDeepSeekConfig = (overrides: Partial<DeepSeekSettings>): DeepSeekSettings => ({
+  enabled: false,
+  binaryPath: "claude",
+  homePath: "",
   customModels: [],
   ...overrides,
 });
@@ -672,12 +682,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const deepSeekId = ProviderInstanceId.make("deepseek_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const deepSeekDriverKind = ProviderDriverKind.make("deepseek");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -713,10 +725,23 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeOpenCodeConfig({}),
         },
+        [deepSeekId]: {
+          driver: deepSeekDriverKind,
+          displayName: "DeepSeek",
+          enabled: false,
+          config: makeDeepSeekConfig({ homePath: "/home/julius/.claude-t3-deepseek" }),
+        },
       };
 
       const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [
+          CodexDriver,
+          ClaudeDriver,
+          CursorDriver,
+          GrokDriver,
+          OpenCodeDriver,
+          DeepSeekDriver,
+        ],
         configMap,
       });
 
@@ -726,9 +751,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, openCodeId, deepSeekId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -739,16 +764,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const deepSeek = yield* registry.getInstance(deepSeekId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
+      expect(deepSeek?.driverKind).toBe(deepSeekDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
+      expect(deepSeek?.displayName).toBe("DeepSeek");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -761,6 +789,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
+        deepSeek!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -769,6 +798,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
+        deepSeek!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
       const snapshots = [
@@ -777,6 +807,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
+        deepSeek!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
@@ -822,6 +853,24 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.enabled).toBe(false);
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
+      );
+
+      // DeepSeek reuses the Claude runtime but stamps its own identity: the
+      // snapshot, continuation key, adapter, and Flash-only catalog must
+      // never read as Claude.
+      const deepSeekSnapshot = yield* deepSeek!.snapshot.getSnapshot;
+      expect(deepSeekSnapshot.instanceId).toBe(deepSeekId);
+      expect(deepSeekSnapshot.driver).toBe(deepSeekDriverKind);
+      expect(deepSeekSnapshot.displayName).toBe("DeepSeek");
+      expect(deepSeekSnapshot.enabled).toBe(false);
+      expect(deepSeekSnapshot.continuation?.groupKey).toBe(
+        `deepseek:home:${(yield* Path.Path).resolve("/home/julius/.claude-t3-deepseek")}`,
+      );
+      expect(deepSeekSnapshot.models.map((model) => model.slug)).toEqual(["deepseek-flash"]);
+      expect(deepSeek!.adapter.provider).toBe(deepSeekDriverKind);
+      expect(deepSeek!.continuationIdentity.driverKind).toBe(deepSeekDriverKind);
+      expect(deepSeek!.continuationIdentity.continuationKey).toBe(
+        `deepseek:home:${(yield* Path.Path).resolve("/home/julius/.claude-t3-deepseek")}`,
       );
     }).pipe(Effect.provide(testLayer)),
   );

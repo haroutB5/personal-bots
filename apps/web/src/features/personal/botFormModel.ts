@@ -56,8 +56,8 @@ export function noBotProviderMessage(providers: ReadonlyArray<ServerProvider>): 
       !driverCarriesBotInstructions(provider.driver),
   );
   return readyButMute
-    ? "The providers ready on your computer don't pass bot instructions to the model, so a bot there would reply as the plain model. Set up Claude Code, Codex or OpenCode, then come back to create a bot."
-    : "No provider is ready on your computer yet. Set up Claude Code or Codex there, then come back to create a bot.";
+    ? "The providers ready on your computer don't pass bot instructions to the model, so a bot there would reply as the plain model. Set up Claude Code, Codex, OpenCode or DeepSeek, then come back to create a bot."
+    : "No provider is ready on your computer yet. Set up Claude Code, Codex or DeepSeek there, then come back to create a bot.";
 }
 
 export { EFFORT_OPTION_IDS } from "./botModelLabel";

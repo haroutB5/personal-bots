@@ -70,6 +70,7 @@ describe("bot instruction coverage", () => {
       claudeAgent: "Layers/ClaudeAdapter.ts",
       codex: "CodexDeveloperInstructions.ts",
       opencode: "Layers/OpenCodeAdapter.ts",
+      deepseek: "Layers/ClaudeAdapter.ts",
     });
   });
 

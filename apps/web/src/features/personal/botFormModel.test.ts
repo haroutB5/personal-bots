@@ -217,6 +217,7 @@ describe("bot provider instruction support", () => {
     expect(readyProvider("claudeAgent")).toSatisfy(isBotProviderSelectable);
     expect(readyProvider("codex")).toSatisfy(isBotProviderSelectable);
     expect(readyProvider("opencode")).toSatisfy(isBotProviderSelectable);
+    expect(readyProvider("deepseek")).toSatisfy(isBotProviderSelectable);
     for (const driver of ["cursor", "grok", "antigravity", "someFutureProvider"]) {
       expect(isBotProviderSelectable(readyProvider(driver))).toBe(false);
     }

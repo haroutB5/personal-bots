@@ -54,6 +54,16 @@
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": "=1.1.1",
       "ranges": [{ "range": "=1.1.1", "status": "supported" }]
+    },
+    {
+      "driver": "deepseek",
+      "t3CodeRange": ">=0.0.42",
+      "recommendedRange": ">=2.1.280",
+      "ranges": [
+        { "range": ">=2.1.280", "status": "supported" },
+        { "range": ">=2.1.111 <2.1.280", "status": "graceful" },
+        { "range": "<2.1.111", "status": "unsupported" }
+      ]
     }
   ],
   "currentModels": {
@@ -65,7 +75,8 @@
       "gpt-daybreak-red-latest"
     ],
     "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5"],
-    "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
+    "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"],
+    "deepseek": ["deepseek-flash"]
   },
   "providers": {
     "claudeAgent": {
@@ -774,6 +785,50 @@
           "slug": "gemini-3.8-flash-low",
           "name": "Gemini 3.8 Flash (Low)",
           "status": "current"
+        }
+      ]
+    },
+    "deepseek": {
+      "defaults": {
+        "chat": "deepseek-flash"
+      },
+      "profiles": {
+        "flash-1m": {
+          "capabilities": {
+            "optionDescriptors": [
+              {
+                "id": "effort",
+                "label": "Reasoning",
+                "type": "select",
+                "options": [
+                  { "id": "low", "label": "Low" },
+                  { "id": "high", "label": "High", "isDefault": true },
+                  { "id": "max", "label": "Max" }
+                ]
+              },
+              {
+                "id": "contextWindow",
+                "label": "Context Window",
+                "type": "select",
+                "options": [{ "id": "1m", "label": "1M", "isDefault": true }]
+              }
+            ]
+          },
+          "adapter": {
+            "claudeCode": {
+              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
+              "contextWindowTokens": { "1m": 1000000 }
+            }
+          }
+        }
+      },
+      "models": [
+        {
+          "slug": "deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "aliases": ["deepseek-v4-flash", "vision-exp", "flash"],
+          "status": "current",
+          "profile": "flash-1m"
         }
       ]
     }
