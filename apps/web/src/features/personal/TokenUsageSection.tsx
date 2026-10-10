@@ -18,6 +18,7 @@ import { formatRelativeTime } from "./relativeTime";
 import { useMinuteNow } from "./useMinuteNow";
 import { usePersonalTokenUsage } from "./usePersonalBots";
 import {
+  deepSeekSpendText,
   formatBalanceAmount,
   refreshFailureText,
   selectDeepSeekBalanceLine,
@@ -403,6 +404,8 @@ export function TokenUsageCard({
  * it, unlike the flat subscriptions the price estimate above cannot charge.
  * One quiet row, hidden entirely when there is no reading; the failure note
  * rides it when the newest read failed and the numbers are the last good ones.
+ * The spent line is our own records' value at DeepSeek's published Flash
+ * rates, in the same words as the usage sheet card.
  */
 function DeepSeekBalanceRow({
   line,
@@ -415,6 +418,7 @@ function DeepSeekBalanceRow({
   const failure = refreshFailureText(line.failure);
   const fetchedAt = balance.fetchedAt;
   const sub = `granted ${formatBalanceAmount(balance.granted, balance.currency)} · topped up ${formatBalanceAmount(balance.toppedUp, balance.currency)}`;
+  const spentText = deepSeekSpendText(balance.spent, nowMs);
   return (
     <div
       data-testid="token-usage-balance"
@@ -422,6 +426,17 @@ function DeepSeekBalanceRow({
     >
       <span className="flex min-w-0 flex-col">
         <span className="truncate">DeepSeek balance</span>
+        <span
+          data-testid="token-usage-balance-spent"
+          className={cn(
+            "truncate text-[12px] leading-4 tabular-nums",
+            balance.spent === null
+              ? "text-[var(--personal-text-tertiary)]"
+              : "text-[var(--personal-text-secondary)]",
+          )}
+        >
+          {spentText}
+        </span>
         <span className="truncate text-[12px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums">
           {sub}
         </span>

@@ -3,6 +3,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  deepSeekSpendText,
   formatBalanceAmount,
   formatResetCountdown,
   formatResetTime,
@@ -462,6 +463,59 @@ describe("the DeepSeek balance card", () => {
       },
     });
     expect(card!.checkedAt).toBe(Date.parse("2026-09-13T11:59:00Z"));
+  });
+
+  it("maps our own scan's spend onto the balance view, or null without one", () => {
+    const [card] = selectUsageCards(
+      [
+        deepSeek({
+          checkedAt: "2026-09-13T11:59:00Z",
+          status: "ready",
+          balance: reading,
+          spent: { costUsd: 0.9713, since: "2026-09-08T09:00:00Z", records: 650 },
+        }),
+      ],
+      NOW,
+    );
+    expect(card!.balance?.spent).toEqual({
+      costUsd: 0.9713,
+      sinceMs: Date.parse("2026-09-08T09:00:00Z"),
+    });
+
+    const [bare] = selectUsageCards(
+      [deepSeek({ checkedAt: "2026-09-13T11:59:00Z", status: "ready", balance: reading })],
+      NOW,
+    );
+    expect(bare!.balance?.spent).toBeNull();
+
+    // A since nobody can parse reads as no figure, never a wrong date.
+    const [broken] = selectUsageCards(
+      [
+        deepSeek({
+          checkedAt: "2026-09-13T11:59:00Z",
+          status: "ready",
+          balance: reading,
+          spent: { costUsd: 1, since: "not a date", records: 1 },
+        }),
+      ],
+      NOW,
+    );
+    expect(broken!.balance?.spent).toBeNull();
+  });
+
+  it("writes the spent line the same way for both surfaces", () => {
+    expect(
+      deepSeekSpendText({ costUsd: 0.9713, sinceMs: Date.parse("2026-09-08T09:00:00Z") }, NOW),
+    ).toBe("Spent $0.97 since 8 Sep");
+    // Another year carries the year, so "since 8 Sep" is never ambiguous.
+    expect(
+      deepSeekSpendText({ costUsd: 0.5, sinceMs: Date.parse("2025-09-08T09:00:00Z") }, NOW),
+    ).toBe("Spent $0.50 since 8 Sep 2025");
+    // A real but tiny amount never rounds into a $0.00 that reads as none.
+    expect(
+      deepSeekSpendText({ costUsd: 0.001, sinceMs: Date.parse("2026-09-08T09:00:00Z") }, NOW),
+    ).toBe("Spent <$0.01 since 8 Sep");
+    expect(deepSeekSpendText(null, NOW)).toBe("No DeepSeek spend recorded yet.");
   });
 
   it("keeps the last good numbers when the newest read failed, saying why", () => {

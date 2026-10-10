@@ -93,6 +93,9 @@ const layers = (
         providers: {
           claudeAgent: { homePath: NodePath.join(home, "claude") },
           codex: { homePath: NodePath.join(home, "codex") },
+          // The default DeepSeek slot always exists; without a homePath it
+          // would resolve to the machine's own ~/.claude-t3-deepseek.
+          deepseek: { homePath: NodePath.join(home, "deepseek") },
         },
       }),
     ),
@@ -209,6 +212,48 @@ describe("UsageService.readSessionUsage", () => {
       // gpt-6-astra is not in the table: not priced, never zero dollars.
       assert.strictEqual(codex!.costUsd, 0);
       assert.strictEqual(codex!.unpricedTokens, 1040);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("counts DeepSeek turns as their own provider, priced at the published Flash rates", () =>
+    Effect.gen(function* () {
+      const { home } = yield* setup;
+      const counters = { http: 0, urls: [] as string[] };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layers(home, counters, LITELLM_DOCUMENT)),
+      );
+      const deepseekFile = NodePath.join(home, "deepseek", "projects", "proj", "s.jsonl");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(deepseekFile), { recursive: true });
+        await NodeFSP.writeFile(
+          deepseekFile,
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          `${JSON.stringify({
+            type: "assistant",
+            timestamp: "2026-08-01T10:00:00Z",
+            sessionId: "deepseek-a",
+            message: {
+              id: "msg_ds_1",
+              model: "deepseek-flash",
+              usage: { input_tokens: 100, cache_read_input_tokens: 1_000, output_tokens: 10 },
+            },
+          })}\n`,
+        );
+      });
+
+      const result = yield* service.readSessionUsage(WINDOW);
+      const cell = result.cells.find((entry) => entry.provider === "deepseek");
+      assert.ok(cell !== undefined, "a deepseek cell");
+      assert.strictEqual(cell.sessionId, "deepseek-a");
+      assert.deepStrictEqual(cell.totals, {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 1_000,
+        cacheCreationTokens: 0,
+        outputTokens: 10,
+      });
+      // Published Flash rates, whatever the LiteLLM table says about DeepSeek.
+      assert.closeTo(cell.costUsd, 100 * 0.14e-6 + 1_000 * 0.0028e-6 + 10 * 0.28e-6, 1e-12);
+      assert.strictEqual(cell.unpricedTokens, 0);
     }).pipe(Effect.scoped),
   );
 

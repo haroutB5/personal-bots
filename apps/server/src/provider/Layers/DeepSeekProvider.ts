@@ -12,6 +12,7 @@
 import {
   type DeepSeekSettings,
   type ServerProviderAuth,
+  type ServerProviderSpend,
   type ServerProviderUsageBalance,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -63,8 +64,17 @@ const BALANCE_FAILURE_NOTES: Record<DeepSeekBalanceFailureReason, string> = {
  * last good numbers (`balance`) and says how old they are through `fetchedAt`,
  * exactly as a kept usage window keeps its own time; the newest attempt's
  * outcome is `status`, with a short message of our wording.
+ *
+ * `spent` is our own figure from the usage scan, not part of the balance read:
+ * it rides here so both balance surfaces (the usage sheet card and the Team
+ * card) show it from the same snapshot field, and it is absent when there is
+ * nothing to price - never a zero standing in for an unknown.
  */
-function toUsageBalance(read: DeepSeekBalanceRead, checkedAt: string): ServerProviderUsageBalance {
+function toUsageBalance(
+  read: DeepSeekBalanceRead,
+  checkedAt: string,
+  spent: ServerProviderSpend | null,
+): ServerProviderUsageBalance {
   const amounts = read.status === "ready" ? read.amounts : read.lastGood?.amounts;
   const fetchedAtMs = read.status === "ready" ? read.fetchedAtMs : read.lastGood?.fetchedAtMs;
   return {
@@ -82,6 +92,7 @@ function toUsageBalance(read: DeepSeekBalanceRead, checkedAt: string): ServerPro
           },
         }
       : {}),
+    ...(spent !== null ? { spent } : {}),
     ...(read.status === "failed" ? { message: BALANCE_FAILURE_NOTES[read.reason] } : {}),
   };
 }
@@ -89,6 +100,13 @@ function toUsageBalance(read: DeepSeekBalanceRead, checkedAt: string): ServerPro
 export interface DeepSeekProviderProbeDependencies {
   /** Tests: stub the balance read. Defaults to the shared, cached reader. */
   readonly readBalance?: (token: string) => Promise<DeepSeekBalanceRead>;
+  /**
+   * The API-price value of our own DeepSeek transcripts, from the usage scan.
+   * The driver wires it to `UsageService.readDeepSeekSpend` for the instance's
+   * own home; without it (tests, or a caller with no scan) no spend figure is
+   * published rather than a guessed one.
+   */
+  readonly readSpent?: () => Effect.Effect<ServerProviderSpend | null>;
 }
 
 function deepSeekModelsFromCatalog(catalog: DeepSeekModelCatalog) {
@@ -190,8 +208,16 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
               lastGood: null,
             })),
           );
+          // Our own spend figure, independent of the balance read: a failed
+          // balance still shows it, and a failed scan (or none wired) shows
+          // the balance alone rather than a number we cannot stand behind.
+          const readSpent = dependencies?.readSpent;
+          const spent =
+            readSpent === undefined
+              ? null
+              : yield* readSpent().pipe(Effect.catchCause(() => Effect.succeed(null)));
           const checkedAt = DateTime.formatIso(yield* DateTime.now);
-          return toUsageBalance(read, checkedAt);
+          return toUsageBalance(read, checkedAt, spent);
         });
 
   const binaryPath = settings.binaryPath.trim() || "claude";

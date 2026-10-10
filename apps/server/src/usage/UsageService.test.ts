@@ -51,6 +51,30 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
   })}\n`;
 }
 
+/** A DeepSeek transcript line: Claude format, model `deepseek-flash`, no cost, no requestId. */
+function deepseekLine(input: {
+  readonly id: number;
+  readonly output: number;
+  readonly at?: string;
+  readonly input?: number;
+  readonly cached?: number;
+}): string {
+  return `${JSON.stringify({
+    type: "assistant",
+    timestamp: input.at ?? "2026-08-01T10:00:00Z",
+    sessionId: "deepseek-session-1",
+    message: {
+      id: `msg_ds_${input.id}`,
+      model: "deepseek-flash",
+      usage: {
+        input_tokens: input.input ?? 0,
+        cache_read_input_tokens: input.cached ?? 0,
+        output_tokens: input.output,
+      },
+    },
+  })}\n`;
+}
+
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
@@ -73,6 +97,10 @@ const setup = Effect.gen(function* () {
       providers: {
         claudeAgent: { homePath: NodePath.join(home, "claude") },
         codex: { homePath: NodePath.join(home, "codex") },
+        // The default DeepSeek slot always exists; without a homePath it would
+        // resolve to the machine's own ~/.claude-t3-deepseek, so pin it to the
+        // throwaway root (the directory itself is created per test).
+        deepseek: { homePath: NodePath.join(home, "deepseek") },
       },
     },
   };
@@ -1072,6 +1100,90 @@ describe("UsageService", () => {
         orphanedAt,
         `interruption left the next matching request pending at scheduler check ${orphanedAt}`,
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("scans the DeepSeek home as its own provider kind, priced at the published rates", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const deepseekDir = NodePath.join(home, "deepseek", "projects", "proj");
+      yield* Effect.promise(() => NodeFSP.mkdir(deepseekDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(deepseekDir, "session.jsonl"),
+          // One turn with a cache split, one without: input at the published
+          // cache-miss rate ($0.14/M), cached input at the cache-hit rate
+          // ($0.0028/M), output at $0.28/M.
+          deepseekLine({ id: 1, input: 1_000_000, cached: 1_000_000, output: 1_000_000 }) +
+            deepseekLine({ id: 2, input: 1_000_000, output: 1_000_000 }),
+        ),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-deepseek-scan", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const bucket = summary.buckets.find((entry) => entry.provider === "deepseek");
+      assert.ok(bucket !== undefined, "a deepseek bucket");
+      assert.strictEqual(bucket.model, "deepseek-flash");
+      assert.strictEqual(bucket.costSource, "modelPriced");
+      assert.strictEqual(bucket.records, 2);
+      assert.strictEqual(bucket.totals.uncachedInputTokens, 2_000_000);
+      assert.strictEqual(bucket.totals.cachedInputTokens, 1_000_000);
+      assert.strictEqual(bucket.totals.outputTokens, 2_000_000);
+      // With the split: 0.14 + 0.0028 + 0.28. Without: 0.14 + 0.28.
+      assert.closeTo(bucket.costUsd, 0.14 + 0.0028 + 0.28 + 0.14 + 0.28, 1e-9);
+      const source = summary.sources.find((entry) => entry.fingerprint.provider === "deepseek");
+      assert.strictEqual(source?.status, "ok");
+      assert.strictEqual(source?.scannedFiles, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reads DeepSeek spend from the home all-time, de-duplicated, or null", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const deepseekDir = NodePath.join(home, "deepseek", "projects", "proj");
+      yield* Effect.promise(() => NodeFSP.mkdir(deepseekDir, { recursive: true }));
+      const firstLine = deepseekLine({
+        id: 1,
+        at: "2026-10-08T09:00:00Z",
+        input: 1_000_000,
+        cached: 1_000_000,
+        output: 1_000_000,
+      });
+      const secondLine = deepseekLine({
+        id: 2,
+        at: "2026-10-09T09:00:00Z",
+        input: 1_000_000,
+        output: 0,
+      });
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(deepseekDir, "a.jsonl"),
+          // The same message once per content block (real transcripts repeat
+          // it), plus a line that is not JSON at all.
+          firstLine + firstLine + "not json\n" + secondLine,
+        ),
+      );
+      yield* Effect.promise(() =>
+        // A resumed session copies the earlier message into a second file.
+        NodeFSP.writeFile(NodePath.join(deepseekDir, "b.jsonl"), firstLine),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-deepseek-spend", home, settings })),
+      );
+
+      const spend = yield* service.readDeepSeekSpend(deepseekDir);
+      assert.ok(spend !== null, "a spend figure");
+      assert.strictEqual(spend.records, 2);
+      // 0.14 + 0.0028 + 0.28 for the split turn, 0.14 for the plain input.
+      assert.closeTo(spend.costUsd, 0.14 + 0.0028 + 0.28 + 0.14, 1e-9);
+      assert.strictEqual(spend.since, "2026-10-08T09:00:00.000Z");
+
+      // Nothing to price answers null; never an invented figure.
+      const emptyDir = NodePath.join(home, "deepseek-empty", "projects");
+      yield* Effect.promise(() => NodeFSP.mkdir(emptyDir, { recursive: true }));
+      assert.isNull(yield* service.readDeepSeekSpend(emptyDir));
+      assert.isNull(yield* service.readDeepSeekSpend(NodePath.join(home, "no-such-dir")));
     }).pipe(Effect.scoped),
   );
 });

@@ -29,6 +29,7 @@ describe("usage pricing", () => {
     reportedCostUsd: number | null = null,
     speed: UsageSpeed = "standard",
   ) => ({
+    provider: "claude" as const,
     model,
     totals,
     reportedCostUsd,
@@ -73,6 +74,38 @@ describe("usage pricing", () => {
       costUsd: 0.25,
       costSource: "providerReported",
     });
+  });
+
+  it("prices every DeepSeek turn at the published Flash rates, cache split or not", () => {
+    const deepseekRecord = (overrides: Partial<typeof totals> = {}) => ({
+      provider: "deepseek" as const,
+      model: "deepseek-flash",
+      totals: { ...totals, ...overrides },
+      reportedCostUsd: null,
+      speed: "standard" as const,
+    });
+
+    // A cache split: cached input at the cache-hit rate ($0.0028/M), the rest
+    // at the cache-miss ($0.14/M) and output ($0.28/M) rates. DeepSeek
+    // publishes no separate cache-write price, so writes bill as misses.
+    const split = priceUsage(new Map(), deepseekRecord());
+    expect(split.costSource).toBe("modelPriced");
+    expect(split.costUsd).toBeCloseTo(0.14 + 0.0028 + 0.14 + 0.28, 10);
+    expect(cacheSavingsUsd(new Map(), deepseekRecord())).toBeCloseTo(0.14 - 0.0028, 10);
+
+    // No cache split (no cached tokens recorded): every input token at the
+    // cache-miss rate.
+    const noSplit = priceUsage(
+      new Map(),
+      deepseekRecord({ cachedInputTokens: 0, cacheCreationTokens: 0 }),
+    );
+    expect(noSplit.costUsd).toBeCloseTo(0.14 + 0.28, 10);
+    expect(cacheSavingsUsd(new Map(), deepseekRecord({ cachedInputTokens: 0 }))).toBe(0);
+
+    // DeepSeek never reads the LiteLLM table: a table that knows its model
+    // string, a table that does not, and no table at all price identically.
+    const known = parseRateTable({ "deepseek-flash": rate(1) });
+    expect(priceUsage(known, deepseekRecord()).costUsd).toBeCloseTo(split.costUsd, 10);
   });
 
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {

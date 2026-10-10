@@ -1,4 +1,5 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
+import { BotIcon } from "lucide-react";
 
 import {
   AntigravityIcon,
@@ -41,6 +42,9 @@ export const PROVIDER_PRESENTATION = {
   cursor: { label: "Cursor", color: "#8b8b8b", mark: CursorIcon },
   opencode: { label: "OpenCode", color: "#5b9bbd", mark: OpenCodeIcon },
   antigravity: { label: "Antigravity", color: "#8c7bd1", mark: AntigravityIcon },
+  // DeepSeek has no brand mark in the icon set; the driver metadata uses the
+  // same neutral robot for it.
+  deepseek: { label: "DeepSeek", color: "#4d6bfe", mark: BotIcon },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 /** Stable provider reading order across charts, summaries, tables, and hover rows. */

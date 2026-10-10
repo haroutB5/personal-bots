@@ -82,7 +82,9 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  if (provider === "claude") return line.includes('"usage"');
+  // DeepSeek sessions run the Claude Agent SDK against DeepSeek's endpoint, so
+  // their transcripts carry the same `usage` shape as Claude Code's.
+  if (provider === "claude" || provider === "deepseek") return line.includes('"usage"');
   if (provider === "grok") return line.includes('"turn_completed"');
   return line.includes('"token_count"');
 }
@@ -166,6 +168,34 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",
     dedupeKey,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* DeepSeek                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Parses one line of a DeepSeek transcript.
+ *
+ * DeepSeek sessions reuse the Claude Agent SDK pointed at DeepSeek's
+ * Anthropic-compatible endpoint, so the record shape (and the per-content-block
+ * repetition that `dedupeKey` exists for) is Claude Code's. Only the provider
+ * differs, which matters to the rate lookup: every DeepSeek turn prices at the
+ * published DeepSeek-V4-Flash rates, never the LiteLLM table.
+ */
+export function parseDeepSeekLine(line: string): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  return parseDeepSeekRecord(parsed);
+}
+
+export function parseDeepSeekRecord(parsed: unknown): UsageRecord | null {
+  const record = parseClaudeRecord(parsed);
+  return record === null ? null : { ...record, provider: "deepseek" };
 }
 
 /* -------------------------------------------------------------------------- */

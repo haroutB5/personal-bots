@@ -50,6 +50,7 @@ import {
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
+import * as UsageService from "../../usage/UsageService.ts";
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
@@ -2404,6 +2405,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ),
             Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
+            // The DeepSeek driver's probe prices its own transcripts, so the
+            // built-in drivers need the usage service here.
+            Layer.provideMerge(UsageService.layerTest),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
@@ -2503,6 +2507,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ),
             Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
+            // The DeepSeek driver's probe prices its own transcripts, so the
+            // built-in drivers need the usage service here.
+            Layer.provideMerge(UsageService.layerTest),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
@@ -2619,6 +2626,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ),
             Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
+            // The DeepSeek driver's probe prices its own transcripts, so the
+            // built-in drivers need the usage service here.
+            Layer.provideMerge(UsageService.layerTest),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(NodeServices.layer),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
@@ -2681,6 +2691,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
               Layer.provideMerge(ModelManifest.layerTest),
               Layer.provideMerge(ResetCreditCoordinator.layerTest),
+              // The DeepSeek driver's probe prices its own transcripts, so the
+              // built-in drivers need the usage service here.
+              Layer.provideMerge(UsageService.layerTest),
               Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
               Layer.provideMerge(

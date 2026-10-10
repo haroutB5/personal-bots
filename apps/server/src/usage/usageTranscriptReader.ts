@@ -30,6 +30,8 @@ import {
   parseClaudeRecord,
   parseCodexLine,
   parseCodexRecord,
+  parseDeepSeekLine,
+  parseDeepSeekRecord,
   parseGrokLine,
   parseGrokRecord,
   type CodexScanState,
@@ -299,7 +301,7 @@ export async function readTranscriptRecords(
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
       }
-      const record = parseClaudeLine(line);
+      const record = provider === "deepseek" ? parseDeepSeekLine(line) : parseClaudeLine(line);
       if (record !== null) out.push(record);
     };
 
@@ -349,7 +351,9 @@ export async function readTranscriptRecords(
           const record =
             provider === "codex"
               ? parseCodexRecord(projected, state)
-              : parseClaudeRecord(projected);
+              : provider === "deepseek"
+                ? parseDeepSeekRecord(projected)
+                : parseClaudeRecord(projected);
           if (record !== null) out.push(record);
         }
       } else if (pendingBytes > 0) {

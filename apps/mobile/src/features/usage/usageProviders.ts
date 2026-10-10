@@ -12,6 +12,7 @@ export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
   "cursor",
   "opencode",
   "antigravity",
+  "deepseek",
 ];
 
 export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
@@ -21,6 +22,7 @@ export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
   cursor: "Cursor",
   opencode: "OpenCode",
   antigravity: "Antigravity",
+  deepseek: "DeepSeek",
 };
 
 /**
@@ -36,5 +38,7 @@ export function useProviderColors(): Record<UsageProviderKind, string> {
     cursor: "#8b8b8b",
     opencode: "#5b9bbd",
     antigravity: "#8c7bd1",
+    // DeepSeek's brand blue reads on both backgrounds.
+    deepseek: "#4d6bfe",
   };
 }

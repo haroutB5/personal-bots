@@ -196,6 +196,23 @@ describe("server config forward compatibility", () => {
       decodeServerProvider({ ...baseProviderSnapshot, usageBalance: balance }).usageBalance,
     ).toEqual(balance);
 
+    // Our own scan's spend figure rides the same reading, and a reading
+    // without one (no records to price, or an older server) still decodes.
+    const withSpent = {
+      ...balance,
+      spent: {
+        costUsd: 0.9713,
+        since: "2026-10-10T17:25:47.680Z",
+        records: 650,
+      },
+    };
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, usageBalance: withSpent }).usageBalance,
+    ).toEqual(withSpent);
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, usageBalance: balance }).usageBalance?.spent,
+    ).toBeUndefined();
+
     // A failed read keeps the last good numbers and says why, in our wording.
     const stale = {
       checkedAt: "2026-10-10T20:05:00.000Z",

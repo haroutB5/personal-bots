@@ -113,6 +113,7 @@ describe("selectUsageStripCells", () => {
           toppedUp: 10.34,
           isAvailable: true,
           fetchedAt: null,
+          spent: null,
         },
       }),
       card({ driver: "codex", session: row({ id: "primary", usedPercent: 12 }) }),

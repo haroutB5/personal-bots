@@ -40,6 +40,24 @@ export interface ModelRate extends TokenRates {
 export type RateTable = ReadonlyMap<string, ModelRate>;
 
 /**
+ * DeepSeek-V4-Flash at the rates DeepSeek publishes, USD per token.
+ *
+ * DeepSeek bills through its own rate card, not the LiteLLM table the other
+ * providers price against, and the picker offers only Flash, so every DeepSeek
+ * record prices as Flash regardless of the model string a transcript carries.
+ * DeepSeek publishes no separate cache-write rate, so cache writes bill as
+ * cache misses.
+ */
+export const DEEPSEEK_FLASH_RATES: ModelRate = {
+  inputCostPerToken: 0.14 / 1_000_000,
+  outputCostPerToken: 0.28 / 1_000_000,
+  cacheReadCostPerToken: 0.0028 / 1_000_000,
+  cacheCreationCostPerToken: 0.14 / 1_000_000,
+  fast: null,
+  ultrafast: null,
+};
+
+/**
  * Custom IDs keep their case, provider prefix, and variant suffix. Custom rates
  * apply as entered, at every speed.
  */
@@ -240,12 +258,22 @@ export function lookupRate(table: RateTable, model: string): ModelRate | null {
 /** The parts of a transcript record that decide its price. */
 export type PricedRecord = Pick<
   UsageRecord,
-  "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
+  "provider" | "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
 >;
 
 export interface PricedUsage {
   readonly costUsd: number;
   readonly costSource: UsageCostSource;
+}
+
+/**
+ * The rate a record prices at, before overrides: DeepSeek's own published card
+ * (provider-keyed, so it never depends on the transcript's model string and
+ * works with no rate table fetched), else the LiteLLM table by model name.
+ */
+function baseRate(table: RateTable, record: PricedRecord): ModelRate | null {
+  if (record.provider === "deepseek") return DEEPSEEK_FLASH_RATES;
+  return lookupRate(table, record.rateModel ?? record.model);
 }
 
 /**
@@ -265,7 +293,7 @@ export function priceUsage(
     return { costUsd: reportedCostUsd, costSource: "providerReported" };
   }
 
-  const rate = override ?? lookupRate(table, record.rateModel ?? model);
+  const rate = override ?? baseRate(table, record);
   if (rate === null) return { costUsd: 0, costSource: "unpriced" };
 
   const rates = ratesAt(rate, record.speed);
@@ -288,8 +316,7 @@ export function cacheSavingsUsd(
   record: PricedRecord,
   overrides?: RateTable,
 ): number {
-  const rate =
-    overrides?.get(record.model.trim()) ?? lookupRate(table, record.rateModel ?? record.model);
+  const rate = overrides?.get(record.model.trim()) ?? baseRate(table, record);
   if (rate === null) return 0;
   const rates = ratesAt(rate, record.speed);
   return record.totals.cachedInputTokens * (rates.inputCostPerToken - rates.cacheReadCostPerToken);

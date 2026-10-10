@@ -86,6 +86,20 @@ export interface UsageBalanceView {
   readonly isAvailable: boolean;
   /** Epoch millis the provider returned these numbers, or null when unparseable. */
   readonly fetchedAt: number | null;
+  /**
+   * The API-price value of our own records of these turns, at the published
+   * DeepSeek-V4-Flash rates; null when there are none to price. This is our
+   * figure, not the provider's: the balance endpoint stays the check.
+   */
+  readonly spent: UsageBalanceSpend | null;
+}
+
+/** The spend half: what the usage scan says our DeepSeek turns cost. */
+export interface UsageBalanceSpend {
+  /** USD at the published rates, never converted from the balance's currency. */
+  readonly costUsd: number;
+  /** Epoch millis of the earliest record the figure covers. */
+  readonly sinceMs: number;
 }
 
 export interface UsageCardResetCredits {
@@ -330,6 +344,9 @@ export function selectUsageCards(
  * refresh failed exactly as it does over kept windows. No reading at all is
  * final only without a key (nothing can ever be read until one is added),
  * which keeps the strip's own probing from asking forever.
+ *
+ * `balance.spent` rides the same reading: the API-price value of our own
+ * transcript records, which stays null until there are records to price.
  */
 function deepSeekCard(provider: ServerProvider, title: string): UsageCard {
   const usageBalance = provider.usageBalance;
@@ -339,6 +356,11 @@ function deepSeekCard(provider: ServerProvider, title: string): UsageCard {
   const failure = usageBalance?.status === "failed" ? (usageBalance.message ?? "") : null;
   const checkedAt = parseCheckedAt(usageBalance?.checkedAt);
   if (reading !== undefined) {
+    // Our scan's own figure, from the same snapshot object as the balance, so
+    // the usage sheet card and the Team card can never disagree on it. A
+    // missing or unparseable `since` reads as no figure rather than a wrong one.
+    const spentAt =
+      usageBalance?.spent === undefined ? null : parseCheckedAt(usageBalance.spent.since);
     return {
       driver: "deepseek",
       title,
@@ -357,6 +379,10 @@ function deepSeekCard(provider: ServerProvider, title: string): UsageCard {
         toppedUp: reading.toppedUpBalance,
         isAvailable: reading.isAvailable,
         fetchedAt: parseCheckedAt(reading.fetchedAt),
+        spent:
+          usageBalance?.spent === undefined || spentAt === null
+            ? null
+            : { costUsd: usageBalance.spent.costUsd, sinceMs: spentAt },
       },
     };
   }
@@ -387,6 +413,42 @@ export function formatBalanceAmount(amount: number, currency: string): string {
   const value = Number.isFinite(amount) ? amount : 0;
   const code = currency.trim().toUpperCase();
   return code === "USD" ? formatUsd(value) : `${value.toFixed(2)} ${code || currency}`;
+}
+
+const SPENT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/** "10 Oct", or "10 Oct 2025" when not the current year: the Team card's own day style. */
+function formatSpentSince(sinceMs: number, nowMs: number): string {
+  const since = new Date(sinceMs);
+  const label = `${since.getDate()} ${SPENT_MONTHS[since.getMonth()] ?? ""}`;
+  return since.getFullYear() === new Date(nowMs).getFullYear()
+    ? label
+    : `${label} ${since.getFullYear()}`;
+}
+
+/**
+ * The DeepSeek spent figure as one line, used verbatim by the usage sheet card
+ * and the Team card so the two surfaces read identically: `Spent $0.97 since
+ * 10 Oct`. With no records to price it says so plainly, in the same words on
+ * both surfaces, and never shows a zero standing in for a gap. The figure is
+ * USD at the published rates even where the balance is in another currency.
+ */
+export function deepSeekSpendText(spent: UsageBalanceSpend | null, now: number): string {
+  if (spent === null) return "No DeepSeek spend recorded yet.";
+  return `Spent ${formatUsd(spent.costUsd)} since ${formatSpentSince(spent.sinceMs, now)}`;
 }
 
 /** "Couldn't refresh" (the server named no reason) or "Couldn't refresh · <reason>". */

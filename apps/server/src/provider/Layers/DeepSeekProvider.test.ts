@@ -132,6 +132,67 @@ describe("DeepSeekProvider", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("publishes the spent figure from the usage scan beside the balance", () =>
+    Effect.gen(function* () {
+      const spent = {
+        costUsd: 0.9713,
+        since: "2026-10-10T17:25:47.680Z",
+        records: 650,
+      };
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
+          return yield* checkDeepSeekProviderStatus(
+            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+            catalog,
+            { ...stubBalance, readSpent: () => Effect.succeed(spent) },
+          );
+        }),
+      );
+      expect(snapshot.usageBalance?.spent).toEqual(spent);
+      // The balance read is untouched beside it.
+      expect(snapshot.usageBalance?.balance?.totalBalance).toBe(12.34);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("shows no spent figure when the scan has none, or none is wired", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
+          return yield* checkDeepSeekProviderStatus(
+            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+            catalog,
+            {
+              ...stubBalance,
+              // Neither a null answer nor a broken scan may invent a figure,
+              // and neither may take the balance down with it.
+              readSpent: () => Effect.die(new Error("scan broke")),
+            },
+          );
+        }),
+      );
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.usageBalance?.balance?.totalBalance).toBe(12.34);
+      expect(snapshot.usageBalance?.spent).toBeUndefined();
+
+      const unread = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
+          return yield* checkDeepSeekProviderStatus(
+            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+            catalog,
+            stubBalance,
+          );
+        }),
+      );
+      expect(unread.usageBalance?.spent).toBeUndefined();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps the last good numbers and says the refresh failed, in our own words", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(

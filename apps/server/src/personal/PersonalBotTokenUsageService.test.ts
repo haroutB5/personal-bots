@@ -61,6 +61,7 @@ function fakeScanner(options: { cells?: ReadonlyArray<BotUsageCell> } = {}) {
     UsageService.UsageService.of({
       readSummary: () => Effect.die("unused"),
       refreshRates: Effect.die("unused"),
+      readDeepSeekSpend: () => Effect.die("unused"),
       readSessionUsage: (input) =>
         Effect.gen(function* () {
           const release = yield* Deferred.make<void, UsageReadError>();

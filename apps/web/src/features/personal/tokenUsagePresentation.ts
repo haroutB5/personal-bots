@@ -168,6 +168,7 @@ const PROVIDER_LABELS: Readonly<Record<UsageProviderKind, string>> = {
   cursor: "Cursor",
   grok: "Grok",
   antigravity: "Antigravity",
+  deepseek: "DeepSeek",
 };
 
 export function providerLabel(provider: UsageProviderKind): string {

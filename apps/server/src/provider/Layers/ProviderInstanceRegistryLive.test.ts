@@ -50,6 +50,7 @@ import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as UsageService from "../../usage/UsageService.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
@@ -673,6 +674,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
+    // The DeepSeek driver's probe prices its own transcripts, so the built-in
+    // drivers need the usage service here.
+    Layer.provideMerge(UsageService.layerTest),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>

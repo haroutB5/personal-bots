@@ -63,6 +63,13 @@ describe("resume cursors", () => {
         JSON.stringify({ schemaVersion: 1, sessionId: "ses_1" }),
       ),
     ).toBe("ses_1");
+    // DeepSeek resumes through the Claude-shaped cursor.
+    expect(
+      sessionIdFromResumeCursor(
+        "deepseek",
+        JSON.stringify({ threadId: "t1", resume: "ds_1", turnCount: 2 }),
+      ),
+    ).toBe("ds_1");
   });
 
   it("returns null for a cursor with no usable id", () => {
@@ -81,12 +88,14 @@ describe("resume cursors", () => {
       { botId: "b", providerName: "codex", resumeCursorJson: '{"threadId":"s2"}' },
       { botId: "c", providerName: "opencode", resumeCursorJson: '{"sessionId":"s3"}' },
       { botId: "d", providerName: "cursor", resumeCursorJson: '{"resume":"s4"}' },
+      { botId: "f", providerName: "deepseek", resumeCursorJson: '{"threadId":"t5","resume":"s5"}' },
       { botId: "e", providerName: "claudeAgent", resumeCursorJson: null },
     ]);
     expect(owners.get(sessionKey("claude", "s1"))).toBe("a");
     expect(owners.get(sessionKey("codex", "s2"))).toBe("b");
     expect(owners.get(sessionKey("opencode", "s3"))).toBe("c");
-    expect(owners.size).toBe(3);
+    expect(owners.get(sessionKey("deepseek", "s5"))).toBe("f");
+    expect(owners.size).toBe(4);
     // The same id under another provider is another session.
     expect(owners.get(sessionKey("codex", "s1"))).toBeUndefined();
   });

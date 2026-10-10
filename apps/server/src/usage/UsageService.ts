@@ -17,9 +17,11 @@ import * as NodeOS from "node:os";
 import {
   ClaudeSettings,
   CodexSettings,
+  DeepSeekSettings,
   type ProviderInstanceConfig,
   USAGE_CONTRACT_VERSION,
   ProviderInstanceId,
+  type ServerProviderSpend,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageSource,
@@ -48,6 +50,7 @@ import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { resolveDeepSeekHomePath } from "../provider/Drivers/DeepSeekEnvironment.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
@@ -56,7 +59,12 @@ import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { UsageBotAggregator, type BotUsageCell } from "./botUsage.ts";
 import { makeSliceYield } from "./sliceYield.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  parseRateTable,
+  priceUsage,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -94,6 +102,7 @@ const CACHE_RETENTION_DAYS = 90;
 
 const decodeCodexSettings = Schema.decodeOption(CodexSettings);
 const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
+const decodeDeepSeekSettings = Schema.decodeOption(DeepSeekSettings);
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -126,13 +135,23 @@ export class UsageService extends Context.Service<
      * Tokens per `(day, session, provider, model)` over a day window, from the
      * same transcripts and per-file cache as `readSummary`, for attributing
      * sessions to bots, each cell with its API price estimate (same rates and
-     * custom prices as the usage page). Claude, Codex and OpenCode only; never touches
-     * Cursor's network or Antigravity. Time sliced, so a cold scan does not
-     * hold the event loop.
+     * custom prices as the usage page). Claude, Codex, OpenCode and DeepSeek
+     * only; never touches Cursor's network or Antigravity. Time sliced, so a
+     * cold scan does not hold the event loop.
      */
     readonly readSessionUsage: (
       input: SessionUsageInput,
     ) => Effect.Effect<SessionUsageResult, UsageReadError>;
+    /**
+     * The API-price value of every DeepSeek turn the transcripts under
+     * `projectsDir` still hold, at DeepSeek's published Flash rates, for the
+     * balance surfaces that show it beside what is left. All-time and never
+     * failing: null when there are no records to price, so a caller never
+     * invents a figure.
+     */
+    readonly readDeepSeekSpend: (
+      projectsDir: string,
+    ) => Effect.Effect<ServerProviderSpend | null, never>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -153,6 +172,7 @@ const SESSION_USAGE_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set([
   "claude",
   "codex",
   "opencode",
+  "deepseek",
 ]);
 
 const EMPTY_PRICING: UsagePricing = {
@@ -180,6 +200,7 @@ export const layerTest = Layer.succeed(
       }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
     readSessionUsage: () => Effect.succeed({ cells: [], scannedFiles: 0, scanDurationMs: 0 }),
+    readDeepSeekSpend: () => Effect.succeed(null),
   }),
 );
 
@@ -303,7 +324,7 @@ export const make = Effect.gen(function* () {
       fileName?: string;
     }> = [];
     const seen = new Set<string>();
-    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
+    for (const driver of ["claudeAgent", "codex", "grok", "deepseek"] as const) {
       // Disabled accounts still have history. Explicit default slots replace
       // the legacy settings, just as they do in the provider registry.
       const instances: Array<Pick<ProviderInstanceConfig, "config" | "environment">> =
@@ -333,12 +354,22 @@ export const make = Effect.gen(function* () {
           home = configured
             ? expandHomePath(configured)
             : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+        } else if (driver === "deepseek") {
+          // DeepSeek sessions run the Claude Agent SDK against their own
+          // isolated config home, so their transcripts are Claude-format
+          // `projects` JSONL exactly like Claude Code's.
+          const decoded = decodeDeepSeekSettings(instance.config ?? {});
+          if (Option.isNone(decoded)) continue;
+          home = yield* resolveDeepSeekHomePath(decoded.value, environment);
         } else {
           home = expandHomePath(
             environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
           );
         }
-        const directory = path.resolve(home, provider === "claude" ? "projects" : "sessions");
+        const directory = path.resolve(
+          home,
+          provider === "claude" || provider === "deepseek" ? "projects" : "sessions",
+        );
         const sourceKey = provider + "\0" + directory;
         const previous = sourceCache.get(sourceKey);
         // Keep canonical paths and source fingerprints stable after root cleanup,
@@ -505,6 +536,72 @@ export const make = Effect.gen(function* () {
       return tailRecords.length === 0 ? records : [...records, ...tailRecords];
     });
 
+  const emptyRateTable: RateTable = new Map();
+
+  /**
+   * The API-price value of every DeepSeek turn the transcripts under
+   * `projectsDir` still hold, at DeepSeek's published Flash rates.
+   *
+   * All-time, not windowed: the figure is paired with a prepaid balance, so it
+   * covers every record we hold, from the first one. One pass over the same
+   * per-file cache as the scans, with records de-duplicated exactly as the
+   * aggregator does (a message is counted once across every file), so the
+   * figure agrees with the DeepSeek buckets the usage page shows for the same
+   * period. The cache's retained records of already-cleaned-up transcripts
+   * still count, as they do for the scans.
+   *
+   * Null when nothing is there to price, so callers never invent a figure.
+   * Never fails: the probe it feeds must not lose a balance over a scan hiccup.
+   */
+  const readDeepSeekSpend = Effect.fn("UsageService.readDeepSeekSpend")(function* (
+    projectsDir: string,
+  ) {
+    yield* ensureScanCacheLoaded;
+    // Only for custom prices; with settings unreadable the published rates
+    // still price every record.
+    const settings = yield* readSettings.pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const overrides =
+      settings === null ? undefined : createOverrideRateTable(settings.usagePriceOverrides);
+
+    const files = yield* Effect.promise(() => listTranscriptFiles(projectsDir, 0));
+    const livePaths = new Set(files.map((file) => file.path));
+    const retained: Array<{ readonly path: string; readonly records: readonly UsageRecord[] }> = [];
+    for (const [filePath, entry] of fileCache) {
+      if (entry.provider !== "deepseek") continue;
+      if (livePaths.has(filePath) || !isWithinDirectory(filePath, projectsDir)) continue;
+      retained.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+    }
+
+    const seen = new Set<string>();
+    let costUsd = 0;
+    let records = 0;
+    let sinceMs: number | null = null;
+    const collect = (record: UsageRecord) => {
+      if (record.dedupeKey !== null) {
+        if (seen.has(record.dedupeKey)) return;
+        seen.add(record.dedupeKey);
+      }
+      // DeepSeek prices by provider kind, so the table is empty on purpose.
+      costUsd += priceUsage(emptyRateTable, record, overrides).costUsd;
+      records += 1;
+      if (sinceMs === null || record.timestampMs < sinceMs) sinceMs = record.timestampMs;
+    };
+    for (const file of files) {
+      const fileRecords = yield* readFileRecords(file.path, file.size, file.mtimeMs, "deepseek");
+      for (const record of fileRecords) collect(record);
+    }
+    for (const file of retained) {
+      for (const record of file.records) collect(record);
+    }
+
+    if (records === 0 || sinceMs === null) return null;
+    return {
+      costUsd,
+      since: DateTime.formatIso(DateTime.makeUnsafe(sinceMs)),
+      records,
+    } satisfies ServerProviderSpend;
+  });
+
   /** One provider directory's walk and parse, before rates are involved. */
   interface ScannedDir {
     readonly provider: UsageProviderKind;
@@ -536,7 +633,7 @@ export const make = Effect.gen(function* () {
     return [...canonical];
   });
 
-  /** The Claude, Codex and Grok transcript directories, parsed (or served from the file cache). */
+  /** The Claude, Codex, Grok and DeepSeek transcript directories, parsed (or served from the file cache). */
   const collectTranscriptDirs = Effect.fn("UsageService.collectTranscriptDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
@@ -1053,7 +1150,7 @@ export const make = Effect.gen(function* () {
 
   const readSessionUsage = scanSessionUsage;
 
-  return { readSummary, refreshRates, readSessionUsage } as const;
+  return { readSummary, refreshRates, readSessionUsage, readDeepSeekSpend } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

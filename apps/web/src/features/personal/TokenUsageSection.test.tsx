@@ -431,7 +431,12 @@ describe("TokenUsageCard", () => {
   });
 
   describe("the DeepSeek balance line", () => {
-    const line = (overrides: { readonly failure?: string | null } = {}) => ({
+    const line = (
+      overrides: {
+        readonly failure?: string | null;
+        readonly spent?: { costUsd: number; sinceMs: number } | null;
+      } = {},
+    ) => ({
       balance: {
         currency: "USD",
         total: 12.34,
@@ -439,9 +444,9 @@ describe("TokenUsageCard", () => {
         toppedUp: 10.34,
         isAvailable: true,
         fetchedAt: NOW - 4 * 60_000,
+        spent: overrides.spent ?? null,
       },
-      failure: null as string | null,
-      ...overrides,
+      failure: overrides.failure ?? null,
     });
 
     it("shows the balance with its split and age, from the provider's own fetch time", async () => {
@@ -454,6 +459,24 @@ describe("TokenUsageCard", () => {
       expect(text).toContain("granted $2.00 · topped up $10.34");
       // The age keeps its own line under the figure, so it is never clipped.
       expect(text).toContain("Updated 4m");
+    });
+
+    it("shows the spent figure in the same words as the usage sheet card", async () => {
+      const tree = await render({
+        balanceLine: line({
+          spent: { costUsd: 0.9713, sinceMs: Date.parse("2026-10-10T17:25:47.680Z") },
+        }),
+      });
+      const spent = byTestId(tree, "token-usage-balance-spent");
+      expect(spent).toHaveLength(1);
+      expect(textOf(spent[0]!)).toBe("Spent $0.97 since 10 Oct");
+    });
+
+    it("says nothing is recorded yet rather than inventing a figure", async () => {
+      const tree = await render({ balanceLine: line() });
+      const spent = byTestId(tree, "token-usage-balance-spent");
+      expect(spent).toHaveLength(1);
+      expect(textOf(spent[0]!)).toBe("No DeepSeek spend recorded yet.");
     });
 
     it("keeps the numbers and says the newest read failed", async () => {

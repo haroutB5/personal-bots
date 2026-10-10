@@ -52,6 +52,8 @@ function usageProviderOf(providerName: string): UsageProviderKind | null {
       return "codex";
     case "opencode":
       return "opencode";
+    case "deepseek":
+      return "deepseek";
     default:
       return null;
   }
@@ -75,7 +77,14 @@ export function sessionIdFromResumeCursor(
     return null;
   }
   if (typeof cursor !== "object" || cursor === null) return null;
-  const field = provider === "claude" ? "resume" : provider === "codex" ? "threadId" : "sessionId";
+  // DeepSeek resumes through the same Claude-shaped cursor (`resume`), so it
+  // reads like Claude; the rest keep their own field.
+  const field =
+    provider === "claude" || provider === "deepseek"
+      ? "resume"
+      : provider === "codex"
+        ? "threadId"
+        : "sessionId";
   const value = (cursor as Record<string, unknown>)[field];
   return typeof value === "string" && value.length > 0 ? value : null;
 }

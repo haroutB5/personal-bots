@@ -24,6 +24,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeDeepSeekTextGeneration } from "../../textGeneration/DeepSeekTextGeneration.ts";
+import * as UsageService from "../../usage/UsageService.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -83,7 +84,9 @@ export type DeepSeekDriverEnv =
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  // The probe prices DeepSeek's own transcripts through the usage scan.
+  | UsageService.UsageService;
 
 export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -100,6 +103,7 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
+      const usageService = yield* UsageService.UsageService;
       const eventLoggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const modelCatalog = Effect.map(modelManifest.current, (manifest) =>
@@ -121,7 +125,13 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
         processEnv,
       );
       const configDir = yield* resolveDeepSeekHomePath(effectiveConfig, processEnv);
-      void configDir;
+      // The instance's own transcript directory (Claude-format `projects`
+      // JSONL). Resolved the same way the usage scan resolves it, so the
+      // probe's spend read shares the scan's per-file cache.
+      const projectsDirectory = path.join(configDir, "projects");
+      const spendDirectory = yield* fileSystem
+        .realPath(projectsDirectory)
+        .pipe(Effect.orElseSucceed(() => projectsDirectory));
       const stampIdentity = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
@@ -157,9 +167,9 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
 
       const checkProvider = modelCatalog.pipe(
         Effect.flatMap((catalog) =>
-          checkDeepSeekProviderStatus(effectiveConfig, deepSeekEnv, catalog).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          ),
+          checkDeepSeekProviderStatus(effectiveConfig, deepSeekEnv, catalog, {
+            readSpent: () => usageService.readDeepSeekSpend(spendDirectory),
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         ),
         Effect.map(stampIdentity),
       );

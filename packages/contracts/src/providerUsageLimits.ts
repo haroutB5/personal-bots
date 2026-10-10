@@ -96,17 +96,40 @@ export const ServerProviderBalance = Schema.Struct({
 export type ServerProviderBalance = typeof ServerProviderBalance.Type;
 
 /**
+ * API-price value of the turns our own transcript records still hold, for a
+ * provider whose only money endpoint reports what is left (DeepSeek).
+ *
+ * Computed from the usage scan, not from the provider: every record is priced
+ * at DeepSeek's published DeepSeek-V4-Flash rates (the picker offers Flash
+ * only), in USD. The balance endpoint stays the independent check.
+ */
+export const ServerProviderSpend = Schema.Struct({
+  /** USD, at the published rates. Never converted from the balance's currency. */
+  costUsd: Schema.Number,
+  /** Earliest record the figure covers; the "since" it is shown with. */
+  since: IsoDateTime,
+  /** Transcript records folded into the figure, after de-duplication. */
+  records: NonNegativeInt,
+});
+export type ServerProviderSpend = typeof ServerProviderSpend.Type;
+
+/**
  * What a provider knows about its prepaid balance (DeepSeek today).
  *
  * `status` says how the newest read attempt went; `balance` is what to show,
  * and is kept from the last good read when the newest one failed, so the
  * numbers never flap to nothing for one bad poll. `message` is a short,
  * safe-to-show reason and never the provider's raw error text.
+ *
+ * `spent` is our own scan's figure, independent of the balance read: it is
+ * present only when there are records to price, and never invented when there
+ * are none.
  */
 export const ServerProviderUsageBalance = Schema.Struct({
   checkedAt: IsoDateTime,
   status: Schema.Literals(["ready", "failed"]),
   balance: Schema.optional(ServerProviderBalance),
+  spent: Schema.optional(ServerProviderSpend),
   message: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderUsageBalance = typeof ServerProviderUsageBalance.Type;

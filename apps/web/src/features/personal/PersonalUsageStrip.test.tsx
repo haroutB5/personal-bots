@@ -346,11 +346,42 @@ describe("PersonalUsageStrip", () => {
     expect(json).toContain("DeepSeek");
     expect(text).toContain("Balance left$12.34");
     expect(text).toContain("Granted $2.00 · Topped up $10.34");
-    expect(text).toContain("Spend is not tracked for DeepSeek yet.");
+    // Nothing recorded to price yet: said plainly, never a zero.
+    expect(text).toContain("No DeepSeek spend recorded yet.");
     // Aged from the provider's own fetch time, not the probe's checkedAt.
     expect(text).toContain("Updated 10m");
     // The two window cards are untouched beside it.
     expect(json).toContain("26% used");
+  });
+
+  it("shows the spent figure the scan priced, beside the balance", async () => {
+    state.providers = [
+      CLAUDE,
+      CODEX,
+      provider("deepseek", undefined, {
+        status: "ready",
+        checkedAt: "2026-09-13T11:59:00Z",
+        balance: {
+          currency: "USD",
+          totalBalance: 12.34,
+          grantedBalance: 2,
+          toppedUpBalance: 10.34,
+          isAvailable: true,
+          fetchedAt: "2026-09-13T11:50:00Z",
+        },
+        // Our own records' value at the published Flash rates, from the scan.
+        spent: { costUsd: 0.9713, since: "2026-09-08T09:00:00Z", records: 650 },
+      }),
+    ];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    await act(async () => {
+      renderer!.root.findAllByType("button")[0]!.props.onClick();
+    });
+    const text = textOf(renderer!.toJSON());
+    expect(text).toContain("Balance left$12.34");
+    expect(text).toContain("Spent $0.97 since 8 Sep");
   });
 
   it("says a failed balance read failed, keeping the last good numbers", async () => {

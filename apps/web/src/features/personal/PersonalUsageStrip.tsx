@@ -13,6 +13,7 @@ import { formatRelativeTime } from "./relativeTime";
 import { trackUsageRefresh, useUsageRefreshing } from "./usageRefresh";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
 import {
+  deepSeekSpendText,
   formatBalanceAmount,
   selectUsageCards,
   usageCardEmptyText,
@@ -150,12 +151,19 @@ function MissingRow({ label }: { readonly label: string }) {
 }
 
 /**
- * The money card (DeepSeek): what is left, split into the credit DeepSeek
- * granted and the part that was paid for, and, plainly, that no spend figure
- * exists yet - DeepSeek publishes no billing history, so "spent" could only
- * come from our own token records, which this release does not keep for it.
+ * The money card (DeepSeek): what is left, what our own transcript records
+ * say the turns so far cost, and the credit split behind the balance. The
+ * spent line is the API-price value at DeepSeek's published Flash rates, and
+ * when there is nothing to price it says so plainly instead of inventing a
+ * figure; the balance endpoint stays the independent check.
  */
-function BalanceRows({ balance }: { readonly balance: UsageBalanceView }): JSX.Element {
+function BalanceRows({
+  balance,
+  now,
+}: {
+  readonly balance: UsageBalanceView;
+  readonly now: number;
+}): JSX.Element {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-3">
@@ -164,6 +172,16 @@ function BalanceRows({ balance }: { readonly balance: UsageBalanceView }): JSX.E
           {formatBalanceAmount(balance.total, balance.currency)}
         </span>
       </div>
+      <span
+        className={cn(
+          "text-[13px] tabular-nums",
+          balance.spent === null
+            ? "text-[var(--personal-text-tertiary)]"
+            : "text-[var(--personal-text-secondary)]",
+        )}
+      >
+        {deepSeekSpendText(balance.spent, now)}
+      </span>
       <span className="text-[13px] text-[var(--personal-text-secondary)] tabular-nums">
         Granted {formatBalanceAmount(balance.granted, balance.currency)} · Topped up{" "}
         {formatBalanceAmount(balance.toppedUp, balance.currency)}
@@ -173,9 +191,6 @@ function BalanceRows({ balance }: { readonly balance: UsageBalanceView }): JSX.E
           This account cannot make API calls right now.
         </span>
       )}
-      <span className="text-[13px] text-[var(--personal-text-tertiary)]">
-        Spend is not tracked for DeepSeek yet.
-      </span>
     </div>
   );
 }
@@ -253,7 +268,7 @@ function UsageCardView({
         ) : null}
       </div>
       {card.status === "ready" && card.balance !== null ? (
-        <BalanceRows balance={card.balance} />
+        <BalanceRows balance={card.balance} now={now} />
       ) : card.status === "ready" ? (
         <div className="flex flex-col gap-4">
           {card.session ? (
