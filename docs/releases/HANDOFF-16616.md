@@ -1,56 +1,50 @@
 # HANDOFF 1.66.16
 
-## Release hold, 10 October 2026
+## Candidate and release hold
 
-**DO NOT DEPLOY candidate `07da41f9d033`.** Security found a reproduced Medium recovery blocker: sparse Codex runtime usage updates can stamp retained, stale allowance windows as fresh and prematurely clear fallback/wake waiting work. QA's scoped SHIP does not clear this separate blocker. The previous memory High is closed, but the combined candidate needs a corrected recovery build and focused QA/Security re-review. Report and cross-layer service reproduction: `C:/Claude/AI/dev-team/reviews/security-740ab636/REPORT.md`. Live remains unchanged.
+Corrected candidate `906b33f7db93`, branch `fix/hbots-16616-recovery`, worktree `C:/Claude/AI/_wt/hbots-16616-recovery`. Built with copied externals, four public configuration keys and no activation. Exact gates passed. Focused QA and Security re-review remain required before DevOps deployment. The owner has already authorized ordinary idle-only deployment after clearance.
 
-## Changed behaviour
+**Never deploy rejected candidate `07da41f9d033`.** Its earlier scoped QA pass did not clear Security's sparse-window blocker. Security cleared the prior memory High on base `9ca460ae9b85`; this corrected build retains that fix. It carries additive migration 104 and no new migration. The combined pending-feature candidate 1.66.17 includes this same recovery correction and should supersede this intermediate build after its own gates and approvals. Do not run two competing waiters.
 
-A redeemed usage reset can now return an idle bot to its primary model before the reset date stored on its fallback row. The sweep probes the primary even while that date is in the future, at most once per provider instance every two minutes. Recovery requires a ready original instance, a successful reading newer than the fallback hit and no older than two minutes, explicit room in the exhausted pool, and room in every applicable window. Busy bots wait. Missing, failed, stale, future-dated, exhausted or unrelated-pool readings cannot establish early recovery. The existing natural-reset and unreported-reset hold rules remain.
+## Resulting behavior
 
-Switch-back and releasing waiting work are one SQLite transaction, with another idle check inside it. Only this bot's rate-limited tasks and scheduled chat resumes on its original/fallback provider pair become due. Workers retain their task claims, chat ownership/archive/new-message checks and concurrency limit of five. Cancelled, completed and running tasks are not requeued. A failed wake rolls back the switch, so a restart cannot lose the pending recovery.
+An early redeemed or externally recovered provider allowance returns an idle bot to its saved primary before the old reset date. The sweep probes the original provider at most once every two minutes. It requires a ready original instance, explicit room in the exhausted pool and all applicable windows, a successful full read after the fallback hit and within two minutes, and the existing grace period. Busy bots wait. The owner's fallback settings and normal scheduled-reset behavior remain unchanged.
 
-## Candidate and prerequisite
+The sparse-window blocker is corrected by `fullReadAt` proof tied to the exact full-probe snapshot. Full normalizers and the successful probe boundary attach it. Changed runtime merges retain the UI bars, reset times and reset-credit summary but drop proof; they cannot certify an omitted allowance. Unchanged runtime notifications retain their object identity and original full-read age. Failed or legacy readings without proof cannot establish early recovery. A new successful full probe restores proof.
 
-- Branch: `fix/hbots-16616-recovery`; worktree: `C:/Claude/AI/_wt/hbots-16616-recovery`.
-- Release/code commit: `07da41f9d033`; staged under `C:/Users/Ht/.personal-bots/releases/07da41f9d033`, with copied externals. Build loaded four public configuration keys. No activation or live settings/database write was performed.
-- Base: `9ca460ae9b85`, including live 1.66.14 and the pending security hotfix `a10d9459681a` plus corrected web assertion `9ca460ae9b85`. This retains memory provenance validation/rendering hardening, safe expected-refusal classification and the migration-104 regression coverage. No new migration.
-- The security prerequisite still requires Security review, and recovery/resumption requires focused QA sign-off before DevOps deploys this combined candidate. Passing builder gates is not either sign-off.
+Switch-back and releasing eligible waits share one SQLite transaction and a second idle check. Wake failure preserves the fallback and original due dates. Only the bot's own waiting tasks and scheduled chat resumes on its original/fallback provider pair become due. Completed, cancelled and running tasks are untouched; existing claims and chat ownership guards prevent duplicate starts. Concurrency remains five. Account identity remains scoped by configured provider instance, not a new durable account fingerprint.
 
-## Builder proof
+## Focused correction proof
 
-Fake providers and isolated in-memory SQLite exercised the real fallback service, chat resume service and task dispatcher; no real redemption was invoked.
+- Actual Codex normalization/merge/policy reproduction now returns WAIT after a failed probe followed by a primary-only runtime notification retaining a pre-hit secondary reading.
+- Security's real-service sparse regression passes: the fallback remains and the waiting task's future date is unchanged. `C:/Claude/AI/dev-team/it/recovery-correction-sparse-service.log`.
+- New real-service regression extends that sequence with a successful full read and repeated sweeps: fallback clears and waiting work becomes due once. Recovery/chat/task tests pass in the exact server gate; 52 focused managed-provider/fallback tests pass in `C:/Claude/AI/dev-team/it/recovery-correction-retest.log`.
+- Provider normalizer/merge tests, unchanged-event identity, runtime proof invalidation, missing/mismatched proof rejection, typecheck and targeted lint pass. Build log: `C:/Claude/AI/dev-team/it/recovery-correction-build.log`.
+- Exact gates: 2500 server tests, 2347 web tests, both typechecks, 233 PowerShell checks and 12/12 staged browser journeys. See the machine-bound evidence below. No real redemption, paid provider request, production mutation, restart or deployment occurred.
 
-- 36 fallback/policy/chat tests passed: future reset overridden by confirmed recovery, normal refreshed snapshots and probe-discovered outside-app recovery, Codex and Claude, busy-to-idle recovery, stale/failed/missing/unavailable/future/limited readings, account and model-pool isolation, natural reset, cooldown, transactional wake rollback and one chat start on the primary.
-- The new task dispatcher integration passed: the same task runs on the fallback, stops on its own limit, then resumes once on recovered Codex. Three historical attempts, one active attempt, one new primary turn after repeated sweeps.
-- 54 provider usage/reset-confirmation tests passed; 8 prerequisite refusal/migration tests passed. Targeted lint passed. Exact-candidate release gate results follow below.
-- Focused logs: `C:/Claude/AI/dev-team/it/recovery-focused.log`, `recovery-task.log`, `recovery-provider-signals.log`, `recovery-security-prereq.log`, `recovery-lint.log`; build: `recovery-build.log`.
+## Deployment and remaining work
 
-## Deployment handoff and limits
+After focused QA and Security clear the exact candidate, DevOps validates notes/evidence, takes a fresh integrity-checked backup, pins release tools and arms the usual idle-only waiter. Never restart while bot/task work is active. Retain live `9c0bcf8e8d67` for binary rollback and confirm the active version and logs as soon as the server returns, followed by live QA. The old cancelled Kino deployment task must not be revived; Kino is already deployed and live QA passed.
 
-After installation, the startup sweep loads saved fallbacks and refreshes each primary. With confirmed room and an idle bot it clears the fallback and wakes eligible waits; the existing task/chat workers run them. No reset button or permanent fallback-disable setting is needed. A busy bot returns on a later idle sweep; failed or lagging probes keep waiting. Account identity is scoped by the configured provider instance, as in the existing fallback design; this change does not add a durable account-identity fingerprint.
-
-Read-only live recheck during this build: active pointer `9c0bcf8e8d67` / version 1.66.14; Updates still has Codex-to-Claude fallback until 14 October; CTO has Claude-to-GPT fallback until 11 October. DevOps no longer has a fallback row, and Kino release task `f4df4d3c-ee54-44db-9801-2d3cf9f58d38` is cancelled. This candidate deliberately does not resurrect that cancelled task. CTO must use the appropriate existing-task continuation if that release remains approved. These are observations during the build, not a claim about the eventual deployment state.
-
-DevOps must ship only after QA and Security clear this candidate, using the normal idle-only waiter and exact gate/notes checks. Retain the current binary for rollback. No waiter was armed here. Binary rollback removes the new recovery behaviour without a data migration or saved-model change.
+The owner's overnight scope continues with context-meter and timestamp-swipe integration in `C:/Claude/AI/_wt/hbots-16617-pending`, then a measured hbots performance/bug-hunt run after pending releases deploy. Astra and Fable models are not authorized. Read-only preflight found no scheduled chat resumes for either bot. This is an observation, not permission to change their settings.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=07da41f9d0331be77089e02bc9d8f45173a8a7b3 release=07da41f9d033 json-sha256=9f778c6d4a5947e43f90dddb8356e96abf9d8325aaa2a411fed965378ed5dff2 result=PASS -->
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-09T23:55:12Z. Version 1.66.16, release `07da41f9d033`, commit `07da41f9d0331be77089e02bc9d8f45173a8a7b3` on `fix/hbots-16616-recovery`, working tree clean, result **PASS**.
+<!-- gate-evidence:begin sha=906b33f7db9335119d3158470aea2392122c31fe release=906b33f7db93 json-sha256=321d4d5965f2668e260a491674af53f1898812b2291886f74b2bb2d810e6d9fc result=PASS -->
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-10T03:58:14Z. Version 1.66.16, release `906b33f7db93`, commit `906b33f7db9335119d3158470aea2392122c31fe` on `fix/hbots-16616-recovery`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\07da41f9d033\gate-evidence.json` (sha256 `9f778c6d4a5947e43f90dddb8356e96abf9d8325aaa2a411fed965378ed5dff2`) and the full gate logs in `releases\07da41f9d033\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\906b33f7db93\gate-evidence.json` (sha256 `321d4d5965f2668e260a491674af53f1898812b2291886f74b2bb2d810e6d9fc`) and the full gate logs in `releases\906b33f7db93\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate | Commands | Exit | Result | Seconds |
 | --- | --- | --- | --- | --- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`) | 0 | pass: 2499 tests passed, 0 failed, 3 skipped, in 178 files | 325.1 |
-| server-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`) | 0 | pass: exit code only | 66 |
-| web-tests | `vp test run --project unit src/features/personal` (in `apps\web`) | 0 | pass: 2347 tests passed, 0 failed, 0 skipped, in 217 files | 40.6 |
-| web-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`) | 0 | pass: exit code only | 35.7 |
-| ps-tests | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0 | pass: 233 checks ok, 0 failed | 145.8 |
-| e2e | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16616-recovery\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\07da41f9d033" -Json` (in `.`) | 0 | pass: 12/12 journeys passed | 323.6 |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`) | 0 | pass: 2500 tests passed, 0 failed, 3 skipped, in 178 files | 247.2 |
+| server-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`) | 0 | pass: exit code only | 40.2 |
+| web-tests | `vp test run --project unit src/features/personal` (in `apps\web`) | 0 | pass: 2347 tests passed, 0 failed, 0 skipped, in 217 files | 28.2 |
+| web-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`) | 0 | pass: exit code only | 35.1 |
+| ps-tests | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0 | pass: 233 checks ok, 0 failed | 103 |
+| e2e | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16616-recovery\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\906b33f7db93" -Json` (in `.`) | 0 | pass: 12/12 journeys passed | 303.3 |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `07da41f9d0331be77089e02bc9d8f45173a8a7b3`, at end `07da41f9d0331be77089e02bc9d8f45173a8a7b3`; tracked files modified: none. Staged release: version 1.66.16, sha 07da41f9d033, dirty False, externals copied; `dist/bin.mjs` sha256 `e274aeee6b224685e94dccfd0ca98b4273a3a0f0e0e2e6e08a84a94c016b9421`.
+Tree: HEAD at start `906b33f7db9335119d3158470aea2392122c31fe`, at end `906b33f7db9335119d3158470aea2392122c31fe`; tracked files modified: none. Staged release: version 1.66.16, sha 906b33f7db93, dirty False, externals copied; `dist/bin.mjs` sha256 `fe952e2502166f52703a445641c067361bce2aaa50705089ac4686e337ca6aa2`.
 <!-- gate-evidence:end -->
