@@ -13,11 +13,13 @@ import { formatRelativeTime } from "./relativeTime";
 import { trackUsageRefresh, useUsageRefreshing } from "./usageRefresh";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
 import {
+  formatBalanceAmount,
   selectUsageCards,
   usageCardEmptyText,
   usageAutoProbeDue,
   usageNeedsRefreshOnOpen,
   usageRefreshFailureText,
+  type UsageBalanceView,
   type UsageCard,
   type UsageWindowRow,
 } from "./usagePresentation";
@@ -148,9 +150,41 @@ function MissingRow({ label }: { readonly label: string }) {
 }
 
 /**
+ * The money card (DeepSeek): what is left, split into the credit DeepSeek
+ * granted and the part that was paid for, and, plainly, that no spend figure
+ * exists yet - DeepSeek publishes no billing history, so "spent" could only
+ * come from our own token records, which this release does not keep for it.
+ */
+function BalanceRows({ balance }: { readonly balance: UsageBalanceView }): JSX.Element {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="truncate text-[15px] text-[var(--personal-text)]">Balance left</span>
+        <span className="shrink-0 text-[15px] font-semibold text-[var(--personal-text)] tabular-nums">
+          {formatBalanceAmount(balance.total, balance.currency)}
+        </span>
+      </div>
+      <span className="text-[13px] text-[var(--personal-text-secondary)] tabular-nums">
+        Granted {formatBalanceAmount(balance.granted, balance.currency)} · Topped up{" "}
+        {formatBalanceAmount(balance.toppedUp, balance.currency)}
+      </span>
+      {balance.isAvailable ? null : (
+        <span className="text-[13px] text-[var(--personal-review-text)]">
+          This account cannot make API calls right now.
+        </span>
+      )}
+      <span className="text-[13px] text-[var(--personal-text-tertiary)]">
+        Spend is not tracked for DeepSeek yet.
+      </span>
+    </div>
+  );
+}
+
+/**
  * Under a card: how old its reading is, a small "Refreshing" beside that while
  * a probe runs (the bars stay), and, once a refresh has failed, why the bars
- * are older than they should be.
+ * are older than they should be. A money card's age is the balance's own
+ * fetch time, which the server may have served from its cache.
  */
 function UsageCardFooter({
   card,
@@ -161,15 +195,14 @@ function UsageCardFooter({
   readonly now: number;
   readonly checking: boolean;
 }): JSX.Element | null {
+  const updatedAt = card.balance?.fetchedAt ?? card.checkedAt;
   const failure = checking ? null : usageRefreshFailureText(card);
-  if (card.checkedAt === null && !checking && failure === null) return null;
+  if (updatedAt === null && !checking && failure === null) return null;
   return (
     <div className="flex flex-col gap-0.5 text-[13px] text-[var(--personal-text-secondary)]">
-      {card.checkedAt !== null || checking ? (
+      {updatedAt !== null || checking ? (
         <span className="flex items-center gap-2">
-          {card.checkedAt !== null ? (
-            <span>Updated {formatRelativeTime(card.checkedAt, now)}</span>
-          ) : null}
+          {updatedAt !== null ? <span>Updated {formatRelativeTime(updatedAt, now)}</span> : null}
           {checking ? (
             <span role="status" className="inline-flex items-center gap-1">
               <RefreshCw aria-hidden="true" className="size-3 animate-spin" strokeWidth={2} />
@@ -219,7 +252,9 @@ function UsageCardView({
           </span>
         ) : null}
       </div>
-      {card.status === "ready" ? (
+      {card.status === "ready" && card.balance !== null ? (
+        <BalanceRows balance={card.balance} />
+      ) : card.status === "ready" ? (
         <div className="flex flex-col gap-4">
           {card.session ? (
             <WindowRow card={card} row={card.session} />
@@ -306,7 +341,9 @@ function UsageSheetBody({
             Usage
           </SheetTitle>
           <SheetDescription className="text-[13px] text-[var(--personal-text-tertiary)]">
-            Token windows for Claude and Codex
+            {cards.some((card) => card.balance !== null)
+              ? "Token windows and balance for Claude, Codex and DeepSeek"
+              : "Token windows for Claude and Codex"}
           </SheetDescription>
         </div>
         <button

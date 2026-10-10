@@ -53,6 +53,7 @@ function card(overrides: Partial<UsageCard> & { driver: UsageCardDriver }): Usag
     weeklies: [],
     checkedAt: null,
     resetCredits: null,
+    balance: null,
     ...overrides,
   };
 }
@@ -97,6 +98,26 @@ describe("selectUsageStripCells", () => {
 
   it("has no cells when no provider is configured yet", () => {
     expect(selectUsageStripCells([])).toEqual([]);
+  });
+
+  it("keeps a balance card out of the two-up strip, whatever else is showing", () => {
+    const cells = selectUsageStripCells([
+      card({ driver: "claudeAgent", session: row() }),
+      card({
+        driver: "deepseek",
+        title: "DeepSeek",
+        balance: {
+          currency: "USD",
+          total: 12.34,
+          granted: 2,
+          toppedUp: 10.34,
+          isAvailable: true,
+          fetchedAt: null,
+        },
+      }),
+      card({ driver: "codex", session: row({ id: "primary", usedPercent: 12 }) }),
+    ]);
+    expect(cells.map((cell) => cell.title)).toEqual(["Claude", "Codex"]);
   });
 });
 

@@ -17,14 +17,22 @@ export interface UsageStripCell {
  * Cells for the strip, in card order (Claude left, Codex right). Cards that
  * cannot report (`unavailable` / `not-reported`) keep their cell so the
  * provider name stays visible; their figures are null.
+ *
+ * A balance card (DeepSeek) gets no cell at all, on purpose: the strip is a
+ * two-up row of percent windows with one shared "Session/Weekly percent used"
+ * shape, and a third cell would squeeze the existing two (already tuned down
+ * to a 280 px desktop column) and read as a window that never fills. The
+ * balance with its granted/topped-up split lives one tap away, in the sheet.
  */
 export function selectUsageStripCells(cards: ReadonlyArray<UsageCard>): readonly UsageStripCell[] {
-  return cards.map((card) => ({
-    driver: card.driver,
-    title: card.title,
-    sessionPercent: card.status === "ready" ? (card.session?.usedPercent ?? null) : null,
-    weeklyPercent: card.status === "ready" ? (card.weeklies[0]?.usedPercent ?? null) : null,
-  }));
+  return cards
+    .filter((card) => card.driver !== "deepseek")
+    .map((card) => ({
+      driver: card.driver,
+      title: card.title,
+      sessionPercent: card.status === "ready" ? (card.session?.usedPercent ?? null) : null,
+      weeklyPercent: card.status === "ready" ? (card.weeklies[0]?.usedPercent ?? null) : null,
+    }));
 }
 
 /**

@@ -3,10 +3,13 @@ import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  formatBalanceAmount,
   formatResetCountdown,
   formatResetTime,
+  refreshFailureText,
   resetCreditsExpiresIn,
   resetCreditsHeadline,
+  selectDeepSeekBalanceLine,
   selectUsageCards,
   usageAutoProbeDue,
   usageCardEmptyText,
@@ -411,6 +414,151 @@ describe("selectUsageCards", () => {
   });
 });
 
+describe("the DeepSeek balance card", () => {
+  const deepSeek = (
+    usageBalance: ServerProvider["usageBalance"],
+    auth: ServerProvider["auth"] = {
+      status: "authenticated",
+      type: "api_key",
+      label: "DeepSeek API key",
+    },
+  ) => provider({ driver: "deepseek", instanceId: "deepseek", usageBalance, auth });
+
+  const reading = {
+    currency: "USD",
+    totalBalance: 12.34,
+    grantedBalance: 2,
+    toppedUpBalance: 10.34,
+    isAvailable: true,
+    fetchedAt: "2026-09-13T11:55:00Z",
+  };
+
+  it("shows the balance with its granted/topped-up split and its fetch time", () => {
+    const [card] = selectUsageCards(
+      [
+        deepSeek({
+          checkedAt: "2026-09-13T11:59:00Z",
+          status: "ready",
+          balance: reading,
+        }),
+      ],
+      NOW,
+    );
+    expect(card).toMatchObject({
+      driver: "deepseek",
+      title: "DeepSeek",
+      status: "ready",
+      notice: null,
+      refreshFailure: null,
+      session: null,
+      weeklies: [],
+      balance: {
+        currency: "USD",
+        total: 12.34,
+        granted: 2,
+        toppedUp: 10.34,
+        isAvailable: true,
+        fetchedAt: Date.parse("2026-09-13T11:55:00Z"),
+      },
+    });
+    expect(card!.checkedAt).toBe(Date.parse("2026-09-13T11:59:00Z"));
+  });
+
+  it("keeps the last good numbers when the newest read failed, saying why", () => {
+    const [card] = selectUsageCards(
+      [
+        deepSeek({
+          checkedAt: "2026-09-13T11:59:00Z",
+          status: "failed",
+          balance: reading,
+          message: "DeepSeek could not be reached for the balance.",
+        }),
+      ],
+      NOW,
+    );
+    expect(card!.status).toBe("ready");
+    expect(card!.balance?.total).toBe(12.34);
+    expect(usageRefreshFailureText(card!)).toBe(
+      "Couldn't refresh · DeepSeek could not be reached for the balance.",
+    );
+  });
+
+  it("says the balance could not be read when there are no numbers at all", () => {
+    const [card] = selectUsageCards(
+      [
+        deepSeek({
+          checkedAt: "2026-09-13T11:59:00Z",
+          status: "failed",
+          message: "DeepSeek would not return the balance for this key.",
+        }),
+      ],
+      NOW,
+    );
+    expect(card).toMatchObject({
+      status: "not-reported",
+      balance: null,
+      notice: "DeepSeek would not return the balance for this key.",
+    });
+  });
+
+  it("treats a missing key as final, so the strip stops probing for it", () => {
+    const [card] = selectUsageCards([deepSeek(undefined, { status: "unauthenticated" })], NOW);
+    expect(card).toMatchObject({
+      status: "unavailable",
+      balance: null,
+      notice: "No DeepSeek API key. Add one on the DeepSeek instance in Settings.",
+    });
+    expect(
+      usageAutoProbeDue({ cards: [card!], now: NOW, lastProbeAt: null, firstLoad: true }),
+    ).toBe(false);
+  });
+
+  it("shows no card when no DeepSeek instance is configured", () => {
+    expect(
+      selectUsageCards([provider({ driver: "claudeAgent", instanceId: "claudeAgent" })], NOW),
+    ).toHaveLength(1);
+  });
+
+  it("gives the Team screen a balance line only when there is a reading", () => {
+    const withReading = [
+      deepSeek({ checkedAt: "2026-09-13T11:59:00Z", status: "ready", balance: reading }),
+    ];
+    expect(selectDeepSeekBalanceLine(withReading, NOW)).toMatchObject({
+      balance: { total: 12.34 },
+      failure: null,
+    });
+    const failed = [
+      deepSeek({
+        checkedAt: "2026-09-13T11:59:00Z",
+        status: "failed",
+        balance: reading,
+        message: "DeepSeek did not answer the balance request in time.",
+      }),
+    ];
+    expect(selectDeepSeekBalanceLine(failed, NOW)?.failure).toBe(
+      "DeepSeek did not answer the balance request in time.",
+    );
+    expect(selectDeepSeekBalanceLine([deepSeek(undefined)], NOW)).toBeNull();
+  });
+});
+
+describe("formatBalanceAmount", () => {
+  it("shows USD as dollars and anything else in its own currency code", () => {
+    expect(formatBalanceAmount(12.34, "USD")).toBe("$12.34");
+    expect(formatBalanceAmount(0, "USD")).toBe("$0.00");
+    expect(formatBalanceAmount(1234, "USD")).toBe("$1,234");
+    expect(formatBalanceAmount(6, "CNY")).toBe("6.00 CNY");
+    expect(formatBalanceAmount(6, "cny")).toBe("6.00 CNY");
+    expect(formatBalanceAmount(Number.NaN, "USD")).toBe("$0.00");
+  });
+
+  it("never renders an empty refresh reason as a dangling separator", () => {
+    expect(refreshFailureText(null)).toBeNull();
+    expect(refreshFailureText("")).toBe("Couldn't refresh");
+    expect(refreshFailureText("no answer")).toBe("Couldn't refresh · no answer");
+  });
+});
+
 describe("usage refresh on open", () => {
   const card = (overrides: Partial<UsageCard> = {}): UsageCard => ({
     driver: "claudeAgent",
@@ -423,6 +571,7 @@ describe("usage refresh on open", () => {
     weeklies: [],
     checkedAt: 1_000_000,
     resetCredits: null,
+    balance: null,
     ...overrides,
   });
 
@@ -503,6 +652,7 @@ describe("auto probe", () => {
     weeklies: [],
     checkedAt: 1_000_000,
     resetCredits: null,
+    balance: null,
     ...overrides,
   });
   const due = (cards: UsageCard[], lastProbeAt: number | null = null, firstLoad = false) =>

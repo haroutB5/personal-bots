@@ -55,7 +55,7 @@ vi.mock("~/components/ui/sheet", () => ({
   SheetDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
 }));
 
-function provider(driver: string, usageLimits: unknown): ServerProvider {
+function provider(driver: string, usageLimits: unknown, usageBalance?: unknown): ServerProvider {
   return {
     enabled: true,
     installed: true,
@@ -67,6 +67,7 @@ function provider(driver: string, usageLimits: unknown): ServerProvider {
     slashCommands: [],
     skills: [],
     usageLimits,
+    ...(usageBalance !== undefined ? { usageBalance } : {}),
     driver: ProviderDriverKind.make(driver),
     instanceId: ProviderInstanceId.make(driver),
   } as unknown as ServerProvider;
@@ -101,6 +102,16 @@ const CODEX = provider("codex", {
 });
 
 let renderer: ReactTestRenderer | undefined;
+
+/** Every string in the rendered tree, joined: vnode text splits around interpolations. */
+function textOf(node: unknown): string {
+  if (typeof node === "string") return node;
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (typeof node === "object" && node !== null && "children" in node) {
+    return textOf((node as { children: unknown }).children);
+  }
+  return "";
+}
 
 beforeEach(() => {
   resetUsageAutoProbe();
@@ -299,6 +310,75 @@ describe("PersonalUsageStrip", () => {
     const json = JSON.stringify(renderer!.toJSON());
     expect(json).toContain("–");
     expect(json).not.toContain("0%");
+  });
+
+  it("opens the sheet on DeepSeek's balance, with the split and its age, and no strip cell", async () => {
+    state.providers = [
+      CLAUDE,
+      CODEX,
+      provider("deepseek", undefined, {
+        status: "ready",
+        checkedAt: "2026-09-13T11:59:00Z",
+        balance: {
+          currency: "USD",
+          totalBalance: 12.34,
+          grantedBalance: 2,
+          toppedUpBalance: 10.34,
+          isAvailable: true,
+          fetchedAt: "2026-09-13T11:50:00Z",
+        },
+      }),
+    ];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    // The strip stays two-up: the balance has no percent window to plot.
+    expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toBe(
+      "Usage: Claude, Session 26 percent used, Weekly 8 percent used; Codex, Session 12 percent used, Weekly not reported. Open details.",
+    );
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("DeepSeek");
+
+    await act(async () => {
+      renderer!.root.findAllByType("button")[0]!.props.onClick();
+    });
+    const json = JSON.stringify(renderer!.toJSON());
+    const text = textOf(renderer!.toJSON());
+    expect(json).toContain("DeepSeek");
+    expect(text).toContain("Balance left$12.34");
+    expect(text).toContain("Granted $2.00 · Topped up $10.34");
+    expect(text).toContain("Spend is not tracked for DeepSeek yet.");
+    // Aged from the provider's own fetch time, not the probe's checkedAt.
+    expect(text).toContain("Updated 10m");
+    // The two window cards are untouched beside it.
+    expect(json).toContain("26% used");
+  });
+
+  it("says a failed balance read failed, keeping the last good numbers", async () => {
+    state.providers = [
+      CLAUDE,
+      provider("deepseek", undefined, {
+        status: "failed",
+        checkedAt: "2026-09-13T11:59:00Z",
+        balance: {
+          currency: "USD",
+          totalBalance: 3.5,
+          grantedBalance: 0,
+          toppedUpBalance: 3.5,
+          isAvailable: true,
+          fetchedAt: "2026-09-13T11:55:00Z",
+        },
+        message: "DeepSeek could not be reached for the balance.",
+      }),
+    ];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    await act(async () => {
+      renderer!.root.findAllByType("button")[0]!.props.onClick();
+    });
+    const text = textOf(renderer!.toJSON());
+    expect(text).toContain("$3.50");
+    expect(text).toContain("Couldn't refresh · DeepSeek could not be reached for the balance.");
   });
 
   it("opens the detail sheet with every window, resets and a refresh", async () => {

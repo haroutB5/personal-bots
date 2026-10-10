@@ -9,7 +9,11 @@
  *
  * @module provider/Layers/DeepSeekProvider
  */
-import { type DeepSeekSettings, type ServerProviderAuth } from "@t3tools/contracts";
+import {
+  type DeepSeekSettings,
+  type ServerProviderAuth,
+  type ServerProviderUsageBalance,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -30,6 +34,11 @@ import {
   resolveDeepSeekModelCatalog,
   scopeDeepSeekModelCatalog,
 } from "../DeepSeekModelCatalog.ts";
+import {
+  deepSeekBalanceReader,
+  type DeepSeekBalanceFailureReason,
+  type DeepSeekBalanceRead,
+} from "../Drivers/DeepSeekBalance.ts";
 import { DEEPSEEK_AUTH_TOKEN_ENV } from "../Drivers/DeepSeekEnvironment.ts";
 
 const DEEPSEEK_PRESENTATION = {
@@ -39,6 +48,48 @@ const DEEPSEEK_PRESENTATION = {
 } as const;
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
+
+/** How a failed balance read reads on the usage card: short, ours, never DeepSeek's body. */
+const BALANCE_FAILURE_NOTES: Record<DeepSeekBalanceFailureReason, string> = {
+  missing_key: "DeepSeek API key is missing.",
+  http_error: "DeepSeek would not return the balance for this key.",
+  network_error: "DeepSeek could not be reached for the balance.",
+  timeout: "DeepSeek did not answer the balance request in time.",
+  invalid_response: "DeepSeek returned a balance that could not be read.",
+};
+
+/**
+ * One balance read as the published contract shape. A failed read keeps the
+ * last good numbers (`balance`) and says how old they are through `fetchedAt`,
+ * exactly as a kept usage window keeps its own time; the newest attempt's
+ * outcome is `status`, with a short message of our wording.
+ */
+function toUsageBalance(read: DeepSeekBalanceRead, checkedAt: string): ServerProviderUsageBalance {
+  const amounts = read.status === "ready" ? read.amounts : read.lastGood?.amounts;
+  const fetchedAtMs = read.status === "ready" ? read.fetchedAtMs : read.lastGood?.fetchedAtMs;
+  return {
+    checkedAt,
+    status: read.status,
+    ...(amounts !== undefined && fetchedAtMs !== undefined
+      ? {
+          balance: {
+            currency: amounts.currency,
+            totalBalance: amounts.totalBalance,
+            grantedBalance: amounts.grantedBalance,
+            toppedUpBalance: amounts.toppedUpBalance,
+            isAvailable: amounts.isAvailable,
+            fetchedAt: DateTime.formatIso(DateTime.makeUnsafe(fetchedAtMs)),
+          },
+        }
+      : {}),
+    ...(read.status === "failed" ? { message: BALANCE_FAILURE_NOTES[read.reason] } : {}),
+  };
+}
+
+export interface DeepSeekProviderProbeDependencies {
+  /** Tests: stub the balance read. Defaults to the shared, cached reader. */
+  readonly readBalance?: (token: string) => Promise<DeepSeekBalanceRead>;
+}
 
 function deepSeekModelsFromCatalog(catalog: DeepSeekModelCatalog) {
   return catalog.models.map((entry) => entry.model);
@@ -88,6 +139,7 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
   settings: DeepSeekSettings,
   environment: NodeJS.ProcessEnv = process.env,
   catalog: DeepSeekModelCatalog = BUNDLED_DEEPSEEK_MODEL_CATALOG,
+  dependencies?: DeepSeekProviderProbeDependencies,
 ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const scoped = scopeDeepSeekModelCatalog(catalog, settings.customModels);
@@ -113,6 +165,34 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
   const auth: ServerProviderAuth = token
     ? { status: "authenticated", type: "api_key", label: "DeepSeek API key" }
     : { status: "unauthenticated" };
+
+  // Read before the binary probe, and carried on every outcome below, so a
+  // probe that fails for a CLI reason never blanks a balance the card shows.
+  // The reader never rejects by contract; a stub that does still must not take
+  // the whole probe down.
+  const readBalance = dependencies?.readBalance ?? deepSeekBalanceReader.read;
+  const usageBalance =
+    token.length === 0
+      ? undefined
+      : yield* Effect.gen(function* () {
+          const read = yield* Effect.tryPromise({
+            try: () => readBalance(token),
+            catch: () =>
+              ({
+                status: "failed",
+                reason: "network_error",
+                lastGood: null,
+              }) as DeepSeekBalanceRead,
+          }).pipe(
+            Effect.orElseSucceed((): DeepSeekBalanceRead => ({
+              status: "failed",
+              reason: "network_error",
+              lastGood: null,
+            })),
+          );
+          const checkedAt = DateTime.formatIso(yield* DateTime.now);
+          return toUsageBalance(read, checkedAt);
+        });
 
   const binaryPath = settings.binaryPath.trim() || "claude";
   const versionResult = yield* Effect.gen(function* () {
@@ -143,6 +223,7 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
         message: isCommandMissingCause(error)
           ? "Claude Agent SDK binary (`claude`) is not installed or not on PATH, so DeepSeek sessions cannot start."
           : "Failed to run the agent binary health check for DeepSeek.",
+        ...(usageBalance ? { usageBalance } : {}),
       },
     });
   }
@@ -158,6 +239,7 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
         status: "error",
         auth,
         message: "The agent binary timed out during the DeepSeek health check.",
+        ...(usageBalance ? { usageBalance } : {}),
       },
     });
   }
@@ -175,6 +257,7 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
         status: "error",
         auth,
         message: "The agent binary is installed but failed to run for DeepSeek.",
+        ...(usageBalance ? { usageBalance } : {}),
       },
     });
   }
@@ -192,6 +275,7 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
         auth,
         message:
           "DeepSeek API key is missing. Add ANTHROPIC_AUTH_TOKEN as a sensitive environment variable on this DeepSeek instance.",
+        ...(usageBalance ? { usageBalance } : {}),
       },
     });
   }
@@ -206,6 +290,7 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
       version,
       status: "ready",
       auth,
+      ...(usageBalance ? { usageBalance } : {}),
     },
   });
 });

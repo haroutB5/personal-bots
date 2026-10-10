@@ -6,13 +6,16 @@ import type {
 } from "@t3tools/contracts";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimits";
 
+import { formatUsd } from "./tokenUsagePresentation";
+
 /** Drivers surfaced as cards, in display order. */
-export const USAGE_CARD_DRIVERS = ["claudeAgent", "codex"] as const;
+export const USAGE_CARD_DRIVERS = ["claudeAgent", "codex", "deepseek"] as const;
 export type UsageCardDriver = (typeof USAGE_CARD_DRIVERS)[number];
 
 export const USAGE_CARD_TITLES: Record<UsageCardDriver, string> = {
   claudeAgent: "Claude",
   codex: "Codex",
+  deepseek: "DeepSeek",
 };
 
 function clampPercent(value: number): number {
@@ -66,6 +69,23 @@ export interface UsageCard {
    * card has no bars or the provider reports no credits.
    */
   readonly resetCredits: UsageCardResetCredits | null;
+  /**
+   * A prepaid balance instead of windows (DeepSeek). Null for every window
+   * provider; a card with a balance has no session or weekly rows.
+   */
+  readonly balance: UsageBalanceView | null;
+}
+
+/** The money half of a card: what is left of a prepaid balance. */
+export interface UsageBalanceView {
+  readonly currency: string;
+  readonly total: number;
+  readonly granted: number;
+  readonly toppedUp: number;
+  /** The provider's own answer to "can this account make API calls". */
+  readonly isAvailable: boolean;
+  /** Epoch millis the provider returned these numbers, or null when unparseable. */
+  readonly fetchedAt: number | null;
 }
 
 export interface UsageCardResetCredits {
@@ -230,14 +250,19 @@ function placeholderNotice(provider: ServerProvider, title: string): string | nu
 }
 
 /**
- * One card per driver (Claude, Codex) from the providers the config stream
- * already publishes. Drivers with no configured instance get no card.
+ * One card per driver (Claude, Codex, DeepSeek) from the providers the config
+ * stream already publishes. Drivers with no configured instance get no card.
  *
  * A provider with windows always shows them: the server keeps the last good
  * reading through a failed probe, a restart and a first probe still running,
  * so the card says how old it is and, when the newest refresh failed, why.
  * Only a provider never read falls back to `unavailable` or `not-reported`,
  * with the reason, and never 0%.
+ *
+ * DeepSeek has no windows: its card is the prepaid balance, with the same
+ * keep-the-last-good behaviour behind it (the server keeps the numbers and
+ * marks the newest read failed), and no balance at all when the key is
+ * missing, which is final until one is added.
  */
 export function selectUsageCards(
   providers: ReadonlyArray<ServerProvider>,
@@ -248,6 +273,10 @@ export function selectUsageCards(
     const provider = newestInstance(providers, driver);
     if (!provider) continue;
     const title = USAGE_CARD_TITLES[driver];
+    if (driver === "deepseek") {
+      cards.push(deepSeekCard(provider, title));
+      continue;
+    }
     const limits = provider.usageLimits;
     if (limits && limits.unavailable?.reason !== "unsupported" && limits.windows.length > 0) {
       const failure =
@@ -269,6 +298,7 @@ export function selectUsageCards(
         resetCredits: limits.resetCredits
           ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }
           : null,
+        balance: null,
       });
       continue;
     }
@@ -286,17 +316,108 @@ export function selectUsageCards(
       weeklies: [],
       checkedAt: parseCheckedAt(limits?.checkedAt),
       resetCredits: null,
+      balance: null,
     });
   }
   return cards;
 }
 
+/**
+ * The DeepSeek card: the prepaid balance, or the quiet reason there is none.
+ *
+ * A reading keeps showing while the newest one fails (the server sends the
+ * last good numbers with `status: "failed"`), so `refreshFailure` says the
+ * refresh failed exactly as it does over kept windows. No reading at all is
+ * final only without a key (nothing can ever be read until one is added),
+ * which keeps the strip's own probing from asking forever.
+ */
+function deepSeekCard(provider: ServerProvider, title: string): UsageCard {
+  const usageBalance = provider.usageBalance;
+  // The server writes `balance` only when it has numbers to show: the newest
+  // reading when it succeeded, the last good one when it did not.
+  const reading = usageBalance?.balance;
+  const failure = usageBalance?.status === "failed" ? (usageBalance.message ?? "") : null;
+  const checkedAt = parseCheckedAt(usageBalance?.checkedAt);
+  if (reading !== undefined) {
+    return {
+      driver: "deepseek",
+      title,
+      plan: undefined,
+      status: "ready",
+      notice: null,
+      refreshFailure: failure,
+      session: null,
+      weeklies: [],
+      checkedAt,
+      resetCredits: null,
+      balance: {
+        currency: reading.currency,
+        total: reading.totalBalance,
+        granted: reading.grantedBalance,
+        toppedUp: reading.toppedUpBalance,
+        isAvailable: reading.isAvailable,
+        fetchedAt: parseCheckedAt(reading.fetchedAt),
+      },
+    };
+  }
+  const noKey = provider.auth.status === "unauthenticated";
+  return {
+    driver: "deepseek",
+    title,
+    plan: undefined,
+    status: noKey ? "unavailable" : "not-reported",
+    // No reading and no failure yet: leave the notice empty so the sheet's own
+    // "Checking…" / "not read yet" wording covers the first probe.
+    notice: noKey ? "No DeepSeek API key. Add one on the DeepSeek instance in Settings." : failure,
+    refreshFailure: null,
+    session: null,
+    weeklies: [],
+    checkedAt,
+    resetCredits: null,
+    balance: null,
+  };
+}
+
+/**
+ * A money figure in the provider's own currency: `$12.34` for USD, short
+ * where the amount is large; anything else is shown with its own code
+ * (`12.34 CNY`), never converted behind the owner's back.
+ */
+export function formatBalanceAmount(amount: number, currency: string): string {
+  const value = Number.isFinite(amount) ? amount : 0;
+  const code = currency.trim().toUpperCase();
+  return code === "USD" ? formatUsd(value) : `${value.toFixed(2)} ${code || currency}`;
+}
+
+/** "Couldn't refresh" (the server named no reason) or "Couldn't refresh · <reason>". */
+export function refreshFailureText(failure: string | null): string | null {
+  if (failure === null) return null;
+  return failure === "" ? "Couldn't refresh" : `Couldn't refresh · ${failure}`;
+}
+
 /** "Couldn't refresh · <reason>" for a card showing an older reading, else null. */
 export function usageRefreshFailureText(card: UsageCard): string | null {
-  if (card.refreshFailure === null) return null;
-  return card.refreshFailure === ""
-    ? "Couldn't refresh"
-    : `Couldn't refresh · ${card.refreshFailure}`;
+  return refreshFailureText(card.refreshFailure);
+}
+
+/** The DeepSeek balance line the Team screen shows under its totals. */
+export interface UsageBalanceLine {
+  readonly balance: UsageBalanceView;
+  /** The newest balance read failed; the numbers are the last good ones. */
+  readonly failure: string | null;
+}
+
+/**
+ * The balance line for the Team token usage card, or null when there is no
+ * DeepSeek instance, no key, or no reading yet. Same selection as the usage
+ * sheet's own DeepSeek card, so both surfaces agree on what is shown.
+ */
+export function selectDeepSeekBalanceLine(
+  providers: ReadonlyArray<ServerProvider>,
+  now: number,
+): UsageBalanceLine | null {
+  const card = selectUsageCards(providers, now).find((entry) => entry.driver === "deepseek");
+  return card?.balance ? { balance: card.balance, failure: card.refreshFailure } : null;
 }
 
 /**

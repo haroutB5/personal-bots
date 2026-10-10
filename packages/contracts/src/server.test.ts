@@ -177,6 +177,39 @@ describe("server config forward compatibility", () => {
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
   });
+
+  it("carries a provider's prepaid balance, from a full reading and from a failed one", () => {
+    const balance = {
+      checkedAt: "2026-10-10T20:00:00.000Z",
+      status: "ready",
+      balance: {
+        currency: "USD",
+        totalBalance: 12.34,
+        grantedBalance: 2,
+        toppedUpBalance: 10.34,
+        isAvailable: true,
+        fetchedAt: "2026-10-10T19:55:00.000Z",
+      },
+    };
+
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, usageBalance: balance }).usageBalance,
+    ).toEqual(balance);
+
+    // A failed read keeps the last good numbers and says why, in our wording.
+    const stale = {
+      checkedAt: "2026-10-10T20:05:00.000Z",
+      status: "failed",
+      balance: balance.balance,
+      message: "DeepSeek could not be reached for the balance.",
+    };
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, usageBalance: stale }).usageBalance,
+    ).toEqual(stale);
+
+    // An old snapshot without the field stays a valid provider.
+    expect(decodeServerProvider(baseProviderSnapshot).usageBalance).toBeUndefined();
+  });
 });
 
 describe("ServerObservability", () => {

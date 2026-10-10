@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
 
 import type {
   EnvironmentId,
@@ -10,10 +11,18 @@ import type {
 import { Link } from "@tanstack/react-router";
 
 import { cn } from "~/lib/utils";
+import { primaryServerProvidersAtom } from "~/state/server";
 
 import { BotAvatar } from "./BotAvatar";
+import { formatRelativeTime } from "./relativeTime";
 import { useMinuteNow } from "./useMinuteNow";
 import { usePersonalTokenUsage } from "./usePersonalBots";
+import {
+  formatBalanceAmount,
+  refreshFailureText,
+  selectDeepSeekBalanceLine,
+  type UsageBalanceLine,
+} from "./usagePresentation";
 import {
   buildTokenUsageTable,
   DEFAULT_TOKEN_USAGE_WINDOW,
@@ -142,6 +151,14 @@ export function TokenUsageSection({
     dataUpdatedAt: usage.dataUpdatedAt,
     refresh: usage.refresh,
   });
+  // DeepSeek's prepaid balance, from the provider snapshot the app already
+  // streams: the same figure the usage sheet's DeepSeek card shows, so the two
+  // never disagree.
+  const providers = useAtomValue(primaryServerProvidersAtom);
+  const balanceLine = useMemo(
+    () => selectDeepSeekBalanceLine(providers, nowMs),
+    [providers, nowMs],
+  );
 
   return (
     <TokenUsageCard
@@ -155,6 +172,7 @@ export function TokenUsageSection({
       listedBotIds={listedBotIds}
       modelLabels={modelLabels}
       nowMs={nowMs}
+      balanceLine={balanceLine}
     />
   );
 }
@@ -168,6 +186,7 @@ export function TokenUsageCard({
   listedBotIds,
   modelLabels,
   nowMs,
+  balanceLine = null,
 }: {
   readonly result: PersonalBotTokenUsageResult | null;
   readonly error: string | null;
@@ -176,6 +195,8 @@ export function TokenUsageCard({
   readonly listedBotIds: ReadonlySet<string>;
   readonly modelLabels: ReadonlyMap<string, string | null>;
   readonly nowMs: number;
+  /** The DeepSeek prepaid balance, when there is a reading to show. */
+  readonly balanceLine?: UsageBalanceLine | null;
 }): JSX.Element {
   const [windowId, setWindowId] = useState<PersonalBotTokenUsageWindowId>(
     DEFAULT_TOKEN_USAGE_WINDOW,
@@ -362,6 +383,8 @@ export function TokenUsageCard({
         </p>
       )}
 
+      {balanceLine !== null ? <DeepSeekBalanceRow line={balanceLine} nowMs={nowMs} /> : null}
+
       {table !== null && (updated !== null || refreshing) ? (
         <p
           role="status"
@@ -372,6 +395,52 @@ export function TokenUsageCard({
         </p>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * DeepSeek's prepaid balance under the totals: these tokens are billed against
+ * it, unlike the flat subscriptions the price estimate above cannot charge.
+ * One quiet row, hidden entirely when there is no reading; the failure note
+ * rides it when the newest read failed and the numbers are the last good ones.
+ */
+function DeepSeekBalanceRow({
+  line,
+  nowMs,
+}: {
+  readonly line: UsageBalanceLine;
+  readonly nowMs: number;
+}): JSX.Element {
+  const { balance } = line;
+  const failure = refreshFailureText(line.failure);
+  const fetchedAt = balance.fetchedAt;
+  const sub = [
+    `granted ${formatBalanceAmount(balance.granted, balance.currency)}`,
+    `topped up ${formatBalanceAmount(balance.toppedUp, balance.currency)}`,
+    fetchedAt !== null ? `Updated ${formatRelativeTime(fetchedAt, nowMs)}` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+  return (
+    <div
+      data-testid="token-usage-balance"
+      className="flex items-baseline justify-between gap-3 border-t border-[var(--personal-border)] pt-3 text-[14px] leading-5 text-[var(--personal-text-secondary)]"
+    >
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate">DeepSeek balance</span>
+        <span className="truncate text-[12px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums">
+          {sub}
+        </span>
+        {failure !== null ? (
+          <span className="truncate text-[12px] leading-4 text-[var(--personal-review-text)]">
+            {failure}
+          </span>
+        ) : null}
+      </span>
+      <span className="shrink-0 tabular-nums text-[15px] font-semibold text-[var(--personal-text)]">
+        {formatBalanceAmount(balance.total, balance.currency)}
+      </span>
+    </div>
   );
 }
 

@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -15,6 +16,21 @@ import {
 
 const decodeDeepSeekSettings = Schema.decodeSync(DeepSeekSettings);
 const catalog = resolveDeepSeekModelCatalog(BUNDLED_MODEL_MANIFEST);
+
+/** A stubbed reading: these tests never touch the real balance endpoint. */
+const BALANCE_READY = {
+  status: "ready",
+  amounts: {
+    currency: "USD",
+    totalBalance: 12.34,
+    grantedBalance: 2,
+    toppedUpBalance: 10.34,
+    isAvailable: true,
+  },
+  fetchedAtMs: 1_700_000_000_000,
+} as const;
+
+const stubBalance = { readBalance: async () => BALANCE_READY };
 
 const writeFakeClaudeCli = (versionOutput: string, exitCode: number) =>
   Effect.gen(function* () {
@@ -57,6 +73,7 @@ describe("DeepSeekProvider", () => {
         }),
         { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
         catalog,
+        stubBalance,
       );
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(false);
@@ -73,6 +90,7 @@ describe("DeepSeekProvider", () => {
             decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
+            stubBalance,
           );
         }),
       );
@@ -80,8 +98,115 @@ describe("DeepSeekProvider", () => {
       expect(snapshot.version).toBe("2.1.280");
       expect(snapshot.auth.status).toBe("authenticated");
       expect(snapshot.models.map((model) => model.slug)).toEqual(["deepseek-flash"]);
-      // No subscription/account probing on DeepSeek: no usage block, no reset flow.
+      // No subscription/account probing on DeepSeek: no usage windows, no reset flow.
       expect(snapshot.usageLimits).toBeUndefined();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("publishes the prepaid balance it read, with the provider's own fetch time", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
+          return yield* checkDeepSeekProviderStatus(
+            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+            catalog,
+            stubBalance,
+          );
+        }),
+      );
+      expect(snapshot.usageBalance).toMatchObject({
+        status: "ready",
+        balance: {
+          currency: "USD",
+          totalBalance: 12.34,
+          grantedBalance: 2,
+          toppedUpBalance: 10.34,
+          isAvailable: true,
+          fetchedAt: DateTime.formatIso(DateTime.makeUnsafe(1_700_000_000_000)),
+        },
+      });
+      expect(snapshot.usageBalance?.message).toBeUndefined();
+      expect(Number.isFinite(Date.parse(snapshot.usageBalance!.checkedAt))).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps the last good numbers and says the refresh failed, in our own words", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
+          return yield* checkDeepSeekProviderStatus(
+            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+            catalog,
+            {
+              readBalance: async () => ({
+                status: "failed" as const,
+                reason: "http_error" as const,
+                lastGood: { amounts: BALANCE_READY.amounts, fetchedAtMs: 1_700_000_000_000 },
+              }),
+            },
+          );
+        }),
+      );
+      expect(snapshot.usageBalance?.status).toBe("failed");
+      expect(snapshot.usageBalance?.balance?.totalBalance).toBe(12.34);
+      expect(snapshot.usageBalance?.message).toBe(
+        "DeepSeek would not return the balance for this key.",
+      );
+      expect(snapshot.status).toBe("ready");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("shows no balance at all when a failed read has no earlier numbers", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
+          return yield* checkDeepSeekProviderStatus(
+            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+            catalog,
+            {
+              readBalance: async () => ({
+                status: "failed" as const,
+                reason: "network_error" as const,
+                lastGood: null,
+              }),
+            },
+          );
+        }),
+      );
+      expect(snapshot.usageBalance?.status).toBe("failed");
+      expect(snapshot.usageBalance?.balance).toBeUndefined();
+      expect(snapshot.usageBalance?.message).toBe("DeepSeek could not be reached for the balance.");
+      // A money figure never takes the provider's own health down with it.
+      expect(snapshot.status).toBe("ready");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("never lets a throwing balance read fail the probe", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
+          return yield* checkDeepSeekProviderStatus(
+            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+            catalog,
+            {
+              readBalance: async () => {
+                throw new Error("boom");
+              },
+            },
+          );
+        }),
+      );
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.usageBalance?.status).toBe("failed");
+      expect(snapshot.usageBalance?.message).toBe("DeepSeek could not be reached for the balance.");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -112,6 +237,7 @@ describe("DeepSeekProvider", () => {
             decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
+            stubBalance,
           );
         }),
       );

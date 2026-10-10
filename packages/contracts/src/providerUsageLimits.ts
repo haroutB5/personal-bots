@@ -74,6 +74,44 @@ export const ServerProviderUsageLimits = Schema.Struct({
 export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 
 /**
+ * Prepaid credit an API-key provider reports, in the provider's own currency.
+ *
+ * `grantedBalance` is free credit the provider gave, `toppedUpBalance` is what
+ * was paid for; both are spendable, and `totalBalance` is their sum as the
+ * provider reports it (never recomputed here).
+ */
+export const ServerProviderBalance = Schema.Struct({
+  currency: TrimmedNonEmptyString,
+  totalBalance: Schema.Number,
+  grantedBalance: Schema.Number,
+  toppedUpBalance: Schema.Number,
+  /** The provider's own answer to "can this account make API calls". */
+  isAvailable: Schema.Boolean,
+  /**
+   * When the provider returned these numbers. May be older than the
+   * enclosing `checkedAt`: reads are cached so the provider is not hammered.
+   */
+  fetchedAt: IsoDateTime,
+});
+export type ServerProviderBalance = typeof ServerProviderBalance.Type;
+
+/**
+ * What a provider knows about its prepaid balance (DeepSeek today).
+ *
+ * `status` says how the newest read attempt went; `balance` is what to show,
+ * and is kept from the last good read when the newest one failed, so the
+ * numbers never flap to nothing for one bad poll. `message` is a short,
+ * safe-to-show reason and never the provider's raw error text.
+ */
+export const ServerProviderUsageBalance = Schema.Struct({
+  checkedAt: IsoDateTime,
+  status: Schema.Literals(["ready", "failed"]),
+  balance: Schema.optional(ServerProviderBalance),
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderUsageBalance = typeof ServerProviderUsageBalance.Type;
+
+/**
  * What an adapter reports when its runtime pushes a rate-limit update during
  * a turn. Sparse by contract: Claude's `rate_limit_event` names one window at
  * a time and Codex documents its notification as a partial. Windows merge by

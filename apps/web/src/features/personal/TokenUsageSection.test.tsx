@@ -429,4 +429,43 @@ describe("TokenUsageCard", () => {
       expect(byTestId(tree, "token-usage-row-cost")).toHaveLength(0);
     });
   });
+
+  describe("the DeepSeek balance line", () => {
+    const line = (overrides: Partial<Parameters<typeof TokenUsageCard>[0]> = {}) => ({
+      balance: {
+        currency: "USD",
+        total: 12.34,
+        granted: 2,
+        toppedUp: 10.34,
+        isAvailable: true,
+        fetchedAt: NOW - 4 * 60_000,
+      },
+      failure: null as string | null,
+      ...overrides,
+    });
+
+    it("shows the balance with its split and age, from the provider's own fetch time", async () => {
+      const tree = await render({ balanceLine: line() });
+      const row = byTestId(tree, "token-usage-balance");
+      expect(row).toHaveLength(1);
+      const text = textOf(row[0]!);
+      expect(text).toContain("DeepSeek balance");
+      expect(text).toContain("$12.34");
+      expect(text).toContain("granted $2.00 · topped up $10.34 · Updated 4m");
+    });
+
+    it("keeps the numbers and says the newest read failed", async () => {
+      const tree = await render({
+        balanceLine: line({ failure: "DeepSeek could not be reached for the balance." }),
+      });
+      const text = textOf(byTestId(tree, "token-usage-balance")[0]!);
+      expect(text).toContain("$12.34");
+      expect(text).toContain("Couldn't refresh · DeepSeek could not be reached for the balance.");
+    });
+
+    it("shows no line at all when there is no reading", async () => {
+      const tree = await render();
+      expect(byTestId(tree, "token-usage-balance")).toHaveLength(0);
+    });
+  });
 });
