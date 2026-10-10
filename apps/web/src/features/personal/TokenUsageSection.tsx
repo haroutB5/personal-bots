@@ -414,13 +414,7 @@ function DeepSeekBalanceRow({
   const { balance } = line;
   const failure = refreshFailureText(line.failure);
   const fetchedAt = balance.fetchedAt;
-  const sub = [
-    `granted ${formatBalanceAmount(balance.granted, balance.currency)}`,
-    `topped up ${formatBalanceAmount(balance.toppedUp, balance.currency)}`,
-    fetchedAt !== null ? `Updated ${formatRelativeTime(fetchedAt, nowMs)}` : null,
-  ]
-    .filter((part): part is string => part !== null)
-    .join(" · ");
+  const sub = `granted ${formatBalanceAmount(balance.granted, balance.currency)} · topped up ${formatBalanceAmount(balance.toppedUp, balance.currency)}`;
   return (
     <div
       data-testid="token-usage-balance"
@@ -437,8 +431,17 @@ function DeepSeekBalanceRow({
           </span>
         ) : null}
       </span>
-      <span className="shrink-0 tabular-nums text-[15px] font-semibold text-[var(--personal-text)]">
-        {formatBalanceAmount(balance.total, balance.currency)}
+      {/* The age sits under the figure, not in the sub-line: at 390 px the
+          three parts together ran past the row and "Updated 4m" was clipped. */}
+      <span className="flex shrink-0 flex-col items-end tabular-nums">
+        <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+          {formatBalanceAmount(balance.total, balance.currency)}
+        </span>
+        {fetchedAt !== null ? (
+          <span className="text-[12px] leading-4 text-[var(--personal-text-tertiary)]">
+            {`Updated ${formatRelativeTime(fetchedAt, nowMs)}`}
+          </span>
+        ) : null}
       </span>
     </div>
   );

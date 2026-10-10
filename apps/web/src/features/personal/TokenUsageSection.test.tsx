@@ -451,7 +451,9 @@ describe("TokenUsageCard", () => {
       const text = textOf(row[0]!);
       expect(text).toContain("DeepSeek balance");
       expect(text).toContain("$12.34");
-      expect(text).toContain("granted $2.00 · topped up $10.34 · Updated 4m");
+      expect(text).toContain("granted $2.00 · topped up $10.34");
+      // The age keeps its own line under the figure, so it is never clipped.
+      expect(text).toContain("Updated 4m");
     });
 
     it("keeps the numbers and says the newest read failed", async () => {
