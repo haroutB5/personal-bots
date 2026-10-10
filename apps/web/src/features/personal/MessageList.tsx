@@ -945,6 +945,13 @@ export function MessageList({
     );
     targetGuardRef.current = true;
     stickRef.current = false;
+    // A quote supersedes the native smooth latest scroll as well as its timer.
+    // Otherwise that animation can move the target away after it has landed.
+    endJump();
+    cancelShow();
+    anchorRef.current = null;
+    const scroller = scrollerRef.current;
+    scroller?.scrollTo({ top: scroller.scrollTop, behavior: "instant" });
     targetRef.current = messageId;
     if (index >= 0 && (index < range.start || index >= range.end)) {
       setPage({ threadId, firstId: items[Math.max(0, index - TRANSCRIPT_WINDOW_STEP)]!.id });
