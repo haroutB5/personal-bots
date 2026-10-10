@@ -33,7 +33,21 @@ No separate QA or Security review was performed in this staging task, per the br
 
 ## Handoff to CTO / DevOps
 
-**Shipping blocker found on completion recheck:** the staged `/settings/providers` Add provider instance dialog does not offer DeepSeek. `apps/web/src/components/settings/providerDriverMeta.ts` omits DeepSeek from `PROVIDER_CLIENT_DEFINITIONS`, which supplies both the dialog and settings metadata. A fresh throwaway root therefore has no UI route through this dialog to add a DeepSeek instance and its sensitive key environment. The earlier dummy-key setup was configured outside the UI and must not be treated as UI key-setup proof. Dark 390 x 844 evidence: `C:/Users/Ht/.personal-bots/qa/backend-16619/add-provider-missing-deepseek-dark-390.png`. Resolve this code omission and verify key setup before shipping. This continuation was restricted to docs-only commits, so no code fix was made. The effort control's default High is visible in the existing form shots; changing effort options has not been proved. The recheck server `ds16619final` (port 55464, captured PID 10188) was stopped and its root deleted; the shared browser was closed. All existing passing gates remain valid for the unchanged binary, but do not cover this settings omission.
+**The earlier shipping blocker is resolved.** It was real for the release staged at `e24e094532b5`: that binary predated `1209267aa4`, so `apps/web/src/components/settings/providerDriverMeta.ts` had no `deepseek` entry in `PROVIDER_CLIENT_DEFINITIONS` and the Add provider instance dialog could not offer DeepSeek (evidence: `C:/Users/Ht/.personal-bots/qa/backend-16619/add-provider-missing-deepseek-dark-390.png`).
+
+Commit `1209267aa4` ("fix(web): expose DeepSeek provider setup with sensitive key guidance") adds that entry, adds the DeepSeek `ANTHROPIC_AUTH_TOKEN` guidance to `ProviderInstanceCard`, and extends the server settings tests to DeepSeek. Release `1209267aa46f` is that commit's build, so the omission is gone from the shipped binary.
+
+**UI setup proof (this release).** A fresh throwaway root on release `1209267aa46f` was paired with a real 390 x 844 dark Chrome. Because the upstream settings shell sits behind the first-run gate, a project was registered through the release's own CLI (`node dist/bin.mjs project add <dir> --base-dir <root>`) so the run reached the normal settings shell rather than onboarding. Then, in the app:
+
+- `/settings/providers` lists a DeepSeek row (disabled by default), alongside the other drivers.
+- **Add provider** opens the Add provider instance dialog whose Driver step now offers DeepSeek, between OpenCode and Antigravity. Evidence: `add-provider-with-deepseek-dark-390.png`.
+- Selecting DeepSeek and walking the wizard to Add instance **creates the instance through the UI**. The toast confirms "DeepSeek instance 'deepseek_deepseek_flash' was added", the card appears with its own DE/DF accent badge, and the app then reports "Not authenticated · DeepSeek API key is missing. Add ANTHROPIC_AUTH_TOKE…". Evidence: `deepseek-instance-card-dark-390.png`.
+
+That is UI key-setup proof: the route to add a DeepSeek instance and its sensitive key environment is now reachable in the product, not configured outside it. The instance was created with no key stored, and the throwaway root was deleted afterwards.
+
+**Still unverified.** No real DeepSeek key, authentication request, paid turn, streaming, tool execution or resumed real session. The provider snapshot checks token presence and binary health; it does not authenticate. The effort control's default High is visible in the existing form shots; changing effort options has not been proved. Raw runner output for the dialog proof: `C:/Users/Ht/.personal-bots/qa/backend-16619/verify-deepseek-dialog.json`.
+
+The earlier recheck server `ds16619final` (port 55464, captured PID 10188) was stopped and its root deleted; the shared browser was closed. The gates below were re-run on the fixed commit, so they now cover this settings change.
 
 Use the staged release and the pushed documentation commit after checking the notes and gate evidence. Preserve the separate 1.66.18 audit decision when integrating release branches. The builder stops before activation; DevOps owns any later shipping. Throwaway server shutdown, root removal, final checks and push results are recorded in `C:/Users/Ht/.personal-bots/qa/backend-16619/REPORT.md`.
 
