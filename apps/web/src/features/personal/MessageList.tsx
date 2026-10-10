@@ -896,6 +896,7 @@ export function MessageList({
   // Set while a tap's smooth scroll is on its way down: its own scroll events
   // are still far from the bottom and must not bring the button back.
   const jumpingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quoteSettleRef = useRef<number | null>(null);
   // Only the reader's own scrolling lets go of the bottom. A finger, the
   // mouse on the scrollbar, a wheel or a key marks the scroll as theirs.
   const readerRef = useRef({ holding: false, at: Number.NEGATIVE_INFINITY });
@@ -945,6 +946,7 @@ export function MessageList({
     );
     targetGuardRef.current = true;
     stickRef.current = false;
+    const settlingLatest = jumpingRef.current !== null;
     // A quote supersedes the native smooth latest scroll as well as its timer.
     // Otherwise that animation can move the target away after it has landed.
     endJump();
@@ -963,6 +965,17 @@ export function MessageList({
       targetRef.current = null;
       targetGuardRef.current = false;
       stickRef.current = true;
+    }
+    // Chromium can deliver a queued smooth-scroll offset after the instant
+    // cancellation. Reassert the new target next frame, unless another intent
+    // has superseded it; endJump cancels this work too.
+    if (settlingLatest) {
+      quoteSettleRef.current =
+        window.requestAnimationFrame?.(() => {
+          quoteSettleRef.current = null;
+          if (targetGuardRef.current && !selectionRef.current)
+            jumpToMessage(contentRef.current ?? document, messageId);
+        }) ?? null;
     }
   };
   useLayoutEffect(() => {
@@ -990,6 +1003,8 @@ export function MessageList({
   const endJump = () => {
     if (jumpingRef.current !== null) clearTimeout(jumpingRef.current);
     jumpingRef.current = null;
+    if (quoteSettleRef.current !== null) window.cancelAnimationFrame(quoteSettleRef.current);
+    quoteSettleRef.current = null;
   };
 
   useEffect(() => {
