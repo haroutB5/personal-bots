@@ -108,6 +108,7 @@ beforeEach(() => {
   resize = () => {};
   reduceMotion = false;
   windowListeners = new Listeners();
+  vi.stubGlobal("document", { addEventListener: () => {}, removeEventListener: () => {} });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
     matchMedia: (query: string) => ({ matches: reduceMotion && query.includes("reduce") }),

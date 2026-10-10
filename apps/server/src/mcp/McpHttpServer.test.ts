@@ -122,6 +122,65 @@ const callSnapshot = (args: Record<string, unknown>) =>
       );
   });
 
+for (const [name, value, expected] of [
+  [
+    "nested undefined",
+    { value: undefined, nested: { keep: null, omit: undefined } },
+    { nested: { keep: null } },
+  ],
+  ["array holes", [1, , undefined, { omit: undefined, ok: true }], [1, null, null, { ok: true }]],
+  ["null", null, null],
+  ["top-level undefined", undefined, null],
+] as const) {
+  it.effect(`encodes ${name} through the registered evaluate tool and real MCP result schema`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* serveSnapshots(`json-${name}`, value);
+        const server = yield* McpServer.McpServer;
+        const result = yield* server
+          .callTool({ name: "preview_evaluate", arguments: { expression: "fixture" } })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        expect(result.isError, encodeJsonText(result.content)).toBe(false);
+        const encoded = yield* Schema.encodeEffect(McpSchema.CallToolResult)(result);
+        expect(encoded.structuredContent).toEqual({ value: expected });
+        const block = result.content[0];
+        expect(block?.type === "text" ? decodeJsonText(block.text) : null).toEqual({
+          value: expected,
+        });
+      }),
+    ).pipe(Effect.provide(TestLayer)),
+  );
+}
+
+for (const [name, value] of [
+  ["nonfinite", NaN],
+  ["bigint", 1n],
+  ["function", () => {}],
+] as const) {
+  it.effect(`returns a clear tool error for unsupported ${name} at the native MCP boundary`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* serveSnapshots(`unsupported-${name}`, value);
+        const server = yield* McpServer.McpServer;
+        const result = yield* server
+          .callTool({ name: "preview_evaluate", arguments: { expression: "fixture" } })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        expect(result.isError).toBe(true);
+        const encoded = yield* Schema.encodeEffect(McpSchema.CallToolResult)(result);
+        expect(encoded.content).toEqual([
+          { type: "text", text: "Tool result contains an unsupported JSON value." },
+        ]);
+      }),
+    ).pipe(Effect.provide(TestLayer)),
+  );
+}
+
 it("normalizes empty successful notification responses to accepted", () => {
   const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
     HttpServerResponse.text("", { status: 200, contentType: "application/json" }),

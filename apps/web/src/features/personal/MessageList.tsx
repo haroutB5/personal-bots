@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from "react";
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { PendingApproval } from "@t3tools/client-runtime/pending-requests";
 import type {
@@ -50,6 +50,11 @@ import { ReplyableMessage } from "./ReplyableMessage";
 import { SwipeTimeRow } from "./MessageSwipeTime";
 import { parseSentAt } from "./messageTime";
 import type { OutboxEntry, OutboxRow } from "./outbox";
+import {
+  transcriptRange,
+  TRANSCRIPT_WINDOW_SIZE,
+  TRANSCRIPT_WINDOW_STEP,
+} from "./transcriptWindow";
 
 /** A message the user sent that the server has not echoed back yet. */
 export interface PendingOutgoingMessage {
@@ -879,9 +884,6 @@ export function MessageList({
   choicesBusy?: boolean;
 }): JSX.Element {
   const choicesById = useMemo(() => choicesStates(items, choicesBusy), [items, choicesBusy]);
-  const jumpToQuoted = useCallback((messageId: string) => {
-    jumpToMessage(contentRef.current ?? document, messageId);
-  }, []);
   const turnStarts = useMemo(
     () => (showContextUsed ? turnStartByAssistantItem(items) : new Map<string, string>()),
     [items, showContextUsed],
@@ -897,6 +899,82 @@ export function MessageList({
   // Only the reader's own scrolling lets go of the bottom. A finger, the
   // mouse on the scrollbar, a wheel or a key marks the scroll as theirs.
   const readerRef = useRef({ holding: false, at: Number.NEGATIVE_INFINITY });
+  const threadId = threadRef.threadId;
+  const [page, setPage] = useState<{ threadId: string; firstId: string | null }>({
+    threadId,
+    firstId: null,
+  });
+  const firstId = page.threadId === threadId ? page.firstId : null;
+  const range = transcriptRange(items, firstId);
+  const visibleItems = items.slice(range.start, range.end);
+  const windowRef = useRef({ threadId, range, items });
+  useLayoutEffect(() => {
+    windowRef.current = { threadId, range, items };
+  });
+  const anchorRef = useRef<{ id: string; top: number } | null>(null);
+  const targetRef = useRef<string | null>(null);
+  const targetGuardRef = useRef(false);
+  const selectionRef = useRef(false);
+  const saveAnchor = () => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const top = scroller.getBoundingClientRect?.().top ?? 0;
+    const rows = contentRef.current?.querySelectorAll<HTMLElement>("[data-transcript-row]");
+    const row =
+      rows && Array.from(rows).find((element) => element.getBoundingClientRect().bottom > top);
+    if (row)
+      anchorRef.current = { id: row.dataset.transcriptRow!, top: row.getBoundingClientRect().top };
+  };
+  const movePage = (direction: -1 | 1) => {
+    // A selected passage keeps its DOM while the reader copies it.
+    if (window.getSelection?.()?.isCollapsed === false) return;
+    saveAnchor();
+    stickRef.current = false;
+    const start = Math.max(
+      0,
+      Math.min(
+        items.length - TRANSCRIPT_WINDOW_SIZE,
+        range.start + direction * TRANSCRIPT_WINDOW_STEP,
+      ),
+    );
+    setPage({ threadId, firstId: items[start]?.id ?? null });
+  };
+  const jumpToQuoted = (messageId: string) => {
+    const index = items.findIndex(
+      (item) => "message" in item && String(item.message.id) === messageId,
+    );
+    targetGuardRef.current = true;
+    stickRef.current = false;
+    targetRef.current = messageId;
+    if (index >= 0 && (index < range.start || index >= range.end)) {
+      setPage({ threadId, firstId: items[Math.max(0, index - TRANSCRIPT_WINDOW_STEP)]!.id });
+    } else if (jumpToMessage(contentRef.current ?? document, messageId)) {
+      targetRef.current = null;
+      clearMessageJump(threadId);
+      setShowJump(true);
+    } else {
+      targetRef.current = null;
+      targetGuardRef.current = false;
+      stickRef.current = true;
+    }
+  };
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    anchorRef.current = null;
+    if (anchor && scrollerRef.current) {
+      const row = Array.from(
+        contentRef.current?.querySelectorAll<HTMLElement>("[data-transcript-row]") ?? [],
+      ).find((element) => element.dataset.transcriptRow === anchor.id);
+      if (row) scrollerRef.current.scrollTop += row.getBoundingClientRect().top - anchor.top;
+    }
+    if (targetRef.current && jumpToMessage(contentRef.current ?? document, targetRef.current)) {
+      targetRef.current = null;
+      clearMessageJump(threadId);
+      setShowJump(true);
+    }
+    if (stickRef.current && firstId === null && scrollerRef.current)
+      scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
+  }, [items, firstId, threadId]);
 
   const cancelShow = () => {
     if (showTimerRef.current !== null) clearTimeout(showTimerRef.current);
@@ -946,13 +1024,13 @@ export function MessageList({
       observedHeight = scroller.clientHeight;
       follow();
       if (!grew) return;
-      reassertEnd();
+      if (stickRef.current) reassertEnd();
       // Once more after the keyboard has finished moving.
       if (settleTimer !== null) clearTimeout(settleTimer);
       settleTimer = setTimeout(() => {
         settleTimer = null;
         follow();
-        reassertEnd();
+        if (stickRef.current) reassertEnd();
       }, VIEWPORT_SETTLE_MS);
     };
     follow();
@@ -965,9 +1043,15 @@ export function MessageList({
       const resized =
         scroller.scrollHeight !== seen.scrollHeight || scroller.clientHeight !== seen.clientHeight;
       remember();
-      if (nearBottom) {
+      if (targetGuardRef.current || selectionRef.current) return;
+      if (nearBottom && windowRef.current.range.end === windowRef.current.items.length) {
         endJump();
         stickRef.current = true;
+        setPage((previous) =>
+          previous.threadId === windowRef.current.threadId && previous.firstId === null
+            ? previous
+            : { threadId: windowRef.current.threadId, firstId: null },
+        );
         cancelShow();
         setShowJump(false);
         return;
@@ -982,6 +1066,13 @@ export function MessageList({
         return;
       }
       stickRef.current = false;
+      const current = windowRef.current;
+      const first = current.items[current.range.start]?.id ?? null;
+      setPage((previous) =>
+        previous.threadId === current.threadId && previous.firstId === first
+          ? previous
+          : { threadId: current.threadId, firstId: first },
+      );
       // Every scroll event restarts the wait, so momentum scrolling does not
       // make the button flicker; it appears once the list settles.
       cancelShow();
@@ -992,6 +1083,9 @@ export function MessageList({
     };
     const onReaderInput = () => {
       readerRef.current.at = Date.now();
+      targetGuardRef.current = false;
+      targetRef.current = null;
+      clearMessageJump(windowRef.current.threadId);
       if (jumpingRef.current === null) return;
       // A finger, wheel or key during a jump stops it where it is. The
       // browser's own smooth scroll carries on to the bottom unless stopped.
@@ -1016,6 +1110,21 @@ export function MessageList({
     const onKeyDown = (event: KeyboardEvent) => {
       if (SCROLL_KEYS.has(event.key) && !isEditable(event.target)) onReaderInput();
     };
+    const onSelection = () => {
+      const selection = window.getSelection?.();
+      selectionRef.current =
+        !!selection && !selection.isCollapsed && content.contains(selection.anchorNode);
+      if (!selectionRef.current) return;
+      stickRef.current = false;
+      const current = windowRef.current;
+      const first = current.items[current.range.start]?.id ?? null;
+      setPage((previous) =>
+        previous.threadId === current.threadId && previous.firstId === first
+          ? previous
+          : { threadId: current.threadId, firstId: first },
+      );
+    };
+    document.addEventListener?.("selectionchange", onSelection);
     scroller.addEventListener("scroll", onScroll, { passive: true });
     scroller.addEventListener("touchstart", onHold, { passive: true });
     scroller.addEventListener("wheel", onReaderInput, { passive: true });
@@ -1039,6 +1148,7 @@ export function MessageList({
       window.removeEventListener("touchcancel", onRelease);
       window.removeEventListener("pointerup", onRelease);
       window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener?.("selectionchange", onSelection);
       observer.disconnect();
       cancelShow();
       endJump();
@@ -1047,10 +1157,12 @@ export function MessageList({
 
   // The screen stays mounted when the route moves to another chat, so the
   // next chat opens at its latest message with the button hidden.
-  const threadId = threadRef.threadId;
   useEffect(() => {
     cancelShow();
     endJump();
+    targetGuardRef.current = false;
+    targetRef.current = null;
+    selectionRef.current = false;
     stickRef.current = true;
     // A tap that opened this chat from inside the last one is not a scroll here.
     readerRef.current = { holding: false, at: Number.NEGATIVE_INFINITY };
@@ -1065,16 +1177,8 @@ export function MessageList({
   useEffect(() => {
     const messageId = peekMessageJump(threadId);
     if (messageId === null) return;
-    // Let go of the bottom first, so following new content does not undo the jump.
-    const wasFollowing = stickRef.current;
-    stickRef.current = false;
-    if (jumpToMessage(contentRef.current ?? document, messageId)) {
-      clearMessageJump(threadId);
-    } else {
-      stickRef.current = wasFollowing;
-    }
+    jumpToQuoted(messageId);
     // `items` is the trigger: a thread that loads in pages may bring the message later.
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies
   }, [threadId, items]);
 
   const jumpToLatest = () => {
@@ -1084,6 +1188,10 @@ export function MessageList({
     setShowJump(false);
     // Following resumes now, so a reply landing mid-scroll is followed too.
     stickRef.current = true;
+    targetGuardRef.current = false;
+    targetRef.current = null;
+    clearMessageJump(threadId);
+    setPage({ threadId, firstId: null });
     endJump();
     jumpingRef.current = setTimeout(endJump, JUMP_SETTLE_MS);
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
@@ -1129,15 +1237,17 @@ export function MessageList({
           aria-label={`Chat with ${botName}`}
           className="flex min-h-full flex-col justify-end gap-3 py-3"
         >
-          {loadEarlier !== null ? (
+          {range.start > 0 || loadEarlier !== null ? (
             <button
               type="button"
-              onClick={loadEarlier.onLoad}
-              disabled={loadEarlier.loading}
-              aria-busy={loadEarlier.loading}
+              onClick={range.start > 0 ? () => movePage(-1) : loadEarlier?.onLoad}
+              disabled={range.start === 0 && loadEarlier?.loading}
+              aria-busy={range.start === 0 && loadEarlier?.loading}
               className="mx-auto h-11 rounded-full px-4 text-sm font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
             >
-              {loadEarlier.loading ? "Loading earlier messages" : "Load earlier messages"}
+              {range.start === 0 && loadEarlier?.loading
+                ? "Loading earlier messages"
+                : "Load earlier messages"}
             </button>
           ) : null}
 
@@ -1147,277 +1257,294 @@ export function MessageList({
             </p>
           ) : null}
 
-          {items.map((item) => {
-            switch (item.kind) {
-              case "divider":
-                return (
-                  <p
-                    key={item.id}
-                    className="my-3 text-center text-xs text-[var(--personal-text-tertiary)]"
-                  >
-                    <time dateTime={item.at.toISOString()}>{formatDayDivider(item.at, now)}</time>
-                  </p>
-                );
-              case "system-turn":
-                return (
-                  <SystemTurnRow
-                    key={item.id}
-                    label={describeTurn(item.turn)}
-                    text={item.message.text}
-                  />
-                );
-              case "group-message":
-                if (readGroupMarker(item.message)?.phase === "discussion") {
-                  return (
-                    <details
-                      key={item.id}
-                      className="rounded-xl border border-[var(--personal-border)] px-3 py-2"
-                    >
-                      <summary className="cursor-pointer text-sm text-[var(--personal-text-secondary)]">
-                        {item.speaker.name} ·{" "}
-                        {item.message.streaming ? "Researching…" : "View contribution"}
-                      </summary>
-                      <GroupMessage
-                        message={item.message}
-                        threadRef={threadRef}
-                        workspaceRoot={workspaceRoot}
-                        speaker={groupSpeaker?.(item.speaker.botId) ?? null}
-                        botId={item.speaker.botId}
-                        showSpeaker={false}
-                        onReply={onReply}
-                        choices={choicesById.get(item.id)}
-                        onChoose={onChoose}
-                      />
-                    </details>
-                  );
-                }
-                {
-                  // The verdict speaks for the whole group, so it is headed as
-                  // the group's answer; its writer is only credited, not shown
-                  // as the speaker.
-                  const isVerdict = readGroupMarker(item.message)?.phase === "verdict";
-                  return (
-                    <div key={item.id}>
-                      {isVerdict && (
-                        <div className="mb-2">
-                          <p className="text-base font-semibold text-[var(--personal-text)]">
-                            Group verdict
-                          </p>
-                          <p className="text-[13px] text-[var(--personal-text-secondary)]">
-                            From the whole group · written up by {item.speaker.name}
-                          </p>
-                        </div>
-                      )}
-                      <GroupMessage
+          {visibleItems.map((item) => (
+            <div key={item.id} data-transcript-row={item.id} className="flex flex-col gap-3">
+              {(() => {
+                switch (item.kind) {
+                  case "divider":
+                    return (
+                      <p
                         key={item.id}
-                        message={item.message}
-                        threadRef={threadRef}
-                        workspaceRoot={workspaceRoot}
-                        speaker={groupSpeaker?.(item.speaker.botId) ?? null}
-                        botId={item.speaker.botId}
-                        showSpeaker={isVerdict ? false : item.showSpeaker}
-                        onReply={onReply}
-                        choices={choicesById.get(item.id)}
-                        onChoose={onChoose}
+                        className="my-3 text-center text-xs text-[var(--personal-text-tertiary)]"
+                      >
+                        <time dateTime={item.at.toISOString()}>
+                          {formatDayDivider(item.at, now)}
+                        </time>
+                      </p>
+                    );
+                  case "system-turn":
+                    return (
+                      <SystemTurnRow
+                        key={item.id}
+                        label={describeTurn(item.turn)}
+                        text={item.message.text}
                       />
-                    </div>
-                  );
-                }
-              case "notice": {
-                // The continue shows the prompt the bot got when tapped, like
-                // any server-written turn; the pause is a plain line; a note a
-                // bot saved or forgot on its own offers Undo.
-                const noteUndo = chatNoticeUndo(item.notice);
-                if (noteUndo !== null) {
-                  return (
-                    <NoteNoticeRow
-                      key={item.id}
-                      environmentId={environmentId}
-                      label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
-                      memoryId={noteUndo.memoryId}
-                      undo={noteUndo.undo}
-                      {...(noteUndo.receipt === undefined ? {} : { receipt: noteUndo.receipt })}
-                      threadId={String(threadRef.threadId)}
-                      noticeMessageId={String(item.message.id)}
-                      noticeCreatedAt={String(item.message.createdAt)}
-                      readOnly={readOnly}
-                    />
-                  );
-                }
-                return isServerTurnNotice(item.notice) ? (
-                  <SystemTurnRow
-                    key={item.id}
-                    label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
-                    text={item.message.text}
-                  />
-                ) : (
-                  <p
-                    key={item.id}
-                    data-testid="chat-notice"
-                    className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
-                  >
-                    {chatNoticeLabel(item.notice, item.message.text, now.getTime())}
-                  </p>
-                );
-              }
-              case "group-system":
-                return (
-                  <p
-                    key={item.id}
-                    className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
-                  >
-                    {groupSystemLabel(item.event, item.message.text)}
-                  </p>
-                );
-              case "delegation":
-                return <div key={item.id}>{renderDelegation(item.task)}</div>;
-              case "question":
-                return lockCard(
-                  item.id,
-                  readOnly,
-                  <QuestionCard
-                    key={item.id}
-                    card={item.card}
-                    botName={botName}
-                    responding={respondingIds.has(item.card.requestId)}
-                    onAnswer={onAnswerQuestion}
-                    onDismiss={onDismissQuestion}
-                  />,
-                );
-              case "secret":
-                return lockCard(
-                  item.id,
-                  readOnly,
-                  <SecretRequestCard
-                    key={item.id}
-                    card={item.card}
-                    botName={botName}
-                    responding={respondingIds.has(item.card.requestId)}
-                    onProvide={onProvideSecret}
-                    onDecline={onDeclineSecret}
-                  />,
-                );
-              case "login":
-                return lockCard(
-                  item.id,
-                  readOnly,
-                  <LoginRequestCard
-                    key={item.id}
-                    request={item.request}
-                    botName={botName}
-                    onProvide={(...args) => onProvideLogin?.(...args)}
-                    onCancel={(requestId) => onCancelLogin?.(requestId)}
-                  />,
-                );
-              case "connection-approval":
-                return lockCard(
-                  item.id,
-                  readOnly,
-                  <ConnectionApprovalCard
-                    key={item.id}
-                    card={item.card}
-                    botName={botName}
-                    expired={
-                      item.card.kind === "pending" &&
-                      approvalHasExpired(item.card.approval, approvalsNowMs)
+                    );
+                  case "group-message":
+                    if (readGroupMarker(item.message)?.phase === "discussion") {
+                      return (
+                        <details
+                          key={item.id}
+                          className="rounded-xl border border-[var(--personal-border)] px-3 py-2"
+                        >
+                          <summary className="cursor-pointer text-sm text-[var(--personal-text-secondary)]">
+                            {item.speaker.name} ·{" "}
+                            {item.message.streaming ? "Researching…" : "View contribution"}
+                          </summary>
+                          <GroupMessage
+                            message={item.message}
+                            threadRef={threadRef}
+                            workspaceRoot={workspaceRoot}
+                            speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                            botId={item.speaker.botId}
+                            showSpeaker={false}
+                            onReply={onReply}
+                            choices={choicesById.get(item.id)}
+                            onChoose={onChoose}
+                          />
+                        </details>
+                      );
                     }
-                    responding={approvalRespondingIds.has(item.card.approvalId)}
-                    onApprove={(approvalId) => onDecideConnectionApproval(approvalId, "approved")}
-                    onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
-                  />,
-                );
-              case "lead-bot-change":
-                return lockCard(
-                  item.id,
-                  readOnly,
-                  <LeadBotChangeCard
-                    key={item.id}
-                    card={item.card}
-                    nowMs={approvalsNowMs}
-                    responding={leadBotChangeRespondingIds?.has(item.card.changeId) ?? false}
-                    onDecide={(changeId, changeHash, decision) =>
-                      onDecideLeadBotChange?.(changeId, changeHash, decision)
+                    {
+                      // The verdict speaks for the whole group, so it is headed as
+                      // the group's answer; its writer is only credited, not shown
+                      // as the speaker.
+                      const isVerdict = readGroupMarker(item.message)?.phase === "verdict";
+                      return (
+                        <div key={item.id}>
+                          {isVerdict && (
+                            <div className="mb-2">
+                              <p className="text-base font-semibold text-[var(--personal-text)]">
+                                Group verdict
+                              </p>
+                              <p className="text-[13px] text-[var(--personal-text-secondary)]">
+                                From the whole group · written up by {item.speaker.name}
+                              </p>
+                            </div>
+                          )}
+                          <GroupMessage
+                            key={item.id}
+                            message={item.message}
+                            threadRef={threadRef}
+                            workspaceRoot={workspaceRoot}
+                            speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                            botId={item.speaker.botId}
+                            showSpeaker={isVerdict ? false : item.showSpeaker}
+                            onReply={onReply}
+                            choices={choicesById.get(item.id)}
+                            onChoose={onChoose}
+                          />
+                        </div>
+                      );
                     }
-                  />,
-                );
-              case "memory-change":
-                return lockCard(
-                  item.id,
-                  readOnly,
-                  <MemoryChangeCard
-                    key={item.id}
-                    item={item.card}
-                    botName={memoryBotName ?? (() => undefined)}
-                    responding={memoryChangeRespondingIds?.has(item.card.changeId) ?? false}
-                    onDecide={(changeId, changeHash, approve) =>
-                      onDecideMemoryChange?.(changeId, changeHash, approve)
+                  case "notice": {
+                    // The continue shows the prompt the bot got when tapped, like
+                    // any server-written turn; the pause is a plain line; a note a
+                    // bot saved or forgot on its own offers Undo.
+                    const noteUndo = chatNoticeUndo(item.notice);
+                    if (noteUndo !== null) {
+                      return (
+                        <NoteNoticeRow
+                          key={item.id}
+                          environmentId={environmentId}
+                          label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                          memoryId={noteUndo.memoryId}
+                          undo={noteUndo.undo}
+                          {...(noteUndo.receipt === undefined ? {} : { receipt: noteUndo.receipt })}
+                          threadId={String(threadRef.threadId)}
+                          noticeMessageId={String(item.message.id)}
+                          noticeCreatedAt={String(item.message.createdAt)}
+                          readOnly={readOnly}
+                        />
+                      );
                     }
-                  />,
-                );
-              case "message":
-                return item.message.role === "user" ? (
-                  <UserMessage
-                    key={item.id}
-                    environmentId={environmentId}
-                    message={item.message}
-                    readStatus={
-                      latestMessageStatus?.messageId === String(item.message.id)
-                        ? latestMessageStatus.status
-                        : null
-                    }
-                    onReply={onReply}
-                    onJump={jumpToQuoted}
-                  />
-                ) : (
-                  <Fragment key={item.id}>
-                    <AssistantMessage
-                      message={item.message}
-                      threadRef={threadRef}
-                      workspaceRoot={workspaceRoot}
-                      botName={botName}
-                      onReply={onReply}
-                      choices={choicesById.get(item.id)}
-                      onChoose={onChoose}
-                    />
-                    {item.message.streaming ||
-                    !turnStarts.has(item.id) ||
-                    !hasRecordedContext(new Date(item.message.createdAt), now) ? null : (
-                      <ContextUsed
+                    return isServerTurnNotice(item.notice) ? (
+                      <SystemTurnRow
+                        key={item.id}
+                        label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                        text={item.message.text}
+                      />
+                    ) : (
+                      <p
+                        key={item.id}
+                        data-testid="chat-notice"
+                        className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
+                      >
+                        {chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                      </p>
+                    );
+                  }
+                  case "group-system":
+                    return (
+                      <p
+                        key={item.id}
+                        className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
+                      >
+                        {groupSystemLabel(item.event, item.message.text)}
+                      </p>
+                    );
+                  case "delegation":
+                    return <div key={item.id}>{renderDelegation(item.task)}</div>;
+                  case "question":
+                    return lockCard(
+                      item.id,
+                      readOnly,
+                      <QuestionCard
+                        key={item.id}
+                        card={item.card}
+                        botName={botName}
+                        responding={respondingIds.has(item.card.requestId)}
+                        onAnswer={onAnswerQuestion}
+                        onDismiss={onDismissQuestion}
+                      />,
+                    );
+                  case "secret":
+                    return lockCard(
+                      item.id,
+                      readOnly,
+                      <SecretRequestCard
+                        key={item.id}
+                        card={item.card}
+                        botName={botName}
+                        responding={respondingIds.has(item.card.requestId)}
+                        onProvide={onProvideSecret}
+                        onDecline={onDeclineSecret}
+                      />,
+                    );
+                  case "login":
+                    return lockCard(
+                      item.id,
+                      readOnly,
+                      <LoginRequestCard
+                        key={item.id}
+                        request={item.request}
+                        botName={botName}
+                        onProvide={(...args) => onProvideLogin?.(...args)}
+                        onCancel={(requestId) => onCancelLogin?.(requestId)}
+                      />,
+                    );
+                  case "connection-approval":
+                    return lockCard(
+                      item.id,
+                      readOnly,
+                      <ConnectionApprovalCard
+                        key={item.id}
+                        card={item.card}
+                        botName={botName}
+                        expired={
+                          item.card.kind === "pending" &&
+                          approvalHasExpired(item.card.approval, approvalsNowMs)
+                        }
+                        responding={approvalRespondingIds.has(item.card.approvalId)}
+                        onApprove={(approvalId) =>
+                          onDecideConnectionApproval(approvalId, "approved")
+                        }
+                        onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
+                      />,
+                    );
+                  case "lead-bot-change":
+                    return lockCard(
+                      item.id,
+                      readOnly,
+                      <LeadBotChangeCard
+                        key={item.id}
+                        card={item.card}
+                        nowMs={approvalsNowMs}
+                        responding={leadBotChangeRespondingIds?.has(item.card.changeId) ?? false}
+                        onDecide={(changeId, changeHash, decision) =>
+                          onDecideLeadBotChange?.(changeId, changeHash, decision)
+                        }
+                      />,
+                    );
+                  case "memory-change":
+                    return lockCard(
+                      item.id,
+                      readOnly,
+                      <MemoryChangeCard
+                        key={item.id}
+                        item={item.card}
+                        botName={memoryBotName ?? (() => undefined)}
+                        responding={memoryChangeRespondingIds?.has(item.card.changeId) ?? false}
+                        onDecide={(changeId, changeHash, approve) =>
+                          onDecideMemoryChange?.(changeId, changeHash, approve)
+                        }
+                      />,
+                    );
+                  case "message":
+                    return item.message.role === "user" ? (
+                      <UserMessage
+                        key={item.id}
                         environmentId={environmentId}
-                        threadId={String(threadRef.threadId)}
-                        messageId={turnStarts.get(item.id)!}
-                        readOnly={readOnly}
+                        message={item.message}
+                        readStatus={
+                          latestMessageStatus?.messageId === String(item.message.id)
+                            ? latestMessageStatus.status
+                            : null
+                        }
+                        onReply={onReply}
+                        onJump={jumpToQuoted}
                       />
-                    )}
-                  </Fragment>
-                );
-              case "plan":
-                return (
-                  <div
-                    key={item.id}
-                    className="personal-markdown max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]"
-                  >
-                    <p className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
-                      Plan
-                    </p>
-                    <ChatMarkdown
-                      text={item.plan.planMarkdown}
-                      cwd={workspaceRoot}
-                      threadRef={threadRef}
-                    />
-                  </div>
-                );
-              case "work":
-                return (
-                  <ToolDetails
-                    key={item.id}
-                    entries={item.entries}
-                    live={item.id === liveWorkId}
-                    workspaceRoot={workspaceRoot}
-                  />
-                );
-            }
-          })}
+                    ) : (
+                      <Fragment key={item.id}>
+                        <AssistantMessage
+                          message={item.message}
+                          threadRef={threadRef}
+                          workspaceRoot={workspaceRoot}
+                          botName={botName}
+                          onReply={onReply}
+                          choices={choicesById.get(item.id)}
+                          onChoose={onChoose}
+                        />
+                        {item.message.streaming ||
+                        !turnStarts.has(item.id) ||
+                        !hasRecordedContext(new Date(item.message.createdAt), now) ? null : (
+                          <ContextUsed
+                            environmentId={environmentId}
+                            threadId={String(threadRef.threadId)}
+                            messageId={turnStarts.get(item.id)!}
+                            readOnly={readOnly}
+                          />
+                        )}
+                      </Fragment>
+                    );
+                  case "plan":
+                    return (
+                      <div
+                        key={item.id}
+                        className="personal-markdown max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]"
+                      >
+                        <p className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+                          Plan
+                        </p>
+                        <ChatMarkdown
+                          text={item.plan.planMarkdown}
+                          cwd={workspaceRoot}
+                          threadRef={threadRef}
+                        />
+                      </div>
+                    );
+                  case "work":
+                    return (
+                      <ToolDetails
+                        key={item.id}
+                        entries={item.entries}
+                        live={item.id === liveWorkId}
+                        workspaceRoot={workspaceRoot}
+                      />
+                    );
+                }
+              })()}
+            </div>
+          ))}
+          {range.end < items.length ? (
+            <button
+              type="button"
+              onClick={() => movePage(1)}
+              className="mx-auto h-11 rounded-full px-4 text-sm font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
+              Load later messages
+            </button>
+          ) : null}
 
           {pending.map((message) => (
             <div key={message.id} className="flex flex-col items-end gap-1 opacity-70">

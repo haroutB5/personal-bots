@@ -131,7 +131,7 @@ describe("jumpToMessage", () => {
     const root = { querySelectorAll: () => [first, second] };
     expect(jumpToMessage(root as never, "m2")).toBe(true);
     expect(first.scrollIntoView).not.toHaveBeenCalled();
-    expect(second.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
+    expect(second.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "instant" });
     expect(second.attributes.has(REPLY_HIGHLIGHT_ATTRIBUTE)).toBe(true);
     vi.advanceTimersByTime(REPLY_HIGHLIGHT_MS);
     expect(second.attributes.has(REPLY_HIGHLIGHT_ATTRIBUTE)).toBe(false);

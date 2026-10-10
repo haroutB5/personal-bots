@@ -49,8 +49,8 @@ export function jumpToMessage(root: ParentNode, messageId: string): boolean {
     (element) => element.getAttribute(MESSAGE_ID_ATTRIBUTE) === messageId,
   );
   if (target === undefined) return false;
-  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-  target.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  // Complete the landing before releasing the transcript's follow guard.
+  target.scrollIntoView({ block: "center", behavior: "instant" });
   target.setAttribute(REPLY_HIGHLIGHT_ATTRIBUTE, "");
   window.setTimeout(() => target.removeAttribute(REPLY_HIGHLIGHT_ATTRIBUTE), REPLY_HIGHLIGHT_MS);
   return true;

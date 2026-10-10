@@ -21,6 +21,7 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as PersonalBotRepository from "../personal/PersonalBotRepository.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { guardedToolkit, guardMcpServer } from "./McpSecretGuard.ts";
+import { normalizeJsonResult } from "./jsonResult.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import {
@@ -366,41 +367,48 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
 
-const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
-  if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
-    return Effect.failCause(cause).pipe(Effect.orDie);
-  }
-  const failures = cause.reasons.filter(Cause.isFailReason);
-  const firstFailure = failures[0]?.error;
-  const errorTag =
-    typeof firstFailure === "object" &&
-    firstFailure !== null &&
-    "_tag" in firstFailure &&
-    typeof firstFailure._tag === "string"
-      ? firstFailure._tag
-      : "PreviewSnapshotError";
-  // Preview errors build their message on the server, never from page output,
-  // and it tells the agent what to do next, such as falling back to a shell browser.
-  const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
-  const result = new McpSchema.CallToolResult({
-    isError: true,
-    structuredContent: {
-      error: {
-        _tag: errorTag,
-        operation: "snapshot",
-        failureCount: failures.length,
-        ...(message === undefined ? {} : { message }),
+const previewFailure =
+  (operation: "snapshot" | "evaluate") =>
+  <E>(cause: Cause.Cause<E>) => {
+    if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
+      return Effect.failCause(cause).pipe(Effect.orDie);
+    }
+    const failures = cause.reasons.filter(Cause.isFailReason);
+    const firstFailure = failures[0]?.error;
+    const errorTag =
+      typeof firstFailure === "object" &&
+      firstFailure !== null &&
+      "_tag" in firstFailure &&
+      typeof firstFailure._tag === "string"
+        ? firstFailure._tag
+        : "PreviewResultError";
+    // Preview errors build their message on the server, never from page output,
+    // and it tells the agent what to do next, such as falling back to a shell browser.
+    const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
+    const result = new McpSchema.CallToolResult({
+      isError: true,
+      structuredContent: {
+        error: {
+          _tag: errorTag,
+          operation,
+          failureCount: failures.length,
+          ...(message === undefined ? {} : { message }),
+        },
       },
-    },
-    // Some clients show only the text content and others only structuredContent, so both carry it.
-    content: [{ type: "text", text: `Preview snapshot failed: ${message ?? `${errorTag}.`}` }],
-  });
-  return Effect.logWarning("preview snapshot failed", {
-    operation: "snapshot",
-    errorTag,
-    failureCount: failures.length,
-  }).pipe(Effect.as(result));
-};
+      // Some clients show only the text content and others only structuredContent, so both carry it.
+      content: [
+        { type: "text", text: `Preview ${operation} failed: ${message ?? `${errorTag}.`}` },
+      ],
+    });
+    return Effect.logWarning(`preview ${operation} failed`, {
+      operation,
+      errorTag,
+      failureCount: failures.length,
+    }).pipe(Effect.as(result));
+  };
+const previewSnapshotFailure = previewFailure("snapshot");
+const previewEvaluateFailure = previewFailure("evaluate");
+const decodeToolJsonSchema = Schema.decodeUnknownEffect(McpSchema.ToolJsonSchema);
 
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = guardMcpServer(yield* McpServer.McpServer);
@@ -792,9 +800,89 @@ export const DesktopToolkitRegistrationLive = Layer.mergeAll(
   ),
 ).pipe(Layer.provide(PersonalBotRepository.layer));
 
-const PreviewStandardToolkitRegistrationLive = guardedToolkit(PreviewStandardToolkit).pipe(
-  Layer.provide(PreviewStandardToolkitHandlersLive),
-);
+const PreviewStandardToolkitRegistrationLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const server = guardMcpServer(yield* McpServer.McpServer);
+    // The generic toolkit constructs CallToolResult before we can normalize its JSON.
+    const standardServer = Object.create(server, {
+      addTool: {
+        value: ((options) =>
+          options.tool.name === "preview_evaluate"
+            ? Effect.void
+            : server.addTool(options)) satisfies McpServer.McpServer["Service"]["addTool"],
+      },
+    });
+    yield* McpServer.registerToolkit(PreviewStandardToolkit).pipe(
+      Effect.provideService(McpServer.McpServer, standardServer),
+    );
+    const built = yield* PreviewStandardToolkit;
+    const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const tool = PreviewStandardToolkit.tools.preview_evaluate;
+    const outputSchema = yield* decodeToolJsonSchema(
+      Tool.getJsonSchemaFromSchema(tool.successSchema),
+    ).pipe(Effect.orDie);
+    yield* server.addTool({
+      tool: new McpSchema.Tool({
+        name: tool.name,
+        description: Tool.getDescription(tool),
+        inputSchema: Tool.getJsonSchema(tool),
+        outputSchema,
+        annotations: {
+          ...Context.getOption(tool.annotations, Tool.Title).pipe(
+            Option.map((title) => ({ title })),
+            Option.getOrUndefined,
+          ),
+          readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
+          destructiveHint: Context.get(tool.annotations, Tool.Destructive),
+          idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
+          openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
+        },
+      }),
+      annotations: tool.annotations,
+      handle: (payload) =>
+        Effect.withFiber((fiber) => {
+          const invocation = Context.getUnsafe(
+            fiber.context,
+            McpInvocationContext.McpInvocationContext,
+          );
+          return built.handle("preview_evaluate", payload).pipe(
+            Stream.unwrap,
+            Stream.run(Sink.last()),
+            Effect.flatMap(Effect.fromOption),
+            Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.map(({ encodedResult }) => {
+              try {
+                const structuredContent = normalizeJsonResult(encodedResult) as {
+                  [key: string]: ReturnType<typeof normalizeJsonResult>;
+                };
+                return new McpSchema.CallToolResult({
+                  isError: false,
+                  structuredContent,
+                  content: [{ type: "text", text: encodeJsonText(structuredContent) }],
+                });
+              } catch (cause) {
+                return new McpSchema.CallToolResult({
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text:
+                        cause instanceof Error ? cause.message : "Unsupported JSON tool result.",
+                    },
+                  ],
+                });
+              }
+            }),
+            Effect.matchCauseEffect({
+              onFailure: previewEvaluateFailure,
+              onSuccess: Effect.succeed,
+            }),
+          );
+        }),
+    });
+  }),
+).pipe(Layer.provide(McpServer.McpServer.layer), Layer.provide(PreviewStandardToolkitHandlersLive));
 
 const PreviewSnapshotRegistrationLive = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
   Layer.provide(PreviewSnapshotToolkitHandlersLive),
