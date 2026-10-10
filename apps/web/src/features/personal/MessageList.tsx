@@ -23,6 +23,7 @@ import { isFileAttachment, type ChatMessage } from "~/types";
 import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
 
 import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
+import { COMPOSER_INPUT_ATTRIBUTE } from "./composerRefocus";
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
 import { chatNoticeLabel, chatNoticeUndo, isServerTurnNotice } from "./chatNotices";
@@ -45,6 +46,7 @@ import { ChoiceButtons, type ChoicesState } from "./ChoiceButtons";
 import { mayHaveChoices, splitChoices } from "./choices";
 import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
 import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
+import { perfOptimizationOn } from "./perfFlags";
 import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
 import { SwipeTimeRow } from "./MessageSwipeTime";
@@ -73,11 +75,27 @@ const STICK_THRESHOLD_PX = 80;
 export const JUMP_TO_LATEST_DELAY_MS = 150;
 /** Outlasts the iPhone keyboard's slide down (about 250-300ms). */
 export const VIEWPORT_SETTLE_MS = 400;
+/**
+ * How long a composer-driven re-pin glides to the new bottom: a typed line
+ * grows the composer about 22px and re-pinning in one write reads as the
+ * messages jumping on a phone-height transcript.
+ */
+export const RESIZE_PIN_TWEEN_MS = 120;
 /** Gives up on a smooth jump that never reached the bottom. */
 const JUMP_SETTLE_MS = 1_000;
 /** How long after a wheel, key or finger lift a scroll still counts as the reader's. */
 const READER_INPUT_MS = 400;
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+/** The composer-driven re-pin's glide, while one runs (see MessageList's resize effect). */
+interface PinTween {
+  frame: number;
+  from: number;
+  to: number;
+  /** Set from the first frame's own clock, so every frame shares one timebase. */
+  startedAt: number | null;
+  grew: boolean;
+}
 
 function isEditable(target: EventTarget | null): boolean {
   const element = target as Partial<HTMLElement> | null;
@@ -897,6 +915,11 @@ export function MessageList({
   // are still far from the bottom and must not bring the button back.
   const jumpingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quoteSettleRef = useRef<number | null>(null);
+  // The composer-driven re-pin's own tween, while it glides: its cancel
+  // function, null otherwise. endJump ends it the way it ends quoteSettleRef,
+  // and the scroll events it causes are held off the pin state (see the
+  // resize effect's onScroll).
+  const pinTweenCancelRef = useRef<(() => void) | null>(null);
   // Only the reader's own scrolling lets go of the bottom. A finger, the
   // mouse on the scrollbar, a wheel or a key marks the scroll as theirs.
   const readerRef = useRef({ holding: false, at: Number.NEGATIVE_INFINITY });
@@ -1000,11 +1023,17 @@ export function MessageList({
     if (showTimerRef.current !== null) clearTimeout(showTimerRef.current);
     showTimerRef.current = null;
   };
+  const endPinTween = () => {
+    const cancel = pinTweenCancelRef.current;
+    pinTweenCancelRef.current = null;
+    cancel?.();
+  };
   const endJump = () => {
     if (jumpingRef.current !== null) clearTimeout(jumpingRef.current);
     jumpingRef.current = null;
     if (quoteSettleRef.current !== null) window.cancelAnimationFrame(quoteSettleRef.current);
     quoteSettleRef.current = null;
+    endPinTween();
   };
 
   useEffect(() => {
@@ -1041,12 +1070,25 @@ export function MessageList({
     // Kept apart from `seen`: a scroll event can land before the resize and
     // record the new height first.
     let observedHeight = scroller.clientHeight;
-    const onResize = () => {
-      const grew = scroller.clientHeight > observedHeight;
-      observedHeight = scroller.clientHeight;
-      follow();
-      if (!grew) return;
-      if (stickRef.current) reassertEnd();
+    let observedContentHeight = scroller.scrollHeight;
+    // The composer's message field (PersonalComposer marks it), read only when
+    // a resize lands: anything that changes the field's own height resizes
+    // this scroller with it, so a read here always sees the new value. Null on
+    // a screen without it (an archived chat, a chat still loading).
+    let composerField: HTMLElement | null = null;
+    const readComposerHeight = (): number | null => {
+      if (composerField !== null && composerField.isConnected === false) composerField = null;
+      if (composerField === null) {
+        composerField =
+          (typeof document !== "undefined" && typeof document.querySelector === "function"
+            ? document.querySelector<HTMLElement>(`[${COMPOSER_INPUT_ATTRIBUTE}]`)
+            : null) ?? null;
+      }
+      const height = composerField?.getBoundingClientRect?.().height;
+      return typeof height === "number" ? height : null;
+    };
+    let observedComposerHeight = readComposerHeight();
+    const armSettle = () => {
       // Once more after the keyboard has finished moving.
       if (settleTimer !== null) clearTimeout(settleTimer);
       settleTimer = setTimeout(() => {
@@ -1054,6 +1096,93 @@ export function MessageList({
         follow();
         if (stickRef.current) reassertEnd();
       }, VIEWPORT_SETTLE_MS);
+    };
+    // A typed line grows the composer about 22px and shrinks this scroller by
+    // the same. On a phone-height transcript re-pinning that in one write
+    // reads as the messages jumping, so a composer-driven re-pin (and the one
+    // when the composer shrinks back) glides to the new bottom instead. Every
+    // other resize - streaming text, a late image, the keyboard, a strip -
+    // keeps the instant follow. `bots:perf-off=resize-pin-tween` turns it off.
+    let pinTween: PinTween | null = null;
+    const cancelPinTween = () => {
+      if (pinTween === null) return;
+      window.cancelAnimationFrame?.(pinTween.frame);
+      pinTween = null;
+    };
+    /** The tween's destination applied at once: the bottom, never a half-way stop. */
+    const landPinTween = (grew: boolean) => {
+      follow();
+      if (!grew) return;
+      if (stickRef.current) reassertEnd();
+      armSettle();
+    };
+    const stepPinTween = (time: number): void => {
+      const tween = pinTween;
+      if (tween === null) return;
+      if (tween.startedAt === null) {
+        // The first frame only starts the clock: the motion takes the next
+        // RESIZE_PIN_TWEEN_MS of frames. No clock ran while hidden, so a tween
+        // that sleeps in a background tab lands on its next frame.
+        tween.startedAt = time;
+        tween.frame = window.requestAnimationFrame(stepPinTween);
+        return;
+      }
+      const progress = Math.min(1, (time - tween.startedAt) / RESIZE_PIN_TWEEN_MS);
+      if (progress >= 1) {
+        pinTween = null;
+        pinTweenCancelRef.current = null;
+        landPinTween(tween.grew);
+        return;
+      }
+      scroller.scrollTop = tween.from + (tween.to - tween.from) * progress;
+      tween.frame = window.requestAnimationFrame(stepPinTween);
+    };
+    const pinTweenAllowed = () =>
+      typeof window.requestAnimationFrame === "function" &&
+      typeof window.cancelAnimationFrame === "function" &&
+      perfOptimizationOn("resize-pin-tween") &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches !== true;
+    /** Glides the re-pin to the new bottom; false when there is nothing to move. */
+    const startPinTween = (grew: boolean): boolean => {
+      const from = scroller.scrollTop;
+      const to = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      if (Math.abs(to - from) < 1) return false;
+      const tween: PinTween = { frame: 0, from, to, startedAt: null, grew };
+      pinTween = tween;
+      pinTweenCancelRef.current = cancelPinTween;
+      tween.frame = window.requestAnimationFrame(stepPinTween);
+      return true;
+    };
+    const onResize = () => {
+      const previousHeight = observedHeight;
+      const clientHeight = scroller.clientHeight;
+      const grew = clientHeight > previousHeight;
+      observedHeight = clientHeight;
+      const contentMoved = scroller.scrollHeight !== observedContentHeight;
+      observedContentHeight = scroller.scrollHeight;
+      const composerHeight = readComposerHeight();
+      const composerDelta =
+        composerHeight === null || observedComposerHeight === null
+          ? 0
+          : composerHeight - observedComposerHeight;
+      if (composerHeight !== null) observedComposerHeight = composerHeight;
+      // The field and this scroller share a flex column, so a typed line grows
+      // the one and shrinks the other by the same; any other size change (the
+      // keyboard, a strip) moves the scroller with the composer untouched.
+      // Content changing in the same step (a sent bubble, streaming text) is
+      // not a typed line: it keeps the instant follow.
+      const typedLine =
+        composerDelta !== 0 &&
+        !contentMoved &&
+        clientHeight !== previousHeight &&
+        composerDelta > 0 === clientHeight < previousHeight;
+      // A new size change always takes the scroll over from a glide in flight.
+      endPinTween();
+      if (typedLine && stickRef.current && pinTweenAllowed() && startPinTween(grew)) return;
+      follow();
+      if (!grew) return;
+      if (stickRef.current) reassertEnd();
+      armSettle();
     };
     follow();
     const readerActive = () =>
@@ -1066,6 +1195,10 @@ export function MessageList({
         scroller.scrollHeight !== seen.scrollHeight || scroller.clientHeight !== seen.clientHeight;
       remember();
       if (targetGuardRef.current || selectionRef.current) return;
+      // The re-pin tween's own frames: it is still on its way to the bottom,
+      // so its scroll events must not un-stick the list, arm the button, or
+      // move the mounted window.
+      if (pinTweenCancelRef.current !== null) return;
       if (nearBottom && windowRef.current.range.end === windowRef.current.items.length) {
         endJump();
         stickRef.current = true;
@@ -1108,6 +1241,13 @@ export function MessageList({
       targetGuardRef.current = false;
       targetRef.current = null;
       clearMessageJump(windowRef.current.threadId);
+      if (pinTweenCancelRef.current !== null) {
+        // A finger, wheel or key during the re-pin takes the scroll back: the
+        // glide stops and its destination (the bottom) is applied at once, so
+        // the reader drags away from a settled list, not a half-way one.
+        endPinTween();
+        follow();
+      }
       if (jumpingRef.current === null) return;
       // A finger, wheel or key during a jump stops it where it is. The
       // browser's own smooth scroll carries on to the bottom unless stopped.

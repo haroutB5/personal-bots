@@ -74,7 +74,12 @@ export type PerfOptimization =
   // Once the app is quiet it preloads the personal screens' code (Team, Settings,
   // Memory, Files, Tasks, Computer) so they still open when the phone loses its
   // network (warmRoutes.ts, 1.66.11); off: each is fetched when first opened.
-  | "warm-routes";
+  | "warm-routes"
+  // A re-pin the composer's own growth caused (a typed line) glides to the new
+  // bottom over 120ms instead of one instant write, so the transcript stops
+  // jumping while typing on the phone (MessageList.tsx, 1.66.23); off: one
+  // instant write, as before.
+  | "resize-pin-tween";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {
