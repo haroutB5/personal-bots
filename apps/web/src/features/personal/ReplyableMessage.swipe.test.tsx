@@ -393,6 +393,27 @@ describe("ReplyableMessage: swipe to see when it was sent", () => {
     expect(label(root)).toHaveLength(0);
   });
 
+  it("an earlier swipe cannot clear the next swipe's click guard", async () => {
+    const root = await render({ align: "end" });
+    await down(root, 300, 150);
+    await move(root, 240, 150);
+    await up(root, 240, 150);
+    await act(async () => vi.advanceTimersByTime(200));
+    await down(root, 300, 150);
+    await move(root, 240, 150);
+    await act(async () => vi.advanceTimersByTime(151));
+    await up(root, 240, 150);
+    const click = {
+      currentTarget: { contains: () => true },
+      target: {},
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    };
+    row(root).props.onClickCapture(click);
+    expect(click.preventDefault).toHaveBeenCalledTimes(1);
+    expect(click.stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
   it("a new touch during the spring back starts clean", async () => {
     const root = await render({ align: "end" });
     await down(root, 300, 150);

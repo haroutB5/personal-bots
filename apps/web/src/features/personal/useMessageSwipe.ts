@@ -80,6 +80,7 @@ export function useMessageSwipe({
   const target = useRef<HTMLElement | null>(null);
   const swallowClick = useRef(false);
   const springTimer = useRef(0);
+  const clickTimer = useRef(0);
   const live = useRef({ enabled, align, onSwipeStart });
   useEffect(() => {
     live.current = { enabled, align, onSwipeStart };
@@ -92,12 +93,18 @@ export function useMessageSwipe({
     if (target.current !== null) resetStyle(target.current);
     setReveal(null);
   }, []);
+  const clearClickTimer = useCallback(() => {
+    if (clickTimer.current === 0) return;
+    window.clearTimeout(clickTimer.current);
+    clickTimer.current = 0;
+  }, []);
   useEffect(
     () => () => {
       finishSpring();
+      clearClickTimer();
       drag.current = null;
     },
-    [finishSpring],
+    [finishSpring, clearClickTimer],
   );
 
   const settle = useCallback((reduceMotion: boolean) => {
@@ -124,14 +131,17 @@ export function useMessageSwipe({
     settle(current.reduceMotion);
     // The click that ends the swipe arrives right after the lift, or not at all (iOS): do not
     // let the flag wait for some later, unrelated click (a keyboard's) to swallow.
-    window.setTimeout(() => {
+    clearClickTimer();
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = 0;
       swallowClick.current = false;
     }, CLICK_AFTER_LIFT_MS);
-  }, [settle]);
+  }, [settle, clearClickTimer]);
 
   const onPointerDown = (event: ReactPointerEvent) => {
     // A new touch ends a spring-back still on its way.
     finishSpring();
+    clearClickTimer();
     drag.current = null;
     swallowClick.current = false;
     if (!live.current.enabled || event.pointerType === "mouse" || event.isPrimary === false) return;
@@ -189,6 +199,7 @@ export function useMessageSwipe({
     reveal,
     handlers: { onPointerDown, onPointerMove, onPointerUp: end, onPointerCancel: end },
     consumeClick: () => {
+      clearClickTimer();
       const swallow = swallowClick.current;
       swallowClick.current = false;
       return swallow;
