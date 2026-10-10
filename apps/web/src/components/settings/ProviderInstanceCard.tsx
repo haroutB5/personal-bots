@@ -188,6 +188,7 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
 }
 
 function ProviderEnvironmentSection(props: {
+  readonly driver: ProviderDriverKind;
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
 }) {
@@ -271,7 +272,11 @@ function ProviderEnvironmentSection(props: {
   return (
     <SettingsRow
       title="Variables"
-      description="API keys, base URLs, and other per-instance CLI settings."
+      description={
+        props.driver === "deepseek"
+          ? "Add your DeepSeek API key as ANTHROPIC_AUTH_TOKEN and keep it sensitive. The API endpoint is fixed."
+          : "API keys, base URLs, and other per-instance CLI settings."
+      }
       control={
         <Button type="button" size="sm" variant="outline" onClick={addVariable}>
           <PlusIcon className="size-3" />
@@ -942,6 +947,7 @@ export function ProviderInstanceCard({
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
         <ProviderEnvironmentSection
+          driver={instance.driver}
           environment={instance.environment ?? []}
           onChange={updateEnvironment}
         />

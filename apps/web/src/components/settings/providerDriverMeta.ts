@@ -3,10 +3,12 @@ import {
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
+  DeepSeekSettings,
   GrokSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import { BotIcon } from "lucide-react";
 import type * as Schema from "effect/Schema";
 import {
   AntigravityIcon,
@@ -75,6 +77,12 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("deepseek"),
+    label: "DeepSeek",
+    icon: BotIcon,
+    settingsSchema: DeepSeekSettings,
   },
   {
     value: ProviderDriverKind.make("antigravity"),

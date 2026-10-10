@@ -8,6 +8,14 @@ import {
 } from "./ProviderSettingsForm";
 
 describe("ProviderSettingsForm helpers", () => {
+  it("exposes DeepSeek setup without key or endpoint fields in plain-text config", () => {
+    const deepseek = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("deepseek")];
+    expect(deepseek).toBeDefined();
+    expect(deriveProviderSettingsFields(deepseek!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "homePath",
+    ]);
+  });
   it("derives visible provider config fields from the client definition schema", () => {
     const codex = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("codex")];
 

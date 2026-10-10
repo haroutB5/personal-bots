@@ -1214,69 +1214,81 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     );
   }
 
-  it.effect("stores sensitive provider instance environment values outside settings.json", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const instanceId = ProviderInstanceId.make("codex_personal");
+  for (const driver of ["codex", "deepseek"] as const) {
+    it.effect(
+      `stores ${driver} sensitive provider instance environment values outside settings.json`,
+      () =>
+        Effect.gen(function* () {
+          const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+          const serverConfig = yield* ServerConfig.ServerConfig;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const instanceId = ProviderInstanceId.make("codex_personal");
 
-      const next = yield* serverSettings.updateSettings({
-        providerInstances: {
-          [instanceId]: {
-            driver: ProviderDriverKind.make("codex"),
-            environment: [
-              { name: "OPENROUTER_API_KEY", value: "sk-or-secret", sensitive: true },
-              { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
-            ],
-            config: {},
-          },
-        },
-      });
+          const next = yield* serverSettings.updateSettings({
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make(driver),
+                environment: [
+                  { name: "OPENROUTER_API_KEY", value: "sk-or-secret", sensitive: true },
+                  {
+                    name: "ANTHROPIC_BASE_URL",
+                    value: "https://openrouter.ai/api",
+                    sensitive: false,
+                  },
+                ],
+                config: {},
+              },
+            },
+          });
 
-      assert.deepEqual(next.providerInstances[instanceId]?.environment, [
-        {
-          name: "OPENROUTER_API_KEY",
-          value: "sk-or-secret",
-          sensitive: true,
-          valueRedacted: true,
-        },
-        { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
-      ]);
+          assert.deepEqual(next.providerInstances[instanceId]?.environment, [
+            {
+              name: "OPENROUTER_API_KEY",
+              value: "sk-or-secret",
+              sensitive: true,
+              valueRedacted: true,
+            },
+            { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
+          ]);
 
-      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      assert.notInclude(raw, "sk-or-secret");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      assert.deepEqual(JSON.parse(raw).providerInstances.codex_personal.environment, [
-        {
-          name: "OPENROUTER_API_KEY",
-          value: "",
-          sensitive: true,
-          valueRedacted: true,
-        },
-        { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
-      ]);
+          const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+          assert.notInclude(raw, "sk-or-secret");
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          assert.deepEqual(JSON.parse(raw).providerInstances.codex_personal.environment, [
+            {
+              name: "OPENROUTER_API_KEY",
+              value: "",
+              sensitive: true,
+              valueRedacted: true,
+            },
+            { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
+          ]);
 
-      const roundTripped = yield* serverSettings.updateSettings({
-        providerInstances: {
-          [instanceId]: {
-            driver: ProviderDriverKind.make("codex"),
-            displayName: "Codex Personal",
-            environment: [
-              { name: "OPENROUTER_API_KEY", value: "", sensitive: true, valueRedacted: true },
-              { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
-            ],
-            config: {},
-          },
-        },
-      });
+          const roundTripped = yield* serverSettings.updateSettings({
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make(driver),
+                displayName: "Codex Personal",
+                environment: [
+                  { name: "OPENROUTER_API_KEY", value: "", sensitive: true, valueRedacted: true },
+                  {
+                    name: "ANTHROPIC_BASE_URL",
+                    value: "https://openrouter.ai/api",
+                    sensitive: false,
+                  },
+                ],
+                config: {},
+              },
+            },
+          });
 
-      assert.equal(
-        roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
-        "sk-or-secret",
-      );
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
+          assert.equal(
+            roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
+            "sk-or-secret",
+          );
+        }).pipe(Effect.provide(makeServerSettingsLayer())),
+    );
+  }
 
   it.effect("materializes provider secrets for terminal environment resolution", () =>
     Effect.gen(function* () {
