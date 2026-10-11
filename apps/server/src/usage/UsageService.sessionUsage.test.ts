@@ -251,8 +251,9 @@ describe("UsageService.readSessionUsage", () => {
         cacheCreationTokens: 0,
         outputTokens: 10,
       });
-      // Published Flash rates, whatever the LiteLLM table says about DeepSeek.
-      assert.closeTo(cell.costUsd, 100 * 0.14e-6 + 1_000 * 0.0028e-6 + 10 * 0.28e-6, 1e-12);
+      // Published off-peak Flash rates (Saturday 10:00 UTC), whatever the
+      // LiteLLM table says about DeepSeek.
+      assert.closeTo(cell.costUsd, 100 * 0.15e-6 + 1_000 * 0.003e-6 + 10 * 0.6e-6, 1e-12);
       assert.strictEqual(cell.unpricedTokens, 0);
     }).pipe(Effect.scoped),
   );

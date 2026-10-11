@@ -1111,11 +1111,23 @@ describe("UsageService", () => {
       yield* Effect.promise(() =>
         NodeFSP.writeFile(
           NodePath.join(deepseekDir, "session.jsonl"),
-          // One turn with a cache split, one without: input at the published
-          // cache-miss rate ($0.14/M), cached input at the cache-hit rate
-          // ($0.0028/M), output at $0.28/M.
-          deepseekLine({ id: 1, input: 1_000_000, cached: 1_000_000, output: 1_000_000 }) +
-            deepseekLine({ id: 2, input: 1_000_000, output: 1_000_000 }),
+          // One turn with a cache split at off-peak (Friday noon UTC), one
+          // without inside a peak window (Friday 02:00 UTC, 01:00-04:00 is
+          // peak): cached input at the cache-hit rate, the rest at the
+          // cache-miss and output rates, peak at double.
+          deepseekLine({
+            id: 1,
+            at: "2026-07-31T12:00:00Z",
+            input: 1_000_000,
+            cached: 1_000_000,
+            output: 1_000_000,
+          }) +
+            deepseekLine({
+              id: 2,
+              at: "2026-07-31T02:00:00Z",
+              input: 1_000_000,
+              output: 1_000_000,
+            }),
         ),
       );
       const service = yield* UsageService.make.pipe(
@@ -1130,8 +1142,8 @@ describe("UsageService", () => {
       assert.strictEqual(bucket.totals.uncachedInputTokens, 2_000_000);
       assert.strictEqual(bucket.totals.cachedInputTokens, 1_000_000);
       assert.strictEqual(bucket.totals.outputTokens, 2_000_000);
-      // With the split: 0.14 + 0.0028 + 0.28. Without: 0.14 + 0.28.
-      assert.closeTo(bucket.costUsd, 0.14 + 0.0028 + 0.28 + 0.14 + 0.28, 1e-9);
+      // Off-peak split: 0.15 + 0.003 + 0.6. Peak without: 0.3 + 1.2.
+      assert.closeTo(bucket.costUsd, 0.15 + 0.003 + 0.6 + 0.3 + 1.2, 1e-9);
       const source = summary.sources.find((entry) => entry.fingerprint.provider === "deepseek");
       assert.strictEqual(source?.status, "ok");
       assert.strictEqual(source?.scannedFiles, 1);
@@ -1175,8 +1187,9 @@ describe("UsageService", () => {
       const spend = yield* service.readDeepSeekSpend(deepseekDir);
       assert.ok(spend !== null, "a spend figure");
       assert.strictEqual(spend.records, 2);
-      // 0.14 + 0.0028 + 0.28 for the split turn, 0.14 for the plain input.
-      assert.closeTo(spend.costUsd, 0.14 + 0.0028 + 0.28 + 0.14, 1e-9);
+      // Both turns sit at 09:00 UTC on weekdays, inside the 06:00-10:00 peak
+      // window: 0.3 + 0.006 + 1.2 for the split turn, 0.3 for the plain input.
+      assert.closeTo(spend.costUsd, 0.3 + 0.006 + 1.2 + 0.3, 1e-9);
       assert.strictEqual(spend.since, "2026-10-08T09:00:00.000Z");
 
       // Nothing to price answers null; never an invented figure.

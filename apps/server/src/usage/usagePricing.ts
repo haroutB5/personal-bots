@@ -8,6 +8,8 @@
  * @module usagePricing
  */
 import type { UsageCostSource, UsageModelPriceOverride } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
 import type { UsageRecord, UsageSpeed } from "./usageTranscripts.ts";
 
@@ -40,7 +42,8 @@ export interface ModelRate extends TokenRates {
 export type RateTable = ReadonlyMap<string, ModelRate>;
 
 /**
- * DeepSeek-V4-Flash at the rates DeepSeek publishes, USD per token.
+ * DeepSeek-V4-Flash off-peak rates, USD per token, from DeepSeek's published
+ * card (retrieved 2026-10-11; off-peak is half of peak).
  *
  * DeepSeek bills through its own rate card, not the LiteLLM table the other
  * providers price against, and the picker offers only Flash, so every DeepSeek
@@ -49,13 +52,41 @@ export type RateTable = ReadonlyMap<string, ModelRate>;
  * cache misses.
  */
 export const DEEPSEEK_FLASH_RATES: ModelRate = {
-  inputCostPerToken: 0.14 / 1_000_000,
-  outputCostPerToken: 0.28 / 1_000_000,
-  cacheReadCostPerToken: 0.0028 / 1_000_000,
-  cacheCreationCostPerToken: 0.14 / 1_000_000,
+  inputCostPerToken: 0.15 / 1_000_000,
+  outputCostPerToken: 0.6 / 1_000_000,
+  cacheReadCostPerToken: 0.003 / 1_000_000,
+  cacheCreationCostPerToken: 0.15 / 1_000_000,
   fast: null,
   ultrafast: null,
 };
+
+/** The same card at peak: exactly double the off-peak rates. */
+export const DEEPSEEK_FLASH_PEAK_RATES: ModelRate = {
+  inputCostPerToken: 0.3 / 1_000_000,
+  outputCostPerToken: 1.2 / 1_000_000,
+  cacheReadCostPerToken: 0.006 / 1_000_000,
+  cacheCreationCostPerToken: 0.3 / 1_000_000,
+  fast: null,
+  ultrafast: null,
+};
+
+/**
+ * Peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday through Friday.
+ * Everything else — weekends included — is off-peak. Chinese public holidays
+ * are off-peak in full as well; this ignores them, so their peak-hour records
+ * price half too high rather than too low.
+ */
+export function isDeepSeekPeakTime(timestampMs: number): boolean {
+  // A millisecond input makes a UTC DateTime; its parts are UTC. An
+  // unreadable timestamp prices as off-peak rather than throwing mid-scan.
+  const at = DateTime.make(timestampMs);
+  if (Option.isNone(at)) return false;
+  const parts = DateTime.toParts(at.value);
+  const utcDay = parts.weekDay; // 0 Sunday .. 6 Saturday
+  if (utcDay === 0 || utcDay === 6) return false;
+  const utcHour = parts.hour;
+  return (utcHour >= 1 && utcHour < 4) || (utcHour >= 6 && utcHour < 10);
+}
 
 /**
  * Custom IDs keep their case, provider prefix, and variant suffix. Custom rates
@@ -258,7 +289,7 @@ export function lookupRate(table: RateTable, model: string): ModelRate | null {
 /** The parts of a transcript record that decide its price. */
 export type PricedRecord = Pick<
   UsageRecord,
-  "provider" | "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
+  "provider" | "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd" | "timestampMs"
 >;
 
 export interface PricedUsage {
@@ -269,10 +300,15 @@ export interface PricedUsage {
 /**
  * The rate a record prices at, before overrides: DeepSeek's own published card
  * (provider-keyed, so it never depends on the transcript's model string and
- * works with no rate table fetched), else the LiteLLM table by model name.
+ * works with no rate table fetched) — peak or off-peak by the record's own
+ * timestamp — else the LiteLLM table by model name.
  */
 function baseRate(table: RateTable, record: PricedRecord): ModelRate | null {
-  if (record.provider === "deepseek") return DEEPSEEK_FLASH_RATES;
+  if (record.provider === "deepseek") {
+    return isDeepSeekPeakTime(record.timestampMs)
+      ? DEEPSEEK_FLASH_PEAK_RATES
+      : DEEPSEEK_FLASH_RATES;
+  }
   return lookupRate(table, record.rateModel ?? record.model);
 }
 
