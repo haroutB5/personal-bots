@@ -313,6 +313,93 @@ it("glides a typed line's re-pin and lands exactly at the bottom", async () => {
   expect(jumpButtons()).toHaveLength(0);
 });
 
+it("the pinned write of an items update mid-glide cannot pull the transcript back", async () => {
+  await render("thread-1", messages(40));
+  scroller.clearWrites();
+  await typedLine();
+  await advanceFrames(3);
+  expect(scroller.scrollTop).toBeGreaterThan(600);
+  expect(scroller.scrollTop).toBeLessThan(622);
+  // The layout effect's pinned write, the one an items update raises: the
+  // scroller snaps to the bottom between two frames of the glide.
+  await act(async () => {
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+  expect(scroller.scrollTop).toBe(622);
+  const marker = scroller.writes.length;
+  await advanceFrames(12);
+  // Frames still ran after the write (the 622 holds), and not one of them
+  // pulled back under the bottom the write already reached.
+  expect(scroller.writes.slice(marker)).toContain(622);
+  for (const value of scroller.writes.slice(marker)) expect(value).toBeGreaterThanOrEqual(622);
+  // The glide still ends exactly at the bottom.
+  expect(scroller.scrollTop).toBe(622);
+  expect(scroller.writes[scroller.writes.length - 1]).toBe(1000);
+});
+
+it("a new items array mid-glide (the layout effect's own write) leaves no pull-back", async () => {
+  await render("thread-1", messages(40));
+  scroller.clearWrites();
+  await typedLine();
+  await advanceFrames(3);
+  expect(scroller.scrollTop).toBeLessThan(622);
+  // The ~2s items identity change of an open chat: a fresh items array runs
+  // the layout effect, which pins with one write of scrollHeight.
+  await render("thread-1", messages(41));
+  expect(scroller.scrollTop).toBe(622);
+  const marker = scroller.writes.length;
+  await advanceFrames(12);
+  expect(scroller.writes.slice(marker)).toContain(622);
+  for (const value of scroller.writes.slice(marker)) expect(value).toBeGreaterThanOrEqual(622);
+  expect(scroller.scrollTop).toBe(622);
+});
+
+it("a partial outside write mid-glide is carried on from, never undone", async () => {
+  await render();
+  scroller.clearWrites();
+  await typedLine();
+  await advanceFrames(3);
+  await act(async () => {
+    scroller.scrollTop = 615;
+  });
+  expect(scroller.scrollTop).toBe(615);
+  const marker = scroller.writes.length;
+  await advanceFrames(12);
+  for (const value of scroller.writes.slice(marker)) expect(value).toBeGreaterThanOrEqual(615);
+  expect(scroller.scrollTop).toBe(622);
+});
+
+it("a pinned write during the restore cannot move the top off the grown end, and the end re-assert survives", async () => {
+  await render();
+  await typedLine();
+  await advanceFrames(12);
+  expect(scroller.scrollTop).toBe(622);
+  scroller.clearWrites();
+  composer.height = 44;
+  scroller.clientHeight = 400;
+  await act(async () => resize());
+  await advanceFrames(3);
+  // Every position the restore passes sits at or past the grown scroller's
+  // end, so its first frame's write lands there and holds.
+  expect(scroller.scrollTop).toBe(600);
+  // The pinned write of an items update inside that window changes nothing...
+  await act(async () => {
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+  expect(scroller.scrollTop).toBe(600);
+  const marker = scroller.writes.length;
+  for (let index = 0; index < 12; index += 1) {
+    await advanceFrames(1);
+    // ...and step by step no frame takes the top off the end; the landing's
+    // re-assert (599 then the bottom) stays inside one frame.
+    expect(scroller.scrollTop).toBe(600);
+  }
+  // The landing still writes the bottom and re-applies the grown list's end
+  // the keyboard way (`end - 1` first so WebKit applies it).
+  expect(scroller.writes.slice(marker)).toContain(1000);
+  expect(scroller.writes.slice(-3)).toEqual([1000, 599, 1000]);
+});
+
 it("glides a pasted block that adds more than one line at once", async () => {
   await render();
   scroller.clearWrites();
