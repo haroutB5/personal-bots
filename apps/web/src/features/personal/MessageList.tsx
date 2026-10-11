@@ -744,7 +744,9 @@ function lockCard(key: string, readOnly: boolean, card: ReactNode): ReactNode {
  * in the conversation (questions, secrets, delegated work) in the order they
  * happened. Only approvals, which vanish when decided, sit below the
  * transcript. Owns the scroller: it follows new content while the reader is at
- * the bottom and leaves them alone once they scroll up.
+ * the bottom and leaves them alone once they scroll up; a window frozen at an
+ * older message brings the later ones in by itself as the reader reaches its
+ * end, so the newest are never behind a tap.
  */
 export function MessageList({
   environmentId,
@@ -908,9 +910,9 @@ export function MessageList({
   const firstId = page.threadId === threadId ? page.firstId : null;
   const range = transcriptRange(items, firstId);
   const visibleItems = items.slice(range.start, range.end);
-  const windowRef = useRef({ threadId, range, items });
+  const windowRef = useRef({ threadId, range, items, firstId });
   useLayoutEffect(() => {
-    windowRef.current = { threadId, range, items };
+    windowRef.current = { threadId, range, items, firstId };
   });
   const anchorRef = useRef<{ id: string; top: number } | null>(null);
   const targetRef = useRef<string | null>(null);
@@ -929,16 +931,22 @@ export function MessageList({
   const movePage = (direction: -1 | 1) => {
     // A selected passage keeps its DOM while the reader copies it.
     if (window.getSelection?.()?.isCollapsed === false) return;
+    const current = windowRef.current;
     saveAnchor();
     stickRef.current = false;
     const start = Math.max(
       0,
       Math.min(
-        items.length - TRANSCRIPT_WINDOW_SIZE,
-        range.start + direction * TRANSCRIPT_WINDOW_STEP,
+        current.items.length - TRANSCRIPT_WINDOW_SIZE,
+        current.range.start + direction * TRANSCRIPT_WINDOW_STEP,
       ),
     );
-    setPage({ threadId, firstId: items[start]?.id ?? null });
+    const first = current.items[start]?.id ?? null;
+    setPage((previous) =>
+      previous.threadId === current.threadId && previous.firstId === first
+        ? previous
+        : { threadId: current.threadId, firstId: first },
+    );
   };
   const jumpToQuoted = (messageId: string) => {
     const index = items.findIndex(
@@ -992,8 +1000,14 @@ export function MessageList({
       clearMessageJump(threadId);
       setShowJump(true);
     }
-    if (stickRef.current && firstId === null && scrollerRef.current)
+    if (stickRef.current && firstId === null && scrollerRef.current) {
       scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
+      return;
+    }
+    // A frozen window whose reader is sitting at the end of what it loaded
+    // takes the next step before the frame paints, so later messages arrive
+    // without a tap and the fallback button below never has to be pressed.
+    if (firstId !== null) catchUpAtWindowEnd();
   }, [items, firstId, threadId]);
 
   const cancelShow = () => {
@@ -1005,6 +1019,41 @@ export function MessageList({
     jumpingRef.current = null;
     if (quoteSettleRef.current !== null) window.cancelAnimationFrame(quoteSettleRef.current);
     quoteSettleRef.current = null;
+  };
+
+  /** Back on the newest: the latest window, following whatever arrives next. */
+  const pinToLatest = () => {
+    const current = windowRef.current;
+    endJump();
+    stickRef.current = true;
+    setPage((previous) =>
+      previous.threadId === current.threadId && previous.firstId === null
+        ? previous
+        : { threadId: current.threadId, firstId: null },
+    );
+    cancelShow();
+    setShowJump(false);
+  };
+
+  /**
+   * The reader has reached the end of what a frozen window has loaded. Take
+   * the next step now instead of waiting for a tap: the later messages are
+   * brought in (movePage anchors on the first visible row, so the reader's
+   * place does not move), and once the window covers the newest items and the
+   * reader is still at its end, the transcript pins and follows again.
+   */
+  const catchUpAtWindowEnd = () => {
+    const scroller = scrollerRef.current;
+    if (scroller === null || scroller.clientHeight === 0) return;
+    if (targetGuardRef.current || selectionRef.current) return;
+    const fromEnd = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (fromEnd >= STICK_THRESHOLD_PX) return;
+    const current = windowRef.current;
+    if (current.range.end < current.items.length) {
+      movePage(1);
+      return;
+    }
+    if (current.firstId !== null) pinToLatest();
   };
 
   useEffect(() => {
@@ -1075,16 +1124,15 @@ export function MessageList({
         scroller.scrollHeight !== seen.scrollHeight || scroller.clientHeight !== seen.clientHeight;
       remember();
       if (targetGuardRef.current || selectionRef.current) return;
-      if (nearBottom && windowRef.current.range.end === windowRef.current.items.length) {
-        endJump();
-        stickRef.current = true;
-        setPage((previous) =>
-          previous.threadId === windowRef.current.threadId && previous.firstId === null
-            ? previous
-            : { threadId: windowRef.current.threadId, firstId: null },
-        );
-        cancelShow();
-        setShowJump(false);
+      if (nearBottom) {
+        // At the end of what is loaded, with the newest items in it: pin and follow.
+        if (windowRef.current.range.end === windowRef.current.items.length) {
+          pinToLatest();
+          return;
+        }
+        // A frozen window with newer items beyond it: reaching its end brings
+        // the next step in, without a tap.
+        if (jumpingRef.current === null) catchUpAtWindowEnd();
         return;
       }
       if (jumpingRef.current !== null) return;
@@ -1141,6 +1189,19 @@ export function MessageList({
     const onKeyDown = (event: KeyboardEvent) => {
       if (SCROLL_KEYS.has(event.key) && !isEditable(event.target)) onReaderInput();
     };
+    // Back from the lock screen or another app. A chat that was showing the
+    // latest settles at the end even if iOS kept drawing the old offset while
+    // it was away; a frozen window whose reader is sitting at its end takes
+    // the next step like any scroll. A reader up in history is left alone.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") return;
+      if (stickRef.current) {
+        follow();
+        reassertEnd();
+        return;
+      }
+      catchUpAtWindowEnd();
+    };
     const onSelection = () => {
       const selection = window.getSelection?.();
       selectionRef.current =
@@ -1156,6 +1217,7 @@ export function MessageList({
       );
     };
     document.addEventListener?.("selectionchange", onSelection);
+    document.addEventListener?.("visibilitychange", onVisibilityChange);
     scroller.addEventListener("scroll", onScroll, { passive: true });
     scroller.addEventListener("touchstart", onHold, { passive: true });
     scroller.addEventListener("wheel", onReaderInput, { passive: true });
@@ -1180,6 +1242,7 @@ export function MessageList({
       window.removeEventListener("pointerup", onRelease);
       window.removeEventListener("keydown", onKeyDown);
       document.removeEventListener?.("selectionchange", onSelection);
+      document.removeEventListener?.("visibilitychange", onVisibilityChange);
       observer.disconnect();
       cancelShow();
       endJump();
@@ -1201,6 +1264,29 @@ export function MessageList({
     const scroller = scrollerRef.current;
     if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
   }, [threadId]);
+
+  // Sending is the reader asking for the newest: a new outgoing message (typed
+  // now, or one going out from the offline queue) opens the latest window,
+  // pinned, whatever the transcript was showing, so the sent message and the
+  // reply that follows are on screen. A selected passage keeps its DOM, like
+  // every other move.
+  const sentRef = useRef({ threadId, count: pending.length + queued.length });
+  useEffect(() => {
+    const count = pending.length + queued.length;
+    const sent = sentRef.current.threadId === threadId && count > sentRef.current.count;
+    sentRef.current = { threadId, count };
+    if (!sent) return;
+    if (window.getSelection?.()?.isCollapsed === false) return;
+    endJump();
+    cancelShow();
+    targetGuardRef.current = false;
+    targetRef.current = null;
+    setShowJump(false);
+    stickRef.current = true;
+    setPage({ threadId, firstId: null });
+    const scroller = scrollerRef.current;
+    if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
+  }, [pending.length, queued.length, threadId]);
 
   // A tap on a message search hit asked for this chat to open on that message.
   // The thread loads progressively, so this tries again whenever the items
