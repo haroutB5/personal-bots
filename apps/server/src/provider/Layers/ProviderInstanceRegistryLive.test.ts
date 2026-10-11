@@ -185,74 +185,92 @@ const makeTildeProviderFixtures = Effect.fn(
   );
   yield* fileSystem.chmod(codexPath, 0o755);
 
-  yield* fileSystem.writeFileString(
-    claudePath,
-    [
-      "#!/usr/bin/env node",
-      'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
-      'import * as NodeReadline from "node:readline";',
-      'if (process.argv.includes("--version")) {',
-      '  process.stdout.write("claude 2.1.219\\n");',
-      "  process.exit(0);",
-      "}",
-      "const lines = NodeReadline.createInterface({ input: process.stdin });",
-      'lines.on("line", (line) => {',
-      "  const message = JSON.parse(line);",
-      '  if (message.type !== "control_request") return;',
-      '  if (message.request?.subtype === "get_usage") {',
-      "    const marker = process.env.T3_CLAUDE_RESET_MARKER;",
-      "    if (process.env.T3_CLAUDE_USAGE_FAILS_AFTER_CLAIM && marker && existsSync(marker)) {",
-      "      process.stdout.write(JSON.stringify({",
-      '        type: "control_response",',
-      '        response: { subtype: "error", request_id: message.request_id, error: "usage failed" },',
-      '      }) + "\\n");',
-      "      return;",
-      "    }",
-      "    // Anthropic's usage endpoint can trail a claim: the first N reads after it",
-      "    // still report the old windows.",
-      "    let claimed = Boolean(marker && existsSync(marker));",
-      "    const lagFile = process.env.T3_CLAUDE_USAGE_LAG_FILE;",
-      "    if (claimed && lagFile && existsSync(lagFile)) {",
-      '      const left = Number(readFileSync(lagFile, "utf8"));',
-      "      if (left > 0) {",
-      "        writeFileSync(lagFile, String(left - 1));",
-      "        claimed = false;",
-      "      }",
-      "    }",
-      "    process.stdout.write(JSON.stringify({",
-      '      type: "control_response",',
-      '      response: { subtype: "success", request_id: message.request_id, response: {',
-      '        session: {}, subscription_type: "pro", rate_limits_available: true,',
-      "        rate_limits: { five_hour: { utilization: claimed ? 0 : 100, resets_at: null } },",
-      "      } },",
-      '    }) + "\\n");',
-      "    return;",
-      "  }",
-      '  if (message.request?.subtype !== "initialize") return;',
-      "  process.stdout.write(JSON.stringify({",
-      '    type: "control_response",',
-      "    response: {",
-      '      subtype: "success",',
-      "      request_id: message.request_id,",
-      "      response: {",
-      "        commands: [], agents: [], models: [],",
-      '        output_style: "default", available_output_styles: ["default"],',
-      '        account: { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
-      "      },",
-      "    },",
-      '  }) + "\\n");',
-      "});",
-      "setInterval(() => {}, 1_000);",
-      "",
-    ].join("\n"),
-  );
-  yield* fileSystem.chmod(claudePath, 0o755);
+  const claudeScript = [
+    "#!/usr/bin/env node",
+    'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+    'import * as NodeReadline from "node:readline";',
+    'if (process.argv.includes("--version")) {',
+    '  process.stdout.write("claude 2.1.219\\n");',
+    "  process.exit(0);",
+    "}",
+    "const lines = NodeReadline.createInterface({ input: process.stdin });",
+    'lines.on("line", (line) => {',
+    "  const message = JSON.parse(line);",
+    '  if (message.type !== "control_request") return;',
+    '  if (message.request?.subtype === "get_usage") {',
+    "    const marker = process.env.T3_CLAUDE_RESET_MARKER;",
+    "    if (process.env.T3_CLAUDE_USAGE_FAILS_AFTER_CLAIM && marker && existsSync(marker)) {",
+    "      process.stdout.write(JSON.stringify({",
+    '        type: "control_response",',
+    '        response: { subtype: "error", request_id: message.request_id, error: "usage failed" },',
+    '      }) + "\\n");',
+    "      return;",
+    "    }",
+    "    // Anthropic's usage endpoint can trail a claim: the first N reads after it",
+    "    // still report the old windows.",
+    "    let claimed = Boolean(marker && existsSync(marker));",
+    "    const lagFile = process.env.T3_CLAUDE_USAGE_LAG_FILE;",
+    "    if (claimed && lagFile && existsSync(lagFile)) {",
+    '      const left = Number(readFileSync(lagFile, "utf8"));',
+    "      if (left > 0) {",
+    "        writeFileSync(lagFile, String(left - 1));",
+    "        claimed = false;",
+    "      }",
+    "    }",
+    "    process.stdout.write(JSON.stringify({",
+    '      type: "control_response",',
+    '      response: { subtype: "success", request_id: message.request_id, response: {',
+    '        session: {}, subscription_type: "pro", rate_limits_available: true,',
+    "        rate_limits: { five_hour: { utilization: claimed ? 0 : 100, resets_at: null } },",
+    "      } },",
+    '    }) + "\\n");',
+    "    return;",
+    "  }",
+    '  if (message.request?.subtype !== "initialize") return;',
+    "  process.stdout.write(JSON.stringify({",
+    '    type: "control_response",',
+    "    response: {",
+    '      subtype: "success",',
+    "      request_id: message.request_id,",
+    "      response: {",
+    "        commands: [], agents: [], models: [],",
+    '        output_style: "default", available_output_styles: ["default"],',
+    '        account: { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
+    "      },",
+    "    },",
+    '  }) + "\\n");',
+    "});",
+    "setInterval(() => {}, 1_000);",
+    "",
+  ].join("\n");
+
+  // Windows cannot spawn a shebang script directly. A real install there is a
+  // `claude.cmd` shim beside `node_modules/@anthropic-ai/claude-code`: the CLI
+  // probes spawn the shim through cmd.exe, and the Agent SDK follows the shim
+  // to the package's `cli.js`, which it runs with Node. Mirror that layout so
+  // the same script drives both spawn paths; POSIX hosts spawn the script
+  // itself.
+  const hostIsWindows = yield* isHostWindows;
+  const claudeBinaryPath = hostIsWindows ? path.join(fixtureDir, "claude.cmd") : claudePath;
+  if (hostIsWindows) {
+    yield* fileSystem.writeFileString(
+      claudeBinaryPath,
+      ["@echo off", 'node "%~dp0claude.js" %*', ""].join("\r\n"),
+    );
+    yield* fileSystem.writeFileString(path.join(fixtureDir, "claude.js"), claudeScript);
+    const packageEntryDir = path.join(fixtureDir, "node_modules", "@anthropic-ai", "claude-code");
+    yield* fileSystem.makeDirectory(packageEntryDir, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(packageEntryDir, "cli.js"), claudeScript);
+  } else {
+    yield* fileSystem.writeFileString(claudePath, claudeScript);
+    yield* fileSystem.chmod(claudePath, 0o755);
+  }
   yield* fileSystem.makeDirectory(claudeHomePath);
 
   const asTildePath = (filePath: string) => `~/${path.relative(homePath, filePath)}`;
   return {
     codexBinaryPath: asTildePath(codexPath),
-    claudeBinaryPath: asTildePath(claudePath),
+    claudeBinaryPath: asTildePath(claudeBinaryPath),
     claudeHomePath,
     codexScriptPath,
   };
@@ -550,8 +568,15 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       const refreshed = yield* instance!.snapshot.refresh;
       return { outcome, after, refreshed };
     }).pipe(
-      // macOS logins live in the Keychain, where resets are never read.
-      Effect.provideService(HostProcessPlatform, "linux"),
+      // macOS logins live in the Keychain, where resets are never read, so
+      // darwin is pinned to the POSIX-file platform. Every other host keeps
+      // its own platform: the Windows fixture (claude.cmd shim + package
+      // cli.js) only launches through win32 spawn/SDK resolution, and the
+      // code under test branches on platform nowhere else.
+      Effect.provideService(
+        HostProcessPlatform,
+        process.platform === "darwin" ? "linux" : process.platform,
+      ),
       Effect.provide(testLayer),
     );
 
