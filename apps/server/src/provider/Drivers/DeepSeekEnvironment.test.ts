@@ -8,6 +8,8 @@ import * as Path from "effect/Path";
 import {
   DEEPSEEK_ANTHROPIC_BASE_URL,
   DEEPSEEK_AUTH_TOKEN_ENV,
+  DEEPSEEK_AUTO_COMPACT_WINDOW,
+  DEEPSEEK_FLASH_1M_MODEL,
   makeDeepSeekCapabilitiesCacheKey,
   makeDeepSeekContinuationGroupKey,
   makeDeepSeekEnvironment,
@@ -28,7 +30,7 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
       }),
     );
 
-    it.effect("drops ambient endpoint/model overrides so they cannot reroute us", () =>
+    it.effect("replaces ambient endpoint and model overrides so they cannot reroute us", () =>
       Effect.gen(function* () {
         const env = yield* makeDeepSeekEnvironment(
           { homePath: "" },
@@ -39,7 +41,48 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
           },
         );
         expect(env.ANTHROPIC_BASE_URL).toBe("https://api.deepseek.com/anthropic");
-        expect(env.ANTHROPIC_MODEL).toBeUndefined();
+        expect(env.ANTHROPIC_MODEL).toBe(DEEPSEEK_FLASH_1M_MODEL);
+      }),
+    );
+
+    it.effect("pins every model alias and the compact window, overriding ambient values", () =>
+      Effect.gen(function* () {
+        // The Claude runtime resolves alias-named internal calls (subagents,
+        // background jobs) through these variables, and DeepSeek's endpoint
+        // bills an unresolved claude-opus id as Pro (about 4.4x Flash). The
+        // DeepSeek Claude Code guide pins every one; ambient machine values
+        // must not survive.
+        const env = yield* makeDeepSeekEnvironment(
+          { homePath: "" },
+          {
+            ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key",
+            ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+            ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5",
+            CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-5-5",
+            CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000",
+            // Legacy names whose roles the pins above already carry.
+            ANTHROPIC_SMALL_FAST_MODEL: "claude-haiku-4-5",
+            ANTHROPIC_DEFAULT_MODEL: "claude-opus-5-5",
+          },
+        );
+        expect(env.ANTHROPIC_MODEL).toBe("deepseek-flash[1m]");
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("deepseek-flash[1m]");
+        expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("deepseek-flash[1m]");
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("deepseek-flash");
+        expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe("deepseek-flash");
+        expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("786432");
+        expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(DEEPSEEK_AUTO_COMPACT_WINDOW);
+        expect(env.ANTHROPIC_SMALL_FAST_MODEL).toBeUndefined();
+        expect(env.ANTHROPIC_DEFAULT_MODEL).toBeUndefined();
+      }),
+    );
+
+    it.effect("still pins the model environment when the base env is empty", () =>
+      Effect.gen(function* () {
+        const env = yield* makeDeepSeekEnvironment({ homePath: "" }, {});
+        expect(env.ANTHROPIC_MODEL).toBe("deepseek-flash[1m]");
+        expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe("deepseek-flash");
       }),
     );
 

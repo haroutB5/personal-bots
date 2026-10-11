@@ -28,6 +28,7 @@ import {
   DEEPSEEK_FLASH_SLUG,
   type DeepSeekModelCatalog,
 } from "../DeepSeekModelCatalog.ts";
+import { DEEPSEEK_AUTO_COMPACT_WINDOW } from "../Drivers/DeepSeekEnvironment.ts";
 import { ProviderAdapterValidationError, type ProviderAdapterError } from "../Errors.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
@@ -134,13 +135,16 @@ export const makeDeepSeekAdapter = Effect.fn("makeDeepSeekAdapter")(function* (
   void boundInstanceId;
   // The Claude runtime reads Claude-shaped settings; DeepSeek settings are a
   // subset (no launchArgs/autoCompact), so map explicitly with safe defaults.
+  // The compact window is DeepSeek's own: its Claude Code guide pins the
+  // runtime's auto-compact at 786432 (three quarters of Flash's 1M context),
+  // and the session environment carries the same value.
   const claudeSettings = {
     enabled: settings.enabled,
     binaryPath: settings.binaryPath,
     homePath: settings.homePath,
     customModels: [],
     launchArgs: "",
-    autoCompactWindow: "",
+    autoCompactWindow: DEEPSEEK_AUTO_COMPACT_WINDOW,
   };
   const inner = yield* makeClaudeAdapter(claudeSettings, {
     ...(options?.instanceId ? { instanceId: options.instanceId } : {}),
