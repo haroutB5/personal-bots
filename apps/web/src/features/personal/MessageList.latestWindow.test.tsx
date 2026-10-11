@@ -355,6 +355,18 @@ it("reopening another chat lands on its latest window", async () => {
   expect(laterFallback()).toHaveLength(0);
 });
 
+it("keeps the load-later fallback as a screen-reader-only control, never drawn", async () => {
+  await render("thread-1", messages(200));
+  await scrollTo(100);
+  await render("thread-1", messages(205));
+  // A frozen window with later items beyond it: the fallback exists for
+  // assistive tech, out of the visual flow (the auto-load is the real path).
+  const fallback = laterFallback();
+  expect(fallback).toHaveLength(1);
+  expect(fallback[0]!.props.className).toBe("sr-only");
+  expect(fallback[0]!.props["aria-label"]).toBe("Load later messages");
+});
+
 it("listens for resumes while it owns the scroller, and stops on unmount", async () => {
   await render("thread-1", messages(200));
   expect(documentListeners.count("visibilitychange")).toBe(1);

@@ -1654,10 +1654,15 @@ export function MessageList({
             </div>
           ))}
           {range.end < items.length ? (
+            // The accessibility fallback for a frozen window (the reader
+            // reaches the end of what is loaded and the next step is taken by
+            // itself, so this is never needed and never drawn): still a control
+            // VoiceOver can find and press, out of the visual flow.
             <button
               type="button"
               onClick={() => movePage(1)}
-              className="mx-auto h-11 rounded-full px-4 text-sm font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+              className="sr-only"
+              aria-label="Load later messages"
             >
               Load later messages
             </button>
