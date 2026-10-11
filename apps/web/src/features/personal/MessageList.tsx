@@ -77,6 +77,13 @@ export const VIEWPORT_SETTLE_MS = 400;
 const JUMP_SETTLE_MS = 1_000;
 /** How long after a wheel, key or finger lift a scroll still counts as the reader's. */
 const READER_INPUT_MS = 400;
+/**
+ * How long after a return from hidden new items still land the reader on the
+ * latest. On iOS the page is suspended while away and the client learns the
+ * missed items only when it reconnects, which can be after the visible event;
+ * the reader's own touch, a selection or a jump in flight ends the wait early.
+ */
+export const AWAY_CATCH_UP_MS = 5_000;
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
 function isEditable(target: EventTarget | null): boolean {
@@ -902,6 +909,12 @@ export function MessageList({
   // Only the reader's own scrolling lets go of the bottom. A finger, the
   // mouse on the scrollbar, a wheel or a key marks the scroll as theirs.
   const readerRef = useRef({ holding: false, at: Number.NEGATIVE_INFINITY });
+  // Taken when the page goes hidden: the thread and newest item the reader
+  // left behind, so the return can tell items that arrived while away from
+  // old news. `until` is 0 while the page is still away (only the visible
+  // event may spend the marker) and becomes the end of the catch-up window
+  // (AWAY_CATCH_UP_MS) when it comes back.
+  const awayRef = useRef<{ threadId: string; lastId: string | null; until: number } | null>(null);
   const threadId = threadRef.threadId;
   const [page, setPage] = useState<{ threadId: string; firstId: string | null }>({
     threadId,
@@ -1004,6 +1017,10 @@ export function MessageList({
       scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
       return;
     }
+    // Items arriving just after a return from hidden (the reconnect's missed
+    // ones) land on the latest; while the page is still away the marker holds
+    // (until is 0) and the visible event owns the first look.
+    if (landOnNewSinceAway()) return;
     // A frozen window whose reader is sitting at the end of what it loaded
     // takes the next step before the frame paints, so later messages arrive
     // without a tap and the fallback button below never has to be pressed.
@@ -1054,6 +1071,45 @@ export function MessageList({
       return;
     }
     if (current.firstId !== null) pinToLatest();
+  };
+
+  /**
+   * The reader was away and the newest item changed since they left: the
+   * newest are what they came back for, so land on them, pinned. Nothing new:
+   * their place is kept, so a long read is not interrupted by a phone lock. A
+   * held selection or a jump to a quoted message in flight wins over it, like
+   * every other move.
+   */
+  const landOnNewSinceAway = (): boolean => {
+    const away = awayRef.current;
+    if (away === null || stickRef.current) return false;
+    const current = windowRef.current;
+    if (current.threadId !== away.threadId) {
+      awayRef.current = null;
+      return false;
+    }
+    // 0 means the page is still away: the visible event owns the first look,
+    // and the marker must not be spent before it.
+    if (away.until === 0) return false;
+    if (Date.now() >= away.until) {
+      awayRef.current = null;
+      return false;
+    }
+    const newestId = current.items[current.items.length - 1]?.id ?? null;
+    if (newestId === away.lastId) return false;
+    awayRef.current = null;
+    if (targetGuardRef.current || selectionRef.current) return false;
+    const frozen = current.firstId !== null;
+    pinToLatest();
+    // A frozen window re-renders into the latest one, whose layout effect pins
+    // (a direct write here would race the window swap). An already-latest
+    // window has no state change to hang that on: the one write is the pin,
+    // and the scroll event it raises reads a window that still ends at the
+    // newest items, so it settles as pinned with no jump button.
+    if (!frozen && scrollerRef.current !== null) {
+      scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
+    }
+    return true;
   };
 
   useEffect(() => {
@@ -1162,6 +1218,9 @@ export function MessageList({
     };
     const onReaderInput = () => {
       readerRef.current.at = Date.now();
+      // The reader is here and reading: a catch-up window left over from a
+      // return from hidden ends now, and old news stays old news.
+      awayRef.current = null;
       targetGuardRef.current = false;
       targetRef.current = null;
       clearMessageJump(windowRef.current.threadId);
@@ -1192,14 +1251,33 @@ export function MessageList({
     // Back from the lock screen or another app. A chat that was showing the
     // latest settles at the end even if iOS kept drawing the old offset while
     // it was away; a frozen window whose reader is sitting at its end takes
-    // the next step like any scroll. A reader up in history is left alone.
+    // the next step like any scroll. A reader up in history keeps their place
+    // unless items arrived while they were away (Harout's rule, 2026-10-11:
+    // "Jump to latest when I come back"): those land on the latest, pinned,
+    // and the catch-up window stays armed briefly because the reconnect that
+    // brings them can land just after this event.
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") return;
+      if (document.visibilityState === "hidden") {
+        const current = windowRef.current;
+        awayRef.current = {
+          threadId: current.threadId,
+          lastId: current.items[current.items.length - 1]?.id ?? null,
+          until: 0,
+        };
+        return;
+      }
+      const away = awayRef.current;
       if (stickRef.current) {
+        awayRef.current = null;
         follow();
         reassertEnd();
         return;
       }
+      awayRef.current =
+        away === null || away.threadId !== windowRef.current.threadId
+          ? null
+          : { ...away, until: Date.now() + AWAY_CATCH_UP_MS };
+      if (awayRef.current !== null && landOnNewSinceAway()) return;
       catchUpAtWindowEnd();
     };
     const onSelection = () => {
@@ -1257,6 +1335,7 @@ export function MessageList({
     targetGuardRef.current = false;
     targetRef.current = null;
     selectionRef.current = false;
+    awayRef.current = null;
     stickRef.current = true;
     // A tap that opened this chat from inside the last one is not a scroll here.
     readerRef.current = { holding: false, at: Number.NEGATIVE_INFINITY };
