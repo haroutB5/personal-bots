@@ -110,8 +110,11 @@ interface RowLike {
 }
 
 type RoundNumber = 1 | 2;
-/** round1 -> preparing/repeating round 2 -> done for this page view. */
-type PairState = "round1" | "round2-ready" | "round2" | "done";
+/**
+ * round1 -> (round2-wait while the round-1 message is still being typed) ->
+ * preparing/repeating round 2 -> done for this page view.
+ */
+type PairState = "round1" | "round2-wait" | "round2-ready" | "round2" | "done";
 
 interface CaptureSession {
   readonly round: RoundNumber;
@@ -344,8 +347,14 @@ function finish(s: CaptureSession, stop: PersonalTypeJumpTrace["stop"]): void {
     }
     postTrace(s, stop);
     if (s.round === 1) {
-      pair = "round2-ready";
-      armRound2();
+      // A budget or time stop lands mid-message at typing speed: flipping the
+      // glide off now would put the rest of the same message in round 2's
+      // control. Round 2 waits until that message is sent or the field blurs.
+      const midMessage =
+        (stop === "budget" || stop === "timeout") &&
+        page()?.activeElement === (s.field as unknown as Element);
+      pair = midMessage ? "round2-wait" : "round2-ready";
+      if (!midMessage) armRound2();
     } else {
       pair = "done";
       disarmRound2();
@@ -536,7 +545,7 @@ function attachSessionListeners(s: CaptureSession): void {
 }
 
 function armSession(field: FieldLike): void {
-  if (session !== null || pair === "done") return;
+  if (session !== null || pair === "done" || pair === "round2-wait") return;
   if (!captureOn()) return;
   try {
     if (page()?.activeElement !== (field as unknown as Element)) return;
@@ -639,7 +648,9 @@ function showRound2Banner(): void {
     banner.setAttribute("aria-hidden", "true");
     banner.style.cssText = [
       "position:fixed",
-      "top:8px",
+      // Below the status bar and Dynamic Island in the standalone PWA
+      // (viewport-fit=cover), as InAppNotifications does.
+      "top:calc(env(safe-area-inset-top, 0px) + 8px)",
       "left:50%",
       "transform:translateX(-50%)",
       "z-index:2147483647",
@@ -696,6 +707,17 @@ function armRound2(): void {
       else detachWatch();
     }
   }, ROUND2_WATCHDOG_MS);
+}
+
+/**
+ * The round-1 message ended (sent, field blurred or chat closed): round 2 may
+ * now flip the control. Arms at once while a chat is watched; otherwise the
+ * next chat's start does.
+ */
+function releaseRound2Wait(): void {
+  if (pair !== "round2-wait") return;
+  pair = "round2-ready";
+  if (watching) armRound2();
 }
 
 /** Undoes the flip and removes the overlay; the pair state is the caller's. */
@@ -774,10 +796,15 @@ export function startTypeJumpTrace(): void {
       });
     }
   };
+  const onFocusOut = (event: Event): void => {
+    if (composerField(event.target) !== null) releaseRound2Wait();
+  };
   d.addEventListener("focusin", onFocusIn, { capture: true, passive: true });
+  d.addEventListener("focusout", onFocusOut, { capture: true, passive: true });
   d.addEventListener("input", onWatchInput, { capture: true, passive: true });
   watchDetach = [
     () => d.removeEventListener("focusin", onFocusIn, { capture: true }),
+    () => d.removeEventListener("focusout", onFocusOut, { capture: true }),
     () => d.removeEventListener("input", onWatchInput, { capture: true }),
   ];
   if (pair === "round2-ready") armRound2();
@@ -791,6 +818,7 @@ export function startTypeJumpTrace(): void {
  */
 export function stopTypeJumpTrace(): void {
   watching = false;
+  releaseRound2Wait();
   const s = session;
   if (s === null) return;
   if (s.state === "capturing") finish(s, "close");
@@ -804,7 +832,11 @@ export function stopTypeJumpTrace(): void {
  */
 export function noteTypeJumpTraceSent(): void {
   const s = session;
-  if (s === null) return;
+  if (s === null) {
+    // The round-1 message that ran out of budget is the one being sent.
+    releaseRound2Wait();
+    return;
+  }
   if (s.state === "capturing") finish(s, "send");
   else endSession(s);
 }

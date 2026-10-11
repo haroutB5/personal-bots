@@ -489,6 +489,8 @@ describe("round 2 control flip", () => {
     expect(appendedBanners[0]!.textContent).toBe("Round 2 of 2 - type the same again");
     expect(appendedBanners[0]!.style.cssText).toContain("position:fixed");
     expect(appendedBanners[0]!.style.cssText).toContain("pointer-events:none");
+    // Clear of the iPhone status bar in the standalone PWA (viewport-fit=cover).
+    expect(appendedBanners[0]!.style.cssText).toContain("env(safe-area-inset-top");
 
     await captureRound();
     expect(posts.length).toBe(2);
@@ -496,6 +498,70 @@ describe("round 2 control flip", () => {
     expect(localStorageFake.getItem(PERF_OFF_STORAGE_KEY)).toBe("lean-shell, preload-chat");
     expect(sessionStorageFake.getItem("bots:typejump-restore")).toBeNull();
     expect(appendedBanners[0]!.removed).toBe(true);
+  });
+
+  it("holds round 2 after a mid-message budget stop until that message is sent", async () => {
+    startTypeJumpTrace();
+    focusField();
+    field.height = 66;
+    typeInput();
+    await tick();
+    for (let index = 0; index < 400 && posts.length === 0; index += 1) {
+      nowMs += 1;
+      typeInput();
+      await tick();
+    }
+    expect(lastPost().body.stop).toBe("budget");
+    // Still typing the same message: no flip, no banner, no round-2 session.
+    expect(localStorageFake.getItem(PERF_OFF_STORAGE_KEY)).toBeNull();
+    expect(appendedBanners.length).toBe(0);
+    field.height = 88;
+    typeInput();
+    await tick();
+    runFrames(5, 40);
+    expect(posts.length).toBe(1);
+    expect(frames.length).toBe(0);
+
+    noteTypeJumpTraceSent();
+    expect(localStorageFake.getItem(PERF_OFF_STORAGE_KEY)).toBe("resize-pin-tween");
+    expect(appendedBanners.length).toBe(1);
+    field.height = 44;
+    await captureRound();
+    expect(posts.length).toBe(2);
+    expect(lastPost().body.tween).toBe(false);
+    expect(localStorageFake.getItem(PERF_OFF_STORAGE_KEY)).toBeNull();
+  });
+
+  it("releases a held round 2 when the field blurs or the chat closes", async () => {
+    startTypeJumpTrace();
+    focusField();
+    field.height = 66;
+    typeInput();
+    await tick();
+    nowMs += 10_400;
+    typeInput();
+    await tick();
+    expect(lastPost().body.stop).toBe("timeout");
+    expect(appendedBanners.length).toBe(0);
+    fire("focusout", { target: field });
+    expect(localStorageFake.getItem(PERF_OFF_STORAGE_KEY)).toBe("resize-pin-tween");
+    expect(appendedBanners.length).toBe(1);
+
+    resetTypeJumpTraceForTest(() => nowMs);
+    field.height = 44;
+    startTypeJumpTrace();
+    focusField();
+    field.height = 66;
+    typeInput();
+    await tick();
+    nowMs += 10_400;
+    typeInput();
+    await tick();
+    stopTypeJumpTrace();
+    // Off-chat nothing flips; the next chat's start arms round 2.
+    expect(localStorageFake.getItem(PERF_OFF_STORAGE_KEY)).toBeNull();
+    startTypeJumpTrace();
+    expect(localStorageFake.getItem(PERF_OFF_STORAGE_KEY)).toBe("resize-pin-tween");
   });
 
   it("restores an absent key by removing it again", async () => {
