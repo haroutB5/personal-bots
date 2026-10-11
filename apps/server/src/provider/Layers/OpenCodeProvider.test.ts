@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodePath from "@effect/platform-node/NodePath";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -68,7 +69,7 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
           );
         }),
       ),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.merge(NodeServices.layer, NodePath.layerPosix)),
     );
     NodeAssert.equal(limits.unavailable, undefined);
     NodeAssert.deepEqual(

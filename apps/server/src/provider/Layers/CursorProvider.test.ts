@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - FileSystem.symlink cannot select Windows directory junctions.
 import * as NodeOS from "node:os";
+import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
@@ -432,7 +434,15 @@ describe("Cursor skills", () => {
         yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
         const root = path.join(workspace, ".cursor", "skills");
         yield* fileSystem.makeDirectory(root, { recursive: true });
-        yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
+        const target = path.join(library, "shared-review");
+        const link = path.join(root, "review");
+        if (windowsHost) {
+          // Directory junctions preserve link-boundary coverage without requiring
+          // Windows symlink privileges or skipping the containment assertions.
+          yield* Effect.promise(() => NodeFSP.symlink(target, link, "junction"));
+        } else {
+          yield* fileSystem.symlink(target, link);
+        }
 
         const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
         expect(skills).toEqual([

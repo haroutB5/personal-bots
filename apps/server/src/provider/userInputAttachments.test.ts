@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
 import { appendUserInputAttachmentPaths } from "./userInputAttachments.ts";
@@ -18,6 +19,7 @@ const attachment = {
   mimeType: "text/plain",
   sizeBytes: 4,
 };
+const quoteReference = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 describe("question answer paths", () => {
   it.effect("keeps selected values intact and appends an actual readable server path", () =>
     Effect.gen(function* () {
@@ -33,7 +35,7 @@ describe("question answer paths", () => {
       expect(answers.q).toEqual([
         "First",
         "Second",
-        `Attached file "spec \\"final\\".txt": "${path}"`,
+        `Attached file ${quoteReference(attachment.name)}: ${quoteReference(path)}`,
       ]);
       expect(answers.other).toBe("No file");
       expect(original.q).toEqual(["First", "Second"]);
@@ -44,7 +46,9 @@ describe("question answer paths", () => {
         attachmentsByQuestionId: { ["__proto__"]: [attachment] },
       });
       expect(Object.keys(specialKey)).toEqual(["__proto__"]);
-      expect(specialKey["__proto__"]).toContain(path);
+      expect(specialKey["__proto__"]).toBe(
+        `Attached file ${quoteReference(attachment.name)}: ${quoteReference(path)}`,
+      );
     }).pipe(Effect.provide(layer)),
   );
   it.effect("does not send an unavailable attachment path", () =>
