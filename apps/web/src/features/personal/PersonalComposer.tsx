@@ -72,14 +72,78 @@ const MAX_LINES = 5;
 const ROUND_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
 
+/** Marks the hidden field resizeTextarea measures against. */
+const MEASURE_FIELD_ATTRIBUTE = "data-composer-measure";
+
+/**
+ * A hidden textarea that answers "how tall is this draft?" without touching
+ * the field on screen.
+ *
+ * The composer used to set the live field to `height: auto` and read its
+ * `scrollHeight` back before restoring the real height. On the phone that
+ * collapsed the field for a beat inside the same task: the transcript grew by
+ * the same amount, WebKit committed a scroll clamp from that intermediate
+ * layout, and the latest message stepped back up to 66px. When the line count
+ * did not change (typing on a wrapped line) no resize reached the transcript's
+ * own re-pin either, so the step stuck until some later write pinned the list
+ * again. The measurer never moves the live layout: an out-of-flow box pinned
+ * at its own top-left, invisible and at an auto one-line height that never
+ * changes, carrying the live field's classes so font, line-height and padding
+ * match, with only its `scrollHeight` read.
+ */
+function measureField(textarea: HTMLTextAreaElement): HTMLTextAreaElement | null {
+  if (typeof document === "undefined" || typeof document.createElement !== "function") return null;
+  const parent = textarea.parentElement;
+  if (parent === null) return null;
+  let measurer = parent.querySelector<HTMLTextAreaElement>(`:scope > [${MEASURE_FIELD_ATTRIBUTE}]`);
+  if (measurer === null) {
+    measurer = document.createElement("textarea");
+    measurer.setAttribute(MEASURE_FIELD_ATTRIBUTE, "");
+    measurer.setAttribute("aria-hidden", "true");
+    measurer.tabIndex = -1;
+    measurer.readOnly = true;
+    parent.append(measurer);
+  }
+  measurer.className = textarea.className;
+  // Set after the class copy: the measurer's own box must never depend on a
+  // utility the live field carries.
+  measurer.rows = 1;
+  // The field carries no horizontal border or padding, and an auto-height
+  // field never shows a scrollbar, so this is its full text width - the width
+  // the old measure saw even while the live field was capped and scrolling.
+  measurer.style.position = "absolute";
+  measurer.style.top = "0";
+  measurer.style.left = "0";
+  measurer.style.width = `${textarea.offsetWidth}px`;
+  measurer.style.height = "auto";
+  measurer.style.visibility = "hidden";
+  measurer.style.pointerEvents = "none";
+  measurer.style.overflowY = "hidden";
+  measurer.style.zIndex = "-1";
+  return measurer;
+}
+
+/** The draft's content height in px, or null when it cannot be measured here. */
+function draftHeight(textarea: HTMLTextAreaElement, value: string): number | null {
+  // 0 in a test root (jsdom, no layout); a hidden field is left at its height.
+  if (textarea.offsetWidth <= 0) return null;
+  const measurer = measureField(textarea);
+  if (measurer === null) return null;
+  measurer.value = value;
+  return measurer.scrollHeight > 0 ? measurer.scrollHeight : null;
+}
+
 function resizeTextarea(textarea: HTMLTextAreaElement | null, value: string): void {
   if (textarea === null) return;
   const max = LINE_HEIGHT_PX * MAX_LINES + 20;
-  textarea.style.height = "auto";
-  // An empty draft is always one line; skip the layout read.
-  const height = value.length === 0 ? LINE_HEIGHT_PX + 22 : Math.min(textarea.scrollHeight, max);
+  // An empty draft is always one line; skip the measurement.
+  const measured = value.length === 0 ? LINE_HEIGHT_PX + 22 : draftHeight(textarea, value);
+  // A field that cannot be measured (a hidden screen, a test root) keeps the
+  // height it has: never measure by collapsing it.
+  if (measured === null) return;
+  const height = Math.min(measured, max);
   textarea.style.height = `${height}px`;
-  textarea.style.overflowY = value.length > 0 && textarea.scrollHeight > max ? "auto" : "hidden";
+  textarea.style.overflowY = measured > max ? "auto" : "hidden";
 }
 
 /** Waits between send attempts; the gaps grow so a brief outage is ridden out. */
