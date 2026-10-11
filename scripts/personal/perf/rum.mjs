@@ -41,8 +41,9 @@ for (const name of NodeFS.readdirSync(logs)
     } catch {
       continue;
     }
-    // Journey beacons only: the iPhone typing capture (features/personal/typeJumpDiag.ts)
-    // posts numeric-only "type-" lines on the same event and would land in a journey-less bucket.
+    // Journey beacons only: the retired iPhone typing capture (removed in 1.66.28) posted
+    // numeric-only "type-" lines on this event; older logs still hold them and they would
+    // land in a journey-less bucket.
     if (typeof record.ms !== "number" || record.type !== undefined) continue;
     const key = `${record.journey} ${record.via ?? "?"} ${record.warm ? "warm" : "cold"}${record.snapshot ? " snapshot" : ""}`;
     if (!groups.has(key)) groups.set(key, []);
