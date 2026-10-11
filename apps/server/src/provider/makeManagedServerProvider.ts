@@ -4,6 +4,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -40,6 +41,26 @@ function withUsageLimits(
   const { usageLimits: _previous, ...rest } = snapshot;
   return usageLimits ? { ...rest, usageLimits } : rest;
 }
+
+/**
+ * `Effect.ignoreCause({ log: true })` that keeps interruptions out of the log.
+ * A shared cached computation (e.g. the maintenance-capabilities cache) can
+ * hand a later caller the exit of an interrupted run, and that stored exit
+ * arrives as an ordinary failure whose cause is interrupts only. Logging it
+ * puts a synthetic `InterruptError: All fibers interrupted without error`
+ * line with a stack in the startup log, which the release smoke counts as an
+ * error (1.66.22 rolled back on two such lines under load). Genuine failures
+ * and defects still log exactly as `ignoreCause({ log: true })` did, and
+ * interruption still ends the fiber the same way; only the logging of an
+ * interrupts-only cause is skipped.
+ */
+const ignoreCauseWithoutInterruptNoise = <A, E, R>(
+  self: Effect.Effect<A, E, R>,
+): Effect.Effect<void, never, R> =>
+  Effect.matchCauseEffect(self, {
+    onFailure: (cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.log(cause)),
+    onSuccess: () => Effect.void,
+  });
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
@@ -127,7 +148,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
         publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
       })
-      .pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
+      .pipe(ignoreCauseWithoutInterruptNoise, Effect.forkIn(scope));
 
     yield* Ref.set(enrichmentFiberRef, fiber);
   });
@@ -294,11 +315,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       );
       if (input.refreshOnInterval === false || !intervalElapsed || !enabled) return;
       if (yield* hasProviderStatusDemand) yield* Effect.asVoid(refreshSnapshot());
-    }).pipe(Effect.ignoreCause({ log: true })),
+    }).pipe(ignoreCauseWithoutInterruptNoise),
   ).pipe(Effect.forkScoped);
 
   yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
-    Effect.ignoreCause({ log: true }),
+    ignoreCauseWithoutInterruptNoise,
     Effect.forkScoped,
   );
 
