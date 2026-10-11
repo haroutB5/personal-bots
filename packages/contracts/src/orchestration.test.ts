@@ -268,6 +268,52 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
   }),
 );
 
+it.effect("decodes thread.turn.start followUp, absent meaning steer", () =>
+  Effect.gen(function* () {
+    const base = {
+      type: "thread.turn.start",
+      commandId: "cmd-turn-followup",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-followup",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const plain = yield* decodeThreadTurnStartCommand(base);
+    assert.strictEqual(plain.followUp, undefined);
+    const queued = yield* decodeThreadTurnStartCommand({ ...base, followUp: "queue" });
+    assert.strictEqual(queued.followUp, "queue");
+    const steered = yield* decodeThreadTurnStartCommand({ ...base, followUp: "steer" });
+    assert.strictEqual(steered.followUp, "steer");
+    const fromClient = yield* decodeClientOrchestrationCommand({
+      ...base,
+      followUp: "queue",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    });
+    if (fromClient.type !== "thread.turn.start") {
+      assert.fail(`Expected thread.turn.start, received ${fromClient.type}.`);
+    }
+    assert.strictEqual(fromClient.followUp, "queue");
+    const payload = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-followup",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(payload.followUp, undefined);
+    const queuedPayload = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-followup",
+      followUp: "queue",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(queuedPayload.followUp, "queue");
+  }),
+);
+
 it.effect("accepts inline images, uploaded images, and uploaded files from clients", () =>
   Effect.gen(function* () {
     const command = yield* decodeClientOrchestrationCommand({
