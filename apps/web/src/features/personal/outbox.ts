@@ -5,11 +5,10 @@ import type {
   PersonalReplyQuote,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadTurnFollowUp,
 } from "@t3tools/contracts";
 
 import { randomUUID } from "~/lib/utils";
-
-import type { TurnFollowUp } from "./turnFollowUp";
 
 /**
  * The offline send queue (1.66.10).
@@ -62,7 +61,7 @@ export interface OutboxTurnSettings {
    * null is a plain steer send, and what every entry stored before 1.66.28
    * reads back as.
    */
-  readonly followUp: TurnFollowUp | null;
+  readonly followUp: ThreadTurnFollowUp | null;
 }
 
 export interface OutboxEntry {

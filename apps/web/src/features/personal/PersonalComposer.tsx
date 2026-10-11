@@ -18,6 +18,7 @@ import {
   personalReplyContext,
   type PersonalReplyQuote,
   type ThreadId,
+  type ThreadTurnFollowUp,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import { ArrowUp, CircleAlert, CircleDashed, FileText, Plus, Square, X } from "lucide-react";
@@ -66,7 +67,6 @@ import { activeMentionDraft, applyMention, matchMentionCandidates } from "./ment
 import { MentionPopover, type MentionRow } from "./MentionPopover";
 import { COMPOSER_INPUT_ATTRIBUTE, consumeComposerRefocus } from "./composerRefocus";
 import { ReplyBar } from "./ReplyQuote";
-import type { TurnFollowUp } from "./turnFollowUp";
 import { useHoldCue } from "./useHoldCue";
 import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
 
@@ -602,7 +602,7 @@ export function PersonalComposer({
     readonly createdAt: string;
     readonly titleSeed: string;
     /** The steer/queue choice of the send this message came from, kept for its own go-out. */
-    readonly followUp?: TurnFollowUp;
+    readonly followUp?: ThreadTurnFollowUp;
     /** The unanswered first attempt, when a send that dropped mid-way is queued. */
     readonly unanswered?: boolean;
   }): Promise<string | null> => {
@@ -660,7 +660,7 @@ export function PersonalComposer({
     return null;
   };
 
-  const send = async (quick?: string, followUp?: TurnFollowUp): Promise<boolean> => {
+  const send = async (quick?: string, followUp?: ThreadTurnFollowUp): Promise<boolean> => {
     // A tapped choice: its own text, no draft, no attachments, no reply quote.
     const isQuick = quick !== undefined;
     if (
