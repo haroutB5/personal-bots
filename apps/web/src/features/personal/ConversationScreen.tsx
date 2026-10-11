@@ -1555,7 +1555,6 @@ export function ConversationScreen({
               disabledReason={sendBlockedReason}
               offlineNotice={offlineNotice}
               working={turnBusy}
-              queuedNotice={false}
               canInterrupt={interruptInput !== null}
               onInterrupt={onInterrupt}
               onPendingChange={(update) => setPending((current) => update(current))}

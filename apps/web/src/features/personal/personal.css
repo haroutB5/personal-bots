@@ -1015,6 +1015,16 @@
   background-color: var(--personal-fill-muted);
   transition: transform 120ms ease-out;
 }
+/* The composer's send button holds too: the dip says a menu is coming before
+   the hold fires. A tap or a scroll never reaches the 150 ms. */
+.personal-send-hold[data-holding="true"] {
+  transform: scale(0.9);
+  transition: transform 350ms cubic-bezier(0.4, 0, 1, 1) 150ms;
+}
+.personal-send-hold[data-held="true"] {
+  transform: scale(1.06);
+  transition: transform 120ms ease-out;
+}
 @media (hover: hover) {
   .personal-chip-hit:hover .personal-chip:not([data-current="true"]):not([data-state="needs_you"]) {
     background-color: var(--personal-border);
@@ -1075,7 +1085,9 @@
   .personal-chip-hit[data-holding="true"] .personal-chip,
   .personal-chip-hit[data-held="true"] .personal-chip,
   .personal-hold-target[data-holding="true"],
-  .personal-hold-target[data-held="true"] {
+  .personal-hold-target[data-held="true"],
+  .personal-send-hold[data-holding="true"],
+  .personal-send-hold[data-held="true"] {
     transform: none;
     transition: background-color 0ms;
   }
