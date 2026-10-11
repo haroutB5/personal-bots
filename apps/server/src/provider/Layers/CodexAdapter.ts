@@ -2615,6 +2615,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           : {}),
         ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.followUp !== undefined ? { followUp: input.followUp } : {}),
+        ...(input.messageId !== undefined ? { clientUserMessageId: input.messageId } : {}),
         ...(input.systemInstructions !== undefined
           ? { systemInstructions: input.systemInstructions }
           : {}),

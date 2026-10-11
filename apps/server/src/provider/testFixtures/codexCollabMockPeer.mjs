@@ -162,6 +162,47 @@ rl.on("line", (line) => {
     write({ id, result: fixture.responses.threadStart });
     return;
   }
+  if (method === "turn/steer") {
+    // Same-turn steering (1.66.28). The steer lands in the turn that is
+    // active; like the real app-server it fails when expectedTurnId does not
+    // match the active turn (the turn just ended).
+    if (script.recordTurnStarts) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
+    }
+    if (script.failSteer) {
+      write({ id, error: { code: -32000, message: script.failSteer } });
+      return;
+    }
+    if (!activeTurn || message.params?.expectedTurnId !== activeTurn.id) {
+      write({
+        id,
+        error: {
+          code: -32000,
+          message: `expected active turn id ${message.params?.expectedTurnId}`,
+        },
+      });
+      return;
+    }
+    for (const notification of script.steerNotifications ?? []) {
+      write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+    }
+    write({ id, result: { turnId: activeTurn.id } });
+    if (script.completeTurnOnSteer) {
+      write({
+        jsonrpc: "2.0",
+        method: "turn/completed",
+        params: {
+          threadId: script.rootThreadId,
+          turn: { ...activeTurn, status: "completed" },
+        },
+      });
+      activeTurn = undefined;
+    }
+    return;
+  }
   if (method === "turn/start") {
     const turnId = script.turnIds?.[turnStartCount];
     const turn = turnId
@@ -169,6 +210,12 @@ rl.on("line", (line) => {
       : fixture.responses.turnStart.turn;
     activeTurn = turn;
     turnStartCount += 1;
+    if (script.recordTurnStarts) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
+    }
     write({ id, result: { ...fixture.responses.turnStart, turn } });
     const rootThreadId = script.rootThreadId;
     if (script.onlyFirstTurnStarts !== true || turnStartCount === 1) {

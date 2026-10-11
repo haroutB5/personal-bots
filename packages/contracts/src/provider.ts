@@ -22,6 +22,7 @@ import {
   ProviderUserInputAnswers,
   UserInputAttachments,
   RuntimeMode,
+  ThreadTurnFollowUp,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 
@@ -112,6 +113,12 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  /** How a send behaves while the thread's turn is already running: "steer"
+      (the default when absent) folds it into the running turn; "queue" never
+      steers — the provider starts (or queues) it as its own turn. Only
+      adapters whose protocol has a real steer call read this (Codex's
+      `turn/steer`); the rest keep their pre-existing mid-turn behaviour. */
+  followUp: Schema.optional(ThreadTurnFollowUp),
   /** Per-thread system instructions (personal bot persona). Same meaning as
       on ProviderSessionStartInput, for adapters whose instructions slot is
       per turn rather than per session. */

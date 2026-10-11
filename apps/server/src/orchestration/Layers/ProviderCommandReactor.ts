@@ -483,6 +483,15 @@ const make = Effect.gen(function* () {
     }
   >();
   const stoppingThreadIds = new Set<ThreadId>();
+  // followUp="queue" turn starts received while their thread is working: held
+  // here (FIFO, one thread's messages in the order they were sent) and
+  // re-issued as their own turn once the running turn ends.
+  const queuedFollowUps = new Map<ThreadId, Array<QueuedTurnStart>>();
+  // Threads whose drained follow-up has been re-issued and whose turn has not
+  // been seen running yet. While an entry is set, an idle session event
+  // belongs to the turn that just ended, so the queue waits; a failed drain
+  // clears the entry and moves on to the next queued message.
+  const followUpDrainInFlight = new Map<ThreadId, CommandId>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -754,6 +763,119 @@ const make = Effect.gen(function* () {
       .getThreadShellById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
   });
+
+  /**
+   * Re-issues the head of a thread's follow-up queue as a fresh turn start.
+   * The message id is preserved, so the chat keeps one user bubble; the send
+   * carries followUp "queue" so a thread that turned busy again re-queues it
+   * instead of steering. Only called when the thread looks idle.
+   */
+  const drainQueuedFollowUps = Effect.fn("drainQueuedFollowUps")(function* (threadId: ThreadId) {
+    if (followUpDrainInFlight.has(threadId)) return;
+    const queued = queuedFollowUps.get(threadId);
+    if (queued === undefined || queued.length === 0) return;
+    const thread = yield* resolveThreadShell(threadId);
+    if (!thread) {
+      queuedFollowUps.delete(threadId);
+      return;
+    }
+    // The caller's signal is the gate: a session seen idle, a send that ended
+    // without a turn, or a message handled outside the provider. The session
+    // projection may still lag behind that signal (a separate reader of the
+    // event store), and a re-issue held back on stale state would be stranded,
+    // so it is deliberately not re-checked here.
+    const event = queued.shift()!;
+    if (queued.length === 0) queuedFollowUps.delete(threadId);
+    const turnStart = yield* projectionSnapshotQuery.getTurnStartMessage({
+      threadId,
+      messageId: event.payload.messageId,
+    });
+    if (Option.isNone(turnStart) || turnStart.value.message.role !== "user") {
+      yield* appendProviderFailureActivity({
+        threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Queued message was not sent",
+        detail: `User message '${event.payload.messageId}' was not found for turn start request.`,
+        turnId: null,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+        requestId: event.payload.messageId,
+      });
+      return;
+    }
+    const commandId = yield* serverCommandId("follow-up-queue");
+    followUpDrainInFlight.set(threadId, commandId);
+    const { messageId, ...request } = event.payload;
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.turn.start",
+        commandId,
+        ...request,
+        message: {
+          messageId,
+          role: "user",
+          text: turnStart.value.message.text,
+          attachments: turnStart.value.message.attachments ?? [],
+        },
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            if (followUpDrainInFlight.get(threadId) === commandId) {
+              followUpDrainInFlight.delete(threadId);
+            }
+            if (Cause.hasInterruptsOnly(cause)) return;
+            yield* appendProviderFailureActivity({
+              threadId,
+              kind: "provider.turn.start.failed",
+              summary: "Queued message was not sent",
+              detail: formatFailureDetail(cause),
+              turnId: null,
+              createdAt: DateTime.formatIso(yield* DateTime.now),
+              requestId: messageId,
+            }).pipe(
+              Effect.ignore({ log: true, message: "failed to report queued follow-up failure" }),
+            );
+          }),
+        ),
+      );
+  });
+
+  /**
+   * A session status change is what releases a thread's queued follow-ups: a
+   * turn seen running clears the drain marker (the drained send landed), and
+   * an idle session with no drain in flight lets the next queued message out.
+   */
+  const handleFollowUpQueueSessionChange = Effect.fn("handleFollowUpQueueSessionChange")(function* (
+    threadId: ThreadId,
+    session: OrchestrationSession,
+  ) {
+    if (
+      session.status === "starting" ||
+      session.status === "running" ||
+      session.activeTurnId !== null
+    ) {
+      followUpDrainInFlight.delete(threadId);
+      return;
+    }
+    // An idle event while a drained send has not been seen running belongs
+    // to the turn that just ended, not to the drained one.
+    if (followUpDrainInFlight.has(threadId)) return;
+    yield* drainQueuedFollowUps(threadId);
+  });
+
+  /**
+   * The drained send behind this command is over without a running turn (it
+   * failed, or the message was handled outside the provider): clear the marker
+   * and let the next queued message through.
+   */
+  const releaseFollowUpDrain = (threadId: ThreadId, commandId: CommandId | null) =>
+    Effect.suspend(() => {
+      if (commandId === null || followUpDrainInFlight.get(threadId) !== commandId) {
+        return Effect.void;
+      }
+      followUpDrainInFlight.delete(threadId);
+      return drainQueuedFollowUps(threadId);
+    });
 
   const resolveThreadDetail = Effect.fnUntraced(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
@@ -1212,6 +1334,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly followUp?: "steer" | "queue";
     readonly createdAt: string;
     readonly titleSeed?: string;
     /** Start a fresh provider session and carry the chat over to it. */
@@ -1329,6 +1452,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.followUp !== undefined ? { followUp: input.followUp } : {}),
       ...(systemInstructions !== undefined ? { systemInstructions } : {}),
       ...(turnContext !== undefined ? { turnContext } : {}),
       ...(turnContext !== undefined && turnContextFallbacks.length > 0
@@ -1790,6 +1914,8 @@ const make = Effect.gen(function* () {
         createdAt: event.payload.createdAt,
       }).pipe(
         Effect.flatMap(() => appendTurnStartFailure("Provider turn start failed", detail)),
+        // A failed drained follow-up must not strand the messages behind it.
+        Effect.flatMap(() => releaseFollowUpDrain(event.payload.threadId, event.commandId)),
         Effect.asVoid,
       );
     };
@@ -1854,6 +1980,8 @@ const make = Effect.gen(function* () {
       return true;
     }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
     if (authCommandHandled) {
+      // A queued account command runs no turn of its own; the queue moves on.
+      yield* releaseFollowUpDrain(event.payload.threadId, event.commandId);
       return;
     }
 
@@ -1948,6 +2076,14 @@ const make = Effect.gen(function* () {
         ),
       );
     if (isCompactCommand) {
+      // A queued /compact runs compaction rather than a turn of its own; the
+      // queue waits for whatever session events compaction produces.
+      if (
+        event.commandId !== null &&
+        followUpDrainInFlight.get(event.payload.threadId) === event.commandId
+      ) {
+        followUpDrainInFlight.delete(event.payload.threadId);
+      }
       if (!hasOtherUserMessages) {
         return yield* appendTurnStartFailure(
           "Context compaction failed",
@@ -2017,6 +2153,38 @@ const make = Effect.gen(function* () {
       turnsAfterCompaction.set(event.payload.threadId, queued);
       return;
     }
+    // A drain re-issue was released by a real "the turn ended" signal, so it
+    // is sent even if the session projection has not caught up yet; holding it
+    // again on stale state would strand it (no further session event is due).
+    // The compaction replay above is exempt the same way.
+    const followUpDrainReissue =
+      event.commandId !== null &&
+      followUpDrainInFlight.get(event.payload.threadId) === event.commandId;
+    // A message already queued, or one whose turn is on its way out, keeps
+    // later ones behind it even in the instant the running turn ends, so the
+    // order the user sent them in is the order they run in.
+    const followUpQueuePending =
+      queuedFollowUps.has(event.payload.threadId) ||
+      followUpDrainInFlight.has(event.payload.threadId);
+    if (
+      !resumed &&
+      !followUpDrainReissue &&
+      event.payload.followUp === "queue" &&
+      (followUpQueuePending ||
+        (thread.session != null &&
+          (thread.session.status === "starting" ||
+            thread.session.status === "running" ||
+            thread.session.activeTurnId !== null)))
+    ) {
+      // "Queue after this turn": hold the message here until the running turn
+      // ends. The user message is already in the chat; the drain re-issues it
+      // as its own turn (an idle thread with nothing pending never comes
+      // through here).
+      const queued = queuedFollowUps.get(event.payload.threadId) ?? [];
+      queued.push(event);
+      queuedFollowUps.set(event.payload.threadId, queued);
+      return;
+    }
     const turnInput = {
       threadId: event.payload.threadId,
       messageId: event.payload.messageId,
@@ -2030,6 +2198,7 @@ const make = Effect.gen(function* () {
       ),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       interactionMode: event.payload.interactionMode,
+      ...(event.payload.followUp !== undefined ? { followUp: event.payload.followUp } : {}),
       createdAt: event.payload.createdAt,
       // Later turns must not reuse the current title as titleSeed. Only the
       // first prompt seed should suppress a not-yet-renamed session title.
@@ -2422,6 +2591,7 @@ const make = Effect.gen(function* () {
       case "thread.session-set":
         if (event.payload.session.status === "ready")
           yield* maybeRefineThreadTitle(event.payload.threadId);
+        yield* handleFollowUpQueueSessionChange(event.payload.threadId, event.payload.session);
         return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThreadShell(event.payload.threadId);
@@ -2518,11 +2688,19 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      // Session status changes are otherwise off the reactor's path; a thread
+      // with a queued follow-up or one being drained needs every one of them
+      // (a turn seen running ends the wait, an idle status releases the queue).
+      const sessionSetForFollowUpQueue =
+        event.type === "thread.session-set" &&
+        (queuedFollowUps.has(event.payload.threadId) ||
+          followUpDrainInFlight.has(event.payload.threadId));
       if (
         (event.type === "thread.meta-updated" &&
           (event.payload.regenerateTitle === true ||
             event.payload.titleState?.needsRefinement === true)) ||
-        (event.type === "thread.session-set" && event.payload.session.status === "ready") ||
+        (event.type === "thread.session-set" &&
+          (event.payload.session.status === "ready" || sessionSetForFollowUpQueue)) ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||

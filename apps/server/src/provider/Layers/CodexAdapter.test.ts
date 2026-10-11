@@ -7,6 +7,7 @@ import {
   ApprovalRequestId,
   CodexSettings,
   EventId,
+  MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderItemId,
@@ -578,6 +579,37 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         effort: "high",
         serviceTier: "priority",
       });
+    }),
+  );
+
+  it.effect("passes the send's followUp and message id through to the runtime", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-follow-up");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.sendTurnImpl.mockClear();
+
+      yield* Effect.ignore(
+        adapter.sendTurn({
+          threadId,
+          input: "steer me",
+          messageId: MessageId.make("message-steer-adapter"),
+          followUp: "queue",
+          attachments: [],
+        }),
+      );
+
+      // The runtime decides steer vs its own turn from these two fields.
+      const input = runtime.sendTurnImpl.mock.calls[0]?.[0];
+      NodeAssert.ok(input);
+      NodeAssert.equal(input.followUp, "queue");
+      NodeAssert.equal(input.clientUserMessageId, "message-steer-adapter");
     }),
   );
 

@@ -15,6 +15,7 @@ import {
   type ProviderUserInputAnswers,
   RuntimeMode,
   type ServerProviderModel,
+  type ThreadTurnFollowUp,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -28,6 +29,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -47,6 +49,7 @@ import {
   type T3CodeToolAvailability,
 } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeV2TurnSteerResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnSteerResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -202,6 +205,14 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly interactionMode?: ProviderInteractionMode;
   /** Per-thread bot instructions (personal bot persona); omitted for ordinary threads. */
   readonly systemInstructions?: string;
+  /**
+   * How the send behaves while a turn is already running: "steer" (or absent)
+   * folds it into the running turn via `turn/steer`; "queue" never steers and
+   * starts (or queues) a turn of its own.
+   */
+  readonly followUp?: ThreadTurnFollowUp;
+  /** The owner's message this send carries, for the steer's client id. */
+  readonly clientUserMessageId?: string;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -625,6 +636,27 @@ function buildCodexTurnInstructions(input: {
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
+/** The turn's user input items: prompt text (skill aliases canonicalised) plus image attachments. */
+export function buildTurnUserInput(input: {
+  readonly prompt?: string;
+  readonly attachments?: ReadonlyArray<{
+    readonly type: "localImage";
+    readonly path: string;
+  }>;
+}): Array<EffectCodexSchema.V2TurnStartParams__UserInput> {
+  const turnInput: Array<EffectCodexSchema.V2TurnStartParams__UserInput> = [];
+  if (input.prompt) {
+    turnInput.push({
+      type: "text",
+      text: input.prompt.replace(SKILL_MENTION_PATTERN, "$1$$$2"),
+    });
+  }
+  for (const attachment of input.attachments ?? []) {
+    turnInput.push(attachment);
+  }
+  return turnInput;
+}
+
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
@@ -647,16 +679,7 @@ export function buildTurnStartParams(input: {
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
 > {
-  const turnInput: Array<EffectCodexSchema.V2TurnStartParams__UserInput> = [];
-  if (input.prompt) {
-    turnInput.push({
-      type: "text",
-      text: input.prompt.replace(SKILL_MENTION_PATTERN, "$1$$$2"),
-    });
-  }
-  for (const attachment of input.attachments ?? []) {
-    turnInput.push(attachment);
-  }
+  const turnInput = buildTurnUserInput(input);
 
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   const turnInstructions = buildCodexTurnInstructions({
@@ -2575,6 +2598,53 @@ export const makeCodexSessionRuntime = (
           );
           const models = options.models ? yield* options.models : [];
           const modelName = models.find((model) => model.slug === normalizedModel)?.name;
+          // Harout's send behaviour (1.66.28): a message sent while a turn is
+          // running is steered into it by default. turn/steer is refused when
+          // the turn just ended, or cannot take same-turn steering (/review,
+          // manual /compact): fall through to turn/start so the message is
+          // never lost. "queue" never steers and takes the turn/start path.
+          const activeTurnId = (yield* Ref.get(sessionRef)).activeTurnId;
+          if (input.followUp !== "queue" && activeTurnId !== undefined) {
+            const steered = yield* Effect.result(
+              client.raw.request("turn/steer", {
+                threadId: providerThreadId,
+                expectedTurnId: activeTurnId,
+                input: buildTurnUserInput({
+                  ...(input.input ? { prompt: input.input } : {}),
+                  ...(input.attachments ? { attachments: input.attachments } : {}),
+                }),
+                ...(input.clientUserMessageId !== undefined
+                  ? { clientUserMessageId: input.clientUserMessageId }
+                  : {}),
+              }),
+            );
+            if (Result.isSuccess(steered)) {
+              // The steer landed in the turn that was already running. A
+              // response this build cannot decode is logged, not treated as a
+              // failure: the message was taken in and must not be sent twice.
+              yield* decodeV2TurnSteerResponse(steered.success).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Codex steered a turn but returned an unknown response", {
+                    threadId: options.threadId,
+                    cause,
+                  }),
+                ),
+              );
+              const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+              return {
+                threadId: options.threadId,
+                turnId: activeTurnId,
+                ...(resumedProviderThreadId
+                  ? { resumeCursor: { threadId: resumedProviderThreadId } }
+                  : {}),
+              } satisfies ProviderTurnStartResult;
+            }
+            yield* Effect.logInfo("Codex refused turn/steer; starting a new turn instead", {
+              threadId: options.threadId,
+              activeTurnId,
+              error: steered.failure,
+            });
+          }
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,

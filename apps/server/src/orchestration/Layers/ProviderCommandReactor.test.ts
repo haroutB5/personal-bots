@@ -5707,4 +5707,255 @@ describe("ProviderCommandReactor", () => {
         expect(harness.closeIdleTerminals).toHaveBeenCalledTimes(1);
       }),
   );
+
+  describe("followUp queue (1.66.28)", () => {
+    const at = (seconds: number) => `2026-01-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+
+    const setSessionStatus = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      input: {
+        readonly commandId: string;
+        readonly status: "running" | "ready" | "interrupted" | "error";
+        readonly activeTurnId: TurnId | null;
+        readonly seconds: number;
+      },
+    ) =>
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(input.commandId),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status: input.status,
+          runtimeMode: "approval-required",
+          activeTurnId: input.activeTurnId,
+          lastError: null,
+          updatedAt: at(input.seconds),
+        },
+        createdAt: at(input.seconds),
+      });
+
+    const startQueuedTurn = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      input: {
+        readonly commandId: string;
+        readonly messageId: string;
+        readonly text: string;
+        readonly seconds: number;
+      },
+    ) =>
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(input.commandId),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make(input.messageId),
+          role: "user",
+          text: input.text,
+          attachments: [],
+        },
+        followUp: "queue",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: at(input.seconds),
+      });
+
+    const sentInputs = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+    ): Array<{ readonly input?: string; readonly followUp?: string }> =>
+      harness.sendTurn.mock.calls.map(
+        (call) => call[0] as { readonly input?: string; readonly followUp?: string },
+      );
+
+    effectIt.effect("holds queued messages until the running turn ends, in order", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        yield* setSessionStatus(harness, {
+          commandId: "cmd-queue-turn-running",
+          status: "running",
+          activeTurnId: asTurnId("turn-1"),
+          seconds: 1,
+        });
+        yield* startQueuedTurn(harness, {
+          commandId: "cmd-queue-1",
+          messageId: "message-queue-1",
+          text: "queued first",
+          seconds: 2,
+        });
+        yield* startQueuedTurn(harness, {
+          commandId: "cmd-queue-2",
+          messageId: "message-queue-2",
+          text: "queued second",
+          seconds: 3,
+        });
+        yield* Effect.promise(() => harness.drain());
+
+        // While the turn runs, nothing of the queue reaches the provider.
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+
+        // The turn ends: the first queued message goes out as its own turn,
+        // and it never steers (the drain re-issues it as followUp "queue").
+        yield* setSessionStatus(harness, {
+          commandId: "cmd-queue-turn-ready-1",
+          status: "ready",
+          activeTurnId: null,
+          seconds: 4,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length >= 1));
+        expect(sentInputs(harness).map((entry) => entry.input)).toEqual(["queued first"]);
+        expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ followUp: "queue" });
+
+        // That turn runs and ends: the next queued message follows.
+        yield* setSessionStatus(harness, {
+          commandId: "cmd-queue-turn-running-2",
+          status: "running",
+          activeTurnId: asTurnId("turn-2"),
+          seconds: 5,
+        });
+        yield* setSessionStatus(harness, {
+          commandId: "cmd-queue-turn-ready-2",
+          status: "ready",
+          activeTurnId: null,
+          seconds: 6,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length >= 2));
+        expect(sentInputs(harness).map((entry) => entry.input)).toEqual([
+          "queued first",
+          "queued second",
+        ]);
+
+        // Each queued message kept one user bubble and the queue left no
+        // failure behind.
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(
+          thread?.messages.filter((entry) => entry.role === "user").map((entry) => entry.text),
+        ).toEqual(["queued first", "queued second"]);
+        expect(thread?.activities.map((entry) => entry.kind)).not.toContain(
+          "provider.turn.start.failed",
+        );
+      }),
+    );
+
+    effectIt.effect("sends a queued message normally when the thread is idle", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        yield* startQueuedTurn(harness, {
+          commandId: "cmd-queue-idle",
+          messageId: "message-queue-idle",
+          text: "send me now",
+          seconds: 1,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        expect(sentInputs(harness).map((entry) => entry.input)).toEqual(["send me now"]);
+      }),
+    );
+
+    effectIt.effect("an interrupt ends the turn and releases the queue, not cancels it", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        yield* setSessionStatus(harness, {
+          commandId: "cmd-interrupt-turn-running",
+          status: "running",
+          activeTurnId: asTurnId("turn-1"),
+          seconds: 1,
+        });
+        yield* startQueuedTurn(harness, {
+          commandId: "cmd-queue-interrupt",
+          messageId: "message-queue-interrupt",
+          text: "survive the stop",
+          seconds: 2,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-interrupt"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: at(3),
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+
+        // The provider reports the aborted turn.
+        yield* setSessionStatus(harness, {
+          commandId: "cmd-interrupt-aborted",
+          status: "interrupted",
+          activeTurnId: null,
+          seconds: 4,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        expect(sentInputs(harness).map((entry) => entry.input)).toEqual(["survive the stop"]);
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.activities).not.toContainEqual(
+          expect.objectContaining({ summary: "Queued message was not sent" }),
+        );
+      }),
+    );
+
+    effectIt.effect("a failed drained send releases the next queued message", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            sendTurnEffect: (call) =>
+              call === 1
+                ? Effect.fail(
+                    new ProviderAdapterRequestError({
+                      provider: "codex",
+                      method: "turn/start",
+                      detail: "provider refused the drained turn",
+                    }),
+                  )
+                : undefined,
+          }),
+        );
+        yield* setSessionStatus(harness, {
+          commandId: "cmd-fail-turn-running",
+          status: "running",
+          activeTurnId: asTurnId("turn-1"),
+          seconds: 1,
+        });
+        yield* startQueuedTurn(harness, {
+          commandId: "cmd-queue-fail-1",
+          messageId: "message-queue-fail-1",
+          text: "fails first",
+          seconds: 2,
+        });
+        yield* startQueuedTurn(harness, {
+          commandId: "cmd-queue-fail-2",
+          messageId: "message-queue-fail-2",
+          text: "still goes out",
+          seconds: 3,
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        yield* setSessionStatus(harness, {
+          commandId: "cmd-fail-turn-ready",
+          status: "ready",
+          activeTurnId: null,
+          seconds: 4,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+
+        expect(sentInputs(harness).map((entry) => entry.input)).toEqual([
+          "fails first",
+          "still goes out",
+        ]);
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.activities).toContainEqual(
+          expect.objectContaining({
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+          }),
+        );
+      }),
+    );
+  });
 });
