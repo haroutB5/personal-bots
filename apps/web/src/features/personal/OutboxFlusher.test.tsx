@@ -133,6 +133,28 @@ describe("sending the queue", () => {
     expect(ids()).toEqual([]);
   });
 
+  it("carries the steer/queue choice the message was typed with", async () => {
+    enqueueOutboxEntry(
+      entry("q", {
+        turn: {
+          modelSelection: { instanceId: "claude", model: "sonnet" },
+          titleSeed: null,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          followUp: "queue",
+        } as never,
+      }),
+    );
+    enqueueOutboxEntry(entry("s"));
+    await mount();
+    await settle();
+    expect(mocks.startTurn).toHaveBeenCalledTimes(2);
+    const inputs = mocks.startTurn.mock.calls.map((call) => call[0].input);
+    expect(inputs[0]?.followUp).toBe("queue");
+    // A plain steer keeps the field off the command entirely.
+    expect(inputs[1]).not.toHaveProperty("followUp");
+  });
+
   it("waits while the laptop is away, and sends when it comes back", async () => {
     mocks.phase = "reconnecting";
     enqueueOutboxEntry(entry("a"));

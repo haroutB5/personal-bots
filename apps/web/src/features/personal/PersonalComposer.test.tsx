@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import {
 } from "./outbox";
 import { setOutboxBlobBackendForTesting } from "./outboxBlobs";
 import { isSentTextEcho, PersonalComposer } from "./PersonalComposer";
+import { LONG_PRESS_MS } from "./useLongPress";
 
 vi.mock("./AttachmentPreview", () => ({
   AttachmentPreview: ({
@@ -26,6 +28,22 @@ vi.mock("./AttachmentPreview", () => ({
       {attachment.name}
       <button onClick={onClose}>Close preview</button>
     </div>
+  ),
+}));
+
+// Base UI's menu needs a DOM; what matters here is when the composer opens it.
+vi.mock("~/components/ui/menu", () => ({
+  Menu: ({ open, children }: { open: boolean; children: ReactNode }) => (
+    <div data-testid="send-menu" data-open={String(open)}>
+      {children}
+    </div>
+  ),
+  MenuTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
+  MenuPopup: ({ children }: { children: ReactNode }) => <div role="menu">{children}</div>,
+  MenuItem: ({ children, onClick }: { children: ReactNode; onClick: () => void }) => (
+    <button role="menuitem" onClick={onClick}>
+      {children}
+    </button>
   ),
 }));
 
@@ -479,19 +497,116 @@ describe("personal composer in a group", () => {
     await act(async () => textarea.props.onChange({ target: { value: "@", selectionStart: 1 } }));
     expect(renderer.root.findAllByProps({ "aria-label": "Mention a bot" })).toHaveLength(0);
   });
+
+  it("keeps its own send path: a hold on Send opens no menu and sends nothing", async () => {
+    // The DOM bits a hold would touch, with the fake clock in place: a group
+    // composer attaches no hold handlers at all, so none of it runs.
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+      setTimeout,
+      clearTimeout,
+    });
+    vi.stubGlobal("document", {
+      activeElement: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    state.draft.prompt = "Round one";
+    await renderGroup();
+    const send = renderer.root.findByProps({ "aria-label": "Send" });
+    await act(async () =>
+      send.props.onPointerDown({
+        clientX: 10,
+        clientY: 10,
+        pointerType: "touch",
+        button: 0,
+        preventDefault: () => undefined,
+      }),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(LONG_PRESS_MS);
+    });
+
+    expect(renderer.root.findAllByProps({ role: "menu" })).toHaveLength(0);
+    expect(state.groupSend).not.toHaveBeenCalled();
+    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
+    expect(state.groupSend).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it("says Queued for any mid-turn send: its members take the message in later", async () => {
+    state.draft.prompt = "Round two";
+    // groupId as the group screen passes it: that is what keeps the notice on
+    // for any mid-turn send here.
+    await renderGroup({ working: true, groupId: "group-1" });
+    await act(async () =>
+      renderer.root
+        .findByProps({ "aria-label": "Send, queued until the bot takes it in" })
+        .props.onClick(),
+    );
+    expect(state.groupSend).toHaveBeenCalledOnce();
+    const status = renderer.root.findAllByProps({ role: "status" });
+    expect(status.some((node) => node.children.join("").includes("Queued"))).toBe(true);
+  });
 });
 
 /**
- * The server takes a mid-turn start unconditionally and every adapter folds it
- * into the running turn, so the phone no longer has to hold the message until
- * the bot is idle. Sending it is also what makes it survive closing the PWA:
- * the draft store is this device's, the sent message is on the laptop.
+ * Steering is the default: a tapped send leaves `followUp` off the command, so
+ * the server folds it into the running turn and the composer says nothing.
+ * Queueing is the deliberate choice: a hold on the send button (or a desktop
+ * right-click, or the ContextMenu key) opens "Send now" / "Queue after this
+ * turn", and only a "queue" send shows "Queued" in the composer. The click
+ * that ends a hold is swallowed by useLongPress (its own tests); here what
+ * matters is what the composer does with each send.
  */
-describe("personal composer queues while the bot works", () => {
+describe("personal composer steers by default and queues from the send menu", () => {
   const working = { ...props, working: true, canInterrupt: true };
-  const sendLabel = "Send, queued until the bot takes it in";
+  const sendLabel = "Send, the bot takes it in during this turn. Hold for send options";
+  const offlineSendLabel = "Send, waits here until your laptop reconnects";
 
-  it("sends mid-turn and says the message is waiting its turn", async () => {
+  /** The DOM bits a hold touches, with the fake clock in place (as useLongPress.test). */
+  function stubHoldEnvironment(): void {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+      setTimeout,
+      clearTimeout,
+    });
+    vi.stubGlobal("document", {
+      activeElement: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+  }
+
+  /** Presses Send and lets the hold fire, so the menu is open. */
+  async function holdSendButton(label = sendLabel): Promise<void> {
+    const button = renderer.root.findByProps({ "aria-label": label });
+    await act(async () =>
+      button.props.onPointerDown({
+        clientX: 10,
+        clientY: 10,
+        pointerType: "touch",
+        button: 0,
+        preventDefault: () => undefined,
+      }),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(LONG_PRESS_MS);
+    });
+  }
+
+  function menuItem(text: string) {
+    const item = renderer.root.findAllByType("button").find((node) => node.children.includes(text));
+    expect(item).toBeDefined();
+    return item!;
+  }
+
+  const sendMenuOpen = () =>
+    renderer.root.findByProps({ "data-testid": "send-menu" }).props["data-open"];
+
+  it("sends mid-turn as a steer: no followUp on the command, nothing about queueing", async () => {
     await act(async () => renderer.update(<PersonalComposer {...working} />));
 
     const send = renderer.root.findByProps({ "aria-label": sendLabel });
@@ -499,16 +614,62 @@ describe("personal composer queues while the bot works", () => {
     await act(async () => send.props.onClick());
 
     expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input).not.toHaveProperty("followUp");
     expect(state.draft.prompt).toBe("");
-    const status = renderer.root.findAllByProps({ role: "status" });
-    expect(status.some((node) => node.children.join("").includes("Queued"))).toBe(true);
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
   });
 
-  it("leaves Queued to the status under the message when a bot chat asks it to", async () => {
-    await act(async () => renderer.update(<PersonalComposer {...working} queuedNotice={false} />));
-    await act(async () => renderer.root.findByProps({ "aria-label": sendLabel }).props.onClick());
+  it("a hold opens the menu; the lift neither sends nor closes it", async () => {
+    stubHoldEnvironment();
+    await act(async () => renderer.update(<PersonalComposer {...working} />));
+    await holdSendButton();
+    await act(async () =>
+      renderer.root.findByProps({ "aria-label": sendLabel }).props.onPointerUp(),
+    );
+
+    expect(state.start).not.toHaveBeenCalled();
+    expect(sendMenuOpen()).toBe("true");
+  });
+
+  it("queues from the menu: the command asks to wait for this turn, and Queued shows", async () => {
+    stubHoldEnvironment();
+    await act(async () => renderer.update(<PersonalComposer {...working} />));
+    await holdSendButton();
+    await act(async () => menuItem("Queue after this turn").props.onClick());
+
     expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input.followUp).toBe("queue");
+    const status = renderer.root.findAllByProps({ role: "status" });
+    expect(status.some((node) => node.children.join("").includes("Queued"))).toBe(true);
+    expect(sendMenuOpen()).toBe("false");
+  });
+
+  it("an idle hold offers only Send now, which sends a plain steer", async () => {
+    stubHoldEnvironment();
+    await holdSendButton("Send");
+    expect(
+      renderer.root
+        .findAllByType("button")
+        .some((node) => node.children.includes("Queue after this turn")),
+    ).toBe(false);
+
+    await act(async () => menuItem("Send now").props.onClick());
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input).not.toHaveProperty("followUp");
     expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  });
+
+  it("a desktop right-click opens the same menu without a hold", async () => {
+    await act(async () => renderer.update(<PersonalComposer {...working} />));
+    const preventDefault = vi.fn();
+    await act(async () =>
+      renderer.root
+        .findByProps({ "aria-label": sendLabel })
+        .props.onContextMenu({ preventDefault }),
+    );
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(sendMenuOpen()).toBe("true");
   });
 
   it("says nothing about queueing for a message sent to an idle bot", async () => {
@@ -528,11 +689,10 @@ describe("personal composer queues while the bot works", () => {
   });
 
   it("drops the queued notice once the bot answers, without waiting for the turn", async () => {
-    // The reported bug: a steered message is usually answered long before the
-    // turn ends, and "Queued. The bot gets it as soon as this turn finishes."
-    // stayed on screen underneath the reply it had already produced.
+    stubHoldEnvironment();
     await act(async () => renderer.update(<PersonalComposer {...working} />));
-    await act(async () => renderer.root.findByProps({ "aria-label": sendLabel }).props.onClick());
+    await holdSendButton();
+    await act(async () => menuItem("Queue after this turn").props.onClick());
     expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(1);
 
     await act(async () =>
@@ -542,11 +702,13 @@ describe("personal composer queues while the bot works", () => {
   });
 
   it("keeps the queued notice while the only bot output predates the message", async () => {
+    stubHoldEnvironment();
     const spokeBefore = Date.now() - 10_000;
     await act(async () =>
       renderer.update(<PersonalComposer {...working} botLastSpokeAtMs={spokeBefore} />),
     );
-    await act(async () => renderer.root.findByProps({ "aria-label": sendLabel }).props.onClick());
+    await holdSendButton();
+    await act(async () => menuItem("Queue after this turn").props.onClick());
 
     await act(async () =>
       renderer.update(<PersonalComposer {...working} botLastSpokeAtMs={spokeBefore} />),
@@ -555,14 +717,36 @@ describe("personal composer queues while the bot works", () => {
   });
 
   it("drops the queued notice when the turn ends", async () => {
+    stubHoldEnvironment();
     await act(async () => renderer.update(<PersonalComposer {...working} />));
-    await act(async () => renderer.root.findByProps({ "aria-label": sendLabel }).props.onClick());
+    await holdSendButton();
+    await act(async () => menuItem("Queue after this turn").props.onClick());
     expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(1);
 
     await act(async () =>
       renderer.update(<PersonalComposer {...working} working={false} canInterrupt={false} />),
     );
     expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  });
+
+  it("keeps followUp on a queue send that lands in the offline outbox", async () => {
+    stubHoldEnvironment();
+    // No attachment: a fake file has no bytes to keep on the device, and the
+    // outbox refuses those (its own tests).
+    state.draft.files = [];
+    await act(async () =>
+      renderer.update(
+        <PersonalComposer
+          {...working}
+          offlineNotice="Saved on this device; it goes out when your laptop is back."
+        />,
+      ),
+    );
+    await holdSendButton(offlineSendLabel);
+    await act(async () => menuItem("Queue after this turn").props.onClick());
+
+    expect(state.start).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries[0]?.turn?.followUp).toBe("queue");
   });
 });
 

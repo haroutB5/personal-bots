@@ -100,6 +100,43 @@ describe("send queue store", () => {
     expect(next?.seq).toBeGreaterThan(after[1]!.seq);
   });
 
+  it("keeps the steer/queue choice of a message across a reload", () => {
+    enqueueOutboxEntry(
+      entry("q", "t1", {
+        turn: {
+          modelSelection: { instanceId: "claude", model: "sonnet" },
+          titleSeed: null,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          followUp: "queue",
+        } as never,
+      }),
+    );
+    resetOutboxForTesting(memoryStorage(storage.raw() ?? undefined));
+    expect(getOutboxSnapshot().entries[0]?.turn?.followUp).toBe("queue");
+  });
+
+  it("reads an entry stored before 1.66.28, and a damaged value, back as a plain steer", () => {
+    const legacy = { ...entry("old"), commandId: "outbox:old", seq: 1, queuedAt: 1 };
+    const damaged = {
+      ...entry("bad"),
+      commandId: "outbox:bad",
+      seq: 2,
+      queuedAt: 2,
+      turn: {
+        modelSelection: { instanceId: "claude", model: "sonnet" },
+        titleSeed: "hello",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        followUp: "banana",
+      },
+    };
+    resetOutboxForTesting(memoryStorage(JSON.stringify([legacy, damaged])));
+    const [old, bad] = getOutboxSnapshot().entries;
+    expect(old?.turn?.followUp).toBeNull();
+    expect(bad?.turn?.followUp).toBeNull();
+  });
+
   it("ignores damaged data instead of breaking the app", () => {
     resetOutboxForTesting(memoryStorage("{not json"));
     expect(getOutboxSnapshot().entries).toEqual([]);

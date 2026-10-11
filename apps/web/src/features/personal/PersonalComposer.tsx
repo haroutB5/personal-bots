@@ -18,6 +18,7 @@ import {
   personalReplyContext,
   type PersonalReplyQuote,
   type ThreadId,
+  type ThreadTurnFollowUp,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import { ArrowUp, CircleAlert, CircleDashed, FileText, Plus, Square, X } from "lucide-react";
@@ -34,6 +35,7 @@ import {
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "~/composerDraftStore";
+import { Menu, MenuItem, MenuPopup } from "~/components/ui/menu";
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
@@ -65,7 +67,8 @@ import { activeMentionDraft, applyMention, matchMentionCandidates } from "./ment
 import { MentionPopover, type MentionRow } from "./MentionPopover";
 import { COMPOSER_INPUT_ATTRIBUTE, consumeComposerRefocus } from "./composerRefocus";
 import { ReplyBar } from "./ReplyQuote";
-import { noteTypeJumpSent } from "./typeJumpDiag";
+import { useHoldCue } from "./useHoldCue";
+import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
 
 const LINE_HEIGHT_PX = 22;
 const MAX_LINES = 5;
@@ -269,10 +272,12 @@ export function PersonalComposer({
   /** When the bot last produced output, in epoch ms; null if it has not yet. */
   botLastSpokeAtMs?: number | null;
   /**
-   * Whether the composer says "Queued" itself after a mid-turn send. A bot chat
-   * turns it off: the server's delivery record drives "Queued"/"Read" under the
-   * message instead, so there is one source and the two never disagree. A
-   * group, whose members take the message in through their own chats, keeps it.
+   * Whether the composer says "Queued" itself. A bot chat keeps it for an
+   * explicit "Queue after this turn" send only: a steer (a plain tap) goes into
+   * the running turn and says nothing, and the server's delivery record under
+   * the message stays the other "Queued"/"Read". A group keeps it for any
+   * mid-turn send, because its members take the message in later, through their
+   * own chats.
    */
   queuedNotice?: boolean;
   canInterrupt: boolean;
@@ -404,6 +409,25 @@ export function PersonalComposer({
     queuedAtMs !== null &&
     working &&
     (botLastSpokeAtMs === null || botLastSpokeAtMs < queuedAtMs);
+
+  // ---------------------------------------------------------------------
+  // The send button's hold menu (1.66.28): a tap steers; a hold, a desktop
+  // right-click or the ContextMenu key opens "Send now" and, while the bot is
+  // working, "Queue after this turn" (followUp "queue" on thread.turn.start).
+  // The menu is anchored on the button and opens without a trigger, so the
+  // button's own click stays a send. A group keeps its own send path (no menu,
+  // no followUp); its message joins the transcript for the next speaker.
+  // ---------------------------------------------------------------------
+  const sendMenuEnabled = sendOverride === undefined;
+  const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const sendMenuGuard = usePressOpenedMenuGuard();
+  const sendButtonRef = useRef<HTMLButtonElement | null>(null);
+  const sendMenuHold = useHoldCue(() => {
+    if (!sendMenuEnabled || !canSend) return;
+    // The popup opens under the finger; the lift that follows must not read as a dismissal.
+    sendMenuGuard.armUntilLift();
+    setSendMenuOpen(true);
+  });
 
   // Grows with the draft (including drafts restored from storage) up to ~5 lines,
   // and puts the caret back where an insertion left it. Both belong to the same
@@ -577,10 +601,12 @@ export function PersonalComposer({
     readonly snapshot: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
     readonly createdAt: string;
     readonly titleSeed: string;
+    /** The steer/queue choice of the send this message came from, kept for its own go-out. */
+    readonly followUp?: ThreadTurnFollowUp;
     /** The unanswered first attempt, when a send that dropped mid-way is queued. */
     readonly unanswered?: boolean;
   }): Promise<string | null> => {
-    const { messageId, text, quote, snapshot, createdAt, titleSeed } = input;
+    const { messageId, text, quote, snapshot, createdAt, titleSeed, followUp } = input;
     const bytes = snapshot.reduce((total, attachment) => total + attachment.sizeBytes, 0);
     if (bytes > OUTBOX_MAX_ATTACHMENT_BYTES) {
       return "Those photos and files are too big to wait for the laptop. Remove some, or send them once it is back.";
@@ -615,6 +641,7 @@ export function PersonalComposer({
               titleSeed,
               runtimeMode: thread.runtimeMode,
               interactionMode: thread.interactionMode,
+              followUp: followUp ?? null,
             }
           : null,
       attachments: snapshot.map((attachment) => ({
@@ -633,7 +660,7 @@ export function PersonalComposer({
     return null;
   };
 
-  const send = async (quick?: string): Promise<boolean> => {
+  const send = async (quick?: string, followUp?: ThreadTurnFollowUp): Promise<boolean> => {
     // A tapped choice: its own text, no draft, no attachments, no reply quote.
     const isQuick = quick !== undefined;
     if (
@@ -645,17 +672,18 @@ export function PersonalComposer({
     }
     if (sendingRef.current || preparingRef.current) return false;
     sendingRef.current = true;
-    // The typing capture ends with the send: what moved while the field sat
-    // above the keyboard goes out as one diag batch (typeJumpDiag.ts) before
-    // the send itself can move anything else.
-    noteTypeJumpSent();
     const sentPrompt = isQuick ? "" : prompt;
     const text = isQuick ? quick.trim() : prompt.trim();
     const quote = isQuick ? null : replyTo;
     const snapshot = isQuick ? [] : [...attachments];
     const snapshotIds = new Set(snapshot.map((attachment) => attachment.id));
     const messageId = newMessageId();
-    const midTurn = working;
+    // The composer's own "Queued" line: a bot chat says it only for an explicit
+    // "Queue after this turn" send, because a steer goes in the moment the turn
+    // yields and saying "queued" would be wrong; a group keeps it for any
+    // mid-turn send, whose members take the message in later through their own
+    // chats.
+    const queuedSend = groupId !== undefined ? working : followUp === "queue";
     const titleSeed = truncate(
       text ||
         (snapshot[0]
@@ -717,6 +745,7 @@ export function PersonalComposer({
           snapshot,
           createdAt,
           titleSeed,
+          ...(followUp !== undefined ? { followUp } : {}),
         });
         if (problem !== null) {
           restoreDraft();
@@ -798,6 +827,8 @@ export function PersonalComposer({
               titleSeed,
               runtimeMode: thread.runtimeMode,
               interactionMode: thread.interactionMode,
+              // "queue" only: absent is the contract's steer, the plain tap.
+              ...(followUp !== undefined ? { followUp } : {}),
               createdAt,
             },
           });
@@ -835,6 +866,7 @@ export function PersonalComposer({
             snapshot,
             createdAt,
             titleSeed,
+            ...(followUp !== undefined ? { followUp } : {}),
             unanswered: outcome.kind === "unknown",
           });
           if (problem === null) {
@@ -848,7 +880,7 @@ export function PersonalComposer({
         setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
         return false;
       }
-      setQueuedAtMs(midTurn ? Date.now() : null);
+      setQueuedAtMs(queuedSend ? Date.now() : null);
       for (const attachment of snapshot) removeAttachment(attachment);
       releaseInFlight();
       if (quote !== null) onClearReply?.();
@@ -1128,23 +1160,89 @@ export function PersonalComposer({
           </button>
         ) : (
           <button
+            ref={sendButtonRef}
             type="button"
-            onPointerDown={keepKeyboardUp}
+            {...(sendMenuEnabled ? sendMenuHold.attributes : {})}
+            onPointerDown={(event) => {
+              keepKeyboardUp(event);
+              if (sendMenuEnabled) sendMenuHold.handlers.onPointerDown(event);
+            }}
+            onPointerMove={sendMenuEnabled ? sendMenuHold.handlers.onPointerMove : undefined}
+            onPointerUp={sendMenuEnabled ? sendMenuHold.handlers.onPointerUp : undefined}
+            onPointerCancel={sendMenuEnabled ? sendMenuHold.handlers.onPointerCancel : undefined}
+            onContextMenu={(event) => {
+              // Desktop right-click (and the hold itself on Android): the same
+              // menu. The button never shows the browser's own.
+              if (!sendMenuEnabled) return;
+              event.preventDefault();
+              if (!canSend) return;
+              setSendMenuOpen(true);
+            }}
+            onKeyDown={(event) => {
+              // The keyboard's way in, as on a chat chip: ContextMenu or Shift+F10.
+              if (!sendMenuEnabled) return;
+              if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+              event.preventDefault();
+              if (!canSend) return;
+              setSendMenuOpen(true);
+            }}
             onClick={() => void send()}
             disabled={!canSend}
             aria-busy={sending}
             aria-label={
               offlineNotice !== null
                 ? "Send, waits here until your laptop reconnects"
-                : working
-                  ? "Send, queued until the bot takes it in"
-                  : "Send"
+                : sendMenuEnabled && working
+                  ? "Send, the bot takes it in during this turn. Hold for send options"
+                  : working
+                    ? "Send, queued until the bot takes it in"
+                    : "Send"
             }
-            className={`${ROUND_BUTTON} bg-[var(--personal-primary)] text-[var(--personal-primary-text)] disabled:opacity-30`}
+            className={`${ROUND_BUTTON} bg-[var(--personal-primary)] text-[var(--personal-primary-text)] disabled:opacity-30 ${
+              sendMenuEnabled ? "personal-send-hold select-none [-webkit-touch-callout:none]" : ""
+            }`}
           >
             <ArrowUp aria-hidden="true" className="size-[22px]" strokeWidth={2} />
           </button>
         )}
+        {sendMenuEnabled ? (
+          <Menu
+            open={sendMenuOpen}
+            onOpenChange={(next, details) => {
+              if (!next && !sendMenuGuard.mayClose(details.reason)) return;
+              setSendMenuOpen(next);
+            }}
+          >
+            {/* Anchored on the button and opened without a trigger, so a tap
+                stays a send; the hold, the right-click or the ContextMenu key
+                is what opens this. */}
+            <MenuPopup
+              align="end"
+              side="top"
+              anchor={sendButtonRef}
+              className="personal-app personal-menu min-w-44"
+            >
+              <MenuItem
+                onClick={() => {
+                  setSendMenuOpen(false);
+                  void send();
+                }}
+              >
+                Send now
+              </MenuItem>
+              {working ? (
+                <MenuItem
+                  onClick={() => {
+                    setSendMenuOpen(false);
+                    void send(undefined, "queue");
+                  }}
+                >
+                  Queue after this turn
+                </MenuItem>
+              ) : null}
+            </MenuPopup>
+          </Menu>
+        ) : null}
       </div>
     </div>
   );
