@@ -1102,7 +1102,10 @@ export function MessageList({
     // reads as the messages jumping, so a composer-driven re-pin (and the one
     // when the composer shrinks back) glides to the new bottom instead. Every
     // other resize - streaming text, a late image, the keyboard, a strip -
-    // keeps the instant follow. `bots:perf-off=resize-pin-tween` turns it off.
+    // keeps the instant follow. An outside write at the bottom can land inside
+    // the glide and takes the scroll over; the frames yield to it and never
+    // pull back (see stepPinTween). `bots:perf-off=resize-pin-tween` turns it
+    // off.
     let pinTween: PinTween | null = null;
     const cancelPinTween = () => {
       if (pinTween === null) return;
@@ -1134,7 +1137,19 @@ export function MessageList({
         landPinTween(tween.grew);
         return;
       }
-      scroller.scrollTop = tween.from + (tween.to - tween.from) * progress;
+      const next = tween.from + (tween.to - tween.from) * progress;
+      // A glide downwards (a typed line: the scroller shrank and the bottom
+      // moved away below it) can be overtaken by an outside write between two
+      // frames: the pinned write of an items update (measured firing in bursts
+      // about every 2s in an open chat) and the settle re-assert both write
+      // scrollHeight, which clamps to the bottom. Such a frame only ever
+      // carries the scroll on towards its destination, never back to the
+      // position its own clock expected: that pull-back undid the write by up
+      // to a frame's worth of motion (about 12px on a phone-height
+      // transcript). A glide upwards (the composer shrinking back) needs no
+      // clamp: every position it passes sits at or past the grown scroller's
+      // end, so its writes clamp to the bottom too.
+      scroller.scrollTop = tween.to >= tween.from ? Math.max(next, scroller.scrollTop) : next;
       tween.frame = window.requestAnimationFrame(stepPinTween);
     };
     const pinTweenAllowed = () =>
