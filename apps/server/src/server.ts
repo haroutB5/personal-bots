@@ -121,6 +121,7 @@ import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.
 import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
+import { personalTypeJumpTraceRouteLayer } from "./personal/push/typeJumpTraceRoute.ts";
 import { personalPushSentRouteLayer } from "./personal/push/sentPushesRoute.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
@@ -834,6 +835,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     personalDesktopStreamRouteLayer,
     // Open, allowlisted and rate limited: notification-tap diagnostics (see clientDiagRoute.ts).
     personalClientDiagRouteLayer,
+    personalTypeJumpTraceRouteLayer,
     // Signed-in only: pushes sent to this device, for taps iOS drops (see sentPushesRoute.ts).
     personalPushSentRouteLayer,
     // Unauthenticated by necessity; the URL token is the whole credential.
