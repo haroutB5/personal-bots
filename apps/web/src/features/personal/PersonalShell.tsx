@@ -30,6 +30,7 @@ import {
 } from "./personalMode";
 import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
 import { PersonalTabBar } from "./PersonalTabBar";
+import { restoreTypeJumpPerfFlag } from "./typeJumpFlagCleanup";
 import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
 import { warmPersonalRoutes } from "./warmRoutes";
 
@@ -64,6 +65,9 @@ const PANE_CONTENT_CLASS: Record<DesktopPaneLayout, string> = {
  */
 // Watches visibility and chat-row taps for the real-user timings (perfRum.ts).
 installPerfRum();
+// Puts back a kill-switch flip the retired typing-rounds recorder left behind
+// (typeJumpFlagCleanup.ts), once, before any screen reads `bots:perf-off`.
+restoreTypeJumpPerfFlag();
 
 export function PersonalShell(): JSX.Element {
   const pathname = useLocation({ select: (location) => location.pathname });

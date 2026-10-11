@@ -74,16 +74,7 @@ export type PerfOptimization =
   // Once the app is quiet it preloads the personal screens' code (Team, Settings,
   // Memory, Files, Tasks, Computer) so they still open when the phone loses its
   // network (warmRoutes.ts, 1.66.11); off: each is fetched when first opened.
-  | "warm-routes"
-  // A re-pin the composer's own growth caused (a typed line) glides to the new
-  // bottom over 120ms instead of one instant write, so the transcript stops
-  // jumping while typing on the phone (MessageList.tsx, 1.66.23); off: one
-  // instant write, as before.
-  | "resize-pin-tween"
-  // The ordered typing rounds (typeJumpTrace.ts): at most one default round
-  // and one tween-off round per page view, POSTed as numeric traces; off: no
-  // rounds, and round 2's temporary bots:perf-off flip never happens.
-  | "type-jump-trace";
+  | "warm-routes";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

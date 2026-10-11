@@ -166,7 +166,6 @@ import {
 } from "./unreadChats";
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { startTypeJumpWatch, stopTypeJumpWatch } from "./typeJumpDiag";
-import { startTypeJumpTrace, stopTypeJumpTrace } from "./typeJumpTrace";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
 import { ProgressNoteLine } from "./ProgressNoteLine";
@@ -355,18 +354,14 @@ export function ConversationScreen({
     if (usableThreadId === null) return;
     reportChatUsable(window.location.pathname);
   }, [usableThreadId]);
-  // The on-phone captures for the iPhone "jumping" bug: while this chat is
+  // The on-phone capture for the iPhone "jumping" bug: while this chat is
   // mounted, typing in the composer folds the viewport and scroll geometry
-  // into one diag batch per sent message (typeJumpDiag.ts, unchanged), and
-  // the ordered rounds recorder (typeJumpTrace.ts) is watching the same
-  // field for its at-most-two bounded traces per page view. Keyed by thread:
+  // into one diag batch per sent message (typeJumpDiag.ts). Keyed by thread:
   // a chat switch closes a capture the same way a screen unmount does.
   useEffect(() => {
     startTypeJumpWatch();
-    startTypeJumpTrace();
     return () => {
       stopTypeJumpWatch();
-      stopTypeJumpTrace();
     };
   }, [threadId]);
   useEffect(() => {
