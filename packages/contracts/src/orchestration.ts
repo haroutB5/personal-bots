@@ -1347,6 +1347,15 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+/**
+ * How a message sent while its thread is already working is handled. Absent
+ * means "steer": the message folds into the running turn. "queue" holds the
+ * message server-side and dispatches it as its own turn once the running
+ * turn ends.
+ */
+export const ThreadTurnFollowUp = Schema.Literals(["steer", "queue"]);
+export type ThreadTurnFollowUp = typeof ThreadTurnFollowUp.Type;
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -1364,6 +1373,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
+  followUp: Schema.optional(ThreadTurnFollowUp),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
@@ -1384,6 +1394,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  followUp: Schema.optional(ThreadTurnFollowUp),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
@@ -1976,6 +1987,9 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
+  // Persisted events from before this field exists carry no key at all; absent
+  // means the send steers (the pre-1.66.28 behaviour).
+  followUp: Schema.optional(ThreadTurnFollowUp),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
 });
