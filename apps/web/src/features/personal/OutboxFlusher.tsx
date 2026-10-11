@@ -148,6 +148,13 @@ export function OutboxFlusher(): null {
           ...(entry.turn.titleSeed !== null ? { titleSeed: entry.turn.titleSeed } : {}),
           runtimeMode: entry.turn.runtimeMode,
           interactionMode: entry.turn.interactionMode,
+          // The steer/queue choice made when it was typed: a queued message
+          // still asks to wait behind whatever turn runs when it finally goes
+          // out. Anything else (null, or a field an old entry never had) is
+          // the contract's steer, which is what an absent field means.
+          ...(entry.turn.followUp === "steer" || entry.turn.followUp === "queue"
+            ? { followUp: entry.turn.followUp }
+            : {}),
           createdAt: entry.createdAt,
         },
       });

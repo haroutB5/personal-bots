@@ -9,6 +9,8 @@ import type {
 
 import { randomUUID } from "~/lib/utils";
 
+import type { TurnFollowUp } from "./turnFollowUp";
+
 /**
  * The offline send queue (1.66.10).
  *
@@ -55,6 +57,12 @@ export interface OutboxTurnSettings {
   readonly titleSeed: string | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  /**
+   * The steer/queue choice made when the message was typed (the send menu).
+   * null is a plain steer send, and what every entry stored before 1.66.28
+   * reads back as.
+   */
+  readonly followUp: TurnFollowUp | null;
 }
 
 export interface OutboxEntry {
@@ -182,7 +190,15 @@ function parseEntry(value: unknown): OutboxEntry | null {
     sendText,
     createdAt,
     replyTo: isRecord(value.replyTo) ? (value.replyTo as unknown as PersonalReplyQuote) : null,
-    turn: isRecord(value.turn) ? (value.turn as unknown as OutboxTurnSettings) : null,
+    // followUp is normalised here rather than carried by the cast: entries
+    // stored before 1.66.28 have no field, and anything that is not "queue"
+    // (the only non-default choice) reads back as a plain steer.
+    turn: isRecord(value.turn)
+      ? {
+          ...(value.turn as unknown as OutboxTurnSettings),
+          followUp: value.turn.followUp === "queue" ? ("queue" as const) : null,
+        }
+      : null,
     attachments,
     seq: value.seq,
     queuedAt: value.queuedAt,
