@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -608,7 +609,9 @@ export const makeCachedProviderMaintenanceResolution = Effect.fn(
 )(function* (resolve: Effect.Effect<ProviderMaintenanceCapabilities>) {
   const [cached, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     resolve,
-    MAINTENANCE_CAPABILITIES_CACHE_TTL,
+    // A cancelled enrichment must not leave every subsequent reader with
+    // its failed exit for an hour. Successful ownership remains cached.
+    (exit) => (Exit.isSuccess(exit) ? MAINTENANCE_CAPABILITIES_CACHE_TTL : Duration.zero),
   );
   return (options?: { readonly fresh?: boolean }) =>
     options?.fresh ? invalidate.pipe(Effect.andThen(cached)) : cached;

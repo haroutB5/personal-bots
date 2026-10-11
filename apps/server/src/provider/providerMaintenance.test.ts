@@ -9,6 +9,8 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
@@ -767,6 +769,47 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
         expect(capabilities).toEqual(manualPackageTool);
       }),
+  );
+
+  it.effect("recomputes an interrupted lookup on the next ordinary read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        let resolutions = 0;
+        const resolve = yield* makeCachedProviderMaintenanceResolution(
+          Effect.suspend(() => {
+            resolutions += 1;
+            return resolutions === 1
+              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.succeed(manualPackageTool);
+          }),
+        );
+        const owner = yield* resolve().pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(owner);
+        expect(yield* resolve()).toEqual(manualPackageTool);
+        expect(yield* resolve()).toEqual(manualPackageTool);
+        expect(resolutions).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("recomputes a defective lookup without caching its failure", () =>
+    Effect.gen(function* () {
+      let resolutions = 0;
+      const resolve = yield* makeCachedProviderMaintenanceResolution(
+        Effect.suspend(() => {
+          resolutions += 1;
+          return resolutions === 1
+            ? Effect.die("test maintenance lookup failed")
+            : Effect.succeed(manualPackageTool);
+        }),
+      );
+      expect((yield* Effect.exit(resolve()))._tag).toBe("Failure");
+      expect(yield* resolve()).toEqual(manualPackageTool);
+      expect(yield* resolve()).toEqual(manualPackageTool);
+      expect(resolutions).toBe(2);
+    }),
   );
 
   it.effect("caches resolution until a fresh read is requested", () =>
