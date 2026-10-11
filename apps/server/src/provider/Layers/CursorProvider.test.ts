@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - FileSystem.symlink cannot select Windows directory junctions.
 import * as NodeOS from "node:os";
 import * as NodeFSP from "node:fs/promises";
 

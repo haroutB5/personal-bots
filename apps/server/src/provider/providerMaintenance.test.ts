@@ -11,6 +11,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
@@ -812,7 +813,33 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it.effect("caches resolution until a fresh read is requested", () =>
+  it.effect("shares an in-flight maintenance lookup between ordinary readers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let resolutions = 0;
+        const resolve = yield* makeCachedProviderMaintenanceResolution(
+          Effect.sync(() => {
+            resolutions += 1;
+          }).pipe(
+            Effect.andThen(Deferred.succeed(started, undefined)),
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(manualPackageTool),
+          ),
+        );
+        const readers = yield* Effect.all([resolve(), resolve()], {
+          concurrency: "unbounded",
+        }).pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(readers)).toEqual([manualPackageTool, manualPackageTool]);
+        expect(resolutions).toBe(1);
+      }),
+    ),
+  );
+
+  it.effect("caches successful resolution for an hour and honours a fresh read", () =>
     Effect.gen(function* () {
       let resolutions = 0;
       const resolve = yield* makeCachedProviderMaintenanceResolution(
@@ -824,9 +851,15 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       yield* resolve();
       yield* resolve();
       expect(resolutions).toBe(1);
-      yield* resolve({ fresh: true });
+      yield* TestClock.adjust("59 minutes");
+      yield* resolve();
+      expect(resolutions).toBe(1);
+      yield* TestClock.adjust("2 minutes");
       yield* resolve();
       expect(resolutions).toBe(2);
+      yield* resolve({ fresh: true });
+      yield* resolve();
+      expect(resolutions).toBe(3);
     }),
   );
 });

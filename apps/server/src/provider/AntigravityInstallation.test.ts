@@ -345,9 +345,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           const platform = yield* HostProcessPlatform;
           // The runtime unpacks straight into the disposable profile.
           if (!helper) {
-            expect(command.options.env?.[platform === "win32" ? "TEMP" : "TMPDIR"]).toBe(
-              profile,
-            );
+            expect(command.options.env?.[platform === "win32" ? "TEMP" : "TMPDIR"]).toBe(profile);
             if (platform === "win32") expect(command.options.env?.TMP).toBe(profile);
           }
           const output = yield* Queue.unbounded<Uint8Array>();

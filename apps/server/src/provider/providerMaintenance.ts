@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -607,14 +608,20 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",
 )(function* (resolve: Effect.Effect<ProviderMaintenanceCapabilities>) {
-  const [cached, invalidate] = yield* Effect.cachedInvalidateWithTTL(
+  const makeCached = Effect.cachedWithTTL(
     resolve,
     // A cancelled enrichment must not leave every subsequent reader with
     // its failed exit for an hour. Successful ownership remains cached.
     (exit) => (Exit.isSuccess(exit) ? MAINTENANCE_CAPABILITIES_CACHE_TTL : Duration.zero),
   );
+  const cachedRef = yield* Ref.make(yield* makeCached);
   return (options?: { readonly fresh?: boolean }) =>
-    options?.fresh ? invalidate.pipe(Effect.andThen(cached)) : cached;
+    options?.fresh
+      ? makeCached.pipe(
+          Effect.tap((cached) => Ref.set(cachedRef, cached)),
+          Effect.flatten,
+        )
+      : Ref.get(cachedRef).pipe(Effect.flatten);
 });
 
 function deriveVersionAdvisory(input: {
