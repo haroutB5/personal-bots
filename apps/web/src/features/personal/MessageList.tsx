@@ -47,6 +47,7 @@ import { mayHaveChoices, splitChoices } from "./choices";
 import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
 import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
 import { perfOptimizationOn } from "./perfFlags";
+import { setTranscriptPinned } from "./transcriptPinState";
 import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
 import { SwipeTimeRow } from "./MessageSwipeTime";
@@ -909,6 +910,13 @@ export function MessageList({
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  /** Sets the pin; mirrors it for the ordered typing capture's pinned flag
+   * (transcriptPinState.ts), so the trace can tell a mid-glide frame on a
+   * still-pinned list from a reader who has scrolled away. */
+  const setStick = (value: boolean): void => {
+    stickRef.current = value;
+    setTranscriptPinned(value);
+  };
   const [showJump, setShowJump] = useState(false);
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Set while a tap's smooth scroll is on its way down: its own scroll events
@@ -953,7 +961,7 @@ export function MessageList({
     // A selected passage keeps its DOM while the reader copies it.
     if (window.getSelection?.()?.isCollapsed === false) return;
     saveAnchor();
-    stickRef.current = false;
+    setStick(false);
     const start = Math.max(
       0,
       Math.min(
@@ -968,7 +976,7 @@ export function MessageList({
       (item) => "message" in item && String(item.message.id) === messageId,
     );
     targetGuardRef.current = true;
-    stickRef.current = false;
+    setStick(false);
     const settlingLatest = jumpingRef.current !== null;
     // A quote supersedes the native smooth latest scroll as well as its timer.
     // Otherwise that animation can move the target away after it has landed.
@@ -987,7 +995,7 @@ export function MessageList({
     } else {
       targetRef.current = null;
       targetGuardRef.current = false;
-      stickRef.current = true;
+      setStick(true);
     }
     // Chromium can deliver a queued smooth-scroll offset after the instant
     // cancellation. Reassert the new target next frame, unless another intent
@@ -1216,7 +1224,7 @@ export function MessageList({
       if (pinTweenCancelRef.current !== null) return;
       if (nearBottom && windowRef.current.range.end === windowRef.current.items.length) {
         endJump();
-        stickRef.current = true;
+        setStick(true);
         setPage((previous) =>
           previous.threadId === windowRef.current.threadId && previous.firstId === null
             ? previous
@@ -1235,7 +1243,7 @@ export function MessageList({
         follow();
         return;
       }
-      stickRef.current = false;
+      setStick(false);
       const current = windowRef.current;
       const first = current.items[current.range.start]?.id ?? null;
       setPage((previous) =>
@@ -1268,7 +1276,7 @@ export function MessageList({
       // browser's own smooth scroll carries on to the bottom unless stopped.
       endJump();
       scroller.scrollTo({ top: scroller.scrollTop, behavior: "instant" });
-      stickRef.current = false;
+      setStick(false);
       onScroll();
     };
     const onHold = () => {
@@ -1292,7 +1300,7 @@ export function MessageList({
       selectionRef.current =
         !!selection && !selection.isCollapsed && content.contains(selection.anchorNode);
       if (!selectionRef.current) return;
-      stickRef.current = false;
+      setStick(false);
       const current = windowRef.current;
       const first = current.items[current.range.start]?.id ?? null;
       setPage((previous) =>
@@ -1340,7 +1348,7 @@ export function MessageList({
     targetGuardRef.current = false;
     targetRef.current = null;
     selectionRef.current = false;
-    stickRef.current = true;
+    setStick(true);
     // A tap that opened this chat from inside the last one is not a scroll here.
     readerRef.current = { holding: false, at: Number.NEGATIVE_INFINITY };
     setShowJump(false);
@@ -1364,7 +1372,7 @@ export function MessageList({
     cancelShow();
     setShowJump(false);
     // Following resumes now, so a reply landing mid-scroll is followed too.
-    stickRef.current = true;
+    setStick(true);
     targetGuardRef.current = false;
     targetRef.current = null;
     clearMessageJump(threadId);

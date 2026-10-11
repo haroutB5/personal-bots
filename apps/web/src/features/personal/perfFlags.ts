@@ -79,7 +79,11 @@ export type PerfOptimization =
   // bottom over 120ms instead of one instant write, so the transcript stops
   // jumping while typing on the phone (MessageList.tsx, 1.66.23); off: one
   // instant write, as before.
-  | "resize-pin-tween";
+  | "resize-pin-tween"
+  // The ordered typing rounds (typeJumpTrace.ts): at most one default round
+  // and one tween-off round per page view, POSTed as numeric traces; off: no
+  // rounds, and round 2's temporary bots:perf-off flip never happens.
+  | "type-jump-trace";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {
