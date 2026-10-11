@@ -6,12 +6,14 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -20,6 +22,7 @@ import { TestClock } from "effect/testing";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
+import { makeCachedProviderMaintenanceResolution } from "./providerMaintenance.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -147,6 +150,28 @@ const enrichedSnapshotSecond: ServerProvider = {
       capabilities: emptyCapabilities,
     },
   ],
+};
+
+/**
+ * Renders a captured log entry the way the server's console logger does: the
+ * message text, then the pretty-printed cause. A cause-only entry (what
+ * `Effect.ignoreCause({ log: true })` feeds the logger) renders as the cause
+ * alone, which for an interrupts-only cause is the synthetic
+ * `InterruptError: All fibers interrupted without error` with a stack.
+ */
+const renderLogEntry = (options: Logger.Options<unknown>): string => {
+  const parts = Array.isArray(options.message) ? options.message : [options.message];
+  const message = parts.map((part) => (typeof part === "string" ? part : String(part))).join(" ");
+  const cause = Cause.pretty(options.cause);
+  return [message, cause].filter((part) => part.length > 0).join("\n");
+};
+
+const captureLogLines = () => {
+  const lines: Array<string> = [];
+  const logger = Logger.make<unknown, void>((options) => {
+    lines.push(renderLogEntry(options));
+  });
+  return { lines, layer: Logger.layer([logger], { mergeWithExisting: false }) };
 };
 
 describe("makeManagedServerProvider", () => {
@@ -522,6 +547,151 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
+
+  it.effect(
+    "restarts the enrichment without an error-looking log line when the in-flight lookup is interrupted",
+    () => {
+      const { lines, layer } = captureLogLines();
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const settingsRef = yield* Ref.make<TestSettings>({ enabled: true });
+          const settingsChanges = yield* PubSub.unbounded<TestSettings>();
+          const lookupStarted = yield* Deferred.make<void>();
+          const lookupInterrupted = yield* Deferred.make<void>();
+          const secondGenerationDone = yield* Deferred.make<void>();
+          const releaseThirdEnrichment = yield* Deferred.make<void>();
+          const thirdEnrichmentPublished = yield* Deferred.make<void>();
+          const enrichmentCalls = yield* Ref.make(0);
+          // The restart runs in another fiber; without a few scheduler turns it
+          // can interrupt the lookup before that fiber has entered it.
+          const yieldToScheduler = (times: number) =>
+            Effect.forEach(Array.from({ length: times }), () => Effect.yieldNow, {
+              discard: true,
+            });
+
+          // The shared one-hour cache the drivers build once at construction
+          // (ClaudeDriver.ts:158): the first enrichment runs the lookup, the
+          // restart interrupts it mid-flight, and the replacement generation
+          // reads the interrupted computation's exit back out of the cache.
+          const lookupMode = yield* Ref.make<"stall" | "resolve">("stall");
+          const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+            Ref.get(lookupMode).pipe(
+              Effect.flatMap((mode) =>
+                mode === "stall"
+                  ? Effect.never.pipe(
+                      Effect.onInterrupt(() =>
+                        Ref.set(lookupMode, "resolve").pipe(
+                          Effect.andThen(Deferred.succeed(lookupInterrupted, undefined)),
+                          Effect.ignore,
+                        ),
+                      ),
+                    )
+                  : Effect.succeed(maintenanceCapabilities),
+              ),
+            ),
+          );
+
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Ref.get(settingsRef),
+            streamSettings: Stream.fromPubSub(settingsChanges),
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Effect.succeed(refreshedSnapshot),
+            enrichSnapshot: ({ publishSnapshot }) =>
+              Ref.updateAndGet(enrichmentCalls, (count) => count + 1).pipe(
+                Effect.flatMap((call) => {
+                  if (call === 1) {
+                    // Runs the real lookup and stalls inside it.
+                    return Deferred.succeed(lookupStarted, undefined).pipe(
+                      Effect.andThen(resolveMaintenance()),
+                    );
+                  }
+                  if (call === 2) {
+                    // Reads the exit the interrupted first lookup left cached.
+                    return resolveMaintenance().pipe(
+                      Effect.onExit(() =>
+                        Deferred.succeed(secondGenerationDone, undefined).pipe(Effect.ignore),
+                      ),
+                    );
+                  }
+                  return Deferred.await(releaseThirdEnrichment).pipe(
+                    Effect.andThen(resolveMaintenance({ fresh: true })),
+                    Effect.andThen(publishSnapshot(enrichedSnapshot)),
+                    Effect.andThen(
+                      Deferred.succeed(thirdEnrichmentPublished, undefined).pipe(Effect.ignore),
+                    ),
+                  );
+                }),
+                Effect.asVoid,
+              ),
+            refreshInterval: "1 hour",
+          });
+
+          // The initial background refresh starts the first enrichment; wait
+          // until its lookup is in flight, then let the fiber settle into it.
+          yield* Deferred.await(lookupStarted);
+          yield* yieldToScheduler(5);
+
+          // A settings change restarts the enrichment while the lookup is in
+          // flight; the restart interrupts it. The replacement generation then
+          // reads the interrupted computation's exit from the shared cache.
+          yield* Ref.set(settingsRef, { enabled: false });
+          yield* PubSub.publish(settingsChanges, { enabled: false });
+          yield* Deferred.await(lookupInterrupted);
+          yield* Deferred.await(secondGenerationDone);
+          yield* yieldToScheduler(10);
+
+          // The release smoke fails a startup log that has a line matching
+          // /error/i; reading the interrupted lookup's exit back must not
+          // produce one (before the fix it renders as a synthetic
+          // `InterruptError: All fibers interrupted without error` line).
+          const errorLooking = lines.filter((line) => /error/i.test(line));
+          assert.deepStrictEqual(errorLooking, []);
+
+          // A later fresh read still resolves and publishes normally.
+          yield* Ref.set(settingsRef, { enabled: true });
+          yield* PubSub.publish(settingsChanges, { enabled: true });
+          yield* Deferred.succeed(releaseThirdEnrichment, undefined);
+          yield* Deferred.await(thirdEnrichmentPublished);
+          assert.deepStrictEqual(yield* provider.getSnapshot, enrichedSnapshot);
+          assert.deepStrictEqual(lines, []);
+        }),
+      ).pipe(Effect.provide(Layer.merge(layer, AlwaysRunTestLayer)));
+    },
+  );
+
+  it.effect("still logs a genuine enrichment failure", () => {
+    const { lines, layer } = captureLogLines();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const enrichmentRan = yield* Deferred.make<void>();
+        yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed(refreshedSnapshot),
+          enrichSnapshot: () =>
+            Deferred.succeed(enrichmentRan, undefined).pipe(
+              Effect.andThen(Effect.die(new Error("enrichment exploded"))),
+            ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Deferred.await(enrichmentRan);
+        for (let attempt = 0; attempt < 200; attempt++) {
+          if (lines.some((line) => line.includes("enrichment exploded"))) break;
+          yield* Effect.yieldNow;
+        }
+        assert.ok(
+          lines.some((line) => line.includes("enrichment exploded")),
+          `expected the genuine failure to be logged, captured: ${lines.join(" | ")}`,
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(layer, AlwaysRunTestLayer)));
+  });
 
   it.effect("applies runtime usage updates onto the published snapshot", () =>
     Effect.scoped(
