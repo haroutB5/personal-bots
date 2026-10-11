@@ -23,9 +23,22 @@ const asset = Schema.String.check(
  * Rows are local ordinal references; no message identifiers or content are sent.
  */
 export const PersonalTypeJumpSample = Schema.Tuple([
-  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8 })), time,
-  geometry, geometry, geometry, geometry, geometry, geometry, geometry,
-  geometry, geometry, count, geometry, geometry, geometry, geometry,
+  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8 })),
+  time,
+  geometry,
+  geometry,
+  geometry,
+  geometry,
+  geometry,
+  geometry,
+  geometry,
+  geometry,
+  geometry,
+  count,
+  geometry,
+  geometry,
+  geometry,
+  geometry,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 31 })),
 ]);
 export type PersonalTypeJumpSample = typeof PersonalTypeJumpSample.Type;
@@ -35,8 +48,11 @@ export type PersonalTypeJumpSample = typeof PersonalTypeJumpSample.Type;
  * Optional second-arm instrumentation, absent from passive capture.
  */
 export const PersonalTypeJumpWrite = Schema.Tuple([
-  time, Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 9 })),
-  geometry, geometry, geometry,
+  time,
+  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 9 })),
+  geometry,
+  geometry,
+  geometry,
 ]);
 export type PersonalTypeJumpWrite = typeof PersonalTypeJumpWrite.Type;
 
@@ -55,7 +71,8 @@ export const PersonalTypeJumpTrace = Schema.Struct({
   // CSS width, DPR * 100, visualViewport scale * 100.
   viewport: Schema.Tuple([count, count, count]),
   samples: Schema.Array(PersonalTypeJumpSample).check(
-    Schema.isMinLength(1), Schema.isMaxLength(TYPE_JUMP_TRACE_MAX_SAMPLES),
+    Schema.isMinLength(1),
+    Schema.isMaxLength(TYPE_JUMP_TRACE_MAX_SAMPLES),
     Schema.makeFilter((rows) => rows.every((row, i) => i === 0 || row[1] >= rows[i - 1]![1])),
   ),
   writes: Schema.Array(PersonalTypeJumpWrite).check(
