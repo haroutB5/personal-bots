@@ -3974,6 +3974,75 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("restarts deepseek sessions when deepseek effort changes", async () => {
+    // DeepSeek runs on the same Claude runtime as claudeAgent, whose effort is
+    // fixed when the query is created: an effort change must restart the
+    // session to take effect, exactly as it does for claudeAgent.
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: ProviderInstanceId.make("deepseek"),
+        model: "deepseek-flash",
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-deepseek-effort-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-deepseek-effort-1"),
+          role: "user",
+          text: "first deepseek turn",
+          attachments: [],
+        },
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("deepseek"),
+          "deepseek-flash",
+          [{ id: "effort", value: "high" }],
+        ),
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-deepseek-effort-2"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-deepseek-effort-2"),
+          role: "user",
+          text: "second deepseek turn",
+          attachments: [],
+        },
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("deepseek"),
+          "deepseek-flash",
+          [{ id: "effort", value: "max" }],
+        ),
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      resumeCursor: { opaque: "resume-1" },
+      modelSelection: createModelSelection(ProviderInstanceId.make("deepseek"), "deepseek-flash", [
+        { id: "effort", value: "max" },
+      ]),
+    });
+  });
+
   it("restarts the provider session when runtime mode is updated on the thread", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

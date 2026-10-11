@@ -305,6 +305,30 @@ describe("DeepSeekAdapter", () => {
     );
   });
 
+  it.effect("passes DeepSeek's 786432 auto-compact window to the runtime", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* DeepSeekAdapterTag;
+      yield* adapter.startSession({
+        threadId: ThreadId.make("thread-deepseek-compact"),
+        provider: DEEPSEEK,
+        runtimeMode: "full-access",
+        modelSelection: flashSelection(),
+      });
+
+      const options = harness.getCreateInput()?.options as
+        | { settings?: Record<string, unknown> }
+        | undefined;
+      // DeepSeek's Claude Code guide compacts Flash at 786432 (three quarters
+      // of its 1M context); the session environment carries the same value
+      // (DeepSeekEnvironment tests pin it there).
+      assert.equal(options?.settings?.autoCompactWindow, 786432);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("streams text plus a tool roundtrip to turn.completed, all stamped deepseek", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

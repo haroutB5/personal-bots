@@ -5,6 +5,7 @@ import type { UsageSpeed } from "./usageTranscripts.ts";
 import {
   cacheSavingsUsd,
   createOverrideRateTable,
+  isDeepSeekPeakTime,
   lookupRate,
   parseRateTable,
   priceUsage,
@@ -15,6 +16,9 @@ const rate = (input: number, cacheRead?: number) => ({
   output_cost_per_token: input * 5,
   ...(cacheRead === undefined ? {} : { cache_read_input_token_cost: cacheRead }),
 });
+
+/** Wednesday 2026-10-14 12:00 UTC: a weekday outside every peak window. */
+const OFF_PEAK_MS = Date.parse("2026-10-14T12:00:00Z");
 
 describe("usage pricing", () => {
   const totals = {
@@ -31,6 +35,7 @@ describe("usage pricing", () => {
   ) => ({
     provider: "claude" as const,
     model,
+    timestampMs: OFF_PEAK_MS,
     totals,
     reportedCostUsd,
     speed,
@@ -80,18 +85,20 @@ describe("usage pricing", () => {
     const deepseekRecord = (overrides: Partial<typeof totals> = {}) => ({
       provider: "deepseek" as const,
       model: "deepseek-flash",
+      timestampMs: OFF_PEAK_MS,
       totals: { ...totals, ...overrides },
       reportedCostUsd: null,
       speed: "standard" as const,
     });
 
-    // A cache split: cached input at the cache-hit rate ($0.0028/M), the rest
-    // at the cache-miss ($0.14/M) and output ($0.28/M) rates. DeepSeek
-    // publishes no separate cache-write price, so writes bill as misses.
+    // A cache split at off-peak: cached input at the cache-hit rate
+    // ($0.003/M), the rest at the cache-miss ($0.15/M) and output ($0.60/M)
+    // rates. DeepSeek publishes no separate cache-write price, so writes bill
+    // as misses.
     const split = priceUsage(new Map(), deepseekRecord());
     expect(split.costSource).toBe("modelPriced");
-    expect(split.costUsd).toBeCloseTo(0.14 + 0.0028 + 0.14 + 0.28, 10);
-    expect(cacheSavingsUsd(new Map(), deepseekRecord())).toBeCloseTo(0.14 - 0.0028, 10);
+    expect(split.costUsd).toBeCloseTo(0.15 + 0.003 + 0.15 + 0.6, 10);
+    expect(cacheSavingsUsd(new Map(), deepseekRecord())).toBeCloseTo(0.15 - 0.003, 10);
 
     // No cache split (no cached tokens recorded): every input token at the
     // cache-miss rate.
@@ -99,13 +106,55 @@ describe("usage pricing", () => {
       new Map(),
       deepseekRecord({ cachedInputTokens: 0, cacheCreationTokens: 0 }),
     );
-    expect(noSplit.costUsd).toBeCloseTo(0.14 + 0.28, 10);
+    expect(noSplit.costUsd).toBeCloseTo(0.15 + 0.6, 10);
     expect(cacheSavingsUsd(new Map(), deepseekRecord({ cachedInputTokens: 0 }))).toBe(0);
 
     // DeepSeek never reads the LiteLLM table: a table that knows its model
     // string, a table that does not, and no table at all price identically.
     const known = parseRateTable({ "deepseek-flash": rate(1) });
     expect(priceUsage(known, deepseekRecord()).costUsd).toBeCloseTo(split.costUsd, 10);
+  });
+
+  it("doubles DeepSeek's Flash rates inside the peak windows, priced by record timestamp", () => {
+    const deepseekRecord = (timestampMs: number) => ({
+      provider: "deepseek" as const,
+      model: "deepseek-flash",
+      timestampMs,
+      totals,
+      reportedCostUsd: null,
+      speed: "standard" as const,
+    });
+
+    // Peak is 01:00-04:00 and 06:00-10:00 UTC, Monday-Friday; every boundary
+    // instant: 01:00 and 06:00 enter peak, 04:00 and 10:00 leave it.
+    const cases: ReadonlyArray<[number, boolean]> = [
+      [Date.parse("2026-10-14T00:59:59.999Z"), false],
+      [Date.parse("2026-10-14T01:00:00Z"), true],
+      [Date.parse("2026-10-14T03:59:59.999Z"), true],
+      [Date.parse("2026-10-14T04:00:00Z"), false],
+      [Date.parse("2026-10-14T05:59:59.999Z"), false],
+      [Date.parse("2026-10-14T06:00:00Z"), true],
+      [Date.parse("2026-10-14T09:59:59.999Z"), true],
+      [Date.parse("2026-10-14T10:00:00Z"), false],
+      [OFF_PEAK_MS, false],
+      // Weekends are off-peak in full.
+      [Date.parse("2026-10-17T02:00:00Z"), false],
+      [Date.parse("2026-10-18T08:00:00Z"), false],
+    ];
+    for (const [timestampMs, isPeak] of cases) {
+      expect(isDeepSeekPeakTime(timestampMs)).toBe(isPeak);
+    }
+
+    const offPeak = deepseekRecord(OFF_PEAK_MS);
+    const peak = deepseekRecord(Date.parse("2026-10-14T06:00:00Z"));
+    expect(priceUsage(new Map(), peak).costUsd).toBeCloseTo(
+      priceUsage(new Map(), offPeak).costUsd * 2,
+      10,
+    );
+    expect(cacheSavingsUsd(new Map(), peak)).toBeCloseTo(
+      cacheSavingsUsd(new Map(), offPeak) * 2,
+      10,
+    );
   });
 
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {

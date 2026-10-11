@@ -148,6 +148,16 @@ export const SESSION_RENEWED_REASON = "session_renewed";
 const HANDOFF_INPUT_MARGIN_CHARS = 8_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+/**
+ * Providers whose adapter is the Claude runtime (`makeClaudeAdapter`) — the
+ * DeepSeek adapter wraps it. That runtime fixes effort (and the other
+ * selection options) when the query is created, so a model-selection change on
+ * a live session only takes effect after a restart; sendTurn alone cannot
+ * apply it.
+ */
+const CLAUDE_RUNTIME_PROVIDERS: ReadonlySet<string> = new Set(["claudeAgent", "deepseek"]);
+const runsClaudeRuntime = (provider: ProviderDriverKind): boolean =>
+  CLAUDE_RUNTIME_PROVIDERS.has(provider);
 
 function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -1203,7 +1213,7 @@ const make = Effect.gen(function* () {
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "unsupported";
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
-        preferredProvider === "claudeAgent" &&
+        runsClaudeRuntime(preferredProvider) &&
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
 
