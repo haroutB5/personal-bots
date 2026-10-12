@@ -5915,9 +5915,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             };
             if (options?.getSessionMessages)
               return options.getSessionMessages(historySessionId, readOptions);
-            if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
-              return getSessionMessages(historySessionId, readOptions);
-            }
+            // Always read through the worker process. The SDK helper parses the
+            // whole session JSONL, and in-process that parse (JSON.parse over
+            // every transcript line) runs on the server's event loop - the
+            // "Claude history scan on the main thread" the 12 Oct stall review
+            // flagged (claudeHistoryWorker-*.mjs frames, seconds on a long
+            // session). The child gets the same environment, so it resolves the
+            // same Claude home; only the reading and parsing moved off this
+            // thread. Rollback and fork are the only callers.
             return decodeSessionMessages(
               await runScopedHistoryCommand("getSessionMessages", readOptions, historySessionId),
             );
@@ -5974,9 +5979,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                 upToMessageId: rollbackAt,
               };
               if (options?.forkSession) return options.forkSession(sessionId, forkOptions);
-              if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
-                return forkSession(sessionId, forkOptions);
-              }
+              // The worker process, like the history read above: forking rewrites
+              // the whole transcript, and doing that on the server's loop is the
+              // same main-thread scan by another name.
               return decodeHistoryFork(await runScopedHistoryCommand("forkSession", forkOptions));
             },
             catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
