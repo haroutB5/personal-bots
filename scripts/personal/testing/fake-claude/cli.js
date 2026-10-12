@@ -551,12 +551,15 @@ lines.on("line", async (line) => {
   }
   // MCPONCE is MCPTOOL that does not run again when its own task resumes: a delegating chat's
   // continuation turn quotes the request, and a fake that repeated the call would delegate again.
-  // Every trigger is collected with its brace-matched JSON, not one greedy one-line regex: a prompt
-  // that quotes an earlier (often truncated) call - a reused root's task summaries do - used to
-  // match the quoted text and report "has bad JSON" without ever seeing the real instruction
-  // (QA 1.66.33 F7). The first candidate that parses wins, as before.
+  // The candidate list starts with the original one-line greedy match - when that parses it is
+  // exactly what every journey has always run, quoted calls in history included. Only when it
+  // fails to parse (a prompt that quotes an earlier, truncated call and puts the real instruction
+  // further down - QA 1.66.33 F7) are brace-matched candidates tried in order, so a multi-line or
+  // later call can still be found. Nothing is ever run that did not parse.
   const toolCandidates = [];
   if (!(text.includes("MCPONCE ") && text.startsWith("[Task continuation]"))) {
+    const greedy = text.match(/MCP(?:TOOL|ONCE) (\w+) (\{.*\})/);
+    if (greedy) toolCandidates.push({ name: greedy[1], json: greedy[2] });
     const trigger = /MCP(?:TOOL|ONCE) (\w+) /g;
     let hit;
     while ((hit = trigger.exec(text)) !== null) {
@@ -584,7 +587,12 @@ lines.on("line", async (line) => {
           }
         }
       }
-      if (end !== -1) toolCandidates.push({ name: hit[1], json: text.slice(open, end + 1) });
+      if (end !== -1) {
+        const json = text.slice(open, end + 1);
+        if (!toolCandidates.some((candidate) => candidate.json === json)) {
+          toolCandidates.push({ name: hit[1], json });
+        }
+      }
     }
   }
   if (toolCandidates.length > 0 || /MCP(?:TOOL|ONCE) \w+ \{/.test(text)) {
