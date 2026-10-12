@@ -4,12 +4,13 @@
 // QA_PROBE_DIR is set.
 //
 // Requests are files the driver drops into that directory:
-//   burst-<label>.json  { n, chunk }  writes n numbered lines alternately to
-//     process.stdout / process.stderr (looked up at call time, so the server's
-//     patched write is what runs). After every chunk it records the count
-//     ACCEPTED so far in <label>.accepted (sync); <label>.done lands with
-//     whether each stream's write was patched. The driver kills the server
-//     mid-burst (taskkill /F, what restart/-Stop/rollback use) and compares the
+//   burst-<label>.json  { n, chunk, chunkDelayMs }  writes n numbered lines
+//     alternately to process.stdout / process.stderr (looked up at call time,
+//     so the server's patched write is what runs). After every chunk it records
+//     the count ACCEPTED so far in <label>.accepted (sync); <label>.done lands
+//     with whether each stream's write was patched. chunkDelayMs paces the
+//     burst so it spans seconds and the driver's taskkill /F (what restart,
+//     -Stop and rollback use) lands mid-burst; the driver then compares the
 //     lines in the log with the accepted count: the F1 check - with the batched
 //     writer the loss is the write batch in flight, not the whole backlog.
 //   stall-<label>.json  { ms }  holds the main thread in a busy loop for about
@@ -28,7 +29,7 @@ if (dir && isMainThread && /bin\.mjs$/i.test(process.argv[1] || "")) {
   let seq = 0;
   const pad = "x".repeat(60);
 
-  const runBurst = (label, n, chunk) => {
+  const runBurst = (label, n, chunk, chunkDelayMs) => {
     let i = 0;
     const step = () => {
       const end = Math.min(n, i + chunk);
@@ -39,8 +40,10 @@ if (dir && isMainThread && /bin\.mjs$/i.test(process.argv[1] || "")) {
         else process.stderr.write(line);
       }
       fs.writeFileSync(path.join(dir, `${label}.accepted`), String(i));
-      if (i < n) setImmediate(step);
-      else
+      if (i < n) {
+        if (chunkDelayMs > 0) setTimeout(step, chunkDelayMs);
+        else setImmediate(step);
+      } else
         fs.writeFileSync(
           path.join(dir, `${label}.done`),
           JSON.stringify({
@@ -78,7 +81,7 @@ if (dir && isMainThread && /bin\.mjs$/i.test(process.argv[1] || "")) {
       if (burst && !handled.has(burst[1])) {
         handled.add(burst[1]);
         const request = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
-        runBurst(burst[1], request.n, request.chunk ?? 2000);
+        runBurst(burst[1], request.n, request.chunk ?? 2000, request.chunkDelayMs ?? 0);
         continue;
       }
       const stall = /^stall-(\w+)\.json$/.exec(file);

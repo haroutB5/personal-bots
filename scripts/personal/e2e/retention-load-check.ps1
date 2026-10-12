@@ -60,9 +60,13 @@ for ($i = 0; $i -lt 40; $i++) {
 }
 # Six dated files with the provider prefix and header: the retention pass must
 # remove these for age (older than 14 days) while leaving unrelated files alone.
+# The names must satisfy the pass's own filter (isProviderLogFileAsync: name
+# ends .log or .log.<digits>, and starts with the "events.log." prefix or holds
+# an NTIVE/CANON/ORCH header), or the pass never looks at them at all - the
+# first version of this check used "events.log.stale0" and they survived.
 $stale = (Get-Date).AddDays(-20)
 for ($i = 0; $i -lt 6; $i++) {
-    $staleFile = Join-Path $dir "events.log.stale$i"
+    $staleFile = Join-Path $dir ("events.log.{0}" -f (900000 + $i))
     [System.IO.File]::WriteAllText($staleFile, '[2026-09-01T00:00:00.000Z] NTIVE: x')
     (Get-Item -LiteralPath $staleFile).LastWriteTime = $stale
 }
@@ -102,7 +106,7 @@ try {
     #    report alone cannot tell "async and fast" from "never ran" (QA F2).
     $after = Get-ChildItem -LiteralPath $dir -File
     $afterBytes = ($after | Measure-Object -Property Length -Sum).Sum
-    $staleLeft = @($after | Where-Object { $_.Name -like 'events.log.stale*' }).Count
+    $staleLeft = @($after | Where-Object { $_.Name -match '^events\.log\.9\d{5}$' }).Count
     $eventsLeft = @($after | Where-Object { $_.Name -like 'events.log.*' }).Count
     $unrelatedKept = (Test-Path -LiteralPath (Join-Path $dir 'unrelated.txt')) -and (Test-Path -LiteralPath (Join-Path $dir 'notes.log'))
     $capBytes = 512MB

@@ -200,52 +200,65 @@ try {
             $serverPid = [int]$consoleInfo.Server
             Write-Output "    probe root $consoleRoot (server pid $serverPid)"
             try {
-                Set-Content -LiteralPath (Join-Path $probeDir 'burst-a.json') -Value (@{ n = $BurstLines; chunk = 4000 } | ConvertTo-Json -Compress)
-                # Wait until the server accepted at least half the burst, then kill it hard.
+                # chunkDelayMs paces the burst over ~2.5 s (100 x 4,000 lines,
+                # 25 ms apart) so the kill lands mid-burst instead of after it.
+                # The probe's files are named after the LABEL: "a.accepted",
+                # "a.done" (not "burst-a.*").
+                Set-Content -LiteralPath (Join-Path $probeDir 'burst-a.json') -Value (@{ n = $BurstLines; chunk = 4000; chunkDelayMs = 25 } | ConvertTo-Json -Compress)
+                # Wait until the server accepted at least a quarter of the burst,
+                # then kill it hard.
                 $accepted = 0
                 $deadline = (Get-Date).AddSeconds(60)
                 while ((Get-Date) -lt $deadline) {
-                    if (Test-Path -LiteralPath (Join-Path $probeDir 'burst-a.done')) { break }
-                    if (Test-Path -LiteralPath (Join-Path $probeDir 'burst-a.accepted')) {
-                        $accepted = [int](Get-Content -LiteralPath (Join-Path $probeDir 'burst-a.accepted') -Raw)
-                        if ($accepted -ge ($BurstLines / 2)) { break }
+                    if (Test-Path -LiteralPath (Join-Path $probeDir 'a.done')) { break }
+                    if (Test-Path -LiteralPath (Join-Path $probeDir 'a.accepted')) {
+                        $accepted = [int](Get-Content -LiteralPath (Join-Path $probeDir 'a.accepted') -Raw)
+                        if ($accepted -ge ($BurstLines / 4)) { break }
                     }
-                    Start-Sleep -Milliseconds 100
+                    Start-Sleep -Milliseconds 50
                 }
-                $completed = Test-Path -LiteralPath (Join-Path $probeDir 'burst-a.done')
-                if (-not $completed -and $accepted -lt ($BurstLines / 2)) {
-                    throw "the burst never reached half of $BurstLines accepted (accepted=$accepted)"
+                $completed = Test-Path -LiteralPath (Join-Path $probeDir 'a.done')
+                if (-not $completed -and $accepted -lt ($BurstLines / 4)) {
+                    throw "the burst never reached a quarter of $BurstLines accepted (accepted=$accepted)"
                 }
                 if (-not $completed) {
                     & taskkill /F /PID $serverPid 2>&1 | Out-Null
                     Start-Sleep -Seconds 2
                 }
-                $done = if ($completed) { Get-Content -LiteralPath (Join-Path $probeDir 'burst-a.done') -Raw | ConvertFrom-Json } else { $null }
+                $done = if ($completed) { Get-Content -LiteralPath (Join-Path $probeDir 'a.done') -Raw | ConvertFrom-Json } else { $null }
                 if ($done -and (-not $done.patchedOut -or -not $done.patchedErr)) {
                     throw "the async console writer was not installed (patchedOut=$($done.patchedOut) patchedErr=$($done.patchedErr))"
                 }
-                $acceptedText = Get-Content -LiteralPath (Join-Path $probeDir 'burst-a.accepted') -Raw
+                # Let a still-draining writer finish what it holds (a completed
+                # burst can have ~40 batches queued; a killed one has stopped).
+                $acceptedText = Get-Content -LiteralPath (Join-Path $probeDir 'a.accepted') -Raw
                 $accepted = [int]$acceptedText
-                $landed = @(Select-String -Path (Join-Path $consoleRoot 'server.log') -Pattern 'QAPROBE burst-a ' -SimpleMatch).Count
+                if ($completed) {
+                    $deadline = (Get-Date).AddSeconds(30)
+                    $previousLanded = -1
+                    while ((Get-Date) -lt $deadline) {
+                        Start-Sleep -Milliseconds 500
+                        $landed = @(Select-String -Path (Join-Path $consoleRoot 'server.log') -Pattern 'QAPROBE a ' -SimpleMatch).Count
+                        if ($landed -ge $accepted -or $landed -eq $previousLanded) { break }
+                        $previousLanded = $landed
+                    }
+                }
+                $landed = @(Select-String -Path (Join-Path $consoleRoot 'server.log') -Pattern 'QAPROBE a ' -SimpleMatch).Count
                 # One batch is 1 MiB; a probe line is about 95 bytes, so ~11,000
-                # lines. Two batches is the bound the check allows (the kill can
-                # land while one batch is in flight and one more queues behind).
+                # lines. The bound allows two batches plus one write chunk: the
+                # kill can land while one batch is in flight, one more queues
+                # behind it, and the accepted counter is written after a chunk
+                # (so it can name up to chunk lines that were never written).
                 $batchLines = [Math]::Ceiling(1048576 / 95)
+                $allowedLost = ($batchLines * 2) + 4000
                 $lost = [Math]::Max(0, $accepted - $landed)
-                $lostOverall = [Math]::Max(0, $BurstLines - $landed)
-                Write-Output ("    accepted=$accepted landed=$landed lost=$lost (allowed $($batchLines * 2)); completed before kill=$completed")
+                Write-Output ("    accepted=$accepted landed=$landed lost=$lost (allowed $allowedLost); completed before kill=$completed")
                 Set-Content -LiteralPath (Join-Path $Out 'console-burst.json') -Value (@{
-                        accepted = $accepted; landed = $landed; lost = $lost; allowedLost = $batchLines * 2
+                        accepted = $accepted; landed = $landed; lost = $lost; allowedLost = $allowedLost
                         burstLines = $BurstLines; completedBeforeKill = $completed; patchedOut = ($done -and $done.patchedOut); patchedErr = ($done -and $done.patchedErr)
                     } | ConvertTo-Json)
-                if ($lost -gt ($batchLines * 2)) {
-                    throw "a mid-burst kill lost $lost of $accepted accepted lines (bound $($batchLines * 2))"
-                }
-                # The accepted counter is written after every chunk, so a kill in
-                # the middle of a chunk can also leave that chunk partly unwritten;
-                # the log must still hold all but at most two batches of the burst.
-                if ($lostOverall -gt ($batchLines * 2 + 4000)) {
-                    throw "only $landed of $BurstLines burst lines reached the log"
+                if ($lost -gt $allowedLost) {
+                    throw "a mid-burst kill lost $lost of $accepted accepted lines (bound $allowedLost)"
                 }
             } finally {
                 & $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Stop $consoleName | Out-Null
@@ -271,11 +284,11 @@ try {
             $stallRoot = [string]$stallInfo.Root
             try {
                 Set-Content -LiteralPath (Join-Path $stallProbeDir 'stall-a.json') -Value (@{ ms = 1600 } | ConvertTo-Json -Compress)
-                $deadline = (Get-Date).AddSeconds(20)
-                while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath (Join-Path $stallProbeDir 'stall-a.stalled'))) {
+                $deadline = (Get-Date).AddSeconds(30)
+                while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath (Join-Path $stallProbeDir 'a.stalled'))) {
                     Start-Sleep -Milliseconds 200
                 }
-                if (-not (Test-Path -LiteralPath (Join-Path $stallProbeDir 'stall-a.stalled'))) { throw 'the provoked stall never ran' }
+                if (-not (Test-Path -LiteralPath (Join-Path $stallProbeDir 'a.stalled'))) { throw 'the provoked stall never ran' }
                 # The recorder writes the capture from a worker; give it a moment.
                 $ownDir = Join-Path $stallRoot 'userdata\logs\stalls'
                 $deadline = (Get-Date).AddSeconds(30)
