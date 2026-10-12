@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - real temp files back the spawn-resolution cache tests
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -5,7 +6,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
-import { describe, expect, it, vi } from "vite-plus/test";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CommandAvailability,
@@ -22,7 +26,9 @@ import {
   resolveCommandPath,
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
+  resolveSpawnExecutableWithNode,
   resolveWindowsEnvironment,
+  spawnResolutionCache,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
   withPathDirectoryListings,
@@ -508,6 +514,74 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
   );
+});
+
+describe("resolveSpawnExecutableWithNode", () => {
+  const windowsEnv = (dir: string) => ({ PATH: dir, PATHEXT: ".EXE;.CMD" });
+  let dir = "";
+  let now = 1_000_000;
+
+  beforeEach(() => {
+    spawnResolutionCache.clear();
+    dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-cache-"));
+    now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("memoizes a PATH walk so a repeat resolution never touches the disk", () => {
+    const executable = NodePath.join(dir, "tool.CMD");
+    NodeFS.writeFileSync(executable, "");
+    expect(resolveSpawnExecutableWithNode("tool", "win32", windowsEnv(dir))).toBe(executable);
+    // The file vanishing proves the second answer came from the cache.
+    NodeFS.rmSync(executable);
+    expect(resolveSpawnExecutableWithNode("tool", "win32", windowsEnv(dir))).toBe(executable);
+  });
+
+  it("caches a not-found outcome for the TTL, then probes again", () => {
+    expect(resolveSpawnExecutableWithNode("late", "win32", windowsEnv(dir))).toBeUndefined();
+    const executable = NodePath.join(dir, "late.CMD");
+    NodeFS.writeFileSync(executable, "");
+    expect(resolveSpawnExecutableWithNode("late", "win32", windowsEnv(dir))).toBeUndefined();
+    now += 30_001;
+    expect(resolveSpawnExecutableWithNode("late", "win32", windowsEnv(dir))).toBe(executable);
+  });
+
+  it("expires a cached hit after the TTL", () => {
+    const executable = NodePath.join(dir, "aging.CMD");
+    NodeFS.writeFileSync(executable, "");
+    expect(resolveSpawnExecutableWithNode("aging", "win32", windowsEnv(dir))).toBe(executable);
+    NodeFS.rmSync(executable);
+    expect(resolveSpawnExecutableWithNode("aging", "win32", windowsEnv(dir))).toBe(executable);
+    now += 30_001;
+    expect(resolveSpawnExecutableWithNode("aging", "win32", windowsEnv(dir))).toBeUndefined();
+  });
+
+  it("re-walks when PATH changes between calls", () => {
+    const executable = NodePath.join(dir, "moved.CMD");
+    NodeFS.writeFileSync(executable, "");
+    expect(resolveSpawnExecutableWithNode("moved", "win32", windowsEnv(dir))).toBe(executable);
+    NodeFS.rmSync(executable);
+    expect(
+      resolveSpawnExecutableWithNode("moved", "win32", {
+        ...windowsEnv(dir),
+        PATH: `${dir}\\other`,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("never caches an explicit path", () => {
+    const executable = NodePath.join(dir, "explicit.CMD");
+    NodeFS.writeFileSync(executable, "");
+    expect(resolveSpawnExecutableWithNode(executable, "win32", windowsEnv(dir))).toBe(executable);
+    NodeFS.rmSync(executable);
+    expect(resolveSpawnExecutableWithNode(executable, "win32", windowsEnv(dir))).toBeUndefined();
+    expect(spawnResolutionCache.size).toBe(0);
+  });
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {

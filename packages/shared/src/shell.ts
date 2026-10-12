@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - the synchronous resolver runs outside any fiber (spawn-time), so it reads the wall clock directly
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
@@ -93,7 +93,47 @@ export type SpawnExecutableResolver = (
   env: NodeJS.ProcessEnv,
 ) => string | undefined;
 
-function resolveSpawnExecutableWithNode(
+// This resolver runs synchronously on the event loop (resolveSpawnCommand on
+// every Windows spawn, provider CLI resolution on every session start), and one
+// walk costs a statSync probe per PATH entry x PATHEXT candidate. A probe that
+// takes microseconds on a quiet disk takes hundreds of milliseconds under
+// disk load (measured on the live server: 4.4 s of one walk blocking every
+// request), and session bootstrap resolves the same commands over and over.
+// Memoize the walk outcome per (platform, PATH, PATHEXT, command) for a short
+// window, mirroring the async resolveCommandPath cache below: repeat scans hit
+// the cache while any change to the search environment invalidates immediately.
+// Explicit-path resolution is never cached - callers probe paths they have just
+// written (e.g. managed binary installs). A "not-found" outcome is also cached
+// for the TTL, so a just-installed binary can stay invisible for up to 30s
+// unless resolved by explicit path. Date.now() drives the TTL; a backward
+// wall-clock adjustment can only keep an entry alive a little longer, which
+// the same TTL comment accepts for the async cache's window.
+const SPAWN_RESOLUTION_CACHE_TTL_MS = 30_000;
+const SPAWN_RESOLUTION_CACHE_MAX_ENTRIES = 512;
+const SPAWN_RESOLUTION_CACHE_KEY_SEPARATOR = String.fromCharCode(0);
+
+interface SpawnResolutionCacheEntry {
+  readonly resolvedPath: string | null;
+  readonly expiresAtMs: number;
+}
+
+/** Exported so tests can clear it between cases; production shares one map. */
+export const spawnResolutionCache = new Map<string, SpawnResolutionCacheEntry>();
+
+function cacheSpawnResolution(cacheKey: string, resolvedPath: string | null, nowMs: number): void {
+  if (spawnResolutionCache.size >= SPAWN_RESOLUTION_CACHE_MAX_ENTRIES) {
+    const oldestKey = spawnResolutionCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      spawnResolutionCache.delete(oldestKey);
+    }
+  }
+  spawnResolutionCache.set(cacheKey, {
+    resolvedPath,
+    expiresAtMs: nowMs + SPAWN_RESOLUTION_CACHE_TTL_MS,
+  });
+}
+
+export function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
@@ -122,14 +162,29 @@ function resolveSpawnExecutableWithNode(
     return candidates.find(isExecutable);
   }
 
-  for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
+  const pathValue = readEnvPath(env) ?? "";
+  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
+    SPAWN_RESOLUTION_CACHE_KEY_SEPARATOR,
+  );
+  const nowMs = Date.now();
+  const cached = spawnResolutionCache.get(cacheKey);
+  if (cached !== undefined) {
+    if (cached.expiresAtMs > nowMs) return cached.resolvedPath ?? undefined;
+    spawnResolutionCache.delete(cacheKey);
+  }
+
+  for (const pathEntry of pathValue.split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
+      if (isExecutable(candidatePath)) {
+        cacheSpawnResolution(cacheKey, candidatePath, nowMs);
+        return candidatePath;
+      }
     }
   }
+  cacheSpawnResolution(cacheKey, null, nowMs);
   return undefined;
 }
 
