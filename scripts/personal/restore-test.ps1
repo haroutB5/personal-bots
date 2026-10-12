@@ -61,8 +61,63 @@ $tempBase = [System.IO.Path]::GetTempPath()
 $tempRoot = Join-Path $tempBase ('pb-restore-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $stateDir = Join-Path $tempRoot 'userdata'
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-Get-ChildItem -LiteralPath $backupDir | Where-Object { $_.Name -ne 'backup.json' } | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stateDir $_.Name) -Recurse -Force
+
+# The ~2.5 GB copy runs at background priority: QA 1.66.33 measured the plain
+# Copy-Item stalling the LIVE server twice (1,358 ms and 2,224 ms synchronous
+# SQLite writes at 19:39:00 and 19:40:23 on 12 Oct). CPU BelowNormal and I/O +
+# memory Very Low is the same treatment the release runner gives its backups.
+function Set-BackgroundIoPriority {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    if (-not ('PbRestoreProc' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class PbRestoreProc {
+    [DllImport("ntdll.dll")] static extern int NtSetInformationProcess(IntPtr h, int cls, ref int info, int len);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    const uint SET_INFO = 0x0200;
+    const int ProcessIoPriority = 33, ProcessPagePriority = 39;
+    public static int SetIo(int pid, int level) { return Set(pid, ProcessIoPriority, level); }
+    public static int SetMem(int pid, int level) { return Set(pid, ProcessPagePriority, level); }
+    static int Set(int pid, int cls, int value) {
+        IntPtr h = OpenProcess(SET_INFO, false, pid);
+        if (h == IntPtr.Zero) return -1;
+        try { return NtSetInformationProcess(h, cls, ref value, 4); } finally { CloseHandle(h); }
+    }
+}
+'@
+    }
+    $io = [PbRestoreProc]::SetIo($ProcessId, 0)  # 0 = very low
+    $mem = [PbRestoreProc]::SetMem($ProcessId, 1) # 1 = very low
+    return "io=$io mem=$mem"
+}
+
+function Copy-BackupAtLowPriority {
+    param([string]$From, [string]$To)
+    $robocopy = Join-Path $env:SystemRoot 'System32\robocopy.exe'
+    if (-not (Test-Path -LiteralPath $robocopy -PathType Leaf)) { return $false }
+    $args = @('"' + $From + '"', '"' + $To + '"', '/E', '/XF', 'backup.json', '/R:2', '/W:1',
+        '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+    $copy = Start-Process -FilePath $robocopy -ArgumentList ($args -join ' ') -PassThru -WindowStyle Hidden
+    if ($null -eq $copy) { return $false }
+    try { $copy.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch { }
+    $priority = Set-BackgroundIoPriority -ProcessId $copy.Id
+    $null = $copy.Handle
+    $copy.WaitForExit()
+    # Robocopy codes 0-7 are success (files copied, extras present, and so on); 8+ is a failure.
+    if ($copy.ExitCode -ge 8) {
+        Write-Warning "robocopy exited $($copy.ExitCode); falling back to a normal-priority Copy-Item."
+        return $false
+    }
+    Write-Host "  restored backup at background priority ($priority, robocopy exit $($copy.ExitCode))"
+    return $true
+}
+
+if (-not (Copy-BackupAtLowPriority -From $backupDir -To $stateDir)) {
+    Get-ChildItem -LiteralPath $backupDir | Where-Object { $_.Name -ne 'backup.json' } | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stateDir $_.Name) -Recurse -Force
+    }
 }
 
 Clear-DevOriginEnv
