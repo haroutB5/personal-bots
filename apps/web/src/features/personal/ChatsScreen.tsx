@@ -893,8 +893,9 @@ export function ChatsScreen({
         </div>
       </header>
 
-      {/* One reserved line for the update status: empty unless a release is
-          moving, and it never shifts the list below (UpdateStatusLine). */}
+      {/* The update status line: nothing at all unless a release is moving or
+          just landed, and it expands and collapses smoothly when it changes
+          (UpdateStatusLine). */}
       <UpdateStatusLine versionLabel={versionLabel} />
 
       <PersonalUsageStrip now={now} />

@@ -4,6 +4,14 @@
  * update", "Restarting for update", "Checking update 1.66.34", then
  * "Updated to 1.66.34" or "Update failed, still on 1.66.33".
  *
+ * The finished "Updated to x" line is a one-time note: it stands for ten
+ * seconds after it first appears, then the row fades and collapses, and the
+ * device remembers the version it showed so the line never repeats it beside
+ * the version the header already carries (Harout, 12 Oct: "If im already on
+ * the same version i dont want to see the status duplicating the info there.
+ * Or show it briefly for 10s after i first open the app and then hide it and
+ * collapse it."). Every other phase is real news and stays while it is true.
+ *
  * The words come from `GET /api/personal/update/status`
  * (apps/server/src/personal/updateStatus/updateStatusRoute.ts, which reads the
  * release runner's result file); this module owns how a phase reads, how long
@@ -102,6 +110,19 @@ const FINISHED_PHASES: ReadonlySet<string> = new Set([
   "rollback_failed",
   "failed",
 ]);
+
+/**
+ * The phases that say the update landed. Their line is the one-time note:
+ * shown for ten seconds once per version per device, then gone. The failure
+ * phases above keep showing while they are true, since they are real news.
+ */
+export const UPDATED_PHASES: ReadonlySet<string> = new Set([
+  "live_verified",
+  "live_verified_doc_update_failed",
+]);
+
+/** How long "Updated to x" stands before it fades and collapses away. */
+export const UPDATED_LINE_MS = 10_000;
 
 /**
  * The line for one answer, or null when the phase gets none. `fallbackVersion`
@@ -207,6 +228,8 @@ export function visibleUpdateLine(input: {
   readonly offline: boolean;
   readonly lastSeen: LastSeenPhase | null;
   readonly dismissed: DismissedLine | null;
+  /** The "Updated to x" line this device has already shown, if any. */
+  readonly seenUpdated: SeenUpdated | null;
   readonly fallbackVersion: string | null;
   readonly nowMs: number;
 }): UpdateLine | null {
@@ -232,6 +255,16 @@ export function visibleUpdateLine(input: {
   if (input.answer === null) return null;
   const line = updateLineFor(input.answer, input.fallbackVersion);
   if (line === null) return null;
+  // "Updated to x" is a one-time note per version: this device has shown it
+  // (ten seconds ago, or on an earlier launch), so the header's version
+  // stands on its own.
+  if (
+    UPDATED_PHASES.has(line.phase) &&
+    input.seenUpdated !== null &&
+    input.seenUpdated.version === line.version
+  ) {
+    return null;
+  }
   const dismissed = input.dismissed;
   if (
     dismissed !== null &&
@@ -273,6 +306,45 @@ export function writeDismissedLine(line: DismissedLine): void {
     window.localStorage.setItem(DISMISSED_LINE_KEY, JSON.stringify(line));
   } catch {
     // Private mode: the line simply comes back on the next launch.
+  }
+}
+
+/**
+ * The "Updated to x" line this device has already shown: the ten-second note
+ * is once per version, so the next launch has nothing to say. The version is
+ * null only for a line the server could not name, and only for the session
+ * that showed it; storage never holds a nameless record.
+ */
+export interface SeenUpdated {
+  readonly version: string | null;
+  readonly atMs: number;
+}
+
+/** Where the shown version is remembered, per device. */
+export const SEEN_UPDATED_KEY = "bots:update-status-seen";
+
+/** The seen version, or null. localStorage, best-effort. */
+export function readSeenUpdated(): SeenUpdated | null {
+  try {
+    const raw = window.localStorage.getItem(SEEN_UPDATED_KEY);
+    if (raw === null) return null;
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.version !== "string" || !VERSION.test(record.version)) return null;
+    if (typeof record.atMs !== "number" || !Number.isFinite(record.atMs)) return null;
+    return { version: record.version, atMs: record.atMs };
+  } catch {
+    return null;
+  }
+}
+
+export function writeSeenUpdated(record: SeenUpdated): void {
+  if (record.version === null) return;
+  try {
+    window.localStorage.setItem(SEEN_UPDATED_KEY, JSON.stringify(record));
+  } catch {
+    // Private mode: worst case the line shows once more on the next launch.
   }
 }
 
