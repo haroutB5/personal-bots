@@ -43,11 +43,14 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
-$failures = @()
+$script:failures = @()
 function Step($what, $script) {
     Write-Output ("=== " + $what)
     try { & $script; if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw "exit $LASTEXITCODE" } }
-    catch { $failures += "${what}: $($_.Exception.Message)"; Write-Warning "${what} FAILED: $($_.Exception.Message)" }
+    catch {
+        $script:failures += "${what}: $($_.Exception.Message)"
+        Write-Warning "${what} FAILED: $($_.Exception.Message)"
+    }
 }
 
 if (-not $Out) { $Out = Join-Path $env:TEMP ('hbots-qa16633-' + (Get-Date -Format 'HHmmss')) }
@@ -149,8 +152,8 @@ try {
 }
 
 Write-Output ''
-if ($failures.Count -gt 0) {
-    Write-Output ("qa-16633 FAILED: " + ($failures -join ' | '))
+if ($script:failures.Count -gt 0) {
+    Write-Output ("qa-16633 FAILED: " + ($script:failures -join ' | '))
     exit 1
 }
 Write-Output "qa-16633 all checks passed. Evidence in $Out"

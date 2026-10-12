@@ -35,8 +35,9 @@ const check = (what, ok, detail = "") => {
   if (!ok) failures += 1;
 };
 
-const { webkit } = loadPlaywright(args.bin);
-const browser = await webkit.launch({ headless: true });
+// Google Chrome, like the e2e smoke: a Playwright WebKit tap here fires no click.
+const { chromium } = loadPlaywright(args.bin);
+const browser = await chromium.launch({ channel: "chrome", headless: true });
 try {
   const storageState = await pairContext(browser, args.origin, args.pair);
   const { context, page, errors } = await openPhone(browser, args.origin, storageState);

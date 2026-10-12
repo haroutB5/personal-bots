@@ -10,6 +10,9 @@
 //   ASKQ   asks the owner a question (AskUserQuestion) and waits for the answer.
 //   BADCHOICES, CHOICESBUSY, CHOICES, CHOICES6, CHOICES7  replies that end with a choices block.
 //   LONGMSG  a long multi-paragraph reply.   SLOW<n>  works for n seconds, then answers.
+//   A message that arrives while a SLOW job runs is folded into it ("Folded in: ...", no result
+//   of its own) like the real CLI's steer, and every prompt reports command_lifecycle frames
+//   (started/completed) - the delivery signal the server's steer-row fix reads.
 //   TABLEMSG  a markdown table wider than a 390 px phone.   TABLEFIT  a table that fits the screen.
 //   WIDECODE  an unwrapped code block wider than a phone (the sideways-scroll checks drag them).
 //   DELEGATE:<botId>  calls the delegate_task MCP tool.   TASKDONE  answers a delegated task.
@@ -116,6 +119,10 @@ const lifecycle = (commandUuid, state) =>
     state,
     session_id: sessionId,
   });
+// True while a SLOW<n> job runs: a message that arrives now is folded into the
+// running turn the way the real CLI folds a steer - an in-turn "Folded in:"
+// reply with no result of its own, so the slow job's result is the only one.
+let slowJobActive = false;
 const respond = (request, response) =>
   out({
     type: "control_response",
@@ -334,6 +341,19 @@ lines.on("line", async (line) => {
     if (pendingCommandUuids.length > 32) pendingCommandUuids.shift();
     lifecycle(message.uuid, "started");
   }
+  // A message folded into a running slow job: taken in, answered in-turn, no
+  // result of its own (the real CLI's steer fold; QA's 1.66.28 rig patched the
+  // same behaviour into its own copy).
+  if (slowJobActive) {
+    log("folded into running slow job");
+    assistant(`Folded in: ${text}`);
+    if (typeof message.uuid === "string") {
+      lifecycle(message.uuid, "completed");
+      const index = pendingCommandUuids.indexOf(message.uuid);
+      if (index >= 0) pendingCommandUuids.splice(index, 1);
+    }
+    return;
+  }
   // What this session was told before this prompt (the fake's only memory; see WHATWORD).
   const memoryFile = `${pidDir}/sessions/${sessionId}.jsonl`;
   NodeFS.mkdirSync(`${pidDir}/sessions`, { recursive: true });
@@ -433,8 +453,10 @@ lines.on("line", async (line) => {
   const slow = text.match(/SLOW(\d+)/);
   if (slow) {
     assistant("Working on the slow job.");
+    slowJobActive = true;
     setTimeout(
       () => {
+        slowJobActive = false;
         assistant("Slow job finished.");
         finish("ok", false);
       },

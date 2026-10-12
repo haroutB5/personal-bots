@@ -38,22 +38,27 @@ const seconds = Number(args.seconds);
 NodeFS.mkdirSync(args.out, { recursive: true });
 
 const report = { refreshes: 0, turns: 0, errors: [] };
-const { webkit } = loadPlaywright(args.bin);
-const browser = await webkit.launch({ headless: true });
+// Google Chrome, like the e2e smoke: a Playwright WebKit tap here fires no click.
+const { chromium } = loadPlaywright(args.bin);
+const browser = await chromium.launch({ channel: "chrome", headless: true });
 try {
   const storageState = await pairContext(browser, args.origin, args.pair);
   const { context, page, errors } = await openPhone(browser, args.origin, storageState);
-  await openBots(page, args.origin);
-
-  const strip = page.locator('button[aria-label^="Usage:"]').first();
-  await strip.waitFor({ state: "visible", timeout: 30_000 });
 
   // A streaming turn keeps provider events, session spawns and event-log
   // appends flowing while the refreshes run. SLOW<n> is the fake CLI's bare
   // trigger word (it streams for n seconds, then answers).
+  await openBots(page, args.origin);
   await newChatOnBotScreen(page, args.origin, "Assistant", "E2E stall load");
   await send(page, "SLOW120");
   report.turns += 1;
+
+  // Back to the Bots page (the turn streams server-side): the Usage strip
+  // lives there, and each "Refresh usage" is one rpc:server.refreshProviders
+  // - the RPC whose synchronous CLI resolution blocked the live loop.
+  await openBots(page, args.origin);
+  const strip = page.locator('button[aria-label^="Usage:"]').first();
+  await strip.waitFor({ state: "visible", timeout: 30_000 });
 
   const deadline = Date.now() + seconds * 1000;
   while (Date.now() < deadline) {
