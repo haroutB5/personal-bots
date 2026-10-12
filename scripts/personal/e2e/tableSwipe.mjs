@@ -13,17 +13,32 @@
 // scroller, since the owner's bubble is plain wrapped text) does not move; the
 // 20 px edge strip still drags the chat back to the Bots list.
 //
+// "The app took the touch" is watched with a MutationObserver on the row: the
+// swipe writes the row's inline style (transform, transition, the time's opacity
+// variable) and mounts the time element, so any write means useMessageSwipe
+// claimed the gesture. That is the fix's contract and it is engine-independent:
+// Chromium starts its own pan anyway (and cancels the pointer), so scrollLeft
+// alone cannot tell the before build from the after one; the observer can.
+// The watch and the scroll widths are read off a handle kept on window, so a
+// row that has left the page still reports what happened.
+//
+// Headless Chromium has a touch overscroll gesture that iOS Safari does not:
+// when a rightward drag has nothing left to consume, the browser sends the page
+// back to the previous history entry itself (a popstate with no app call). This
+// script detects that, records it on the check and goes forward again, so every
+// check still runs; the drag's own numbers are read before the recovery.
+//
 // Exit code: 0 every check passed, 1 a check failed, 2 setup failed. The result
 // JSON is written to <out>\table-swipe-<label>.json.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import {
   loadPlaywright,
+  newChatOnBotScreen,
   openBots,
   openPhone,
   pairContext,
   send,
-  startChatFromSheet,
   transcript,
 } from "./lib.mjs";
 
@@ -49,27 +64,13 @@ const label = args.label ?? "run";
 const outDir = args.out;
 NodeFS.mkdirSync(outDir, { recursive: true });
 
+const pathnameOf = (value) => new URL(value).pathname;
+
 const checks = [];
 function record(name, ok, detail) {
   checks.push({ name, ok, detail });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}  ${JSON.stringify(detail)}`);
 }
-
-/** The row's own state: the swipe writes its transform and draws the time itself. */
-const rowState = (row, scrollerSelector) =>
-  row.evaluate((element, selector) => {
-    const scroller = element.querySelector(selector);
-    const time = element.querySelector("[data-message-time]");
-    const transform = element.style.transform || "";
-    return {
-      moved: transform !== "",
-      transform,
-      timeShown: time !== null && Number.parseFloat(getComputedStyle(time).opacity) > 0,
-      scrollLeft: scroller === null ? null : Math.round(scroller.scrollLeft),
-      scrollWidth: scroller === null ? null : scroller.scrollWidth,
-      clientWidth: scroller === null ? null : scroller.clientWidth,
-    };
-  }, scrollerSelector);
 
 /** A touch drag as the phone's finger: down, moves 18 ms apart, up. */
 async function touchDrag(
@@ -106,6 +107,7 @@ const mid = (x, y) => ({ x, y });
 
 let browser;
 let context;
+let pageRef;
 try {
   const playwright = loadPlaywright(args.bin);
   browser = await playwright.chromium.launch({
@@ -116,17 +118,132 @@ try {
   const phone = await openPhone(browser, origin, storageState);
   context = phone.context;
   const { page, errors } = phone;
+  pageRef = page;
   // Harout's phone is the installed app; the edge swipe back only runs there.
   await context.addInitScript(() => {
     Object.defineProperty(window.navigator, "standalone", { value: true, configurable: true });
   });
   const session = await context.newCDPSession(page);
+  const navigations = [];
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) navigations.push(pathnameOf(page.url()));
+  });
+
+  /** Watches one row for the swipe's own marks and keeps a handle on page. */
+  const watchRow = (row, scrollerSelector) =>
+    row.evaluate((element, selector) => {
+      const watch = { styleWrites: 0, timeSeen: false };
+      window.__swipeWatch = watch;
+      window.__swipeRow = element;
+      window.__swipeScroller = element.querySelector(selector);
+      const styleObserver = new MutationObserver(() => {
+        watch.styleWrites += 1;
+      });
+      styleObserver.observe(element, { attributes: true, attributeFilter: ["style"] });
+      const timeObserver = new MutationObserver(() => {
+        if (element.querySelector("[data-message-time]") !== null) watch.timeSeen = true;
+      });
+      timeObserver.observe(element, { childList: true, subtree: true });
+      window.__swipeWatchStop = () => {
+        styleObserver.disconnect();
+        timeObserver.disconnect();
+        return watch;
+      };
+    }, scrollerSelector);
+
+  /** What the watched row shows, from the handle: it works after it has left the page. */
+  const readWatch = () =>
+    page.evaluate(() => {
+      const watch = window.__swipeWatchStop ? window.__swipeWatchStop() : null;
+      const scroller = window.__swipeScroller ?? null;
+      const row = window.__swipeRow ?? null;
+      return watch === null
+        ? null
+        : {
+            styleWrites: watch.styleWrites,
+            timeSeen: watch.timeSeen,
+            scrollLeft: scroller === null ? null : Math.round(scroller.scrollLeft),
+            scrollWidth: scroller === null ? null : scroller.scrollWidth,
+            clientWidth: scroller === null ? null : scroller.clientWidth,
+            rowTransform: row === null ? null : row.style.transform || "",
+          };
+    });
+
+  /** The row's state while it is still on the page (for the mid-gesture sample). */
+  const rowState = (row, scrollerSelector) =>
+    row.evaluate((element, selector) => {
+      const scroller = element.querySelector(selector);
+      const time = element.querySelector("[data-message-time]");
+      const transform = element.style.transform || "";
+      return {
+        moved: transform !== "",
+        transform,
+        timeShown: time !== null && Number.parseFloat(getComputedStyle(time).opacity) > 0,
+        scrollLeft: scroller === null ? null : Math.round(scroller.scrollLeft),
+        scrollWidth: scroller === null ? null : scroller.scrollWidth,
+        clientWidth: scroller === null ? null : scroller.clientWidth,
+      };
+    }, scrollerSelector);
+
+  /** Chromium's touch overscroll gesture (see the header): go back to the chat. */
+  const browserBacks = [];
+  const recoverIfLeftChat = async (expectedPath) => {
+    if (pathnameOf(page.url()) === expectedPath) return false;
+    browserBacks.push(pathnameOf(page.url()));
+    await page.goForward().catch(() => undefined);
+    await page
+      .waitForFunction((path) => location.pathname === path, expectedPath, { timeout: 10_000 })
+      .catch(() => undefined);
+    await page.getByPlaceholder(/^Message/).waitFor({ state: "visible", timeout: 15_000 });
+    await page.waitForTimeout(300);
+    return true;
+  };
+
+  /** What is under a point: the touch must land on the message it is meant to test. */
+  const hitAt = (point) =>
+    page.evaluate(
+      ({ x, y }) => {
+        const target = document.elementFromPoint(x, y);
+        if (target === null) return { tag: null, inRow: false, inScroller: false };
+        return {
+          tag: target.tagName,
+          inRow: target.closest("[data-replyable]") !== null,
+          inScroller:
+            target.closest(
+              '[data-slot="scroll-area-viewport"], .chat-markdown pre, [data-injected-scroller]',
+            ) !== null,
+        };
+      },
+      { x: point.x, y: point.y },
+    );
+
+  /** One drag on a row, watched: what the app did with the touch. */
+  const dragWatched = async (row, scrollerSelector, from, to, options = {}) => {
+    const hit = await hitAt(from);
+    if (!hit.inRow) {
+      throw new Error(
+        `the drag from ${JSON.stringify(from)} missed the message (hit ${hit.tag ?? "nothing"})`,
+      );
+    }
+    await watchRow(row, scrollerSelector);
+    const during = await touchDrag(session, page, from, to, options);
+    const after = await readWatch();
+    const browserBack = await recoverIfLeftChat(options.expectedPath ?? pathnameOf(page.url()));
+    return {
+      during,
+      after,
+      hit,
+      browserBack,
+      appTookTouch: after !== null && (after.styleWrites > 0 || after.timeSeen),
+    };
+  };
 
   // A chat with the seeded Assistant: a long reply above so the transcript
-  // scrolls, then the wide table.
+  // scrolls, then the wide table. Started from the bot's own screen, so a bot
+  // that already has chats opens a fresh one either way.
   await openBots(page, origin);
-  await page.getByText("Assistant", { exact: true }).first().tap();
-  await startChatFromSheet(page, "");
+  await newChatOnBotScreen(page, origin, "Assistant", "");
+  const chatPath = pathnameOf(page.url());
   await send(page, "LONGMSG");
   await transcript(page)
     .getByText("End of the long report.")
@@ -138,9 +255,13 @@ try {
   await wideScroller.waitFor({ state: "visible", timeout: 30_000 });
   await page.waitForTimeout(400);
 
-  const tableBox = await wideScroller.boundingBox();
-  if (tableBox === null) throw new Error("the wide table has no box");
-  const tableY = tableBox.y + Math.min(tableBox.height / 2, 60);
+  /** The wide table's box, measured where it is now (a recovery may have moved it). */
+  const wideBox = async () => {
+    const box = await wideScroller.boundingBox();
+    if (box === null) throw new Error("the wide table has no box");
+    return box;
+  };
+  const wideY = (box) => box.y + Math.min(box.height / 2, 60);
 
   const start = await rowState(wideRow, '[data-slot="scroll-area-viewport"]');
   record("wide-table-overflows", (start.scrollWidth ?? 0) > (start.clientWidth ?? 0) + 1, {
@@ -150,93 +271,112 @@ try {
   });
 
   // 1. A left drag pans the table; the message must not move and no time may appear.
-  const leftDuring = await touchDrag(
-    session,
-    page,
-    mid(tableBox.x + tableBox.width - 30, tableY),
-    mid(tableBox.x + 30, tableY),
+  let box = await wideBox();
+  const left = await dragWatched(
+    wideRow,
+    '[data-slot="scroll-area-viewport"]',
+    mid(box.x + box.width - 30, wideY(box)),
+    mid(box.x + 30, wideY(box)),
     {
       during: () => rowState(wideRow, '[data-slot="scroll-area-viewport"]'),
+      expectedPath: chatPath,
     },
   );
-  const afterLeft = await rowState(wideRow, '[data-slot="scroll-area-viewport"]');
   await page.screenshot({ path: NodePath.join(outDir, `table-swiped-left-${label}.png`) });
-  record("left-drag-pans-table", (afterLeft.scrollLeft ?? 0) >= (start.scrollLeft ?? 0) + 40, {
-    scrollLeft: afterLeft.scrollLeft,
-    duringMoved: leftDuring?.moved ?? null,
-    duringTimeShown: leftDuring?.timeShown ?? null,
-  });
+  record(
+    "left-drag-pans-table",
+    (left.after?.scrollLeft ?? 0) >= (start.scrollLeft ?? 0) + 40 && !left.appTookTouch,
+    {
+      scrollLeftBefore: start.scrollLeft,
+      scrollLeftAfter: left.after?.scrollLeft ?? null,
+      scrollWidth: start.scrollWidth,
+      clientWidth: start.clientWidth,
+      appTookTouch: left.appTookTouch,
+      styleWrites: left.after?.styleWrites ?? null,
+      timeSeen: left.after?.timeSeen ?? null,
+      browserBack: left.browserBack,
+    },
+  );
 
   // 2. The bug: a right drag must pan it back. Before 1.66.32 the message's
   // swipe took the touch, the table stayed where it was and the time appeared.
-  const rightDuring = await touchDrag(
-    session,
-    page,
-    mid(tableBox.x + 30, tableY),
-    mid(tableBox.x + tableBox.width - 30, tableY),
+  box = await wideBox();
+  const right = await dragWatched(
+    wideRow,
+    '[data-slot="scroll-area-viewport"]',
+    mid(box.x + 30, wideY(box)),
+    mid(box.x + box.width - 30, wideY(box)),
     {
       during: () => rowState(wideRow, '[data-slot="scroll-area-viewport"]'),
+      expectedPath: chatPath,
     },
   );
-  const afterRight = await rowState(wideRow, '[data-slot="scroll-area-viewport"]');
   await page.screenshot({ path: NodePath.join(outDir, `table-swiped-back-${label}.png`) });
   record(
     "right-drag-pans-table-back",
-    (afterRight.scrollLeft ?? 99) <= (start.scrollLeft ?? 0) + 2 &&
-      rightDuring !== null &&
-      !rightDuring.moved &&
-      !rightDuring.timeShown,
+    (right.after?.scrollLeft ?? 99) <= (start.scrollLeft ?? 0) + 2 && !right.appTookTouch,
     {
-      scrollLeft: afterRight.scrollLeft,
-      duringMoved: rightDuring?.moved ?? null,
-      duringTransform: rightDuring?.transform ?? null,
-      duringTimeShown: rightDuring?.timeShown ?? null,
+      scrollLeftBefore: left.after?.scrollLeft ?? null,
+      scrollLeftAfter: right.after?.scrollLeft ?? null,
+      appTookTouch: right.appTookTouch,
+      hitAtTouch: right.hit,
+      styleWrites: right.after?.styleWrites ?? null,
+      timeSeen: right.after?.timeSeen ?? null,
+      duringTransform: right.during?.transform ?? null,
+      duringTimeShown: right.during?.timeShown ?? null,
+      browserBack: right.browserBack,
     },
   );
 
   // 3. Another right drag at the start: nothing left to pan, so nothing happens
   // at all (the message must not swipe either).
-  const againDuring = await touchDrag(
-    session,
-    page,
-    mid(tableBox.x + 30, tableY),
-    mid(tableBox.x + tableBox.width - 30, tableY),
+  box = await wideBox();
+  const again = await dragWatched(
+    wideRow,
+    '[data-slot="scroll-area-viewport"]',
+    mid(box.x + 30, wideY(box)),
+    mid(box.x + box.width - 30, wideY(box)),
     {
       during: () => rowState(wideRow, '[data-slot="scroll-area-viewport"]'),
+      expectedPath: chatPath,
     },
   );
-  record(
-    "right-drag-at-start-stays-put",
-    againDuring !== null && !againDuring.moved && !againDuring.timeShown,
-    {
-      duringMoved: againDuring?.moved ?? null,
-      duringTimeShown: againDuring?.timeShown ?? null,
-      scrollLeft: againDuring?.scrollLeft ?? null,
-    },
-  );
+  record("right-drag-at-start-stays-put", !again.appTookTouch, {
+    appTookTouch: again.appTookTouch,
+    hitAtTouch: again.hit,
+    styleWrites: again.after?.styleWrites ?? null,
+    timeSeen: again.after?.timeSeen ?? null,
+    browserBack: again.browserBack,
+  });
 
-  // 4. The message's own swipe still works on the text beside the table.
+  // 4. The message's own swipe still works on the text beside the table. The
+  // watch must see this one take the touch: that is what proves it can see the
+  // swipe at all.
   const textBox = await wideRow.locator("p").first().boundingBox();
   if (textBox === null) throw new Error("the message text has no box");
   const textY = textBox.y + textBox.height / 2;
-  const textDuring = await touchDrag(
-    session,
-    page,
+  const text = await dragWatched(
+    wideRow,
+    '[data-slot="scroll-area-viewport"]',
     mid(textBox.x + 20, textY),
     mid(textBox.x + 20 + 120, textY),
     {
       during: () => rowState(wideRow, '[data-slot="scroll-area-viewport"]'),
+      expectedPath: chatPath,
     },
   );
-  const textAfter = await rowState(wideRow, '[data-slot="scroll-area-viewport"]');
   record(
     "message-text-still-swipes",
-    textDuring !== null && textDuring.moved && textDuring.timeShown && !textAfter.moved,
+    text.appTookTouch && (text.during?.timeShown ?? false) && text.after?.rowTransform === "",
     {
-      duringMoved: textDuring?.moved ?? null,
-      duringTransform: textDuring?.transform ?? null,
-      duringTimeShown: textDuring?.timeShown ?? null,
-      afterMoved: textAfter.moved,
+      appTookTouch: text.appTookTouch,
+      hitAtTouch: text.hit,
+      styleWrites: text.after?.styleWrites ?? null,
+      timeSeen: text.after?.timeSeen ?? null,
+      duringTransform: text.during?.transform ?? null,
+      duringTimeShown: text.during?.timeShown ?? null,
+      transformAfterSettle: text.after?.rowTransform ?? null,
+      browserBack: text.browserBack,
     },
   );
 
@@ -249,139 +389,194 @@ try {
   const fitBox = await fitScroller.boundingBox();
   if (fitBox === null) throw new Error("the fitting table has no box");
   const fitStart = await rowState(fitRow, '[data-slot="scroll-area-viewport"]');
-  const fitDuring = await touchDrag(
-    session,
-    page,
+  const fit = await dragWatched(
+    fitRow,
+    '[data-slot="scroll-area-viewport"]',
     mid(fitBox.x + 20, fitBox.y + Math.min(fitBox.height / 2, 40)),
     mid(fitBox.x + 20 + 120, fitBox.y + Math.min(fitBox.height / 2, 40)),
     {
       during: () => rowState(fitRow, '[data-slot="scroll-area-viewport"]'),
+      expectedPath: chatPath,
     },
   );
-  const fitAfter = await rowState(fitRow, '[data-slot="scroll-area-viewport"]');
   record(
     "fitting-table-still-swipes",
     (fitStart.scrollWidth ?? 0) <= (fitStart.clientWidth ?? 0) + 1 &&
-      fitDuring !== null &&
-      fitDuring.moved &&
-      fitDuring.timeShown &&
-      !fitAfter.moved,
+      fit.appTookTouch &&
+      fit.after?.rowTransform === "",
     {
       scrollWidth: fitStart.scrollWidth,
       clientWidth: fitStart.clientWidth,
-      duringMoved: fitDuring?.moved ?? null,
-      duringTimeShown: fitDuring?.timeShown ?? null,
+      appTookTouch: fit.appTookTouch,
+      hitAtTouch: fit.hit,
+      styleWrites: fit.after?.styleWrites ?? null,
+      timeSeen: fit.after?.timeSeen ?? null,
+      duringTimeShown: fit.during?.timeShown ?? null,
+      transformAfterSettle: fit.after?.rowTransform ?? null,
+      browserBack: fit.browserBack,
     },
   );
 
   // 6. A vertical drag that starts on the wide table still scrolls the chat.
   const beforeVertical = await wideRow.evaluate((element) => element.getBoundingClientRect().top);
-  const verticalDuring = await touchDrag(
-    session,
-    page,
-    mid(tableBox.x + tableBox.width / 2, tableY),
-    mid(tableBox.x + tableBox.width / 2, tableY + 150),
+  box = await wideBox();
+  const vertical = await dragWatched(
+    wideRow,
+    '[data-slot="scroll-area-viewport"]',
+    mid(box.x + box.width / 2, wideY(box)),
+    mid(box.x + box.width / 2, wideY(box) + 150),
     {
       during: () => rowState(wideRow, '[data-slot="scroll-area-viewport"]'),
+      expectedPath: chatPath,
     },
   );
   const afterVertical = await wideRow.evaluate((element) => element.getBoundingClientRect().top);
-  record("vertical-drag-scrolls-chat", afterVertical - beforeVertical > 20, {
-    rowTopBefore: Math.round(beforeVertical),
-    rowTopAfter: Math.round(afterVertical),
-    moved: afterVertical - beforeVertical,
-    duringMoved: verticalDuring?.moved ?? null,
-  });
+  record(
+    "vertical-drag-scrolls-chat",
+    afterVertical - beforeVertical > 20 && !vertical.appTookTouch,
+    {
+      rowTopBefore: Math.round(beforeVertical),
+      rowTopAfter: Math.round(afterVertical),
+      scrolledBy: Math.round(afterVertical - beforeVertical),
+      appTookTouch: vertical.appTookTouch,
+      styleWrites: vertical.after?.styleWrites ?? null,
+      browserBack: vertical.browserBack,
+    },
+  );
 
-  // 7. An unwrapped code block pans both ways too (WIDECODE).
+  // 7. An unwrapped code block pans both ways too (WIDECODE). Word wrap is on
+  // by default, and a wrapped code block never overflows: turn it off first,
+  // the way the footer toggle does.
   await send(page, "WIDECODE");
   const codeRow = page.locator('[data-replyable]:has-text("A wide code block:")');
   const codeScroller = codeRow.locator(".chat-markdown-codeblock pre").first();
   await codeScroller.waitFor({ state: "visible", timeout: 30_000 });
+  const codeBlock = codeRow.locator(".chat-markdown-codeblock").first();
+  if ((await codeBlock.getAttribute("data-wrap")) === "true") {
+    await codeRow.getByRole("button", { name: "Disable line wrap" }).first().tap();
+    await page
+      .waitForFunction(
+        () =>
+          document
+            .querySelector(
+              "[data-replyable]:has(.chat-markdown-codeblock) .chat-markdown-codeblock",
+            )
+            ?.getAttribute("data-wrap") === "false",
+        undefined,
+        { timeout: 10_000 },
+      )
+      .catch(() => undefined);
+  }
   await page.waitForTimeout(400);
   const codeStart = await rowState(codeRow, ".chat-markdown-codeblock pre");
   const codeBox = await codeScroller.boundingBox();
   if (codeBox === null) throw new Error("the wide code block has no box");
   const codeY = codeBox.y + Math.min(codeBox.height / 2, 40);
-  await touchDrag(
-    session,
-    page,
+  const codeLeft = await dragWatched(
+    codeRow,
+    ".chat-markdown-codeblock pre",
     mid(codeBox.x + codeBox.width - 20, codeY),
     mid(codeBox.x + 20, codeY),
+    { expectedPath: chatPath },
   );
-  const codeAfterLeft = await rowState(codeRow, ".chat-markdown-codeblock pre");
-  const codeDuringRight = await touchDrag(
-    session,
-    page,
+  const codeRight = await dragWatched(
+    codeRow,
+    ".chat-markdown-codeblock pre",
     mid(codeBox.x + 20, codeY),
     mid(codeBox.x + codeBox.width - 20, codeY),
-    {
-      during: () => rowState(codeRow, ".chat-markdown-codeblock pre"),
-    },
+    { during: () => rowState(codeRow, ".chat-markdown-codeblock pre"), expectedPath: chatPath },
   );
-  const codeAfterRight = await rowState(codeRow, ".chat-markdown-codeblock pre");
+  // A flick leaves momentum behind, so the return may need a second, shorter
+  // drag to land at the start: what matters is that it gets there and that
+  // neither drag is taken by the message.
+  const codeAgain =
+    (codeRight.after?.scrollLeft ?? 99) > 2
+      ? await dragWatched(
+          codeRow,
+          ".chat-markdown-codeblock pre",
+          mid(codeBox.x + 20, codeY),
+          mid(codeBox.x + codeBox.width - 20, codeY),
+          { expectedPath: chatPath },
+        )
+      : null;
+  const codeHome = codeAgain?.after?.scrollLeft ?? codeRight.after?.scrollLeft ?? null;
   record(
     "code-block-pans-both-ways",
     (codeStart.scrollWidth ?? 0) > (codeStart.clientWidth ?? 0) + 1 &&
-      (codeAfterLeft.scrollLeft ?? 0) >= (codeStart.scrollLeft ?? 0) + 40 &&
-      (codeAfterRight.scrollLeft ?? 99) <= (codeStart.scrollLeft ?? 0) + 2 &&
-      codeDuringRight !== null &&
-      !codeDuringRight.moved &&
-      !codeDuringRight.timeShown,
+      (codeLeft.after?.scrollLeft ?? 0) >= (codeStart.scrollLeft ?? 0) + 40 &&
+      (codeHome ?? 99) <= (codeStart.scrollLeft ?? 0) + 2 &&
+      !codeLeft.appTookTouch &&
+      !codeRight.appTookTouch &&
+      !(codeAgain?.appTookTouch ?? false),
     {
       scrollWidth: codeStart.scrollWidth,
       clientWidth: codeStart.clientWidth,
-      afterLeftScrollLeft: codeAfterLeft.scrollLeft,
-      afterRightScrollLeft: codeAfterRight.scrollLeft,
-      duringMoved: codeDuringRight?.moved ?? null,
-      duringTimeShown: codeDuringRight?.timeShown ?? null,
+      scrollLeftAfterLeft: codeLeft.after?.scrollLeft ?? null,
+      scrollLeftAfterRight: codeRight.after?.scrollLeft ?? null,
+      scrollLeftBackAtStart: codeHome,
+      leftAppTookTouch: codeLeft.appTookTouch,
+      rightAppTookTouch: codeRight.appTookTouch,
+      againAppTookTouch: codeAgain?.appTookTouch ?? null,
+      rightStyleWrites: codeRight.after?.styleWrites ?? null,
+      rightTimeSeen: codeRight.after?.timeSeen ?? null,
+      browserBack:
+        codeLeft.browserBack || codeRight.browserBack || (codeAgain?.browserBack ?? false),
     },
   );
 
   // 8. The owner's side, instrumented: an owner bubble is plain wrapped text and
   // has no scroller of its own, so an overflowing box is put inside the owner's
-  // row to drive the same rule (align "end" swipes leftwards) for real.
+  // row to drive the same rule (align "end" swipes leftwards) for real. It is
+  // absolutely positioned so it takes no space and cannot move the bubble.
   const ownerRow = page.locator('[data-replyable]:has-text("TABLEMSG")');
-  await ownerRow.evaluate((element) => {
-    const scroller = document.createElement("div");
-    scroller.setAttribute("data-injected-scroller", "");
-    scroller.style.cssText = "overflow-x:auto;width:100%;max-width:100%";
-    const inner = document.createElement("div");
-    inner.style.cssText = "width:1200px;height:36px";
-    scroller.appendChild(inner);
-    element.appendChild(scroller);
-  });
-  const injected = ownerRow.locator("[data-injected-scroller]");
-  const injectedBox = await injected.boundingBox();
-  if (injectedBox === null) throw new Error("the injected scroller has no box");
-  const injectedY = injectedBox.y + injectedBox.height / 2;
-  await touchDrag(
-    session,
-    page,
-    mid(injectedBox.x + injectedBox.width - 20, injectedY),
-    mid(injectedBox.x + 20, injectedY),
+  const injectOwnerScroller = async () => {
+    await ownerRow.scrollIntoViewIfNeeded();
+    await ownerRow.evaluate((element) => {
+      element.querySelector("[data-injected-scroller]")?.remove();
+      const scroller = document.createElement("div");
+      scroller.setAttribute("data-injected-scroller", "");
+      scroller.style.cssText =
+        "position:absolute;left:0;top:0;width:120px;height:20px;overflow-x:auto";
+      const inner = document.createElement("div");
+      inner.style.cssText = "width:1200px;height:20px";
+      scroller.appendChild(inner);
+      element.appendChild(scroller);
+    });
+    const box = await ownerRow.locator("[data-injected-scroller]").boundingBox();
+    if (box === null) throw new Error("the injected scroller has no box");
+    return box;
+  };
+  let injectedBox = await injectOwnerScroller();
+  const ownerLeft = await dragWatched(
+    ownerRow,
+    "[data-injected-scroller]",
+    mid(injectedBox.x + injectedBox.width - 20, injectedBox.y + injectedBox.height / 2),
+    mid(injectedBox.x + 20, injectedBox.y + injectedBox.height / 2),
+    { expectedPath: chatPath },
   );
-  const injectedAfterLeft = await injected.evaluate((element) => Math.round(element.scrollLeft));
-  const ownerDuringRight = await touchDrag(
-    session,
-    page,
-    mid(injectedBox.x + 20, injectedY),
-    mid(injectedBox.x + injectedBox.width - 20, injectedY),
-    {
-      during: () => rowState(ownerRow, "[data-injected-scroller]"),
-    },
+  const injectedAfterLeft = ownerLeft.after?.scrollLeft ?? null;
+  if (ownerLeft.browserBack) injectedBox = await injectOwnerScroller();
+  const ownerRight = await dragWatched(
+    ownerRow,
+    "[data-injected-scroller]",
+    mid(injectedBox.x + 20, injectedBox.y + injectedBox.height / 2),
+    mid(injectedBox.x + injectedBox.width - 20, injectedBox.y + injectedBox.height / 2),
+    { during: () => rowState(ownerRow, "[data-injected-scroller]"), expectedPath: chatPath },
   );
-  const injectedAfterRight = await injected.evaluate((element) => Math.round(element.scrollLeft));
   record(
     "owner-scroller-does-not-move-the-message",
-    ownerDuringRight !== null && !ownerDuringRight.moved && !ownerDuringRight.timeShown,
+    !ownerLeft.appTookTouch && !ownerRight.appTookTouch,
     {
       instrumented: true,
-      injectedScrollLeftAfterLeft: injectedAfterLeft,
-      injectedScrollLeftAfterRight: injectedAfterRight,
-      duringMoved: ownerDuringRight?.moved ?? null,
-      duringTransform: ownerDuringRight?.transform ?? null,
-      duringTimeShown: ownerDuringRight?.timeShown ?? null,
+      injectedScrollerPans: (injectedAfterLeft ?? 0) > 40,
+      scrollLeftAfterLeft: injectedAfterLeft,
+      scrollLeftAfterRight: ownerRight.after?.scrollLeft ?? null,
+      leftAppTookTouch: ownerLeft.appTookTouch,
+      rightAppTookTouch: ownerRight.appTookTouch,
+      hitAtTouch: ownerRight.hit,
+      rightStyleWrites: ownerRight.after?.styleWrites ?? null,
+      rightTimeSeen: ownerRight.after?.timeSeen ?? null,
+      browserBack: ownerLeft.browserBack || ownerRight.browserBack,
     },
   );
 
@@ -389,34 +584,37 @@ try {
   const ownerText = await ownerRow.locator("p").first().boundingBox();
   if (ownerText === null) throw new Error("the owner message has no box");
   const ownerTextY = ownerText.y + ownerText.height / 2;
-  const ownerTextDuring = await touchDrag(
-    session,
-    page,
+  const ownerTextDrag = await dragWatched(
+    ownerRow,
+    "[data-injected-scroller]",
     mid(ownerText.x + ownerText.width - 10, ownerTextY),
     mid(ownerText.x + ownerText.width - 10 - 120, ownerTextY),
-    {
-      during: () => rowState(ownerRow, "[data-injected-scroller]"),
-    },
+    { during: () => rowState(ownerRow, "[data-injected-scroller]"), expectedPath: chatPath },
   );
   record(
     "owner-text-still-swipes",
-    ownerTextDuring !== null && ownerTextDuring.moved && ownerTextDuring.timeShown,
+    ownerTextDrag.appTookTouch && (ownerTextDrag.during?.timeShown ?? false),
     {
-      duringMoved: ownerTextDuring?.moved ?? null,
-      duringTransform: ownerTextDuring?.transform ?? null,
-      duringTimeShown: ownerTextDuring?.timeShown ?? null,
+      appTookTouch: ownerTextDrag.appTookTouch,
+      hitAtTouch: ownerTextDrag.hit,
+      styleWrites: ownerTextDrag.after?.styleWrites ?? null,
+      timeSeen: ownerTextDrag.after?.timeSeen ?? null,
+      duringTimeShown: ownerTextDrag.during?.timeShown ?? null,
+      browserBack: ownerTextDrag.browserBack,
     },
   );
   await page.waitForTimeout(400);
 
   // 10. The 20 px edge strip: the swipe back still leaves the chat for the list.
-  const chatUrl = page.url();
+  const chatBeforeEdge = pathnameOf(page.url());
   await touchDrag(session, page, mid(8, 500), mid(320, 500), { steps: 16, settleMs: 900 });
   await page
-    .waitForURL((url) => new URL(url).pathname === "/bots", { timeout: 5_000 })
+    .waitForFunction(() => new URL(location.href).pathname === "/bots", undefined, {
+      timeout: 5_000,
+    })
     .catch(() => undefined);
-  const landed = new URL(page.url()).pathname;
-  record("edge-swipe-back-still-works", landed === "/bots", { from: chatUrl, landed });
+  const landed = pathnameOf(page.url());
+  record("edge-swipe-back-still-works", landed === "/bots", { from: chatBeforeEdge, landed });
 
   const failed = checks.filter((check) => !check.ok);
   const result = {
@@ -426,6 +624,8 @@ try {
     standalone: true,
     checks,
     failed: failed.map((check) => check.name),
+    browserBacks,
+    navigations,
     pageErrors: errors,
   };
   NodeFS.writeFileSync(
@@ -438,6 +638,7 @@ try {
       passed: checks.length - failed.length,
       total: checks.length,
       failed: failed.map((check) => check.name),
+      browserBacks: browserBacks.length,
     })}`,
   );
   await context.close();
@@ -445,6 +646,10 @@ try {
   process.exit(failed.length === 0 ? 0 : 1);
 } catch (error) {
   console.error(`setup failed: ${error instanceof Error ? error.message : String(error)}`);
+  const failed = checks.filter((check) => !check.ok);
+  console.error(
+    `after ${checks.length} checks (${failed.length} failed at: ${failed.map((check) => check.name).join(", ") || "none"}), page is at ${pageRef?.url() ?? "unknown"}`,
+  );
   await context?.close().catch(() => undefined);
   await browser?.close().catch(() => undefined);
   process.exit(2);
