@@ -1,4 +1,5 @@
 import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
+import { firstSafeBotModelSlug } from "@t3tools/contracts";
 
 /**
  * Pins the model of the default bots a fresh data root seeds. Test servers
@@ -7,14 +8,17 @@ import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
  */
 export const PERSONAL_SEED_MODEL_ENV = "PERSONAL_SEED_MODEL";
 
-/** The seed's first choice on Claude, at medium effort. */
-const PREFERRED_SEED_MODEL = "claude-opus-5-5";
 const PREFERRED_SEED_EFFORT = "medium";
 
 /**
  * Fable and Mythos are the most expensive models. The catalog marks Fable as
  * Claude's default, so every throwaway test root (and a fresh install) used
  * to seed its bots on it: 56 Fable requests in two days from e2e servers.
+ *
+ * The seed's own never-auto-pick set. The bot form's default (which also
+ * skips Codex's Astra) is the wider `isExpensiveDefaultModel` in contracts;
+ * here the set is deliberately unchanged, because the memory tidy-up's env
+ * override reads this one and a pinned Astra tidy is the owner's own call.
  */
 export const isExpensiveSeedModel = (slug: string): boolean => /fable|mythos/i.test(slug);
 
@@ -37,9 +41,10 @@ function withMediumEffort(instance: ServerProvider, slug: string): SeedModel {
 
 /**
  * The model a seeded bot starts on: the `PERSONAL_SEED_MODEL` override when
- * the provider has it; else Opus 5.5 at medium; else the provider's default,
- * then its first non-legacy model, skipping Fable and Mythos. Undefined:
- * the provider lists nothing else (never seed onto Fable or Mythos).
+ * the provider has it; else the shared safe default (`firstSafeBotModelSlug`
+ * in contracts: Opus 5.5 first, the provider's own default next, skipping
+ * Fable, Mythos and Astra) at medium effort. Undefined: the provider lists
+ * nothing else (never seed onto an expensive model).
  */
 export function seedModelFor(
   instance: ServerProvider,
@@ -50,11 +55,6 @@ export function seedModelFor(
   if (pinned !== undefined && pinned.length > 0 && slugs.includes(pinned)) {
     return withMediumEffort(instance, pinned);
   }
-  if (slugs.includes(PREFERRED_SEED_MODEL)) return withMediumEffort(instance, PREFERRED_SEED_MODEL);
-  const affordable = instance.models.filter((model) => !isExpensiveSeedModel(model.slug));
-  const chosen =
-    affordable.find((model) => model.isDefault === true) ??
-    affordable.find((model) => model.isLegacy !== true) ??
-    affordable[0];
-  return chosen === undefined ? undefined : withMediumEffort(instance, chosen.slug);
+  const chosen = firstSafeBotModelSlug(instance);
+  return chosen === "" ? undefined : withMediumEffort(instance, chosen);
 }
