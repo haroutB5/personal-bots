@@ -30,6 +30,7 @@ import {
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
+import { SpawnExecutableResolution, type SpawnExecutableResolver } from "@t3tools/shared/shell";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
@@ -822,12 +823,38 @@ const collectOutput = Effect.fnUntraced(function* (
   };
 });
 
+/**
+ * The executable this driver spawns. On Windows `child_process.spawn("git", ...)`
+ * makes libuv walk every PATH entry (times PATHEXT) synchronously in this process
+ * before CreateProcess runs, and each probe can take hundreds of milliseconds on
+ * a busy disk - the same walk class 1.66.33 memoized for provider CLIs (4.4-5.3 s
+ * live captures). `ProcessRunner` already spawns the resolved absolute path; this
+ * driver spawned the bare name, so every GitManager call (status, pull-request
+ * lookup, settlement sweeps) paid the walk again. The resolver is memoized per
+ * (platform, PATH, PATHEXT, command) for 30 s, so this is a map hit after the
+ * first call. Other platforms leave the command untouched: exec resolves PATH in
+ * the kernel there and the probe walk is not wanted.
+ *
+ * Exported for tests: the resolver, platform and env decide the answer, so the
+ * Windows and POSIX behaviour is checkable without a real spawn.
+ */
+export const resolveGitSpawnExecutable = (
+  resolveExecutable: SpawnExecutableResolver,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): string => (platform === "win32" ? (resolveExecutable("git", platform, env) ?? "git") : "git");
+
 export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const platform = yield* HostProcessPlatform;
+
+  const gitExecutableFor = (env: NodeJS.ProcessEnv): string =>
+    resolveGitSpawnExecutable(resolveExecutable, platform, env);
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -854,14 +881,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
         const child = yield* commandSpawner
           .spawn(
-            ChildProcess.make("git", commandInput.args, {
-              cwd: commandInput.cwd,
-              env: {
-                ...process.env,
-                ...input.env,
-                ...trace2Monitor.env,
+            ChildProcess.make(
+              gitExecutableFor({ ...process.env, ...input.env }),
+              commandInput.args,
+              {
+                cwd: commandInput.cwd,
+                env: {
+                  ...process.env,
+                  ...input.env,
+                  ...trace2Monitor.env,
+                },
               },
-            }),
+            ),
           )
           .pipe(
             Effect.mapError(
