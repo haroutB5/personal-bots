@@ -28,7 +28,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\qa-16633.ps
 param(
     [Parameter(Mandatory = $true)][string]$Release,
     [string]$Name = 'qa16633',
-    [int]$LoadSeconds = 90,
+    # Refresh-loop seconds. Deliberately under the 30 s resolution-cache TTL:
+    # the loop measures repeated resolutions (where the live stalls came from),
+    # after one warm-up refresh the fixed server resolves into the cache.
+    [int]$LoadSeconds = 28,
     [string]$Out = '',
     # Which throwaway-server.ps1 to start from (a baseline run against the
     # previous release passes that release's own copy, which does not isolate
@@ -72,10 +75,14 @@ $bin = [string]$record.bin
 Write-Output "    $($info.URL) version=$($info.Version) pid=$($info.PID)"
 
 # ---------------------------------------------------------------- disk load generator
+# Two parallel jobs: write-through streaming (the backup's shape) and a
+# create/delete metadata storm (the worktree cleanup's shape - this is what
+# makes statSync and CreateProcess take hundreds of milliseconds on this
+# laptop; a big sequential write alone barely slows NTFS metadata lookups).
 function Start-DiskLoad([int]$Seconds) {
     $dir = Join-Path $env:TEMP 'hbots-load-16633'
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    return (Start-Job -ArgumentList $dir, $Seconds -ScriptBlock {
+    $writer = Start-Job -ArgumentList $dir, $Seconds -ScriptBlock {
         param($dir, $seconds)
         $deadline = (Get-Date).AddSeconds($seconds)
         $rng = [System.Random]::new(7)
@@ -84,30 +91,55 @@ function Start-DiskLoad([int]$Seconds) {
         while ((Get-Date) -lt $deadline) {
             $file = Join-Path $dir ('load-{0}.bin' -f ($rng.Next()))
             $fs = [System.IO.File]::Create($file)
-            try { for ($i = 0; $i -lt 40; $i++) { $fs.Write($chunk, 0, $chunk.Length); $fs.Flush($true) } }
+            try { for ($i = 0; $i -lt 48; $i++) { $fs.Write($chunk, 0, $chunk.Length); $fs.Flush($true) } }
             finally { $fs.Dispose() }
-            $sub = Join-Path $dir ('meta-{0}' -f ($rng.Next()))
-            New-Item -ItemType Directory -Force -Path $sub | Out-Null
-            for ($i = 0; $i -lt 400; $i++) { [System.IO.File]::WriteAllText((Join-Path $sub "f$i.dat"), 'x') }
-            Get-ChildItem -LiteralPath $sub -File | ForEach-Object { [System.IO.File]::Delete($_.FullName) }
-            Remove-Item -LiteralPath $sub -Recurse -Force
             Remove-Item -LiteralPath $file -Force
         }
-    })
+    }
+    $churn = Start-Job -ArgumentList $dir, $Seconds -ScriptBlock {
+        param($dir, $seconds)
+        $deadline = (Get-Date).AddSeconds($seconds)
+        $rng = [System.Random]::new(3)
+        while ((Get-Date) -lt $deadline) {
+            $pass = Join-Path $dir ('meta-{0}' -f ($rng.Next()))
+            for ($d = 0; $d -lt 20; $d++) {
+                $sub = Join-Path $pass "d$d"
+                New-Item -ItemType Directory -Force -Path $sub | Out-Null
+                for ($i = 0; $i -lt 120; $i++) { [System.IO.File]::WriteAllText((Join-Path $sub "f$i.dat"), 'x') }
+            }
+            Remove-Item -LiteralPath $pass -Recurse -Force
+        }
+    }
+    return @($writer, $churn)
 }
 
 try {
     if (-not $SkipLoad) {
         Step 'stall load (disk load + refresh/stream driver)' {
-            $job = Start-DiskLoad ($LoadSeconds + 20)
-            Start-Sleep -Seconds 3
+            # Reproduce the live walk: the Claude provider resolves the BARE
+            # command "claude", found only in the fake directory placed LAST on
+            # PATH, so a provider refresh really walks ~32 PATH entries (the
+            # 14:12/17:31 stalls). Restart the root once so the setting applies.
+            & $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Down $Name | Out-Null
+            $settingsPath = Join-Path $root 'userdata\settings.json'
+            $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+            $settings.providers.claudeAgent.binaryPath = 'claude'
+            [System.IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+            $env:PATH = $env:PATH + ';' + (Join-Path $root 'fake\fakeok')
+            $up = & $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Up $Name
+            Write-Output ($up | Out-String).Trim()
+
+            $jobs = Start-DiskLoad ($LoadSeconds + 30)
+            Start-Sleep -Seconds 4
             try {
                 & $nodeExe (Join-Path $e2e 'stall-load.mjs') --origin $info.URL --pair $info.Pairing --bin $bin --out $Out --seconds $LoadSeconds
                 if ($LASTEXITCODE -ne 0) { throw "stall-load exit $LASTEXITCODE" }
             } finally {
-                Wait-Job -Job $job -Timeout ([Math]::Max(60, $LoadSeconds)) | Out-Null
-                Stop-Job -Job $job -ErrorAction SilentlyContinue
-                Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                foreach ($job in $jobs) {
+                    Wait-Job -Job $job -Timeout ([Math]::Max(60, $LoadSeconds)) | Out-Null
+                    Stop-Job -Job $job -ErrorAction SilentlyContinue
+                    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                }
                 Remove-Item -LiteralPath (Join-Path $env:TEMP 'hbots-load-16633') -Recurse -Force -ErrorAction SilentlyContinue
             }
             & $nodeExe (Join-Path $e2e 'stall-report.mjs') (Join-Path $root 'server.log') | Tee-Object -FilePath (Join-Path $Out 'stall-report.txt')

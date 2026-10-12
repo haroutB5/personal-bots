@@ -6,6 +6,15 @@
 //     path.normalize walks of 12 Oct 14:12 and 17:31 live) and probes --version;
 //   - a streaming fake bot turn (SLOW<n>): session spawn and the provider
 //     event log appends a busy bot produces.
+// qa-16633.ps1 repoints the root's Claude binary at the bare command "claude"
+// with the fake CLI directory last on PATH first, so a refresh reproduces the
+// live walk (bare name, resolved after ~32 PATH entries).
+//
+// One warm-up refresh runs BEFORE the timed loop: on the fixed server that
+// resolves the walk into the 30 s cache, exactly as a real app-open does, and
+// the loop then measures the repeats - which is where the live stalls came
+// from. The loop stays under the 30 s TTL on purpose.
+//
 // It writes <out>/stall-load.json with what it did; the stall counts come from
 // the server log afterwards (stall-report.mjs).
 //
@@ -37,7 +46,7 @@ for (const key of ["origin", "pair", "bin", "out", "seconds"]) {
 const seconds = Number(args.seconds);
 NodeFS.mkdirSync(args.out, { recursive: true });
 
-const report = { refreshes: 0, turns: 0, errors: [] };
+const report = { warmupRefreshes: 0, refreshes: 0, turns: 0, errors: [] };
 // Google Chrome, like the e2e smoke: a Playwright WebKit tap here fires no click.
 const { chromium } = loadPlaywright(args.bin);
 const browser = await chromium.launch({ channel: "chrome", headless: true });
@@ -53,20 +62,25 @@ try {
   await send(page, "SLOW120");
   report.turns += 1;
 
-  // Back to the Bots page (the turn streams server-side): the Usage strip
-  // lives there, and each "Refresh usage" is one rpc:server.refreshProviders
-  // - the RPC whose synchronous CLI resolution blocked the live loop.
+  // Back to the Bots page: the Usage strip lives there, and one tap opens its
+  // sheet (a second strip tap is blocked by the sheet, so the loop uses the
+  // sheet's own Refresh usage button - one rpc:server.refreshProviders each).
   await openBots(page, args.origin);
   const strip = page.locator('button[aria-label^="Usage:"]').first();
   await strip.waitFor({ state: "visible", timeout: 30_000 });
+  await strip.tap({ timeout: 15_000 });
+  const refresh = page.getByRole("button", { name: "Refresh usage" });
+  await refresh.waitFor({ state: "visible", timeout: 15_000 });
+
+  // Warm-up: the first resolution a fixed server caches for 30 s.
+  await refresh.tap({ timeout: 15_000 });
+  report.warmupRefreshes += 1;
+  await page.waitForTimeout(1500);
 
   const deadline = Date.now() + seconds * 1000;
   while (Date.now() < deadline) {
     try {
-      await strip.tap();
-      const refresh = page.getByRole("button", { name: "Refresh usage" });
-      await refresh.waitFor({ state: "visible", timeout: 10_000 });
-      await refresh.tap();
+      await refresh.tap({ timeout: 10_000 });
       report.refreshes += 1;
       // Let the probe settle a moment before the next one.
       await page.waitForTimeout(1200);
@@ -83,5 +97,5 @@ try {
 }
 NodeFS.writeFileSync(NodePath.join(args.out, "stall-load.json"), JSON.stringify(report, null, 2));
 console.log(
-  `load done: refreshes=${report.refreshes} turns=${report.turns} errors=${report.errors.length}`,
+  `load done: warmup=${report.warmupRefreshes} refreshes=${report.refreshes} turns=${report.turns} errors=${report.errors.length}`,
 );
