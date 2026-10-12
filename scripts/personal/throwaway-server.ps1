@@ -26,6 +26,14 @@ Two fake Claude CLIs are copied from scripts\personal\testing\fake-claude into <
              while <root>\fake-pids\limit-until holds a future epoch in ms.
 Trigger words and state files are documented at the top of testing\fake-claude\cli.js.
 
+Usage-scan isolation (1.66.33): every provider home the Team usage scan reads points
+inside the root, so a throwaway never reads this PC's real histories (QA 1.66.29 saw the
+card showing the machine's real OpenCode store). Claude, Codex and DeepSeek get an
+explicit homePath in the root's settings.json; GROK_HOME, OPENCODE_DATA_DIR and
+ANTIGRAVITY_DATA_DIR are set for the server process; the homes live under <root>\homes.
+AI check: the Team screen's Token usage card on a fresh root must show no provider with
+tokens (scripts\personal\e2e\usage-isolation.mjs).
+
 The server listens on 127.0.0.1 only. Dark mode and a 390 px viewport are the team's test default; this
 script does not drive a browser.
 
@@ -148,10 +156,17 @@ function Write-TwSettings {
     param([string]$Root)
     $ok = ConvertTo-ForwardSlash (Join-Path $Root 'fake\fakeok\claude.cmd')
     $limit = ConvertTo-ForwardSlash (Join-Path $Root 'fake\fakelimit\claude.cmd')
+    # Every provider home points inside the root: the Team usage scan reads
+    # transcripts from these homes, and none of them may be the real one
+    # (QA 1.66.29: a throwaway showed the machine's real OpenCode history).
+    $claudeHome = ConvertTo-ForwardSlash (Join-Path $Root 'homes\claude')
+    $codexHome = ConvertTo-ForwardSlash (Join-Path $Root 'homes\codex')
+    $deepseekHome = ConvertTo-ForwardSlash (Join-Path $Root 'homes\deepseek')
     $settings = [ordered]@{
         providers         = [ordered]@{
-            claudeAgent = [ordered]@{ binaryPath = $ok }
-            codex       = [ordered]@{ enabled = $false }
+            claudeAgent = [ordered]@{ binaryPath = $ok; homePath = $claudeHome }
+            codex       = [ordered]@{ enabled = $false; homePath = $codexHome }
+            deepseek    = [ordered]@{ homePath = $deepseekHome }
             opencode    = [ordered]@{ enabled = $false }
             cursor      = [ordered]@{ enabled = $false }
             grok        = [ordered]@{ enabled = $false }
@@ -160,7 +175,7 @@ function Write-TwSettings {
             claudeLimited = [ordered]@{
                 driver      = 'claudeAgent'
                 displayName = 'Home (limited)'
-                config      = [ordered]@{ binaryPath = $limit }
+                config      = [ordered]@{ binaryPath = $limit; homePath = $claudeHome }
             }
         }
     }
@@ -192,7 +207,8 @@ function Show-Result {
 }
 
 # Starts the server for a root (fresh or resumed) and returns the process. The environment is the test default:
-# a Sonnet seed, the fake CLIs' pid dir, a headless browser, no auto connect.
+# a Sonnet seed, the fake CLIs' pid dir, a headless browser, no auto connect, and usage-scan homes inside the root
+# (Grok, OpenCode and Antigravity have no settings homePath; the env vars are read per scan).
 function Start-TwServer {
     param([string]$TwName, [string]$TwRoot, [string]$NodeExe, [string]$Bin, [int]$ServerPort)
     $pidDir = Join-Path $TwRoot 'fake-pids'
@@ -203,6 +219,9 @@ function Start-TwServer {
         T3CODE_PERSONAL_BROWSER_HEADLESS  = '1'
         T3CODE_AUTO_CONNECT               = 'false'
         T3CODE_ENVIRONMENT_LABEL          = ('throwaway ' + $TwName)
+        GROK_HOME                         = (Join-Path $TwRoot 'homes\grok')
+        OPENCODE_DATA_DIR                 = (Join-Path $TwRoot 'homes\opencode')
+        ANTIGRAVITY_DATA_DIR              = (Join-Path $TwRoot 'homes\antigravity')
     }
     $previousEnv = @{}
     foreach ($key in $envSet.Keys) {
@@ -359,6 +378,9 @@ $origin = 'http://127.0.0.1:' + $Port
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 $pidDir = Join-Path $root 'fake-pids'
 New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
+foreach ($home in @('claude', 'codex', 'deepseek', 'grok', 'opencode', 'antigravity')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $root ('homes\' + $home)) | Out-Null
+}
 New-TwFakeClaude -Root $root -NodeExe $nodeExe
 Write-TwSettings -Root $root
 

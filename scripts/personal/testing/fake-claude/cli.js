@@ -102,6 +102,20 @@ const readDeniedBy = (path) => {
 };
 
 const out = (message) => process.stdout.write(JSON.stringify(message) + "\n");
+// Command lifecycle frames (the real CLI's msg_lifecycle_v1 shape): the server
+// marks a prompt "started" when the CLI begins it and "completed" when its
+// work is drained, and reads "started" as the message being taken in - the
+// delivery signal that completes a steered message's pending turn row
+// (1.66.33). QA's 1.66.28 rig patched this into its own copy; the repo fake
+// carries it now, so a plain throwaway server reproduces a steer end to end.
+const pendingCommandUuids = [];
+const lifecycle = (commandUuid, state) =>
+  out({
+    type: "command_lifecycle",
+    command_uuid: commandUuid,
+    state,
+    session_id: sessionId,
+  });
 const respond = (request, response) =>
   out({
     type: "control_response",
@@ -142,7 +156,12 @@ const assistant = (text, stop = "end_turn") =>
       usage: { input_tokens: 10, output_tokens: 5 },
     },
   });
-const finish = (text, isError) =>
+const finish = (text, isError) => {
+  // The oldest prompt that started and has not completed is this result's
+  // command (FIFO keeps overlapping SLOW jobs paired correctly enough; the
+  // server only needs each started uuid to appear once).
+  const completedUuid = pendingCommandUuids.shift();
+  if (completedUuid !== undefined) lifecycle(completedUuid, "completed");
   out({
     type: "result",
     subtype: "success",
@@ -157,6 +176,7 @@ const finish = (text, isError) =>
     session_id: sessionId,
     uuid: NodeCrypto.randomUUID(),
   });
+};
 
 let askRequest = null;
 const mcpConfigArg = (() => {
@@ -307,6 +327,13 @@ lines.on("line", async (line) => {
       ? content
       : (content ?? []).map((part) => part.text ?? "").join(" ");
   log(`prompt ${JSON.stringify(text.slice(0, 6000))}`);
+  // The server sends each owner prompt (a turn's own prompt or a steer) with
+  // its own uuid; the CLI reports when it begins the command.
+  if (typeof message.uuid === "string" && message.uuid.length > 0) {
+    pendingCommandUuids.push(message.uuid);
+    if (pendingCommandUuids.length > 32) pendingCommandUuids.shift();
+    lifecycle(message.uuid, "started");
+  }
   // What this session was told before this prompt (the fake's only memory; see WHATWORD).
   const memoryFile = `${pidDir}/sessions/${sessionId}.jsonl`;
   NodeFS.mkdirSync(`${pidDir}/sessions`, { recursive: true });
