@@ -1,6 +1,6 @@
 # HANDOFF 1.66.34
 
-Base `b4e2f8e26c` (live 1.66.33). Branch `feat/hbots-16634-update-status`. Staged release `296ee22474ce`.
+Base `b4e2f8e26c` (live 1.66.33). Branch `feat/hbots-16634-update-status`. Staged release `71a2debb573d`.
 No migration (max stays 106). `PERSONAL_TASKS_CONCURRENCY = 5` unchanged.
 
 ## What changed
@@ -44,8 +44,22 @@ when there is nothing to say - the list below never moves when the words appear 
 only while the page is visible (10 s with an update moving, 60 s idle, 15 s after a failed ask;
 coming back on screen asks at once, and a hidden page asks nothing). When the server goes down
 after `waiting_for_idle` / `backing_up` / `activating` / `rolling_back` was seen in the last 30
-minutes, the line says "Restarting for update" instead of leaving only the generic reconnect
-banner, and picks the phase up again by itself when the server is back.
+minutes, the line says "Restarting for update" (on /bots the generic reconnect banner steps aside
+for it, below), and picks the phase up again by itself when the server is back.
+
+### The generic banner steps aside (CTO ruling, 12 Oct)
+
+With the line saying "Restarting for update", the generic "Reconnecting to your laptop" banner only
+repeated in worse words what was already said calmly (Harout's standing preference: don't show
+messages that make it look like something is wrong). On /bots it now hides while a restart is
+expected - a `waiting_for_idle` / `backing_up` / `activating` / `rolling_back` phase seen inside the
+same 30-minute window the line uses - and it comes back five minutes after the "Restarting for
+update" words appeared: a restart that long is no longer normal, so the banner is right to worry
+(`RESTART_BANNER_GRACE_MS`). Every other page, and every outage with no update behind it, keeps the
+banner exactly as before. The status line publishes the restart state to a small module store
+(`publishUpdateRestartSignal`, the outbox pattern); the banner reads it together with the route
+(`offlineBannerHiddenForRestart`, one pure function) and wakes itself exactly at the five-minute
+boundary rather than on the next minute's tick.
 
 ### The two other restart paths: report only, nothing changed here
 
@@ -65,19 +79,23 @@ banner.
 
 ## Verification (small-fix tier: builder proof, no QA)
 
-Throwaway server on the staged release `296ee22474ce` (fake Claude CLI, Sonnet seed, 390x844 dark,
+Throwaway server on the staged release `71a2debb573d` (fake Claude CLI, Sonnet seed, 390x844 dark,
 Chrome headless). Script: `C:\Claude\AI\_wt\hbots-16634-scratch\update-status-check.mjs`;
-screenshots: `C:\Claude\AI\_wt\hbots-16634-shots\`. **17/17 checks passed** (exit 0):
+screenshots: `C:\Claude\AI\_wt\hbots-16634-shots2\`. **21/21 checks passed** (exit 0):
 
 - endpoint: 401 without a session; 200 signed in, `{phase: null}` with nothing in progress;
 - each phase shows its exact line, one screenshot each (`01-preparing` ... `01-rollback_failed`);
 - live_verified: a tap dismisses "Updated to 1.66.34" and a relaunch keeps it dismissed
   (`02-dismissed`); a superseded waiter (`03`) and an empty run folder (`04`) show nothing;
 - the connection-drop case: with "Update 1.66.35 ready" on screen the throwaway server was stopped
-  (`-Down`, exactly what a restart does); the line read **"Restarting for update"** (with the
-  generic "Reconnecting to your laptop..." banner above it, unchanged), then a `smoking` file was
-  written and the server restarted (`-Up`) and the page read "Checking update 1.66.35" again
-  (`05-restarting-offline`, `06-after-reconnect`);
+  (`-Down`, exactly what a restart does); the line read **"Restarting for update"** and the generic
+  "Reconnecting to your laptop..." banner did **not** appear - checked 5 s into the outage and again
+  a full minute in (`05-restarting-no-banner`: the calm line, no banner above it);
+- past the five-minute grace, on the real clock (no faked time), the generic banner came back while
+  the line still said "Restarting for update" (`06-banner-back`) - exactly the "something is
+  actually wrong" signal the grace exists for;
+- back up (`-Up` plus a `smoking` file): the page read "Checking update 1.66.35" again
+  (`07-after-reconnect`);
 - no uncaught page errors, and the fake CLI's "Session 10%" reading confirmed no real provider.
 
 Phone page with every screenshot:
@@ -86,21 +104,24 @@ Phone page with every screenshot:
 ## Tests
 
 New: 17 server tests (`apps/server/src/personal/updateStatus/updateStatus.test.ts`,
-`updateStatusRoute.test.ts`) and 23 web tests (`apps/web/src/features/personal/updateStatus.test.ts`,
-`UpdateStatusLine.test.tsx`, plus one placement test in `ChatsScreen.test.tsx`). They pin the file
-name rule, the BOM read, every status -> line or nothing, the 10-minute / 48-hour / 2-hour windows,
-the future-mtime case, 401/403 before any read, both run-folder layouts, newest-run-wins with
-dry-runs and superseded waits ignored, the five-second cache answering with the file deleted, every
-phase's text/tone/dismissibility, the offline "restarting" window and its bound, dismissal memory,
-the reserved empty slot, visible-only polling, and "nothing asked before pairing".
+`updateStatusRoute.test.ts`) and 33 web tests (`apps/web/src/features/personal/updateStatus.test.ts`,
+`UpdateStatusLine.test.tsx`, `offlineBanner.test.ts`, `PersonalOfflineBanner.test.tsx`, plus one
+placement test in `ChatsScreen.test.tsx`). They pin the file name rule, the BOM read, every status
+-> line or nothing, the 10-minute / 48-hour / 2-hour windows, the future-mtime case, 401/403 before
+any read, both run-folder layouts, newest-run-wins with dry-runs and superseded waits ignored, the
+five-second cache answering with the file deleted, every phase's text/tone/dismissibility, the
+offline "restarting" window and its bound, dismissal memory, the reserved empty slot, visible-only
+polling, and "nothing asked before pairing". For the banner follow-up: the restart store (stamps on
+the restarting words, keeps the stamp while they last, clears, wakes listeners on real changes
+only), the hide rule (Bots page only, trailing slash included; the 30-minute window; armed before
+restarting; the five-minute grace on both sides of the boundary), and the banner itself (away
+through the restart on /bots, back past the grace on the real clock, untouched on every other page).
 
 Fork gates on this branch: server `vp test run src/personal` 2178 passed / 3 skipped (156 files),
-`tsc --noEmit` clean; web `vp test run --project unit src/features/personal` 2484 passed (227
+`tsc --noEmit` clean; web `vp test run --project unit src/features/personal` 2494 passed (227
 files), `tsc --noEmit` clean. The official evidence run below covers `src/personal src/mcp` and the
-full phone e2e. The first evidence pass failed web-tests on a known flake - `PersonalUsageStrip.test`
-awaits the lazy `import("./PersonalResetCredits")` and hit the 15 s test ceiling on a loaded laptop;
-the rerun of that one gate (`-Gates web-tests -Merge`, same commit and sealed artifact) passed
-2484/2484, which is the result recorded below. No code changed between the two runs.
+full phone e2e, and this pass was green first try (the earlier run's web-tests flake - the lazy
+`import("./PersonalResetCredits")` under load - did not recur; no gate merge was needed).
 
 ## DevOps: ship steps
 
@@ -108,34 +129,37 @@ the rerun of that one gate (`-Gates web-tests -Merge`, same commit and sealed ar
   kill switch, no runner or classifier change. The phase list follows `run/hbots-release.ps1` as it
   is (a status this build does not know shows nothing by design).
 - The app sheet got one line for the new endpoint and behaviour (kept short).
+- The 12 Oct banner follow-up is **web-only** - `server.ts` and the route are untouched and the
+  staged `dist/bin.mjs` is byte-identical to the first staged build (sha256 `f937d5f1...`), so
+  Backend's 1.66.35 rebase sees no server churn.
 - Nothing here touches the live server, the live DB, `current.txt` or the release runner.
 
 ## Open for the CTO
 
-- Keep the generic reconnect banner under the line during a restart (current behaviour: the banner
-  says the app is reconnecting, the line names why), or suppress it on /bots while a restart is
-  expected? One small follow-up either way.
+- (Resolved 12 Oct, CTO ruling) The generic reconnect banner now steps aside on /bots while a
+  restart is expected, and returns past the five-minute grace - see "The generic banner steps
+  aside".
 - The nightly Updates pipeline and the upstream sync would show the same line if they wrote a phase
-  marker per step (e.g. reusing the runner's status file shape). Separate job.
+  marker per step (e.g. reusing the runner's status file shape). Separate job (CTO: not now).
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=296ee22474ceb478b9c5a720f4c3db55048d6516 release=296ee22474ce json-sha256=393cf596fe67c70021494580cee978379116152ee8832616e2c54c10572b0140 result=PASS -->
+<!-- gate-evidence:begin sha=71a2debb573daaa8c1cf2086d8ab31d51216ac4d release=71a2debb573d json-sha256=e20e9f7875a6225f26010b7c83d5c9bf58e12f1950279f5a5b9df6214b40f2c4 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-12T19:56:13Z. Version 1.66.34, release `296ee22474ce`, commit `296ee22474ceb478b9c5a720f4c3db55048d6516` on `feat/hbots-16634-update-status`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-12T20:31:09Z. Version 1.66.34, release `71a2debb573d`, commit `71a2debb573daaa8c1cf2086d8ab31d51216ac4d` on `feat/hbots-16634-update-status`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\296ee22474ce\gate-evidence.json` (sha256 `393cf596fe67c70021494580cee978379116152ee8832616e2c54c10572b0140`) and the full gate logs in `releases\296ee22474ce\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\71a2debb573d\gate-evidence.json` (sha256 `e20e9f7875a6225f26010b7c83d5c9bf58e12f1950279f5a5b9df6214b40f2c4`) and the full gate logs in `releases\71a2debb573d\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2526 tests passed, 0 failed, 3 skipped, in 181 files | 323.6   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 115.7   |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2484 tests passed, 0 failed, 0 skipped, in 227 files | 43.6    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 62.1    |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 63.9    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16634\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\296ee22474ce" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 290.8   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2526 tests passed, 0 failed, 3 skipped, in 181 files | 255.3   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 51.7    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2494 tests passed, 0 failed, 0 skipped, in 227 files | 32.3    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.2     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 58.1    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16634\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\71a2debb573d" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 277.9   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `296ee22474ceb478b9c5a720f4c3db55048d6516`, at end `296ee22474ceb478b9c5a720f4c3db55048d6516`; tracked files modified: none. Staged release: version 1.66.34, sha 296ee22474ce, dirty False, externals copied; `dist/bin.mjs` sha256 `f937d5f1acd680fc91751b898221d5c7ffee4e535b00ef23a1cf4bba425c5645`.
+Tree: HEAD at start `71a2debb573daaa8c1cf2086d8ab31d51216ac4d`, at end `71a2debb573daaa8c1cf2086d8ab31d51216ac4d`; tracked files modified: none. Staged release: version 1.66.34, sha 71a2debb573d, dirty False, externals copied; `dist/bin.mjs` sha256 `f937d5f1acd680fc91751b898221d5c7ffee4e535b00ef23a1cf4bba425c5645`.
 <!-- gate-evidence:end -->
