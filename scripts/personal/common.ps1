@@ -79,8 +79,13 @@ function Import-RepoDotEnv {
 
 # A dev-server URL or baked origin in the environment turns the built server
 # into a dev proxy or breaks remote browsers, so the launcher never inherits them.
+# T3CODE_PERSONAL_STALL_DIR (start.ps1 sets it to the LIVE %USERPROFILE%\.personal-bots\logs\stalls)
+# is cleared for the same reason QA 1.66.33 F3 caught: every test launcher runs
+# inside the live server's process tree, so an inherited value put throwaway and
+# restore-test stall captures into the live folder where they read as real.
+# Cleared, the server derives <baseDir>\userdata\logs\stalls from its own root.
 function Clear-DevOriginEnv {
-    foreach ($name in @('VITE_DEV_SERVER_URL', 'VITE_HTTP_URL', 'VITE_WS_URL', 'T3CODE_HOME', 'T3CODE_PORT', 'T3CODE_MODE')) {
+    foreach ($name in @('VITE_DEV_SERVER_URL', 'VITE_HTTP_URL', 'VITE_WS_URL', 'T3CODE_HOME', 'T3CODE_PORT', 'T3CODE_MODE', 'T3CODE_PERSONAL_STALL_DIR')) {
         [Environment]::SetEnvironmentVariable($name, $null, 'Process')
     }
 }
