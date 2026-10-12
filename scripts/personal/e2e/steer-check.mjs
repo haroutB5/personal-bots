@@ -9,10 +9,12 @@
 //      one turn, the running one) - and, in pending-turns-check.mjs, no
 //      pending turn-start row survives and the idle classifier sees the table.
 // The fake does not emulate the real CLI's post-steer streaming, so the fold
-// reply and the slow finish are not asserted here; the fork-gate integration
+// reply is not asserted here; the check waits for the steered turn to END (the
+// send button returns to "Send") before it finishes, so the pending-row check
+// that runs next really sees the post-turn state (QA 1.66.33 F6, which the
+// old script missed because it exited mid-turn). The fork-gate integration
 // test (ProjectionPipeline.test.ts, "clears the steered message's pending turn
-// start on delivery, in the real order") covers the full order including the
-// turn end.
+// start on delivery, in the real order") covers the full event order.
 //
 // Usage: node steer-check.mjs --origin <url> --pair <pairing-url> --bin <playwright dir> --out <dir> [--chat-state <path>]
 import * as NodeFS from "node:fs";
@@ -47,6 +49,19 @@ const check = (what, ok, detail = "") => {
   if (!ok) failures += 1;
 };
 
+// Playwright's isVisible() never waits (QA 1.66.33 F6): it answers about the
+// page right now, so a check built on it passed or failed on timing luck.
+// waitFor({state:"visible"}) is the waiting form; wrap it so a timeout is a
+// clean false instead of a throw.
+const waitVisible = async (locator, timeoutMs) => {
+  try {
+    await locator.waitFor({ state: "visible", timeout: timeoutMs });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const { chromium } = loadPlaywright(args.bin);
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 try {
@@ -60,36 +75,48 @@ try {
   // during this turn. Hold for send options", so match the prefix both times.
   await composer(page).fill("SLOW15");
   await page.getByRole("button", { name: /^Send/ }).tap();
-  await transcript(page)
-    .getByText("Working on the slow job.")
-    .isVisible({ timeout: 20_000 })
-    .catch(() => false);
+  await waitVisible(transcript(page).getByText("Working on the slow job."), 20_000);
   await page.waitForTimeout(1500);
   await composer(page).fill("steer one alpha");
   await page.getByRole("button", { name: /^Send/ }).tap();
 
   check(
     "the steer bubble is in the running turn's chat",
-    await transcript(page)
-      .getByText("steer one alpha")
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false),
+    await waitVisible(transcript(page).getByText("steer one alpha"), 15_000),
   );
   // "Read" is the delivery receipt: the CLI reported the steer's prompt taken
-  // in, which is the exact frame the pending-row fix consumes.
+  // in, which is the exact frame the pending-row fix consumes. Scope it to the
+  // steer's own transcript row - an unscoped getByText("Read").first() matches
+  // the FIRST message's receipt, which is already "Read" and would pass before
+  // the steer is delivered (QA 1.66.33 F6).
+  const steerRow = transcript(page).locator("[data-transcript-row]", {
+    hasText: "steer one alpha",
+  });
   check(
-    "the steer is delivered mid-turn (Read receipt)",
-    await transcript(page)
-      .getByText("Read", { exact: true })
-      .first()
-      .isVisible({ timeout: 25_000 })
-      .catch(() => false),
+    "the steer is delivered mid-turn (its own Read receipt)",
+    await waitVisible(steerRow.getByText("Read", { exact: true }), 25_000),
   );
+
+  // The turn must END before this check finishes: pending-turns-check.mjs runs
+  // straight after and can only prove "no pending row after the steered turn"
+  // if the steered turn is over (QA 1.66.33 F6). The composer's send button
+  // reads exactly "Send" only when no turn is running.
+  const turnEnded = await waitVisible(
+    page.getByRole("button", { name: "Send", exact: true }),
+    45_000,
+  );
+  check("the steered turn ends (send button idle)", turnEnded);
+  if (turnEnded) {
+    check(
+      "the steer's row keeps its Read receipt after the turn",
+      await waitVisible(steerRow.getByText("Read", { exact: true }), 10_000),
+    );
+  }
   await page.screenshot({ path: NodePath.join(args.out, "steer-check.png") }).catch(() => {});
   check("no uncaught page errors", errors.length === 0, errors.join(" | "));
   NodeFS.writeFileSync(
     NodePath.join(args.out, "steer-check.json"),
-    JSON.stringify({ chatId, failures: 0 }),
+    JSON.stringify({ chatId, failures, turnEnded }),
   );
   await context.close();
 } finally {
