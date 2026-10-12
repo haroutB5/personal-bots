@@ -2,7 +2,11 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { UpdateStatusLine } from "./UpdateStatusLine";
-import { DISMISSED_LINE_KEY } from "./updateStatus";
+import {
+  DISMISSED_LINE_KEY,
+  getUpdateRestartSignal,
+  resetUpdateRestartSignalForTesting,
+} from "./updateStatus";
 
 const T0 = Date.parse("2026-10-12T21:00:00.000Z");
 
@@ -108,6 +112,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
+  resetUpdateRestartSignalForTesting();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -147,6 +152,21 @@ describe("the reserved line under the header", () => {
     const output = tree();
     expect(output).toContain("Restarting for update");
     expect(output).not.toContain("Update 1.66.34 ready");
+  });
+
+  it("tells the offline banner where the update stands, phase by phase", async () => {
+    state.queue.push({ status: 200, body: answer("waiting_for_idle") });
+    await render();
+    // Armed, connected: the phase is known, no restarting words yet.
+    expect(getUpdateRestartSignal().lastSeen?.phase).toBe("waiting_for_idle");
+    expect(getUpdateRestartSignal().restartingSinceMs).toBeNull();
+    state.queue.push("throw");
+    await advance(10_000);
+    // The server went away with the update on its way: the line reads
+    // "Restarting for update" and the stamp starts at that moment.
+    expect(tree()).toContain("Restarting for update");
+    expect(getUpdateRestartSignal().lastSeen?.phase).toBe("waiting_for_idle");
+    expect(getUpdateRestartSignal().restartingSinceMs).toBe(T0 + 10_000);
   });
 
   it("keeps a plain outage a plain outage when no update was on its way", async () => {

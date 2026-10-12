@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { offlineBannerHint, offlineBannerText, offlineComposerNotice } from "./offlineBanner";
+import {
+  offlineBannerHiddenForRestart,
+  offlineBannerHint,
+  offlineBannerText,
+  offlineComposerNotice,
+} from "./offlineBanner";
 import {
   applicationServerKeyFrom,
   isNavigablePath,
   shouldRegisterServiceWorker,
 } from "./serviceWorker";
+import {
+  RESTART_BANNER_GRACE_MS,
+  RESTART_EXPECTED_WINDOW_MS,
+  type LastSeenPhase,
+} from "./updateStatus";
 
 const NOW = Date.parse("2026-09-14T12:00:00Z");
 
@@ -54,6 +64,73 @@ describe("what the banner and composer promise while the laptop is away", () => 
     expect(offlineBannerHint(3)).toBe(
       "3 messages are waiting to send. They go out when it reconnects.",
     );
+  });
+});
+
+describe("offlineBannerHiddenForRestart", () => {
+  const seen = (overrides: Partial<LastSeenPhase> = {}): LastSeenPhase => ({
+    phase: "waiting_for_idle",
+    version: "1.66.34",
+    atMs: NOW,
+    ...overrides,
+  });
+  const onBots = { pathname: "/bots", lastSeen: seen(), restartingSinceMs: NOW };
+
+  it("steps aside only on the Bots page", () => {
+    expect(offlineBannerHiddenForRestart({ ...onBots, nowMs: NOW + 60_000 })).toBe(true);
+    expect(offlineBannerHiddenForRestart({ ...onBots, pathname: "/bots/", nowMs: NOW })).toBe(true);
+    for (const pathname of ["/bots/team", "/bots/chats/abc", "/tasks", "/computer", "/files"]) {
+      expect(offlineBannerHiddenForRestart({ ...onBots, pathname, nowMs: NOW })).toBe(false);
+    }
+  });
+
+  it("steps aside as soon as the update is armed, before any restarting words", () => {
+    expect(
+      offlineBannerHiddenForRestart({
+        pathname: "/bots",
+        lastSeen: seen({ phase: "backing_up" }),
+        restartingSinceMs: null,
+        nowMs: NOW + 30_000,
+      }),
+    ).toBe(true);
+  });
+
+  it("comes back five minutes after the line went to restarting", () => {
+    expect(
+      offlineBannerHiddenForRestart({ ...onBots, nowMs: NOW + RESTART_BANNER_GRACE_MS - 1 }),
+    ).toBe(true);
+    expect(offlineBannerHiddenForRestart({ ...onBots, nowMs: NOW + RESTART_BANNER_GRACE_MS })).toBe(
+      false,
+    );
+  });
+
+  it("comes back once the phase it was waiting on is stale, or was never a restart", () => {
+    expect(
+      offlineBannerHiddenForRestart({
+        pathname: "/bots",
+        lastSeen: seen({ atMs: NOW - RESTART_EXPECTED_WINDOW_MS - 1 }),
+        restartingSinceMs: NOW,
+        nowMs: NOW,
+      }),
+    ).toBe(false);
+    for (const phase of ["smoking", "live_verified", "rolled_back"]) {
+      expect(
+        offlineBannerHiddenForRestart({
+          pathname: "/bots",
+          lastSeen: seen({ phase }),
+          restartingSinceMs: NOW,
+          nowMs: NOW,
+        }),
+      ).toBe(false);
+    }
+    expect(
+      offlineBannerHiddenForRestart({
+        pathname: "/bots",
+        lastSeen: null,
+        restartingSinceMs: NOW,
+        nowMs: NOW,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -6,8 +6,9 @@
  *
  * Nothing shows when no update is running or recently finished, and the line
  * never moves the list: its slot is reserved, empty, all the time. While the
- * server is down for its own restart the line says "Restarting for update"
- * instead of leaving the page with only the generic offline banner.
+ * server is down for its own restart the line says "Restarting for update",
+ * and on /bots the generic offline banner steps aside for it
+ * (`offlineBannerHiddenForRestart`): the page keeps one calm sentence.
  *
  * Polling is cheap and quiet: only while the page is visible, every 10 s while
  * something is happening, every 60 s when nothing is, and after a failed
@@ -21,6 +22,7 @@ import { cn } from "~/lib/utils";
 
 import {
   fetchUpdateStatus,
+  publishUpdateRestartSignal,
   readDismissedLine,
   versionFromLabel,
   visibleUpdateLine,
@@ -134,6 +136,14 @@ export function useUpdateStatusLine(versionLabel: string | null): {
     fallbackVersion: versionFromLabel(versionLabel),
     nowMs: Date.now(),
   });
+  // The offline banner watches this: on /bots it steps aside while the line
+  // is the calm "Restarting for update" (offline after a restart-expected
+  // phase), and comes back if that drags on past its grace.
+  const restartingLine =
+    line !== null && (line.phase === "activating" || line.phase === "restarting");
+  useEffect(() => {
+    publishUpdateRestartSignal(state.lastSeen, restartingLine);
+  }, [state.lastSeen, restartingLine]);
   const dismiss = () => {
     if (line === null || !line.dismissible) return;
     const record: DismissedLine = { phase: line.phase, version: line.version, atMs: Date.now() };

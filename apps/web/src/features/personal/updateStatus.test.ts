@@ -4,7 +4,11 @@ import {
   NO_UPDATE,
   RESTART_EXPECTED_WINDOW_MS,
   fetchUpdateStatus,
+  getUpdateRestartSignal,
   parseUpdateStatusAnswer,
+  publishUpdateRestartSignal,
+  resetUpdateRestartSignalForTesting,
+  subscribeUpdateRestartSignal,
   updateLineFor,
   versionFromLabel,
   visibleUpdateLine,
@@ -236,5 +240,41 @@ describe("the page's own version stamp", () => {
     expect(versionFromLabel("1.66.33")).toBe("1.66.33");
     expect(versionFromLabel("970a968")).toBeNull();
     expect(versionFromLabel(null)).toBeNull();
+  });
+});
+
+describe("the restart signal the offline banner reads", () => {
+  afterEach(() => {
+    resetUpdateRestartSignalForTesting();
+  });
+
+  it("stamps when the line went to restarting, and keeps that time while it stays", () => {
+    const seen = { phase: "waiting_for_idle", version: "1.66.34", atMs: 1_000 };
+    publishUpdateRestartSignal(seen, true, 5_000);
+    expect(getUpdateRestartSignal()).toEqual({ lastSeen: seen, restartingSinceMs: 5_000 });
+    // The polls keep repeating the same restarting reading: the stamp holds,
+    // so the banner's grace is measured from the words first appearing.
+    publishUpdateRestartSignal({ ...seen, atMs: 9_000 }, true, 12_000);
+    expect(getUpdateRestartSignal().restartingSinceMs).toBe(5_000);
+    // Back to a normal phase: no restarting words, no stamp.
+    publishUpdateRestartSignal(seen, false, 20_000);
+    expect(getUpdateRestartSignal().restartingSinceMs).toBeNull();
+  });
+
+  it("wakes listeners on a real change only, and forgets on the next restart", () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeUpdateRestartSignal(listener);
+    const seen = { phase: "backing_up", version: null, atMs: 1 };
+    publishUpdateRestartSignal(seen, true, 1_000);
+    expect(listener).toHaveBeenCalledTimes(1);
+    publishUpdateRestartSignal(seen, true, 1_500);
+    expect(listener).toHaveBeenCalledTimes(1);
+    publishUpdateRestartSignal(seen, false, 2_000);
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    publishUpdateRestartSignal(seen, true, 3_000);
+    expect(listener).toHaveBeenCalledTimes(2);
+    // A later restart is a fresh grace, not the old stamp.
+    expect(getUpdateRestartSignal().restartingSinceMs).toBe(3_000);
   });
 });

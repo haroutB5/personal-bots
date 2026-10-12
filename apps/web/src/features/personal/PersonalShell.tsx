@@ -113,7 +113,7 @@ export function PersonalShell(): JSX.Element {
           style={swipeBack.style}
         >
           <div className="pt-[env(safe-area-inset-top)]">
-            <PersonalOfflineBanner />
+            <PersonalOfflineBanner pathname={pathname} />
           </div>
           <main
             ref={mainRef}
@@ -177,7 +177,7 @@ export function PersonalShell(): JSX.Element {
         />
       </aside>
       <main className="personal-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
-        <PersonalOfflineBanner />
+        <PersonalOfflineBanner pathname={pathname} />
         <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
           {showsHome ? (
             <div className={PANE_CONTENT_CLASS.column}>

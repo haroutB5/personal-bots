@@ -7,6 +7,7 @@ import { WifiOff } from "lucide-react";
 import { useEnvironment } from "~/state/environments";
 
 import {
+  offlineBannerHiddenForRestart,
   offlineBannerHint,
   offlineBannerText,
   readLastContact,
@@ -14,6 +15,7 @@ import {
 } from "./offlineBanner";
 import { useOutboxCount } from "./outbox";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
+import { RESTART_BANNER_GRACE_MS, useUpdateRestartSignal } from "./updateStatus";
 
 /** The laptop's connection phase ("available" until an environment is paired). */
 export function usePersonalConnectionPhase(): EnvironmentConnectionPhase {
@@ -31,14 +33,43 @@ export function useLaptopOffline(): boolean {
 /**
  * "Laptop offline · last contact 5m ago". The last contact is the last moment
  * this device saw the laptop connected, kept per environment in localStorage.
+ *
+ * While an update is landing and the page is /bots, it steps aside for the
+ * calm "Restarting for update" line (`offlineBannerHiddenForRestart`), but
+ * only until `RESTART_BANNER_GRACE_MS` after those words went up: a restart
+ * still running past that is not normal, and the banner says so.
  */
-export function PersonalOfflineBanner(): JSX.Element | null {
+export function PersonalOfflineBanner({
+  pathname,
+}: {
+  readonly pathname: string;
+}): JSX.Element | null {
   const environmentId = usePersonalEnvironmentId();
   const phase = usePersonalConnectionPhase();
+  const restart = useUpdateRestartSignal();
   const [now, setNow] = useState(() => Date.now());
   const waiting = useOutboxCount();
   const [banner, setBanner] = useState({ phase, visible: false });
   if (banner.phase !== phase) setBanner({ phase, visible: false });
+
+  const hiddenForRestart = offlineBannerHiddenForRestart({
+    pathname,
+    lastSeen: restart.lastSeen,
+    restartingSinceMs: restart.restartingSinceMs,
+    nowMs: now,
+  });
+
+  // The grace ends on the clock, not on a render: wake exactly when the five
+  // minutes after "Restarting for update" are up so the banner comes back.
+  useEffect(() => {
+    if (!hiddenForRestart || restart.restartingSinceMs === null) return;
+    const untilMs = restart.restartingSinceMs + RESTART_BANNER_GRACE_MS;
+    const timer = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.max(untilMs - Date.now(), 0) + 50,
+    );
+    return () => window.clearTimeout(timer);
+  }, [hiddenForRestart, restart.restartingSinceMs]);
 
   useEffect(() => {
     if (phase !== "reconnecting") return;
@@ -67,6 +98,7 @@ export function PersonalOfflineBanner(): JSX.Element | null {
   }, [environmentId, phase]);
 
   if (environmentId === null) return null;
+  if (hiddenForRestart) return null;
   if (phase === "reconnecting" && (banner.phase !== phase || !banner.visible)) return null;
   const text = offlineBannerText(phase, readLastContact(environmentId), now);
   if (text === null) return null;

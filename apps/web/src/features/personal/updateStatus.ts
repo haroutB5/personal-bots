@@ -8,9 +8,11 @@
  * (apps/server/src/personal/updateStatus/updateStatusRoute.ts, which reads the
  * release runner's result file); this module owns how a phase reads, how long
  * it is worth showing and what the page says while the server is away for its
- * own restart. Pure except for the two small storage helpers, so every rule
- * here is unit-testable without a server.
+ * own restart. Pure except for the small storage helpers and the restart
+ * signal the offline banner reads, so every rule here is unit-testable
+ * without a server.
  */
+import { useSyncExternalStore } from "react";
 
 /** Must match PERSONAL_UPDATE_STATUS_PATH in apps/server updateStatusRoute.ts. */
 export const UPDATE_STATUS_URL = "/api/personal/update/status";
@@ -176,6 +178,14 @@ export const RESTART_EXPECTED_PHASES: ReadonlySet<string> = new Set([
 export const RESTART_EXPECTED_WINDOW_MS = 30 * 60_000;
 export const RESTARTING_TEXT = "Restarting for update";
 
+/**
+ * How long the calm "Restarting for update" line stands in for the offline
+ * banner on /bots. An hbots restart takes a few minutes at most; still down
+ * five minutes after the words went up means something is actually wrong, so
+ * the banner comes back then (CTO ruling, 2026-10-12).
+ */
+export const RESTART_BANNER_GRACE_MS = 5 * 60_000;
+
 export interface LastSeenPhase {
   readonly phase: string;
   readonly version: string | null;
@@ -271,4 +281,70 @@ export function versionFromLabel(label: string | null): string | null {
   if (label === null) return null;
   const text = label.startsWith("v") ? label.slice(1) : label;
   return /^\d+(?:\.\d+)+$/.test(text) ? text : null;
+}
+
+/**
+ * The one fact the status line and the offline banner share: an update is
+ * landing, and since when the line has been reading "Restarting for update".
+ * `useUpdateStatusLine` is the only writer; `PersonalOfflineBanner` reads it
+ * to step aside on /bots (see `offlineBannerHiddenForRestart`). Module state,
+ * like the outbox: both live in the same page, and no server is involved.
+ */
+export interface UpdateRestartSignal {
+  /** The last phase any status request saw; null before the first answer. */
+  readonly lastSeen: LastSeenPhase | null;
+  /** When the line first read "Restarting for update"; null when it does not. */
+  readonly restartingSinceMs: number | null;
+}
+
+const NO_RESTART_SIGNAL: UpdateRestartSignal = { lastSeen: null, restartingSinceMs: null };
+
+let restartSignal: UpdateRestartSignal = NO_RESTART_SIGNAL;
+const restartSignalListeners = new Set<() => void>();
+
+/**
+ * Publishes where the update line stands. The start time sticks for as long
+ * as the line keeps reading "Restarting for update", so the banner's grace is
+ * measured from when the words first appeared, not from the last render.
+ */
+export function publishUpdateRestartSignal(
+  lastSeen: LastSeenPhase | null,
+  restarting: boolean,
+  nowMs: number = Date.now(),
+): void {
+  const restartingSinceMs = restarting ? (restartSignal.restartingSinceMs ?? nowMs) : null;
+  if (
+    restartSignal.lastSeen === lastSeen &&
+    restartSignal.restartingSinceMs === restartingSinceMs
+  ) {
+    return;
+  }
+  restartSignal = { lastSeen, restartingSinceMs };
+  for (const listener of restartSignalListeners) listener();
+}
+
+export function subscribeUpdateRestartSignal(listener: () => void): () => void {
+  restartSignalListeners.add(listener);
+  return () => {
+    restartSignalListeners.delete(listener);
+  };
+}
+
+export function getUpdateRestartSignal(): UpdateRestartSignal {
+  return restartSignal;
+}
+
+/** The restart signal, re-rendering on every publish (the offline banner). */
+export function useUpdateRestartSignal(): UpdateRestartSignal {
+  return useSyncExternalStore(
+    subscribeUpdateRestartSignal,
+    getUpdateRestartSignal,
+    getUpdateRestartSignal,
+  );
+}
+
+/** Tests only: back to "nothing seen". */
+export function resetUpdateRestartSignalForTesting(): void {
+  restartSignal = NO_RESTART_SIGNAL;
+  for (const listener of restartSignalListeners) listener();
 }
