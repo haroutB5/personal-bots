@@ -6,7 +6,11 @@ import type {
   ServerProvider,
   ServerProviderModel,
 } from "@t3tools/contracts";
-import { botFallback, driverCarriesBotInstructions } from "@t3tools/contracts";
+import {
+  botFallback,
+  driverCarriesBotInstructions,
+  safeDefaultBotModelSlug,
+} from "@t3tools/contracts";
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -66,9 +70,16 @@ import { EFFORT_OPTION_IDS } from "./botModelLabel";
 /**
  * The provider's own default model, or "" when it names none (OpenCode lists
  * hundreds of models from many sub-providers, some paid), so the owner picks.
+ *
+ * Fable, Mythos and Astra are never taken automatically: the provider's own
+ * `isDefault` is Fable on Claude and Astra on Codex, the two priciest tiers,
+ * so a new bot and a provider switch go through the shared rule the server
+ * seed uses (`safeDefaultBotModelSlug` in contracts): Opus 5.5 first, then
+ * the provider's default, then its first current model. All three stay
+ * pickable by hand.
  */
 export function defaultModelFor(provider: ServerProvider | undefined): string {
-  return provider?.models.find((model) => model.isDefault && !model.isCustom)?.slug ?? "";
+  return safeDefaultBotModelSlug(provider);
 }
 
 /** "Muse Spark 1.3 · OpenCode Zen": the sub-provider tells same-named models apart. */
