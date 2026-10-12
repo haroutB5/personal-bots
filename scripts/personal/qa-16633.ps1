@@ -169,7 +169,9 @@ try {
     if (-not $SkipIsolation) {
         Step 'usage-scan isolation on the Team card' {
             # A fresh pairing link: steer-check and the load driver each use one.
-            $pair = (& $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Pair $Name | Select-String -Pattern 'http').ToString().Trim()
+            $pairText = (& $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Pair $Name | Out-String)
+            $pair = [regex]::Match($pairText, 'https?://\S+').Value
+            if (-not $pair) { throw "no pairing link in: $pairText" }
             & $nodeExe (Join-Path $e2e 'usage-isolation.mjs') --origin $info.URL --pair $pair --bin $bin --out $Out
             if ($LASTEXITCODE -ne 0) { throw "usage-isolation exit $LASTEXITCODE" }
         }
