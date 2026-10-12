@@ -321,7 +321,10 @@ describe("the seen-version memory", () => {
 
 describe("the one-time rule's own numbers", () => {
   it("covers exactly the two landed phases, for ten seconds", () => {
-    expect([...UPDATED_PHASES].sort()).toEqual(["live_verified", "live_verified_doc_update_failed"]);
+    expect([...UPDATED_PHASES].sort()).toEqual([
+      "live_verified",
+      "live_verified_doc_update_failed",
+    ]);
     expect(UPDATED_LINE_MS).toBe(10_000);
   });
 });
