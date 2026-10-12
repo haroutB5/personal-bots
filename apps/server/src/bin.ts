@@ -14,6 +14,7 @@ import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { isEntrypoint } from "./entrypoint.ts";
+import { installAsyncConsoleFileRedirect } from "./observability/asyncConsoleFile.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { serviceCommand } from "./cli/service.ts";
@@ -87,6 +88,11 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
+  // The release launcher redirects stdout and stderr into the server log file,
+  // and Node writes to file handles synchronously: one log line would hold the
+  // event loop for the disk's latency (seconds under load). Swap the write for
+  // an async one before anything logs. No-op for TTYs, pipes and `pair.ps1`.
+  installAsyncConsoleFileRedirect();
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
     Effect.provide(CliRuntimeLayer),
