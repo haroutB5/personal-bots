@@ -4223,6 +4223,218 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
         assert.deepEqual(pendingRows, [{ messageId: "new-message" }]);
       }),
     );
+
+    it.effect(
+      "clears the steered message's pending turn start on delivery, in the real order",
+      () =>
+        Effect.gen(function* () {
+          // The event order a Claude steer produces (QA 1.66.28): a turn is
+          // running, the owner's second message requests a turn start, the
+          // provider folds it into the running turn and reports it taken in
+          // (user-message.delivered), then the running turn completes. No
+          // turn.started ever names the steered message, so the delivery is the
+          // only signal that its pending row is done.
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const threadId = ThreadId.make("thread-steer-delivery");
+
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make("evt-steer-own-start"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-12T10:00:00.000Z",
+            commandId: CommandId.make("cmd-steer-own-start"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-steer-own-start"),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make("message-own"),
+              runtimeMode: "full-access",
+              createdAt: "2026-10-12T10:00:00.000Z",
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-steer-turn-running"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-12T10:00:01.000Z",
+            commandId: CommandId.make("cmd-steer-turn-running"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-steer-turn-running"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "claudeAgent",
+                runtimeMode: "full-access",
+                activeTurnId: TurnId.make("turn-steer-running"),
+                lastError: null,
+                updatedAt: "2026-10-12T10:00:01.000Z",
+              },
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make("evt-steer-start"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-12T10:00:02.000Z",
+            commandId: CommandId.make("cmd-steer-start"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-steer-start"),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make("message-steer"),
+              runtimeMode: "full-access",
+              createdAt: "2026-10-12T10:00:02.000Z",
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.activity-appended",
+            eventId: EventId.make("evt-steer-delivered"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-12T10:00:03.000Z",
+            commandId: CommandId.make("cmd-steer-delivered"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-steer-delivered"),
+            metadata: {},
+            payload: {
+              threadId,
+              activity: {
+                id: EventId.make("activity-steer-delivered"),
+                tone: "info",
+                kind: "user-message.delivered",
+                summary: "Message read",
+                payload: { messageId: "message-steer" },
+                turnId: TurnId.make("turn-steer-running"),
+                createdAt: "2026-10-12T10:00:03.000Z",
+              },
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-steer-turn-done"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-12T10:00:04.000Z",
+            commandId: CommandId.make("cmd-steer-turn-done"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-steer-turn-done"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "ready",
+                providerName: "claudeAgent",
+                runtimeMode: "full-access",
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: "2026-10-12T10:00:04.000Z",
+              },
+            },
+          });
+
+          yield* projectionPipeline.bootstrap;
+
+          const pendingRows = yield* sql<{ readonly messageId: string }>`
+          SELECT pending_message_id AS "messageId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id IS NULL
+            AND state = 'pending'
+        `;
+          assert.deepEqual(pendingRows, []);
+          const turnRows = yield* sql<{
+            readonly turnId: string;
+            readonly state: string;
+            readonly pendingMessageId: string | null;
+          }>`
+          SELECT
+            turn_id AS "turnId",
+            state,
+            pending_message_id AS "pendingMessageId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+        `;
+          assert.deepEqual(turnRows, [
+            {
+              turnId: "turn-steer-running",
+              state: "completed",
+              pendingMessageId: "message-own",
+            },
+          ]);
+        }),
+    );
+
+    it.effect("a delivery for another message leaves a pending turn start alone", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-delivery-other");
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-late-start"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-10-12T11:00:00.000Z",
+          commandId: CommandId.make("cmd-late-start"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-late-start"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-late"),
+            runtimeMode: "full-access",
+            createdAt: "2026-10-12T11:00:00.000Z",
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-other-delivered"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-10-12T11:00:01.000Z",
+          commandId: CommandId.make("cmd-other-delivered"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-other-delivered"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-other-delivered"),
+              tone: "info",
+              kind: "user-message.delivered",
+              summary: "Message read",
+              payload: { messageId: "message-other" },
+              turnId: null,
+              createdAt: "2026-10-12T11:00:01.000Z",
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const pendingRows = yield* sql<{ readonly messageId: string }>`
+          SELECT pending_message_id AS "messageId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id IS NULL
+            AND state = 'pending'
+        `;
+        assert.deepEqual(pendingRows, [{ messageId: "message-late" }]);
+      }),
+    );
   },
 );
 

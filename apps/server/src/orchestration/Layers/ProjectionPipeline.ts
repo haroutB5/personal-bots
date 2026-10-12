@@ -128,6 +128,14 @@ function extractActivityRequestId(payload: unknown): ApprovalRequestId | null {
   return typeof requestId === "string" ? ApprovalRequestId.make(requestId) : null;
 }
 
+function extractActivityMessageId(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+  const messageId = (payload as Record<string, unknown>).messageId;
+  return typeof messageId === "string" && messageId.length > 0 ? messageId : null;
+}
+
 function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   if (detail === null) {
     return false;
@@ -1440,6 +1448,26 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               Option.isNone(pendingTurnStart) ||
               String(pendingTurnStart.value.messageId) !==
                 extractActivityRequestId(event.payload.activity.payload)
+            ) {
+              return;
+            }
+            yield* projectionTurnRepository.deletePendingTurnStartByThreadId(event.payload);
+            return;
+          }
+          if (event.payload.activity.kind === "user-message.delivered") {
+            // A message folded into a running turn (a steer) never opens a turn
+            // of its own, so no session-set consumes its pending turn-start row;
+            // the provider reporting the message taken in is that row's
+            // completion signal. Without this the row stayed pending forever
+            // (QA 1.66.28 found the live DB holding such rows since 10 Oct).
+            const deliveredMessageId = extractActivityMessageId(event.payload.activity.payload);
+            if (deliveredMessageId === null) return;
+            const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
+              event.payload,
+            );
+            if (
+              Option.isNone(pendingTurnStart) ||
+              String(pendingTurnStart.value.messageId) !== deliveredMessageId
             ) {
               return;
             }
