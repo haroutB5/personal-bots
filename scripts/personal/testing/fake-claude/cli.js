@@ -551,35 +551,81 @@ lines.on("line", async (line) => {
   }
   // MCPONCE is MCPTOOL that does not run again when its own task resumes: a delegating chat's
   // continuation turn quotes the request, and a fake that repeated the call would delegate again.
-  const tool =
-    text.includes("MCPONCE ") && text.startsWith("[Task continuation]")
-      ? null
-      : text.match(/MCP(?:TOOL|ONCE) (\w+) (\{.*\})/);
-  if (tool) {
+  // Every trigger is collected with its brace-matched JSON, not one greedy one-line regex: a prompt
+  // that quotes an earlier (often truncated) call - a reused root's task summaries do - used to
+  // match the quoted text and report "has bad JSON" without ever seeing the real instruction
+  // (QA 1.66.33 F7). The first candidate that parses wins, as before.
+  const toolCandidates = [];
+  if (!(text.includes("MCPONCE ") && text.startsWith("[Task continuation]"))) {
+    const trigger = /MCP(?:TOOL|ONCE) (\w+) /g;
+    let hit;
+    while ((hit = trigger.exec(text)) !== null) {
+      const open = text.indexOf("{", hit.index + hit[0].length);
+      if (open === -1) continue;
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      let end = -1;
+      for (let at = open; at < text.length; at += 1) {
+        const ch = text[at];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (ch === "\\") escaped = true;
+          else if (ch === '"') inString = false;
+          continue;
+        }
+        if (ch === '"') inString = true;
+        else if (ch === "{") depth += 1;
+        else if (ch === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            end = at;
+            break;
+          }
+        }
+      }
+      if (end !== -1) toolCandidates.push({ name: hit[1], json: text.slice(open, end + 1) });
+    }
+  }
+  if (toolCandidates.length > 0 || /MCP(?:TOOL|ONCE) \w+ \{/.test(text)) {
+    let toolName;
     let toolArgs;
-    try {
-      // $ENV{NAME} becomes that environment variable's value, so a test can make the bot "type" a key
-      // it holds (an env-mode key) into a tool call without the value ever being in the prompt.
-      toolArgs = JSON.parse(
-        tool[2].replace(/\$ENV\{(\w+)\}/g, (_match, name) =>
-          JSON.stringify(process.env[name] ?? "").slice(1, -1),
-        ),
-      );
-    } catch (err) {
-      assistant(`MCPTOOL ${tool[1]} has bad JSON: ${err}`);
+    let lastError;
+    for (const candidate of toolCandidates) {
+      toolName = candidate.name;
+      try {
+        // $ENV{NAME} becomes that environment variable's value, so a test can make the bot "type" a
+        // key it holds (an env-mode key) into a tool call without the value ever being in the prompt.
+        toolArgs = JSON.parse(
+          candidate.json.replace(/\$ENV\{(\w+)\}/g, (_match, name) =>
+            JSON.stringify(process.env[name] ?? "").slice(1, -1),
+          ),
+        );
+        lastError = undefined;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (toolName === undefined) {
+      const named = /MCP(?:TOOL|ONCE) (\w+)/.exec(text);
+      toolName = named?.[1] ?? "unknown";
+    }
+    if (toolArgs === undefined) {
+      assistant(`MCPTOOL ${toolName} has bad JSON: ${lastError}`);
       finish("failed", false);
       return;
     }
-    mcpCall(tool[1], toolArgs).then(
+    mcpCall(toolName, toolArgs).then(
       (res) => {
         const body = JSON.stringify(res?.result ?? res?.error ?? res).slice(0, 1500);
-        log(`mcptool ${tool[1]} ${body}`);
-        assistant(`MCPTOOL ${tool[1]} ${res?.result?.isError ? "refused" : "ok"}: ${body}`);
+        log(`mcptool ${toolName} ${body}`);
+        assistant(`MCPTOOL ${toolName} ${res?.result?.isError ? "refused" : "ok"}: ${body}`);
         finish("ok", false);
       },
       (err) => {
-        log(`mcptool ${tool[1]} failed ${err}`);
-        assistant(`MCPTOOL ${tool[1]} failed: ${err}`);
+        log(`mcptool ${toolName} failed ${err}`);
+        assistant(`MCPTOOL ${toolName} failed: ${err}`);
         finish("failed", false);
       },
     );

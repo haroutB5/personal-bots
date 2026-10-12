@@ -1,4 +1,5 @@
-// The scripted load for the 1.66.33 stall checks (driven by ../qa-16633.ps1):
+// The scripted load for the 1.66.33/1.66.35 stall checks (driven by ../qa-16633.ps1
+// and ../qa-16635.ps1):
 // on a throwaway server, while a disk-load generator runs on the same volume,
 // keep pressing the paths whose synchronous work blocked the live event loop:
 //   - the Usage strip's "Refresh usage" button: rpc:server.refreshProviders,
@@ -6,9 +7,10 @@
 //     path.normalize walks of 12 Oct 14:12 and 17:31 live) and probes --version;
 //   - a streaming fake bot turn (SLOW<n>): session spawn and the provider
 //     event log appends a busy bot produces.
-// qa-16633.ps1 repoints the root's Claude binary at the bare command "claude"
-// with the fake CLI directory last on PATH first, so a refresh reproduces the
-// live walk (bare name, resolved after ~32 PATH entries).
+// The root keeps the ABSOLUTE fake CLI path (throwaway-server.ps1 writes it into
+// settings.json): a bare command name would resolve through PATH to this
+// machine's real Claude CLI, which ran a real turn once during a 1.66.33 dry
+// run. Do not bring the bare-command trick back.
 //
 // One warm-up refresh runs BEFORE the timed loop: on the fixed server that
 // resolves the walk into the 30 s cache, exactly as a real app-open does, and
