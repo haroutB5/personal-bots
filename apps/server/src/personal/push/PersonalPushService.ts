@@ -54,6 +54,13 @@ import {
   type WebPushRequest,
 } from "./webPushCrypto.ts";
 import { TASK_CHAT_VIEWED_WRITE_INTERVAL_MS } from "../taskChatAutoArchivePolicy.ts";
+import {
+  approvalDetail,
+  chatNeedsInputBody,
+  type ChatNeedsInputKind,
+  chatNeedsInputTitle,
+  firstQuestionText,
+} from "./chatNeedsInput.ts";
 import { taskNotifyVerdict, type TaskNotifyState } from "./notifyDecision.ts";
 import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -143,7 +150,8 @@ export type PersonalPushEventKind =
   | "task_needs_input"
   | "task_failed"
   | "routine_result"
-  | "chat_reply";
+  | "chat_reply"
+  | "chat_needs_input";
 
 const PREFERENCE_FOR: Record<PersonalPushEventKind, keyof PersonalPushPreferences> = {
   task_completed: "taskCompleted",
@@ -151,6 +159,9 @@ const PREFERENCE_FOR: Record<PersonalPushEventKind, keyof PersonalPushPreference
   task_failed: "taskFailed",
   routine_result: "routineResult",
   chat_reply: "chatReply",
+  // A plain chat waiting on the user rides the same switch as a task waiting on
+  // the user: it is the same decision ("tell me when a bot needs me").
+  chat_needs_input: "taskNeedsInput",
 };
 
 /**
@@ -271,6 +282,30 @@ export function chatReplyPushPayload(input: {
     title: `${input.bot.name} replied`,
     body: "Open the chat to read it.",
     url: `/bots/${encodeURIComponent(input.botId)}/${encodeURIComponent(input.threadId)}`,
+    tag: `chat-${input.threadId}`,
+    ...avatarFields(input.bot),
+  };
+}
+
+/**
+ * A plain bot chat parked on the user: a question, a tool approval, a sign-in
+ * or a secret. The title names the bot and the chat ("Juno · Weekend in
+ * Lisbon"), the body says what is needed, and the tap opens the chat - the
+ * request card is in it. One tag per chat, like a reply, so a newer
+ * notification replaces the older instead of stacking.
+ */
+export function chatNeedsInputPushPayload(input: {
+  readonly kind: ChatNeedsInputKind;
+  readonly botId: string;
+  readonly bot: PushBotIdentity;
+  readonly threadId: string;
+  readonly chatTitle: string;
+  readonly detail: string;
+}): PersonalPushPayload {
+  return {
+    title: chatNeedsInputTitle(input.bot.name, input.chatTitle),
+    body: chatNeedsInputBody(input.kind, input.detail),
+    url: chatPath(input.botId, input.threadId),
     tag: `chat-${input.threadId}`,
     ...avatarFields(input.bot),
   };
@@ -1155,10 +1190,117 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed((): TaskNotifyState => ({ mode: null, decision: null, message: null })),
     );
 
+  /**
+   * The chat a plain bot chat's pending sign-in or secret request is on, for
+   * the body of its notification: the request's own label (the host a sign-in
+   * opens, the name a secret was asked for). Null when the chat has neither.
+   *
+   * Index lookups only: pending rows are a handful at a time, and the login
+   * table is indexed by thread; the secret table's status index keeps its own
+   * scan to the pending rows.
+   */
+  const pendingChatRequest = (
+    threadId: string,
+  ): Effect.Effect<{ readonly kind: ChatNeedsInputKind; readonly detail: string } | null> =>
+    Effect.gen(function* () {
+      const logins = yield* sql<{ readonly label: string }>`
+        SELECT label FROM personal_login_requests
+        WHERE thread_id = ${threadId} AND status = 'pending'
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      if (logins[0] !== undefined) return { kind: "sign-in" as const, detail: logins[0].label };
+      const secrets = yield* sql<{ readonly label: string }>`
+        SELECT label FROM personal_secret_requests
+        WHERE status = 'pending' AND thread_id = ${threadId}
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      if (secrets[0] !== undefined) return { kind: "secret" as const, detail: secrets[0].label };
+      return null;
+    }).pipe(Effect.orElseSucceed(() => null));
+
+  /**
+   * A plain bot chat - the owner's own chat with a bot, not a task's, a
+   * routine's or a group member's chat - with its bot. Null for every other
+   * chat: task and routine chats already have `task_needs_input`, and a group
+   * member's thread buzzes once with its round. `expectedBotId` re-checks the
+   * link when the caller already knows which bot the chat belongs to.
+   */
+  const plainChat = (
+    threadId: ThreadId,
+    expectedBotId: string | null,
+  ): Effect.Effect<{ readonly botId: string; readonly chatTitle: string } | null> =>
+    botRepository.getChatFacts({ threadId }).pipe(
+      Effect.map((facts) =>
+        Option.isSome(facts) &&
+        !facts.value.groupRelay &&
+        !facts.value.taskChat &&
+        !facts.value.routineChat &&
+        (expectedBotId === null || facts.value.botId === expectedBotId)
+          ? { botId: facts.value.botId, chatTitle: facts.value.title }
+          : null,
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+
+  /**
+   * One notification for a request in a plain bot chat: an approval or a
+   * question arriving on the event stream, or (via notifyTask) a sign-in or
+   * secret request parking the chat's task. Deduped per request by the outbox
+   * key, suppressed while the chat is open and visible, and dropped for a
+   * muted bot, exactly as a reply is.
+   */
+  const notifyChatNeedsInput = (input: {
+    readonly eventId: string;
+    readonly kind: ChatNeedsInputKind;
+    readonly botId: string | null;
+    readonly threadId: ThreadId;
+    readonly detail: string;
+  }) =>
+    Effect.gen(function* () {
+      const preferences = yield* readPreferences;
+      if (!preferences[PREFERENCE_FOR.chat_needs_input]) return;
+      const chat = yield* plainChat(input.threadId, input.botId);
+      if (chat === null) return;
+      const bot = yield* botRepository.getBotById({
+        botId: chat.botId as PersonalBot["botId"],
+      });
+      yield* deliver(
+        input.eventId,
+        chatNeedsInputPushPayload({
+          kind: input.kind,
+          botId: chat.botId,
+          bot: botIdentity(bot),
+          threadId: input.threadId,
+          chatTitle: chat.chatTitle,
+          detail: input.detail,
+        }),
+        {
+          bot,
+          viewing: {
+            threadId: input.threadId,
+            quietPath: chatPath(chat.botId, input.threadId),
+          },
+        },
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not queue a chat request", {
+              eventId: input.eventId,
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
   const notifyTask: PersonalPushService["Service"]["notifyTask"] = (task) =>
     Effect.gen(function* () {
       const kind = pushEventForTask(task);
       if (kind === null) return;
+      // pushEventForTask only ever returns the four task kinds; chat_needs_input
+      // is built by notifyChatNeedsInput and never rides this path.
+      if (kind === "chat_needs_input") return;
       const preferences = yield* readPreferences;
       if (!preferences[PREFERENCE_FOR[kind]]) return;
       // One event per transition: a replayed or re-published upsert dedupes.
@@ -1172,6 +1314,39 @@ export const make = Effect.gen(function* () {
         return;
       }
       const bot = yield* botRepository.getBotById({ botId: task.botId });
+      // A sign-in or secret request in the owner's own chat with the bot parks
+      // the turn's caller task, and the chat's own notification names the
+      // request and opens the chat - better than the task's title and page.
+      // The task's own chats keep the task notification unchanged.
+      if (
+        kind === "task_needs_input" &&
+        task.status === "waiting_for_user" &&
+        task.threadId !== null
+      ) {
+        const chat = yield* plainChat(task.threadId, task.botId);
+        const request = chat === null ? null : yield* pendingChatRequest(task.threadId);
+        if (chat !== null && request !== null) {
+          yield* deliver(
+            eventId,
+            chatNeedsInputPushPayload({
+              kind: request.kind,
+              botId: task.botId,
+              bot: botIdentity(bot),
+              threadId: task.threadId,
+              chatTitle: chat.chatTitle,
+              detail: request.detail,
+            }),
+            {
+              bot,
+              viewing: {
+                threadId: task.threadId,
+                quietPath: chatPath(task.botId, task.threadId),
+              },
+            },
+          );
+          return;
+        }
+      }
       const quiet = updatesQuietHoursVerdict(
         task,
         kind === "chat_reply" ? "task_completed" : kind,
@@ -1404,6 +1579,33 @@ export const make = Effect.gen(function* () {
   const pendingFailures = new Map<string, string>();
 
   const ingestDomainEvent: PersonalPushService["Service"]["ingestDomainEvent"] = (event) => {
+    if (event.type === "thread.activity-appended") {
+      // The filter runs before anything reads: most events here are tool
+      // steps and reasoning notes, and they must not cost a lookup.
+      const activity = event.payload.activity;
+      if (activity.kind !== "approval.requested" && activity.kind !== "user-input.requested") {
+        return Effect.void;
+      }
+      const payload = (
+        typeof activity.payload === "object" && activity.payload !== null ? activity.payload : {}
+      ) as Record<string, unknown>;
+      // The provider's request id dedupes a re-emitted request; the activity
+      // id is unique on its own when a provider gives none.
+      const requestId =
+        typeof payload.requestId === "string" && payload.requestId.length > 0
+          ? payload.requestId
+          : activity.id;
+      return notifyChatNeedsInput({
+        eventId: `chat-needs:${requestId}`,
+        kind: activity.kind === "approval.requested" ? "approval" : "question",
+        botId: null,
+        threadId: event.payload.threadId,
+        detail:
+          activity.kind === "approval.requested"
+            ? approvalDetail(payload)
+            : firstQuestionText(payload.questions),
+      });
+    }
     if (event.type !== "thread.session-set") return Effect.void;
     const { threadId, session } = event.payload;
     pendingFailures.delete(threadId);
