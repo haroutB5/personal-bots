@@ -88,6 +88,7 @@ import {
   usePersonalGroupsList,
 } from "./usePersonalGroups";
 import { reloadLatestApp, useAppVersion } from "./appVersion";
+import { UpdateStatusLine } from "./UpdateStatusLine";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
 import { botMuteState } from "./botMuteModel";
@@ -891,6 +892,10 @@ export function ChatsScreen({
           </Menu>
         </div>
       </header>
+
+      {/* One reserved line for the update status: empty unless a release is
+          moving, and it never shifts the list below (UpdateStatusLine). */}
+      <UpdateStatusLine versionLabel={versionLabel} />
 
       <PersonalUsageStrip now={now} />
 

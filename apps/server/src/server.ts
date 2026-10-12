@@ -122,6 +122,7 @@ import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
 import { personalPushSentRouteLayer } from "./personal/push/sentPushesRoute.ts";
+import { personalUpdateStatusRouteLayer } from "./personal/updateStatus/updateStatusRoute.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
@@ -836,6 +837,8 @@ export const makeRoutesLayer = Layer.mergeAll(
     personalClientDiagRouteLayer,
     // Signed-in only: pushes sent to this device, for taps iOS drops (see sentPushesRoute.ts).
     personalPushSentRouteLayer,
+    // Signed-in only: where a release is, for the Bots page's status line (see updateStatusRoute.ts).
+    personalUpdateStatusRouteLayer,
     // Unauthenticated by necessity; the URL token is the whole credential.
     personalRoutineHookRouteLayer,
     personalRoutineHookMethodRouteLayer,

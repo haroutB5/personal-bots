@@ -194,6 +194,13 @@ vi.mock("./appVersion", () => ({
   useAppVersion: () => state.versionInfo,
   reloadLatestApp: async () => state.reload(),
 }));
+// The line polls and owns its own storage; the screen only has to place it
+// and hand it the version it already shows.
+vi.mock("./UpdateStatusLine", () => ({
+  UpdateStatusLine: ({ versionLabel }: { versionLabel?: string | null }) => (
+    <span data-update-status-line={versionLabel ?? ""} />
+  ),
+}));
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -1488,5 +1495,23 @@ describe("ChatsScreen snoozed, pinned-group and unread chats", () => {
     const text = json();
     expect(text).toContain("1 unread chat");
     expect(text).not.toContain("2 unread chats");
+  });
+});
+
+describe("ChatsScreen update status line", () => {
+  it("keeps one reserved line under the header, carrying the version the page shows", async () => {
+    stubWindow();
+    seedSnapshot();
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+    // The reserved slot, in place and told which version is live, so a
+    // "still on 1.66.y" line has its fallback even with no server answer.
+    const line = renderer!.root.findByProps({
+      "data-update-status-line": "v9.9.9-test",
+    });
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json.indexOf('"data-update-status-line"')).toBeGreaterThan(json.indexOf('"Bots"'));
+    expect(String(line.props["data-update-status-line"])).toBe("v9.9.9-test");
   });
 });
