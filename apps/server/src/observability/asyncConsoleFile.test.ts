@@ -80,6 +80,44 @@ describe("installAsyncConsoleFileRedirect", () => {
     expect(lines[63]).toBe("line-63");
   });
 
+  it("coalesces a burst into one in-flight batch instead of one write per line", async () => {
+    const { stream, target, filePath } = makeTarget();
+    installAsyncConsoleFileRedirect([target]);
+    const writer = asyncConsoleWriterFor(stream);
+    const write = stream.write as (chunk: string) => boolean;
+
+    // A synchronous burst cannot let an fs.write callback run, so everything
+    // written here is queued. One batch is taken by the first pump; the rest
+    // must wait as queue, not as thousands of separate in-flight writes.
+    for (let index = 0; index < 5_000; index += 1) write(`burst line ${index}\n`);
+    const text = await waitForLines(filePath, 5_000);
+    const lines = text.trim().split("\n");
+    expect(lines).toHaveLength(5_000);
+    expect(lines[0]).toBe("burst line 0");
+    expect(lines[4_999]).toBe("burst line 4999");
+    expect(writer?.backlogBytes).toBe(0);
+  });
+
+  it("bounds the backlog and drops the oldest lines with one marker", async () => {
+    const { stream, target, filePath } = makeTarget();
+    installAsyncConsoleFileRedirect([target]);
+    const writer = asyncConsoleWriterFor(stream);
+    const write = stream.write as (chunk: string) => boolean;
+
+    // Fill the queue past the bound in one synchronous turn (no callback can
+    // run). The oldest lines must go, the newest must stay, and exactly one
+    // marker line must record the loss.
+    const chunk = "x".repeat(1_023) + "\n"; // 1 KiB per line
+    for (let index = 0; index < 12_000; index += 1) {
+      write(`line ${String(index).padStart(5, "0")} ${chunk}`);
+    }
+    expect(writer?.droppedLineCount).toBeGreaterThan(0);
+    expect(writer?.backlogBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    const text = await waitForLines(filePath, 100);
+    expect(text).toContain("[async-console] dropped ");
+    expect(text).toContain("line 11999 ");
+  });
+
   it("is a no-op with the kill switch set", () => {
     const { stream, target } = makeTarget();
     vi.stubEnv("T3CODE_ASYNC_CONSOLE", "off");
