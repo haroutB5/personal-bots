@@ -56,6 +56,19 @@ function Step($what, $script) {
     }
 }
 
+$script:pairCounter = 0
+# Every browser session needs its own single-use pairing link (one is consumed
+# per pairContext); the link from the initial start is used by nothing.
+function New-PairLink {
+    $script:pairCounter += 1
+    $text = (& $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Pair $Name | Out-String)
+    $url = [regex]::Match($text, 'https?://\S+').Value
+    if (-not $url) { throw "no pairing link in: $text" }
+    # Write-Host, not Write-Output: the return value must be the URL alone.
+    Write-Host "    pairing link $($script:pairCounter) minted"
+    return $url
+}
+
 if (-not $Out) { $Out = Join-Path $env:TEMP ('hbots-qa16633-' + (Get-Date -Format 'HHmmss')) }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 Write-Output "out: $Out"
@@ -116,23 +129,14 @@ function Start-DiskLoad([int]$Seconds) {
 try {
     if (-not $SkipLoad) {
         Step 'stall load (disk load + refresh/stream driver)' {
-            # Reproduce the live walk: the Claude provider resolves the BARE
-            # command "claude", found only in the fake directory placed LAST on
-            # PATH, so a provider refresh really walks ~32 PATH entries (the
-            # 14:12/17:31 stalls). Restart the root once so the setting applies.
-            & $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Down $Name | Out-Null
-            $settingsPath = Join-Path $root 'userdata\settings.json'
-            $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
-            $settings.providers.claudeAgent.binaryPath = 'claude'
-            [System.IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
-            $env:PATH = $env:PATH + ';' + (Join-Path $root 'fake\fakeok')
-            $up = & $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Up $Name
-            Write-Output ($up | Out-String).Trim()
-
+            # The throwaway keeps its ABSOLUTE fake binary path: a bare command
+            # name resolves through PATH, and this machine's real
+            # C:\Users\Ht\.local\bin\claude.exe sits there (it ran a real turn
+            # once during a 1.66.33 dry run - never again).
             $jobs = Start-DiskLoad ($LoadSeconds + 30)
             Start-Sleep -Seconds 4
             try {
-                & $nodeExe (Join-Path $e2e 'stall-load.mjs') --origin $info.URL --pair $info.Pairing --bin $bin --out $Out --seconds $LoadSeconds
+                & $nodeExe (Join-Path $e2e 'stall-load.mjs') --origin $info.URL --pair (New-PairLink) --bin $bin --out $Out --seconds $LoadSeconds
                 if ($LASTEXITCODE -ne 0) { throw "stall-load exit $LASTEXITCODE" }
             } finally {
                 foreach ($job in $jobs) {
@@ -154,7 +158,7 @@ try {
 
     if (-not $SkipSteer) {
         Step 'steer order on the fake CLI' {
-            & $nodeExe (Join-Path $e2e 'steer-check.mjs') --origin $info.URL --pair $info.Pairing --bin $bin --out $Out
+            & $nodeExe (Join-Path $e2e 'steer-check.mjs') --origin $info.URL --pair (New-PairLink) --bin $bin --out $Out
             if ($LASTEXITCODE -ne 0) { throw "steer-check exit $LASTEXITCODE" }
         }
         Step 'no pending turn row + idle classifier sees the table' {
@@ -168,11 +172,7 @@ try {
 
     if (-not $SkipIsolation) {
         Step 'usage-scan isolation on the Team card' {
-            # A fresh pairing link: steer-check and the load driver each use one.
-            $pairText = (& $ps -NoProfile -ExecutionPolicy Bypass -File $throwaway -Pair $Name | Out-String)
-            $pair = [regex]::Match($pairText, 'https?://\S+').Value
-            if (-not $pair) { throw "no pairing link in: $pairText" }
-            & $nodeExe (Join-Path $e2e 'usage-isolation.mjs') --origin $info.URL --pair $pair --bin $bin --out $Out
+            & $nodeExe (Join-Path $e2e 'usage-isolation.mjs') --origin $info.URL --pair (New-PairLink) --bin $bin --out $Out
             if ($LASTEXITCODE -ne 0) { throw "usage-isolation exit $LASTEXITCODE" }
         }
     }
