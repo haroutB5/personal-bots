@@ -1499,14 +1499,14 @@ describe("ChatsScreen snoozed, pinned-group and unread chats", () => {
 });
 
 describe("ChatsScreen update status line", () => {
-  it("keeps one reserved line under the header, carrying the version the page shows", async () => {
+  it("places the update status line under the header, carrying the version the page shows", async () => {
     stubWindow();
     seedSnapshot();
     await act(async () => {
       renderer = create(<ChatsScreen />);
     });
-    // The reserved slot, in place and told which version is live, so a
-    // "still on 1.66.y" line has its fallback even with no server answer.
+    // In place and told which version is live, so a "still on 1.66.y" line
+    // has its fallback even with no server answer.
     const line = renderer!.root.findByProps({
       "data-update-status-line": "v9.9.9-test",
     });

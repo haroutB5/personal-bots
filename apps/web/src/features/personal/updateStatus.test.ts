@@ -3,15 +3,20 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   NO_UPDATE,
   RESTART_EXPECTED_WINDOW_MS,
+  SEEN_UPDATED_KEY,
+  UPDATED_LINE_MS,
+  UPDATED_PHASES,
   fetchUpdateStatus,
   getUpdateRestartSignal,
   parseUpdateStatusAnswer,
   publishUpdateRestartSignal,
+  readSeenUpdated,
   resetUpdateRestartSignalForTesting,
   subscribeUpdateRestartSignal,
   updateLineFor,
   versionFromLabel,
   visibleUpdateLine,
+  writeSeenUpdated,
   type UpdateStatusAnswer,
 } from "./updateStatus";
 
@@ -169,6 +174,7 @@ describe("what the page shows right now", () => {
       offline: false,
       lastSeen: null,
       dismissed: null,
+      seenUpdated: null,
       fallbackVersion: null,
       nowMs: NOW,
       ...input,
@@ -213,6 +219,45 @@ describe("what the page shows right now", () => {
     expect(visible({ offline: true, lastSeen: null })).toBeNull();
   });
 
+  it("shows the finished Updated line only until this device has seen that version", () => {
+    const updated = answer({ phase: "live_verified" });
+    // Nothing seen yet: the one-time note is due.
+    expect(visible({ answer: updated })?.text).toBe("Updated to 1.66.34");
+    // Seen (this session's ten seconds ran out, or an earlier launch): gone.
+    expect(visible({ answer: updated, seenUpdated: { version: "1.66.34", atMs: NOW } })).toBeNull();
+    // A newer update is a new note.
+    expect(
+      visible({
+        answer: answer({ phase: "live_verified", version: "1.66.35" }),
+        seenUpdated: { version: "1.66.34", atMs: NOW },
+      })?.text,
+    ).toBe("Updated to 1.66.35");
+    // The ten seconds of a line the server could not name still end it (the
+    // in-session record carries a null version; storage never does).
+    expect(
+      visible({
+        answer: answer({ phase: "live_verified", version: null }),
+        seenUpdated: { version: null, atMs: NOW },
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the failure phases out of the once-per-version rule", () => {
+    // Real news keeps showing while it is true, seen version or not, until a
+    // tap puts the same one away.
+    const seenUpdated = { version: "1.66.34", atMs: NOW };
+    expect(visible({ answer: answer({ phase: "rolled_back" }), seenUpdated })?.text).toBe(
+      "Update failed, still on 1.66.33",
+    );
+    expect(visible({ answer: answer({ phase: "failed" }), seenUpdated })?.text).toBe(
+      "Update problem, the team is on it",
+    );
+    // The moving phases are never gated either.
+    expect(visible({ answer: answer({ phase: "backing_up" }), seenUpdated })?.text).toBe(
+      "Backing up before update",
+    );
+  });
+
   it("hides a dismissed line while it is the same one, and brings a new one back", () => {
     const dismissed = { phase: "live_verified", version: "1.66.34", atMs: NOW - 60_000 };
     expect(visible({ answer: answer({ phase: "live_verified" }), dismissed })).toBeNull();
@@ -240,6 +285,44 @@ describe("the page's own version stamp", () => {
     expect(versionFromLabel("1.66.33")).toBe("1.66.33");
     expect(versionFromLabel("970a968")).toBeNull();
     expect(versionFromLabel(null)).toBeNull();
+  });
+});
+
+describe("the seen-version memory", () => {
+  it("keeps the version Updated was shown for, and refuses anything else", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          store.set(key, value);
+        },
+      },
+    });
+    expect(readSeenUpdated()).toBeNull();
+    writeSeenUpdated({ version: "1.66.36", atMs: NOW });
+    expect(readSeenUpdated()).toEqual({ version: "1.66.36", atMs: NOW });
+    // Foreign or damaged records read as nothing, so the worst case is one
+    // extra showing, never a line hidden wrongly.
+    store.set(SEEN_UPDATED_KEY, "{not json");
+    expect(readSeenUpdated()).toBeNull();
+    store.set(SEEN_UPDATED_KEY, JSON.stringify({ version: "not a version", atMs: NOW }));
+    expect(readSeenUpdated()).toBeNull();
+    store.set(SEEN_UPDATED_KEY, JSON.stringify({ version: "1.66.36" }));
+    expect(readSeenUpdated()).toBeNull();
+    store.set(SEEN_UPDATED_KEY, JSON.stringify(["1.66.36"]));
+    expect(readSeenUpdated()).toBeNull();
+    // A nameless record is never written: there is nothing to key it on.
+    store.clear();
+    writeSeenUpdated({ version: null, atMs: NOW });
+    expect(readSeenUpdated()).toBeNull();
+  });
+});
+
+describe("the one-time rule's own numbers", () => {
+  it("covers exactly the two landed phases, for ten seconds", () => {
+    expect([...UPDATED_PHASES].sort()).toEqual(["live_verified", "live_verified_doc_update_failed"]);
+    expect(UPDATED_LINE_MS).toBe(10_000);
   });
 });
 

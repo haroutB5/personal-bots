@@ -6,6 +6,7 @@ import {
   DISMISSED_LINE_KEY,
   getUpdateRestartSignal,
   resetUpdateRestartSignalForTesting,
+  SEEN_UPDATED_KEY,
 } from "./updateStatus";
 
 const T0 = Date.parse("2026-10-12T21:00:00.000Z");
@@ -117,8 +118,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("the reserved line under the header", () => {
-  it("shows nothing, and keeps its one line of space, when no update is moving", async () => {
+describe("the line under the header", () => {
+  it("shows nothing, and takes no space, when no update is moving", async () => {
     state.queue.push({
       status: 200,
       body: { phase: null, version: null, previousVersion: null, updatedAt: null },
@@ -126,13 +127,17 @@ describe("the reserved line under the header", () => {
     await render();
     expect(state.answered).toBe(1);
     const output = tree();
+    // The row is collapsed to nothing - the list sits right under the header,
+    // no reserved 16 px - and there are no words, only the empty region.
     expect(output).toContain('"aria-live":"polite"');
-    expect(output).toContain("mt-1 h-4");
+    expect(output).toContain("grid-rows-[0fr]");
+    expect(output).not.toContain("grid-rows-[1fr]");
+    expect(output).toContain('"inert":true');
     expect(output).not.toContain("update");
     expect(output).not.toContain("<button");
   });
 
-  it("reads the phase the server is in", async () => {
+  it("reads the phase the server is in, in an open row", async () => {
     state.queue.push({ status: 200, body: answer("waiting_for_idle") });
     await render();
     const output = tree();
@@ -140,7 +145,27 @@ describe("the reserved line under the header", () => {
     expect(output).toContain("--personal-review-text");
     // One line, quiet: 12px, not a card and not a button while it is moving.
     expect(output).toContain("text-[12px]");
+    // Real news opens the row (smoothly, in the browser) instead of staying
+    // out of sight in a hidden slot.
+    expect(output).toContain("grid-rows-[1fr]");
+    expect(output).not.toContain("grid-rows-[0fr]");
+    expect(output).not.toContain('"inert":true');
     expect(output).not.toContain("<button");
+  });
+
+  it("collapses the row when a moving phase goes away", async () => {
+    state.queue.push({ status: 200, body: answer("backing_up") });
+    await render();
+    expect(tree()).toContain("Backing up before update");
+    expect(tree()).toContain("grid-rows-[1fr]");
+    state.queue.push({ status: 200, body: answer("superseded_before_activation") });
+    await advance(10_000);
+    // Collapsing: the row has no height, the words stay to fade with it.
+    expect(tree()).toContain("grid-rows-[0fr]");
+    expect(tree()).toContain('"inert":true');
+    expect(tree()).toContain("Backing up before update");
+    await advance(300);
+    expect(tree()).not.toContain("Backing up before update");
   });
 
   it("says the server is restarting when it goes away with an update on its way", async () => {
@@ -174,13 +199,55 @@ describe("the reserved line under the header", () => {
     state.queue.push("throw");
     await render();
     expect(tree()).toContain("Updated to 1.66.34");
+    // Ten seconds end the one-time note; the collapse is still running here.
     await advance(10_000);
     expect(state.answered).toBe(2);
+    expect(tree()).not.toContain("grid-rows-[1fr]");
     expect(tree()).not.toContain("Restarting for update");
+    await advance(300);
     expect(tree()).not.toContain("Updated to");
   });
 
-  it("lets a tap put the finished line away, and keeps it away next launch", async () => {
+  it("shows Updated to x for ten seconds, once per version, then collapses it", async () => {
+    state.queue.push({ status: 200, body: answer("live_verified") });
+    state.queue.push({ status: 200, body: answer("live_verified") });
+    await render();
+    expect(tree()).toContain("Updated to 1.66.34");
+    expect(tree()).toContain("grid-rows-[1fr]");
+    // Remembered the moment it is shown: closing the app inside the ten
+    // seconds does not bring the words back on the next launch.
+    expect(stored.get(SEEN_UPDATED_KEY)).toContain("1.66.34");
+
+    // Ten seconds: the row collapses, the words stay to fade with it.
+    await advance(10_000);
+    expect(tree()).not.toContain("grid-rows-[1fr]");
+    expect(tree()).toContain("grid-rows-[0fr]");
+    expect(tree()).toContain('"inert":true');
+    expect(tree()).toContain("Updated to 1.66.34");
+    // The poll that answered the same phase does not bring it back.
+    await advance(300);
+    expect(tree()).not.toContain("Updated to 1.66.34");
+
+    // A fresh launch on the same device: the same version stays quiet.
+    await act(async () => renderer?.unmount());
+    state.queue.push({ status: 200, body: answer("live_verified") });
+    await render();
+    expect(tree()).not.toContain("Updated to 1.66.34");
+    expect(tree()).toContain("grid-rows-[0fr]");
+  });
+
+  it("shows a newer version's note again", async () => {
+    state.queue.push({ status: 200, body: answer("live_verified", "1.66.34") });
+    await render();
+    expect(tree()).toContain("Updated to 1.66.34");
+    await act(async () => renderer?.unmount());
+    state.queue.push({ status: 200, body: answer("live_verified", "1.66.35") });
+    await render();
+    expect(tree()).toContain("Updated to 1.66.35");
+    expect(tree()).toContain("grid-rows-[1fr]");
+  });
+
+  it("lets a tap put the Updated line away early, and keeps it away next launch", async () => {
     state.queue.push({ status: 200, body: answer("live_verified") });
     await render();
     expect(tree()).toContain("Updated to 1.66.34");
@@ -188,15 +255,39 @@ describe("the reserved line under the header", () => {
     await act(async () => {
       button.props.onClick();
     });
+    expect(tree()).toContain("grid-rows-[0fr]");
+    expect(stored.get(SEEN_UPDATED_KEY)).toContain("1.66.34");
+    await advance(300);
     expect(tree()).not.toContain("Updated to 1.66.34");
-    expect(stored.get(DISMISSED_LINE_KEY)).toContain("live_verified");
 
     // A fresh launch (a new mount, same device) with the same finished line:
-    // still dismissed.
+    // still gone.
     await act(async () => renderer?.unmount());
     state.queue.push({ status: 200, body: answer("live_verified") });
     await render();
     expect(tree()).not.toContain("Updated to 1.66.34");
+  });
+
+  it("keeps a tapped failure line away with the 24-hour dismissal memory", async () => {
+    state.queue.push({ status: 200, body: answer("rolled_back") });
+    await render();
+    expect(tree()).toContain("Update failed, still on 1.66.33");
+    const button = renderer!.root.findByType("button");
+    await act(async () => {
+      button.props.onClick();
+    });
+    expect(tree()).toContain("grid-rows-[0fr]");
+    // The failure memory, not the seen-version one: a failure is not a
+    // once-per-version note.
+    expect(stored.get(DISMISSED_LINE_KEY)).toContain("rolled_back");
+    expect(stored.get(SEEN_UPDATED_KEY)).toBeUndefined();
+
+    await advance(300);
+    expect(tree()).not.toContain("Update failed");
+    await act(async () => renderer?.unmount());
+    state.queue.push({ status: 200, body: answer("rolled_back") });
+    await render();
+    expect(tree()).not.toContain("Update failed");
   });
 
   it("shows a failed landing with what is still live", async () => {
