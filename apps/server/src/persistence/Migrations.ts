@@ -116,6 +116,8 @@ import Migration0101 from "./Migrations/101_PersonalModelFallback.ts";
 import Migration0102 from "./Migrations/102_PersonalSecretBrokering.ts";
 import Migration0103 from "./Migrations/103_PersonalSecretPlacement.ts";
 import Migration0104 from "./Migrations/104_PersonalMemoryEvidence.ts";
+import Migration0105 from "./Migrations/105_ProjectionThreadMessagesRoleIndex.ts";
+import Migration0106 from "./Migrations/106_StalePendingTurnStartCleanup.ts";
 import MigrationUpstream0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import MigrationUpstream0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
@@ -237,6 +239,8 @@ const migrationEntries = [
   [102, "PersonalSecretBrokering", Migration0102],
   [103, "PersonalSecretPlacement", Migration0103],
   [104, "PersonalMemoryEvidence", Migration0104],
+  [105, "ProjectionThreadMessagesRoleIndex", Migration0105],
+  [106, "StalePendingTurnStartCleanup", Migration0106],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are
