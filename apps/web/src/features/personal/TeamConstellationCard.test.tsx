@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { TeamConstellationCard, type ConstellationBot } from "./TeamConstellationCard";
+import type { TeamCaption } from "./teamCaption";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ to, params, children, ...rest }: Record<string, unknown> & { children?: never }) => (
@@ -35,6 +36,8 @@ const entry = (
   } as never,
   modelLabel: "Sonnet 5.5 · H",
   live: false,
+  caption: { text: "Sonnet 5.5 · H", tone: "idle" } satisfies TeamCaption,
+  needsYou: false,
   workingFor: null,
   ...extra,
 });
@@ -58,10 +61,7 @@ afterEach(async () => {
 });
 
 const opened: string[] = [];
-const render = async (
-  members: ReadonlyArray<ConstellationBot>,
-  spokes: ReadonlyMap<string, { recent: number; running: boolean }> = new Map(),
-) => {
+const render = async (members: ReadonlyArray<ConstellationBot>, lead?: ConstellationBot) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   opened.length = 0;
   await act(async () => {
@@ -74,10 +74,8 @@ const render = async (
           memberBotIds: members.map((member) => member.bot.botId),
         }}
         label="Finance"
-        lead={entry("cfo", "CFO", { modelLabel: "Opus 5.5 · X" })}
+        lead={lead ?? entry("cfo", "CFO", { caption: { text: "Working", tone: "working" } })}
         members={members}
-        spokes={spokes}
-        maxSpoke={4}
         custom={false}
         removable={false}
         removeBusy={false}
@@ -96,6 +94,24 @@ const named = (tree: ReactTestRenderer, label: string): ReactTestInstance | unde
   tree.root.findAll((node) => node.props["aria-label"] === label).at(0);
 const botNodes = (tree: ReactTestRenderer) =>
   tree.root.findAll((node) => node.type === "a" && node.props["data-bot-node"] !== undefined);
+/** Every piece of visible text on the card, joined per element. */
+const texts = (tree: ReactTestRenderer): string[] =>
+  tree.root
+    .findAll(
+      (node) =>
+        (node.type === "span" || node.type === "button" || node.type === "p") &&
+        (node.children ?? []).some(
+          (child) => typeof child === "string" || typeof child === "number",
+        ),
+    )
+    .map((node) =>
+      (node.children ?? [])
+        .flatMap((child: unknown) =>
+          typeof child === "string" || typeof child === "number" ? [String(child)] : [],
+        )
+        .join("")
+        .trim(),
+    );
 
 const NAMES = [
   "Quarterly budget planner",
@@ -120,21 +136,28 @@ const many = (count: number) =>
   );
 
 describe("TeamConstellationCard", () => {
-  it("keeps a long name whole: it wraps under the avatar and is on the node's label", async () => {
-    const tree = await render([entry("s", "CFO scheduler")]);
-    const node = named(tree, "CFO scheduler, Sonnet 5.5 · H");
-    expect(node).toBeDefined();
-    expect(node!.props.title).toBe("CFO scheduler");
-    // The visible label wraps to two lines; it is never cut to a fixed length.
-    const text = tree.root.findAll(
+  it("crowns the lead and keeps 'team lead' in its accessible name", async () => {
+    const tree = await render([]);
+    const lead = named(tree, "CFO, team lead, Working");
+    expect(lead).toBeDefined();
+    // The crown is drawn with the name, not announced twice.
+    expect(
+      tree.root.findAll((node) => node.props["aria-hidden"] === "true").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("keeps a long name whole: it wraps under the avatar, never cut to a fixed length", async () => {
+    const tree = await render([entry("s", "Release Notes Copywriter")]);
+    expect(named(tree, "Release Notes Copywriter, Sonnet 5.5 · H")).toBeDefined();
+    const clamped = tree.root.findAll(
       (candidate) =>
         typeof candidate.props.className === "string" &&
         candidate.props.className.includes("line-clamp-2"),
     );
-    expect(text.at(0)?.children).toEqual(["CFO scheduler"]);
+    expect(clamped.at(0)?.children).toEqual(["Release Notes Copywriter"]);
   });
 
-  it("draws every member of a 15-bot team with names of 14 or more characters", async () => {
+  it("draws every member of a 15-bot team, none of them behind a seat", async () => {
     const tree = await render(many(15));
     const nodes = botNodes(tree);
     // 15 members and the lead.
@@ -147,42 +170,76 @@ describe("TeamConstellationCard", () => {
 
   it("puts the overflow of a very full team behind a +N seat that opens the list", async () => {
     const tree = await render(many(24));
-    const more = named(tree, "5 more bots on Finance. See all.");
+    const more = named(tree, "9 more bots on Finance. See all.");
     expect(more).toBeDefined();
     await act(async () => more!.props.onClick());
     expect(opened).toEqual(["Finance"]);
-    // Nineteen members and the lead are drawn.
-    expect(botNodes(tree)).toHaveLength(20);
+    // Fifteen members and the lead are drawn; the last seat is the +N plate.
+    expect(botNodes(tree)).toHaveLength(16);
   });
 
   it("opens the full list from the count, with the whole team size in its name", async () => {
     const tree = await render(many(3));
-    const count = named(tree, "See all 4 bots on Finance");
+    const count = named(tree, "See all 4 bots on Finance, or move them");
     expect(count).toBeDefined();
+    expect(texts(tree)).toContain("4 bots · Move");
     await act(async () => count!.props.onClick());
     expect(opened).toEqual(["Finance"]);
   });
 
-  it("puts the week's handoff count on the node's name, and on the avatar when no spoke can be drawn", async () => {
+  it("says how many are working and how many need the owner, in the header", async () => {
     const tree = await render(
-      many(20),
-      new Map(many(20).map((m) => [m.bot.botId, { recent: 4, running: false }])),
+      [
+        entry("a", "Auditor", {
+          live: true,
+          caption: { text: "Running the tests", tone: "working" },
+        }),
+        entry("b", "Relay", {
+          caption: { text: "Needs approval", tone: "needs" },
+          needsYou: true,
+        }),
+        entry("c", "Quill"),
+      ],
+      entry("cfo", "CFO", {
+        live: true,
+        caption: { text: "Planning release 2.4", tone: "working" },
+      }),
     );
-    const counted = tree.root.findAll((node) =>
-      String(node.props["aria-label"]).endsWith("4 handoffs this week"),
-    );
-    expect(counted.length).toBeGreaterThan(15);
-    // Crowded: the spokes that would cross another node are shown as a number instead.
-    const badges = tree.root.findAll(
-      (node) =>
-        typeof node.props.className === "string" &&
-        node.props.className.includes("-top-1 -right-2"),
-    );
-    expect(badges.length).toBeGreaterThan(0);
+    const labels = texts(tree);
+    expect(labels).toContain("2 working");
+    expect(labels).toContain("1 needs you");
   });
 
-  it("labels a working node for the screen reader, with who it works for", async () => {
-    const tree = await render([entry("d", "Designer", { workingFor: "CTO", live: true })]);
-    expect(named(tree, "Designer, Sonnet 5.5 · H, working for CTO")).toBeDefined();
+  it("shows the model when a bot is idle and the state word when it is not", async () => {
+    const tree = await render([
+      entry("a", "Quill"),
+      entry("b", "Relay", {
+        caption: { text: "Needs your reply", tone: "needs" },
+        needsYou: true,
+      }),
+      entry("c", "Probe", { live: true, caption: { text: "Thinking", tone: "thinking" } }),
+    ]);
+    const labels = texts(tree);
+    expect(labels).toContain("Sonnet 5.5 · H");
+    expect(labels).toContain("Needs your reply");
+    expect(labels).toContain("Thinking");
+    // A bot waiting on the owner wears the amber ring.
+    const ringed = tree.root.findAll(
+      (node) =>
+        typeof node.props.className === "string" &&
+        node.props.className.includes("ring-[var(--personal-state-needs"),
+    );
+    expect(ringed.length).toBeGreaterThan(0);
+  });
+
+  it("announces a working node with who it works for", async () => {
+    const tree = await render([
+      entry("d", "Designer", {
+        workingFor: "CTO",
+        live: true,
+        caption: { text: "Laying out the Team card", tone: "working" },
+      }),
+    ]);
+    expect(named(tree, "Designer, Laying out the Team card, working for CTO")).toBeDefined();
   });
 });

@@ -15,6 +15,20 @@ export interface BotLook {
   readonly color: string;
 }
 
+/** A saved bot's look, as the bot list holds it. */
+export interface BotLookSource {
+  readonly avatarShape: BotAvatarShape;
+  readonly avatarColor: string;
+}
+
+/** The list helpers read either form: the form's draft pair, or a saved bot. */
+type HasLook = BotLook | BotLookSource;
+
+/** One entry per bot, in the helpers' own shape. */
+export function botLooks(bots: ReadonlyArray<BotLookSource>): ReadonlyArray<BotLook> {
+  return bots.map((bot) => ({ shape: bot.avatarShape, color: bot.avatarColor }));
+}
+
 /**
  * Every palette combination, in the order a new bot walks them: 7 shapes and
  * 12 colours are coprime, so stepping both counters together (shape `i % 7`,
@@ -26,12 +40,18 @@ export const BOT_LOOK_ORDER: ReadonlyArray<BotLook> = Array.from({ length: 84 },
   color: BOT_AVATAR_SWATCHES[step % BOT_AVATAR_SWATCHES.length]!,
 }));
 
-const key = (look: BotLook): string => `${look.shape}\u0000${look.color.toLocaleLowerCase()}`;
+const fieldsOf = (look: HasLook): BotLook =>
+  "shape" in look ? look : { shape: look.avatarShape, color: look.avatarColor };
+
+const key = (look: HasLook): string => {
+  const { shape, color } = fieldsOf(look);
+  return `${shape}\u0000${color.toLocaleLowerCase()}`;
+};
 
 const PALETTE = new Set(BOT_LOOK_ORDER.map(key));
 
 /** How many bots wear each palette look. A look outside the palette counts for nothing. */
-function usageCounts(bots: ReadonlyArray<BotLook>): Map<string, number> {
+function usageCounts(bots: ReadonlyArray<HasLook>): Map<string, number> {
   const counts = new Map<string, number>();
   for (const bot of bots) {
     const id = key(bot);
@@ -59,7 +79,7 @@ function leastUsedBotLook(counts: ReadonlyMap<string, number>): BotLook {
  * A cold start (no list yet) takes the first one. Deterministic on purpose,
  * so two bots created in a row never race to the same pair.
  */
-export function nextFreeBotLook(bots: ReadonlyArray<BotLook>): BotLook {
+export function nextFreeBotLook(bots: ReadonlyArray<HasLook>): BotLook {
   const counts = usageCounts(bots);
   return BOT_LOOK_ORDER.find((look) => !counts.has(key(look))) ?? leastUsedBotLook(counts);
 }
@@ -69,7 +89,7 @@ export function nextFreeBotLook(bots: ReadonlyArray<BotLook>): BotLook {
  * once every combination is taken (the least-used one on average).
  */
 export function shuffledBotLook(
-  bots: ReadonlyArray<BotLook>,
+  bots: ReadonlyArray<HasLook>,
   random: () => number = Math.random,
 ): BotLook {
   const counts = usageCounts(bots);

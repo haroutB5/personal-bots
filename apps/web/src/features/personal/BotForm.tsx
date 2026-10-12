@@ -30,7 +30,7 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
-import { nextFreeBotLook, shuffledBotLook } from "./botAvatarAssignment";
+import { botLooks, nextFreeBotLook, shuffledBotLook } from "./botAvatarAssignment";
 import { BotAvatarPicker } from "./BotAvatarPicker";
 import { BotFallbackSection } from "./BotFallbackSection";
 import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
@@ -328,7 +328,7 @@ function BotForm({
       next.model = defaultModelFor(firstSelectable);
     }
     if (!lookTouched && botList.data !== null) {
-      const look = nextFreeBotLook(botList.data.bots);
+      const look = nextFreeBotLook(botLooks(botList.data.bots));
       next.avatarShape = look.shape;
       next.avatarColor = look.color;
     }
@@ -528,7 +528,7 @@ function BotForm({
             aria-label="Shuffle the look"
             onClick={() => {
               setLookTouched(true);
-              const look = shuffledBotLook(botList.data?.bots ?? []);
+              const look = shuffledBotLook(botLooks(botList.data?.bots ?? []));
               update({ avatarShape: look.shape, avatarColor: look.color });
             }}
             className="flex min-h-11 items-center gap-1 rounded-full px-2 text-[13px] leading-4 font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"

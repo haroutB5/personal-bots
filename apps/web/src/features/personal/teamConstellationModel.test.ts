@@ -12,190 +12,147 @@ import {
   deriveWorkingNow,
   formatWorkingFor,
   historyReachesCutoff,
-  layoutCollisions,
   leadConfirmCopy,
+  leadLabelSizes,
   MAX_ORBIT_NODES,
-  nodeLabel,
+  memberLabelSizes,
+  NODE_AVATAR,
+  NODE_NAME_WIDTH,
+  NODE_WIDTH,
   planDrop,
   replacedLead,
-  spokeIsClear,
-  hubBoxes,
-  spokeLine,
-  spokeWidth,
+  teamLayoutOverlaps,
   teamMoveTargets,
   undoMessage,
   undoPlan,
   workingNowTarget,
   zoneIdAtPoint,
-  type NodeLabel,
 } from "./teamConstellationModel";
 
-const NAMES = [
-  "IT",
-  "Musey",
-  "Sync reports",
-  "Frontend",
-  "CFO scheduler",
-  "Quarterly budget planner",
-  "QA",
-  "Invoice reconciliation",
-  "Astra",
-  "Security",
-  "Updates",
-  "Designer",
-  "Subscription tracker",
-  "Payroll scheduler",
-  "DevOps",
-  "Backend",
-  "Cashflow forecaster",
-  "Ledger archivist",
-  "Planner",
-  "Scout",
-  "Scheduler",
-  "Assistant",
-  "Vendor onboarding",
-  "Currency converter",
-  "Tax compliance checker",
+/** The design's own Build team (mockups/final.html), long name included. */
+const BUILD_TEAM: ReadonlyArray<{ name: string; caption: string }> = [
+  { name: "Pixel", caption: "Opus 5.5 · H" },
+  { name: "Forge", caption: "Working" },
+  { name: "Probe", caption: "Thinking" },
+  { name: "Relay", caption: "Needs approval" },
+  { name: "Release Notes Copywriter", caption: "Haiku 5.5 · M" },
+  { name: "Sentinel", caption: "Sonnet 5.5 · H" },
+  { name: "Harbor", caption: "Sonnet 5.5 · M" },
+  { name: "Quill", caption: "Sonnet 5.5 · M" },
 ];
-const labels = (count: number): NodeLabel[] =>
-  Array.from({ length: count }, (_, index) => nodeLabel(NAMES[index % NAMES.length]!));
-
-describe("nodeLabel", () => {
-  it("keeps a short name on one line, as wide as the name", () => {
-    expect(nodeLabel("QA")).toMatchObject({ lines: 1 });
-    expect(nodeLabel("QA").width).toBeLessThan(nodeLabel("Frontend").width);
-    expect(nodeLabel("Sync reports")).toMatchObject({ lines: 1 });
-  });
-
-  it("gives a name of 13 or more characters two lines across the whole column", () => {
-    expect(nodeLabel("CFO scheduler")).toEqual({ lines: 2, width: 76 });
-    expect(nodeLabel("Quarterly budget planner")).toEqual({ lines: 2, width: 76 });
-  });
-});
-
+const BUILD_LEAD = { name: "Atlas", caption: "Planning release 2.4" };
+const AVATAR_ONLY = { nameWidth: 0, captionWidth: 0 };
 describe("buildConstellationLayout", () => {
-  it("never overlaps the hub or another node, at any team size or phone width", () => {
-    for (const width of [320, 350, 390, 430]) {
-      for (let count = 0; count <= 40; count += 1) {
-        const layout = buildConstellationLayout(labels(count), width);
-        expect(layoutCollisions(layout), `${String(count)} members at ${String(width)}`).toBe(0);
-        // Every node stays inside the card.
-        for (const slot of layout.slots) {
-          expect(slot.x - 38).toBeGreaterThanOrEqual(0);
-          expect(slot.x + 38).toBeLessThanOrEqual(layout.width);
-          expect(slot.y - 20).toBeGreaterThanOrEqual(0);
-        }
+  it("never lets two avatars touch, at every team size and phone width", () => {
+    for (const width of [320, 350, 358, 390, 430]) {
+      for (let count = 0; count <= 24; count += 1) {
+        const layout = buildConstellationLayout(count, width);
+        expect(
+          teamLayoutOverlaps(layout, { member: AVATAR_ONLY, lead: AVATAR_ONLY }),
+          `${String(count)} members at ${String(width)}`,
+        ).toBe(0);
       }
     }
   });
 
-  it("draws a small team on one orbit and spreads a crowded one over more than one", () => {
-    expect(buildConstellationLayout(labels(5), 350).orbits).toHaveLength(1);
-    const crowded = buildConstellationLayout(labels(16), 350);
-    expect(crowded.slots).toHaveLength(16);
-    expect(crowded.hidden).toBe(0);
-    expect(new Set(crowded.slots.map((slot) => slot.ring)).size).toBeGreaterThan(1);
+  it("keeps a 9-bot Build team clean, wide name included", () => {
+    // Eight members plus the lead: rx 124, ry 140, the first member at 12 o'clock.
+    const layout = buildConstellationLayout(8, 358);
+    expect(layout.rx).toBe(124);
+    expect(layout.ry).toBe(140);
+    expect(layout.slots).toHaveLength(8);
+    expect(layout.hidden).toBe(0);
+    // The first member sits at 12 o'clock, straight above the lead.
+    expect(layout.slots[0]!.x).toBe(layout.hub.x);
+    expect(layout.slots[0]!.y).toBeLessThan(layout.hub.y);
+    expect(
+      teamLayoutOverlaps(layout, {
+        member: BUILD_TEAM.map((entry) => memberLabelSizes(entry.name, entry.caption)),
+        lead: leadLabelSizes(BUILD_LEAD.name, BUILD_LEAD.caption),
+      }),
+    ).toBe(0);
   });
 
-  it("draws all 15 or more members of a full team, long names included", () => {
-    for (const count of [15, 17, 20]) {
-      const layout = buildConstellationLayout(labels(count), 390);
-      expect(layout.slots).toHaveLength(count);
-      expect(layout.hidden).toBe(0);
+  it("starts two to five members half a step past 12 o'clock, so nobody sits on the lead's name", () => {
+    const layout = buildConstellationLayout(4, 358);
+    expect(layout.rx).toBe(112);
+    expect(layout.ry).toBe(72);
+    expect(layout.slots[0]!.x).not.toBe(layout.hub.x);
+    expect(
+      teamLayoutOverlaps(layout, {
+        member: memberLabelSizes("Scout", "Needs your reply"),
+        lead: leadLabelSizes("Juno", "Needs your reply"),
+      }),
+    ).toBe(0);
+  });
+
+  it("opens the ring by 16 px a member past the eighth", () => {
+    expect(buildConstellationLayout(8, 358).ry).toBe(140);
+    expect(buildConstellationLayout(9, 358).ry).toBe(156);
+    expect(buildConstellationLayout(12, 358).ry).toBe(204);
+  });
+
+  it("puts a lead that is alone at the top, above its own name", () => {
+    const layout = buildConstellationLayout(0, 358);
+    expect(layout.slots).toEqual([]);
+    expect(layout.hub).toEqual({ x: 179, y: 72 });
+    expect(layout.height).toBeGreaterThan(0);
+  });
+
+  it("gives a single member the tall ring at 12 o'clock, clear of the lead's name", () => {
+    const layout = buildConstellationLayout(1, 358);
+    expect(layout.ry).toBe(140);
+    expect(layout.slots[0]!.x).toBe(layout.hub.x);
+    expect(
+      teamLayoutOverlaps(layout, {
+        member: memberLabelSizes("Release Notes Copywriter", "Sonnet 5.5 · M"),
+        lead: leadLabelSizes("Atlas", "Planning release 2.4"),
+      }),
+    ).toBe(0);
+  });
+
+  it("pulls the ring in rather than let a node run off a narrow card", () => {
+    const narrow = buildConstellationLayout(6, 240);
+    expect(narrow.rx).toBeLessThan(124);
+    for (const slot of narrow.slots) {
+      expect(slot.x - NODE_WIDTH / 2).toBeGreaterThanOrEqual(0);
+      expect(slot.x + NODE_WIDTH / 2).toBeLessThanOrEqual(narrow.width);
     }
   });
 
   it("puts the rest behind a +N seat past the most a card draws", () => {
-    const layout = buildConstellationLayout(labels(26), 350);
+    const layout = buildConstellationLayout(26, 358);
     expect(layout.slots).toHaveLength(MAX_ORBIT_NODES);
-    // 19 members are drawn; the 20th seat says how many more there are.
+    // One seat fewer than the cap is drawn; the last seat says how many are left.
     expect(layout.hidden).toBe(26 - (MAX_ORBIT_NODES - 1));
-    expect(buildConstellationLayout(labels(MAX_ORBIT_NODES), 350).hidden).toBe(0);
+    expect(buildConstellationLayout(MAX_ORBIT_NODES, 358).hidden).toBe(0);
   });
 
-  it("centres the hub on a card with no members", () => {
-    const layout = buildConstellationLayout([], 350);
-    expect(layout.slots).toEqual([]);
-    expect(layout.hub.x).toBe(175);
+  it("leaves room under the lowest caption for the card's own padding", () => {
+    const layout = buildConstellationLayout(8, 358);
+    const lowestCaption = Math.max(
+      ...layout.slots.map((slot) => slot.y + NODE_AVATAR / 2 + 4 + 32 + 16),
+    );
+    expect(layout.height).toBeGreaterThan(lowestCaption);
   });
 });
 
-describe("spokes", () => {
-  it("starts outside the hub and stops short of the avatar, without crossing another spoke", () => {
-    const hub = { x: 175, y: 120 };
-    const lines = [
-      { x: 175, y: 20 },
-      { x: 300, y: 120 },
-      { x: 175, y: 230 },
-      { x: 50, y: 120 },
-    ].map((slot) => spokeLine(hub, slot));
-    for (const line of lines) {
-      expect(line).not.toBeNull();
-      expect(Math.hypot(line!.x1 - hub.x, line!.y1 - hub.y)).toBeGreaterThanOrEqual(42);
-    }
-    // Every spoke leaves the same centre, so two only ever meet at the hub.
-    const angles = lines.map((line) => Math.atan2(line!.y2 - line!.y1, line!.x2 - line!.x1));
-    expect(new Set(angles.map((angle) => angle.toFixed(3))).size).toBe(4);
+describe("label sizes", () => {
+  it("caps a member's name at two lines and its caption at the column", () => {
+    expect(memberLabelSizes("QA", "Working").nameWidth).toBeLessThan(NODE_NAME_WIDTH);
+    expect(memberLabelSizes("Release Notes Copywriter", "Haiku 5.5 · M").nameWidth).toBe(
+      NODE_NAME_WIDTH,
+    );
+    expect(
+      memberLabelSizes("QA", "A very long caption that runs past the column").captionWidth,
+    ).toBe(NODE_WIDTH);
   });
 
-  it("never starts behind the lead's name pill or model label, whichever way it points", () => {
-    const hub = { x: 195, y: 150 };
-    let drawn = 0;
-    for (const radius of [110, 140, 170]) {
-      for (let degrees = 0; degrees < 360; degrees += 5) {
-        const radians = (degrees * Math.PI) / 180;
-        const slot = {
-          x: hub.x + Math.cos(radians) * radius,
-          y: hub.y + Math.sin(radians) * radius,
-        };
-        const line = spokeLine(hub, slot);
-        if (line === null) continue;
-        drawn += 1;
-        // Every point along the first stretch of the line stays out of the disc, pill and label boxes.
-        for (let offset = 0; offset <= 10; offset += 1) {
-          const length = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
-          const x = line.x1 + ((line.x2 - line.x1) * offset) / length;
-          const y = line.y1 + ((line.y2 - line.y1) * offset) / length;
-          for (const entry of hubBoxes(hub.x, hub.y)) {
-            const inside =
-              x > entry.x0 - 2 && x < entry.x1 + 2 && y > entry.y0 - 2 && y < entry.y1 + 2;
-            expect(inside, `${degrees}° at ${radius}: (${x.toFixed(0)}, ${y.toFixed(0)})`).toBe(
-              false,
-            );
-          }
-        }
-        // And it still ends short of the avatar, after it started.
-        expect(Math.hypot(line.x2 - hub.x, line.y2 - hub.y)).toBeGreaterThan(
-          Math.hypot(line.x1 - hub.x, line.y1 - hub.y),
-        );
-      }
-    }
-    expect(drawn).toBeGreaterThan(100);
-  });
-
-  it("starts at the ring when it points sideways or up, where nothing is in the way", () => {
-    const hub = { x: 195, y: 150 };
-    const sideways = spokeLine(hub, { x: 335, y: 150 });
-    expect(sideways!.x1 - hub.x).toBeCloseTo(42, 0);
-    const up = spokeLine(hub, { x: 195, y: 10 });
-    expect(hub.y - up!.y1).toBeCloseTo(42, 0);
-  });
-
-  it("draws every spoke on a small team, and only the clear ones on a crowded card", () => {
-    const small = buildConstellationLayout(labels(8), 350);
-    expect(small.slots.every((_, index) => spokeIsClear(small, index))).toBe(true);
-    const crowded = buildConstellationLayout(labels(20), 350);
-    const clear = crowded.slots.filter((_, index) => spokeIsClear(crowded, index)).length;
-    // Some run behind an inner node and are shown as a count instead; the inner ones are still drawn.
-    expect(clear).toBeGreaterThan(0);
-    expect(clear).toBeLessThan(crowded.slots.length);
-  });
-
-  it("is thicker for more handoffs, on a square-root scale", () => {
-    expect(spokeWidth(0, 38)).toBe(0);
-    expect(spokeWidth(2, 38)).toBeLessThan(spokeWidth(29, 38));
-    expect(spokeWidth(38, 38)).toBe(5.75);
-    expect(spokeWidth(1, 38)).toBeGreaterThan(1.25);
+  it("caps the lead's plates at its own column", () => {
+    expect(leadLabelSizes("Atlas", "Planning release 2.4").nameWidth).toBeLessThan(80);
+    expect(
+      leadLabelSizes("A lead with an extremely long name here", "x").nameWidth,
+    ).toBeLessThanOrEqual(160);
   });
 });
 

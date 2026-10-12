@@ -20,18 +20,15 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { PersonalPageHeader } from "./BotForm";
 import { TEAM_VIEW_STATE_KEY } from "./botsBackStack";
-import { isThreadLive } from "./botSummaries";
+import { isThreadLive, buildBotSummaries, botStatus, type BotSummary } from "./botSummaries";
 import { botActiveModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { friendlyTurnError } from "./conversationModel";
 import { shownInTeamChart } from "./groupModel";
 import { NewTeamForm } from "./NewTeamForm";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
-import {
-  TeamConstellationCard,
-  type ConstellationBot,
-  type ConstellationSpoke,
-} from "./TeamConstellationCard";
+import { TeamConstellationCard, type ConstellationBot } from "./TeamConstellationCard";
+import { teamBotCaption } from "./teamCaption";
 import { TeamLeadConfirm } from "./TeamLeadConfirm";
 import { TeamMembersSheet, type MemberListRow } from "./TeamMembersSheet";
 import { TeamMoveOverlay } from "./TeamMoveOverlay";
@@ -40,7 +37,6 @@ import { TeamWorkingNow } from "./TeamWorkingNow";
 import { TokenUsageSection } from "./TokenUsageSection";
 import {
   applyTeamUpdate,
-  deriveDelegationCounts,
   deriveWorkingNow,
   leadConfirmCopy,
   planDrop,
@@ -72,6 +68,11 @@ import {
 import { useMinuteNow } from "./useMinuteNow";
 import { useTeamHandoffTasks } from "./useTeamHandoffTasks";
 import { useTeamBotDrag } from "./useTeamBotDrag";
+import {
+  currentProgressNote,
+  currentTurnHasToolStep,
+  useWorkingProgressNotes,
+} from "./useWorkingProgress";
 
 function initialOf(name: string): string {
   return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "Y";
@@ -167,6 +168,7 @@ function TeamBoard({
   allBots,
   ownerName,
   tasks,
+  summaries,
   liveBotIds,
   environmentId,
   customTeams,
@@ -178,7 +180,9 @@ function TeamBoard({
   /** Every bot, group-only ones too: the New team form checks names against all of them. */
   readonly allBots: ReadonlyArray<PersonalBot>;
   readonly ownerName: string;
-  readonly tasks: Parameters<typeof deriveDelegationCounts>[0];
+  readonly tasks: Parameters<typeof deriveWorkingNow>[0];
+  /** The Bots list's own summaries: the words on every caption come from them. */
+  readonly summaries: ReadonlyArray<BotSummary>;
   readonly liveBotIds: ReadonlySet<string>;
   readonly environmentId: EnvironmentId | null;
   readonly customTeams: ReadonlyArray<PersonalBotTeam>;
@@ -233,10 +237,6 @@ function TeamBoard({
     [shown],
   );
   const botIdSet = useMemo(() => new Set(botById.keys()), [botById]);
-  const counts = useMemo(
-    () => deriveDelegationCounts(tasks, botIdSet, nowMs),
-    [botIdSet, nowMs, tasks],
-  );
   const working = useMemo(() => deriveWorkingNow(tasks, botIdSet), [botIdSet, tasks]);
   const openHandoffsBy = useCallback(
     (botId: string) => working.filter((item) => item.from === botId).length,
@@ -255,18 +255,63 @@ function TeamBoard({
       new Map(shown.map((bot) => [bot.botId as string, botActiveModelShortLabel(bot, providers)])),
     [providers, shown],
   );
-  const entryOf = useCallback(
-    (bot: PersonalBot): ConstellationBot => ({
-      bot,
-      modelLabel: modelLabels.get(bot.botId) ?? null,
-      live: liveBotIds.has(bot.botId),
-      workingFor: workingFor.get(bot.botId) ?? null,
-    }),
-    [liveBotIds, modelLabels, workingFor],
+  // The words on each caption are the app's own (`botStatus`), off the same
+  // summaries the Bots list builds, so a card can never say something the list
+  // or the chat header contradicts. Only the live bots' progress notes are
+  // asked for, and only while one is working (see useWorkingProgressNotes).
+  const summariesByBot = useMemo(
+    () => new Map(summaries.map((summary) => [summary.bot.botId as string, summary] as const)),
+    [summaries],
   );
-  const maxSpoke = useMemo(
-    () => counts.reduce((max, entry) => Math.max(max, entry.recent), 0),
-    [counts],
+  const progressTargets = useMemo(
+    () =>
+      summaries.flatMap((summary) =>
+        summary.live && summary.liveThread != null
+          ? [
+              {
+                threadId: summary.liveThread.id as string,
+                updatedAt: summary.liveThread.updatedAt,
+              },
+            ]
+          : [],
+      ),
+    [summaries],
+  );
+  const progressNotes = useWorkingProgressNotes(environmentId, progressTargets);
+  const entryOf = useCallback(
+    (bot: PersonalBot): ConstellationBot => {
+      const summary = summariesByBot.get(bot.botId) ?? null;
+      const live = summary?.live ?? liveBotIds.has(bot.botId);
+      const liveThread = summary?.liveThread ?? null;
+      const progress = liveThread === null ? undefined : progressNotes.get(liveThread.id);
+      const modelLabel = modelLabels.get(bot.botId) ?? null;
+      return {
+        bot,
+        modelLabel,
+        live,
+        caption: teamBotCaption({
+          status: summary === null ? { label: "Ready", tone: "normal" } : botStatus(summary, nowMs),
+          live,
+          // A tool step in the live turn makes the bot working, the same rule
+          // the list and the chat header use.
+          thinking:
+            summary !== null &&
+            summary.thinking &&
+            !currentTurnHasToolStep(progress, liveThread ?? {}),
+          modelLabel,
+          progressNote:
+            liveThread === null ? null : (currentProgressNote(progress, liveThread) ?? null),
+        }),
+        needsYou:
+          summary !== null &&
+          (summary.needsBrowserHelp ||
+            summary.needsSecret ||
+            summary.hasPendingApprovals ||
+            summary.hasPendingUserInput),
+        workingFor: workingFor.get(bot.botId) ?? null,
+      };
+    },
+    [liveBotIds, modelLabels, nowMs, progressNotes, summariesByBot, workingFor],
   );
 
   const scrollToTeam = useCallback((team: string) => {
@@ -627,11 +672,6 @@ function TeamBoard({
           const bot = botById.get(id);
           return bot === undefined ? [] : [entryOf(bot)];
         });
-        const spokes = new Map<string, ConstellationSpoke>();
-        for (const entry of counts) {
-          if (entry.from !== group.leadBotId) continue;
-          spokes.set(entry.to, { recent: entry.recent, running: entry.running > 0 });
-        }
         const custom = customTeams.some((registered) => sameTeam(registered, group.team));
         return (
           <TeamConstellationCard
@@ -640,8 +680,6 @@ function TeamBoard({
             label={group.label}
             lead={lead === undefined ? null : entryOf(lead)}
             members={members}
-            spokes={spokes}
-            maxSpoke={maxSpoke}
             custom={custom}
             removable={lead === undefined && members.length === 0}
             removeBusy={removing || offline}
@@ -655,13 +693,11 @@ function TeamBoard({
       }),
     [
       botById,
-      counts,
       customTeams,
       draggingBotId,
       entryOf,
       groups,
       handlersFor,
-      maxSpoke,
       movingBotId,
       offline,
       removeTeam,
@@ -885,6 +921,22 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
     [bots, providers],
   );
   const feedTasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  // The words every Team caption uses (`botStatus`), off the same summaries the
+  // Bots list builds. Built once per list change, not per minute: the caption
+  // re-reads its own status word each time the clock ticks, not the whole list.
+  const envShells = useMemo(
+    () => allShells.filter((shell) => shell.environmentId === environmentId),
+    [allShells, environmentId],
+  );
+  const summaries = useMemo(() => {
+    if (list.data === null || environmentId === null) return [];
+    return buildBotSummaries({
+      bots: list.data.bots,
+      links: list.data.threads,
+      shells: envShells,
+      providers,
+    });
+  }, [environmentId, envShells, list.data, providers]);
   const tasks = useTeamHandoffTasks(environmentId, feedTasks, taskFeed !== null);
   const liveBotIds = useMemo(() => {
     if (list.data === null) return new Set<string>();
@@ -989,6 +1041,7 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
           allBots={bots}
           ownerName={ownerName}
           tasks={tasks}
+          summaries={summaries}
           liveBotIds={liveBotIds}
           environmentId={environmentId}
           customTeams={profile.data?.customTeams ?? []}
