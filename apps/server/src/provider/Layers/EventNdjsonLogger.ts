@@ -6,6 +6,7 @@
  * they cannot race while appending to the same thread-scoped file.
  */
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type { ThreadId } from "@t3tools/contracts";
@@ -406,34 +407,45 @@ export function writeBatchedMessages(
   flush();
 }
 
-function isProviderLogFile(filePath: string, fileName: string, filePrefix: string): boolean {
+async function isProviderLogFileAsync(
+  filePath: string,
+  fileName: string,
+  filePrefix: string,
+): Promise<boolean> {
   if (!/\.log(?:\.\d+)?$/u.test(fileName)) return false;
   if (fileName.startsWith(filePrefix)) return true;
 
-  const descriptor = NodeFS.openSync(filePath, "r");
+  const handle = await NodeFSP.open(filePath, "r");
   try {
     const header = Buffer.alloc(256);
-    const bytesRead = NodeFS.readSync(descriptor, header, 0, header.byteLength, 0);
+    const { bytesRead } = await handle.read(header, 0, header.byteLength, 0);
     return /^\[[^\]\r\n]+\] (?:NTIVE|CANON|ORCH): /u.test(header.toString("utf8", 0, bytesRead));
   } finally {
-    NodeFS.closeSync(descriptor);
+    await handle.close();
   }
 }
 
-function enforceRetention(input: {
+/**
+ * The 5-minute retention pass reads the whole provider-log directory (77 files,
+ * hundreds of MB live) and runs on the server's event loop, so every call is
+ * asynchronous: on a busy disk a single statSync here held every request for
+ * seconds. Behaviour is unchanged (same filters, same ordering, same failures);
+ * removal stays `force` and never touches an active sink.
+ */
+async function enforceRetentionAsync(input: {
   readonly directory: string;
   readonly maxTotalBytes: number;
   readonly maxAgeMs: number;
   readonly activeFilePaths: ReadonlySet<string>;
   readonly filePrefix: string;
   readonly now: number;
-}): RetentionResult {
+}): Promise<RetentionResult> {
   const failures: Array<FileOperationFailure> = [];
   const files: Array<{ filePath: string; mtimeMs: number; size: number }> = [];
 
   let entries: ReadonlyArray<NodeFS.Dirent>;
   try {
-    entries = NodeFS.readdirSync(input.directory, { withFileTypes: true });
+    entries = await NodeFSP.readdir(input.directory, { withFileTypes: true });
   } catch (cause) {
     return { failures: [{ filePath: input.directory, cause }] };
   }
@@ -442,8 +454,8 @@ function enforceRetention(input: {
     if (!entry.isFile()) continue;
     const filePath = NodePath.join(input.directory, entry.name);
     try {
-      if (!isProviderLogFile(filePath, entry.name, input.filePrefix)) continue;
-      const stat = NodeFS.statSync(filePath);
+      if (!(await isProviderLogFileAsync(filePath, entry.name, input.filePrefix))) continue;
+      const stat = await NodeFSP.stat(filePath);
       files.push({ filePath, mtimeMs: stat.mtimeMs, size: stat.size });
     } catch (cause) {
       failures.push({ filePath, cause });
@@ -451,10 +463,10 @@ function enforceRetention(input: {
   }
 
   let totalBytes = files.reduce((total, file) => total + file.size, 0);
-  const remove = (file: (typeof files)[number]) => {
+  const remove = async (file: (typeof files)[number]): Promise<boolean> => {
     if (input.activeFilePaths.has(file.filePath)) return false;
     try {
-      NodeFS.rmSync(file.filePath, { force: true });
+      await NodeFSP.rm(file.filePath, { force: true });
       totalBytes -= file.size;
       return true;
     } catch (cause) {
@@ -463,16 +475,16 @@ function enforceRetention(input: {
     }
   };
 
-  const retained = files.filter((file) => {
-    if (input.now - file.mtimeMs <= input.maxAgeMs) return true;
-    return !remove(file);
-  });
+  const retained: Array<(typeof files)[number]> = [];
+  for (const file of files) {
+    if (input.now - file.mtimeMs <= input.maxAgeMs || !(await remove(file))) retained.push(file);
+  }
 
   for (const file of retained.toSorted(
     (left, right) => left.mtimeMs - right.mtimeMs || left.filePath.localeCompare(right.filePath),
   )) {
     if (totalBytes <= input.maxTotalBytes) break;
-    remove(file);
+    await remove(file);
   }
 
   return { failures };
@@ -587,30 +599,13 @@ function drainPending(input: {
     }
   }
 
-  const retentionDue =
-    input.now - input.state.lastRetentionAt >= input.options.retentionCheckIntervalMs;
-  const retention = retentionDue
-    ? enforceRetention({
-        directory: input.directory,
-        maxTotalBytes: input.options.maxTotalBytes,
-        maxAgeMs: input.options.maxAgeMs,
-        activeFilePaths: new Set(
-          Array.from(sinks.keys(), (threadSegment) =>
-            providerLogPath(input.directory, input.filePrefix, threadSegment),
-          ),
-        ),
-        filePrefix: input.filePrefix,
-        now: input.now,
-      })
-    : { failures: [] };
-
   return [
     {
       attributions: Array.from(attributionByStream, ([stream, value]) => ({
         stream,
         ...value,
       })),
-      failures: [...failures, ...retention.failures],
+      failures,
     },
     {
       pending: [],
@@ -618,7 +613,7 @@ function drainPending(input: {
       sinks,
       flushScheduled: input.timerFired ? false : input.state.flushScheduled,
       closed: input.close,
-      lastRetentionAt: retentionDue ? input.now : input.state.lastRetentionAt,
+      lastRetentionAt: input.state.lastRetentionAt,
     },
   ];
 }
@@ -647,8 +642,10 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   });
 
   const initializedAt = yield* Clock.currentTimeMillis;
-  const initialRetention = yield* Effect.sync(() =>
-    enforceRetention({
+  // Per-directory failures come back in the result; the promise itself only
+  // rejects on a programming error, which stays a defect.
+  const initialRetention = yield* Effect.promise(() =>
+    enforceRetentionAsync({
       directory,
       maxTotalBytes: resolved.maxTotalBytes,
       maxAgeMs: resolved.maxAgeMs,
@@ -676,20 +673,59 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 
   const flush = Effect.fnUntraced(function* (timerFired: boolean, close: boolean) {
     const startedAt = yield* Clock.currentTimeMillis;
-    const result = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
-      Effect.sync(() =>
-        drainPending({
+    const outcome = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+      const result = drainPending({
+        directory,
+        options: resolved,
+        state,
+        filePrefix,
+        now: startedAt,
+        timerFired,
+        close,
+      });
+      const [drainResult, drainedState] = result;
+      // The due-check and the timestamp move together under the lock, so two
+      // overlapping flushes cannot both run the pass.
+      const retentionDue =
+        !drainedState.closed &&
+        startedAt - state.lastRetentionAt >= resolved.retentionCheckIntervalMs;
+      return Effect.succeed([
+        {
+          result: drainResult,
+          retentionDue,
+          activeFilePaths: new Set(
+            Array.from(drainedState.sinks.keys(), (threadSegment) =>
+              providerLogPath(directory, filePrefix, threadSegment),
+            ),
+          ),
+        },
+        retentionDue ? { ...drainedState, lastRetentionAt: startedAt } : drainedState,
+      ] as const);
+    });
+
+    // The retention pass reads the whole log directory, so it runs off the
+    // event loop, outside the state lock: a slow disk holds this fiber, not
+    // every request behind it.
+    if (outcome.retentionDue) {
+      const retention = yield* Effect.promise(() =>
+        enforceRetentionAsync({
           directory,
-          options: resolved,
-          state,
+          maxTotalBytes: resolved.maxTotalBytes,
+          maxAgeMs: resolved.maxAgeMs,
+          activeFilePaths: outcome.activeFilePaths,
           filePrefix,
           now: startedAt,
-          timerFired,
-          close,
         }),
-      ),
-    );
+      );
+      for (const failure of retention.failures) {
+        yield* logWarning("provider event log retention failed", {
+          filePath: failure.filePath,
+          errorTag: errorTag(failure.cause),
+        });
+      }
+    }
 
+    const result = outcome.result;
     for (const failure of result.failures) {
       yield* logWarning("provider event log write or retention failed", {
         filePath: failure.filePath,
