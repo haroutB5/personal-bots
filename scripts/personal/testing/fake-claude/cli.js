@@ -10,6 +10,8 @@
 //   ASKQ   asks the owner a question (AskUserQuestion) and waits for the answer.
 //   BADCHOICES, CHOICESBUSY, CHOICES, CHOICES6, CHOICES7  replies that end with a choices block.
 //   LONGMSG  a long multi-paragraph reply.   SLOW<n>  works for n seconds, then answers.
+//   TABLEMSG  a markdown table wider than a 390 px phone.   TABLEFIT  a table that fits the screen.
+//   WIDECODE  an unwrapped code block wider than a phone (the sideways-scroll checks drag them).
 //   DELEGATE:<botId>  calls the delegate_task MCP tool.   TASKDONE  answers a delegated task.
 //   MCPTOOL <name> <one-line json>  calls any MCP tool the bot has (update_bot, create_bot, ...) and
 //     answers "MCPTOOL <name> ok|refused: <the tool's result>", so a test reads the outcome in the chat.
@@ -373,6 +375,30 @@ lines.on("line", async (line) => {
       "The quarterly report shows revenue grew in every region, with the strongest gains in the north where the new warehouse opened in March. ";
     assistant(
       `Summary line for the long report.\n\n${para.repeat(4)}\n\n${para.repeat(3)}\n\nEnd of the long report.`,
+    );
+    finish("ok", false);
+    return;
+  }
+  if (text.includes("TABLEMSG")) {
+    // A table wider than a 390 px phone: the sideways-scroll checks drag it.
+    assistant(
+      `Here is the table you asked for.\n\n| Command | What it does | Owner | Added in | Notes |\n| --- | --- | --- | --- | --- |\n| build | Stages a release and never activates it | DevOps | 1.66.0 | needs the repo .env |\n| restart | Activates a staged release | DevOps | 1.66.0 | idle gate first |\n| smoke | Verifies the live release | DevOps | 1.66.0 | 120 s stability |\n| backup | Snapshots the data root | DevOps | 1.66.0 | keeps the newest 14 |\n| pair | Prints a phone pairing link | Harout | 1.66.9 | single use, 15 minutes |\n`,
+    );
+    finish("ok", false);
+    return;
+  }
+  if (text.includes("TABLEFIT")) {
+    // A table that fits the screen: the message's own swipe must still work on it.
+    assistant(
+      `A small one.\n\n| Step | State |\n| --- | --- |\n| Build | done |\n| Smoke | ok |\n`,
+    );
+    finish("ok", false);
+    return;
+  }
+  if (text.includes("WIDECODE")) {
+    // An unwrapped code block with lines far wider than a phone.
+    assistant(
+      `A wide code block:\n\n${fence}bash\nkubectl get pods --namespace production --output wide --watch --selector app=hbots-release-runner,team=dev\ngit log --format='%h %an %ad %s' --date=iso --since='3 weeks ago' --author=harout_b5@live.com\n${fence}\n`,
     );
     finish("ok", false);
     return;

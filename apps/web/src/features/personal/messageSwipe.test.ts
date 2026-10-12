@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { EDGE_WIDTH_PX } from "./edgeSwipeBack";
 import {
+  SIDEWAYS_SCROLL_SLOP_PX,
+  type SidewaysScrollBox,
+  scrollsSideways,
   startsInEdgeZone,
+  startsInSidewaysScroller,
   SWIPE_AXIS_RATIO,
   SWIPE_FIRST_SHOWN_PX,
   SWIPE_FULL_REVEAL_PX,
@@ -119,5 +123,87 @@ describe("startsInEdgeZone", () => {
     expect(startsInEdgeZone(EDGE_WIDTH_PX - 1)).toBe(true);
     expect(startsInEdgeZone(EDGE_WIDTH_PX)).toBe(false);
     expect(startsInEdgeZone(200)).toBe(false);
+  });
+});
+
+describe("startsInSidewaysScroller", () => {
+  /** One box of the fake DOM: its computed overflow and the two scroll widths. */
+  interface FakeBox {
+    overflowX: string;
+    scrollWidth: number;
+    clientWidth: number;
+    parentElement: FakeBox | null;
+  }
+  function box(overflowX: string, scrollWidth: number, clientWidth: number): FakeBox {
+    return { overflowX, scrollWidth, clientWidth, parentElement: null };
+  }
+  /** Links the boxes from the innermost (the touch) outwards; returns the touch. */
+  function chain(...boxes: FakeBox[]): FakeBox {
+    boxes.forEach((item, index) => {
+      item.parentElement = boxes[index + 1] ?? null;
+    });
+    return boxes[0]!;
+  }
+
+  beforeEach(() => {
+    // The walk reads the box's own overflowX; the fake boxes carry it as a plain field.
+    vi.stubGlobal("window", {
+      getComputedStyle: (node: { overflowX?: string }) => ({
+        overflowX: node.overflowX ?? "visible",
+      }),
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("leaves a touch inside a table that scrolls sideways to the table", () => {
+    const row = box("visible", 0, 0);
+    const scroller = box("auto", 900, 300);
+    const cell = box("visible", 0, 0);
+    expect(startsInSidewaysScroller(chain(cell, scroller, row), row)).toBe(true);
+  });
+
+  it("finds the scroller however deep the touch is inside it", () => {
+    // A highlighted code block: the touch is on a span inside the pre that scrolls.
+    const row = box("visible", 0, 0);
+    const code = box("auto", 1400, 362);
+    expect(
+      startsInSidewaysScroller(chain(box("visible", 0, 0), box("visible", 0, 0), code, row), row),
+    ).toBe(true);
+    expect(scrollsSideways("scroll")).toBe(true);
+  });
+
+  it("does not claim a box whose content fits: a table that fits still swipes", () => {
+    const row = box("visible", 0, 0);
+    const fitting = box("auto", 300, 300);
+    expect(startsInSidewaysScroller(chain(box("visible", 0, 0), fitting, row), row)).toBe(false);
+    // Within the slop: sub-pixel rounding is not an overflow.
+    const rounded = box("auto", 300 + SIDEWAYS_SCROLL_SLOP_PX, 300);
+    expect(startsInSidewaysScroller(chain(rounded, row), row)).toBe(false);
+    const justOver = box("auto", 300 + SIDEWAYS_SCROLL_SLOP_PX + 1, 300);
+    expect(startsInSidewaysScroller(chain(justOver, row), row)).toBe(true);
+  });
+
+  it("does not treat a box that clips sideways as a scroller", () => {
+    // overflow-x: hidden/clip cannot be panned by a finger, whatever it holds.
+    for (const overflowX of ["hidden", "clip", "visible", "overlay"]) {
+      const row = box("visible", 0, 0);
+      expect(startsInSidewaysScroller(chain(box(overflowX, 900, 300), row), row)).toBe(false);
+      expect(scrollsSideways(overflowX)).toBe(false);
+    }
+    expect(scrollsSideways("auto")).toBe(true);
+  });
+
+  it("stops at the row: a scroller above the message is not the message's", () => {
+    const row = box("visible", 0, 0);
+    const outer = box("auto", 900, 300);
+    expect(startsInSidewaysScroller(chain(box("visible", 0, 0), row, outer), row)).toBe(false);
+  });
+
+  it("is nothing at all for a touch with no box to walk", () => {
+    expect(startsInSidewaysScroller(null, box("auto", 900, 300))).toBe(false);
+    const row = box("visible", 0, 0);
+    expect(startsInSidewaysScroller(box("visible", 0, 0), row)).toBe(false);
   });
 });

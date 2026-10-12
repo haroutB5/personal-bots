@@ -63,3 +63,48 @@ export function swipeTimeOpacity(distance: number): number {
 export function startsInEdgeZone(clientX: number): boolean {
   return clientX < EDGE_WIDTH_PX;
 }
+
+/** Sideways overflow past the box that counts as a scroller: sub-pixel rounding slop. */
+export const SIDEWAYS_SCROLL_SLOP_PX = 1;
+
+/** Whether an overflow-x value lets a finger pan the box sideways. */
+export function scrollsSideways(overflowX: string): boolean {
+  return overflowX === "auto" || overflowX === "scroll";
+}
+
+/** What the walk up from a touch reads of each box: the two scroll widths and the way up. */
+export interface SidewaysScrollBox {
+  readonly parentElement: SidewaysScrollBox | null;
+  readonly scrollWidth: number;
+  readonly clientWidth: number;
+}
+
+/**
+ * Whether a touch that started on `touched` landed inside something that
+ * scrolls sideways within `boundary` (the swiping row): a table or a code
+ * block too wide for the screen keeps its own touch, so a drag pans it both
+ * ways and the message's swipe never takes it. `overflow-x: hidden` or `clip`
+ * is not a scroller a finger can pan, and neither is a box whose content fits
+ * (nothing to scroll). The walk stops at `boundary`, looked at too: only what
+ * sits inside the row can claim the touch.
+ */
+export function startsInSidewaysScroller(
+  touched: SidewaysScrollBox | null,
+  boundary: SidewaysScrollBox | null,
+): boolean {
+  for (
+    let box: SidewaysScrollBox | null | undefined = touched;
+    box != null;
+    box = box.parentElement
+  ) {
+    const style = window.getComputedStyle(box as unknown as Element);
+    if (
+      scrollsSideways(style.overflowX) &&
+      box.scrollWidth > box.clientWidth + SIDEWAYS_SCROLL_SLOP_PX
+    ) {
+      return true;
+    }
+    if (box === boundary) return false;
+  }
+  return false;
+}

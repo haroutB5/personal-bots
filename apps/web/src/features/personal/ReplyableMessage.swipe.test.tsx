@@ -70,6 +70,10 @@ describe("ReplyableMessage: swipe to see when it was sent", () => {
       setTimeout,
       clearTimeout,
       matchMedia: () => ({ matches: reduceMotion }),
+      // The sideways-scroll walk reads each box's own overflowX off the fake boxes.
+      getComputedStyle: (value: { overflowX?: string }) => ({
+        overflowX: value.overflowX ?? "visible",
+      }),
     });
     node = fakeRow();
     onReply.mockReset();
@@ -257,6 +261,54 @@ describe("ReplyableMessage: swipe to see when it was sent", () => {
     await move(root, 90, 150);
     expect(node.style.transform).toBe("");
     expect(label(root)).toHaveLength(0);
+  });
+
+  /** A touch on a table cell: the cell inside its scroller, which the row holds. */
+  const inTable = (overflowing: boolean) => ({
+    closest: () => null,
+    scrollWidth: 0,
+    clientWidth: 0,
+    parentElement: { overflowX: "auto", scrollWidth: overflowing ? 900 : 300, clientWidth: 300 },
+  });
+
+  it("leaves a finger on a table that scrolls sideways to the table, both ways", async () => {
+    // The bot's reply swipes rightwards; on a wide table neither drag is the swipe's.
+    const root = await render({ align: "start" });
+    await down(root, 300, 150, { target: inTable(true) });
+    await move(root, 380, 150);
+    expect(node.style.transform).toBe("");
+    expect(label(root)).toHaveLength(0);
+    expect(node.setPointerCapture).not.toHaveBeenCalled();
+    // The way that is not the bot's swipe either: the table pans both ways.
+    await down(root, 300, 150, { target: inTable(true) });
+    await move(root, 220, 150);
+    expect(node.style.transform).toBe("");
+    expect(label(root)).toHaveLength(0);
+  });
+
+  it("leaves a finger on a scroller to it on the owner's message as well", async () => {
+    const root = await render({ align: "end" });
+    await down(root, 300, 150, { target: inTable(true) });
+    await move(root, 220, 150);
+    expect(node.style.transform).toBe("");
+    expect(label(root)).toHaveLength(0);
+  });
+
+  it("still swipes on a table that fits the screen, and beside it", async () => {
+    const root = await render({ align: "start" });
+    await down(root, 300, 150, { target: inTable(false) });
+    await move(root, 380, 150);
+    expect(shifted()).toBeGreaterThan(0);
+    expect(label(root)).toHaveLength(1);
+    await up(root, 380, 150);
+    await act(async () => renderer?.unmount());
+    // And on the message itself, outside the table.
+    node = fakeRow();
+    const again = await render({ align: "start" });
+    await down(again, 300, 150);
+    await move(again, 380, 150);
+    expect(node.style.transform).not.toBe("");
+    expect(label(again)).toHaveLength(1);
   });
 
   it("is off for a mouse, a second finger and a touch from the menu's own popup", async () => {

@@ -602,6 +602,25 @@
   border-bottom-color: var(--personal-border);
 }
 
+/* Content that scrolls sideways inside a message the owner can swipe for its
+ * send time: a table too wide for the phone (ScrollArea) or an unwrapped code
+ * block (`.chat-markdown pre`). The swiping row is `touch-action: pan-y` so
+ * the browser leaves sideways drags to that swipe, and a touch that starts on
+ * a scroller pans it with no way back unless the scroller itself is allowed to
+ * pan sideways: this answers the row on the scroller. `useMessageSwipe` also
+ * steps out of such a touch entirely (messageSwipe.ts, startsInSidewaysScroller),
+ * so the swipe still works everywhere else on the message. Double-tap zoom
+ * stays off, as on the row itself. Scoped to the two swipe rows the app has
+ * ([data-replyable] = ReplyableMessage, [data-swipe-time-row] = SwipeTimeRow),
+ * not to every markdown surface: a plan card or a task screen scrolls as
+ * before. */
+@media (pointer: coarse) {
+  :is([data-replyable], [data-swipe-time-row])
+    :is([data-slot="scroll-area-viewport"], .chat-markdown pre) {
+    touch-action: pan-x pan-y pinch-zoom;
+  }
+}
+
 /* The Bots app's "…" and "+" menus (MenuPopup className "personal-app
  * personal-menu"). They are portaled outside the shell, so they carry
  * `.personal-app` for the tokens; this puts them on the same surface, ink and

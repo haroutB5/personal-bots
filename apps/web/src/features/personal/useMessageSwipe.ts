@@ -3,8 +3,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   SWIPE_RELEASE_MS,
+  type SidewaysScrollBox,
   type SwipeSide,
   startsInEdgeZone,
+  startsInSidewaysScroller,
   swipeAxis,
   swipeGoesTheWay,
   swipeOffset,
@@ -53,6 +55,16 @@ function resetStyle(element: HTMLElement): void {
   element.style.removeProperty(SWIPE_TIME_OPACITY_VAR);
 }
 
+/** An event target as a box the sideways-scroll walk can read, when it is one. */
+function sidewaysScrollBoxOf(value: EventTarget | null): SidewaysScrollBox | null {
+  return value !== null &&
+    typeof value === "object" &&
+    "parentElement" in value &&
+    "scrollWidth" in value
+    ? (value as unknown as SidewaysScrollBox)
+    : null;
+}
+
 /**
  * The swipe that reveals when a message was sent. The element follows a
  * sideways finger (`align` "end" to the left, "start" to the right) with
@@ -61,8 +73,9 @@ function resetStyle(element: HTMLElement): void {
  * can draw the time. A move that is mostly vertical is a scroll and is left to
  * the browser (the element is `touch-action: pan-y`, so it is never cancelled
  * for a sideways one); so is a touch from a mouse, one that starts in the edge
- * swipe back's strip, and any move while `enabled` is false (Select text, an
- * open menu).
+ * swipe back's strip, one that starts inside content that scrolls sideways
+ * (a wide table or code block, whose scroller pans it), and any move while
+ * `enabled` is false (Select text, an open menu).
  */
 export function useMessageSwipe({
   align,
@@ -148,6 +161,18 @@ export function useMessageSwipe({
     // The menu's popup is portaled out of the message, but React bubbles its events up through it.
     if (!event.currentTarget.contains(event.target as Node)) return;
     if (startsInEdgeZone(event.clientX)) return;
+    // A table or a code block that scrolls sideways keeps its own touch: the
+    // drag pans it both ways and the swipe never takes it (a wide table swiped
+    // left could not be brought back otherwise). The swipe still works on
+    // everything else on the message, and on a table that fits.
+    if (
+      startsInSidewaysScroller(
+        sidewaysScrollBoxOf(event.target),
+        sidewaysScrollBoxOf(event.currentTarget),
+      )
+    ) {
+      return;
+    }
     target.current = event.currentTarget as HTMLElement;
     drag.current = { x: event.clientX, y: event.clientY, axis: null, reduceMotion: false };
   };
