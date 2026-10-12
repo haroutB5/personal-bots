@@ -378,8 +378,8 @@ $origin = 'http://127.0.0.1:' + $Port
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 $pidDir = Join-Path $root 'fake-pids'
 New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
-foreach ($home in @('claude', 'codex', 'deepseek', 'grok', 'opencode', 'antigravity')) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $root ('homes\' + $home)) | Out-Null
+foreach ($homeName in @('claude', 'codex', 'deepseek', 'grok', 'opencode', 'antigravity')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $root ('homes\' + $homeName)) | Out-Null
 }
 New-TwFakeClaude -Root $root -NodeExe $nodeExe
 Write-TwSettings -Root $root
