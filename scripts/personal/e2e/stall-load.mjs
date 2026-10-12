@@ -59,7 +59,7 @@ try {
   // trigger word (it streams for n seconds, then answers).
   await openBots(page, args.origin);
   await newChatOnBotScreen(page, args.origin, "Assistant", "E2E stall load");
-  await send(page, "SLOW120");
+  await send(page, "SLOW45");
   report.turns += 1;
 
   // Back to the Bots page: the Usage strip lives there, and one tap opens its

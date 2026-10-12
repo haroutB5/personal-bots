@@ -48,11 +48,14 @@ try {
 
   // The real order: a slow turn starts, the owner's next message is folded
   // into it (a tap-send while working steers since 1.66.28), the turn ends.
+  // Sends go through the Send button: Enter is a newline on the phone layout.
+  // While a turn runs the button's label becomes "Send, the bot takes it in
+  // during this turn. Hold for send options", so match the prefix.
   await composer(page).fill("SLOW15");
-  await composer(page).press("Enter");
+  await page.getByRole("button", { name: /^Send/ }).tap();
   await page.waitForTimeout(2500);
   await composer(page).fill("steer one alpha");
-  await composer(page).press("Enter");
+  await page.getByRole("button", { name: /^Send/ }).tap();
   check(
     "the steer was taken into the running turn",
     await transcript(page)
