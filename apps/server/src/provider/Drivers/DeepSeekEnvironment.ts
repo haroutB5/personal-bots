@@ -85,7 +85,12 @@ const UNRELATED_TOKEN_PREFIXES = [
   "CLIPROXY_",
 ];
 
-const isLeakedSecretName = (name: string): boolean => {
+/**
+ * Names that must never reach a provider subprocess: the secret placeholders
+ * the app injects, and the credentials of unrelated providers. Exported so the
+ * DeepSeek Harness engine strips exactly the same set.
+ */
+export const isLeakedSecretName = (name: string): boolean => {
   if (name.startsWith("PB_SECRET_")) return true;
   return UNRELATED_TOKEN_PREFIXES.some((prefix) => name === prefix || name.startsWith(prefix));
 };
