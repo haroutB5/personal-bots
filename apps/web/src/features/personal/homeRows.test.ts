@@ -64,7 +64,6 @@ const shell = (
     latestUserMessageAt: null,
     latestTurn: null,
     archivedAt: null,
-    latestUserMessageAt: null,
     title: id,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
@@ -117,7 +116,7 @@ describe("homeChatBases", () => {
         bots: [bot("b1", "Juno")],
         links: [
           link("open", "b1"),
-          link("archived", "b1", { archivedAt: "2026-10-01T00:00:00.000Z" }),
+          link("archived", "b1", { archivedAt: DateTime.makeUnsafe("2026-10-01T00:00:00.000Z") }),
           link("relay", "b1"),
           link("gone", "b1"),
           link("snoozed", "b1", { snoozedUntil: DateTime.makeUnsafe("2026-10-03T00:00:00.000Z") }),

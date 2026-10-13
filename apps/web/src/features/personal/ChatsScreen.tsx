@@ -96,6 +96,7 @@ import {
 import { reloadLatestApp, useAppVersion } from "./appVersion";
 import { UpdateStatusLine } from "./UpdateStatusLine";
 import { usePendingSecretRequests } from "./useSecretRequests";
+import { useNeedsYouLoginRequests } from "./useNeedsYouLoginRequests";
 import { usePersonalRoutines, usePersonalTasks } from "./usePersonalAutomation";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
@@ -439,6 +440,24 @@ export function ChatsScreen({
     [pendingApprovalsQuery.data],
   );
   const browserHelpThreadId = computerFeed.status?.helpRequest?.threadId ?? null;
+  // A chat parked on the owner may hold a sign-in request: those chats are the
+  // ones the home asks about (the login-request RPC is per chat). Both waiting
+  // statuses are candidates and `waiting_for_browser` is the usual one; the
+  // query answers nothing for a chat parked on something else.
+  const browserWaitingThreadIds = useMemo(
+    () =>
+      tasks.flatMap((task) =>
+        (task.status === "waiting_for_browser" || task.status === "waiting_for_user") &&
+        task.threadId !== null
+          ? [String(task.threadId)]
+          : [],
+      ),
+    [tasks],
+  );
+  const openLoginRequests = useNeedsYouLoginRequests(
+    tasksArmed ? environmentId : null,
+    browserWaitingThreadIds,
+  );
   const chatBases = useMemo(
     () =>
       homeChatBases({
@@ -464,9 +483,9 @@ export function ChatsScreen({
           shell: base.shell,
         })),
         secretRequests: pendingSecretsQuery.data?.requests ?? [],
-        // The login-request RPC is per chat today, so the home has no global
-        // list yet; see the note on NeedsYouInput.loginRequests.
-        loginRequests: [],
+        // The chats parked on the browser, asked about one by one (see
+        // useNeedsYouLoginRequests for why, and what the server should add).
+        loginRequests: openLoginRequests,
         browserHelpThreadId,
         approvalThreadIds,
         groupIds: openGroupIds,
@@ -477,6 +496,7 @@ export function ChatsScreen({
       browserHelpThreadId,
       chatBases,
       openGroupIds,
+      openLoginRequests,
       pendingSecretsQuery.data,
       rounds,
     ],

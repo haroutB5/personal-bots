@@ -165,21 +165,6 @@ export function HomeRail({
         ))}
         {empty ? <li aria-hidden="true" className="h-14 w-px" /> : null}
       </ul>
-      {/* The scroll cue: a 44 px fade of the page colour, an overlay rather
-          than a mask (a mask on this scroller repaints every frame while it
-          scrolls; the overlay does not). */}
-      <span
-        aria-hidden="true"
-        data-testid="rail-fade-right"
-        data-on={edge !== "end" ? "" : undefined}
-        className="rail-fade rail-fade-right"
-      />
-      <span
-        aria-hidden="true"
-        data-testid="rail-fade-left"
-        data-on={edge === "start" ? undefined : ""}
-        className="rail-fade rail-fade-left"
-      />
     </section>
   );
 }

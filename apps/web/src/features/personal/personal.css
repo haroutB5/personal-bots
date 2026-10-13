@@ -1225,39 +1225,59 @@
  * here is compositor-friendly: transform and opacity only, no per-frame work.
  */
 
-/* The rail's scroll cue: a 44 px fade while there is more to the right, a
- * matching left fade once it has been scrolled, neither at the end. Two
- * overlays of the page colour, not a mask: a mask on this scroller made
- * Chrome repaint the whole layer every frame while the frosted tab bar was up
- * (measured with the phone profile: p95 frame 36 ms and 52 ms of long tasks
- * per scroll, against 18 ms and none with the overlays). The edge state is one
- * attribute set on scroll (HomeRail). */
-.rail-fade {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 44px;
-  pointer-events: none;
-  opacity: 1;
-  transition: opacity 120ms linear;
+/* The rail's scroll cue (design 2.2): a 44 px mask fade while there is more
+ * to the right, a matching left fade once it has been scrolled, neither at the
+ * end. The edge state is one attribute set on scroll (HomeRail). Measured on
+ * the phone profile: this costs nothing beside a page-colour overlay (p50
+ * 17.8 ms, p95 35 ms, 0 long-task time either way). */
+.home-rail {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent);
+  /* The same sideways-scroller contract as the chat chips
+   * (`.personal-chip-row`): a drag pans this element only, never the page and
+   * never the browser's own back gesture, which is what a horizontal swipe
+   * near the viewport edge otherwise becomes. */
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
 }
 
-.rail-fade[data-on] {
-  opacity: 1;
+.home-rail[data-edge="end"] {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
-.rail-fade:not([data-on]) {
-  opacity: 0;
+.home-rail[data-edge="middle"] {
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 44px,
+    #000 calc(100% - 44px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 44px,
+    #000 calc(100% - 44px),
+    transparent 100%
+  );
 }
 
-.rail-fade-right {
-  right: 0;
-  background: linear-gradient(90deg, transparent, var(--personal-bg));
+/* The Bots screens never hand a sideways drag to the browser. A horizontal
+ * swipe near the viewport edge is the browser's own back gesture on iOS and
+ * Android (the 1.66.36 report: a swipe on the pinned strip went Back 5 of 5);
+ * with this, the drag stays with the app's own sideways scrollers (the rail,
+ * which also carries overscroll-x-contain). */
+html:has(.personal-app),
+body:has(.personal-app) {
+  overscroll-behavior-x: none;
 }
 
-.rail-fade-left {
-  left: 0;
-  background: linear-gradient(90deg, var(--personal-bg), transparent);
+/* A row has nothing to move sideways, so the touch stays vertical: without
+ * this a horizontal drag on a row is the browser's back gesture waiting to
+ * happen (the 1.66.36 report: a swipe on the pinned strip went Back 5 of 5). */
+.home-row {
+  touch-action: pan-y;
 }
 
 /* A chat row's separator: 0.5 px, inset to where the text starts (16 + 48 + 12). */
