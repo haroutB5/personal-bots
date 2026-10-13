@@ -384,6 +384,7 @@ import { PersonalDesktopError, PersonalDesktopStatus } from "./personalDesktop.t
 import {
   PersonalLoginRequest,
   PersonalLoginRequestsListInput,
+  PersonalLoginRequestsListPendingResult,
   PersonalLoginRequestsListResult,
   PersonalLoginRequestsSubmitInput,
   PersonalLoginRequestsCancelInput,
@@ -689,6 +690,7 @@ export const WS_METHODS = {
   // Personal saved logins (passwords are write-only and never appear in results)
   personalLoginsList: "personalLogins.list",
   personalLoginRequestsList: "personalLoginRequests.list",
+  personalLoginRequestsListPending: "personalLoginRequests.listPending",
   personalLoginRequestsSubmit: "personalLoginRequests.submit",
   personalLoginRequestsCancel: "personalLoginRequests.cancel",
   personalLoginsCreate: "personalLogins.create",
@@ -1707,6 +1709,14 @@ const WsPersonalLoginRequestsListRpc = Rpc.make(WS_METHODS.personalLoginRequests
   success: PersonalLoginRequestsListResult,
   error: PersonalLoginsRpcError,
 });
+const WsPersonalLoginRequestsListPendingRpc = Rpc.make(
+  WS_METHODS.personalLoginRequestsListPending,
+  {
+    payload: Schema.Struct({}),
+    success: PersonalLoginRequestsListPendingResult,
+    error: PersonalLoginsRpcError,
+  },
+);
 const WsPersonalLoginRequestsSubmitRpc = Rpc.make(WS_METHODS.personalLoginRequestsSubmit, {
   payload: PersonalLoginRequestsSubmitInput,
   success: PersonalLoginRequest,
@@ -2680,6 +2690,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalConnectionApprovalsCancelRpc,
   WsPersonalLoginsListRpc,
   WsPersonalLoginRequestsListRpc,
+  WsPersonalLoginRequestsListPendingRpc,
   WsPersonalLoginRequestsSubmitRpc,
   WsPersonalLoginRequestsCancelRpc,
   WsPersonalLoginsCreateRpc,

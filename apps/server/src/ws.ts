@@ -3648,6 +3648,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalLoginRequestsList, loginRequests.list(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalLoginRequestsListPending]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalLoginRequestsListPending,
+            loginRequests.listPending(),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.personalLoginRequestsSubmit]: (input) =>
           observeRpcEffect(WS_METHODS.personalLoginRequestsSubmit, loginRequests.submit(input), {
             "rpc.aggregate": "server",
