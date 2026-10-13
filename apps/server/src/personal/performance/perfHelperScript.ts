@@ -169,7 +169,10 @@ public sealed class PdhCounter : IDisposable
     }
 
     // The [name, value] rows of one multi-instance counter, or null.
-    static List<KeyValuePair<string, double>> ReadArray(IntPtr counter)
+    // minValue (used for the GPU engines, ~370 mostly-idle instances) skips
+    // decoding the name of anything below it: the name decode is the cost, and
+    // an idle engine's name is never looked at.
+    static List<KeyValuePair<string, double>> ReadArray(IntPtr counter, double minValue = double.NegativeInfinity)
     {
         uint size = 0;
         uint count = 0;
@@ -185,9 +188,11 @@ public sealed class PdhCounter : IDisposable
             for (int i = 0; i < count; i++)
             {
                 FmtItem item = (FmtItem)Marshal.PtrToStructure(new IntPtr(buffer.ToInt64() + i * stride), typeof(FmtItem));
-                string name = item.Name == IntPtr.Zero ? "" : (Marshal.PtrToStringUni(item.Name) ?? "");
                 bool valid = item.CStatus == CSTATUS_VALID_DATA || item.CStatus == CSTATUS_NEW_DATA;
-                rows.Add(new KeyValuePair<string, double>(name, valid ? item.Value : double.NaN));
+                double value = valid ? item.Value : double.NaN;
+                if (double.IsNaN(value) || value < minValue) continue;
+                string name = item.Name == IntPtr.Zero ? "" : (Marshal.PtrToStringUni(item.Name) ?? "");
+                rows.Add(new KeyValuePair<string, double>(name, value));
             }
             return rows;
         }
@@ -247,7 +252,7 @@ public sealed class PdhCounter : IDisposable
                 sb.Append(']');
                 continue;
             }
-            var rows = ReadArray(e.Counter);
+            var rows = ReadArray(e.Counter, e.Mode == 1 ? 0.05 : double.NegativeInfinity);
             if (rows == null) { sb.Append("null"); continue; }
             sb.Append('[');
             int written = 0;
@@ -255,9 +260,8 @@ public sealed class PdhCounter : IDisposable
             {
                 if (e.Mode == 1)
                 {
-                    // GPU engines: only the ones doing work, and only named
-                    // engine types (the unnamed overlay leftovers are noise).
-                    if (double.IsNaN(row.Value) || row.Value < 0.05) continue;
+                    // GPU engines: only named engine types (the unnamed
+                    // overlay leftovers are noise; idle ones never got here).
                     int idx = row.Key.LastIndexOf("engtype_", StringComparison.Ordinal);
                     if (idx < 0 || idx + 8 >= row.Key.Length) continue;
                     if (written >= 80) break;

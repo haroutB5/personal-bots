@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { memo, useEffect, useRef, useState, type JSX } from "react";
 
 /*
  * The small sparkline beside a row's value (spec section 5): same rules as
@@ -71,7 +71,7 @@ export function sparkPoints(
   };
 }
 
-export function PerfSpark({
+export const PerfSpark = memo(function PerfSpark({
   values,
   width = 140,
   height = 32,
@@ -79,15 +79,36 @@ export function PerfSpark({
   max = null,
   className,
 }: PerfSparkProps): JSX.Element {
+  const hostRef = useRef<SVGSVGElement | null>(null);
+  const [near, setNear] = useState(true);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (host === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry !== undefined) setNear(entry.isIntersecting);
+      },
+      // A screenful of margin: coming back onto the page redraws before the
+      // eye arrives, and off-screen cards cost nothing per tick.
+      { rootMargin: "400px 0px" },
+    );
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
   const highest = (() => {
     let top = min;
     for (const value of values) if (value !== null && value > top) top = value;
     return top;
   })();
   const ceiling = max ?? Math.max(min + 0.0001, highest * 1.15);
-  const { line, area, end } = sparkPoints(values, width, height, min, ceiling);
+  // Off screen: the same box, no drawing (spec section 8).
+  const { line, area, end } = near
+    ? sparkPoints(values, width, height, min, ceiling)
+    : { line: "", area: "", end: null };
   return (
     <svg
+      ref={hostRef}
       className={className}
       width={width}
       height={height}
@@ -117,4 +138,4 @@ export function PerfSpark({
       )}
     </svg>
   );
-}
+});

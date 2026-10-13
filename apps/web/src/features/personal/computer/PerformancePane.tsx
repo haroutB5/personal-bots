@@ -7,7 +7,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
-import { PerfChart } from "./PerfChart";
+import { PerfChart, type PerfChartSeries } from "./PerfChart";
 import { PcAvatar, type PcPose } from "./PcAvatar";
 import {
   evaluateThresholds,
@@ -349,6 +349,26 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
   const tempSeries = useMemo(() => series(samples, (sample) => sample.cpuTempC), [samples]);
   const fan1Series = useMemo(() => series(samples, (sample) => sample.fan1Rpm), [samples]);
   const fan2Series = useMemo(() => series(samples, (sample) => sample.fan2Rpm), [samples]);
+  // The chart components are memoized, so their series prop must keep its
+  // identity across renders that do not carry a new sample.
+  const cpuChart = useMemo(
+    () => [
+      { name: "This PC", hbots: false, values: cpuSeries },
+      { name: "hbots", hbots: true, values: hbotsSeries },
+    ],
+    [cpuSeries, hbotsSeries],
+  );
+  const memChart = useMemo(
+    () => [
+      { name: "This PC", hbots: false, values: memSeries },
+      { name: "hbots", hbots: true, values: hbotsMemSeries },
+    ],
+    [memSeries, hbotsMemSeries],
+  );
+  const tempChart = useMemo(
+    () => [{ name: "CPU temperature", hbots: false, values: tempSeries }],
+    [tempSeries],
+  );
 
   const hbotsRows = groups?.hbots ?? null;
   const storageHbotsGB =
@@ -491,10 +511,7 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
           }
         />
         <PerfChart
-          series={[
-            { name: "This PC", hbots: false, values: cpuSeries },
-            { name: "hbots", hbots: true, values: hbotsSeries },
-          ]}
+          series={cpuChart}
           min={0}
           max={100}
           ticks={[
@@ -564,10 +581,7 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
           }
         />
         <PerfChart
-          series={[
-            { name: "This PC", hbots: false, values: memSeries },
-            { name: "hbots", hbots: true, values: hbotsMemSeries },
-          ]}
+          series={memChart}
           min={0}
           max={16}
           ticks={[
@@ -619,6 +633,7 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
         warnPillHot={cpuTempWarn}
         fansFastest={fansFastest}
         tempSeries={tempSeries}
+        tempChart={tempChart}
         fan1Series={fan1Series}
         fan2Series={fan2Series}
       />
@@ -940,6 +955,7 @@ function TempsCard({
   warnPillHot,
   fansFastest,
   tempSeries,
+  tempChart,
   fan1Series,
   fan2Series,
 }: {
@@ -950,6 +966,7 @@ function TempsCard({
   readonly warnPillHot: boolean;
   readonly fansFastest: number;
   readonly tempSeries: ReadonlyArray<number | null>;
+  readonly tempChart: ReadonlyArray<PerfChartSeries>;
   readonly fan1Series: ReadonlyArray<number | null>;
   readonly fan2Series: ReadonlyArray<number | null>;
 }): JSX.Element {
@@ -1014,9 +1031,7 @@ function TempsCard({
         }
       />
       <PerfChart
-        series={[
-          { name: "CPU temperature", hbots: false, values: series(samples, (s) => s.cpuTempC) },
-        ]}
+        series={tempChart}
         min={30}
         max={100}
         ticks={[

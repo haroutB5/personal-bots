@@ -44,9 +44,24 @@ const EMPTY: PerformanceFeedState = {
 let state: PerformanceFeedState = EMPTY;
 const listeners = new Set<() => void>();
 
+/**
+ * One notification per animation-frame's worth of events: the server sends
+ * the groups frame and the sample frame back to back in the same tick, and
+ * the profile showed the pane paying two full renders for them.
+ */
+let notifyScheduled = false;
+const scheduleNotify = (): void => {
+  if (notifyScheduled) return;
+  notifyScheduled = true;
+  queueMicrotask(() => {
+    notifyScheduled = false;
+    for (const listener of listeners) listener();
+  });
+};
+
 const emit = (next: PerformanceFeedState): void => {
   state = next;
-  for (const listener of listeners) listener();
+  scheduleNotify();
 };
 
 export function applyEvent(event: PerformanceStreamEvent, now: number): void {

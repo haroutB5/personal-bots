@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -69,7 +69,7 @@ export function chartRuns(
   return runs;
 }
 
-export function PerfChart({
+export const PerfChart = memo(function PerfChart({
   series,
   min,
   max,
@@ -83,6 +83,20 @@ export function PerfChart({
   ariaLabel,
 }: PerfChartProps): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const [near, setNear] = useState(true);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (host === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry !== undefined) setNear(entry.isIntersecting);
+      },
+      { rootMargin: "400px 0px" },
+    );
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
   const total = series[0]?.values.length ?? 0;
   const x = useCallback(
     (index: number) => (total <= 1 ? 0 : (index / (total - 1)) * width),
@@ -110,54 +124,58 @@ export function PerfChart({
   const warnY = warnLine === null ? null : y(warnLine.v);
   const dropTick = (value: number): boolean => warnY !== null && Math.abs(y(value) - warnY) < 14;
 
-  const grid = tickY
-    .filter((tick) => !dropTick(tick.v))
-    .map((tick) => (
-      <line
-        key={`grid-${tick.l}`}
-        x1={0}
-        x2={width}
-        y1={tick.y}
-        y2={tick.y}
-        stroke="var(--perf-grid)"
-        strokeWidth="1"
-      />
-    ));
+  const grid = near
+    ? tickY
+        .filter((tick) => !dropTick(tick.v))
+        .map((tick) => (
+          <line
+            key={`grid-${tick.l}`}
+            x1={0}
+            x2={width}
+            y1={tick.y}
+            y2={tick.y}
+            stroke="var(--perf-grid)"
+            strokeWidth="1"
+          />
+        ))
+    : [];
 
   const washes: JSX.Element[] = [];
   const lines: JSX.Element[] = [];
-  for (const s of series) {
-    const runs = chartRuns(s.values, width);
-    for (const [runIndex, run] of runs.entries()) {
-      const point = (i: number, v: number) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`;
-      const line = "M" + run.map(([i, v]) => point(i, v)).join("L");
-      const first = run[0]!;
-      const last = run.at(-1)!;
-      if (run.length > 1) {
-        washes.push(
+  // Off screen: no path work at all; the box and its labels stay (spec 8).
+  if (near)
+    for (const s of series) {
+      const runs = chartRuns(s.values, width);
+      for (const [runIndex, run] of runs.entries()) {
+        const point = (i: number, v: number) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`;
+        const line = "M" + run.map(([i, v]) => point(i, v)).join("L");
+        const first = run[0]!;
+        const last = run.at(-1)!;
+        if (run.length > 1) {
+          washes.push(
+            <path
+              key={`wash-${s.name}-${runIndex}`}
+              d={`${line}L${x(last[0]).toFixed(1)} ${y(min)}L${x(first[0]).toFixed(1)} ${y(min)}Z`}
+              fill={s.hbots ? "var(--perf-wash-hbots)" : "var(--perf-wash-pc)"}
+            />,
+          );
+        }
+        lines.push(
           <path
-            key={`wash-${s.name}-${runIndex}`}
-            d={`${line}L${x(last[0]).toFixed(1)} ${y(min)}L${x(first[0]).toFixed(1)} ${y(min)}Z`}
-            fill={s.hbots ? "var(--perf-wash-hbots)" : "var(--perf-wash-pc)"}
+            key={`line-${s.name}-${runIndex}`}
+            d={line}
+            fill="none"
+            stroke={s.hbots ? "var(--perf-hbots)" : "var(--perf-pc)"}
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
           />,
         );
       }
-      lines.push(
-        <path
-          key={`line-${s.name}-${runIndex}`}
-          d={line}
-          fill="none"
-          stroke={s.hbots ? "var(--perf-hbots)" : "var(--perf-pc)"}
-          strokeWidth="2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />,
-      );
     }
-  }
 
   const gapLabels: JSX.Element[] = [];
-  {
+  if (near) {
     const reference = series[0]?.values ?? [];
     let gapStart = -1;
     for (let i = 0; i < reference.length; i++) {
@@ -186,7 +204,7 @@ export function PerfChart({
   }
 
   const endDots: JSX.Element[] = [];
-  if (scrubIndex === null) {
+  if (near && scrubIndex === null) {
     for (const s of series) {
       const lastIndex = s.values.length - 1;
       const lastValue = s.values[lastIndex] ?? null;
@@ -203,7 +221,7 @@ export function PerfChart({
         />,
       );
     }
-  } else {
+  } else if (near && scrubIndex !== null) {
     for (const s of series) {
       const value = s.values[scrubIndex] ?? null;
       if (value === null) continue;
@@ -302,18 +320,16 @@ export function PerfChart({
             />
           )}
         </svg>
-        {tickY
-          .filter((tick) => !dropTick(tick.v))
-          .map((tick) => (
-            <span
-              key={`yl-${tick.l}`}
-              className="absolute text-[11px] leading-[13px] text-[var(--personal-text-tertiary)] tabular-nums"
-              style={{ left: width + 6, top: tick.y - 7 }}
-            >
-              {tick.l}
-            </span>
-          ))}
-        {warnY === null || warnLine === null ? null : (
+        {(near ? tickY.filter((tick) => !dropTick(tick.v)) : []).map((tick) => (
+          <span
+            key={`yl-${tick.l}`}
+            className="absolute text-[11px] leading-[13px] text-[var(--personal-text-tertiary)] tabular-nums"
+            style={{ left: width + 6, top: tick.y - 7 }}
+          >
+            {tick.l}
+          </span>
+        ))}
+        {!near || warnY === null || warnLine === null ? null : (
           <span
             className="absolute text-[11px] leading-[13px] font-semibold text-[var(--personal-text-secondary)] tabular-nums"
             style={{ left: width + 6, top: warnY - 7 }}
@@ -341,4 +357,4 @@ export function PerfChart({
       </div>
     </div>
   );
-}
+});
