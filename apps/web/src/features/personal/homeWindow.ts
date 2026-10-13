@@ -64,14 +64,10 @@ export interface HomeWindowInput {
  * How close to an edge of the drawn slice the visible band is allowed to come
  * before the slice moves, in rows. This is the difference between a smooth
  * scroll and a slow one: every move of the slice takes rows out of the DOM and
- * puts rows back, and in this app a structural change to the document costs a
- * style recalculation of several hundred elements (measured with a Chrome
- * trace: one mid-list row insert + remove restyled 779 elements and cost about
- * 100 ms at 4x CPU throttling, while the same number of attribute writes cost
- * 8 ms; `content-visibility`, containment and deleting the sibling selector
- * were each measured, none moved it). At one row per move the whole document
- * was restyled every 72 px of travel, and scrolling fell from 35 to 24 fps;
- * held back, the slice moves about every four rows.
+ * puts rows back. Previously global wildcard sibling rules made a structural
+ * change restyle hundreds of elements. Those rules now use non-first-child
+ * selectors, but replacing a row still mounts its content and animation
+ * layers. Keeping the slice steady avoids that work on every 72 px of travel.
  */
 const HYSTERESIS_ROWS = 4;
 
@@ -86,7 +82,8 @@ export function firstHomeWindow(
   count: number,
   overscan: number = HOME_ROW_OVERSCAN,
 ): HomeWindowRange {
-  return { start: 0, end: Math.min(Math.max(0, count), 2 * overscan + FIRST_PAINT_ROWS) };
+  // The first slice begins at zero: there are no rows above it to overscan.
+  return { start: 0, end: Math.min(Math.max(0, count), overscan + FIRST_PAINT_ROWS) };
 }
 
 /**
@@ -124,8 +121,8 @@ export function homeWindowRange(input: HomeWindowInput): HomeWindowRange {
       : { start: firstVisible - input.overscan, end: lastVisible + input.overscan };
   const keep =
     previous !== null &&
-    firstVisible - previous.start >= HYSTERESIS_ROWS &&
-    previous.end - lastVisible >= HYSTERESIS_ROWS;
+    (previous.start === 0 || firstVisible - previous.start >= HYSTERESIS_ROWS) &&
+    (previous.end === count || previous.end - lastVisible >= HYSTERESIS_ROWS);
   const start = clampIndex(keep ? previous!.start : anchor.start, count);
   const end = clampIndex(Math.max(keep ? previous!.end : anchor.end, start + 1), count);
   return { start, end };

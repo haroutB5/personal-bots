@@ -170,7 +170,7 @@ afterEach(() => {
 describe("useHomeWindow", () => {
   it("draws a first-paint slice with no layout at all (test renderer)", async () => {
     const harness = await mount(60);
-    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 24 });
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 12 });
     await act(async () => harness.renderer.unmount());
   });
 
@@ -179,9 +179,41 @@ describe("useHomeWindow", () => {
     const scroller = harness.scroller;
     const { list } = harness.fakeList();
     await harness.setList(list);
-    // 600 px of viewport shows 9 rows; 8 rows of band either side; the list
-    // sits at the scroller's top, so nothing is above it.
-    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 17 });
+    // 600 px shows 9 rows. A five-row band extends the first phone slice.
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 14 });
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it("restores the wider buffer with the compact-window switch off", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => "home-window-compact" });
+    const harness = await mount(61);
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 16 });
+    const { list, state } = harness.fakeList();
+    await harness.setList(list);
+    state.top = -720;
+    await act(async () => harness.scroller.fire("scroll"));
+    await harness.flushRaf();
+    expect(harness.ranges.at(-1)).toEqual({ start: 6, end: 31 });
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it("counts only the viewport below the header and rail", async () => {
+    const harness = await mount(61);
+    const { list, state } = harness.fakeList({ top: 288 });
+    await harness.setList(list);
+    // The first slice already covers the available rows: keep its DOM still.
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 12 });
+    // A tall viewport needs a real measurement; its header leaves 312 px.
+    harness.scroller.element.clientHeight = 1000;
+    state.top = 688;
+    await harness.setCount(62);
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 12 });
+    state.top = 0;
+    await act(async () => harness.scroller.fire("scroll"));
+    await harness.flushRaf();
+    const drawn = harness.ranges.at(-1)!;
+    expect(drawn.start).toBe(0);
+    expect(drawn.end).toBeGreaterThanOrEqual(Math.ceil(1000 / 72));
     await act(async () => harness.renderer.unmount());
   });
 
@@ -196,8 +228,8 @@ describe("useHomeWindow", () => {
       scroller.fire("scroll");
     });
     await harness.flushRaf();
-    // Scrolled down: the band stays wide below (12 rows) and slim above (4).
-    expect(harness.ranges.at(-1)).toEqual({ start: 6, end: 31 });
+    // Scrolled down: the band stays wider below (6 rows) than above (4).
+    expect(harness.ranges.at(-1)).toEqual({ start: 6, end: 25 });
     await act(async () => harness.renderer.unmount());
   });
 
@@ -225,7 +257,20 @@ describe("useHomeWindow", () => {
     await act(async () => harness.renderer.unmount());
   });
 
-  it("corrects a stale slice on the frame after Back", async () => {
+  it("covers the visible rows after a jump beyond the buffer", async () => {
+    const harness = await mount(61);
+    const { list, state } = harness.fakeList();
+    await harness.setList(list);
+    state.top = -4000;
+    await act(async () => harness.scroller.fire("scroll"));
+    await harness.flushRaf();
+    const drawn = harness.ranges.at(-1)!;
+    expect(drawn.start).toBeLessThanOrEqual(Math.floor(4000 / 72));
+    expect(drawn.end).toBeGreaterThanOrEqual(Math.min(61, Math.ceil(4600 / 72)));
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it("keeps the saved slice during Back restoration, then measures the restored geometry", async () => {
     const harness = await mount(61);
     const scroller = harness.scroller;
     const { list, state } = harness.fakeList();
@@ -234,9 +279,11 @@ describe("useHomeWindow", () => {
     // The scroll moved while hidden (the shell restores it on Back).
     state.top = -1440;
     await harness.setActive(true);
-    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 17 });
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 14 });
     await harness.flushRaf();
-    expect(harness.ranges.at(-1)).toEqual({ start: 16, end: 41 });
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 14 });
+    await harness.flushRaf();
+    expect(harness.ranges.at(-1)).toEqual({ start: 16, end: 35 });
     await act(async () => harness.renderer.unmount());
   });
 

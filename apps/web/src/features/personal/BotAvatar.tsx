@@ -1,5 +1,5 @@
 import type { AnimationEvent, CSSProperties, JSX } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
@@ -9,6 +9,7 @@ import { AvatarOrbitLayer } from "./BotAvatarComet";
 import { isContinuousMotion, type AvatarMotion } from "./avatarMotion";
 import { pauseWhileOffscreen } from "./avatarOffscreen";
 import { perfOptimizationOn } from "./perfFlags";
+import { homeAvatarImage } from "./homeAvatarImage";
 import {
   avatarThoughtCloud,
   BOT_AVATAR_EYE_COLOR,
@@ -54,6 +55,8 @@ export interface BotAvatarProps {
    * stay static.
    */
   thought?: BotAvatarThoughtPlace | undefined;
+  /** Home tiles and rows can use a smaller DOM for unanimated artwork. */
+  compactIdle?: boolean;
 }
 
 /** Keeps a thought layer mounted this long after thinking ends, if its leave never reports an end. */
@@ -88,140 +91,206 @@ const boxStyle = (box: BotAvatarThoughtBox): CSSProperties => ({
  * view (see `personal.css`, `avatarMotion.ts` and `avatarOffscreen.ts`).
  * Without `motion` the markup is the flat SVG original.
  */
-export function BotAvatar({
-  shape,
-  color,
-  size,
-  label,
-  className,
-  motion,
-  comet = false,
-  thought,
-}: BotAvatarProps): JSX.Element {
-  // Work stopping is the one transition that needs its own pose: dropping a
-  // continuous loop would snap the avatar back to rest mid-cycle, so `done`
-  // plays a small hop that lands exactly on rest. Adjusted during render (no
-  // effect, no timer) and cleared by the done animation ending.
-  const [settling, setSettling] = useState(false);
-  const [lastMotion, setLastMotion] = useState(motion);
-  // Thinking ending lifts the cloud off (220 ms) instead of dropping it:
-  // set during render like `settling`, cleared by the leave ending or, where
-  // it never runs (offscreen, reduced motion), by a fallback timer.
-  const [thoughtLeaving, setThoughtLeaving] = useState(false);
-  if (lastMotion !== motion) {
-    setLastMotion(motion);
-    setSettling(lastMotion !== undefined && isContinuousMotion(lastMotion) && motion === "idle");
-    setThoughtLeaving(lastMotion === "thinking" && motion !== "thinking");
-  }
-  const pose = motion === undefined ? undefined : settling ? "done" : motion;
-  const silhouette = BOT_AVATAR_SILHOUETTES[shape];
-  const eyes = BOT_AVATAR_EYES[shape];
-  const eyeRx = BOT_AVATAR_EYE_WIDTH / 2;
-  const halo = botAvatarNeedsHalo(color);
-  const showComet = comet && pose === "working";
-  const showThought =
-    thought !== undefined &&
-    (pose === "thinking" || thoughtLeaving) &&
-    perfOptimizationOn("anim-thought");
-  useEffect(() => {
-    if (!thoughtLeaving) return;
-    const timer = setTimeout(() => setThoughtLeaving(false), THOUGHT_LEAVE_FALLBACK_MS);
-    return () => clearTimeout(timer);
-  }, [thoughtLeaving]);
-  // A loop scrolled out of view pauses (every busy bot in a long list moves).
-  const rootRef = useRef<Element | null>(null);
-  const setRoot = useCallback((node: Element | null) => {
-    rootRef.current = node;
-  }, []);
-  const looping = pose !== undefined && isContinuousMotion(pose);
-  useEffect(() => {
-    const element = rootRef.current;
-    if (!looping || element === null) return;
-    return pauseWhileOffscreen(element);
-  }, [looping]);
-  const onAnimationEnd =
-    settling || thoughtLeaving
-      ? (event: AnimationEvent<Element>) => {
-          // Every done layer ends together; any of them retires the pose.
-          if (event.animationName.startsWith("bot-avatar-done-")) setSettling(false);
-          if (event.animationName === "bot-avatar-thought-leave") setThoughtLeaving(false);
-        }
-      : undefined;
+export const BotAvatar = memo(
+  function BotAvatar({
+    shape,
+    color,
+    size,
+    label,
+    className,
+    motion,
+    comet = false,
+    thought,
+    compactIdle = false,
+  }: BotAvatarProps): JSX.Element {
+    // Work stopping is the one transition that needs its own pose: dropping a
+    // continuous loop would snap the avatar back to rest mid-cycle, so `done`
+    // plays a small hop that lands exactly on rest. Adjusted during render (no
+    // effect, no timer) and cleared by the done animation ending.
+    const [settling, setSettling] = useState(false);
+    const [lastMotion, setLastMotion] = useState(motion);
+    // Thinking ending lifts the cloud off (220 ms) instead of dropping it:
+    // set during render like `settling`, cleared by the leave ending or, where
+    // it never runs (offscreen, reduced motion), by a fallback timer.
+    const [thoughtLeaving, setThoughtLeaving] = useState(false);
+    if (lastMotion !== motion) {
+      setLastMotion(motion);
+      setSettling(lastMotion !== undefined && isContinuousMotion(lastMotion) && motion === "idle");
+      setThoughtLeaving(lastMotion === "thinking" && motion !== "thinking");
+    }
+    const pose = motion === undefined ? undefined : settling ? "done" : motion;
+    const silhouette = BOT_AVATAR_SILHOUETTES[shape];
+    const eyes = BOT_AVATAR_EYES[shape];
+    const eyeRx = BOT_AVATAR_EYE_WIDTH / 2;
+    const halo = botAvatarNeedsHalo(color);
+    const showComet = comet && pose === "working";
+    const showThought =
+      thought !== undefined &&
+      (pose === "thinking" || thoughtLeaving) &&
+      perfOptimizationOn("anim-thought");
+    useEffect(() => {
+      if (!thoughtLeaving) return;
+      const timer = setTimeout(() => setThoughtLeaving(false), THOUGHT_LEAVE_FALLBACK_MS);
+      return () => clearTimeout(timer);
+    }, [thoughtLeaving]);
+    // A loop scrolled out of view pauses (every busy bot in a long list moves).
+    const rootRef = useRef<Element | null>(null);
+    const setRoot = useCallback((node: Element | null) => {
+      rootRef.current = node;
+    }, []);
+    const looping = pose !== undefined && isContinuousMotion(pose);
+    useEffect(() => {
+      const element = rootRef.current;
+      if (!looping || element === null) return;
+      return pauseWhileOffscreen(element);
+    }, [looping]);
+    const onAnimationEnd =
+      settling || thoughtLeaving
+        ? (event: AnimationEvent<Element>) => {
+            // Every done layer ends together; any of them retires the pose.
+            if (event.animationName.startsWith("bot-avatar-done-")) setSettling(false);
+            if (event.animationName === "bot-avatar-thought-leave") setThoughtLeaving(false);
+          }
+        : undefined;
 
-  if (motion !== undefined) {
+    if (motion !== undefined) {
+      if (
+        compactIdle &&
+        pose === "idle" &&
+        !showThought &&
+        perfOptimizationOn("home-avatar-idle")
+      ) {
+        return (
+          <span
+            ref={setRoot}
+            role="img"
+            aria-label={label}
+            data-motion={pose}
+            className={cn("bot-avatar shrink-0", className)}
+            style={{ width: size, height: size }}
+          >
+            <svg className="bot-avatar-shape" viewBox={BOT_AVATAR_VIEWBOX} aria-hidden="true">
+              {halo ? (
+                <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} />
+              ) : null}
+              <SilhouetteFill
+                d={silhouette.d}
+                roundCorners={silhouette.roundCorners}
+                color={color}
+              />
+            </svg>
+            {eyes.map((eye) => (
+              <span
+                key={`${eye.cx}-${eye.cy}`}
+                className="bot-avatar-eye bot-avatar-pill"
+                style={{
+                  left: `${eye.cx - BOT_AVATAR_EYE_WIDTH / 2}%`,
+                  top: `${eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}%`,
+                  width: `${BOT_AVATAR_EYE_WIDTH}%`,
+                  height: `${BOT_AVATAR_EYE_HEIGHT}%`,
+                  backgroundColor: BOT_AVATAR_EYE_COLOR,
+                }}
+              />
+            ))}
+          </span>
+        );
+      }
+      return (
+        <span
+          ref={setRoot}
+          role="img"
+          aria-label={label}
+          data-motion={pose}
+          onAnimationEnd={onAnimationEnd}
+          className={cn("bot-avatar shrink-0", className)}
+          style={{ width: size, height: size }}
+        >
+          <span className="bot-avatar-body">
+            <svg className="bot-avatar-shape" viewBox={BOT_AVATAR_VIEWBOX} aria-hidden="true">
+              {halo ? (
+                <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} />
+              ) : null}
+              <SilhouetteFill
+                d={silhouette.d}
+                roundCorners={silhouette.roundCorners}
+                color={color}
+              />
+            </svg>
+            {eyes.map((eye) => (
+              <span
+                key={`${eye.cx}-${eye.cy}`}
+                className="bot-avatar-eye"
+                style={{
+                  left: `${eye.cx - BOT_AVATAR_EYE_WIDTH / 2}%`,
+                  top: `${eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}%`,
+                  width: `${BOT_AVATAR_EYE_WIDTH}%`,
+                  height: `${BOT_AVATAR_EYE_HEIGHT}%`,
+                }}
+              >
+                <span
+                  className="bot-avatar-pill"
+                  style={{ backgroundColor: BOT_AVATAR_EYE_COLOR }}
+                />
+                {pose === "done" ? (
+                  <svg
+                    className="bot-avatar-arc"
+                    viewBox={`${eye.cx - BOT_AVATAR_EYE_WIDTH / 2} ${eye.cy - BOT_AVATAR_EYE_HEIGHT / 2} ${BOT_AVATAR_EYE_WIDTH} ${BOT_AVATAR_EYE_HEIGHT}`}
+                    aria-hidden="true"
+                  >
+                    <path
+                      d={botAvatarHappyArcPath(eye.cx, eye.cy)}
+                      fill="none"
+                      stroke={BOT_AVATAR_EYE_COLOR}
+                      strokeWidth={5}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                ) : null}
+              </span>
+            ))}
+            {/* A working avatar's comet circles the body: the ring masks hide the stretch behind it. */}
+            {showComet ? <AvatarOrbitLayer shape={shape} /> : null}
+          </span>
+          {/* Beside the body, not in it, so the cloud does not tilt with the sway. */}
+          {showThought ? (
+            <AvatarThoughtLayer
+              shape={shape}
+              size={size}
+              place={thought}
+              leaving={pose !== "thinking"}
+            />
+          ) : null}
+        </span>
+      );
+    }
+
+    if (compactIdle && !halo && perfOptimizationOn("home-avatar-image")) {
+      return (
+        <img
+          ref={setRoot}
+          role="img"
+          aria-label={label}
+          alt={label}
+          width={size}
+          height={size}
+          decoding="sync"
+          draggable={false}
+          src={homeAvatarImage(shape, color)}
+          className={cn("bot-avatar pointer-events-none shrink-0", className)}
+        />
+      );
+    }
     return (
-      <span
-        ref={setRoot}
+      <svg
         role="img"
         aria-label={label}
-        data-motion={pose}
-        onAnimationEnd={onAnimationEnd}
+        width={size}
+        height={size}
+        viewBox={BOT_AVATAR_VIEWBOX}
+        ref={setRoot}
         className={cn("bot-avatar shrink-0", className)}
-        style={{ width: size, height: size }}
       >
-        <span className="bot-avatar-body">
-          <svg className="bot-avatar-shape" viewBox={BOT_AVATAR_VIEWBOX} aria-hidden="true">
-            {halo ? (
-              <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} />
-            ) : null}
-            <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
-          </svg>
-          {eyes.map((eye) => (
-            <span
-              key={`${eye.cx}-${eye.cy}`}
-              className="bot-avatar-eye"
-              style={{
-                left: `${eye.cx - BOT_AVATAR_EYE_WIDTH / 2}%`,
-                top: `${eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}%`,
-                width: `${BOT_AVATAR_EYE_WIDTH}%`,
-                height: `${BOT_AVATAR_EYE_HEIGHT}%`,
-              }}
-            >
-              <span className="bot-avatar-pill" style={{ backgroundColor: BOT_AVATAR_EYE_COLOR }} />
-              {pose === "done" ? (
-                <svg
-                  className="bot-avatar-arc"
-                  viewBox={`${eye.cx - BOT_AVATAR_EYE_WIDTH / 2} ${eye.cy - BOT_AVATAR_EYE_HEIGHT / 2} ${BOT_AVATAR_EYE_WIDTH} ${BOT_AVATAR_EYE_HEIGHT}`}
-                  aria-hidden="true"
-                >
-                  <path
-                    d={botAvatarHappyArcPath(eye.cx, eye.cy)}
-                    fill="none"
-                    stroke={BOT_AVATAR_EYE_COLOR}
-                    strokeWidth={5}
-                    strokeLinecap="round"
-                  />
-                </svg>
-              ) : null}
-            </span>
-          ))}
-          {/* A working avatar's comet circles the body: the ring masks hide the stretch behind it. */}
-          {showComet ? <AvatarOrbitLayer shape={shape} /> : null}
-        </span>
-        {/* Beside the body, not in it, so the cloud does not tilt with the sway. */}
-        {showThought ? (
-          <AvatarThoughtLayer
-            shape={shape}
-            size={size}
-            place={thought}
-            leaving={pose !== "thinking"}
-          />
-        ) : null}
-      </span>
-    );
-  }
-
-  return (
-    <svg
-      role="img"
-      aria-label={label}
-      width={size}
-      height={size}
-      viewBox={BOT_AVATAR_VIEWBOX}
-      ref={setRoot}
-      className={cn("bot-avatar shrink-0", className)}
-    >
-      {/*
+        {/*
         Contrast halo. Bot colours are user data and are never rewritten for
         the theme, so a near-black bot would otherwise be a black shape on a
         black card. Same path, stroked only — the fill covers the inner half,
@@ -234,9 +303,8 @@ export function BotAvatar({
         #171717, and at that strength an unconditional one would make every
         saturated avatar in the chats list look deliberately bordered.
       */}
-      {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
-      <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
-      <g>
+        {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
+        <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
         {eyes.map((eye) => (
           <rect
             key={`${eye.cx}-${eye.cy}`}
@@ -249,10 +317,22 @@ export function BotAvatar({
             transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
           />
         ))}
-      </g>
-    </svg>
-  );
-}
+      </svg>
+    );
+  },
+  (previous, next) => {
+    // Home edge-mask and clock updates need not rebuild unchanged artwork.
+    // Other callers keep their original render behavior; local animation state
+    // updates still render normally, independently of this props comparison.
+    if (!previous.compactIdle || !next.compactIdle || !perfOptimizationOn("home-avatar-memo"))
+      return false;
+    const keys = Object.keys(previous) as Array<keyof BotAvatarProps>;
+    return (
+      keys.length === Object.keys(next).length &&
+      keys.every((key) => Object.is(previous[key], next[key]))
+    );
+  },
+);
 
 /**
  * The thinking pose's thought cloud: two tail dots climbing from the shoulder

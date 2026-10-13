@@ -112,6 +112,7 @@ describe("BotAvatar thought layer", () => {
           label="Bot"
           motion={motion}
           thought="row"
+          compactIdle
         />,
       );
     });
@@ -125,6 +126,7 @@ describe("BotAvatar thought layer", () => {
             label="Bot"
             motion={next}
             thought="row"
+            compactIdle
           />,
         );
       });
@@ -154,6 +156,22 @@ describe("BotAvatar thought layer", () => {
       vi.advanceTimersByTime(THOUGHT_LEAVE_FALLBACK_MS);
     });
     expect(avatar.layer()).toBeUndefined();
+  });
+
+  it("keeps the done and cloud-leave layers until both have finished, then returns to compact idle", () => {
+    const avatar = mount("idle");
+    expect(avatar.root().findAllByProps({ className: "bot-avatar-body" })).toHaveLength(0);
+    avatar.update("thinking");
+    expect(avatar.root().findAllByProps({ className: "bot-avatar-body" })).toHaveLength(1);
+    avatar.update("idle");
+    expect(avatar.root().props["data-motion"]).toBe("done");
+    expect(avatar.layer()).toBeDefined();
+    act(() => avatar.root().props.onAnimationEnd({ animationName: "bot-avatar-done-body" }));
+    expect(avatar.root().props["data-motion"]).toBe("idle");
+    expect(avatar.layer()).toBeDefined();
+    act(() => avatar.root().props.onAnimationEnd({ animationName: "bot-avatar-thought-leave" }));
+    expect(avatar.layer()).toBeUndefined();
+    expect(avatar.root().findAllByProps({ className: "bot-avatar-body" })).toHaveLength(0);
   });
 
   it("keeps the cloud when thinking resumes during the leave", () => {

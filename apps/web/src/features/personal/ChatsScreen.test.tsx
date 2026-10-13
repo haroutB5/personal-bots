@@ -69,9 +69,13 @@ function createLocalStorageStub(): Storage {
   };
 }
 
+/** The first-launch step-by-step mount is off unless a test asks for it: the rest draw whole lists at once. */
+let stageMountInTest = false;
+
 function stubWindow(perfOff = "") {
   const localStorage = createLocalStorageStub();
-  if (perfOff !== "") localStorage.setItem(PERF_OFF_STORAGE_KEY, perfOff);
+  const off = [perfOff, stageMountInTest ? "" : "home-stage-mount"].filter(Boolean).join(",");
+  if (off !== "") localStorage.setItem(PERF_OFF_STORAGE_KEY, off);
   vi.stubGlobal("window", {
     localStorage,
     setInterval: () => 0,
@@ -700,22 +704,83 @@ describe("ChatsScreen rows and filters", () => {
       threadShell(chat.threadId, { title: `Chat ${index}` }),
     );
     await render();
-    // No layout to measure in this renderer: the first-paint slice is 24 rows
-    // (homeWindow.ts) and the six undrawn rows stand in as one spacer <li>
+    // No layout to measure in this renderer: the first-paint slice is 12 rows
+    // and the eighteen undrawn rows stand in as one spacer <li>
     // whose height keeps the list's full height, and so the scroll position,
     // exact.
     const items = rows().findAll((node) => node.type === "li");
     const drawn = items.filter((node) => node.props["data-home-window-pad"] === undefined);
     const pads = items.filter((node) => node.props["data-home-window-pad"] !== undefined);
-    expect(drawn).toHaveLength(24);
+    expect(drawn).toHaveLength(12);
     expect(pads).toHaveLength(1);
-    expect(pads[0]!.props.style).toEqual({ height: 6 * 72 });
+    expect(pads[0]!.props.style).toEqual({ height: 18 * 72 });
     // A screen reader hears the row's real place and the list's real length,
     // not the drawn slice's.
     expect(drawn[0]!.props["aria-posinset"]).toBe(1);
     expect(drawn[0]!.props["aria-setsize"]).toBe(30);
-    expect(drawn.at(-1)!.props["aria-posinset"]).toBe(24);
+    expect(drawn.at(-1)!.props["aria-posinset"]).toBe(12);
     for (const row of drawn) expect(row.props["aria-setsize"]).toBe(30);
+  });
+
+  it("mounts a first launch in steps: six rows, then three more per frame, the spacer keeping the height", async () => {
+    stageMountInTest = true;
+    try {
+      const chats = Array.from({ length: 30 }, (_, index) => ({
+        botId: "bot-juno",
+        threadId: `t-${index}`,
+      }));
+      setList({ bots: [bot("bot-juno", "Juno")], chats });
+      state.shells = chats.map((chat, index) =>
+        threadShell(chat.threadId, { title: `Chat ${index}` }),
+      );
+      await render();
+      const drawnCount = () =>
+        rows()
+          .findAll((node) => node.type === "li")
+          .filter((node) => node.props["data-home-window-pad"] === undefined).length;
+      const padHeights = () =>
+        rows()
+          .findAll((node) => node.type === "li")
+          .filter((node) => node.props["data-home-window-pad"] !== undefined)
+          .map((node) => (node.props.style as { height: number }).height);
+      expect(drawnCount()).toBe(6);
+      // The list's whole height is the same at every step: 24 rows stand in as spacer.
+      expect(padHeights()).toEqual([24 * 72]);
+      await flushRaf();
+      expect(drawnCount()).toBe(9);
+      await flushRaf();
+      expect(drawnCount()).toBe(12);
+      expect(padHeights()).toEqual([18 * 72]);
+      await flushRaf();
+      expect(drawnCount()).toBe(12);
+    } finally {
+      stageMountInTest = false;
+    }
+  });
+
+  it("draws the live rows whole when they replace saved ones (no fewer rows for a frame)", async () => {
+    stageMountInTest = true;
+    try {
+      const chats = Array.from({ length: 30 }, (_, index) => ({
+        botId: "bot-live",
+        threadId: `t-${index}`,
+      }));
+      await renderWithSnapshot(() => seedSnapshot());
+      expect(json()).toContain("Cached Ada");
+      await act(async () => {
+        setList({ bots: [bot("bot-live", "Live Ada")], chats });
+        state.shells = chats.map((chat, index) =>
+          threadShell(chat.threadId, { title: `Live chat ${index}` }),
+        );
+        renderer!.update(<ChatsScreen />);
+      });
+      const drawn = rows()
+        .findAll((node) => node.type === "li")
+        .filter((node) => node.props["data-home-window-pad"] === undefined);
+      expect(drawn).toHaveLength(12);
+    } finally {
+      stageMountInTest = false;
+    }
   });
 
   it("draws every row with the home-window kill switch off", async () => {

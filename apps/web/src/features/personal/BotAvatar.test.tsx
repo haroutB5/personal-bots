@@ -20,6 +20,23 @@ describe("BotAvatar static output", () => {
 });
 
 describe("BotAvatar posed layers", () => {
+  it.each(["thinking", "working", "waiting", "blocked", "done"] as const)(
+    "preserves every %s layer when home idle compaction is enabled",
+    (motion) => {
+      const props = {
+        shape: "blob",
+        color: "#171717",
+        size: 56,
+        label: "Bot",
+        motion,
+        comet: true,
+        thought: "row",
+      } as const;
+      expect(renderToStaticMarkup(<BotAvatar {...props} compactIdle />)).toBe(
+        renderToStaticMarkup(<BotAvatar {...props} />),
+      );
+    },
+  );
   const posed = (motion: "idle" | "thinking" | "done") =>
     renderToStaticMarkup(
       <BotAvatar shape="roundedHexagon" color="#171717" size={40} label="Bot" motion={motion} />,

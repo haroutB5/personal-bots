@@ -70,6 +70,7 @@ export function useKeptBotsListScroll(
   scrollerRef: RefObject<HTMLElement | null>,
   list: KeptBotsList,
 ): void {
+  const [deferRestore] = useState(() => perfOptimizationOn("home-scroll-restore"));
   const shownRef = useRef(list.shown);
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -90,8 +91,21 @@ export function useKeptBotsListScroll(
     }
     if (scroller === null) return;
     if (list.shown) {
-      scroller.scrollTop = savedScrollTop;
-      return;
+      if (!deferRestore) {
+        scroller.scrollTop = savedScrollTop;
+        return;
+      }
+      // Restore after the commit's DOM writes but before the browser can
+      // paint. An rAF queued during another rAF can miss this frame in WebKit,
+      // showing the top of the list for one frame before restoring its offset.
+      const top = savedScrollTop;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) scroller.scrollTop = top;
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     // Hidden: the page on top starts at the top. In the next frame's rAF,
     // still before it paints: touching scrollTop here forced a layout inside
@@ -101,5 +115,5 @@ export function useKeptBotsListScroll(
       if (scroller.scrollTop === savedScrollTop) scroller.scrollTop = 0;
     });
     return () => cancelAnimationFrame(frame);
-  }, [list.kept, list.shown, scrollerRef]);
+  }, [deferRestore, list.kept, list.shown, scrollerRef]);
 }
