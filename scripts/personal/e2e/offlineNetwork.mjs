@@ -20,6 +20,7 @@ import {
   PHONE,
   STEP_TIMEOUT_MS,
   blockExternal,
+  botsScreen,
   composer,
   newChatOnBotScreen,
   openBots,
@@ -90,7 +91,7 @@ async function warmChat(page, origin, title) {
   await openBots(page, origin);
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
   await page.reload({ waitUntil: "load" });
-  await page.getByLabel("Search bots and chats").waitFor({ state: "visible" });
+  await botsScreen(page).waitFor({ state: "visible" });
   await expect
     .poll(
       () =>
@@ -227,7 +228,7 @@ async function coldLoadDrop({ page, context, origin, step, root }) {
 
 async function screensKeepContent({ page, context, origin, step }) {
   const watch = watchPage(page);
-  const list = page.getByLabel("Search bots and chats");
+  const list = botsScreen(page);
   const heading = (name) => page.getByRole("heading", { name, exact: true });
   const tab = (name) =>
     page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name });
@@ -244,11 +245,11 @@ async function screensKeepContent({ page, context, origin, step }) {
   };
   // Memory is a page without the tab bar: back out of it (and of Settings) with the history.
   const backToTabs = async () => {
-    for (let i = 0; i < 3 && (await tab("Chats").count()) === 0; i += 1) {
+    for (let i = 0; i < 3 && (await tab("Bots").count()) === 0; i += 1) {
       await page.goBack();
       await page.waitForTimeout(400);
     }
-    await expect(tab("Chats")).toBeVisible();
+    await expect(tab("Bots")).toBeVisible();
   };
   const tour = [
     ["Team", () => page.getByRole("link", { name: "Team" }).first().tap(), heading("Team")],
@@ -256,7 +257,7 @@ async function screensKeepContent({ page, context, origin, step }) {
       "Memory",
       async () => {
         await backToTabs();
-        await tab("Chats").tap();
+        await tab("Bots").tap();
         await page.getByRole("link", { name: "Settings" }).first().tap();
         await page
           .getByRole("link", { name: /^Memory/ })
@@ -273,7 +274,7 @@ async function screensKeepContent({ page, context, origin, step }) {
       },
       heading("Files"),
     ],
-    ["the Bots list", () => tab("Chats").tap(), list],
+    ["the Bots list", () => tab("Bots").tap(), list],
   ];
   for (const [label, open, shown] of tour) await visit(label, open, shown);
   await expect(page.getByText("Planner", { exact: true })).toBeVisible();
@@ -303,7 +304,7 @@ async function screensKeepContent({ page, context, origin, step }) {
   await page.getByRole("link", { name: "Team" }).first().tap();
   await checkScreen("Team", heading("Team"), page.getByText("Planner", { exact: true }));
   await backToTabs();
-  await tab("Chats").tap();
+  await tab("Bots").tap();
   await page.getByRole("link", { name: "Settings" }).first().tap();
   await page
     .getByRole("link", { name: /^Memory/ })
@@ -313,7 +314,7 @@ async function screensKeepContent({ page, context, origin, step }) {
   await backToTabs();
   await tab("Files").tap();
   await checkScreen("Files", heading("Files"));
-  await tab("Chats").tap();
+  await tab("Bots").tap();
   await page.waitForTimeout(15_000);
   await checkScreen("the Bots list after 15 s", list, page.getByText("Planner", { exact: true }));
 
@@ -332,7 +333,7 @@ async function screensKeepContent({ page, context, origin, step }) {
     const h = (name) => p2.getByRole("heading", { name, exact: true });
     const t = (name) => p2.getByRole("navigation", { name: "Primary" }).getByRole("link", { name });
     await p2.goto(`${origin}/bots`, { waitUntil: "load" });
-    await p2.getByLabel("Search bots and chats").waitFor({ state: "visible" });
+    await botsScreen(p2).waitFor({ state: "visible" });
     // The app warms its screens once it is quiet: wait until Team, Memory and Files have been fetched.
     await expect
       .poll(
@@ -353,7 +354,7 @@ async function screensKeepContent({ page, context, origin, step }) {
     });
     await p2.getByRole("link", { name: "Team" }).first().tap();
     await expect(h("Team")).toBeVisible();
-    await t("Chats").tap();
+    await t("Bots").tap();
     await p2.getByRole("link", { name: "Settings" }).first().tap();
     await p2
       .getByRole("link", { name: /^Memory/ })
@@ -381,7 +382,7 @@ async function screensKeepContent({ page, context, origin, step }) {
       await p2.goBack();
       await p2.waitForTimeout(400);
       if (
-        (await t("Chats").count()) > 0 &&
+        (await t("Bots").count()) > 0 &&
         (await p2.getByRole("link", { name: "Settings" }).count()) > 0
       ) {
         await p2.getByRole("link", { name: "Settings" }).first().tap();
@@ -430,7 +431,7 @@ async function staleDeploy({ context, origin, step }) {
     );
     await stale.page.goto(`${origin}/bots`, { waitUntil: "load" });
     await expect.poll(() => stale.watch.loads(), { timeout: 20_000 }).toBe(2);
-    await stale.page.getByLabel("Search bots and chats").waitFor({ state: "visible" });
+    await botsScreen(stale.page).waitFor({ state: "visible" });
     await sleep(4_000);
     if (stale.watch.loads() !== 2) {
       throw new Error(
@@ -453,7 +454,7 @@ async function staleDeploy({ context, origin, step }) {
     );
     await gone.page.goto(`${origin}/bots`, { waitUntil: "load" });
     await expect.poll(() => gone.watch.loads(), { timeout: 45_000 }).toBe(2);
-    await gone.page.getByLabel("Search bots and chats").waitFor({ state: "visible" });
+    await botsScreen(gone.page).waitFor({ state: "visible" });
     await sleep(14_000);
     if (gone.watch.loads() !== 2) {
       throw new Error(
@@ -490,7 +491,7 @@ async function revokedSession({ context, origin, step, auth }) {
     step("the laptop revoked this phone's session");
     await page.reload({ waitUntil: "load" });
     await expect.poll(() => new URL(page.url()).pathname, { timeout: 30_000 }).toBe("/pair");
-    await expect(page.getByLabel("Search bots and chats")).toBeHidden();
+    await expect(botsScreen(page)).toBeHidden();
     step("after the revoke the app signs out: it is on the pairing page, not the Bots list");
     assertNoPageErrors("revoked-session", watch);
   } finally {

@@ -10,6 +10,7 @@ import {
   longPress,
   newChatOnBotScreen,
   openBots,
+  openSearch,
   send,
   startChatFromSheet,
   transcript,
@@ -22,8 +23,10 @@ async function botsListChat({ page, origin, step }) {
     await expect(page.getByText(bot, { exact: true })).toBeVisible();
   }
   step("Bots list shows the four seeded bots");
-  // A bot with no chat yet opens the name sheet; Start chat without a name.
+  // Tapping a bot on the list opens its screen (1.67.0's home draws the bots in the rail), and New chat
+  // asks for a name: Start chat without one.
   await page.getByText("Assistant", { exact: true }).first().tap();
+  await page.getByRole("button", { name: "New chat", exact: true }).tap();
   await startChatFromSheet(page, "");
   step("chat opened from the list");
   await send(page, "e2e hello one");
@@ -43,6 +46,7 @@ async function botsListChat({ page, origin, step }) {
 async function newChatNamed({ page, origin, step }) {
   await openBots(page, origin);
   await page.getByText("Researcher", { exact: true }).first().tap();
+  await page.getByRole("button", { name: "New chat", exact: true }).tap();
   await startChatFromSheet(page, "E2E named chat");
   await expect(page.getByText("E2E named chat")).toBeVisible();
   step("first chat started from the list with a name");
@@ -89,6 +93,7 @@ async function chatsSearch({ page, origin, step }) {
   await expect(transcript(page).getByText("Got it.")).toBeVisible();
   step("sent a message with a unique word");
   await openBots(page, origin);
+  await openSearch(page);
   const search = page.getByLabel("Search bots and chats");
   await search.tap();
   await search.fill(needle);

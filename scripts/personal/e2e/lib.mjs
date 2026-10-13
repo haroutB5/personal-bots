@@ -117,8 +117,22 @@ export async function longPress(context, page, locator, holdMs = 800) {
 /** The seeded fake bots a throwaway root starts with (PERSONAL_SEED_MODEL, fake Claude CLI). */
 export const botId = (name) => `personal-seed-${name.toLowerCase()}`;
 
+/**
+ * The Bots screen is up. Before 1.67.0 this was the always-visible search field;
+ * the redesign shows that field only once the header's button opens it, and a
+ * fresh root has no chat rows yet, so the screen's own heading is the signal.
+ * The tab bar's "Bots" is a link, so the heading is unambiguous.
+ */
+export const botsScreen = (page) => page.getByRole("heading", { name: "Bots", exact: true });
+
 export async function openBots(page, origin) {
   await page.goto(`${origin}/bots`, { waitUntil: "load" });
+  await botsScreen(page).waitFor({ state: "visible" });
+}
+
+/** The header's search button, then the field it opens. */
+export async function openSearch(page) {
+  await page.getByRole("button", { name: "Search chats" }).tap();
   await page.getByLabel("Search bots and chats").waitFor({ state: "visible" });
 }
 

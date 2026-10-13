@@ -14,7 +14,7 @@ import * as NodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { expect } from "./expect.mjs";
-import { composer, newChatOnBotScreen, openBots, transcript } from "./lib.mjs";
+import { botsScreen, composer, newChatOnBotScreen, openBots, transcript } from "./lib.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -119,7 +119,7 @@ async function offlineQueue({ page, origin, step, server, root }) {
   // ten seconds after it settles). A laptop that drops in the first seconds of a cold page cannot be tested fairly.
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
   await page.reload({ waitUntil: "load" });
-  await page.getByLabel("Search bots and chats").waitFor({ state: "visible" });
+  await botsScreen(page).waitFor({ state: "visible" });
   await expect
     .poll(
       () =>
@@ -213,7 +213,7 @@ async function offlineQueue({ page, origin, step, server, root }) {
 
   // ---- the laptop comes back
   await server.up();
-  const botsList = page.getByLabel("Search bots and chats");
+  const botsList = botsScreen(page);
   const chatOpen = composer(page).filter({ visible: true });
   const appOpen = async (timeout) => {
     await Promise.race([
