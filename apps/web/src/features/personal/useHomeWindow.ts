@@ -72,14 +72,19 @@ export function useHomeWindow(
   count: number,
   options: { readonly overscan?: number; readonly active?: boolean } = {},
 ): HomeWindow {
-  const overscan = options.overscan ?? HOME_ROW_OVERSCAN;
+  const [compact] = useState(() => perfOptimizationOn("home-window-compact"));
+  const overscan = options.overscan ?? (compact ? 5 : HOME_ROW_OVERSCAN);
   const active = options.active ?? true;
   // Kill switch "home-window" (perfFlags.ts), read once per load like the
   // other switches: off, every row is drawn and nothing is measured.
   const [enabled] = useState(() => perfOptimizationOn("home-window"));
   const listRef = useRef<HTMLUListElement | null>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
-  const [range, setRange] = useState<HomeWindowRange>(() => firstHomeWindow(count, overscan));
+  const [range, setRange] = useState<HomeWindowRange>(() =>
+    // Twelve rows cover the phone's first visible band plus the four-row
+    // hysteresis cushion. A taller viewport is measured before paint.
+    firstHomeWindow(count, compact && options.overscan === undefined ? 4 : overscan),
+  );
   const rangeRef = useRef(range);
   const activeRef = useRef(active);
   const measuredCountRef = useRef<number | null>(null);

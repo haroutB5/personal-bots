@@ -78,7 +78,10 @@ export type PerfOptimization =
   // The Bots home draws only the rows near the scroll position, standing in for
   // the rest with spacers (homeWindow.ts, 1.67.0); off: every row is drawn, as
   // the first 1.67.0 builds did.
-  | "home-window";
+  | "home-window"
+  // A smaller row buffer once structural style invalidation is cheap. Off:
+  // the original eight-row overscan and sixteen-row first slice.
+  | "home-window-compact";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

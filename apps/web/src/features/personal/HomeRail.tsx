@@ -186,7 +186,9 @@ function RailCap({ caption }: { readonly caption: RailCaption }): JSX.Element {
       key={caption.label}
       data-testid="rail-cap"
       className={cn(
-        "rail-cap w-full truncate text-center text-[13px] leading-4 font-medium",
+        // The link's gap is 8 px; subtract 6 px to retain the former inner
+        // label column's 2 px gap without an extra wrapper on every tile.
+        "rail-cap -mt-1.5 w-full truncate text-center text-[13px] leading-4 font-medium",
         caption.tone === "working" && "text-[var(--personal-state-working)]",
         caption.tone === "thinking" && "text-[var(--personal-state-thinking)]",
         caption.tone === "needs" && "text-[var(--personal-state-needs)]",
@@ -313,10 +315,8 @@ function RailChatCard({
             <Pin aria-hidden="true" className="size-3" strokeWidth={2.4} />
           </span>
         </RailAvatar>
-        <span className="flex w-full min-w-0 flex-col gap-0.5">
-          <span className={NAME_CLASS}>{chat.title}</span>
-          <RailCap caption={chat.caption} />
-        </span>
+        <span className={NAME_CLASS}>{chat.title}</span>
+        <RailCap caption={chat.caption} />
       </Link>
       <CardMenu
         name={chat.title}
@@ -358,10 +358,8 @@ function RailGroupCard({
             <Pin aria-hidden="true" className="size-3" strokeWidth={2.4} />
           </span>
         </span>
-        <span className="flex w-full min-w-0 flex-col gap-0.5">
-          <span className={NAME_CLASS}>{group.name}</span>
-          <RailCap caption={group.caption} />
-        </span>
+        <span className={NAME_CLASS}>{group.name}</span>
+        <RailCap caption={group.caption} />
       </Link>
       <CardMenu
         name={group.name}
@@ -400,10 +398,8 @@ function RailBotTile({ bot }: { readonly bot: RailBotItem }): JSX.Element {
             thought="pinned"
           />
         </RailAvatar>
-        <span className="flex w-full min-w-0 flex-col gap-0.5">
-          <span className={NAME_CLASS}>{bot.name}</span>
-          <RailCap caption={bot.caption} />
-        </span>
+        <span className={NAME_CLASS}>{bot.name}</span>
+        <RailCap caption={bot.caption} />
       </Link>
     </li>
   );

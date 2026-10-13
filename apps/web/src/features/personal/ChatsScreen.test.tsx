@@ -708,21 +708,21 @@ describe("ChatsScreen rows and filters", () => {
       threadShell(chat.threadId, { title: `Chat ${index}` }),
     );
     await render();
-    // No layout to measure in this renderer: the first-paint slice is 16 rows
-    // (homeWindow.ts) and the fourteen undrawn rows stand in as one spacer <li>
+    // No layout to measure in this renderer: the first-paint slice is 12 rows
+    // and the eighteen undrawn rows stand in as one spacer <li>
     // whose height keeps the list's full height, and so the scroll position,
     // exact.
     const items = rows().findAll((node) => node.type === "li");
     const drawn = items.filter((node) => node.props["data-home-window-pad"] === undefined);
     const pads = items.filter((node) => node.props["data-home-window-pad"] !== undefined);
-    expect(drawn).toHaveLength(16);
+    expect(drawn).toHaveLength(12);
     expect(pads).toHaveLength(1);
-    expect(pads[0]!.props.style).toEqual({ height: 14 * 72 });
+    expect(pads[0]!.props.style).toEqual({ height: 18 * 72 });
     // A screen reader hears the row's real place and the list's real length,
     // not the drawn slice's.
     expect(drawn[0]!.props["aria-posinset"]).toBe(1);
     expect(drawn[0]!.props["aria-setsize"]).toBe(30);
-    expect(drawn.at(-1)!.props["aria-posinset"]).toBe(16);
+    expect(drawn.at(-1)!.props["aria-posinset"]).toBe(12);
     for (const row of drawn) expect(row.props["aria-setsize"]).toBe(30);
   });
 
