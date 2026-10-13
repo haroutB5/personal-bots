@@ -127,11 +127,17 @@ function isClaudeEngineEnvName(name: string): boolean {
 }
 
 /**
- * Case-insensitive de-duplication of environment names, keeping the first
- * spelling seen. PowerShell 5.1 inside a dsh tool fails on `Get-ChildItem
- * Env:` when the process environment holds `Path` and `PATH` at once ("An
- * item with the same key has already been added"), and a spawned tool
- * inherits exactly that.
+ * Case-insensitive de-duplication of environment names: one entry per name,
+ * carrying the LAST value seen under the FIRST spelling seen.
+ *
+ * PowerShell 5.1 inside a dsh tool fails on `Get-ChildItem Env:` when the
+ * process environment holds `Path` and `PATH` at once ("An item with the same
+ * key has already been added"), and a spawned tool inherits exactly that.
+ * Windows has one variable per name whatever it is spelled, so the last value
+ * wins — that is what makes an instance's own `PATH` (or `TEMP`, `ComSpec`)
+ * override stick even though it arrives spelled differently from the inherited
+ * one — while the first spelling is kept, so the name the OS already uses is
+ * the name the child gets.
  */
 export function dedupeEnvironmentNames(
   environment: Readonly<Record<string, string | undefined>>,
@@ -141,9 +147,8 @@ export function dedupeEnvironmentNames(
   for (const [name, value] of Object.entries(environment)) {
     if (value === undefined) continue;
     const key = name.toLowerCase();
-    if (seen.has(key)) continue;
+    if (!seen.has(key)) spelled.set(key, name);
     seen.set(key, value);
-    spelled.set(key, name);
   }
   const next: NodeJS.ProcessEnv = {};
   for (const [key, value] of seen) next[spelled.get(key) ?? key] = value;

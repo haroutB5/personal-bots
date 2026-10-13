@@ -235,6 +235,34 @@ it.layer(layer)("DshAcpSupport", (it) => {
     }),
   );
 
+  it.effect("an instance override spelled differently still wins, as one name", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      // Windows users write PATH in caps; the machine spells it Path. The
+      // instance's value must not be dropped for spelling a name differently,
+      // and the child must still see exactly one name.
+      const environment = yield* buildDshEnvironment({
+        instanceEnv: {
+          Path: "C:/Windows",
+          PATH: "C:/Windows;C:/tools",
+          TEMP: "C:/machine-temp",
+          Temp: "C:/instance-temp",
+        },
+        runtimeMode: "full-access",
+        dshHome: "C:/root/userdata/dsh",
+      }).pipe(Effect.provideService(Path.Path, path));
+      const names = Object.keys(environment);
+      expect(names.filter((name) => name.toUpperCase() === "PATH")).toEqual(["Path"]);
+      expect(environment.Path).toBe("C:/Windows;C:/tools");
+      expect(names.filter((name) => name.toUpperCase() === "TEMP")).toEqual(["TEMP"]);
+      expect(environment.TEMP).toBe("C:/instance-temp");
+      // Whatever else happens, no two names may differ only in case: that is
+      // the shape PowerShell 5.1's environment provider refuses.
+      const normalised = names.map((name) => name.toUpperCase());
+      expect(new Set(normalised).size).toBe(normalised.length);
+    }),
+  );
+
   it.effect("reads a dsh cursor, and pins the mode a session was started in", () =>
     Effect.sync(() => {
       const cursor = decodeResumeCursor({

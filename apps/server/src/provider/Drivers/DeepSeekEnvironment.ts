@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+import { resolveDeepSeekEngine } from "./DeepSeekEngine.ts";
 
 export const DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
 export const DEEPSEEK_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN";
@@ -70,6 +71,20 @@ const DROPPED_MODEL_ENV_NAMES: ReadonlySet<string> = new Set([
   "ANTHROPIC_SMALL_FAST_MODEL",
   "ANTHROPIC_DEFAULT_MODEL",
 ]);
+
+/**
+ * Claude engine only: the CLI's own background traffic.
+ *
+ * The Claude CLI talks to `api.anthropic.com` even when its model endpoint is
+ * DeepSeek's — the requests are tunnelled, so what they carry cannot be
+ * inspected, and this engine must never need that host. Both switches are the
+ * CLI's own documented way to turn that feedback off. The harness engine has
+ * no such traffic and is not given them.
+ */
+const CLAUDE_ENGINE_QUIET_ENVIRONMENT: Readonly<Record<string, string>> = {
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  DISABLE_TELEMETRY: "1",
+};
 
 const UNRELATED_TOKEN_PREFIXES = [
   "OPENAI_",
@@ -122,9 +137,12 @@ export const resolveDeepSeekHomePath = Effect.fn("resolveDeepSeekHomePath")(func
  * plus the fixed DeepSeek endpoint, the instance's auth token, and the
  * isolated config dir. Missing token yields an empty env marker the driver
  * turns into a useful "not configured" snapshot instead of spawning.
+ *
+ * On the Claude engine it also quiets the CLI's own background traffic (see
+ * `CLAUDE_ENGINE_QUIET_ENVIRONMENT`).
  */
 export const makeDeepSeekEnvironment = Effect.fn("makeDeepSeekEnvironment")(function* (
-  config: Pick<DeepSeekSettings, "homePath">,
+  config: Pick<DeepSeekSettings, "homePath" | "engine">,
   baseEnv: NodeJS.ProcessEnv,
 ): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
   const resolvedHomePath = yield* resolveDeepSeekHomePath(config, baseEnv);
@@ -151,6 +169,11 @@ export const makeDeepSeekEnvironment = Effect.fn("makeDeepSeekEnvironment")(func
     next[name] = value;
   }
   next.CLAUDE_CONFIG_DIR = resolvedHomePath;
+  if (resolveDeepSeekEngine(config, baseEnv) === "claude-code") {
+    for (const [name, value] of Object.entries(CLAUDE_ENGINE_QUIET_ENVIRONMENT)) {
+      next[name] = value;
+    }
+  }
   return next;
 });
 
