@@ -76,8 +76,15 @@ const claudeSnapshot = () =>
     otherModels: ["claude-opus-5-5", "claude-sonnet-5-5"],
   });
 
+// The live catalogue: Astra is Codex's own default (never auto-picked), then
+// the current models in the order the provider lists them.
 const codexSnapshot = () =>
-  makeProviderSnapshot({ instanceId: "codex", driver: "codex", defaultModel: "gpt-6-astra" });
+  makeProviderSnapshot({
+    instanceId: "codex",
+    driver: "codex",
+    defaultModel: "gpt-6-astra",
+    otherModels: ["gpt-6.1-sol", "gpt-6-luna"],
+  });
 
 /** A ready provider whose adapter drops `systemInstructions` (ACP; no persona). */
 const grokSnapshot = () =>
@@ -349,11 +356,12 @@ it.effect("seedDefaultsIfNeeded creates the four default bots once, even after a
       ]),
     ).toEqual([
       ["Assistant", "blob", "#1A73E8", "claude", "claude-opus-5-5"],
-      ["Developer", "roundedHexagon", "#F26A1B", "codex", "gpt-6-astra"],
-      ["Researcher", "scallopedCloud", "#F0457E", "codex", "gpt-6-astra"],
+      // Astra is Codex's default and is never seeded: GPT-6.1 Sol is next.
+      ["Developer", "roundedHexagon", "#F26A1B", "codex", "gpt-6.1-sol"],
+      ["Researcher", "scallopedCloud", "#F0457E", "codex", "gpt-6.1-sol"],
       ["Planner", "roundedSquare", "#E5323B", "claude", "claude-opus-5-5"],
     ]);
-    // Never Fable: Opus 5.5 at medium effort.
+    // Never Fable or Astra: Opus 5.5 at medium effort, GPT-6.1 Sol on Codex.
     expect(seeded[0]!.modelSelection.options).toEqual([{ id: "effort", value: "medium" }]);
     expect(seeded.map((bot) => bot.title)).toEqual([
       "Personal assistant",
@@ -386,7 +394,7 @@ it.effect(
       expect(seeded.length).toBe(4);
       for (const bot of seeded) {
         expect(bot.modelSelection.instanceId).toBe("codex");
-        expect(bot.modelSelection.model).toBe("gpt-6-astra");
+        expect(bot.modelSelection.model).toBe("gpt-6.1-sol");
       }
       expect(yield* service.seedDefaultsIfNeeded).toEqual([]);
     }).pipe(Effect.provide(makeTestLayer(context)));

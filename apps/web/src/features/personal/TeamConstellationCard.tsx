@@ -54,13 +54,19 @@ function bots(count: number): string {
   return `${String(count)} ${count === 1 ? "bot" : "bots"}`;
 }
 
-/** The line under the team's name: "3 working · 1 needs you", or nothing at all. */
+/**
+ * The line under the team's name: "3 working · 1 needs you", or nothing at
+ * all. A bot that is thinking counts as working - it is mid-turn, just quiet -
+ * the same way the Bots list reads it.
+ */
 function teamStatusLine(entries: ReadonlyArray<ConstellationBot>): {
   readonly working: number;
   readonly needs: number;
 } {
   return {
-    working: entries.filter((entry) => entry.caption.tone === "working").length,
+    working: entries.filter(
+      (entry) => entry.caption.tone === "working" || entry.caption.tone === "thinking",
+    ).length,
     needs: entries.filter((entry) => entry.needsYou).length,
   };
 }

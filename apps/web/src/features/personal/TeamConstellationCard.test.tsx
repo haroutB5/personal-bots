@@ -198,7 +198,8 @@ describe("TeamConstellationCard", () => {
           caption: { text: "Needs approval", tone: "needs" },
           needsYou: true,
         }),
-        entry("c", "Quill"),
+        // A bot that is thinking is mid-turn: it counts as working.
+        entry("c", "Probe", { live: true, caption: { text: "Thinking", tone: "thinking" } }),
       ],
       entry("cfo", "CFO", {
         live: true,
@@ -206,7 +207,7 @@ describe("TeamConstellationCard", () => {
       }),
     );
     const labels = texts(tree);
-    expect(labels).toContain("2 working");
+    expect(labels).toContain("3 working");
     expect(labels).toContain("1 needs you");
   });
 

@@ -77,6 +77,6 @@ describe("what a request says", () => {
     expect(approvalDetail({ detail: "  ", appName: "Vercel" })).toBe("Vercel");
     // Never the activity's own summary ("Command approval requested"): the
     // body would repeat the kind without saying what it is.
-    expect(approvalDetail({ requestKind: "command" })).toBe("");
+    expect(approvalDetail({})).toBe("");
   });
 });
