@@ -61,6 +61,7 @@ import { usePersonalEnvironmentId, usePersonalBotsList } from "../usePersonalBot
 import { usePersonalTasks } from "../usePersonalAutomation";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { AvatarOrbitLayer } from "../BotAvatar";
 import { isThreadLive } from "../botSummaries";
 import { commandFailureMessage } from "../commandFeedback";
 import { inertOutside } from "../overlayInert";
@@ -120,6 +121,13 @@ const ICON_STROKE = 1.75;
 const PerformancePane = lazy(() =>
   import("./PerformancePane").then((module) => ({ default: module.PerformancePane })),
 );
+
+/**
+ * The pane's comet, built in the screen that always loads before the pane and
+ * passed down: the lazy pane itself must not import BotAvatar, or rolldown
+ * hoists shared modules into an extra chunk every app open pays for (1.67.2).
+ */
+const PERF_ORBIT = <AvatarOrbitLayer shape="roundedSquare" />;
 
 type ComputerSegment = "browser" | "desktop" | "files" | "performance";
 const SEGMENT_LABELS: Record<ComputerSegment, string> = {
@@ -420,7 +428,7 @@ export function ComputerScreen({
             </p>
           }
         >
-          <PerformancePane botsBusy={botsBusy} tasksRunning={tasksRunning} />
+          <PerformancePane botsBusy={botsBusy} tasksRunning={tasksRunning} orbit={PERF_ORBIT} />
         </Suspense>
       ) : (
         <FilesPane environmentId={environmentId} />

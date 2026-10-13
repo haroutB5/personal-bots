@@ -272,6 +272,8 @@ export interface PerformancePaneProps {
   /** Bots working + thinking, from the app's own store (the same words as home). */
   readonly botsBusy: number;
   readonly tasksRunning: number;
+  /** The bots' working comet, from ComputerScreen (see PcAvatar). */
+  readonly orbit?: ReactNode;
 }
 
 /**
@@ -311,7 +313,11 @@ function UpFor({
   );
 }
 
-export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps): JSX.Element {
+export function PerformancePane({
+  botsBusy,
+  tasksRunning,
+  orbit,
+}: PerformancePaneProps): JSX.Element {
   const feed = usePerformanceFeed(true);
   const { samples, groups, slow, statics } = feed;
   const newest = samples.at(-1) ?? null;
@@ -449,7 +455,7 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
       {/* 1. Summary */}
       <Card label="How the PC is doing" dim={stale}>
         <div className="flex items-start gap-3">
-          <PcAvatar pose={pose} size={48} />
+          <PcAvatar pose={pose} size={48} orbit={orbit} />
           <div className="min-w-0 flex-1">
             <h2 className="text-[20px] leading-6 font-bold">{summary.headline}</h2>
             <p className="mt-0.5 text-[13px] leading-4 text-[var(--personal-text-secondary)]">
