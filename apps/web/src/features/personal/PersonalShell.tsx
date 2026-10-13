@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from "react";
-import { Activity, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef } from "react";
 
 import { Outlet, useLocation, useParams, useRouter, useRouterState } from "@tanstack/react-router";
 
@@ -19,7 +19,7 @@ import {
 import { InAppNotifications } from "./InAppNotifications";
 import { OutboxFlusher } from "./OutboxFlusher";
 import { useKeptBotsList, useKeptBotsListScroll } from "./keptBotsList";
-import { whenIdle } from "./perfFlags";
+import { KeptBotsHome } from "./KeptBotsHome";
 import { installPerfRum } from "./perfRum";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import {
@@ -92,18 +92,6 @@ export function PersonalShell(): JSX.Element {
   const keptList = useKeptBotsList(renderedPath, isWide);
   useKeptBotsListScroll(mainRef, keptList);
   const keptListElement = useMemo(() => <ChatsScreen />, []);
-  // Hiding the list in Activity disconnects every row's effects, which cost
-  // the opening tap as much as the unmount it replaces. The tap only takes it
-  // out of the page (display: none on a display: contents wrapper, so layout
-  // is unchanged); Activity puts it to sleep once the main thread is idle,
-  // after the chat has painted and mounted. Showing it again is immediate.
-  const [keptListAsleep, setKeptListAsleep] = useState(false);
-  if (keptList.shown && keptListAsleep) setKeptListAsleep(false);
-  useEffect(() => {
-    if (!keptList.kept || keptList.shown) return;
-    return whenIdle(() => setKeptListAsleep(true), 1_000);
-  }, [keptList.kept, keptList.shown]);
-  const keptListMode = keptList.shown || !keptListAsleep ? "visible" : "hidden";
 
   if (!isWide) {
     return (
@@ -117,12 +105,10 @@ export function PersonalShell(): JSX.Element {
           </div>
           <main
             ref={mainRef}
-            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+            className="relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
           >
             {keptList.kept ? (
-              <div style={{ display: keptList.shown ? "contents" : "none" }}>
-                <Activity mode={keptListMode}>{keptListElement}</Activity>
-              </div>
+              <KeptBotsHome shown={keptList.shown}>{keptListElement}</KeptBotsHome>
             ) : null}
             {keptList.shown ? null : <Outlet />}
           </main>

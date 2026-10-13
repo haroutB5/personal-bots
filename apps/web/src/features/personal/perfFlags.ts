@@ -111,7 +111,10 @@ export type PerfOptimization =
   | "home-rail-memo"
   // A home chat row renders again only when a field it draws changed (the home
   // rebuilds every row object on each store change). Off: shallow props.
-  | "home-row-memo";
+  | "home-row-memo"
+  // Preserve the hidden home's layout while Activity pauses all its effects.
+  // Off (or unsupported): the original display:none path.
+  | "home-back-layout";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {
