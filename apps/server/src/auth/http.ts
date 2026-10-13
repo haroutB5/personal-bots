@@ -29,6 +29,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -188,6 +189,51 @@ const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateT
     ),
   );
 
+/**
+ * Keep a browser cookie session alive while it is in use: once renewal is due,
+ * re-set the cookie with a token whose expiry slides forward. A legacy cookie
+ * always moves to the current cookie name. A failed renewal is logged and never
+ * fails the request it rides on. Returns the session's expiry after renewal.
+ */
+const refreshSessionCookie = Effect.fn("environment.auth.refreshSessionCookie")(function* (
+  sessions: SessionStore.SessionStore["Service"],
+  request: HttpServerRequest.HttpServerRequest,
+  session: { readonly method: string; readonly expiresAt?: DateTime.DateTime | undefined },
+) {
+  if (session.method !== "browser-session-cookie" || session.expiresAt === undefined) {
+    return session.expiresAt;
+  }
+  const credential = EnvironmentAuth.selectRequestCredential(
+    request,
+    sessions.cookieName,
+    sessions.legacyCookieName,
+  );
+  if (credential?.source !== "cookie" && credential?.source !== "legacy-cookie") {
+    return session.expiresAt;
+  }
+  const renewed = yield* sessions
+    .renew(credential.token)
+    .pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to renew browser session.").pipe(
+          Effect.annotateLogs({ cause }),
+          Effect.as(Option.none<SessionStore.RenewedSession>()),
+        ),
+      ),
+    );
+  const cookie = Option.isSome(renewed)
+    ? renewed.value
+    : credential.source === "legacy-cookie"
+      ? { token: credential.token, expiresAt: session.expiresAt }
+      : undefined;
+  if (cookie === undefined) {
+    return session.expiresAt;
+  }
+  yield* appendSessionCookie(sessions.cookieName, cookie.token, cookie.expiresAt);
+  yield* appendCredentialResponseHeaders;
+  return cookie.expiresAt;
+});
+
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -202,6 +248,7 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
   EnvironmentAuthenticatedAuth,
   Effect.gen(function* () {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const sessions = yield* SessionStore.SessionStore;
     return (httpEffect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
@@ -216,6 +263,7 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
             failEnvironmentInternal("internal_error", error),
           ),
         );
+        yield* refreshSessionCookie(sessions, request, session);
         return yield* httpEffect.pipe(
           Effect.provideService(EnvironmentAuthenticatedPrincipal, {
             ...session,
@@ -242,21 +290,16 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
             const result = yield* serverAuth.getSessionState(request);
-            const credential = EnvironmentAuth.selectRequestCredential(
-              request,
-              sessions.cookieName,
-              sessions.legacyCookieName,
-            );
-            if (
-              credential?.source === "legacy-cookie" &&
-              result.authenticated &&
-              result.sessionMethod === "browser-session-cookie" &&
-              result.expiresAt
-            ) {
-              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
-              yield* appendCredentialResponseHeaders;
+            if (!result.authenticated || result.sessionMethod === undefined) {
+              return result;
             }
-            return result;
+            const expiresAt = yield* refreshSessionCookie(sessions, request, {
+              method: result.sessionMethod,
+              expiresAt: result.expiresAt,
+            });
+            return expiresAt === undefined
+              ? result
+              : { ...result, expiresAt: DateTime.toUtc(expiresAt) };
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
