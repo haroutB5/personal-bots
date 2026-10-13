@@ -6,6 +6,7 @@ import {
   keepsBotsListUnder,
   type KeptBotsList,
   useKeptBotsList,
+  useKeptBotsListScroll,
 } from "./keptBotsList";
 import { PERF_OFF_STORAGE_KEY } from "./perfFlags";
 
@@ -99,5 +100,72 @@ describe("useKeptBotsList", () => {
       { kept: false, shown: false },
       { kept: false, shown: false },
     ]);
+  });
+});
+
+describe("kept list scroll restoration", () => {
+  it("restores the exact saved offset before paint and cancels stale restores on navigation", () => {
+    let nextId = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextId, callback);
+      return nextId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    const flush = () => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      act(() => callbacks.forEach((callback) => callback(0)));
+    };
+    let top = 0;
+    const writes: number[] = [];
+    let onScroll: (() => void) | undefined;
+    const scroller = {
+      get scrollTop() {
+        return top;
+      },
+      set scrollTop(value: number) {
+        top = value;
+        writes.push(value);
+      },
+      addEventListener(_name: string, callback: () => void) {
+        onScroll = callback;
+      },
+      removeEventListener() {
+        onScroll = undefined;
+      },
+    };
+    const ref = { current: scroller as unknown as HTMLElement };
+    function Probe({ list }: { list: KeptBotsList }) {
+      useKeptBotsListScroll(ref, list);
+      return null;
+    }
+    let renderer!: ReactTestRenderer;
+    const change = (kept: boolean, shown: boolean) =>
+      act(() => renderer.update(<Probe list={{ kept, shown }} />));
+    act(() => {
+      renderer = create(<Probe list={{ kept: false, shown: false }} />);
+    });
+    change(true, true);
+    flush();
+    top = 1234.5;
+    onScroll!();
+    change(true, false);
+    flush();
+    expect(top).toBe(0);
+    writes.length = 0;
+    change(true, true);
+    expect(writes).toEqual([]);
+    flush();
+    expect(top).toBe(1234.5);
+    expect(writes).toEqual([1234.5]);
+    change(true, false);
+    flush();
+    change(true, true);
+    change(false, false);
+    writes.length = 0;
+    flush();
+    expect(writes).toEqual([]);
+    act(() => renderer.unmount());
   });
 });

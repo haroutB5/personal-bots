@@ -270,7 +270,7 @@ describe("useHomeWindow", () => {
     await act(async () => harness.renderer.unmount());
   });
 
-  it("corrects a stale slice on the frame after Back", async () => {
+  it("keeps the saved slice during Back restoration, then measures the restored geometry", async () => {
     const harness = await mount(61);
     const scroller = harness.scroller;
     const { list, state } = harness.fakeList();
@@ -279,6 +279,8 @@ describe("useHomeWindow", () => {
     // The scroll moved while hidden (the shell restores it on Back).
     state.top = -1440;
     await harness.setActive(true);
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 14 });
+    await harness.flushRaf();
     expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 14 });
     await harness.flushRaf();
     expect(harness.ranges.at(-1)).toEqual({ start: 16, end: 35 });

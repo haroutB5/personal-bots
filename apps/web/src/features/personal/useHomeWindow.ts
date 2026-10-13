@@ -74,6 +74,7 @@ export function useHomeWindow(
   options: { readonly overscan?: number; readonly active?: boolean } = {},
 ): HomeWindow {
   const [compact] = useState(() => perfOptimizationOn("home-window-compact"));
+  const [deferRestore] = useState(() => perfOptimizationOn("home-scroll-restore"));
   const overscan = options.overscan ?? (compact ? 5 : HOME_ROW_OVERSCAN);
   const active = options.active ?? true;
   // Kill switch "home-window" (perfFlags.ts), read once per load like the
@@ -167,6 +168,10 @@ export function useHomeWindow(
     }
     if (!active) {
       measuredCountRef.current = null;
+      if (frameRef.current !== 0) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = 0;
+      }
       return;
     }
     if (!wasActive) {
@@ -175,7 +180,20 @@ export function useHomeWindow(
       // runs after this one. Correct in the next frame instead of reading a
       // half-restored scroller.
       measuredCountRef.current = null;
-      scheduleMeasure();
+      if (
+        deferRestore &&
+        frameRef.current === 0 &&
+        typeof window !== "undefined" &&
+        typeof window.requestAnimationFrame === "function"
+      ) {
+        // The parent restores scroll in this frame, after our layout effect.
+        // Keep the saved slice through that paint and measure the restored
+        // geometry in the following frame, rather than the chat's offset.
+        frameRef.current = window.requestAnimationFrame(() => {
+          frameRef.current = 0;
+          if (activeRef.current) scheduleMeasure();
+        });
+      } else if (!deferRestore) scheduleMeasure();
       return;
     }
     if (measuredCountRef.current === count) return;

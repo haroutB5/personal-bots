@@ -14,6 +14,7 @@ import { GroupFacePair } from "./GroupFacePair";
 import { groupPreviewLine, groupStatusLine, isGroupRoundLive } from "./groupModel";
 import type { HomeChatRow, HomeGroupRow, RowPreviewTone } from "./homeRows";
 import { NEEDS_YOU_PILL_LABEL, NEEDS_YOU_WORDS, type NeedsYouRequest } from "./needsYou";
+import { perfOptimizationOn } from "./perfFlags";
 import { formatRelativeTime } from "./relativeTime";
 
 /**
@@ -153,7 +154,56 @@ function chatRowLabel(input: {
   return `${input.title}, ${input.botName}: ${input.preview}`;
 }
 
-export const HomeChatRowView = memo(function HomeChatRowView({
+interface HomeChatRowViewProps {
+  readonly row: HomeChatRow;
+  readonly preview: string;
+  readonly tone: RowPreviewTone;
+  readonly now: number;
+  readonly selected?: boolean | undefined;
+  readonly motion?: AvatarMotion | undefined;
+  readonly comet?: boolean | undefined;
+  readonly posInSet?: number | undefined;
+  readonly setSize?: number | undefined;
+}
+
+/**
+ * Kill switch "home-row-memo" (perfFlags.ts), read once per load. The home
+ * rebuilds every row object on each store change, so the default shallow
+ * comparison always saw a new `row` and drew all of them again. This compares
+ * the fields the row actually draws: the title and time, the avatar, the
+ * unread mark and the request's kind. Add any field the view starts to read.
+ */
+const ROW_MEMO_ON = perfOptimizationOn("home-row-memo");
+
+function sameChatRowProps(previous: HomeChatRowViewProps, next: HomeChatRowViewProps): boolean {
+  if (previous === next) return true;
+  const a = previous.row;
+  const b = next.row;
+  return (
+    previous.preview === next.preview &&
+    previous.tone === next.tone &&
+    previous.now === next.now &&
+    previous.selected === next.selected &&
+    previous.motion === next.motion &&
+    previous.comet === next.comet &&
+    previous.posInSet === next.posInSet &&
+    previous.setSize === next.setSize &&
+    (a === b ||
+      (a.key === b.key &&
+        a.title === b.title &&
+        a.activityMs === b.activityMs &&
+        a.unread === b.unread &&
+        a.link.threadId === b.link.threadId &&
+        a.bot.botId === b.bot.botId &&
+        a.bot.name === b.bot.name &&
+        a.bot.avatarShape === b.bot.avatarShape &&
+        a.bot.avatarColor === b.bot.avatarColor &&
+        (a.request === b.request ||
+          (a.request !== null && b.request !== null && a.request.kind === b.request.kind))))
+  );
+}
+
+function HomeChatRowViewImpl({
   row,
   preview,
   tone,
@@ -203,6 +253,7 @@ export const HomeChatRowView = memo(function HomeChatRowView({
               size={48}
               label={row.bot.name}
               motion={motion}
+              compactIdle
               comet={comet}
               thought="row"
             />
@@ -219,7 +270,12 @@ export const HomeChatRowView = memo(function HomeChatRowView({
       </Link>
     </li>
   );
-});
+}
+
+export const HomeChatRowView = memo(
+  HomeChatRowViewImpl,
+  ROW_MEMO_ON ? sameChatRowProps : undefined,
+);
 
 export const HomeGroupRowView = memo(function HomeGroupRowView({
   row,

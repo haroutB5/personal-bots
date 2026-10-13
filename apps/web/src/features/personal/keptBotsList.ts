@@ -70,6 +70,7 @@ export function useKeptBotsListScroll(
   scrollerRef: RefObject<HTMLElement | null>,
   list: KeptBotsList,
 ): void {
+  const [deferRestore] = useState(() => perfOptimizationOn("home-scroll-restore"));
   const shownRef = useRef(list.shown);
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -90,8 +91,18 @@ export function useKeptBotsListScroll(
     }
     if (scroller === null) return;
     if (list.shown) {
-      scroller.scrollTop = savedScrollTop;
-      return;
+      if (!deferRestore) {
+        scroller.scrollTop = savedScrollTop;
+        return;
+      }
+      // Restore before paint, after React finishes all of the route's DOM
+      // writes. Doing it inside the commit forces a layout halfway through
+      // those writes, followed by another layout for the remaining changes.
+      const top = savedScrollTop;
+      const frame = requestAnimationFrame(() => {
+        scroller.scrollTop = top;
+      });
+      return () => cancelAnimationFrame(frame);
     }
     // Hidden: the page on top starts at the top. In the next frame's rAF,
     // still before it paints: touching scrollTop here forced a layout inside
@@ -101,5 +112,5 @@ export function useKeptBotsListScroll(
       if (scroller.scrollTop === savedScrollTop) scroller.scrollTop = 0;
     });
     return () => cancelAnimationFrame(frame);
-  }, [list.kept, list.shown, scrollerRef]);
+  }, [deferRestore, list.kept, list.shown, scrollerRef]);
 }
