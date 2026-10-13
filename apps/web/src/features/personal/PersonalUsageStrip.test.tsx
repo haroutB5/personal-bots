@@ -156,9 +156,7 @@ describe("PersonalUsageStrip", () => {
 
     await act(async () => renderer!.update(<PersonalUsageStrip now={NOW} />));
     const label = renderer!.root.findAllByType("button")[0]!.props["aria-label"];
-    expect(label).toBe(
-      "Usage: Claude, Session 26 percent used, Weekly 8 percent used; Codex, Session 12 percent used, Weekly not reported. Open details.",
-    );
+    expect(label).toBe("Claude usage: session 26 percent, week 8 percent");
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Not reported");
     // The readings arriving is not a reason to probe again.
     expect(state.refresh).toHaveBeenCalledTimes(1);
@@ -250,7 +248,7 @@ describe("PersonalUsageStrip", () => {
     expect(renderer!.toJSON()).toBeNull();
   });
 
-  it("shows Claude left and Codex right with one labelled button", async () => {
+  it("shows the Claude line, with one labelled button for the sheet", async () => {
     state.providers = [CLAUDE, CODEX];
     await act(async () => {
       renderer = create(<PersonalUsageStrip now={NOW} />);
@@ -259,15 +257,15 @@ describe("PersonalUsageStrip", () => {
     const buttons = renderer!.root.findAllByType("button");
     expect(buttons).toHaveLength(1);
     expect(buttons[0]!.props["aria-label"]).toBe(
-      "Usage: Claude, Session 26 percent used, Weekly 8 percent used; Codex, Session 12 percent used, Weekly not reported. Open details.",
+      "Claude usage: session 26 percent, week 8 percent",
     );
     const json = JSON.stringify(renderer!.toJSON());
-    expect(json.indexOf("Claude")).toBeLessThan(json.indexOf("Codex"));
+    // The one line: Claude's session and week, each over its own bar. Codex
+    // lives in the sheet now, not on the line.
     expect(json).toContain("26%");
     expect(json).toContain("Session");
-    expect(json).toContain("Weekly");
-    expect(json).toContain("used");
-    expect(json).toContain("12%");
+    expect(json).toContain("Week");
+    expect(json).not.toContain("12%");
     // Chrome, not content: the sheet stays closed until asked for.
     expect(json).not.toContain("resets in");
   });
@@ -332,9 +330,9 @@ describe("PersonalUsageStrip", () => {
     await act(async () => {
       renderer = create(<PersonalUsageStrip now={NOW} />);
     });
-    // The strip stays two-up: the balance has no percent window to plot.
+    // The line still shows Claude's windows: the balance has no percent to plot.
     expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toBe(
-      "Usage: Claude, Session 26 percent used, Weekly 8 percent used; Codex, Session 12 percent used, Weekly not reported. Open details.",
+      "Claude usage: session 26 percent, week 8 percent",
     );
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("DeepSeek");
 
@@ -465,9 +463,9 @@ describe("PersonalUsageStrip", () => {
     );
     expect(filled.map((node) => node.props.style.width)).toEqual(["100%"]);
     expect(filled[0]!.props.style.backgroundColor).toBe("var(--personal-review)");
-    // The label still reads both numbers the bar collapses into one.
-    expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toContain(
-      "Session 0 percent used, Weekly 100 percent used",
+    // The label still reads both numbers.
+    expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toBe(
+      "Claude usage: session 0 percent, week 100 percent",
     );
   });
 
@@ -619,8 +617,8 @@ describe("usage values never disappear", () => {
     await openSheet();
 
     const during = visibleText();
-    expect(during).toContain("26% used");
-    expect(during).toContain("8% used");
+    expect(during).toContain("26 % used");
+    expect(during).toContain("8 % used");
     expect(during).toContain("Updated");
     expect(during).toContain("Refreshing");
     expect(during).not.toContain("Checking");
@@ -631,7 +629,7 @@ describe("usage values never disappear", () => {
     await settle();
     const after = visibleText();
     expect(after).not.toContain("Refreshing");
-    expect(after).toContain("26% used");
+    expect(after).toContain("26 % used");
   });
 
   it("shows the last values plus Couldn't refresh and its age after a failed probe", async () => {
@@ -652,15 +650,15 @@ describe("usage values never disappear", () => {
     await settle();
 
     const text = visibleText();
-    expect(text).toContain("26% used");
+    expect(text).toContain("26 % used");
     expect(text).toContain("Updated 3h");
     expect(text).toContain("Couldn't refresh · CLI timed out");
     expect(text).not.toContain("Checking");
     // Codex read fine: no failure line for it.
     expect(text.split("Couldn't refresh").length - 1).toBe(1);
-    // The strip still carries the numbers too.
-    expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toContain(
-      "Claude, Session 26 percent used, Weekly 8 percent used",
+    // The line still carries the numbers too.
+    expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toBe(
+      "Claude usage: session 26 percent, week 8 percent",
     );
   });
 

@@ -14,7 +14,8 @@ export const PERSONAL_TABS: ReadonlyArray<{
   readonly label: string;
   readonly to: "/bots" | "/tasks" | "/computer" | "/files";
 }> = [
-  { tab: "chats", label: "Chats", to: "/bots" },
+  // The tab, the screen title and the route all say Bots (design decision 1).
+  { tab: "chats", label: "Bots", to: "/bots" },
   { tab: "tasks", label: "Tasks", to: "/tasks" },
   { tab: "computer", label: "Computer", to: "/computer" },
   { tab: "files", label: "Files", to: "/files" },

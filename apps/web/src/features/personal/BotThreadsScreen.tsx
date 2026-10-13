@@ -612,7 +612,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
               </Menu>
             </>
           ) : (
-            <h1 className="text-[19px] font-bold text-[var(--personal-text)]">Chats</h1>
+            <h1 className="text-[19px] font-bold text-[var(--personal-text)]">Bot</h1>
           )}
         </header>
       )}
