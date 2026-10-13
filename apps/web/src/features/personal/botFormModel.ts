@@ -6,7 +6,11 @@ import type {
   ServerProvider,
   ServerProviderModel,
 } from "@t3tools/contracts";
-import { botFallback, driverCarriesBotInstructions } from "@t3tools/contracts";
+import {
+  botFallback,
+  DEEPSEEK_AGENT_MODE_OPTION_ID,
+  driverCarriesBotInstructions,
+} from "@t3tools/contracts";
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -108,6 +112,9 @@ export function searchModels<M extends Pick<ServerProviderModel, "slug" | "name"
 /** The option id every provider uses for its context window size choice. */
 export const CONTEXT_WINDOW_OPTION_ID = "contextWindow";
 
+/** The option id the DeepSeek Harness engine uses for a bot's agent mode. */
+export const AGENT_MODE_OPTION_ID = DEEPSEEK_AGENT_MODE_OPTION_ID;
+
 function botSelectDescriptor(
   provider: ServerProvider | undefined,
   model: string,
@@ -132,6 +139,23 @@ export function botEffortDescriptor(
   return botSelectDescriptor(provider, model, EFFORT_OPTION_IDS);
 }
 
+/**
+ * The selected model's agent mode control, if its provider offers one. Only a
+ * DeepSeek bot on the DeepSeek Harness engine has it: on the Claude Code
+ * engine the descriptor is absent and the form shows no picker.
+ */
+export function botAgentModeDescriptor(
+  provider: ServerProvider | undefined,
+  model: string,
+): SelectProviderOptionDescriptor | null {
+  return botSelectDescriptor(provider, model, [AGENT_MODE_OPTION_ID]);
+}
+
+/** The agent mode a model selection carries, or "" when it names none. */
+export function agentModeOfSelection(selection: ModelSelection): string {
+  return getModelSelectionStringOptionValue(selection, AGENT_MODE_OPTION_ID) ?? "";
+}
+
 /** The selected model's context window choice (e.g. 200k / 1M), if it offers more than one. */
 export function botContextWindowDescriptor(
   provider: ServerProvider | undefined,
@@ -141,7 +165,7 @@ export function botContextWindowDescriptor(
   return descriptor !== null && descriptor.options.length > 1 ? descriptor : null;
 }
 
-/** A model choice as the form holds it: provider instance, model, effort and context window. */
+/** A model choice as the form holds it: instance, model, effort, window and mode. */
 export interface ModelDraft {
   readonly instanceId: string;
   readonly model: string;
@@ -149,6 +173,8 @@ export interface ModelDraft {
   readonly effort: string;
   /** Context window option id (e.g. "1m"); "" keeps the model's default. */
   readonly contextWindow: string;
+  /** Agent mode option id ("standard" by default); "" keeps the model's default. */
+  readonly agentMode: string;
 }
 
 /** The choice a saved selection stands for. */
@@ -161,6 +187,7 @@ export function modelDraftFromSelection(selection: ModelSelection): ModelDraft {
         (value) => value !== undefined,
       ) ?? "",
     contextWindow: getModelSelectionStringOptionValue(selection, CONTEXT_WINDOW_OPTION_ID) ?? "",
+    agentMode: agentModeOfSelection(selection),
   };
 }
 
@@ -193,8 +220,16 @@ export function buildModelSelection(
     contextWindowDescriptor?.options.some((option) => option.id === draft.contextWindow) === true
       ? draft.contextWindow
       : "";
+  const agentModeDescriptor = botAgentModeDescriptor(provider, draft.model);
+  const agentModeValue =
+    agentModeDescriptor?.options.some((option) => option.id === draft.agentMode) === true
+      ? draft.agentMode
+      : "";
   const others = (start.options ?? []).filter(
-    (option) => !EFFORT_OPTION_IDS.includes(option.id) && option.id !== CONTEXT_WINDOW_OPTION_ID,
+    (option) =>
+      !EFFORT_OPTION_IDS.includes(option.id) &&
+      option.id !== CONTEXT_WINDOW_OPTION_ID &&
+      option.id !== AGENT_MODE_OPTION_ID,
   );
   const options = [
     ...others,
@@ -203,6 +238,12 @@ export function buildModelSelection(
       : []),
     ...(contextWindowDescriptor !== null && contextWindowValue !== ""
       ? [{ id: contextWindowDescriptor.id, value: contextWindowValue }]
+      : []),
+    // The mode is written whenever the model offers one: a resumed session
+    // keeps the mode it was started in, so the saved value is the mode the
+    // next new chat gets.
+    ...(agentModeDescriptor !== null && agentModeValue !== ""
+      ? [{ id: agentModeDescriptor.id, value: agentModeValue }]
       : []),
   ];
   const { options: _previous, ...rest } = start;

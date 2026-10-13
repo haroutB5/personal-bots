@@ -17,10 +17,13 @@ import {
   defaultModelFor,
   fallbackDraftFromBot,
   fallbackInput,
+  agentModeOfSelection,
+  botAgentModeDescriptor,
   isBotProviderSelectable,
   isFallbackDraftValid,
   modelDraftFromSelection,
   modelOptionLabel,
+  type ModelDraft,
   modelSelectionsEqual,
   noBotProviderMessage,
   SAME_FAMILY_FALLBACK_HINT,
@@ -186,6 +189,69 @@ describe("searchModels", () => {
   });
 });
 
+describe("agent mode on the DeepSeek Harness engine", () => {
+  const deepseek = provider("deepseek", [
+    model({
+      slug: "deepseek-flash",
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          select("effort", ["low", "high", "max"]),
+          {
+            id: "agentMode",
+            label: "Agent mode",
+            type: "select" as const,
+            options: [
+              { id: "standard", label: "Standard", isDefault: true },
+              { id: "code", label: "Code" },
+              { id: "minimal", label: "Minimal" },
+            ],
+          },
+        ],
+      }),
+    }),
+  ]);
+
+  it("offers the picker only where the model has the option", () => {
+    expect(botAgentModeDescriptor(deepseek, "deepseek-flash")?.options.map((o) => o.id)).toEqual([
+      "standard",
+      "code",
+      "minimal",
+    ]);
+    // The Claude Code engine hands the same model no such option.
+    const claudeEngine = provider("deepseek", [
+      model({
+        slug: "deepseek-flash",
+        capabilities: createModelCapabilities({
+          optionDescriptors: [select("effort", ["low", "high", "max"])],
+        }),
+      }),
+    ]);
+    expect(botAgentModeDescriptor(claudeEngine, "deepseek-flash")).toBeNull();
+  });
+
+  it("saves the chosen mode, and drops one the model does not offer", () => {
+    const draft: ModelDraft = {
+      instanceId: "deepseek",
+      model: "deepseek-flash",
+      effort: "high",
+      contextWindow: "",
+      agentMode: "code",
+    };
+    expect(buildModelSelection(draft, deepseek, null).options).toEqual([
+      { id: "effort", value: "high" },
+      { id: "agentMode", value: "code" },
+    ]);
+    const unknown: ModelDraft = { ...draft, agentMode: "creator" };
+    expect(buildModelSelection(unknown, deepseek, null).options).toEqual([
+      { id: "effort", value: "high" },
+    ]);
+    // A saved mode round-trips through the draft.
+    const saved = buildModelSelection(draft, deepseek, null);
+    expect(modelDraftFromSelection(saved).agentMode).toBe("code");
+    expect(agentModeOfSelection(saved)).toBe("code");
+  });
+});
+
 describe("modelOptionLabel", () => {
   it("adds the sub-provider so same-named models can be told apart", () => {
     expect(modelOptionLabel({ name: "Muse Spark 1.3", subProvider: "OpenCode Zen" })).toBe(
@@ -274,6 +340,8 @@ describe("usage-limit fallback in the bot form", () => {
       model: "claude-sonnet-5-5",
       effort: "high",
       contextWindow: "1m",
+      // The agent mode belongs to the bot's own model, never to its fallback.
+      agentMode: "",
     });
     expect(
       buildModelSelection(
@@ -307,6 +375,7 @@ describe("usage-limit fallback in the bot form", () => {
       model: "claude-opus-5-5",
       effort: "low",
       contextWindow: "",
+      agentMode: "",
     });
     expect(fallbackInput(saved, draft, providers)).toBeUndefined();
     // An older server sends no fallback: the default, and still nothing to send.
