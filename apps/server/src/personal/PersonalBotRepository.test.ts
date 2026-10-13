@@ -313,3 +313,66 @@ it.effect("ranks previews and reports lastActivityAt by the last message, not up
     });
   }).pipe(Effect.provide(testLayer)),
 );
+
+// The Performance tab's sampler: a running provider CLI carries its session
+// id on the command line, and this is the map back to the bot's name.
+it.effect("lists each bot chat's provider session for process attribution", () =>
+  Effect.gen(function* () {
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const botId = PersonalBotId.make("bot-perf");
+    yield* repository.createBot(
+      decodeCreateBot({
+        botId,
+        name: "Atlas",
+        title: "Lead",
+        description: "Leads.",
+        instructions: "Lead well.",
+        avatarShape: "roundedHexagon",
+        avatarColor: "#7C3AED",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+        },
+        team: "dev",
+        lead: true,
+        pinned: false,
+        sortOrder: 0,
+        createdAt: "2026-10-13T00:00:00.000Z",
+        updatedAt: "2026-10-13T00:00:00.000Z",
+      }),
+    );
+    const perfThread = ThreadId.make("thread-perf");
+    yield* repository.insertThreadLink(
+      decodeInsertThreadLink({
+        botId,
+        threadId: perfThread,
+        createdAt: "2026-10-13T00:00:00.000Z",
+      }),
+    );
+    yield* sql`
+      INSERT INTO projection_thread_sessions (thread_id, status, updated_at, provider_session_id)
+      VALUES (${perfThread}, 'running', '2026-10-13T00:01:00.000Z', 'b1ef3808-58f4-40ec-81ed-a9a6af7a8f65')
+    `;
+    // A chat with no session row (nothing running) stays out; so does a row
+    // with no session id.
+    const idleThread = ThreadId.make("thread-perf-idle");
+    yield* repository.insertThreadLink(
+      decodeInsertThreadLink({
+        botId,
+        threadId: idleThread,
+        createdAt: "2026-10-13T00:00:00.000Z",
+      }),
+    );
+    yield* sql`
+      INSERT INTO projection_thread_sessions (thread_id, status, updated_at)
+      VALUES (${idleThread}, 'ready', '2026-10-13T00:01:00.000Z')
+    `;
+
+    const sessions = yield* repository.listBotProviderSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.botName).toBe("Atlas");
+    expect(sessions[0]?.threadId).toBe("thread-perf");
+    expect(sessions[0]?.providerSessionId).toBe("b1ef3808-58f4-40ec-81ed-a9a6af7a8f65");
+  }).pipe(Effect.provide(testLayer)),
+);
