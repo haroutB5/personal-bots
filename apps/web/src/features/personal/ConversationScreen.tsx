@@ -198,6 +198,12 @@ import { findRetryTarget, useRetryFailedTurn } from "./retryFailedTurn";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 
+/**
+ * How long the dock's chip row outlives the field's focus: long enough for the
+ * tap that blurred it to land on the option it meant (SPEC 2.9, D9).
+ */
+const COMPOSER_FOCUS_COLLAPSE_MS = 180;
+
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
 
@@ -587,19 +593,35 @@ export function ConversationScreen({
   }, [items]);
   // The composer has the field: on a phone that is the keyboard, so the dock
   // gives the thread its room (SPEC 2.9, D9). The inset alone cannot tell a
-  // desktop browser it is "open"; focus is the state both share.
+  // desktop browser it is "open"; focus is the state both share. The collapse
+  // is deferred a moment: a tap on a docked option blurs the field before the
+  // click dispatches, and swapping the chip row for the tall rows there would
+  // replace the very button under the finger and eat the answer (the same
+  // reason the composer's own keyboard inset waits a frame).
   const [composerActive, setComposerActive] = useState(false);
   useEffect(() => {
     const shell = shellRef.current;
     if (shell === null) return;
+    let collapse: number | undefined;
     const onFocusIn = (event: FocusEvent) => {
+      if (collapse !== undefined) {
+        window.clearTimeout(collapse);
+        collapse = undefined;
+      }
       const target = event.target as HTMLElement | null;
       setComposerActive(target?.getAttribute?.(COMPOSER_INPUT_ATTRIBUTE) === "");
     };
-    const onFocusOut = () => setComposerActive(false);
+    const onFocusOut = () => {
+      if (collapse !== undefined) window.clearTimeout(collapse);
+      collapse = window.setTimeout(() => {
+        collapse = undefined;
+        setComposerActive(false);
+      }, COMPOSER_FOCUS_COLLAPSE_MS);
+    };
     shell.addEventListener("focusin", onFocusIn);
     shell.addEventListener("focusout", onFocusOut);
     return () => {
+      if (collapse !== undefined) window.clearTimeout(collapse);
       shell.removeEventListener("focusin", onFocusIn);
       shell.removeEventListener("focusout", onFocusOut);
     };
