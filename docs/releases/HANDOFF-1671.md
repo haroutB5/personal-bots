@@ -134,3 +134,25 @@ variable inside the `pwsh` tool.
 Binary only: `restart.ps1 -Release <1.67.0 sha> -NoPrune`. No migration, so nothing to restore. Setting the
 DeepSeek instance's engine back to `claude-code`, or `PERSONAL_DEEPSEEK_ENGINE=claude-code`, also returns every bot
 to the old engine without touching the release.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=3da1e51f0d39c750a59bce7f1754aed5ba204557 release=3da1e51f0d39 json-sha256=75cb70b809daf663dc21d01d2c5ce3c674c4122113f69a8d5161bf47a7c4e64c result=FAIL -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T21:32:18Z. Version 1.67.1, release `3da1e51f0d39`, commit `3da1e51f0d39c750a59bce7f1754aed5ba204557` on `release/hbots-1671`, working tree clean, result **FAIL**.
+
+Machine-readable copy: `releases\3da1e51f0d39\gate-evidence.json` (sha256 `75cb70b809daf663dc21d01d2c5ce3c674c4122113f69a8d5161bf47a7c4e64c`) and the full gate logs in `releases\3da1e51f0d39\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2583 tests passed, 0 failed, 3 skipped, in 188 files | 199.7   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 1    | FAIL: exit code only                                       | 20.3    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2707 tests passed, 0 failed, 0 skipped, in 252 files | 30.6    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.7     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 59.5    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1671-dsh\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\3da1e51f0d39" -Json` (in `.`)                                                                                                                  | 0    | pass: 12/12 journeys passed                                | 258.7   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `3da1e51f0d39c750a59bce7f1754aed5ba204557`, at end `3da1e51f0d39c750a59bce7f1754aed5ba204557`; tracked files modified: none. Staged release: version 1.67.1, sha 3da1e51f0d39, dirty False, externals copied; `dist/bin.mjs` sha256 `23a50fc448472ea65d080315c225e2faf2c176847f1642c45f45d775e2505b54`.
+<!-- gate-evidence:end -->
