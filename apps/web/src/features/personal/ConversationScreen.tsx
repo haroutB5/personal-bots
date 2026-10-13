@@ -94,11 +94,10 @@ import { NO_TOUCH_SELECT } from "./SelectMode";
 import { useHoldCue } from "./useHoldCue";
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
-import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
-import { ConversationSubtitle } from "./ConversationSubtitle";
+import { ConversationHeaderIdentity } from "./ConversationHeaderName";
 import { botMuteState } from "./botMuteModel";
-import { conversationHeaderStatus, resolveBotProvider, taskCardBotLine } from "./botSummaries";
-import { botActiveModelShortLabel, fallbackNoteLabel } from "./botModelLabel";
+import { resolveBotProvider, taskCardBotLine } from "./botSummaries";
+import { botActiveModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
 import { ConversationDesktopLine } from "./ConversationDesktopLine";
@@ -111,6 +110,7 @@ import { CONVERSATION_SIDE_PANEL_ID, ConversationSidePanel } from "./Conversatio
 import {
   buildConversationItems,
   contextBadgeLabel,
+  conversationHeaderCaption,
   conversationHeaderStateLabel,
   type ConversationState,
   deriveConversationState,
@@ -574,9 +574,21 @@ export function ConversationScreen({
   });
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
-  const headerStatus = conversationHeaderStatus(conversationState, stateLabel, provider);
   const headerModelLabel = bot === null ? null : botActiveModelShortLabel(bot, providers);
-  const headerModelNote = bot === null ? null : fallbackNoteLabel(bot);
+  // The caption under the bot's name (SPEC 2.7): one state word in the state's
+  // colour, or the model when the chat is idle. "Update broke …" still wins
+  // (conversationHeaderStatus's rule), in red.
+  const headerCaption = useMemo(
+    () =>
+      conversationHeaderCaption({
+        state: conversationState,
+        thinking: turnThinking,
+        statusLabel: stateLabel,
+        modelLabel: headerModelLabel,
+        brokenLabel: provider?.broken === true ? `Update broke ${provider.label}` : null,
+      }),
+    [conversationState, turnThinking, stateLabel, headerModelLabel, provider],
+  );
   // A typed message, Retry and wrapup send what the bot runs on right now (its fallback while on it).
   const botTurnModel = bot === null ? null : botEffectiveModelSelection(bot);
 
@@ -1041,7 +1053,6 @@ export function ConversationScreen({
   // The three header blocks that open the open chat's settings when held.
   const avatarHold = useHoldCue(openOwnSettings);
   const lineHold = useHoldCue(openOwnSettings);
-  const singleHold = useHoldCue(openOwnSettings);
   const holdProps = (hold: ReturnType<typeof useHoldCue>) => ({
     ...hold.attributes,
     draggable: false as const,
@@ -1185,238 +1196,176 @@ export function ConversationScreen({
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
       </div>
-      <header
-        className={cn(
-          "personal-column flex shrink-0 items-center gap-3 px-2",
-          chipsShown ? "h-[72px]" : "h-16",
-        )}
-      >
-        {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
-        <Link
-          to={backTarget.to}
-          activeOptions={{ exact: true }}
-          aria-label={backTarget.label}
-          className={cn(ICON_BUTTON, "md:hidden")}
-        >
-          <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
-        </Link>
-        {bot !== null && chipsShown ? (
-          <>
-            {/* Chips on: the avatar and the first line are both Edit bot (the
-                avatar stays the full-size target), and the chips take line 2. */}
-            <Link
-              to="/bots/$botId/edit"
-              params={{ botId: bot.botId }}
-              aria-hidden="true"
-              tabIndex={-1}
-              {...holdProps(avatarHold)}
-              className={cn(
-                "personal-hold-target shrink-0 rounded-full outline-none active:opacity-70",
-                NO_TOUCH_SELECT,
-              )}
-            >
-              <BotAvatar
-                shape={bot.avatarShape}
-                color={bot.avatarColor}
-                size={48}
-                label={bot.name}
-                motion={motionForConversationState(conversationState, turnThinking)}
-                comet={perfOptimizationOn("anim-comet")}
-                thought="header"
-              />
-            </Link>
-            <div className="flex h-full min-w-0 flex-1 flex-col">
+      <header className="personal-column relative z-[2] flex shrink-0 flex-col border-b-[var(--personal-hairline)] border-[var(--personal-border)] bg-[var(--personal-bg)]">
+        {/* Row 1 (SPEC 2.7): back, the avatar button, the name over its state
+            caption, more. Row 2 (below) is the chip strip. */}
+        <div className="flex h-[52px] items-center gap-1 px-2">
+          {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
+          <Link
+            to={backTarget.to}
+            activeOptions={{ exact: true }}
+            aria-label={backTarget.label}
+            className={cn(ICON_BUTTON, "md:hidden")}
+          >
+            <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
+          </Link>
+          {bot !== null ? (
+            <>
+              {/* The avatar (36 inside its 44 target) is the way to Edit bot; the
+                name and caption are plain text. A hold on either opens the open
+                chat's settings. */}
               <Link
                 to="/bots/$botId/edit"
                 params={{ botId: bot.botId }}
                 aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
                 aria-describedby={holdHintId}
-                {...holdProps(lineHold)}
+                {...holdProps(avatarHold)}
                 className={cn(
-                  "personal-hold-target flex h-[31px] min-w-0 shrink-0 items-start rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                  "personal-hold-target grid size-11 shrink-0 place-items-center rounded-full outline-none active:opacity-70",
                   NO_TOUCH_SELECT,
                 )}
               >
-                <ConversationHeaderLine
+                <BotAvatar
+                  shape={bot.avatarShape}
+                  color={bot.avatarColor}
+                  size={36}
+                  label={bot.name}
+                  motion={motionForConversationState(conversationState, turnThinking)}
+                  comet={perfOptimizationOn("anim-comet")}
+                  thought="header"
+                />
+              </Link>
+              <div
+                {...holdProps(lineHold)}
+                className={cn(
+                  "personal-hold-target flex min-h-11 min-w-0 flex-1 items-center rounded-[var(--personal-radius-button)] px-1 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                  NO_TOUCH_SELECT,
+                )}
+              >
+                <ConversationHeaderIdentity
                   name={bot.name}
                   chatTitle={chatTitle}
                   muted={botMuted}
                   contextBadge={contextBadge}
-                >
-                  {provider !== null || conversationState !== "idle" ? (
-                    <ConversationSubtitle
-                      state={conversationState}
-                      modelLabel={headerModelLabel}
-                      modelNote={headerModelNote}
-                      status={headerStatus}
-                    />
-                  ) : null}
-                </ConversationHeaderLine>
-              </Link>
-              <ChatChips
-                botId={botId}
-                botName={bot.name}
-                chips={chipRow}
-                openCount={chipModel.openCount}
-                onNewChat={onChipNewChat}
-                onChipSettings={openSettings}
-                resortEpoch={frozenOwner.resortEpoch}
-              />
-            </div>
-          </>
-        ) : bot !== null ? (
-          <Link
-            to="/bots/$botId/edit"
-            params={{ botId: bot.botId }}
-            aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
-            aria-describedby={holdHintId}
-            {...holdProps(singleHold)}
-            className={cn(
-              "personal-hold-target flex min-h-11 min-w-0 flex-1 items-center gap-4 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
-              NO_TOUCH_SELECT,
-            )}
-          >
-            <BotAvatar
-              shape={bot.avatarShape}
-              color={bot.avatarColor}
-              size={48}
-              label={bot.name}
-              motion={motionForConversationState(conversationState, turnThinking)}
-              comet={perfOptimizationOn("anim-comet")}
-              thought="header"
-            />
-            <div className="min-w-0 flex-1">
-              <ConversationHeaderName
-                name={bot.name}
-                chatTitle={chatTitle}
-                muted={botMuted}
-                contextBadge={contextBadge}
-              />
-              {provider !== null || conversationState !== "idle" ? (
-                <ConversationSubtitle
-                  state={conversationState}
-                  modelLabel={headerModelLabel}
-                  modelNote={headerModelNote}
-                  status={headerStatus}
+                  caption={headerCaption}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              {headerName.status === "loading" ? (
+                <span
+                  aria-hidden="true"
+                  className="size-11 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
                 />
               ) : null}
-            </div>
-          </Link>
-        ) : (
-          <>
-            {headerName.status === "loading" ? (
-              <span
-                aria-hidden="true"
-                className="size-12 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
-              />
-            ) : null}
-            <div className="min-w-0 flex-1">
-              {headerName.status === "loading" ? (
+              <div className="min-w-0 flex-1 px-1">
+                {headerName.status === "loading" ? (
+                  <>
+                    <h1 className="sr-only">Loading chat</h1>
+                    <span
+                      aria-hidden="true"
+                      className="block h-5 w-32 max-w-full rounded-md bg-[var(--personal-fill-muted)]"
+                    />
+                  </>
+                ) : (
+                  <h1 className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
+                    {headerName.name}
+                  </h1>
+                )}
+              </div>
+            </>
+          )}
+          {sidePanelFits ? (
+            <button
+              type="button"
+              aria-label="Computer and routines panel"
+              aria-expanded={sidePanelOpen}
+              aria-controls={sidePanelOpen ? CONVERSATION_SIDE_PANEL_ID : undefined}
+              onClick={() => setPersonalPreference("showChatSidePanel", !sidePanelOpen)}
+              className={cn(ICON_BUTTON, "text-[var(--personal-text-secondary)]")}
+            >
+              {sidePanelOpen ? (
+                <PanelRightClose aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+              ) : (
+                <PanelRightOpen aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+              )}
+            </button>
+          ) : null}
+          <Menu>
+            <MenuTrigger
+              render={
+                <button
+                  ref={menuButtonRef}
+                  type="button"
+                  aria-label="Chat options"
+                  className={ICON_BUTTON}
+                />
+              }
+            >
+              <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
+            </MenuTrigger>
+            <MenuPopup align="end" className="personal-app personal-menu min-w-48">
+              {interruptInput !== null ? (
+                <MenuItem onClick={() => void onStopFromMenu()}>Stop</MenuItem>
+              ) : null}
+              {bot !== null && providerWait ? (
+                <MenuItem
+                  onClick={() =>
+                    void navigate({ to: "/bots/$botId/edit", params: { botId: bot.botId } })
+                  }
+                >
+                  Switch model…
+                </MenuItem>
+              ) : null}
+              {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
+              {/* The one door to the chat's own actions (pin, snooze, rename, archive...): the sheet
+                holds them, so the menu keeps no copies. */}
+              <MenuItem onClick={() => openSettings(threadIdParam, menuButtonRef.current)}>
+                Chat settings…
+                <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)]">
+                  {chatSettingsHint(chipsShown)}
+                </span>
+              </MenuItem>
+              <MenuSeparator />
+              {bot !== null ? (
+                <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
+                  New chat
+                </MenuItem>
+              ) : null}
+              <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
+                All chats
+                {environmentId !== null && list.data !== null ? (
+                  <AllChatsCount
+                    environmentId={environmentId}
+                    botId={botId}
+                    links={list.data.threads}
+                  />
+                ) : null}
+              </MenuItem>
+              {bot !== null ? (
                 <>
-                  <h1 className="sr-only">Loading chat</h1>
-                  <span
-                    aria-hidden="true"
-                    className="block h-5 w-32 max-w-full rounded-md bg-[var(--personal-fill-muted)]"
+                  <MenuSeparator />
+                  <BotMuteMenuItems
+                    bot={bot}
+                    now={now.getTime()}
+                    onChange={(mute) => void setBotMute(bot, mute)}
                   />
                 </>
-              ) : (
-                <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-                  {headerName.name}
-                </h1>
-              )}
-              {provider !== null || conversationState !== "idle" ? (
-                <ConversationSubtitle
-                  state={conversationState}
-                  modelLabel={null}
-                  status={headerStatus}
-                />
               ) : null}
-            </div>
-          </>
-        )}
-        {sidePanelFits ? (
-          <button
-            type="button"
-            aria-label="Computer and routines panel"
-            aria-expanded={sidePanelOpen}
-            aria-controls={sidePanelOpen ? CONVERSATION_SIDE_PANEL_ID : undefined}
-            onClick={() => setPersonalPreference("showChatSidePanel", !sidePanelOpen)}
-            className={cn(
-              ICON_BUTTON,
-              "text-[var(--personal-text-secondary)]",
-              chipsShown && "mt-0.5 self-start",
-            )}
-          >
-            {sidePanelOpen ? (
-              <PanelRightClose aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
-            ) : (
-              <PanelRightOpen aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
-            )}
-          </button>
+            </MenuPopup>
+          </Menu>
+        </div>
+        {chipsShown ? (
+          <ChatChips
+            botId={botId}
+            botName={bot?.name ?? "this bot"}
+            chips={chipRow}
+            onNewChat={onChipNewChat}
+            onChipSettings={openSettings}
+            resortEpoch={frozenOwner.resortEpoch}
+          />
         ) : null}
-        <Menu>
-          <MenuTrigger
-            render={
-              <button
-                ref={menuButtonRef}
-                type="button"
-                aria-label="Chat options"
-                className={cn(ICON_BUTTON, chipsShown && "mt-0.5 self-start")}
-              />
-            }
-          >
-            <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
-          </MenuTrigger>
-          <MenuPopup align="end" className="personal-app personal-menu min-w-48">
-            {interruptInput !== null ? (
-              <MenuItem onClick={() => void onStopFromMenu()}>Stop</MenuItem>
-            ) : null}
-            {bot !== null && providerWait ? (
-              <MenuItem
-                onClick={() =>
-                  void navigate({ to: "/bots/$botId/edit", params: { botId: bot.botId } })
-                }
-              >
-                Switch model…
-              </MenuItem>
-            ) : null}
-            {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
-            {/* The one door to the chat's own actions (pin, snooze, rename, archive...): the sheet
-                holds them, so the menu keeps no copies. */}
-            <MenuItem onClick={() => openSettings(threadIdParam, menuButtonRef.current)}>
-              Chat settings…
-              <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)]">
-                {chatSettingsHint(chipsShown)}
-              </span>
-            </MenuItem>
-            <MenuSeparator />
-            {bot !== null ? (
-              <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
-                New chat
-              </MenuItem>
-            ) : null}
-            <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
-              All chats
-              {environmentId !== null && list.data !== null ? (
-                <AllChatsCount
-                  environmentId={environmentId}
-                  botId={botId}
-                  links={list.data.threads}
-                />
-              ) : null}
-            </MenuItem>
-            {bot !== null ? (
-              <>
-                <MenuSeparator />
-                <BotMuteMenuItems
-                  bot={bot}
-                  now={now.getTime()}
-                  onChange={(mute) => void setBotMute(bot, mute)}
-                />
-              </>
-            ) : null}
-          </MenuPopup>
-        </Menu>
       </header>
       {newChat.dialog}
       {settingsTarget !== null && settingsRows !== null ? (

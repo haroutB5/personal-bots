@@ -1423,7 +1423,7 @@ export function MessageList({
           above the chat scrollable, so the whole chat drags up off screen. */}
       <div
         ref={scrollerRef}
-        className="personal-column personal-scroll-quiet relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
+        className="personal-column personal-scroll-quiet personal-thread-fade relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
       >
         <div
           ref={contentRef}

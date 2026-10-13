@@ -64,7 +64,6 @@ async function renderChips(href: string) {
         botId="b1"
         botName="Backend"
         chips={[chip("t1", false), chip("t2", true), chip("t3", false)]}
-        openCount={3}
         onNewChat={() => {}}
       />
     ),
@@ -97,19 +96,22 @@ async function renderChips(href: string) {
   return { tree: renderer!, scrollTo };
 }
 
-it("marks only the open chat's chip as the current page, not the All link", async () => {
+it("marks only the open chat's chip as the current page, and ends with the New chip", async () => {
   const { tree } = await renderChips("/bots/b1/t2");
   const current = tree.root.findAll(
     (node) => typeof node.type === "string" && node.props["aria-current"] === "page",
   );
   expect(current.map((node) => node.props["data-chip-id"])).toEqual(["t2"]);
-  const all = tree.root.findAll(
-    (node) =>
-      node.type === "a" && String(node.props["aria-label"]).startsWith("All chats with Backend"),
+  const allLinks = tree.root.findAll(
+    (node) => node.type === "a" && String(node.props["aria-label"]).startsWith("All chats with"),
   );
-  expect(all).toHaveLength(1);
-  expect(all[0]!.props["aria-current"]).toBeUndefined();
-  expect(all[0]!.props["data-status"]).toBeUndefined();
+  expect(allLinks).toHaveLength(0);
+  const newChip = tree.root.find(
+    (node) => node.type === "button" && node.props["aria-label"] === "New chat with Backend",
+  );
+  expect(String(newChip.find((node) => node.type === "span").props.className)).toContain(
+    "personal-chip-plus",
+  );
 });
 
 it("still centres the row on the current chip", async () => {

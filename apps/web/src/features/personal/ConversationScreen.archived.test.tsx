@@ -170,8 +170,7 @@ vi.mock("./BotMute", () => ({
 vi.mock("./ConversationHeaderName", async (importOriginal) => ({
   conversationChatTitle: (await importOriginal<typeof import("./ConversationHeaderName")>())
     .conversationChatTitle,
-  ConversationHeaderName: ({ name }: { name: string }) => <h1>{name}</h1>,
-  ConversationHeaderLine: ({ name }: { name: string }) => <h1 data-header-line="">{name}</h1>,
+  ConversationHeaderIdentity: ({ name }: { name: string }) => <h1 data-header-line="">{name}</h1>,
 }));
 vi.mock("./usePersonalGroups", () => ({ usePersonalGroupRelayThreadIds: () => new Set() }));
 vi.mock("./chatChipRows", async (importOriginal) => ({
@@ -181,16 +180,14 @@ vi.mock("./chatChipRows", async (importOriginal) => ({
 vi.mock("./ChatChips", () => ({
   ChatChips: ({
     chips,
-    openCount,
     onNewChat,
     onChipSettings,
   }: {
     chips: Array<{ threadId: string; text: string }>;
-    openCount: number;
     onNewChat: () => void;
     onChipSettings: (threadId: string, opener: unknown) => void;
   }) => (
-    <nav data-chips={openCount} data-order={chips.map((chip) => chip.threadId).join(",")}>
+    <nav data-chips={chips.length} data-order={chips.map((chip) => chip.threadId).join(",")}>
       {chips.map((chip) => (
         <span key={chip.threadId}>
           {chip.text}
@@ -251,6 +248,10 @@ vi.mock("./conversationModel", () => ({
   buildConversationItems: () => [],
   contextBadgeLabel: () => null,
   conversationHeaderStateLabel: () => null,
+  conversationHeaderCaption: ({ modelLabel }: { modelLabel: string | null }) => ({
+    text: modelLabel ?? "Idle",
+    tone: "idle",
+  }),
   deriveConversationState: () => "idle",
   friendlyTurnError: (message: string) => ({ message }),
   isTurnThinking: () => false,
@@ -825,7 +826,7 @@ function headerClass(): string {
   return String(header!.props.className);
 }
 
-it("keeps the 64 px header and no chips with one chat", async () => {
+it("keeps the name row and no chips with one chat", async () => {
   state.chipModel = {
     ...CHIPS,
     chips: [CHIP_ONE],
@@ -834,19 +835,19 @@ it("keeps the 64 px header and no chips with one chat", async () => {
     visible: false,
   };
   await renderScreen();
-  expect(headerClass()).toContain("h-16");
-  expect(headerClass()).not.toContain("h-[72px]");
+  // The header is the 52 px name row; the chip strip (row 2) is absent.
+  expect(headerClass()).toContain("flex-col");
+  expect(headerClass()).not.toContain("h-16");
   expect(renderer!.root.findAll((node) => node.props["data-chips"] !== undefined)).toHaveLength(0);
-  expect(renderer!.root.findAll((node) => node.props["data-header-line"] === "")).toHaveLength(0);
+  expect(renderer!.root.findAll((node) => node.props["data-header-line"] === "")).toHaveLength(1);
 });
 
-it("takes the 72 px header and shows the chips from two chats", async () => {
+it("shows the chip strip on its own row from two chats", async () => {
   state.chipModel = CHIPS;
   await renderScreen();
-  expect(headerClass()).toContain("h-[72px]");
-  expect(headerClass()).not.toContain("h-16");
+  expect(headerClass()).toContain("flex-col");
   expect(renderer!.root.findAll((node) => node.props["data-chips"] === 2)).toHaveLength(1);
-  // The name line carries the status now: the chat title lives in the chip.
+  // The name row keeps the name and its caption: the chat title lives in the chip.
   expect(renderer!.root.findAll((node) => node.props["data-header-line"] === "")).toHaveLength(1);
   expect(text()).toContain("hbots");
 });

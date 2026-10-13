@@ -929,15 +929,18 @@
   }
 }
 
-/* Chat chips in a bot's chat header (ChatChips.tsx): 24 px pills inside a 44 px
- * tap band. Colours come from the tokens above; the dots are the one place
- * the light and dark values differ (--personal-chip-*). */
+/* Chat chips in a bot's chat header (ChatChips.tsx, SPEC 2.7): 32 px pills in a
+ * 44 px tap band, one strip under the name row. The strip's own fades are
+ * 40 px (the home rail's cue, stronger); the dots are the one place the light
+ * and dark values differ (--personal-chip-*). */
 .personal-chip-row {
   --chip-fade-left: 0px;
   --chip-fade-right: 0px;
   display: flex;
   align-items: center;
-  height: 44px;
+  gap: 8px;
+  height: 48px;
+  padding: 0 16px 4px;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -949,10 +952,10 @@
   display: none;
 }
 .personal-chip-row[data-fade-left="true"] {
-  --chip-fade-left: 24px;
+  --chip-fade-left: 40px;
 }
 .personal-chip-row[data-fade-right="true"] {
-  --chip-fade-right: 24px;
+  --chip-fade-right: 40px;
 }
 .personal-chip-row[data-fade-left="true"],
 .personal-chip-row[data-fade-right="true"] {
@@ -972,7 +975,7 @@
   );
 }
 
-/* The tap target: 44 px tall, 3 px each side, so pills sit 6 px apart and no two tap areas overlap. */
+/* The tap target: 44 px tall, the pill's own width (its 12 px padding keeps it >= 44). */
 .personal-chip-hit {
   display: flex;
   flex-shrink: 0;
@@ -980,7 +983,7 @@
   height: 44px;
   min-width: 44px;
   justify-content: center;
-  padding: 0 3px;
+  padding: 0;
   background: none;
   border: 0;
   color: inherit;
@@ -996,44 +999,37 @@
 .personal-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  max-width: 140px;
-  height: 24px;
-  padding: 0 10px;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
   border-radius: 9999px;
   background-color: var(--personal-fill-muted);
-  color: var(--personal-text);
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 600;
+  color: var(--personal-text-secondary);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
   white-space: nowrap;
   transition:
     background-color 150ms ease,
+    color 150ms ease,
     transform 80ms ease-out,
     opacity 80ms ease-out;
 }
+/* Unread comes forward without a fill of its own: the dot already marks it. */
 .personal-chip[data-unread="true"] {
-  font-weight: 800;
+  color: var(--personal-text);
+  font-weight: 600;
 }
 .personal-chip[data-current="true"] {
   background-color: var(--personal-primary);
   color: var(--personal-primary-text);
-}
-.personal-chip[data-state="needs_you"] {
-  background-color: var(--personal-review-bg);
-  box-shadow: inset 0 0 0 1px var(--personal-review);
+  font-weight: 600;
 }
 .personal-chip-plus {
-  width: 24px;
-  padding: 0;
-  justify-content: center;
+  padding: 0 12px;
   background-color: transparent;
   box-shadow: inset 0 0 0 1px var(--personal-border-strong);
-}
-.personal-chip-all {
-  background-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--personal-border-strong);
-  color: var(--personal-text-secondary);
+  color: var(--personal-text);
 }
 .personal-chip-hit:active .personal-chip {
   transform: scale(0.96);
@@ -1087,10 +1083,16 @@
   .personal-chip-hit:hover .personal-chip:not([data-current="true"]):not([data-state="needs_you"]) {
     background-color: var(--personal-border);
   }
-  .personal-chip-hit:hover .personal-chip-plus,
-  .personal-chip-hit:hover .personal-chip-all {
+  .personal-chip-hit:hover .personal-chip-plus {
     background-color: var(--personal-fill-muted);
   }
+}
+
+/* The thread fades as it scrolls under the chat header (SPEC 2.7): a 24 px top
+ * mask on the message list, the same trick as the strip's own edge fade. */
+.personal-thread-fade {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 24px);
+  mask-image: linear-gradient(180deg, transparent 0, #000 24px);
 }
 
 /* One dot per chip, the strongest state wins (chatChipRows.ts). */

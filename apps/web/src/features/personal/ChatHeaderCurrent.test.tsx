@@ -68,13 +68,7 @@ async function renderChatHeader(chips: ReadonlyArray<ChatChip>) {
       <>
         <ConversationShellHeader botId="b1" />
         {chips.length >= 2 ? (
-          <ChatChips
-            botId="b1"
-            botName="Backend"
-            chips={chips}
-            openCount={chips.length}
-            onNewChat={() => {}}
-          />
+          <ChatChips botId="b1" botName="Backend" chips={chips} onNewChat={() => {}} />
         ) : null}
       </>
     ),
@@ -104,13 +98,12 @@ it("has one aria-current in the header, the open chat's chip, while the strip sh
     chip("t3", false),
   ]);
   expect(current.map((node) => node.props["data-chip-id"])).toEqual(["t2"]);
-  // Back, three chips and All are all in the document, so the count above means something.
+  // Back and the three chips are all in the document, so the count above means something.
   expect(links.map((node) => node.props["aria-label"])).toEqual([
     "Back to Bots",
     "Chat t1",
     "Chat t2, current chat",
     "Chat t3",
-    "All chats with Backend, 3 open",
   ]);
 });
 
