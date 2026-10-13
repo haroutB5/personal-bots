@@ -179,4 +179,35 @@ describe("secure in-chat login requests", () => {
       expect(state.saved).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+  it.effect("lists only the requests still waiting on the owner, across every chat", () => {
+    const { layer } = fixture();
+    return Effect.gen(function* () {
+      const service = yield* LoginRequests.PersonalLoginRequestService;
+      const first = yield* service.request(input);
+      const second = yield* service.request({
+        ...input,
+        threadId: ThreadId.make("thread-two"),
+      });
+      // A settled one is history and stays out of the pending list.
+      const filled = yield* service.request({
+        ...input,
+        threadId: ThreadId.make("thread-three"),
+      });
+      expect((yield* service.submit(credentials(filled.requestId))).status).toBe("filled");
+
+      const pending = yield* service.listPending();
+      expect(pending.requests.map((row) => row.requestId).sort()).toEqual(
+        [first.requestId, second.requestId].sort(),
+      );
+      expect(
+        pending.requests.every((row) => row.status === "pending" || row.status === "filling"),
+      ).toBe(true);
+      // Same item shape as the per-thread list, and no credential material.
+      const perThread = yield* service.list({ threadId: input.threadId });
+      expect(Object.keys(perThread.requests[0] ?? {}).sort()).toEqual(
+        Object.keys(pending.requests[0] ?? {}).sort(),
+      );
+      expect(yield* encodeJson(pending)).not.toMatch(/fixture-user|fixture-password/);
+    }).pipe(Effect.provide(layer));
+  });
 });

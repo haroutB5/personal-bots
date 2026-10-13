@@ -173,6 +173,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalConnectionApprovalsCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLoginsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalLoginRequestsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalLoginRequestsListPending]: AuthOrchestrationReadScope,
   [WS_METHODS.personalLoginRequestsSubmit]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLoginRequestsCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLoginsCreate]: AuthOrchestrationOperateScope,

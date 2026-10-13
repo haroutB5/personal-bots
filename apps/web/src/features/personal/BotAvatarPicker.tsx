@@ -24,32 +24,42 @@ export interface BotAvatarPickerProps {
   color: string;
   onChange: (next: BotAvatarSelection) => void;
   previewName: string;
+  /**
+   * False when the screen already shows the live avatar beside the name (the
+   * bot form does, name-and-look-first): the shape and colour grids then
+   * stand alone, so the same picture is not drawn twice on one screen.
+   */
+  showPreview?: boolean;
 }
 
 /**
- * Avatar picker: live 72px preview, 7 shape buttons and 12 colour swatches.
- * Every option is a native button (≥44px target, `aria-pressed`, visible
- * focus) so the picker is fully keyboard operable.
+ * Avatar picker: live 72px preview (unless the caller shows it), 7 shape
+ * buttons and 12 colour swatches. Every option is a native button (≥44px
+ * target, `aria-pressed`, visible focus) so the picker is fully keyboard
+ * operable.
  */
 export function BotAvatarPicker({
   shape,
   color,
   onChange,
   previewName,
+  showPreview = true,
 }: BotAvatarPickerProps): JSX.Element {
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-center gap-4">
-        <BotAvatar shape={shape} color={color} size={72} label={`${previewName} preview`} />
-        <div className="min-w-0">
-          <p className="truncate text-lg font-semibold text-[var(--personal-text)]">
-            {previewName || "Your bot"}
-          </p>
-          <p className="text-sm text-[var(--personal-text-secondary)]">
-            {BOT_AVATAR_SHAPE_LABELS[shape]}
-          </p>
+      {showPreview ? (
+        <div className="flex items-center gap-4">
+          <BotAvatar shape={shape} color={color} size={72} label={`${previewName} preview`} />
+          <div className="min-w-0">
+            <p className="truncate text-lg font-semibold text-[var(--personal-text)]">
+              {previewName || "Your bot"}
+            </p>
+            <p className="text-sm text-[var(--personal-text-secondary)]">
+              {BOT_AVATAR_SHAPE_LABELS[shape]}
+            </p>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <fieldset>
         <legend className="mb-2 text-sm font-medium text-[var(--personal-text)]">Shape</legend>

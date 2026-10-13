@@ -10,14 +10,12 @@ import { cn } from "~/lib/utils";
 
 import { BotAvatar } from "./BotAvatar";
 import type { TeamGroup } from "./teamDiagramModel";
+import type { TeamCaption, TeamCaptionTone } from "./teamCaption";
 import {
   buildConstellationLayout,
-  nodeLabel,
+  HUB_AVATAR,
   NODE_AVATAR,
   NODE_WIDTH,
-  spokeIsClear,
-  spokeLine,
-  spokeWidth,
 } from "./teamConstellationModel";
 import type { TeamDragHandlers } from "./useTeamBotDrag";
 
@@ -25,43 +23,69 @@ const DEFAULT_SKY_WIDTH = 348;
 
 export interface ConstellationBot {
   readonly bot: PersonalBot;
+  /** "Sonnet 5.5 · H": the model and effort the caption shows when idle. */
   readonly modelLabel: string | null;
-  /** The bot has a turn running now. */
+  /** A turn is running now. */
   readonly live: boolean;
+  /** The card's own words for what the bot is doing ({@link teamBotCaption}). */
+  readonly caption: TeamCaption;
+  /** An approval, a question, a secret or browser help is waiting on the owner. */
+  readonly needsYou: boolean;
   /** Who a running handoff to this bot is for, when there is one. */
   readonly workingFor: string | null;
 }
 
-/** The lead's handoffs to a member: how many this week, and whether one is open. */
-export interface ConstellationSpoke {
-  readonly recent: number;
-  readonly running: boolean;
-}
-
 const RING_CLASS =
   "rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-surface)]";
+
+/** The caption's colour per tone: the design tokens Frontend adds, with the tokens they alias. */
+const TONE_CLASS: Record<TeamCaptionTone, string> = {
+  working: "text-[var(--personal-state-working,var(--personal-live))]",
+  needs: "text-[var(--personal-state-needs,var(--personal-review-text))]",
+  thinking: "text-[var(--personal-state-thinking,var(--personal-text-secondary))]",
+  idle: "text-[var(--personal-state-idle,var(--personal-text-tertiary))]",
+};
+
+/** The amber ring a bot waiting on the owner gets, 4 px outside its avatar. */
+const NEEDS_RING_CLASS =
+  "ring-2 ring-[var(--personal-state-needs,var(--personal-review-text))] ring-offset-4 ring-offset-[var(--personal-surface)]";
 
 function bots(count: number): string {
   return `${String(count)} ${count === 1 ? "bot" : "bots"}`;
 }
 
 /**
- * One team as a card: the lead is the hub, the members orbit it, and a spoke
- * runs from the hub to every member the lead handed work to this week (thicker
- * for more, green and dashed while one is running). Every spoke starts at the
- * hub, so no two ever cross.
+ * The line under the team's name: "3 working · 1 needs you", or nothing at
+ * all. A bot that is thinking counts as working - it is mid-turn, just quiet -
+ * the same way the Bots list reads it.
+ */
+function teamStatusLine(entries: ReadonlyArray<ConstellationBot>): {
+  readonly working: number;
+  readonly needs: number;
+} {
+  return {
+    working: entries.filter(
+      (entry) => entry.caption.tone === "working" || entry.caption.tone === "thinking",
+    ).length,
+    needs: entries.filter((entry) => entry.needsYou).length,
+  };
+}
+
+/**
+ * One team as a card (design A): the lead is the hub, its members orbit it on
+ * one ring dotted at 0.8 opacity, and every label sits on its own plate, so
+ * the line never runs through text. Each caption says what the bot is doing -
+ * a step in green, a state word, or the model with effort when it is idle -
+ * and a bot the owner owes something wears the amber ring.
  *
- * A name wraps to two lines under its avatar and the model label is on the
- * node's accessible name; the full names and models are in the list the
- * "N bots" button opens, which is also where a crowded team's overflow goes.
+ * The header keeps the whole count in words ("N bots · Move") and opens the
+ * members sheet, which is also where a crowded card's "+N" seat leads.
  */
 export function TeamConstellationCard({
   group,
   label,
   lead,
   members,
-  spokes,
-  maxSpoke,
   custom,
   removable,
   removeBusy,
@@ -75,9 +99,6 @@ export function TeamConstellationCard({
   readonly label: string;
   readonly lead: ConstellationBot | null;
   readonly members: ReadonlyArray<ConstellationBot>;
-  /** Keyed by member bot id. */
-  readonly spokes: ReadonlyMap<string, ConstellationSpoke>;
-  readonly maxSpoke: number;
   readonly custom: boolean;
   readonly removable: boolean;
   readonly removeBusy: boolean;
@@ -104,57 +125,52 @@ export function TeamConstellationCard({
     return () => observer.disconnect();
   }, []);
 
-  const lines = useMemo(() => members.map((entry) => nodeLabel(entry.bot.name)), [members]);
-  const layout = useMemo(() => buildConstellationLayout(lines, width), [lines, width]);
+  const layout = useMemo(
+    () => buildConstellationLayout(members.length, width),
+    [members.length, width],
+  );
   const total = members.length + (lead === null ? 0 : 1);
+  const entries = lead === null ? members : [lead, ...members];
+  const status = teamStatusLine(entries);
+  // The "+N" seat is the layout's last seat; the members it hides are in the sheet.
   const drawnMembers = layout.hidden > 0 ? members.slice(0, layout.slots.length - 1) : members;
-
-  // A spoke that would run behind another node is not drawn: that member shows
-  // its week's count on the avatar instead.
-  const { spokeMarks, counted } = useMemo(() => {
-    const marks: Array<
-      {
-        botId: string;
-        line: { x1: number; y1: number; x2: number; y2: number };
-      } & ConstellationSpoke
-    > = [];
-    const behind = new Map<string, number>();
-    if (lead === null) return { spokeMarks: marks, counted: behind };
-    drawnMembers.forEach((entry, index) => {
-      const slot = layout.slots[index];
-      const info = spokes.get(entry.bot.botId);
-      if (slot === undefined || info === undefined) return;
-      const line = spokeLine(layout.hub, slot);
-      if (line !== null && spokeIsClear(layout, index)) {
-        marks.push({ botId: entry.bot.botId, line, ...info });
-      } else if (info.recent > 0) {
-        behind.set(entry.bot.botId, info.recent);
-      }
-    });
-    return { spokeMarks: marks, counted: behind };
-  }, [drawnMembers, layout, lead, spokes]);
-  const anyRunning = spokeMarks.some((mark) => mark.running);
-  const anyRecent = spokeMarks.some((mark) => !mark.running && mark.recent > 0);
-  const leadName = lead?.bot.name ?? "";
+  const seat = layout.slots[layout.slots.length - 1];
 
   return (
     <section
       data-team={group.team}
       aria-label={`${label}, ${bots(total)}`}
-      className="relative mb-3.5 overflow-hidden rounded-[18px] border border-[var(--personal-border)] bg-[var(--personal-surface)] shadow-[var(--personal-shadow-card)]"
+      className="relative mb-4 overflow-hidden rounded-2xl border border-[var(--personal-border)] bg-[var(--personal-surface)] shadow-[var(--personal-shadow-card)]"
     >
-      <div className="relative z-[3] flex min-h-12 items-center gap-1 pt-2 pr-1 pl-4">
-        <h2 className="min-w-0 truncate text-[17px] leading-6 font-bold text-[var(--personal-text)]">
-          {label}
-        </h2>
+      <div className="relative z-[3] flex items-center gap-2 pt-4 pr-3 pl-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-[20px] leading-6 font-bold text-[var(--personal-text)]">
+            {label}
+          </h2>
+          {status.working === 0 && status.needs === 0 ? null : (
+            <p className="mt-0.5 text-[13px] leading-4 font-semibold text-[var(--personal-text-secondary)]">
+              {status.working > 0 ? (
+                <span className={TONE_CLASS.working}>{status.working} working</span>
+              ) : null}
+              {status.working > 0 && status.needs > 0 ? " · " : null}
+              {status.needs > 0 ? (
+                <span className={TONE_CLASS.needs}>{status.needs} needs you</span>
+              ) : null}
+            </p>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => onOpenMembers(group.team)}
-          aria-label={`See all ${bots(total)} on ${label}`}
-          className="flex min-h-11 min-w-11 flex-1 items-center gap-0.5 rounded-[var(--personal-radius-button)] px-1 text-left text-[13px] text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          aria-label={`See all ${bots(total)} on ${label}, or move them`}
+          className="flex h-11 shrink-0 items-center gap-1 rounded-full bg-[var(--personal-fill-muted)] pr-2.5 pl-3.5 text-[15px] leading-5 font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
-          {bots(total)}
-          <ChevronRight aria-hidden="true" className="size-4" strokeWidth={2} />
+          {bots(total)} · Move
+          <ChevronRight
+            aria-hidden="true"
+            className="size-4 text-[var(--personal-text-secondary)]"
+            strokeWidth={2}
+          />
         </button>
         {custom ? (
           <Menu>
@@ -185,40 +201,19 @@ export function TeamConstellationCard({
           height={layout.height}
           className="pointer-events-none absolute inset-0"
         >
-          {layout.orbits.map((orbit, index) => (
+          {layout.slots.length === 0 ? null : (
             <ellipse
-              key={`orbit:${String(index)}`}
               cx={layout.hub.x}
               cy={layout.hub.y}
-              rx={orbit.rx}
-              ry={orbit.ry}
+              rx={layout.rx}
+              ry={layout.ry}
               fill="none"
-              stroke="var(--personal-border)"
+              stroke="var(--personal-border-strong)"
               strokeWidth="1.5"
-              strokeDasharray="2 5"
+              strokeDasharray="2 6"
+              strokeLinecap="round"
+              opacity=".8"
             />
-          ))}
-          {spokeMarks.map((mark) =>
-            mark.running ? (
-              <line
-                key={`spoke:${mark.botId}`}
-                {...mark.line}
-                stroke="var(--personal-team-live)"
-                strokeWidth="3"
-                strokeDasharray="8 5"
-                strokeLinecap="round"
-                className="personal-team-spoke-live"
-              />
-            ) : (
-              <line
-                key={`spoke:${mark.botId}`}
-                {...mark.line}
-                stroke="var(--personal-team-line)"
-                strokeWidth={spokeWidth(mark.recent, maxSpoke)}
-                strokeLinecap="round"
-                opacity={anyRunning ? 0.45 : 1}
-              />
-            ),
           )}
         </svg>
 
@@ -226,13 +221,13 @@ export function TeamConstellationCard({
           <div
             role="img"
             aria-label="No lead. Drop a bot here to make it the lead."
-            className="absolute z-[2] flex w-[132px] flex-col items-center"
+            className="absolute z-[2] flex w-[160px] flex-col items-center"
             style={{ left: layout.hub.x, top: layout.hub.y - 36, transform: "translateX(-50%)" }}
           >
-            <span className="grid size-[72px] place-items-center rounded-full border-2 border-dashed border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)] not-dark:border-[var(--personal-team-recent)]">
+            <span className="grid size-[72px] place-items-center rounded-full border-2 border-dashed border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)]">
               <Crown aria-hidden="true" className="size-4" strokeWidth={2} />
             </span>
-            <span className="relative -mt-3 flex min-h-[26px] items-center rounded-full bg-[var(--personal-surface)] px-3 text-sm font-semibold text-[var(--personal-text-secondary)] shadow-[0_0_0_1px_var(--personal-border)]">
+            <span className="lbl relative -mt-3 rounded-md bg-[var(--personal-surface)] px-1 text-sm font-semibold text-[var(--personal-text-secondary)]">
               No lead
             </span>
           </div>
@@ -259,101 +254,54 @@ export function TeamConstellationCard({
               handlers={handlersFor(entry.bot.botId)}
               lifted={draggingBotId === entry.bot.botId}
               moving={movingBotId === entry.bot.botId}
-              handoffs={spokes.get(entry.bot.botId)?.recent ?? 0}
-              showCount={counted.has(entry.bot.botId)}
             />
           );
         })}
 
-        {layout.hidden > 0 ? (
-          <MoreNode
-            x={layout.slots[layout.slots.length - 1]!.x}
-            y={layout.slots[layout.slots.length - 1]!.y}
-            hidden={layout.hidden}
-            label={label}
-            onOpen={() => onOpenMembers(group.team)}
-          />
+        {layout.hidden > 0 && seat !== undefined ? (
+          <button
+            type="button"
+            onClick={() => onOpenMembers(group.team)}
+            aria-label={`${String(layout.hidden)} more bots on ${label}. See all.`}
+            className="absolute z-[2] flex flex-col items-center rounded-[10px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            style={nodeStyle(seat.x, seat.y, false)}
+          >
+            <span
+              aria-hidden="true"
+              className="grid size-9 place-items-center rounded-full border-2 border-dashed border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] text-[13px] font-bold"
+            >
+              +{layout.hidden}
+            </span>
+            <span className="lbl mt-1 rounded-md bg-[var(--personal-surface)] px-1 text-[13px] leading-4 font-semibold text-[var(--personal-text-secondary)]">
+              See all
+            </span>
+          </button>
         ) : null}
       </div>
-
-      {anyRunning || anyRecent ? (
-        <div className="relative z-[3] flex flex-wrap gap-x-3.5 gap-y-1 px-4 pb-3.5 text-xs text-[var(--personal-text-secondary)]">
-          {anyRunning ? (
-            <span className="inline-flex items-center gap-1.5">
-              <svg aria-hidden="true" width="22" height="4">
-                <line
-                  x1="1"
-                  y1="2"
-                  x2="21"
-                  y2="2"
-                  stroke="var(--personal-team-live)"
-                  strokeWidth="3"
-                  strokeDasharray="6 4"
-                  strokeLinecap="round"
-                />
-              </svg>
-              Working now for {leadName}
-            </span>
-          ) : null}
-          {anyRecent || anyRunning ? (
-            <span className="inline-flex items-center gap-1.5">
-              <svg aria-hidden="true" width="22" height="6">
-                <line
-                  x1="1"
-                  y1="3"
-                  x2="21"
-                  y2="3"
-                  stroke="var(--personal-team-line)"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                />
-              </svg>
-              Handoffs from {leadName} this week, thicker is more
-            </span>
-          ) : null}
-        </div>
-      ) : null}
     </section>
   );
 }
 
-function nodeAccessibleName(entry: ConstellationBot, isLead: boolean, handoffs = 0): string {
-  const { bot, modelLabel, workingFor } = entry;
+/**
+ * The words a node is announced by: its name, its role, what its caption says
+ * ("Atlas, team lead, Planning release 2.4" - the model when it is idle) and,
+ * for a bot the lead handed work to, who it works for.
+ */
+function nodeAccessibleName(entry: ConstellationBot, isLead: boolean): string {
+  const { bot, caption, workingFor } = entry;
   return [
     bot.name,
     isLead ? "team lead" : "",
-    modelLabel ?? "",
-    workingFor === null ? (entry.live ? "working" : "") : `working for ${workingFor}`,
-    handoffs > 0 ? `${String(handoffs)} ${handoffs === 1 ? "handoff" : "handoffs"} this week` : "",
+    caption.text,
+    workingFor === null ? "" : `working for ${workingFor}`,
   ]
     .filter(Boolean)
     .join(", ");
 }
 
-function MemberNode({
-  entry,
-  x,
-  y,
-  handlers,
-  lifted,
-  moving,
-  handoffs,
-  showCount,
-}: {
-  readonly entry: ConstellationBot;
-  readonly x: number;
-  readonly y: number;
-  readonly handlers: TeamDragHandlers;
-  readonly lifted: boolean;
-  readonly moving: boolean;
-  /** Handoffs from the lead this week. */
-  readonly handoffs: number;
-  /** No spoke was drawn to this node, so its count is shown on the avatar. */
-  readonly showCount: boolean;
-}): JSX.Element {
-  const { bot, live, workingFor } = entry;
-  const working = workingFor !== null;
-  const style: CSSProperties = {
+/** Where a node sits: the avatar's centre on the ring, its column centred on it. */
+function nodeStyle(x: number, y: number, lifted: boolean): CSSProperties {
+  return {
     left: x,
     top: y - NODE_AVATAR / 2,
     width: NODE_WIDTH,
@@ -367,8 +315,27 @@ function MemberNode({
     WebkitUserSelect: "none",
     userSelect: "none",
     WebkitTapHighlightColor: "transparent",
-    opacity: lifted ? 0.35 : moving ? 0.7 : 1,
+    opacity: lifted ? 0.35 : 1,
   };
+}
+
+function MemberNode({
+  entry,
+  x,
+  y,
+  handlers,
+  lifted,
+  moving,
+}: {
+  readonly entry: ConstellationBot;
+  readonly x: number;
+  readonly y: number;
+  readonly handlers: TeamDragHandlers;
+  readonly lifted: boolean;
+  readonly moving: boolean;
+}): JSX.Element {
+  const { bot, caption } = entry;
+  const style = nodeStyle(x, y, lifted);
   return (
     <Link
       to="/bots/$botId"
@@ -377,40 +344,36 @@ function MemberNode({
       draggable={false}
       data-bot-node={bot.botId}
       title={bot.name}
-      aria-label={nodeAccessibleName(entry, false, handoffs)}
+      aria-label={nodeAccessibleName(entry, false)}
       aria-busy={moving}
-      className="absolute z-[2] flex min-h-11 flex-col items-center gap-[3px] rounded-[10px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-      style={style}
+      className="absolute z-[2] flex flex-col items-center rounded-[10px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+      style={{ ...style, opacity: moving ? 0.7 : style.opacity }}
     >
       <span
-        aria-hidden="true"
         className={cn(
-          "relative flex size-10 items-center justify-center",
+          "flex size-9 items-center justify-center",
           RING_CLASS,
-          working &&
-            "ring-2 ring-[var(--personal-team-live)] ring-offset-2 ring-offset-[var(--personal-surface)]",
+          entry.needsYou && NEEDS_RING_CLASS,
           moving && "motion-safe:animate-pulse",
         )}
       >
         <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={NODE_AVATAR} label="" />
-        {showCount ? (
-          <span className="absolute -top-1 -right-2 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[var(--personal-text)] px-1 text-[11px] leading-none font-bold text-[var(--personal-bg)]">
-            {handoffs}
-          </span>
-        ) : null}
       </span>
-      <span
-        aria-hidden="true"
-        className={cn(
-          "flex max-w-full items-start justify-center gap-1 rounded bg-[var(--personal-surface)] px-[3px] text-center text-[12px] leading-[15px] font-semibold",
-          working || live ? "text-[var(--personal-team-live)]" : "text-[var(--personal-text)]",
-        )}
-      >
-        {working || live ? (
-          <span className="mt-[3.5px] size-2 shrink-0 rounded-full bg-[var(--personal-team-live)]" />
-        ) : null}
-        <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
+      <span className="lbl mt-1 flex flex-col items-center rounded-md bg-[var(--personal-surface)] px-1">
+        <span
+          aria-hidden="true"
+          className="line-clamp-2 max-w-[88px] text-center text-[13px] leading-4 font-semibold [overflow-wrap:anywhere]"
+        >
           {moving ? "Moving…" : bot.name}
+        </span>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "text-center text-[13px] leading-4 whitespace-nowrap",
+            TONE_CLASS[caption.tone],
+          )}
+        >
+          {caption.text}
         </span>
       </span>
     </Link>
@@ -432,7 +395,7 @@ function HubNode({
   readonly lifted: boolean;
   readonly moving: boolean;
 }): JSX.Element {
-  const { bot, modelLabel } = entry;
+  const { bot, caption } = entry;
   return (
     <Link
       to="/bots/$botId"
@@ -443,10 +406,12 @@ function HubNode({
       title={bot.name}
       aria-label={nodeAccessibleName(entry, true)}
       aria-busy={moving}
-      className="absolute z-[2] flex w-[132px] flex-col items-center rounded-[14px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+      className="absolute z-[2] flex flex-col items-center rounded-[14px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       style={{
         left: x,
-        top: y - 36,
+        // The crown sits 15 px above the disc, so the column starts there.
+        top: y - HUB_AVATAR / 2 - 15,
+        width: 160,
         transform: "translateX(-50%)",
         touchAction: "pan-y pinch-zoom",
         WebkitTouchCallout: "none",
@@ -456,74 +421,41 @@ function HubNode({
         opacity: lifted ? 0.35 : moving ? 0.7 : 1,
       }}
     >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "grid size-[72px] place-items-center rounded-full bg-[var(--personal-surface)] shadow-[0_0_0_2px_var(--personal-primary)]",
-          moving && "motion-safe:animate-pulse",
-        )}
-      >
-        <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={56} label="" />
-      </span>
-      <span
-        aria-hidden="true"
-        className="relative -mt-3 flex min-h-[26px] max-w-full items-center gap-1.5 rounded-full bg-[var(--personal-surface)] py-0.5 pr-1 pl-2.5 text-base leading-5 font-bold shadow-[0_0_0_1px_var(--personal-border)]"
-      >
-        <span className="min-w-0 truncate">{moving ? "Moving…" : bot.name}</span>
-        <span className="inline-flex h-5 shrink-0 items-center rounded-full bg-[var(--personal-primary)] px-[7px] text-[11px] leading-none font-semibold text-[var(--personal-primary-text)]">
-          Lead
-        </span>
-      </span>
-      {modelLabel === null ? null : (
+      <span className="relative flex size-16 items-center justify-center">
         <span
           aria-hidden="true"
-          className="mt-0.5 max-w-full truncate rounded-md bg-[var(--personal-surface)] px-1.5 text-xs leading-[18px] text-[var(--personal-text-secondary)]"
+          className="absolute -top-[15px] left-1/2 grid size-[22px] -translate-x-1/2 place-items-center rounded-full bg-[var(--personal-surface)]"
         >
-          {modelLabel}
+          <Crown aria-hidden="true" className={cn("size-3.5", TONE_CLASS.needs)} strokeWidth={2} />
         </span>
-      )}
+        <span
+          className={cn(
+            "flex size-16 items-center justify-center",
+            RING_CLASS,
+            entry.needsYou && NEEDS_RING_CLASS,
+            moving && "motion-safe:animate-pulse",
+          )}
+        >
+          <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={HUB_AVATAR} label="" />
+        </span>
+      </span>
+      <span className="lbl mt-1.5 flex flex-col items-center rounded-md bg-[var(--personal-surface)] px-1">
+        <span
+          aria-hidden="true"
+          className="max-w-[160px] text-center text-[17px] leading-[22px] font-bold [overflow-wrap:anywhere]"
+        >
+          {moving ? "Moving…" : bot.name}
+        </span>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "max-w-[160px] truncate text-center text-[13px] leading-4 font-medium",
+            TONE_CLASS[caption.tone],
+          )}
+        >
+          {caption.text}
+        </span>
+      </span>
     </Link>
-  );
-}
-
-function MoreNode({
-  x,
-  y,
-  hidden,
-  label,
-  onOpen,
-}: {
-  readonly x: number;
-  readonly y: number;
-  readonly hidden: number;
-  readonly label: string;
-  readonly onOpen: () => void;
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`${String(hidden)} more bots on ${label}. See all.`}
-      className="absolute z-[2] flex min-h-11 flex-col items-center gap-[3px] rounded-[10px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-      style={{
-        left: x,
-        top: y - NODE_AVATAR / 2,
-        width: NODE_WIDTH,
-        transform: "translateX(-50%)",
-      }}
-    >
-      <span
-        aria-hidden="true"
-        className="grid size-10 place-items-center rounded-full border-2 border-dashed border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] text-[13px] font-bold not-dark:border-[var(--personal-team-recent)]"
-      >
-        +{hidden}
-      </span>
-      <span
-        aria-hidden="true"
-        className="rounded bg-[var(--personal-surface)] px-[3px] text-[12px] leading-[15px] font-semibold text-[var(--personal-text-secondary)]"
-      >
-        See all
-      </span>
-    </button>
   );
 }

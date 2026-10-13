@@ -33,6 +33,15 @@ export const PersonalLoginRequestsListInput = Schema.Struct({ threadId: ThreadId
 export const PersonalLoginRequestsListResult = Schema.Struct({
   requests: Schema.Array(PersonalLoginRequest),
 });
+/**
+ * The whole machine's sign-in requests, for the needs-you poll: no input, and
+ * only the ones still waiting on the owner (pending, filling). Same item
+ * shape, still metadata only.
+ */
+export const PersonalLoginRequestsListPendingInput = Schema.Struct({});
+export const PersonalLoginRequestsListPendingResult = Schema.Struct({
+  requests: Schema.Array(PersonalLoginRequest),
+});
 export const PersonalLoginRequestsSubmitInput = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   username: Schema.Redacted(Schema.String),

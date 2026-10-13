@@ -10,7 +10,6 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { perfOptimizationOn } from "./perfFlags";
 import {
   RECENT_DELEGATION_WINDOW_MS,
   teamDropOutcome,
@@ -21,46 +20,40 @@ import {
 } from "./teamDiagramModel";
 
 /*
- * Direction B, "Constellation": each team is a card, its lead is the hub in the
- * middle and the members orbit it. Everything that decides where a node sits is
- * a pure function here, so "no two nodes overlap" is a test and not a hope.
+ * Design A, "Constellation": each team is a card, its lead is the hub in the
+ * middle and the members orbit it on one ellipse. The geometry is the design's
+ * own (SPEC-final 2.10) rather than searched for, so a team draws the same
+ * card every time and every label sits on its own plate; that the labels of a
+ * full team never touch is a test on worst-case names ({@link teamLayoutOverlaps}),
+ * not a runtime search.
  */
 
-/** A node's own width: the name column under a 40 px avatar. */
-export const NODE_WIDTH = 76;
-export const NODE_AVATAR = 40;
-/** The name wraps to at most two lines of 15 px under the avatar. */
-const NODE_LINE_HEIGHT = 15;
-/** What a 12 px semibold character is taken to measure, a little wide so a label never under-reserves. */
-const CHAR_WIDTH = 5.9;
-/** Longest name that stays on one line in a 76 px column. */
-const ONE_LINE_CHARS = 12;
+/** A member's own column: the name under a 36 px avatar. */
+export const NODE_WIDTH = 92;
+export const NODE_AVATAR = 36;
+/** How wide a member's name is drawn before it wraps: `-webkit-line-clamp: 2`. */
+export const NODE_NAME_WIDTH = 88;
+/** The lead's disc and its name column. */
+export const HUB_AVATAR = 64;
+export const HUB_WIDTH = 160;
 
-/** The room a node's name takes under its avatar. */
-export interface NodeLabel {
-  readonly lines: 1 | 2;
-  readonly width: number;
-}
-
-const WIDEST_LABEL: NodeLabel = { lines: 2, width: NODE_WIDTH };
+/** Member name: 13/16 semibold, at most two lines. Caption: 13/16, one line. */
+const NAME_LINE_HEIGHT = 16;
+const NAME_LINES = 2;
+const CAPTION_HEIGHT = 16;
+/** Between the avatar and the name, and between the name and the caption. */
+const AVATAR_GAP = 4;
+/** Room under the card header before the top avatar, and under the lowest caption. */
+const TOP_ROOM = 24;
+const BOTTOM_ROOM = 16;
 
 /**
- * How a name sits under its avatar: one line as wide as the name, or two lines
- * as wide as the column. Estimated, not measured, so the layout is a pure
- * function of the names; the estimate errs wide (a node that reserves room it
- * does not use only leaves air, one that under-reserves touches its neighbour).
+ * Most nodes a card draws. Past this the last seat reads "+N" and opens the
+ * full list. The design's single ring stays clean to here even on a 320 px
+ * card, where the ring cannot grow any wider; a bigger team is read in the
+ * members sheet, which has the room and the Move buttons.
  */
-export function nodeLabel(name: string): NodeLabel {
-  const length = Array.from(name.trim()).length;
-  if (length > ONE_LINE_CHARS) return WIDEST_LABEL;
-  return {
-    lines: 1,
-    width: Math.min(NODE_WIDTH, Math.max(28, Math.ceil(length * CHAR_WIDTH + 8))),
-  };
-}
-export const HUB_DISC = 72;
-/** Most nodes a card draws. Past this the last seat reads "+N" and opens the full list. */
-export const MAX_ORBIT_NODES = 20;
+export const MAX_ORBIT_NODES = 16;
 
 export interface Box {
   readonly x0: number;
@@ -77,44 +70,98 @@ const box = (cx: number, cy: number, halfW: number, top: number, bottom: number)
 });
 
 /**
- * What a node occupies around its avatar centre: the avatar, and the name
- * column below it at the widest and tallest it can be. Two boxes rather than
- * one so an avatar can sit next to the empty corner of a neighbour's label.
+ * How wide one node's plates are: its name (wrapping to at most two lines in
+ * an {@link NODE_NAME_WIDTH} column) and its caption (one line, free to run
+ * wider than the name). Estimated from the text, so the overlap check can use
+ * a real roster rather than the widest possible labels.
  */
-export function nodeBoxes(
-  x: number,
-  y: number,
-  label: NodeLabel = WIDEST_LABEL,
-): ReadonlyArray<Box> {
+export interface LabelSizes {
+  readonly nameWidth: number;
+  readonly captionWidth: number;
+}
+
+/** The widest a member's plates can be; `{0, 0}` means "avatar only, no labels". */
+export const WORST_MEMBER_LABEL: LabelSizes = { nameWidth: NODE_NAME_WIDTH, captionWidth: 96 };
+/** The widest the lead's plates can be. */
+export const WORST_LEAD_LABEL: LabelSizes = { nameWidth: HUB_WIDTH, captionWidth: 120 };
+
+/** 13 px semibold is about this wide per character; the estimate errs generous. */
+const NAME_CHAR_WIDTH = 7;
+/** 13 px regular, for captions. */
+const CAPTION_CHAR_WIDTH = 6.4;
+
+const chars = (text: string): number => Array.from(text.trim()).length;
+const estimate = (text: string, perChar: number): number =>
+  text.trim().length === 0 ? 0 : Math.ceil(chars(text) * perChar + 8);
+
+/** A member's plate widths from its own name and caption. */
+export function memberLabelSizes(name: string, caption: string): LabelSizes {
+  return {
+    nameWidth: Math.min(NODE_NAME_WIDTH, estimate(name, NAME_CHAR_WIDTH)),
+    captionWidth: Math.min(NODE_WIDTH, estimate(caption, CAPTION_CHAR_WIDTH)),
+  };
+}
+
+/** The lead's plate widths, capped at its own column. */
+export function leadLabelSizes(name: string, caption: string): LabelSizes {
+  return {
+    nameWidth: Math.min(HUB_WIDTH, estimate(name, NAME_CHAR_WIDTH + 1.4)),
+    captionWidth: Math.min(HUB_WIDTH, estimate(caption, CAPTION_CHAR_WIDTH)),
+  };
+}
+
+/**
+ * What a member occupies around its avatar centre: the avatar, then the name
+ * plate (one line, or two when the name wraps) and the caption under it. The
+ * caption may be wider than the name (a long model label spreads past its
+ * column), so it gets its own box.
+ */
+export function nodeBoxes(x: number, y: number, sizes: LabelSizes = WORST_MEMBER_LABEL): Box[] {
+  const avatar: Box = box(x, y, NODE_AVATAR / 2, -NODE_AVATAR / 2, NODE_AVATAR / 2);
+  if (sizes.nameWidth <= 0 && sizes.captionWidth <= 0) return [avatar];
+  const nameLines = sizes.nameWidth > 0 && sizes.nameWidth < NODE_NAME_WIDTH ? 1 : NAME_LINES;
+  const nameHalf = Math.max(NODE_AVATAR / 2, sizes.nameWidth / 2);
+  const nameTop = NODE_AVATAR / 2 + AVATAR_GAP;
+  const nameBottom = nameTop + NAME_LINE_HEIGHT * nameLines;
+  const captionHalf = Math.max(nameHalf, sizes.captionWidth / 2);
   return [
-    box(x, y, NODE_AVATAR / 2, -NODE_AVATAR / 2, NODE_AVATAR / 2),
-    box(
-      x,
-      y,
-      label.width / 2,
-      NODE_AVATAR / 2 + 3,
-      NODE_AVATAR / 2 + 3 + NODE_LINE_HEIGHT * label.lines,
-    ),
+    avatar,
+    box(x, y, nameHalf, nameTop, nameBottom),
+    box(x, y, captionHalf, nameBottom, nameBottom + CAPTION_HEIGHT),
   ];
 }
 
-/** The hub: its disc, the name pill across its lower edge and the model label under it. */
-export function hubBoxes(x: number, y: number): ReadonlyArray<Box> {
+/**
+ * The hub: the crown and disc (the disc is 64 wide, never the plate's width),
+ * then the name plate and the caption under it.
+ */
+export function hubBoxes(x: number, y: number, sizes: LabelSizes = WORST_LEAD_LABEL): Box[] {
+  const crown: Box = box(x, y, HUB_AVATAR / 2, -HUB_AVATAR / 2 - 16, HUB_AVATAR / 2);
+  if (sizes.nameWidth <= 0 && sizes.captionWidth <= 0) return [crown];
+  const nameHalf = Math.max(HUB_AVATAR / 2, sizes.nameWidth / 2);
+  const nameTop = HUB_AVATAR / 2;
+  const nameBottom = nameTop + NAME_LINE_HEIGHT;
+  const captionHalf = Math.max(nameHalf, sizes.captionWidth / 2);
   return [
-    box(x, y, HUB_DISC / 2, -HUB_DISC / 2, HUB_DISC / 2),
-    box(x, y, 66, HUB_DISC / 2 - 12, HUB_DISC / 2 + 14),
-    box(x, y, 44, HUB_DISC / 2 + 14, HUB_DISC / 2 + 32),
+    crown,
+    box(x, y, nameHalf, nameTop, nameBottom),
+    box(x, y, captionHalf, nameBottom, nameBottom + CAPTION_HEIGHT + 4),
   ];
 }
 
 const overlaps = (a: Box, b: Box, gap: number): boolean =>
   a.x0 < b.x1 + gap && b.x0 < a.x1 + gap && a.y0 < b.y1 + gap && b.y0 < a.y1 + gap;
 
-/** Whether two sets of boxes touch, leaving `gap` px clear between them. */
+/**
+ * Whether two sets of boxes overlap, leaving `gap` px clear between them. 0
+ * (the default) means plates may touch but must not sit on each other: the
+ * team card's own check, where a pixel of clearance is a plate's padding, not
+ * a collision.
+ */
 export function boxesCollide(
   a: ReadonlyArray<Box>,
   b: ReadonlyArray<Box>,
-  gap: number = 2,
+  gap: number = 0,
 ): boolean {
   return a.some((left) => b.some((right) => overlaps(left, right, gap)));
 }
@@ -123,243 +170,114 @@ export interface ConstellationSlot {
   /** Avatar centre, in the sky's own pixels (origin at its top-left). */
   readonly x: number;
   readonly y: number;
-  /** 0 is the inner orbit. */
-  readonly ring: number;
 }
 
 export interface ConstellationLayout {
   readonly width: number;
   readonly height: number;
+  /** The lead's avatar centre. */
   readonly hub: { readonly x: number; readonly y: number };
   /** One per drawn member, in member order; the last is the "+N" seat when `hidden` > 0. */
   readonly slots: ReadonlyArray<ConstellationSlot>;
-  /** The label room each slot reserved. */
-  readonly lines: ReadonlyArray<NodeLabel>;
-  /** Members that do not fit and sit behind the "+N" seat. */
-  readonly hidden: number;
-  /** Elliptical guides for the dotted orbits. */
-  readonly orbits: ReadonlyArray<{ readonly rx: number; readonly ry: number }>;
-}
-
-interface RawSlot {
-  readonly x: number;
-  readonly y: number;
-  readonly ring: number;
-}
-interface Orbit {
   readonly rx: number;
   readonly ry: number;
-}
-interface Plan {
-  readonly slots: ReadonlyArray<RawSlot>;
-  readonly orbits: ReadonlyArray<Orbit>;
-}
-
-const ringPoints = (
-  count: number,
-  orbit: Orbit,
-  phase: number,
-  ring: number,
-): ReadonlyArray<RawSlot> =>
-  Array.from({ length: count }, (_, index) => {
-    const angle = phase + (index * 2 * Math.PI) / count;
-    return { x: orbit.rx * Math.cos(angle), y: orbit.ry * Math.sin(angle), ring };
-  });
-
-type Lines = ReadonlyArray<NodeLabel>;
-const linesAt = (lines: Lines, index: number): NodeLabel => lines[index] ?? WIDEST_LABEL;
-
-/** True when nothing in the plan touches the hub, another node, or leaves the card. */
-function fits(plan: Plan, halfWidth: number, lines: Lines): boolean {
-  const hub = hubBoxes(0, 0);
-  const placed = plan.slots.map((slot, index) => nodeBoxes(slot.x, slot.y, linesAt(lines, index)));
-  for (const [index, boxes] of placed.entries()) {
-    const slot = plan.slots[index]!;
-    if (Math.abs(slot.x) + NODE_WIDTH / 2 > halfWidth) return false;
-    if (boxesCollide(boxes, hub)) return false;
-    for (let other = 0; other < index; other += 1) {
-      if (boxesCollide(boxes, placed[other]!)) return false;
-    }
-  }
-  return true;
-}
-
-const extent = (plan: Plan, lines: Lines): { top: number; bottom: number } => {
-  const all = [
-    ...hubBoxes(0, 0),
-    ...plan.slots.flatMap((slot, index) => nodeBoxes(slot.x, slot.y, linesAt(lines, index))),
-  ];
-  return {
-    top: Math.min(...all.map((entry) => entry.y0)),
-    bottom: Math.max(...all.map((entry) => entry.y1)),
-  };
-};
-
-const height = (plan: Plan, lines: Lines): number => {
-  const { top, bottom } = extent(plan, lines);
-  return bottom - top;
-};
-
-/** The few (rx, ry) pairs tried for a single orbit, roomiest last. */
-function singleOrbits(maxRx: number, count: number): ReadonlyArray<Orbit> {
-  const rxs = [...new Set([Math.min(maxRx, 112), Math.min(maxRx, 133), maxRx])];
-  const rys = count <= 2 ? [0, 44] : [74, 98, 122, 146, 170, 194, 218, 242];
-  return rys.flatMap((ry) => rxs.map((rx) => ({ rx, ry })));
-}
-
-/** The mockup's own orbit for one card: kept first so a normal team reads exactly as designed. */
-function designedPlan(count: number, maxRx: number): Plan {
-  const rx = count <= 2 ? Math.min(maxRx, 112) : Math.min(maxRx, 140);
-  const ry = count > 5 ? 122 : count <= 2 ? 44 : 74;
-  const phase = count === 1 ? 0 : -Math.PI / 2 + (count === 4 ? Math.PI / 4 : 0);
-  const orbit = { rx, ry };
-  return { slots: ringPoints(count, orbit, phase, 0), orbits: [orbit] };
+  /** Members that do not fit and sit behind the "+N" seat. */
+  readonly hidden: number;
 }
 
 /**
- * Members beyond one orbit go on a second: taller, staggered half a step so a
- * node on the outside sits between two on the inside, and every spoke to the
- * outer ring runs through the gap.
+ * The ellipse the design uses: a wide shallow ring for two to five members, and
+ * the taller one for six or more - and for a single member, which would land on
+ * the lead's own name on the shallow ring. More than eight members open the
+ * ring by 16 px each, per the design note.
  */
-function twoOrbitPlans(count: number, maxRx: number, lines: Lines): ReadonlyArray<Plan> {
-  const plans: Plan[] = [];
-  const inner: ReadonlyArray<Orbit> = [
-    { rx: Math.min(maxRx, 104), ry: 92 },
-    { rx: Math.min(maxRx, 112), ry: 104 },
-    { rx: Math.min(maxRx, 118), ry: 116 },
-    { rx: Math.min(maxRx, 124), ry: 128 },
-    { rx: Math.min(maxRx, 124), ry: 140 },
-  ];
-  const outerRys = [178, 196, 214, 232, 250, 270, 290, 310, 330, 350];
-  for (let innerCount = Math.ceil(count * 0.4); innerCount <= count - 1; innerCount += 1) {
-    const outerCount = count - innerCount;
-    for (const innerOrbit of inner) {
-      for (const outerRy of outerRys) {
-        const outerOrbit = { rx: maxRx, ry: outerRy };
-        plans.push({
-          slots: [
-            ...ringPoints(innerCount, innerOrbit, -Math.PI / 2, 0),
-            ...ringPoints(outerCount, outerOrbit, -Math.PI / 2 + Math.PI / outerCount, 1),
-          ],
-          orbits: [innerOrbit, outerOrbit],
-        });
-      }
-    }
-  }
-  // Each plan's height is measured once, not twice per comparison (a 19-member
-  // team has 550 plans: the old comparator measured about 10 000 of them).
-  if (!perfOptimizationOn("layout-once")) {
-    return plans.toSorted((left, right) => height(left, lines) - height(right, lines));
-  }
-  return plans
-    .map((plan) => ({ plan, tall: height(plan, lines) }))
-    .toSorted((left, right) => left.tall - right.tall)
-    .map((entry) => entry.plan);
-}
+const orbitFor = (count: number): { readonly rx: number; readonly ry: number } =>
+  count >= 2 && count <= 5
+    ? { rx: 112, ry: 72 }
+    : { rx: 124, ry: 140 + Math.max(0, count - 8) * 16 };
 
 /**
- * Last resort: first-fit on three growing orbits. It always ends collision-free
- * (a candidate is only taken when nothing touches it), so a strange width or a
- * very full team still draws every node, if a little untidily.
- */
-function packedPlan(count: number, maxRx: number, lines: Lines): Plan {
-  const hub = hubBoxes(0, 0);
-  const taken: RawSlot[] = [];
-  for (let ring = 0; taken.length < count && ring < 8; ring += 1) {
-    const orbit = { rx: Math.min(maxRx, 104 + ring * 20), ry: 100 + ring * 84 };
-    for (let step = 0; step < 120 && taken.length < count; step += 1) {
-      const angle = -Math.PI / 2 + (step * 2 * Math.PI) / 120;
-      const candidate = {
-        x: orbit.rx * Math.cos(angle),
-        y: orbit.ry * Math.sin(angle),
-        ring,
-      };
-      if (Math.abs(candidate.x) + NODE_WIDTH / 2 > maxRx + NODE_WIDTH / 2) continue;
-      const boxes = nodeBoxes(candidate.x, candidate.y, linesAt(lines, taken.length));
-      if (boxesCollide(boxes, hub)) continue;
-      if (
-        taken.some((other, index) =>
-          boxesCollide(boxes, nodeBoxes(other.x, other.y, linesAt(lines, index))),
-        )
-      ) {
-        continue;
-      }
-      taken.push(candidate);
-    }
-  }
-  // The nodes sit where they fit, not on a curve: no guide ellipses to mislead.
-  return { slots: taken, orbits: [] };
-}
-
-const HEIGHT_PADDING = { top: 10, bottom: 12 } as const;
-
-/**
- * Where the hub and each member sit in a sky `width` px wide. Every plan is
- * checked for overlaps before it is used; the order is the designed single
- * orbit, other single orbits, two staggered orbits, then a packed fallback.
+ * Where the lead and each member sit in a sky `width` px wide. Members walk the
+ * ellipse from 12 o'clock: from six (or alone) the first one sits exactly there
+ * - the crown is above the lead, so the top is free - and with two to five it
+ * starts half a step past it, so nobody lands on the lead's name.
  */
 export function buildConstellationLayout(
-  /** Each member's name label, in member order ({@link nodeLabel}). */
-  memberLines: ReadonlyArray<NodeLabel>,
+  /** How many members the card draws. */
+  count: number,
   width: number,
 ): ConstellationLayout {
-  const memberCount = memberLines.length;
   const skyWidth = Math.max(NODE_WIDTH * 2 + 40, Math.round(width));
+  const drawn = Math.min(count, MAX_ORBIT_NODES);
+  const hidden = count > MAX_ORBIT_NODES ? count - (MAX_ORBIT_NODES - 1) : 0;
+  // The last seat is the "+N" plate when there is overflow; it keeps a seat's
+  // own position, so the card draws one node per slot.
+  const seats = drawn;
   const halfWidth = skyWidth / 2;
-  const maxRx = halfWidth - NODE_WIDTH / 2 - 2;
-  const drawn = Math.min(memberCount, MAX_ORBIT_NODES);
-  // The "+N" seat has no name to wrap: it is one short line.
-  const lines: Lines =
-    memberCount > MAX_ORBIT_NODES
-      ? [...memberLines.slice(0, MAX_ORBIT_NODES - 1), { lines: 1, width: 56 }]
-      : memberLines;
-  const hidden = memberCount > MAX_ORBIT_NODES ? memberCount - (MAX_ORBIT_NODES - 1) : 0;
-
-  let plan: Plan;
-  if (drawn === 0) {
-    plan = { slots: [], orbits: [] };
-  } else {
-    const designed = designedPlan(drawn, maxRx);
-    const candidates: Plan[] = [
-      designed,
-      ...singleOrbits(maxRx, drawn).flatMap((orbit) => {
-        const phases =
-          drawn === 1 ? [0] : drawn === 2 ? [0] : [-Math.PI / 2, -Math.PI / 2 + Math.PI / drawn];
-        return phases.map((phase) => ({
-          slots: ringPoints(drawn, orbit, phase, 0),
-          orbits: [orbit],
-        }));
-      }),
-    ];
-    const singleOk = candidates.filter((candidate) => fits(candidate, halfWidth, lines));
-    // The designed orbit wins outright when it fits; otherwise the shortest single orbit.
-    const single = fits(designed, halfWidth, lines)
-      ? designed
-      : singleOk.toSorted((left, right) => height(left, lines) - height(right, lines))[0];
-    plan =
-      single ??
-      twoOrbitPlans(drawn, maxRx, lines).find((candidate) => fits(candidate, halfWidth, lines)) ??
-      packedPlan(drawn, maxRx, lines);
-  }
-
-  const { top, bottom } = extent(plan, lines);
-  const hubY = HEIGHT_PADDING.top - top;
+  const designed = orbitFor(seats);
+  // A narrow column pulls the ring in rather than let a node run off the card.
+  const rx = Math.max(NODE_AVATAR, Math.min(designed.rx, halfWidth - NODE_WIDTH / 2 - 2));
+  const ry = designed.ry;
+  const step = seats === 0 ? 0 : (2 * Math.PI) / seats;
+  const staggered = seats >= 2 && seats <= 5;
+  const phase = staggered ? -Math.PI / 2 + step / 2 : -Math.PI / 2;
+  const angles = Array.from({ length: seats }, (_, index) => phase + index * step);
+  const minSin = angles.length === 0 ? 0 : Math.min(...angles.map(Math.sin));
+  // The design places the hub so the top avatar's top is 24 px below the card
+  // header; with no member above the hub (a lead alone, or two side by side)
+  // the hub itself is the top, and its crown needs the room instead.
+  const hubY =
+    minSin < 0
+      ? Math.round(TOP_ROOM + NODE_AVATAR / 2 - ry * minSin)
+      : TOP_ROOM + HUB_AVATAR / 2 + 16;
+  const hub = { x: halfWidth, y: hubY };
+  const slots = angles.map((angle) => ({
+    x: Number((hub.x + rx * Math.cos(angle)).toFixed(1)),
+    y: Number((hub.y + ry * Math.sin(angle)).toFixed(1)),
+  }));
+  const lowest = Math.max(
+    hub.y + HUB_AVATAR / 2 + NAME_LINE_HEIGHT + CAPTION_HEIGHT + 4,
+    ...slots.map(
+      (slot) =>
+        slot.y + NODE_AVATAR / 2 + AVATAR_GAP + NAME_LINE_HEIGHT * NAME_LINES + CAPTION_HEIGHT,
+    ),
+  );
   return {
     width: skyWidth,
-    height: Math.ceil(bottom - top + HEIGHT_PADDING.top + HEIGHT_PADDING.bottom),
-    hub: { x: halfWidth, y: hubY },
-    slots: plan.slots.map((slot) => ({ x: halfWidth + slot.x, y: hubY + slot.y, ring: slot.ring })),
-    lines,
+    height: Math.ceil(lowest + BOTTOM_ROOM + (slots.length === 0 ? TOP_ROOM : 0)),
+    hub,
+    slots,
+    rx,
+    ry,
     hidden,
-    orbits: plan.orbits,
   };
 }
 
-/** Every drawn node's boxes, for tests and for checking a layout by eye. */
-export function layoutCollisions(layout: ConstellationLayout): number {
-  const hub = hubBoxes(layout.hub.x, layout.hub.y);
+/**
+ * How many pairs of plates touch: 0 is a clean card. Pass the roster's own
+ * label sizes ({@link memberLabelSizes}) to check a real team - including the
+ * wide "Release Notes Copywriter" - or nothing for the widest labels the
+ * columns allow; `{0, 0}` checks the avatars alone. The layout is the design's
+ * own, so this is the test that says "9 bots fit", not a search at runtime.
+ */
+export function teamLayoutOverlaps(
+  layout: ConstellationLayout,
+  sizes: {
+    /** One size for every member, or one per slot in member order. */
+    readonly member?: LabelSizes | ReadonlyArray<LabelSizes>;
+    readonly lead?: LabelSizes;
+  } = {},
+): number {
+  const hub = hubBoxes(layout.hub.x, layout.hub.y, sizes.lead ?? WORST_LEAD_LABEL);
+  const memberSizes = sizes.member;
   const placed = layout.slots.map((slot, index) =>
-    nodeBoxes(slot.x, slot.y, linesAt(layout.lines, index)),
+    nodeBoxes(
+      slot.x,
+      slot.y,
+      Array.isArray(memberSizes)
+        ? (memberSizes[index] ?? WORST_MEMBER_LABEL)
+        : (memberSizes ?? WORST_MEMBER_LABEL),
+    ),
   );
   let clashes = 0;
   for (const [index, boxes] of placed.entries()) {
@@ -368,81 +286,11 @@ export function layoutCollisions(layout: ConstellationLayout): number {
       if (boxesCollide(boxes, placed[other]!)) clashes += 1;
     }
   }
+  // A node that leaves the card is a clash with the card's own edge.
+  for (const boxes of placed) {
+    if (boxes.some((entry) => entry.x0 < 0 || entry.x1 > layout.width)) clashes += 1;
+  }
   return clashes;
-}
-
-/** A spoke never starts farther from the hub's centre than this. */
-const HUB_SPOKE_MAX_START = 130;
-
-const containsPoint = (entry: Box, x: number, y: number, gap: number): boolean =>
-  x > entry.x0 - gap && x < entry.x1 + gap && y > entry.y0 - gap && y < entry.y1 + gap;
-
-/** Where a spoke runs: from just outside the hub to just short of the node's avatar. */
-export function spokeLine(
-  hub: { readonly x: number; readonly y: number },
-  slot: { readonly x: number; readonly y: number },
-): { x1: number; y1: number; x2: number; y2: number } | null {
-  const dx = slot.x - hub.x;
-  const dy = slot.y - hub.y;
-  const distance = Math.hypot(dx, dy);
-  if (distance < 90) return null;
-  const ux = dx / distance;
-  const uy = dy / distance;
-  // Leaves the hub at its ring, but a line heading down or diagonally down would start behind the
-  // name pill and the model label under the disc ("CTO Lead", "Sonnet 5.5"), so it starts only
-  // where it is clear of every one of them.
-  const around = hubBoxes(hub.x, hub.y);
-  // A ray can leave the disc and then run through the pill, so the start is after the last
-  // point of the ray that is inside any of them, not the first point outside.
-  let start = 42;
-  for (let travelled = 42; travelled <= HUB_SPOKE_MAX_START; travelled += 1) {
-    const x = hub.x + ux * travelled;
-    const y = hub.y + uy * travelled;
-    if (around.some((entry) => containsPoint(entry, x, y, 3))) start = travelled + 1;
-  }
-  // Nothing left between the hub's own labels and the avatar: no line, the count shows on the node.
-  if (distance - 25 - start < 12) return null;
-  return {
-    x1: hub.x + ux * start,
-    y1: hub.y + uy * start,
-    x2: slot.x - ux * 25,
-    y2: slot.y - uy * 25,
-  };
-}
-
-/**
- * Whether the spoke to member `index` reaches it without running behind another
- * node. On a single orbit it always does; on a crowded card a line to an outer
- * node can pass an inner one, and a line hidden behind a name reads as a line
- * to the wrong bot. Those handoffs are shown as a count on the node instead.
- */
-export function spokeIsClear(layout: ConstellationLayout, index: number): boolean {
-  const slot = layout.slots[index];
-  if (slot === undefined) return false;
-  const line = spokeLine(layout.hub, slot);
-  if (line === null) return false;
-  const others = layout.slots.flatMap((other, position) =>
-    position === index ? [] : nodeBoxes(other.x, other.y, linesAt(layout.lines, position)),
-  );
-  const length = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
-  for (let travelled = 0; travelled <= length; travelled += 3) {
-    const x = line.x1 + ((line.x2 - line.x1) * travelled) / length;
-    const y = line.y1 + ((line.y2 - line.y1) * travelled) / length;
-    if (
-      others.some(
-        (entry) => x > entry.x0 - 2 && x < entry.x1 + 2 && y > entry.y0 - 2 && y < entry.y1 + 2,
-      )
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** Thicker for more handoffs, on a square-root scale so 2 and 38 are both legible. */
-export function spokeWidth(count: number, maxCount: number): number {
-  if (count <= 0 || maxCount <= 0) return 0;
-  return Number((1.25 + 4.5 * Math.sqrt(Math.min(1, count / maxCount))).toFixed(2));
 }
 
 export interface DelegationCount {

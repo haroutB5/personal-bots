@@ -58,10 +58,21 @@ describe("seedModelFor", () => {
     ]);
     expect(seedModelFor(noOpus, undefined)?.model).toBe("claude-sonnet-5-5");
     const codex = provider([model("gpt-6-luna"), model("gpt-6-astra", { isDefault: true })]);
-    expect(seedModelFor(codex, undefined)).toEqual({ model: "gpt-6-astra" });
+    // Astra is Codex's own default and is never auto-picked: the first current
+    // model wins instead (the live catalogue puts GPT-6.1 Sol there).
+    expect(seedModelFor(codex, undefined)).toEqual({ model: "gpt-6-luna" });
     expect(
       seedModelFor(provider([model("claude-fable-5-1", { isDefault: true })]), undefined),
     ).toBe(undefined);
+  });
+
+  it("skips Astra on the live Codex order, Sol first", () => {
+    const codex = provider([
+      model("gpt-6-astra", { isDefault: true }),
+      model("gpt-6.1-sol"),
+      model("gpt-6-luna"),
+    ]);
+    expect(seedModelFor(codex, undefined)).toEqual({ model: "gpt-6.1-sol" });
   });
 
   it("recognises the expensive families", () => {

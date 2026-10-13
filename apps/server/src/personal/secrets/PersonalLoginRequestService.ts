@@ -43,6 +43,15 @@ export class PersonalLoginRequestService extends Context.Service<
       { readonly requests: ReadonlyArray<PersonalLoginRequest> },
       PersonalLoginsError
     >;
+    /**
+     * Every sign-in request still waiting on the owner, across all chats: the
+     * needs-you poll's view. Only pending and filling; anything settled is
+     * history and stays out.
+     */
+    readonly listPending: () => Effect.Effect<
+      { readonly requests: ReadonlyArray<PersonalLoginRequest> },
+      PersonalLoginsError
+    >;
     readonly submit: (
       input: PersonalLoginRequestsSubmitInput,
     ) => Effect.Effect<PersonalLoginRequest, PersonalLoginsError>;
@@ -220,9 +229,19 @@ export const layer = Layer.effect(
         return { requests: yield* repository.list(input.threadId) };
       },
     );
+    const listPending: PersonalLoginRequestService["Service"]["listPending"] = Effect.fnUntraced(
+      function* () {
+        yield* sweep();
+        const all = yield* repository.list();
+        return {
+          requests: all.filter((row) => row.status === "pending" || row.status === "filling"),
+        };
+      },
+    );
     return PersonalLoginRequestService.of({
       request: (input) => lock.withPermit(request(input)),
       list: (input) => lock.withPermit(list(input)),
+      listPending: () => lock.withPermit(listPending()),
       submit: (input) => lock.withPermit(submit(input)),
       cancel: (input) => lock.withPermit(cancel(input)),
     });

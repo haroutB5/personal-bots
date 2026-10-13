@@ -131,6 +131,49 @@ describe("defaultModelFor", () => {
     ).toBe("");
     expect(defaultModelFor(undefined)).toBe("");
   });
+
+  it("never auto-picks Fable, Mythos or Astra: Opus 5.5 first", () => {
+    expect(
+      defaultModelFor(
+        provider("claudeAgent", [
+          model({ slug: "claude-fable-5-1", isDefault: true }),
+          model({ slug: "claude-mythos-1" }),
+          model({ slug: "claude-opus-5-5" }),
+          model({ slug: "claude-sonnet-5-5" }),
+        ]),
+      ),
+    ).toBe("claude-opus-5-5");
+  });
+
+  it("takes the first model after Codex's Astra default", () => {
+    expect(
+      defaultModelFor(
+        provider("codex", [
+          model({ slug: "gpt-6-astra", isDefault: true }),
+          model({ slug: "gpt-6.1-sol" }),
+          model({ slug: "gpt-6-luna" }),
+        ]),
+      ),
+    ).toBe("gpt-6.1-sol");
+  });
+
+  it("skips a legacy model when the provider's default is Astra", () => {
+    expect(
+      defaultModelFor(
+        provider("codex", [
+          model({ slug: "gpt-6-astra", isDefault: true }),
+          model({ slug: "gpt-5.4", isLegacy: true }),
+          model({ slug: "gpt-6.1-sol" }),
+        ]),
+      ),
+    ).toBe("gpt-6.1-sol");
+  });
+
+  it("returns nothing when the only models are the ones it never auto-picks", () => {
+    expect(
+      defaultModelFor(provider("codex", [model({ slug: "gpt-6-astra", isDefault: true })])),
+    ).toBe("");
+  });
 });
 
 describe("searchModels", () => {
