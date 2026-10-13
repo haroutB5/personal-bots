@@ -7,7 +7,12 @@ import { useCallback, useSyncExternalStore } from "react";
  * mounted, so writes notify subscribers and every reader re-renders at once.
  */
 const PREFERENCE_KEYS = {
-  /** Collapsed tool/work group rows in a chat ("> 2 steps"). Off by default. */
+  /**
+   * The work steps a full-width reply carries as its footer ("9 steps · read
+   * …", SPEC 2.8). On by default from 1.67.1, the reply's own footer; the log
+   * behind the button only mounts while it is open. The setting still turns
+   * the footer off.
+   */
   showToolSteps: "personal-show-tool-steps",
   /** The "Routines / See all" strip under a chat. On by default. */
   showRoutinesStrip: "personal-show-routines-strip",
@@ -21,7 +26,7 @@ const PREFERENCE_KEYS = {
 export type PersonalPreference = keyof typeof PREFERENCE_KEYS;
 
 export const PERSONAL_PREFERENCE_DEFAULTS: Record<PersonalPreference, boolean> = {
-  showToolSteps: false,
+  showToolSteps: true,
   showRoutinesStrip: true,
   showChatSidePanel: true,
 };
