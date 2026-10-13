@@ -641,6 +641,62 @@
   border-bottom-color: var(--personal-border);
 }
 
+/* Full-width replies, from 1.67.1 (SPEC 2.8): a rich or long bot reply is
+ * body text at 16/24 with its tables in a radius-12 frame (surface header row,
+ * footnote 600 section-label ink, 10/12 cells and hairline rows) and its code
+ * in a radius-12 surface block at 13/20. A short plain reply is a bubble
+ * instead (MessageList's bubble variant) and none of this shows there. */
+.personal-markdown .chat-markdown .chat-markdown-table-container {
+  border: 1px solid var(--personal-border);
+  border-radius: var(--personal-radius-control);
+  overflow: hidden;
+}
+
+.personal-markdown .chat-markdown table {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.personal-markdown .chat-markdown thead th {
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--personal-surface);
+  color: var(--personal-section-label);
+  font-size: 13px;
+  line-height: 16px;
+  font-weight: 600;
+  border-bottom: var(--personal-hairline) solid var(--personal-border-strong);
+}
+
+.personal-markdown .chat-markdown tbody td {
+  padding: 10px 12px;
+  vertical-align: top;
+  border-bottom: var(--personal-hairline) solid var(--personal-border);
+}
+
+.personal-markdown .chat-markdown pre,
+.personal-markdown .chat-markdown .chat-markdown-codeblock {
+  border: 1px solid var(--personal-border);
+  border-radius: var(--personal-radius-control);
+  background: var(--personal-surface);
+}
+
+.personal-markdown .chat-markdown pre {
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.personal-markdown .chat-markdown .chat-markdown-codeblock {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.personal-markdown .chat-markdown .chat-markdown-codeblock pre {
+  font-size: inherit;
+}
+
 /* Content that scrolls sideways inside a message the owner can swipe for its
  * send time: a table too wide for the phone (ScrollArea) or an unwrapped code
  * block (`.chat-markdown pre`). The swiping row is `touch-action: pan-y` so

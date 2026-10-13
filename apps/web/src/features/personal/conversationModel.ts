@@ -590,13 +590,13 @@ export function formatDayDivider(
   );
   const thenDay = dayKey(then, timeZone);
   const nowDay = dayKey(now, timeZone);
-  if (thenDay === nowDay) return `Today, ${time}`;
-  if (thenDay === previousDayKey(nowDay)) return `Yesterday, ${time}`;
+  if (thenDay === nowDay) return `Today ${time}`;
+  if (thenDay === previousDayKey(nowDay)) return `Yesterday ${time}`;
   const [year, month, day] = thenDay.split("-").map(Number);
   const label = `${day} ${SHORT_MONTHS[month! - 1]}`;
   return thenDay.slice(0, 4) === nowDay.slice(0, 4)
-    ? `${label}, ${time}`
-    : `${label} ${year}, ${time}`;
+    ? `${label} ${time}`
+    : `${label} ${year} ${time}`;
 }
 
 /** A new divider starts each London day, and after an hour of silence. */

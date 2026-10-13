@@ -358,15 +358,15 @@ describe("formatDayDivider", () => {
   const now = new Date("2026-09-13T20:40:00.000Z"); // 21:40 BST
 
   it("uses Europe/London wall time", () => {
-    expect(formatDayDivider(new Date("2026-09-13T20:38:00.000Z"), now)).toBe("Today, 21:38");
-    expect(formatDayDivider(new Date("2026-09-12T08:05:00.000Z"), now)).toBe("Yesterday, 09:05");
-    expect(formatDayDivider(new Date("2026-09-01T13:00:00.000Z"), now)).toBe("1 Sep, 14:00");
-    expect(formatDayDivider(new Date("2025-12-24T13:00:00.000Z"), now)).toBe("24 Dec 2025, 13:00");
+    expect(formatDayDivider(new Date("2026-09-13T20:38:00.000Z"), now)).toBe("Today 21:38");
+    expect(formatDayDivider(new Date("2026-09-12T08:05:00.000Z"), now)).toBe("Yesterday 09:05");
+    expect(formatDayDivider(new Date("2026-09-01T13:00:00.000Z"), now)).toBe("1 Sep 14:00");
+    expect(formatDayDivider(new Date("2025-12-24T13:00:00.000Z"), now)).toBe("24 Dec 2025 13:00");
   });
 
   it("rolls the day at London midnight, not UTC midnight", () => {
     // 23:30 UTC on the 12th is 00:30 BST on the 13th.
-    expect(formatDayDivider(new Date("2026-09-12T23:30:00.000Z"), now)).toBe("Today, 00:30");
+    expect(formatDayDivider(new Date("2026-09-12T23:30:00.000Z"), now)).toBe("Today 00:30");
   });
 });
 

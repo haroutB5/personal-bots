@@ -1414,6 +1414,7 @@ export function ConversationScreen({
             latestMessageStatus={latestMessageStatus}
             working={working}
             botName={botName ?? "Bot"}
+            botFace={bot === null ? null : { shape: bot.avatarShape, color: bot.avatarColor }}
             workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
             approvals={approvals}
             respondingIds={respondingIds}
