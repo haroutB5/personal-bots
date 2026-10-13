@@ -114,12 +114,16 @@ export function DockedQuestion({
 
       {/* Both layouts stay mounted; the keyboard only picks which one shows.
           Mounting one in place of the other swapped the buttons under a finger
-          that was already on its way down, and the answer was lost. */}
+          that was already on its way down, and the answer was lost. The pick
+          is an inline display, not a class: the chips row's own stylesheet
+          rule outranks Tailwind's `hidden`, which left both layouts on screen
+          at once (seen in the harness's failure screenshot). */}
       <div
         role="group"
         aria-label={question.question}
         data-testid="docked-question-chips"
-        className={cn("personal-dock-chips", !keyboardOpen && "hidden")}
+        className="personal-dock-chips"
+        style={{ display: keyboardOpen ? undefined : "none" }}
       >
         {options.map((option) => (
           <button
@@ -145,7 +149,8 @@ export function DockedQuestion({
         role="group"
         aria-label={question.question}
         data-testid="docked-question-rows"
-        className={cn("flex flex-col gap-2", keyboardOpen && "hidden")}
+        className="flex flex-col gap-2"
+        style={{ display: keyboardOpen ? "none" : undefined }}
       >
         {options.map((option) => (
           <button
