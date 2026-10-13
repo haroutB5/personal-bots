@@ -87,6 +87,9 @@ const decodeDeepSeekSettings = Schema.decodeSync(DeepSeekSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("deepseek");
 
+/** The npm package the Claude engine runs on, and looks up updates for. */
+const CLAUDE_CODE_PACKAGE_NAME = "@anthropic-ai/claude-code";
+
 /** How long the harness smoke test waits for its ACP handshake. */
 const DSH_SMOKE_TIMEOUT = Duration.seconds(90);
 
@@ -266,11 +269,17 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
         modelCatalog,
       );
 
+      // The update advisory compares the running version with the npm latest
+      // of `packageName`. Only the Claude engine has such a channel: the
+      // harness is pinned, and moves only with `install-dsh.ps1` and a new
+      // pin. On dsh the comparison was against the Claude CLI's latest, so
+      // the card read "Update available" beside the harness version as soon
+      // as that moved. No package means no lookup and no advisory.
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({
             provider: DRIVER_KIND,
-            packageName: "@anthropic-ai/claude-code",
+            packageName: engine === "dsh" ? null : CLAUDE_CODE_PACKAGE_NAME,
           }),
         ),
       );
