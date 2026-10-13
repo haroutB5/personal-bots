@@ -3,9 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 import type { PerformanceGroups, PerformanceSample, PerformanceSlow } from "@t3tools/contracts";
 
 import {
+  axisSeries,
+  axisSlotMap,
   evaluateThresholds,
   meanOver,
   NO_WARNINGS,
+  PERF_AXIS_SLOTS,
   summaryFor,
   sustainedMs,
   type PerfWarnState,
@@ -345,5 +348,88 @@ describe("helpers", () => {
     ];
     expect(sustainedMs(samples, NOW, (s) => (s.cpuPct ?? 0) >= 90)).toBe(4_000);
     expect(sustainedMs(samples, NOW, () => false)).toBe(0);
+  });
+});
+
+describe("axisSeries (the fixed 15-minute time axis)", () => {
+  const step = 2_000;
+  /** The slot a timestamp lands in, for the assertions. */
+  const slot = (t: number): number => PERF_AXIS_SLOTS - 1 - Math.round((NOW - t) / step);
+
+  it("plots samples at their own timestamp, not back to back", () => {
+    // The QA NO-SHIP bug: 31 samples (60 s) were stretched over the whole
+    // "15 min ago" to "Now" axis. They now occupy the last minute of it.
+    const values = axisSeries(history({ cpuPct: 42 }), NOW, (s) => s.cpuPct);
+    expect(values.length).toBe(PERF_AXIS_SLOTS);
+    expect(values[PERF_AXIS_SLOTS - 1]).toBe(42);
+    expect(values[PERF_AXIS_SLOTS - 31]).toBe(42);
+    expect(values[PERF_AXIS_SLOTS - 32]).toBeNull();
+    expect(values[0]).toBeNull();
+
+    // Time, not count: the middle of the axis is 448 s back and lands on slot
+    // 225; the left edge is one slot under 15 minutes back; anything older
+    // falls off the axis.
+    const half = axisSeries([sample({ t: NOW - 448_000, cpuPct: 7 })], NOW, (s) => s.cpuPct);
+    expect(half[PERF_AXIS_SLOTS / 2]).toBe(7);
+    expect(half[PERF_AXIS_SLOTS / 2 - 1]).toBeNull();
+    const edge = axisSeries(
+      [sample({ t: NOW - (PERF_AXIS_SLOTS - 1) * step, cpuPct: 3 })],
+      NOW,
+      (s) => s.cpuPct,
+    );
+    expect(edge[0]).toBe(3);
+    const off = axisSeries(
+      [sample({ t: NOW - PERF_AXIS_SLOTS * step, cpuPct: 99 })],
+      NOW,
+      (s) => s.cpuPct,
+    );
+    expect(off.every((value) => value === null)).toBe(true);
+  });
+
+  it("leaves a stretch nobody watched empty and bridges only a missed tick", () => {
+    const out: PerformanceSample[] = [sample({ t: NOW - 901_000, cpuPct: 99 })];
+    // Five minutes watched, then 72 s with nobody watching (tab closed),
+    // then watched again, with one missed tick (a 4 s spacing) and one
+    // boundary spacing of exactly the gap rule (6 s).
+    for (let t = NOW - 300_000; t <= NOW - 180_000; t += step) out.push(sample({ t, cpuPct: 10 }));
+    for (let t = NOW - 108_000; t <= NOW - 10_000; t += step) out.push(sample({ t, cpuPct: 20 }));
+    out.push(sample({ t: NOW - 6_000, cpuPct: 30 }));
+    out.push(sample({ t: NOW, cpuPct: 31 }));
+    const values = axisSeries(out, NOW, (s) => s.cpuPct);
+
+    expect(values[slot(NOW - 300_000)]).toBe(10);
+    // The whole 72 s stretch is empty, both ends included, and the sample
+    // just after it resumes the line.
+    expect(values[slot(NOW - 180_000)]).toBe(10);
+    expect(values[slot(NOW - 178_000)]).toBeNull();
+    expect(values[slot(NOW - 150_000)]).toBeNull();
+    expect(values[slot(NOW - 110_000)]).toBeNull();
+    expect(values[slot(NOW - 108_000)]).toBe(20);
+    expect(values[slot(NOW - 90_000)]).toBe(20);
+    // A missed tick (4 s apart) carries the previous reading; so does the
+    // boundary 6 s spacing; and the oldest sample fell off the left edge.
+    expect(values[slot(NOW - 8_000)]).toBe(20);
+    expect(values[slot(NOW - 4_000)]).toBe(30);
+    expect(values[slot(NOW - 2_000)]).toBe(30);
+    expect(values).not.toContain(99);
+    expect(values[PERF_AXIS_SLOTS - 1]).toBe(31);
+  });
+
+  it("axisSlotMap gives the scrub a real sample for every slot", () => {
+    const out: PerformanceSample[] = [];
+    // Watched for two minutes, 70 s nobody watched, then watched again.
+    for (let t = NOW - 240_000; t <= NOW - 120_000; t += step) out.push(sample({ t }));
+    for (let t = NOW - 50_000; t <= NOW; t += step) out.push(sample({ t }));
+    const map = axisSlotMap(out, NOW);
+
+    // Inside the 70 s stretch, the readout is the newest sample before it,
+    // with its own timestamp; before the history, the oldest sample; the
+    // right edge is the newest.
+    expect(map[slot(NOW - 80_000)]?.t).toBe(NOW - 120_000);
+    expect(map[slot(NOW - 52_000)]?.t).toBe(NOW - 120_000);
+    expect(map[0]?.t).toBe(NOW - 240_000);
+    expect(map[PERF_AXIS_SLOTS - 1]?.t).toBe(NOW);
+    // Every slot reads something once a sample exists at all.
+    expect(map.some((entry) => entry === null)).toBe(false);
   });
 });

@@ -15,16 +15,32 @@ const feed = vi.hoisted(() => ({
   } as PerformanceFeedState,
 }));
 
+/** Every chart render, for the axis assertions (the pane draws three). */
+const charts = vi.hoisted(() => ({
+  props: [] as Array<{
+    ariaLabel: string;
+    series: ReadonlyArray<{ values: ReadonlyArray<number | null> }>;
+  }>,
+}));
+
 vi.mock("./usePerformanceFeed", () => ({
   usePerformanceFeed: () => feed.state,
 }));
-vi.mock("./PerfChart", () => ({ PerfChart: () => null }));
+vi.mock("./PerfChart", () => ({
+  PerfChart: (props: {
+    ariaLabel: string;
+    series: ReadonlyArray<{ values: ReadonlyArray<number | null> }>;
+  }) => {
+    charts.props.push(props);
+    return null;
+  },
+}));
 vi.mock("./PerfSpark", () => ({ PerfSpark: () => null }));
 vi.mock("./PcAvatar", () => ({ PcAvatar: () => null }));
 
 import { PerformancePane } from "./PerformancePane";
 
-const sample = (t: number): PerformanceSample => ({
+const sample = (t: number, overrides: Partial<PerformanceSample> = {}): PerformanceSample => ({
   t,
   cpuPct: 12,
   clockGHz: 3.1,
@@ -58,6 +74,7 @@ const sample = (t: number): PerformanceSample => ({
   fanStatus: "ok",
   lhm: "ok",
   fans: "ok",
+  ...overrides,
 });
 
 describe("PerformancePane render", () => {
@@ -166,5 +183,97 @@ describe("PerformancePane render", () => {
     expect(footer).not.toContain("This PC");
     expect(footer).toContain("Inspiron 16 Plus 7620");
     expect(footer).toContain("i7-12700H");
+  });
+
+  it("shows live fan speeds while the sensors app is down", () => {
+    // QA NO-SHIP, 13 Oct: whenever LHM was down the fans row was forced to
+    // "not available", though the fan reader (a second source) was answering
+    // with about 2,200 rpm.
+    act(() => {
+      renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    act(() => {
+      feed.state = {
+        ...feed.state,
+        samples: [
+          sample(1_000_000, {
+            lhm: "down",
+            cpuTempC: null,
+            ssdC: null,
+            ramC: null,
+            powerCpuW: null,
+            powerGpuW: null,
+            powerPlatformW: null,
+            batteryRateW: null,
+            fans: "ok",
+            fanStatus: "partial",
+            fan1Rpm: 2201,
+            fan2Rpm: null,
+          }),
+        ],
+        lastSampleAt: Date.now(),
+        status: "live",
+      };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const text = JSON.stringify(renderer!.toJSON());
+    expect(text).toContain("Sensors app not running");
+    expect(text).toContain("2,201 rpm");
+    expect(text).not.toContain("Fan reading not available right now");
+  });
+
+  it("keeps the fans calm state when only the fan reader is down", () => {
+    act(() => {
+      renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    act(() => {
+      feed.state = {
+        ...feed.state,
+        samples: [
+          sample(1_000_000, { fans: "down", fanStatus: "down", fan1Rpm: null, fan2Rpm: null }),
+        ],
+        lastSampleAt: Date.now(),
+        status: "live",
+      };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const text = JSON.stringify(renderer!.toJSON());
+    expect(text).toContain("Fan reading not available right now");
+    expect(text).not.toContain("Sensors app not running");
+    // Temperatures are LHM's and the card stays on screen.
+    expect(text).toContain("CPU package");
+  });
+
+  it("feeds the charts the fixed 15-minute slot axis with the gap left empty", () => {
+    charts.props.length = 0;
+    act(() => {
+      renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const samples: PerformanceSample[] = [];
+    // A minute watched, 70 s nobody watching, then 30 s watched: the oldest
+    // build plotted these back to back; now the 70 s sits empty on the axis.
+    for (let t = 1_000_000; t <= 1_060_000; t += 2_000) samples.push(sample(t));
+    for (let t = 1_130_000; t <= 1_160_000; t += 2_000) {
+      samples.push(sample(t, { cpuPct: 55 }));
+    }
+    act(() => {
+      feed.state = { ...feed.state, samples, lastSampleAt: Date.now(), status: "live" };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const cpu = charts.props
+      .filter((props) => props.ariaLabel.startsWith("CPU, last 15 minutes"))
+      .at(-1);
+    expect(cpu).toBeDefined();
+    const values = cpu!.series[0]!.values;
+    expect(values.length).toBe(450);
+    expect(values[449]).toBe(55); // newest sample on the right edge
+    expect(values[399]).toBe(12); // 1_060_000, at its own timestamp
+    expect(values[400]).toBeNull(); // the stretch nobody watched
+    expect(values[433]).toBeNull();
+    expect(values[434]).toBe(55); // 1_130_000 resumes the line
+    // And the scale is time: one slot per 2 s sample interval, with the space
+    // before the history empty.
+    expect(values[369]).toBe(12); // 1_000_000, the oldest sample
+    expect(values[368]).toBeNull();
   });
 });

@@ -103,6 +103,93 @@ export function sustainedMs(
   return Math.max(0, now - oldest);
 }
 
+/**
+ * The charts' fixed time axis (QA NO-SHIP, 13 Oct): 15 minutes of one slot per
+ * sample tick, ending at the newest sample, so a sample's x is its own
+ * timestamp. The first build plotted the samples back to back instead of by
+ * time, so a stretch nobody watched squeezed together and two minutes of
+ * samples stretched over the whole "15 min ago" to "Now" axis.
+ */
+export const PERF_AXIS_MS = 15 * 60_000;
+/** The server's sample tick (`PERFORMANCE_TICK_MS` in the sampler). */
+export const PERF_SLOT_MS = 2_000;
+/** One slot per tick: what a full 15 minutes holds (the server's ring size). */
+export const PERF_AXIS_SLOTS = PERF_AXIS_MS / PERF_SLOT_MS;
+/** The axis spans the ticks between its edges, so the newest sample sits
+ * exactly on the right edge instead of colliding with the one before it. */
+const axisStart = (newestT: number): number => newestT - (PERF_AXIS_SLOTS - 1) * PERF_SLOT_MS;
+/**
+ * Consecutive samples more than this apart are a stretch nobody watched (the
+ * spec's gap rule, about three sample intervals). The drawing breaks the line
+ * there; a single missed tick inside one gap carries the previous reading.
+ */
+export const PERF_GAP_MS = 6_000;
+
+const slotOf = (t: number, start: number): number =>
+  Math.min(PERF_AXIS_SLOTS - 1, Math.max(0, Math.round((t - start) / PERF_SLOT_MS)));
+
+/**
+ * One value per slot on the fixed axis: each sample at its own timestamp,
+ * samples older than the window dropped (they fall off the left edge), and
+ * slots nobody sampled left null, so the chart leaves that stretch empty and
+ * breaks its line there. Slots missed inside a gap of at most `PERF_GAP_MS`
+ * take the previous reading, so one missed tick does not split the line.
+ * `samples` is assumed oldest first, like the feed holds it.
+ */
+export function axisSeries(
+  samples: ReadonlyArray<PerformanceSample>,
+  newestT: number,
+  pick: (sample: PerformanceSample) => number | null,
+): ReadonlyArray<number | null> {
+  const values: Array<number | null> = new Array(PERF_AXIS_SLOTS).fill(null);
+  const start = axisStart(newestT);
+  let previousSlot = -1;
+  let previousT = 0;
+  let previousValue: number | null = null;
+  for (const sample of samples) {
+    if (sample.t < start || sample.t > newestT) continue;
+    const slot = slotOf(sample.t, start);
+    const value = pick(sample);
+    if (previousSlot >= 0 && slot - previousSlot > 1 && sample.t - previousT <= PERF_GAP_MS) {
+      for (let i = previousSlot + 1; i < slot; i++) values[i] = previousValue;
+    }
+    values[slot] = value;
+    previousSlot = slot;
+    previousT = sample.t;
+    previousValue = value;
+  }
+  return values;
+}
+
+/**
+ * The scrub's view of the axis: what a finger at each slot is reading, the
+ * newest real sample at or before it (before the oldest sample, the oldest
+ * one). Whatever the finger crosses, the readouts show a sample that exists,
+ * with its own timestamp, never a made-up point inside a stretch nobody
+ * watched.
+ */
+export function axisSlotMap(
+  samples: ReadonlyArray<PerformanceSample>,
+  newestT: number,
+): ReadonlyArray<PerformanceSample | null> {
+  const start = axisStart(newestT);
+  const at: Array<PerformanceSample | null> = new Array(PERF_AXIS_SLOTS).fill(null);
+  let first: PerformanceSample | null = null;
+  for (const sample of samples) {
+    if (sample.t < start || sample.t > newestT) continue;
+    if (first === null) first = sample;
+    at[slotOf(sample.t, start)] = sample;
+  }
+  const out: Array<PerformanceSample | null> = new Array(PERF_AXIS_SLOTS).fill(null);
+  let last: PerformanceSample | null = null;
+  for (let i = 0; i < PERF_AXIS_SLOTS; i++) {
+    const sample = at[i] ?? null;
+    if (sample !== null) last = sample;
+    out[i] = last ?? first;
+  }
+  return out;
+}
+
 /** True when every sample in the window holds a condition (and there is one). */
 const heldThroughout = (
   samples: ReadonlyArray<PerformanceSample>,

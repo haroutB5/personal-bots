@@ -18,8 +18,6 @@ import type {
 export const PERFORMANCE_STREAM_URL = "/api/personal/performance/stream";
 /** The server's ring is 450 samples; the browser keeps the same window. */
 export const PERFORMANCE_HISTORY_SAMPLES = 450;
-/** A gap wider than this inside the history is time nobody watched. */
-export const PERFORMANCE_GAP_MS = 6_000;
 
 export interface PerformanceFeedState {
   readonly samples: ReadonlyArray<PerformanceSample>;

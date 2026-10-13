@@ -183,7 +183,10 @@ export const PerfChart = memo(function PerfChart({
       if (value === null && gapStart < 0) gapStart = i;
       if ((value !== null || i === reference.length - 1) && gapStart >= 0) {
         const gapEnd = value === null ? i : i - 1;
-        if (x(gapEnd) - x(gapStart) >= 56) {
+        // A run that starts at slot 0 is where the history begins (the tab
+        // just opened), not a stretch nobody watched; only an interior gap
+        // is time the tab was closed.
+        if (gapStart > 0 && x(gapEnd) - x(gapStart) >= 56) {
           gapLabels.push(
             <span
               key={`gap-${gapStart}`}
