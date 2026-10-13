@@ -35,6 +35,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as NodeOS from "node:os";
 
+import { MCP_TOKEN_ENV_NAME } from "../../mcp/McpProviderSession.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { BOT_PROTECTED_DB_SIDECAR_SUFFIXES } from "../../personal/secrets/botProtectedPaths.ts";
 import { DEEPSEEK_AUTH_TOKEN_ENV, isLeakedSecretName } from "../Drivers/DeepSeekEnvironment.ts";
@@ -117,7 +118,11 @@ function isClaudeEngineEnvName(name: string): boolean {
     name.startsWith("ANTHROPIC_") ||
     name.startsWith("CLAUDE_CODE_") ||
     name === "CLAUDE_CONFIG_DIR" ||
-    name.startsWith("DEEPSEEK_")
+    name.startsWith("DEEPSEEK_") ||
+    // The Claude engine carries its MCP bearer in the child env. dsh sends the
+    // same credential as an HTTP header on the `t3-code` server entry, so the
+    // variable here would be one more credential-shaped name for nothing.
+    name === MCP_TOKEN_ENV_NAME
   );
 }
 
