@@ -12,10 +12,13 @@ already carries the Performance tab and the sliding browser sessions fix. On top
 (`eb80ad6bd0`, `e455f38b0e`, `38e8c52e2d`, `6fc7bba02d`, `96e4fce0e2`), the version bump `160e89ba5a` and the
 rebuild fix `88d431bc8c`. Version **1.66.40**, deliberately not 1.67.x, so it cannot be confused with the redesign.
 
-Staged first as `88d431bc8cf2`, then again as **`203c928ff8fe`** after QA's two scripts, with three more commits
-(`4d935446de`, `203c928ff8`); externals copied, 4 env keys loaded, gate evidence PASS. **`88d431bc8cf2` and
-`3da1e51f0d39` are superseded and must not be activated.** Migration max **106 -> 106** (no new migration; the dsh
-commits add none). `PERSONAL_TASKS_CONCURRENCY = 5` unchanged.
+Staged first as `88d431bc8cf2`, then again as `203c928ff8fe` after QA's two scripts, with three more commits
+(`4d935446de`, `203c928ff8`). QA then returned **NO-SHIP on `203c928ff8fe`**, blaming the Q11 fix for DeepSeek
+disappearing from the new-bot form; that turned out to be QA's own script tapping a destructive button, not the
+product (section below), and the build that ships is **`<<FINAL_SHA12>>`**, which adds only tests and one import
+naming fix to `203c928ff8`. **`88d431bc8cf2`, `203c928ff8fe` and `3da1e51f0d39` are superseded and must not be
+activated.** Migration max **106 -> 106** (no new migration; the dsh commits add none).
+`PERSONAL_TASKS_CONCURRENCY = 5` unchanged.
 
 ## QA on the first 1.66.40 build (88d431bc8cf2), and the three fixes after it
 
@@ -72,53 +75,97 @@ real CLI against a _fake_ token is the one case where it could fall back to Haro
 not done here. **QA: `run-b.ps1 -Release 203c928ff8fe -Only Q6,Q7`**, the measurement that found this, and report
 the hosts.
 
-### 3. Duplicate environment names inside the dsh pwsh tool. NOT fixed; here is everything that was ruled out.
+### 3. Duplicate environment names inside the dsh pwsh tool. Known, explained, no code change.
 
-QA could not run `Get-ChildItem Env:` inside a dsh pwsh tool: PowerShell 5.1 threw `ArgumentException` ("An item
-with the same key has already been added"), which is what its environment provider does when the process
-environment block holds two names that differ only in case. The probe printed its first line (`KEY-EMPTY`) and
-died on the environment count, and no pwsh 7 is installed on this laptop, so 5.1 is the shell dsh resolves.
+The two names are **`HTTPS_PROXY` / `https_proxy`** (and `NO_PROXY` / `no_proxy`), and they only appear because
+QA's script sets proxy variables on the DeepSeek instance. With no proxy variables and the machine's own
+environment, the same probe inside the dsh pwsh tool shows no duplicates at all: 67 variables and the key hidden
+(`qa/hbots-1671/cto-noproxy/result.json`). This laptop has none of its own. In other words dsh adds lowercase
+copies of the proxy variables to the tool's environment block, and PowerShell 5.1's environment provider then
+refuses that block (`ArgumentException`, exit 1) — 5.1 being the shell dsh resolves here, since no pwsh 7 is
+installed.
 
-What was tested on 14 Oct, on this laptop, with the real dsh runtime:
+Nothing to change on our side, and not a ship blocker. What the earlier sweep established, and what still holds:
 
-- **Our side is unique.** `buildDshEnvironment` de-duplicates case-insensitively twice. Node itself never lets a
-  case-variant duplicate reach a child block: a `spawn` given `{Path: A, PATH: B}` writes one entry and keeps the
-  last key, and writing `process.env.PATH` or `process.env.COMSPEC` where `Path`/`ComSpec` already exists leaves one
-  entry under the original spelling — both measured with `cmd /c set` reading the raw block.
+- **Our boundary is unique by construction.** `buildDshEnvironment` de-duplicates case-insensitively twice, and
+  node never lets a case-variant duplicate reach a child block: a `spawn` given `{Path: A, PATH: B}` writes one
+  entry and keeps the last key, and writing `process.env.PATH` where `Path` already exists leaves one entry under
+  the original spelling — both measured with `cmd /c set` reading the raw block.
 - **dsh's own chain de-duplicates.** `dsh-subprocess`'s `scrubbedParentEnv` reads node's collapsed view; its
   `childEnv` filters inherited entries by uppercased name before pushing an override; `targetEnvironment` drops
-  undefined tombstones. The one native block builder, `encodeWindowsEnvironment`
-  (`dsh-win32-process/lib/index.js:382`), does **not** de-duplicate, but it is handed the already-unique object.
-- **The one native environment writer in the harness was run live.** `dsh-sandbox-windows-acl/lib/runner.js:154`
-  calls `SetEnvironmentVariableW("TMP"/"TEMP", …)` and then spawns the tool with `lpEnvironment NULL`, so the tool
-  inherits the runner's block verbatim. Driving that runner standalone — `node
-.../dsh-sandbox-windows-acl/lib/runner.js --workspace <dir> --temp <dir> --mode workspace-write -- powershell
--NoProfile -File diag.ps1` — printed `COUNT=77`, `ENVVARS=77` and no throw, against the machine's own block. Its
-  hardcoded names are already the machine's spellings (`Path`, `TEMP`, `TMP`), so they collide with nothing.
-- Two paths could not be driven from a shell here, and both are worth checking if the duplicate turns up in a
-  Code/Minimal chat rather than a Standard one: the persistent shell, which goes through `node-pty`
-  (`spawnTerminal`, a native ConPTY spawn that builds its own block from the env object), and the PTC runtime's
-  pruned startup environment (`dsh-ptc-runtime-node`, the six startup names only). The Standard tool, which is
-  what QA's probe used, takes the Windows Job path that was read above.
+  undefined tombstones.
+- The one native environment writer reachable from here, `dsh-sandbox-windows-acl/lib/runner.js:154`
+  (`SetEnvironmentVariableW("TMP"/"TEMP", …)` then a spawn with `lpEnvironment NULL`), was driven live and printed
+  `COUNT=77` with no throw; its hardcoded names are already the machine's spellings.
+- One real bug in our own de-duplication was found and fixed on the way: `dedupeEnvironmentNames` kept the FIRST
+  value seen, so an instance variable spelled differently from an inherited one (`PATH` next to the machine's
+  `Path`) was silently dropped. The instance's value now wins with the first spelling kept, with tests.
 
-So the caller is not identified, and this note does not claim it is fixed. What is true: our boundary is provably
-clean, and so is every dsh path that could be read or driven from here, which leaves a spawn path in the pinned
-runtime that cannot be walked on this laptop without a model turn. **Next step, for whoever has a key:** inside a
-dsh pwsh tool run, as ONE command,
+To name a duplicate in any future run, inside a dsh pwsh tool:
+`(cmd /c set) | ForEach-Object { ($_ -split '=', 2)[0] } | Group-Object { $_.ToUpperInvariant() } | Where-Object Count -gt 1`
+— `[Environment]::GetEnvironmentVariables()` cannot answer it, being case-insensitive.
 
-```powershell
-(cmd /c set) | ForEach-Object { ($_ -split '=', 2)[0] } | Group-Object { $_.ToUpperInvariant() } | Where-Object Count -gt 1
-```
+### 4. QA's NO-SHIP on `203c928ff8fe`: the check tapped the Reset button. Not a product regression.
 
-That names the duplicate; the command in the brief cannot, because `[Environment]::GetEnvironmentVariables()`
-returns a case-insensitive collection (checked here: 77 entries, no duplicates, no throw) while `cmd /c set` reads
-the raw block. With the name in hand the fix is a two-line env change on our side or a report against dsh 0.2.0-rc.2.
+QA reported that DeepSeek on dsh had become unselectable in the new-bot form: the card still read `v0.2.0-rc.2
+Authenticated · DeepSeek API key` with no advisory, but about 20 s later `/bots/new` offered only `Claude Code`
+and `Home (limited)`, and `selectOption("deepseek")` timed out. The suspected cause was the Q11 fix.
 
-One real bug in our own de-duplication was found and fixed on the way, and it is worth having whatever the duplicate
-turns out to be: `dedupeEnvironmentNames` kept the FIRST value seen, so an instance variable whose name differed
-only in case from an inherited one (`PATH` next to the machine's `Path`, `TEMP` next to `Temp`) was silently
-dropped. Windows has one variable per name, so the instance's value now wins while the first spelling is kept —
-one name in the child, the instance's value applied, with tests.
+The Q11 check in `dsh-qa-a.mjs` ends by taking "the first button with an aria-label in the DeepSeek detail header"
+and **tapping it**, to open the advisory's "view details". While the false advisory existed, that button _was_ the
+advisory. With the advisory gone it is **Reset DeepSeek provider settings to default**, and the check pressed it:
+`providerInstances.deepseek` disappears from `settings.json`, the legacy blob falls back to its default where
+`DeepSeekSettings.enabled` is `false`, and a disabled provider is correctly not offered by the bot form.
+
+Reproduced with the check's own locator, same setup, both releases, on throwaway roots
+(`qa/hbots-1671/backend/diag-tap.mjs`; `tap-88d431bc8cf2-2026-10-13T23-38-13-123Z` and
+`tap-203c928ff8fe-2026-10-13T23-37-49-389Z`):
+
+| after the check's own "view details" tap | `88d431bc8cf2` (advisory present)        | `203c928ff8fe` (advisory gone)                |
+| ---------------------------------------- | ---------------------------------------- | --------------------------------------------- |
+| first header button it lands on          | `Update available — view details`        | `Reset DeepSeek provider settings to default` |
+| DeepSeek row afterwards                  | unchanged, authenticated                 | `Disabled`                                    |
+| `settings.json` afterwards               | instance intact                          | `providerInstances.deepseek` gone             |
+| `/bots/new` offerings                    | claudeAgent, claudeLimited, **deepseek** | claudeAgent, claudeLimited                    |
+
+The QA run's own `a-q11-card-ready.png` shows the row already reading `Disabled`, because the screenshot is taken
+at the end of the check, after the tap.
+
+The provider payload itself is fine. Captured off the websocket on `203c928ff8fe`
+(`qa/hbots-1671/backend/diag-providers.mjs`, `diag-203c928ff8fe-2026-10-13T23-35-55-522Z`): the server sends
+`deepseek` with `enabled: true, installed: true, status: "ready", version: "0.2.0-rc.2"`, `auth: authenticated`,
+one model, `availability` absent and the advisory `unknown` with no update command — and `/bots/new` offers it
+both at the start of the run and 25 s later.
+
+**The fix is in the QA script, not the product:** the "view details" step must target the advisory itself, e.g.
+`page.locator('button[aria-label^="Update available"]')`, the shape `deepSeekRow` already uses. Until then
+`-Only Q11` resets the DeepSeek provider it has just checked, and the bot creation that follows fails.
+
+### 5. Availability, checked everywhere the missing package name could have reached.
+
+The suspicion was that a null `packageName` made the snapshot read as not installed. `isProviderAvailable` reads
+only `snapshot.availability !== "unavailable"`, the DeepSeek driver never sets that field, and the Q11 change
+touches nothing else. Every consumer of provider availability was then read: the bot form
+(`isBotProviderSelectable`), the bot rows / Team / task cards (`resolveBotProvider`), seeding
+(`PersonalBotService`), the usage-limit fallback (`PersonalModelFallbackService`), the lead-bot model
+(`leadBotModel`), `textGenerationModelSelection` (`serverSettings.ts`) and the usage-limits row
+(`usageLimits.ts`). Every one of them reads `enabled` / `installed` / `status` / `availability` / `auth`; **none**
+reads the advisory, `packageName`, `canUpdate` or `canInstallVersion`.
+
+Two tests now hold that, and both were proved to bite by simulating the reported break:
+
+- `DeepSeekDriver.test.ts`, "dsh: the same availability as the claude-code engine, advisory aside": builds both
+  instances and compares the fields a consumer reads (`enabled`, `installed`, `status`, `availability`,
+  `unavailableReason`, `auth`, the model slugs) on the raw snapshot and again after `enrichSnapshot`; the advisory
+  is the only difference, and dsh still reads `unknown` with `canUpdate: false`. Marking the dsh snapshot
+  `unavailable` fails it.
+- `botFormModel.test.ts`, "offers the dsh DeepSeek snapshot, whose advisory is unknown and availability unset":
+  pins the real wire shape through `isBotProviderSelectable`. Making the advisory part of selectability fails it.
+
+While in that file: `dshUsageLedger.ts`'s `import * as Zlib from "node:zlib"` broke the repo's own
+`namespace-node-imports` lint rule, which wants `NodeZlib` (as its own test already spelled it); renamed, no
+behaviour change. Lint is not one of the gate's default steps, and other pre-existing lint errors sit outside
+this release's files, so this was and is no gate failure.
 
 ### Q10: the Performance tab does not group a dsh bot's process. Known, not a regression, 1.66.41.
 
@@ -328,13 +375,18 @@ Q9 additions (no `dsh_session_log` or `dsh_plugin_packages` in the request body,
 `dsh-otel-collector.deepseeksvc.com` connection, no `.credentials.yaml` under `DSH_HOME`, and no credential-shaped
 variable inside the `pwsh` tool).
 
-Everything on this build can be re-run with the QA scripts as they are: `run-a.ps1 -Release 203c928ff8fe -Only
-Q11` (fake key, cheap) for the DeepSeek card, and `run-b.ps1 -Release 203c928ff8fe -Only Q6,Q7,Q9` (real key) for
-the rest. Q11 must now show no update arrow and no advisory on the dsh engine, while a Claude-engine instance still
-gets its own advisory; Q6/Q7 must show no `api.anthropic.com` in the CONNECT log now that
-`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and `DISABLE_TELEMETRY` are set; Q9's pwsh probe is expected to pass,
-and if it still fails, the `cmd /c set` probe in section 3 names the duplicate. Q10 is expected to fail until
-1.66.41.
+Re-run on this build: `run-a.ps1 -Release <<FINAL_SHA12>> -Only Q5,Q11` (fake key, cheap) for the DeepSeek card
+and the bot form, and `run-b.ps1 -Release <<FINAL_SHA12>> -Only Q1,Q3,Q6,Q7,Q9` (real key) for the model replies.
+**One script fix first, or Q11 takes the run down with it:** the Q11 check's "view details" step taps the first
+`button[aria-label]` in the DeepSeek detail header, which is now the Reset button (section 4 above). It must target
+the advisory itself, e.g. `page.locator('button[aria-label^="Update available"]')`, and only tap when that exists;
+the same step then also has to assert the advisory is absent, which is Q11's whole point. Q11 must show no update
+arrow and no advisory on the dsh engine, while a Claude-engine instance still gets its own advisory; Q5 must still
+offer DeepSeek on the bot form (the DeepSeek provider must still be enabled when it runs — with the current script
+the Q11 tap disables it, which is what QA saw); Q6/Q7 must show no `api.anthropic.com` in the CONNECT log now that
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and `DISABLE_TELEMETRY` are set (already confirmed on `203c928ff8fe`);
+Q9's pwsh probe passes with no proxy variables set on the instance, and with QA's proxy variables the duplicate is
+the proxy pair described in section 3. Q10 is expected to fail until 1.66.41.
 
 Because this build is on 1.66.39, also worth a look: the bot form's agent-mode
 picker on a DeepSeek bot and its absence on a Claude Code bot, and that the app looks exactly like 1.66.39
@@ -352,8 +404,8 @@ everywhere else.
 - The dsh process's PID is recorded, but 1.66.39's Performance tab does not yet group a bot's CLI by it: **Q10**,
   not a regression, and Frontend ports the bot-name grouping into 1.66.41 from that registry. See above.
 - **The dsh pwsh tool's environment holds one name twice on QA's run**, which stops `Get-ChildItem Env:` in
-  PowerShell 5.1. Not fixed: our boundary and every dsh path reachable from here are provably clean, and the
-  diagnostic that names the duplicate is in section 3 above. This is the one open item before the ship.
+  PowerShell 5.1. Known and explained (section 3): dsh adds lowercase copies of the proxy variables QA's script
+  sets, and nothing our side builds is duplicated. No code change, and not a ship blocker.
 
 ## Rollback
 
@@ -361,9 +413,10 @@ Binary only: `restart.ps1 -Release <1.66.39 sha> -NoPrune` (live release `b03c41
 to restore. Setting the DeepSeek instance's engine back to `claude-code`, or `PERSONAL_DEEPSEEK_ENGINE=claude-code`,
 also returns every bot to the old engine without touching the release.
 
-Two staged 1.66.40 folders exist: `203c928ff8fe` is this build and the only one to ship; `88d431bc8cf2` (the
-first, which QA's two scripts ran on) and `3da1e51f0d39` (the abandoned 1.67.0-era stage) are superseded and must
-never be activated. This version keeps 1.66.40 in `app-version.txt` deliberately: it is the same feature, corrected.
+Three 1.66.40 folders are staged and only the newest one may be activated: `<<FINAL_SHA12>>` is this build;
+`203c928ff8fe` (the one QA returned a NO-SHIP on, section 4) and `88d431bc8cf2` (the first, which both QA scripts
+ran on) are superseded by it. `3da1e51f0d39` is the abandoned 1.67.0-era stage and must never be activated either.
+This version keeps 1.66.40 in `app-version.txt` deliberately: it is the same feature, corrected.
 
 ## Gate evidence
 
