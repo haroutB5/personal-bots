@@ -60,6 +60,11 @@ export interface VerifiedSession {
   readonly proofKeyThumbprint?: string;
 }
 
+export interface RenewedSession {
+  readonly token: string;
+  readonly expiresAt: DateTime.DateTime;
+}
+
 export type SessionCredentialChange =
   | {
       readonly type: "clientUpserted";
@@ -381,6 +386,15 @@ export class SessionStore extends Context.Service<
       readonly replaceActiveForSubjectAndMethod?: boolean;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
+    /**
+     * Slide a browser cookie session's expiry forward by its full lifetime, so a
+     * client in regular use is never signed out. Renews at most once a day (or
+     * once per half lifetime for shorter sessions); None when not due, or when
+     * the token is not a live cookie session.
+     */
+    readonly renew: (
+      token: string,
+    ) => Effect.Effect<Option.Option<RenewedSession>, SessionCredentialInternalError>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
       input?: {
@@ -422,6 +436,7 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+const SESSION_RENEWAL_INTERVAL = Duration.days(1);
 const SessionClaims = Schema.Struct({
   v: Schema.Literal(1),
   kind: Schema.Literal("session"),
@@ -646,6 +661,25 @@ export const make = Effect.gen(function* () {
     );
 
   const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
+  const signClaims = (claims: SessionClaims) =>
+    encodeClaims(claims).pipe(
+      Effect.map(base64UrlEncode),
+      Effect.map(
+        (encodedPayload) => `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`,
+      ),
+      Effect.mapError(
+        (cause) =>
+          new SessionCredentialIssueError({
+            sessionId: claims.sid,
+            cause: new SessionClaimsEncodingError({
+              sessionId: claims.sid,
+              operation: "encode_session_claims",
+              cause,
+            }),
+          }),
+      ),
+    );
+
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
     function* (input) {
       const sessionId = AuthSessionId.make(
@@ -669,21 +703,7 @@ export const make = Effect.gen(function* () {
         exp: expiresAt.epochMilliseconds,
       };
 
-      const encodedPayload = yield* encodeClaims(claims).pipe(
-        Effect.map(base64UrlEncode),
-        Effect.mapError(
-          (cause) =>
-            new SessionCredentialIssueError({
-              sessionId,
-              cause: new SessionClaimsEncodingError({
-                sessionId,
-                operation: "encode_session_claims",
-                cause,
-              }),
-            }),
-        ),
-      );
-      const signature = signPayload(encodedPayload, signingSecret);
+      const token = yield* signClaims(claims);
       const client = input?.client ?? createDefaultClientMetadata();
       const sessionRecord = {
         sessionId,
@@ -735,7 +755,7 @@ export const make = Effect.gen(function* () {
 
       return {
         sessionId,
-        token: `${encodedPayload}.${signature}`,
+        token,
         method: claims.method,
         client,
         expiresAt: expiresAt,
@@ -840,6 +860,67 @@ export const make = Effect.gen(function* () {
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
       } satisfies VerifiedSession;
+    },
+  );
+
+  const renew: SessionStore["Service"]["renew"] = Effect.fn("SessionStore.renew")(
+    function* (token) {
+      // The reusable dev session has a fixed far-future expiry and no claims.
+      if (devAuth?.matches(token)) {
+        return Option.none<RenewedSession>();
+      }
+      const [encodedPayload, signature] = token.split(".");
+      if (
+        !encodedPayload ||
+        !signature ||
+        !timingSafeEqualBase64Url(signature, signPayload(encodedPayload, signingSecret))
+      ) {
+        return Option.none<RenewedSession>();
+      }
+      const decoded = yield* Effect.option(
+        decodeSessionClaims(base64UrlDecodeUtf8(encodedPayload)),
+      );
+      if (Option.isNone(decoded) || decoded.value.method !== "browser-session-cookie") {
+        return Option.none<RenewedSession>();
+      }
+      const claims = decoded.value;
+      const now = yield* DateTime.now;
+      const lifetimeMs = claims.exp - claims.iat;
+      const renewAfterMs = Math.min(lifetimeMs / 2, Duration.toMillis(SESSION_RENEWAL_INTERVAL));
+      if (
+        claims.exp <= now.epochMilliseconds ||
+        now.epochMilliseconds - claims.iat < renewAfterMs
+      ) {
+        return Option.none<RenewedSession>();
+      }
+
+      const expiresAt = DateTime.add(now, { milliseconds: lifetimeMs });
+      const renewedToken = yield* signClaims({
+        ...claims,
+        iat: now.epochMilliseconds,
+        exp: expiresAt.epochMilliseconds,
+      });
+      const extended = yield* authSessions
+        .extendExpiry({ sessionId: claims.sid, expiresAt, now })
+        .pipe(
+          Effect.mapError(
+            (cause) => new SessionCredentialIssueError({ sessionId: claims.sid, cause }),
+          ),
+        );
+      if (!extended) {
+        return Option.none<RenewedSession>();
+      }
+      yield* loadActiveSession(claims.sid).pipe(
+        Effect.flatMap((session) =>
+          Option.isSome(session) ? emitUpsert(session.value) : Effect.void,
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logError("Failed to publish renewed-session auth update.").pipe(
+            Effect.annotateLogs({ sessionId: claims.sid, cause }),
+          ),
+        ),
+      );
+      return Option.some<RenewedSession>({ token: renewedToken, expiresAt });
     },
   );
 
@@ -1036,6 +1117,7 @@ export const make = Effect.gen(function* () {
     legacyCookieName,
     issue,
     verify,
+    renew,
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,

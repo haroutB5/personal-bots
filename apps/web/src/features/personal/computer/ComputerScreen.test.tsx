@@ -61,6 +61,19 @@ vi.mock("~/state/query", () => ({
 }));
 vi.mock("../usePersonalBots", () => ({
   usePersonalEnvironmentId: () => EnvironmentId.make("env-1"),
+  usePersonalBotsList: () => ({ data: null, error: null, refresh: () => undefined }),
+}));
+vi.mock("../usePersonalAutomation", () => ({
+  usePersonalTasks: () => ({ tasks: null, error: null }),
+}));
+vi.mock("./PerformancePane", () => ({
+  PerformancePane: (props: { botsBusy: number; tasksRunning: number }) => (
+    <div
+      data-testid="performance-pane"
+      data-bots-busy={props.botsBusy}
+      data-tasks-running={props.tasksRunning}
+    />
+  ),
 }));
 vi.mock("./viewportClient", () => ({ connectViewport: vi.fn() }));
 const desktopState = vi.hoisted(() => ({ available: true as boolean | null }));
@@ -585,7 +598,7 @@ describe("ComputerScreen Desktop segment", () => {
   const tabText = (tab: ReactTestInstance) => String(tab.findByType("span").props.children);
   const tabs = () => renderer!.root.findAllByProps({ role: "tab" }).map(tabText);
 
-  it("offers Browser, Desktop and Files, and shows the PC's live view on Desktop", async () => {
+  it("offers Browser, Desktop, Files and Performance, and shows the PC's live view on Desktop", async () => {
     stubDocument();
     feedState.status = STATUS;
     await act(async () => {
@@ -593,8 +606,22 @@ describe("ComputerScreen Desktop segment", () => {
         createNodeMock: () => ({ focus: vi.fn(), parentElement: null }),
       });
     });
-    expect(tabs()).toEqual(["Browser", "Desktop", "Files"]);
+    expect(tabs()).toEqual(["Browser", "Desktop", "Files", "Performance"]);
     expect(renderer!.root.findAllByProps({ "aria-label": "Desktop pane" })).toHaveLength(0);
+
+    // Performance is its own segment and gets the app's own busy counts.
+    const performanceTab = renderer!.root
+      .findAllByProps({ role: "tab" })
+      .find((tab) => tabText(tab) === "Performance");
+    await act(async () => performanceTab!.props.onClick());
+    const performance = renderer!.root.findByProps({ "data-testid": "performance-pane" });
+    expect(performance.props["data-bots-busy"]).toBe(0);
+    expect(performance.props["data-tasks-running"]).toBe(0);
+    // Back to Browser for the rest of this test's journey.
+    const browserTab = renderer!.root
+      .findAllByProps({ role: "tab" })
+      .find((tab) => tabText(tab) === "Browser");
+    await act(async () => browserTab!.props.onClick());
     const desktopTab = renderer!.root
       .findAllByProps({ role: "tab" })
       .find((tab) => tabText(tab) === "Desktop");
@@ -623,7 +650,7 @@ describe("ComputerScreen Desktop segment", () => {
     await act(async () => {
       renderer = create(<ComputerScreen onBackToChat={vi.fn()} />);
     });
-    expect(tabs()).toEqual(["Browser", "Files"]);
+    expect(tabs()).toEqual(["Browser", "Files", "Performance"]);
   });
 });
 
