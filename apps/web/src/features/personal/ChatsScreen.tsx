@@ -548,21 +548,33 @@ export function ChatsScreen({
     [filter, nameOf, query, rows],
   );
 
-  // Avatar poses for the rows on screen. Transform and opacity loops only,
-  // paused while off screen (BotAvatar, avatarOffscreen.ts) and dropped under
-  // reduced motion; the kill switches are the ones the bot rows used.
+  // Avatar poses for the rows on screen. A row with nothing to say gets no
+  // pose at all: the plain SVG avatar, no pose machinery, no observer. The
+  // home draws one row per chat (the old home drew one per bot), so a quiet
+  // row has to cost as little as a plain list row does. Live rows carry
+  // working or thinking, a row waiting on the owner carries the waiting pose,
+  // a failed reply blocked. Transform and opacity only, paused while off
+  // screen (BotAvatar, avatarOffscreen.ts) and dropped under reduced motion;
+  // the kill switches are the ones the bot rows used.
   const motionByKey = useMemo(() => {
-    const motions: AvatarMotion[] = shownRows.map((row) =>
-      row.kind === "chat" && isChatRowLive(row)
-        ? previewByKey.get(row.key)?.tone === "thinking"
-          ? "thinking"
-          : "working"
-        : "idle",
-    );
+    const wanted: Array<AvatarMotion | undefined> = shownRows.map((row) => {
+      if (row.kind !== "chat") return undefined;
+      if (isChatRowLive(row)) {
+        return previewByKey.get(row.key)?.tone === "thinking" ? "thinking" : "working";
+      }
+      if (row.request !== null) return "waiting";
+      if (isThreadErrored(row.shell)) return "blocked";
+      return undefined;
+    });
+    const motions: AvatarMotion[] = wanted.map((motion) => motion ?? "idle");
     const shown = perfOptimizationOn("all-busy-motion")
       ? motions
       : firstContinuousMotionOnly(motions);
-    return new Map(shownRows.map((row, index) => [row.key, shown[index]] as const));
+    return new Map(
+      shownRows.map(
+        (row, index) => [row.key, wanted[index] === undefined ? undefined : shown[index]] as const,
+      ),
+    );
   }, [previewByKey, shownRows]);
   const cometKeys = useMemo(() => {
     if (!perfOptimizationOn("anim-comet")) return new Set<string>();
@@ -619,13 +631,15 @@ export function ChatsScreen({
   }, [chatBases, needsYou]);
   const cardMotions = useMemo(() => {
     const cards = railCards(rows);
-    const motions = cards.map((row): AvatarMotion =>
-      row.kind === "chat" && isChatRowLive(row)
-        ? previewByKey.get(row.key)?.tone === "thinking"
-          ? "thinking"
-          : "working"
-        : "idle",
-    );
+    const wanted: Array<AvatarMotion | undefined> = cards.map((row) => {
+      if (row.kind !== "chat") return undefined;
+      if (isChatRowLive(row)) {
+        return previewByKey.get(row.key)?.tone === "thinking" ? "thinking" : "working";
+      }
+      if (row.request !== null) return "waiting";
+      return undefined;
+    });
+    const motions: AvatarMotion[] = wanted.map((motion) => motion ?? "idle");
     const drawn = perfOptimizationOn("all-busy-motion")
       ? motions
       : firstContinuousMotionOnly(motions);
@@ -634,7 +648,14 @@ export function ChatsScreen({
     );
     return new Map(
       cards.map(
-        (row, index) => [row.key, { motion: drawn[index]!, comet: comets.has(row.key) }] as const,
+        (row, index) =>
+          [
+            row.key,
+            {
+              motion: wanted[index] === undefined ? undefined : drawn[index],
+              comet: comets.has(row.key),
+            },
+          ] as const,
       ),
     );
   }, [previewByKey, rows]);
@@ -702,20 +723,21 @@ export function ChatsScreen({
     return shown.map((summary, index) => {
       const liveThread = summary.liveThread ?? null;
       const entry = liveThread === null ? undefined : progressNotes.get(liveThread.id as string);
+      const caption = railCaption({
+        summary,
+        now,
+        needsYou: botsNeeding.has(summary.bot.botId),
+        thinking:
+          summary.thinking && !currentTurnHasToolStep(entry, liveThread === null ? {} : liveThread),
+      });
       return {
         botId: summary.bot.botId,
         name: summary.bot.name,
         avatarShape: summary.bot.avatarShape,
         avatarColor: summary.bot.avatarColor,
-        caption: railCaption({
-          summary,
-          now,
-          needsYou: botsNeeding.has(summary.bot.botId),
-          thinking:
-            summary.thinking &&
-            !currentTurnHasToolStep(entry, liveThread === null ? {} : liveThread),
-        }),
-        motion: drawn[index],
+        caption,
+        // An idle tile keeps the plain avatar (see the rows above).
+        motion: caption.tone === "idle" ? undefined : drawn[index],
         comet: comets.has(summary.bot.botId),
       };
     });

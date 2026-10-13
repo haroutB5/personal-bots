@@ -6,7 +6,7 @@ import { botEffectiveModelSelection, type EnvironmentId } from "@t3tools/contrac
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as DateTime from "effect/DateTime";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, Ellipsis, NotebookPen, Pencil, Plus } from "lucide-react";
+import { ChevronLeft, Ellipsis, NotebookPen, Plus } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
@@ -580,9 +580,9 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                 to="/bots/$botId/edit"
                 params={{ botId: bot.botId }}
                 aria-label={`Edit ${bot.name}`}
-                className={ICON_LINK}
+                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center px-3 text-[15px] leading-5 font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
               >
-                <Pencil aria-hidden="true" className="size-5" strokeWidth={1.75} />
+                Edit
               </Link>
               <Menu>
                 <MenuTrigger

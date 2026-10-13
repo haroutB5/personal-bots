@@ -1280,6 +1280,15 @@ body:has(.personal-app) {
   touch-action: pan-y;
 }
 
+/* A chat list is long (one row per chat, where the old home drew one per bot):
+ * off-screen rows are skipped by layout and paint, and the reserved height is
+ * the row's own 72 px so the scrollbar never moves. Browsers without
+ * `content-visibility` ignore both lines. */
+.home-rows > li {
+  content-visibility: auto;
+  contain-intrinsic-size: 72px;
+}
+
 /* A chat row's separator: 0.5 px, inset to where the text starts (16 + 48 + 12). */
 .home-rows > li + li .home-row::before {
   content: "";

@@ -50,36 +50,36 @@ export function PersonalTabBar({ active }: { readonly active: PersonalTab }): JS
                   tab === "chats" && needsYou > 0 ? `Bots, ${needsYou} need you` : undefined
                 }
                 className={cn(
-                  "flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] leading-[13px] outline-none",
+                  "relative flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] leading-[13px] outline-none",
                   "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
                   isActive
                     ? "font-semibold text-[var(--personal-text)]"
                     : "font-medium text-[var(--personal-text-secondary)]",
                 )}
               >
-                <span className="relative flex size-[26px] items-center justify-center">
-                  <Icon
-                    aria-hidden="true"
-                    className={cn(
-                      "size-[26px]",
-                      isActive &&
-                        tab === "tasks" &&
-                        "[&>path]:stroke-[var(--personal-surface)] [&>path]:[stroke-width:2.25]",
-                    )}
-                    strokeWidth={1.75}
-                    fill={isActive ? "currentColor" : "none"}
-                  />
-                  {badge !== null ? (
-                    <span
-                      aria-hidden="true"
-                      data-testid="tab-needs-badge"
-                      className="absolute -top-px left-[calc(50%+5px)] flex h-[18px] min-w-[18px] items-center justify-center rounded-[9px] bg-[var(--personal-state-needs)] px-[5px] text-[11px] leading-[18px] font-bold text-[var(--personal-primary-text)] tabular-nums shadow-[0_0_0_2px_var(--personal-bar-solid)]"
-                    >
-                      {badge}
-                    </span>
-                  ) : null}
-                </span>
+                <Icon
+                  aria-hidden="true"
+                  className={cn(
+                    "size-[26px]",
+                    isActive &&
+                      tab === "tasks" &&
+                      "[&>path]:stroke-[var(--personal-surface)] [&>path]:[stroke-width:2.25]",
+                  )}
+                  strokeWidth={1.75}
+                  fill={isActive ? "currentColor" : "none"}
+                />
                 <span>{label}</span>
+                {/* After the label in the markup (the tab reads "Bots 5"), drawn
+                    at the icon's top-right corner. */}
+                {badge !== null ? (
+                  <span
+                    aria-hidden="true"
+                    data-testid="tab-needs-badge"
+                    className="absolute top-px left-[calc(50%+5px)] flex h-[18px] min-w-[18px] items-center justify-center rounded-[9px] bg-[var(--personal-state-needs)] px-[5px] text-[11px] leading-[18px] font-bold text-[var(--personal-primary-text)] tabular-nums shadow-[0_0_0_2px_var(--personal-bar-solid)]"
+                  >
+                    {badge}
+                  </span>
+                ) : null}
               </Link>
             </li>
           );

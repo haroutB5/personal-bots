@@ -45,7 +45,9 @@ export function NeedsYouPill({ request }: { readonly request: NeedsYouRequest })
         aria-hidden="true"
         className="size-1.5 shrink-0 rounded-full bg-[var(--personal-state-needs)]"
       />
-      {NEEDS_YOU_PILL_LABEL[request.kind]}
+      {/* Its own element: the label is a leaf in the row's markup, so a
+          reader (or a check) that looks for the pill's word finds it. */}
+      <span>{NEEDS_YOU_PILL_LABEL[request.kind]}</span>
       <ChevronRight
         aria-hidden="true"
         className="size-3 shrink-0 text-[var(--personal-text-secondary)]"
