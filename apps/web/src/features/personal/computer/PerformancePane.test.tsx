@@ -1,4 +1,4 @@
-import type { PerformanceSample } from "@t3tools/contracts";
+import type { PerformanceSample, PerformanceSlow } from "@t3tools/contracts";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -15,25 +15,22 @@ const feed = vi.hoisted(() => ({
   } as PerformanceFeedState,
 }));
 
-/** Every chart render, for the axis and scrub assertions (the pane draws three). */
+/** Every chart render, for the axis and view-only assertions (the pane draws three). */
 const charts = vi.hoisted(() => ({
-  props: [] as Array<{
-    ariaLabel: string;
-    series: ReadonlyArray<{ values: ReadonlyArray<number | null> }>;
-    scrubIndex?: number | null;
-    onScrub?: (index: number | null) => void;
-  }>,
+  props: [] as Array<
+    Record<string, unknown> & {
+      ariaLabel: string;
+      series: ReadonlyArray<{ values: ReadonlyArray<number | null> }>;
+    }
+  >,
 }));
 
 vi.mock("./usePerformanceFeed", () => ({
   usePerformanceFeed: () => feed.state,
 }));
 vi.mock("./PerfChart", () => ({
-  PerfChart: (props: {
-    ariaLabel: string;
-    series: ReadonlyArray<{ values: ReadonlyArray<number | null> }>;
-  }) => {
-    charts.props.push(props);
+  PerfChart: (props: Record<string, unknown> & { ariaLabel: string }) => {
+    charts.props.push(props as unknown as (typeof charts.props)[number]);
     return null;
   },
 }));
@@ -41,7 +38,6 @@ vi.mock("./PerfSpark", () => ({ PerfSpark: () => null }));
 vi.mock("./PcAvatar", () => ({ PcAvatar: () => null }));
 
 import { PerformancePane } from "./PerformancePane";
-import { fmtClock } from "./performanceModel";
 
 const sample = (t: number, overrides: Partial<PerformanceSample> = {}): PerformanceSample => ({
   t,
@@ -77,6 +73,23 @@ const sample = (t: number, overrides: Partial<PerformanceSample> = {}): Performa
   fanStatus: "ok",
   lhm: "ok",
   fans: "ok",
+  ...overrides,
+});
+
+/** A laptop with a battery: the tile row then shows CPU temp, not Graphics. */
+const slow = (overrides: Partial<PerformanceSlow> = {}): PerformanceSlow => ({
+  t: 1_000_000,
+  batteryPct: 64,
+  batteryState: "charging",
+  batteryMinutesLeft: 55,
+  batteryDesignWh: 86,
+  batteryFullWh: 74,
+  diskTotalGB: 476,
+  diskFreeGB: 77,
+  dataGB: 7,
+  backupsGB: 37,
+  backupsCount: 18,
+  releasesGB: 8,
   ...overrides,
 });
 
@@ -280,42 +293,93 @@ describe("PerformancePane render", () => {
     expect(values[368]).toBeNull();
   });
 
-  it("reads Not measured over a gap, a sample's own time over a sample", () => {
-    // QA round 2 on 1.66.37: scrubbing a gap showed the last reading before
-    // it; the spec's Gap state says the readout reads "Not measured".
+  it("keeps every readout on the newest sample, with no scrub to stick", () => {
+    // Harout, 13 Oct (live 1.66.39): a touch left the scrub cursor stuck
+    // mid-chart, so the headers, the legends and the tiles all read "Not
+    // measured" and "–" while the hero and the Live dot said the PC was fine.
+    // The charts are view-only now, and one reading - the newest - is the
+    // whole tab.
     charts.props.length = 0;
     act(() => {
       renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
     });
     const samples: PerformanceSample[] = [];
-    // The same shape as the slot-axis test: a minute watched, 70 s nobody
-    // watching, then 30 s watched.
+    // A minute watched, 70 s nobody watching, then 30 s watched: the shape
+    // that used to need a scrub to read either side of the gap.
     for (let t = 1_000_000; t <= 1_060_000; t += 2_000) samples.push(sample(t));
     for (let t = 1_130_000; t <= 1_160_000; t += 2_000) {
       samples.push(sample(t, { cpuPct: 55 }));
     }
     act(() => {
-      feed.state = { ...feed.state, samples, lastSampleAt: Date.now(), status: "live" };
+      feed.state = {
+        ...feed.state,
+        samples,
+        slow: slow(),
+        lastSampleAt: Date.now(),
+        status: "live",
+      };
       renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
     });
-    const cpu = charts.props
-      .filter((props) => props.ariaLabel.startsWith("CPU, last 15 minutes"))
-      .at(-1);
-    expect(cpu).toBeDefined();
 
-    // Slots 400 to 433 are the stretch nobody watched: the readout says so.
-    act(() => {
-      cpu!.onScrub!(416);
-    });
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Not measured");
+    // Nothing on a chart is a control any more: no scrub position to set and
+    // no handler to set it with, on any chart or spark.
+    expect(charts.props.length).toBeGreaterThan(0);
+    for (const props of charts.props) {
+      expect(Object.keys(props).sort()).not.toContain("onScrub");
+      expect(Object.keys(props).sort()).not.toContain("scrubIndex");
+    }
 
-    // Slot 399 is the last sample before the gap, at 1_060_000: its values
-    // come back, with its own time.
-    act(() => {
-      cpu!.onScrub!(399);
-    });
+    // And the gap never reaches a readout: the newest sample does.
     const text = JSON.stringify(renderer!.toJSON());
     expect(text).not.toContain("Not measured");
-    expect(text).toContain(fmtClock(1_060_000, true));
+    const labels = renderer!.root
+      .findAllByType("button")
+      .map((node) => String(node.props["aria-label"]));
+    expect(labels).toContain("CPU 55%. Go to CPU");
+    expect(labels).toContain("Memory 9.8GB. Go to Memory");
+  });
+
+  it("says the sensors app is not running instead of a bare dash on CPU temp", () => {
+    // A tile whose source is not running reads as broken when it shows "–"
+    // (Harout, 13 Oct). It says why instead, in the card's own words.
+    act(() => {
+      renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    act(() => {
+      feed.state = {
+        ...feed.state,
+        samples: [sample(1_000_000, { lhm: "down", cpuTempC: null })],
+        slow: slow(),
+        lastSampleAt: Date.now(),
+        status: "live",
+      };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const labels = renderer!.root
+      .findAllByType("button")
+      .map((node) => String(node.props["aria-label"]));
+    expect(labels).toContain("CPU temp Sensors app not running");
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Sensors app not running");
+  });
+
+  it("shows the CPU temp reading itself while the sensors app answers", () => {
+    act(() => {
+      renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    act(() => {
+      feed.state = {
+        ...feed.state,
+        samples: [sample(1_000_000, { lhm: "ok", cpuTempC: 64 })],
+        slow: slow(),
+        lastSampleAt: Date.now(),
+        status: "live",
+      };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const labels = renderer!.root
+      .findAllByType("button")
+      .map((node) => String(node.props["aria-label"]));
+    expect(labels).toContain("CPU temp 64°C. Go to CPU temp");
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Sensors app not running");
   });
 });

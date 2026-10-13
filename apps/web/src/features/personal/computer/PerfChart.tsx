@@ -5,8 +5,11 @@ import { cn } from "~/lib/utils";
 
 /*
  * The Performance tab's one chart (spec section 5): one y axis, thin marks, a
- * wash under each line, an end dot with a surface ring on the live end, and a
- * scrub the finger drives. Shares the bucket-mean drawing rule with PerfSpark;
+ * wash under each line, an end dot with a surface ring on the live end. The
+ * chart is view-only: a finger on it belongs to the page, so a tap or a drag
+ * does nothing and a vertical scroll over it works normally (Harout, 13 Oct:
+ * the old finger-driven scrub stuck after a touch and left every readout and
+ * tile on "Not measured"). Shares the bucket-mean drawing rule with PerfSpark;
  * gaps (nulls) break the line and are never interpolated.
  */
 
@@ -25,15 +28,11 @@ export interface PerfChartProps {
   readonly height?: number;
   /** The amber dashed line, shown only while its warning is active. */
   readonly warnLine?: { readonly v: number; readonly l: string } | null;
-  /** The scrub position (a sample index), or null for live. */
-  readonly scrubIndex?: number | null;
-  readonly onScrub?: (index: number | null) => void;
   readonly loadingNote?: string | null;
   readonly ariaLabel: string;
 }
 
 const GUTTER = 36;
-const BUCKETS_PER_SAMPLE = 1;
 
 /**
  * One drawn point per ~2 px: the mean of each bucket of samples. Exported for
@@ -77,8 +76,6 @@ export const PerfChart = memo(function PerfChart({
   width = 290,
   height = 112,
   warnLine = null,
-  scrubIndex = null,
-  onScrub,
   loadingNote = null,
   ariaLabel,
 }: PerfChartProps): JSX.Element {
@@ -111,14 +108,6 @@ export const PerfChart = memo(function PerfChart({
   );
 
   const empty = series.every((s) => s.values.every((value) => value === null));
-
-  const indexAt = (clientX: number): number | null => {
-    const host = hostRef.current;
-    if (host === null || total === 0) return null;
-    const rect = host.getBoundingClientRect();
-    const ratio = (clientX - rect.left) / Math.max(1, rect.width - GUTTER);
-    return Math.max(0, Math.min(total - 1, Math.round(ratio * (total - 1))));
-  };
 
   const tickY = ticks.map((tick) => ({ ...tick, y: y(tick.v) }));
   const warnY = warnLine === null ? null : y(warnLine.v);
@@ -207,7 +196,7 @@ export const PerfChart = memo(function PerfChart({
   }
 
   const endDots: JSX.Element[] = [];
-  if (near && scrubIndex === null) {
+  if (near) {
     for (const s of series) {
       const lastIndex = s.values.length - 1;
       const lastValue = s.values[lastIndex] ?? null;
@@ -217,22 +206,6 @@ export const PerfChart = memo(function PerfChart({
           key={`end-${s.name}`}
           cx={x(lastIndex)}
           cy={y(lastValue)}
-          r="4"
-          fill={s.hbots ? "var(--perf-hbots)" : "var(--perf-pc)"}
-          stroke="var(--personal-surface)"
-          strokeWidth="2"
-        />,
-      );
-    }
-  } else if (near && scrubIndex !== null) {
-    for (const s of series) {
-      const value = s.values[scrubIndex] ?? null;
-      if (value === null) continue;
-      endDots.push(
-        <circle
-          key={`scrub-dot-${s.name}`}
-          cx={x(scrubIndex)}
-          cy={y(value)}
           r="4"
           fill={s.hbots ? "var(--perf-hbots)" : "var(--perf-pc)"}
           stroke="var(--personal-surface)"
@@ -250,41 +223,10 @@ export const PerfChart = memo(function PerfChart({
         style={{
           width: width + GUTTER,
           height,
-          touchAction: scrubIndex === null ? "pan-y" : "none",
+          // The finger belongs to the page: a drag scrolls the tab instead of
+          // being swallowed by a scrub.
+          touchAction: "pan-y",
         }}
-        onPointerDown={(event) => {
-          if (onScrub === undefined) return;
-          event.currentTarget.setPointerCapture(event.pointerId);
-          const index = indexAt(event.clientX);
-          if (index !== null) onScrub(index);
-        }}
-        onPointerMove={(event) => {
-          if (onScrub === undefined || !event.currentTarget.hasPointerCapture(event.pointerId)) {
-            return;
-          }
-          const index = indexAt(event.clientX);
-          if (index !== null) onScrub(index);
-        }}
-        onPointerUp={(event) => {
-          if (onScrub === undefined) return;
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          onScrub(null);
-        }}
-        onPointerCancel={() => onScrub?.(null)}
-        onKeyDown={(event) => {
-          if (onScrub === undefined) return;
-          if (event.key === "Escape") {
-            onScrub(null);
-            return;
-          }
-          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-            event.preventDefault();
-            const step = event.key === "ArrowLeft" ? -BUCKETS_PER_SAMPLE : BUCKETS_PER_SAMPLE;
-            const from = scrubIndex ?? total - 1;
-            onScrub(Math.max(0, Math.min(total - 1, from + step)));
-          }
-        }}
-        tabIndex={onScrub === undefined ? -1 : 0}
         role="img"
         aria-label={ariaLabel}
       >
@@ -312,16 +254,6 @@ export const PerfChart = memo(function PerfChart({
             />
           )}
           {endDots}
-          {scrubIndex === null ? null : (
-            <line
-              x1={x(scrubIndex)}
-              x2={x(scrubIndex)}
-              y1={0}
-              y2={height}
-              stroke="var(--personal-text-secondary)"
-              strokeWidth="1"
-            />
-          )}
         </svg>
         {(near ? tickY.filter((tick) => !dropTick(tick.v)) : []).map((tick) => (
           <span

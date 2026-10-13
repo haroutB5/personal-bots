@@ -11,13 +11,11 @@ import { PerfChart, type PerfChartSeries } from "./PerfChart";
 import { PcAvatar, type PcPose } from "./PcAvatar";
 import {
   axisSeries,
-  axisSlotMap,
   evaluateThresholds,
   fmt,
   fmtClock,
   meanOver,
   NO_WARNINGS,
-  PERF_AXIS_SLOTS,
   PERF_STALE_AFTER_MS,
   summaryFor,
   WINDOW_MS,
@@ -321,6 +319,10 @@ export function PerformancePane({
   const newest = samples.at(-1) ?? null;
   const loading = samples.length === 0;
   const stale = useStaleFlip(feed.lastSampleAt);
+  // Temperatures and power come from the sensors app (LHM). While it is down
+  // the CPU temp tile explains itself rather than showing a bare dash; the
+  // Temps card below is left to say the same thing in full.
+  const sensorsDown = newest?.lhm === "down";
 
   // Every heavy derivation below runs once per 2 s sample, not per render:
   // `now` is the newest sample's own time, so no wall-clock dependency leaks
@@ -354,14 +356,11 @@ export function PerformancePane({
         : "calm";
 
   const live = feed.status === "live" && !stale;
-  const [scrub, setScrub] = useState<number | null>(null);
-  const scrubIndex = scrub === null ? null : Math.min(scrub, PERF_AXIS_SLOTS - 1);
-  // The scrub crosses the chart's slot axis and reads what the chart draws
-  // there: a slot with no sample to draw (a stretch nobody watched, or the
-  // empty side before the history begins) reads "Not measured" (spec
-  // section 4, the Gap state), not the last reading carried across the gap.
-  const slotSamples = useMemo(() => axisSlotMap(samples, now), [samples, now]);
-  const shown = scrubIndex === null ? newest : (slotSamples[scrubIndex] ?? null);
+  // Every readout on the tab reads the newest live sample (Harout, 13 Oct:
+  // the old finger-driven scrub stuck after a touch and left the header,
+  // legend and tiles on "Not measured" while the hero and the Live dot said
+  // the PC was fine). The charts are view-only, so there is one reading.
+  const shown = newest;
 
   const scrollTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({
@@ -379,8 +378,8 @@ export function PerformancePane({
   const threadMax = threads === null ? 0 : Math.max(...threads);
 
   // One array per charted field, built once per sample (not per render): a
-  // scrub or a stale flip reuses these identities, so the memoized chart and
-  // spark components below skip redrawing. Every array sits on the fixed
+  // stale flip reuses these identities, so the memoized chart and spark
+  // components below skip redrawing. Every array sits on the fixed
   // 15-minute slot axis (axisSeries), so charts and sparks all share one time
   // scale and a stretch nobody watched is left empty instead of squeezed.
   const gpuSeries = useMemo(
@@ -558,6 +557,9 @@ export function PerformancePane({
               fraction={
                 shown?.cpuTempC == null ? 0 : Math.max(0, ((shown.cpuTempC - 30) / 70) * 100)
               }
+              // The sensors app answering nothing is a state, not a missing
+              // number: the tile says so calmly, exactly as the card below it.
+              note={sensorsDown ? "Sensors app not running" : undefined}
               warn={cpuTempWarn}
               onTap={() => scrollTo("perf-temps")}
             />
@@ -589,20 +591,9 @@ export function PerformancePane({
           main={fmt(shown?.cpuPct ?? null)}
           unit="%"
           context={
-            scrubIndex === null ? (
-              threshold.cpuBusy ? (
-                "Over 70% for the last minute"
-              ) : (
-                (statsLine(samples, (s) => s.cpuPct, "%") ?? "")
-              )
-            ) : shown === null ? (
-              "Not measured"
-            ) : (
-              <>
-                hbots <b className="font-semibold">{fmt(shown.hbotsPct)}%</b> · at{" "}
-                {fmtClock(shown.t, true)}
-              </>
-            )
+            threshold.cpuBusy
+              ? "Over 70% for the last minute"
+              : (statsLine(samples, (s) => s.cpuPct, "%") ?? "")
           }
         />
         <PerfChart
@@ -614,8 +605,6 @@ export function PerformancePane({
             { v: 100, l: "100%" },
           ]}
           warnLine={cpuWarn ? { v: 90, l: "90%" } : null}
-          scrubIndex={scrubIndex}
-          onScrub={setScrub}
           ariaLabel={`CPU, last 15 minutes: now ${fmt(shown?.cpuPct ?? null)} percent, hbots ${fmt(shown?.hbotsPct ?? null)} percent`}
         />
         <div className="mt-1 flex items-center justify-between text-[13px] leading-4 text-[var(--personal-text-secondary)]">
@@ -671,11 +660,9 @@ export function PerformancePane({
             main={fmt(shown?.memUsedGB ?? null, 1)}
             unit="GB"
             context={
-              scrubIndex !== null && shown === null
-                ? "Not measured"
-                : shown?.memUsedGB == null || shown?.memTotalGB == null
-                  ? undefined
-                  : `${Math.round((shown.memUsedGB / shown.memTotalGB) * 100)}% used · ${fmt(shown.memFreeGB, 1)} GB free`
+              shown?.memUsedGB == null || shown?.memTotalGB == null
+                ? undefined
+                : `${Math.round((shown.memUsedGB / shown.memTotalGB) * 100)}% used · ${fmt(shown.memFreeGB, 1)} GB free`
             }
           />
           <PerfChart
@@ -686,8 +673,6 @@ export function PerformancePane({
               { v: 8, l: "8 GB" },
               { v: 16, l: "16 GB" },
             ]}
-            scrubIndex={scrubIndex}
-            onScrub={setScrub}
             ariaLabel={`Memory, last 15 minutes: ${fmt(shown?.memUsedGB ?? null, 1)} of ${fmt(shown?.memTotalGB ?? null, 1)} gigabytes used`}
           />
           <div className="mt-1 flex items-center justify-between text-[13px] leading-4 text-[var(--personal-text-secondary)]">
@@ -729,8 +714,6 @@ export function PerformancePane({
           samples={samples}
           shown={shown}
           stale={stale}
-          scrubIndex={scrubIndex}
-          onScrub={setScrub}
           warnPillHot={cpuTempWarn}
           fansFastest={fansFastest}
           tempSeries={tempSeries}
@@ -959,6 +942,7 @@ function Kpi({
   fraction,
   warn = false,
   charge = false,
+  note,
   onTap,
 }: {
   readonly label: string;
@@ -967,27 +951,41 @@ function Kpi({
   readonly fraction: number;
   readonly warn?: boolean;
   readonly charge?: boolean;
+  /**
+   * A calm sentence shown instead of the big reading, for a tile whose source
+   * is not running at all. A bare "–" there reads as a broken tile (Harout,
+   * 13 Oct); the tile says why instead, in the same words as the card below.
+   */
+  readonly note?: string | undefined;
   readonly onTap: () => void;
 }): JSX.Element {
   return (
     <button
       type="button"
       onClick={onTap}
-      aria-label={`${label} ${value}${unit ?? ""}. Go to ${label}`}
+      aria-label={
+        note === undefined ? `${label} ${value}${unit ?? ""}. Go to ${label}` : `${label} ${note}`
+      }
       className="flex h-[72px] flex-col items-stretch justify-between rounded-[10px] px-1.5 pt-1.5 pb-1 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
     >
       <span className="text-left text-[11px] leading-[13px] text-[var(--personal-text-secondary)]">
         {label}
       </span>
-      <span className="text-left text-[20px] leading-6 font-bold tabular-nums">
-        {value}
-        {unit === undefined ? null : (
-          <small className="ml-px text-[13px] font-semibold text-[var(--personal-text-secondary)]">
-            {unit}
-          </small>
-        )}
-        {charge ? <small className="ml-1 text-[12px]">⚡</small> : null}
-      </span>
+      {note === undefined ? (
+        <span className="text-left text-[20px] leading-6 font-bold tabular-nums">
+          {value}
+          {unit === undefined ? null : (
+            <small className="ml-px text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+              {unit}
+            </small>
+          )}
+          {charge ? <small className="ml-1 text-[12px]">⚡</small> : null}
+        </span>
+      ) : (
+        <span className="text-left text-[11px] leading-[13px] text-[var(--personal-text-secondary)]">
+          {note}
+        </span>
+      )}
       <Meter fraction={fraction} warn={warn} charge={charge} />
     </button>
   );
@@ -1065,8 +1063,6 @@ function TempsCard({
   samples,
   shown,
   stale,
-  scrubIndex,
-  onScrub,
   warnPillHot,
   fansFastest,
   tempSeries,
@@ -1075,11 +1071,9 @@ function TempsCard({
   fan2Series,
 }: {
   readonly samples: ReadonlyArray<PerformanceSample>;
-  /** The sample the pane is showing (newest, or the scrub's slot). */
+  /** The newest live sample: the one reading the whole tab shows. */
   readonly shown: PerformanceSample | null;
   readonly stale: boolean;
-  readonly scrubIndex: number | null;
-  readonly onScrub: (index: number | null) => void;
   readonly warnPillHot: boolean;
   readonly fansFastest: number;
   readonly tempSeries: ReadonlyArray<number | null>;
@@ -1139,18 +1133,16 @@ function TempsCard({
     <Card label="Temperatures and fans" dim={stale}>
       <CardHead
         title="Temperatures and fans"
-        meta={scrubIndex === null ? "CPU package" : "Lift to go back to now"}
+        meta="CPU package"
         warn={warnPillHot ? "Hot" : null}
       />
       <Value
         main={fmt(shown?.cpuTempC ?? null)}
         unit={shown?.cpuTempC == null ? undefined : "°C"}
         context={
-          scrubIndex !== null && shown === null
-            ? "Not measured"
-            : newest?.cpuTempC != null && newest.cpuTempC >= 85 && !warnPillHot
-              ? "Warm"
-              : (statsLine(samples, (s) => s.cpuTempC, " °C") ?? "")
+          newest?.cpuTempC != null && newest.cpuTempC >= 85 && !warnPillHot
+            ? "Warm"
+            : (statsLine(samples, (s) => s.cpuTempC, " °C") ?? "")
         }
       />
       <PerfChart
@@ -1162,8 +1154,6 @@ function TempsCard({
           { v: 70, l: "70°" },
           { v: 100, l: "100°" },
         ]}
-        scrubIndex={scrubIndex}
-        onScrub={onScrub}
         loadingNote="History builds while this tab is open, up to 15 minutes."
         ariaLabel={`CPU temperature, last 15 minutes: now ${fmt(shown?.cpuTempC ?? null)} degrees`}
       />
