@@ -54,7 +54,7 @@ export function FoldedSettingsSection({
           {control ? <div className="flex shrink-0 items-center">{control}</div> : null}
         </div>
         <CollapsiblePanel>
-          <div className="border-t border-border/50 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
+          <div className="border-t border-border/50 [&>:where(:not(:first-child))]:border-t [&>:where(:not(:first-child))]:border-border/50">
             {children}
           </div>
         </CollapsiblePanel>
