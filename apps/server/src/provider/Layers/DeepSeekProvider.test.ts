@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -383,7 +384,7 @@ describe("DeepSeekProvider", () => {
           (descriptor) => descriptor.id === "agentMode",
         ),
       ).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(Path.layer)),
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, Path.layer))),
   );
 
   it("matches the pin as the runtime prints it, pre-release suffix and all", () => {
@@ -413,7 +414,7 @@ describe("DeepSeekProvider", () => {
       expect(snapshot.installed).toBe(false);
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).toContain("install-dsh.ps1");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(Path.layer)),
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, Path.layer))),
   );
 
   it.effect("the kill switch forces the old engine whatever the setting says", () =>
@@ -435,6 +436,6 @@ describe("DeepSeekProvider", () => {
           ?.find((entry) => entry.slug === "deepseek-flash")
           ?.capabilities?.optionDescriptors?.some((descriptor) => descriptor.id === "agentMode"),
       ).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(Path.layer)),
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, Path.layer))),
   );
 });
