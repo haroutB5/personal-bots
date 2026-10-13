@@ -34,6 +34,18 @@ function sameToolDetails(previous: ToolDetailsProps, next: ToolDetailsProps): bo
   return true;
 }
 
+/**
+ * One short phrase for the steps button: the step's own words with any raw
+ * tool argument cut off, so the footer reads "9 steps · Read", never
+ * "9 steps · Read: {"file_path": "C:/repo/…"}".
+ */
+export function stepSummaryLabel(label: string): string | null {
+  const cut = label.search(/[{["]/u);
+  const head = (cut >= 0 ? label.slice(0, cut) : label).replace(/[\s:·,–—-]+$/u, "").trim();
+  if (head.length < 2) return null;
+  return head.length > 48 ? `${head.slice(0, 47)}…` : head;
+}
+
 export const ToolDetails = memo(function ToolDetails({
   entries,
   live,
@@ -43,7 +55,11 @@ export const ToolDetails = memo(function ToolDetails({
   const failures = entries.filter((entry) => entry.tone === "error").length;
   const count = `${entries.length} ${entries.length === 1 ? "step" : "steps"}`;
   const first = entries[0];
-  const summary = first === undefined ? null : workEntryDisplayLabel(first, workspaceRoot);
+  const summary =
+    first === undefined
+      ? null
+      : (stepSummaryLabel(workEntryDisplayLabel(first, workspaceRoot)) ??
+        stepSummaryLabel(`${first.toolTitle || first.label || ""}`));
   return (
     <details
       data-testid="tool-details"

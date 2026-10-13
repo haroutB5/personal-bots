@@ -84,6 +84,8 @@ export const JUMP_TO_LATEST_DELAY_MS = 150;
 export const VIEWPORT_SETTLE_MS = 400;
 /** Gives up on a smooth jump that never reached the bottom. */
 const JUMP_SETTLE_MS = 1_000;
+/** How long a fresh chat's own scroll to the newest settles before the landing decides (D13). */
+const LANDING_SETTLE_MS = 160;
 /** How long after a wheel, key or finger lift a scroll still counts as the reader's. */
 const READER_INPUT_MS = 400;
 /**
@@ -1493,9 +1495,12 @@ export function MessageList({
   // screen, and the dock does its own wash.
   const landingKey = landingItemId === null ? null : `${threadId}:${landingItemId}`;
   const landedRef = useRef<string | null>(null);
+  const landingSettledRef = useRef<string | null>(null);
+  const [landingTick, setLandingTick] = useState(0);
   useEffect(() => {
     if (landingKey === null || landingItemId === null) {
       landedRef.current = null;
+      landingSettledRef.current = null;
       return;
     }
     if (landedRef.current === landingKey) return;
@@ -1505,11 +1510,21 @@ export function MessageList({
       setPage({ threadId, firstId: items[Math.max(0, index - TRANSCRIPT_WINDOW_STEP)]!.id });
       return;
     }
-    landedRef.current = landingKey;
     const node = contentRef.current?.querySelector<HTMLElement>(
       `[data-transcript-row="${landingItemId}"]`,
     );
-    if (node === null || node === undefined) return;
+    if (node === null || node === undefined) {
+      landedRef.current = landingKey;
+      return;
+    }
+    // A fresh mount is still scrolling the list to its bottom over the first
+    // frames: decide where the reader belongs once that has settled.
+    if (landingSettledRef.current !== landingKey) {
+      landingSettledRef.current = landingKey;
+      const timer = window.setTimeout(() => setLandingTick((tick) => tick + 1), LANDING_SETTLE_MS);
+      return () => window.clearTimeout(timer);
+    }
+    landedRef.current = landingKey;
     // A card already on screen - the usual case, where the request is the
     // newest thing said - leaves the chat where it opened: latest messages
     // shown, as ever. Only a card the bottom would hide moves the reader, and
@@ -1520,12 +1535,14 @@ export function MessageList({
       const view = scroller.getBoundingClientRect();
       if (card.top < view.top || card.bottom > view.bottom) {
         stickRef.current = false;
-        node.scrollIntoView({ block: "center", behavior: "instant" });
+        // To the top, not the middle: a request card can be taller than the
+        // phone's thread, and its own first line is what the request says.
+        node.scrollIntoView({ block: "start", behavior: "instant" });
       }
     }
     node.setAttribute(REQUEST_WASH_ATTRIBUTE, "");
     window.setTimeout(() => node.removeAttribute(REQUEST_WASH_ATTRIBUTE), REQUEST_WASH_MS);
-  }, [landingKey, landingItemId, items, range.start, range.end, threadId]);
+  }, [landingKey, landingItemId, items, range.start, range.end, threadId, landingTick]);
 
   const jumpToLatest = () => {
     const scroller = scrollerRef.current;
