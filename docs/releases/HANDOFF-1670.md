@@ -4,8 +4,8 @@ The whole hbots redesign in one release, as Harout asked (13 Oct): the Bots home
 design A, the bot form's name-and-look-first layout, safe model defaults, a push when a plain chat waits on you, and
 the home's speed work. It carries everything live 1.66.39 has (the Performance tab, the sliding browser sessions and
 the scrub fix), and it adds one fix QA found on live: every bot's CLI now groups under its own name in the
-Performance tab. A third answers QA's own run on the staged 1.67.0 (13 Oct, NO-SHIP): the needs-input push and in-app
-notice now deep link to the request card itself (`?request=`), which they did not before. The other failure in that
+Performance tab. Another fix answers QA's own run on the staged 1.67.0 (13 Oct, NO-SHIP): the needs-input push and
+in-app notice now deep link to the request card itself (`?request=`), which they did not before. The other failure in that
 run, the update line, was the check racing the server's 5 s update-status cache, not an app bug: `UpdateStatusLine.tsx`
 and `updateStatus.ts` are byte-identical to live and 1.66.36 behaved the same way, so Frontend's branch adds a
 component test and no source change. What QA should look at is at the end.
@@ -24,7 +24,10 @@ Branch `release/hbots-1670`: the core merge (`3572011cdd`), the home merge (`c94
 (`071a8ec5b0`), the version bump (`c586c1b845`), then the merge of `origin/release/hbots-16638` (the sliding
 sessions, `4f0459795d`), the merge of IT's `origin/feat/hbots-1670-home` at `af239879cd` (`e06d0fca0a`), the merge of
 the live `origin/release/hbots-16639` (`3d6591faf6`), the Performance attribution fix (`b5340741fc`), the phone
-smoke's own update (`8d8cf31ff3`), and the merge of `origin/feat/hbots-1671-chat` at `a51a4fe1c7` (`6d85f58642`).
+smoke's own update (`8d8cf31ff3`), the merge of `origin/feat/hbots-1671-chat` at `a51a4fe1c7` (`6d85f58642`), and
+then QA's run on the staged build: the needs-input deep-link fix (`3b6ccbf148`), the merge of Frontend's
+`origin/fix/hbots-1670-version-line` at `bd02e08f54` (`120767e5b8`, a component test and no source change), and the
+notes (`5153173b52`).
 
 No conflict changed a behaviour. `personal.css` was the only shared file both sides changed, and every side was
 purely additive (the redesign and chat tokens on one side, IT's `--perf-*` tokens and the live-dot keyframes on the
@@ -217,22 +220,22 @@ a row while the same five journeys in the same order passed on their own.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=51ebaf57c33356050a60f32fcd1f16efb8300fbe release=51ebaf57c333 json-sha256=d343268fd364f9d216665ff6250ccc309a0a444498e1bac55832cc7a24db7823 result=PASS -->
+<!-- gate-evidence:begin sha=5153173b52b9434d92b63b63f1d32ae4aa93735e release=5153173b52b9 json-sha256=99548149a4202c41cbda02b018a5a079ff1127d03905e0eb017e2e18cc7e7726 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T16:41:55Z. Version 1.67.0, release `51ebaf57c333`, commit `51ebaf57c33356050a60f32fcd1f16efb8300fbe` on `release/hbots-1670`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T19:05:42Z. Version 1.67.0, release `5153173b52b9`, commit `5153173b52b9434d92b63b63f1d32ae4aa93735e` on `release/hbots-1670`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\51ebaf57c333\gate-evidence.json` (sha256 `d343268fd364f9d216665ff6250ccc309a0a444498e1bac55832cc7a24db7823`) and the full gate logs in `releases\51ebaf57c333\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\5153173b52b9\gate-evidence.json` (sha256 `99548149a4202c41cbda02b018a5a079ff1127d03905e0eb017e2e18cc7e7726`) and the full gate logs in `releases\5153173b52b9\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2581 tests passed, 0 failed, 3 skipped, in 188 files | 194.3   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 17.9    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2700 tests passed, 0 failed, 0 skipped, in 252 files | 28.5    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 3.4     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 58.8    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1670-core\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\51ebaf57c333" -Json` (in `.`)                                                                                                                 | 0    | pass: 12/12 journeys passed                                | 261.1   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2583 tests passed, 0 failed, 3 skipped, in 188 files | 228.8   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 30      |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2704 tests passed, 0 failed, 0 skipped, in 252 files | 33.9    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 5       |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 58.6    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1670-core\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\5153173b52b9" -Json` (in `.`)                                                                                                                 | 0    | pass: 12/12 journeys passed                                | 266.2   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `51ebaf57c33356050a60f32fcd1f16efb8300fbe`, at end `51ebaf57c33356050a60f32fcd1f16efb8300fbe`; tracked files modified: none. Staged release: version 1.67.0, sha 51ebaf57c333, dirty False, externals copied; `dist/bin.mjs` sha256 `e6f12302eae896e6f9e1b216ad69d567af3d5d939aa817af7050a0ccd59f2548`.
+Tree: HEAD at start `5153173b52b9434d92b63b63f1d32ae4aa93735e`, at end `5153173b52b9434d92b63b63f1d32ae4aa93735e`; tracked files modified: none. Staged release: version 1.67.0, sha 5153173b52b9, dirty False, externals copied; `dist/bin.mjs` sha256 `30980bd38c47426f4024640bbce3f9d3f361d4c70b1ced0890e688c675baf0be`.
 <!-- gate-evidence:end -->
