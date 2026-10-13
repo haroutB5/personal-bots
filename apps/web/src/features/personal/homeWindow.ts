@@ -86,7 +86,8 @@ export function firstHomeWindow(
   count: number,
   overscan: number = HOME_ROW_OVERSCAN,
 ): HomeWindowRange {
-  return { start: 0, end: Math.min(Math.max(0, count), 2 * overscan + FIRST_PAINT_ROWS) };
+  // The first slice begins at zero: there are no rows above it to overscan.
+  return { start: 0, end: Math.min(Math.max(0, count), overscan + FIRST_PAINT_ROWS) };
 }
 
 /**
@@ -124,8 +125,8 @@ export function homeWindowRange(input: HomeWindowInput): HomeWindowRange {
       : { start: firstVisible - input.overscan, end: lastVisible + input.overscan };
   const keep =
     previous !== null &&
-    firstVisible - previous.start >= HYSTERESIS_ROWS &&
-    previous.end - lastVisible >= HYSTERESIS_ROWS;
+    (previous.start === 0 || firstVisible - previous.start >= HYSTERESIS_ROWS) &&
+    (previous.end === count || previous.end - lastVisible >= HYSTERESIS_ROWS);
   const start = clampIndex(keep ? previous!.start : anchor.start, count);
   const end = clampIndex(Math.max(keep ? previous!.end : anchor.end, start + 1), count);
   return { start, end };

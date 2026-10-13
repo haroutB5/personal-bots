@@ -112,10 +112,12 @@ export function HomeRail({
   readonly onUnpinGroup: (group: RailGroupItem) => void;
 }): JSX.Element {
   const scroller = useRef<HTMLUListElement | null>(null);
+  const lastScrollLeft = useRef(0);
   const [edge, setEdge] = useState<RailEdge>("start");
   const measure = useCallback(() => {
     const element = scroller.current;
     if (element === null) return;
+    lastScrollLeft.current = element.scrollLeft;
     const max = element.scrollWidth - element.clientWidth;
     const next: RailEdge =
       max <= EDGE_SLACK_PX || element.scrollLeft <= EDGE_SLACK_PX
@@ -130,7 +132,13 @@ export function HomeRail({
   // opening tap's frame.
   const itemCount = chats.length + groups.length + bots.length;
   useEffect(() => {
-    measure();
+    // At the left edge the answer is already known. In particular, mounting
+    // and waking the kept home need no scrollWidth read after React's writes.
+    if (lastScrollLeft.current <= EDGE_SLACK_PX) {
+      setEdge((current) => (current === "start" ? current : "start"));
+    } else {
+      measure();
+    }
   }, [measure, itemCount]);
 
   const empty = itemCount === 0;

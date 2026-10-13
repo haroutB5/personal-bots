@@ -105,7 +105,9 @@ export function useHomeWindow(
       count,
       pitch: measurePitch(list) ?? HOME_ROW_PITCH,
       hiddenAbove,
-      viewport: scroller.clientHeight,
+      // The header and rail take part of the scroller before the list starts.
+      // Count only the height available to rows while they are below its top.
+      viewport: Math.max(0, scroller.clientHeight + Math.min(0, hiddenAbove)),
       overscan,
       // The slice already drawn: while the visible band stays inside it by
       // the hysteresis margin, the same slice comes back and nothing re-renders.

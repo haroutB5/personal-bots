@@ -170,7 +170,7 @@ afterEach(() => {
 describe("useHomeWindow", () => {
   it("draws a first-paint slice with no layout at all (test renderer)", async () => {
     const harness = await mount(60);
-    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 24 });
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 16 });
     await act(async () => harness.renderer.unmount());
   });
 
@@ -179,9 +179,29 @@ describe("useHomeWindow", () => {
     const scroller = harness.scroller;
     const { list } = harness.fakeList();
     await harness.setList(list);
-    // 600 px of viewport shows 9 rows; 8 rows of band either side; the list
-    // sits at the scroller's top, so nothing is above it.
-    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 17 });
+    // 600 px shows 9 rows. The first slice already leaves a comfortable
+    // band below them; with nothing above the list, keep its DOM still.
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 16 });
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it("counts only the viewport below the header and rail", async () => {
+    const harness = await mount(61);
+    const { list, state } = harness.fakeList({ top: 288 });
+    await harness.setList(list);
+    // The first slice already covers the available rows: keep its DOM still.
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 16 });
+    // A tall viewport needs a real measurement; its header leaves 312 px.
+    harness.scroller.element.clientHeight = 1000;
+    state.top = 688;
+    await harness.setCount(62);
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 16 });
+    state.top = 0;
+    await act(async () => harness.scroller.fire("scroll"));
+    await harness.flushRaf();
+    const drawn = harness.ranges.at(-1)!;
+    expect(drawn.start).toBe(0);
+    expect(drawn.end).toBeGreaterThanOrEqual(Math.ceil(1000 / 72));
     await act(async () => harness.renderer.unmount());
   });
 
@@ -234,7 +254,7 @@ describe("useHomeWindow", () => {
     // The scroll moved while hidden (the shell restores it on Back).
     state.top = -1440;
     await harness.setActive(true);
-    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 17 });
+    expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 16 });
     await harness.flushRaf();
     expect(harness.ranges.at(-1)).toEqual({ start: 16, end: 41 });
     await act(async () => harness.renderer.unmount());

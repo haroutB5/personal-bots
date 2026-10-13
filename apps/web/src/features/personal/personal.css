@@ -1296,7 +1296,7 @@ body:has(.personal-app) {
  * a scripted check both read. */
 
 /* A chat row's separator: 0.5 px, inset to where the text starts (16 + 48 + 12). */
-.home-rows > li + li .home-row::before {
+.home-rows > li:not(:first-child) .home-row::before {
   content: "";
   position: absolute;
   top: 0;
