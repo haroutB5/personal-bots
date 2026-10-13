@@ -356,10 +356,12 @@ export function PerformancePane({
   const live = feed.status === "live" && !stale;
   const [scrub, setScrub] = useState<number | null>(null);
   const scrubIndex = scrub === null ? null : Math.min(scrub, PERF_AXIS_SLOTS - 1);
-  // The scrub crosses the chart's slot axis; every slot reads a real sample
-  // (the newest at or before it), never a point inside a stretch nobody saw.
+  // The scrub crosses the chart's slot axis and reads what the chart draws
+  // there: a slot with no sample to draw (a stretch nobody watched, or the
+  // empty side before the history begins) reads "Not measured" (spec
+  // section 4, the Gap state), not the last reading carried across the gap.
   const slotSamples = useMemo(() => axisSlotMap(samples, now), [samples, now]);
-  const shown = scrubIndex === null ? newest : (slotSamples[scrubIndex] ?? newest);
+  const shown = scrubIndex === null ? newest : (slotSamples[scrubIndex] ?? null);
 
   const scrollTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({
@@ -593,10 +595,12 @@ export function PerformancePane({
               ) : (
                 (statsLine(samples, (s) => s.cpuPct, "%") ?? "")
               )
+            ) : shown === null ? (
+              "Not measured"
             ) : (
               <>
-                hbots <b className="font-semibold">{fmt(shown?.hbotsPct ?? null)}%</b> · at{" "}
-                {shown === null ? "–" : fmtClock(shown.t, true)}
+                hbots <b className="font-semibold">{fmt(shown.hbotsPct)}%</b> · at{" "}
+                {fmtClock(shown.t, true)}
               </>
             )
           }
@@ -667,9 +671,11 @@ export function PerformancePane({
             main={fmt(shown?.memUsedGB ?? null, 1)}
             unit="GB"
             context={
-              shown?.memUsedGB == null || shown?.memTotalGB == null
-                ? undefined
-                : `${Math.round((shown.memUsedGB / shown.memTotalGB) * 100)}% used · ${fmt(shown.memFreeGB, 1)} GB free`
+              scrubIndex !== null && shown === null
+                ? "Not measured"
+                : shown?.memUsedGB == null || shown?.memTotalGB == null
+                  ? undefined
+                  : `${Math.round((shown.memUsedGB / shown.memTotalGB) * 100)}% used · ${fmt(shown.memFreeGB, 1)} GB free`
             }
           />
           <PerfChart
@@ -1140,9 +1146,11 @@ function TempsCard({
         main={fmt(shown?.cpuTempC ?? null)}
         unit={shown?.cpuTempC == null ? undefined : "°C"}
         context={
-          newest?.cpuTempC != null && newest.cpuTempC >= 85 && !warnPillHot
-            ? "Warm"
-            : (statsLine(samples, (s) => s.cpuTempC, " °C") ?? "")
+          scrubIndex !== null && shown === null
+            ? "Not measured"
+            : newest?.cpuTempC != null && newest.cpuTempC >= 85 && !warnPillHot
+              ? "Warm"
+              : (statsLine(samples, (s) => s.cpuTempC, " °C") ?? "")
         }
       />
       <PerfChart

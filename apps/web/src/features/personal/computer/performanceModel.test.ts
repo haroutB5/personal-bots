@@ -415,21 +415,41 @@ describe("axisSeries (the fixed 15-minute time axis)", () => {
     expect(values[PERF_AXIS_SLOTS - 1]).toBe(31);
   });
 
-  it("axisSlotMap gives the scrub a real sample for every slot", () => {
+  it("axisSlotMap reads what the chart draws, and nothing across a gap", () => {
     const out: PerformanceSample[] = [];
     // Watched for two minutes, 70 s nobody watched, then watched again.
     for (let t = NOW - 240_000; t <= NOW - 120_000; t += step) out.push(sample({ t }));
     for (let t = NOW - 50_000; t <= NOW; t += step) out.push(sample({ t }));
     const map = axisSlotMap(out, NOW);
 
-    // Inside the 70 s stretch, the readout is the newest sample before it,
-    // with its own timestamp; before the history, the oldest sample; the
-    // right edge is the newest.
-    expect(map[slot(NOW - 80_000)]?.t).toBe(NOW - 120_000);
-    expect(map[slot(NOW - 52_000)]?.t).toBe(NOW - 120_000);
-    expect(map[0]?.t).toBe(NOW - 240_000);
+    // A slot with a sample reads that sample, with its own timestamp; a slot
+    // in the stretch nobody watched reads nothing, so the readout says "Not
+    // measured"; and so does the empty side before the history begins. The
+    // right edge is the newest sample.
+    expect(map[slot(NOW - 240_000)]?.t).toBe(NOW - 240_000);
+    expect(map[slot(NOW - 120_000)]?.t).toBe(NOW - 120_000);
+    expect(map[slot(NOW - 80_000)]).toBeNull();
+    expect(map[slot(NOW - 52_000)]).toBeNull();
+    expect(map[slot(NOW - 50_000)]?.t).toBe(NOW - 50_000);
+    expect(map[0]).toBeNull();
     expect(map[PERF_AXIS_SLOTS - 1]?.t).toBe(NOW);
-    // Every slot reads something once a sample exists at all.
-    expect(map.some((entry) => entry === null)).toBe(false);
+  });
+
+  it("axisSlotMap bridges a single missed tick, like the drawn line", () => {
+    const out = [
+      sample({ t: NOW - 10_000, cpuPct: 20 }),
+      sample({ t: NOW - 6_000, cpuPct: 30 }),
+      sample({ t: NOW, cpuPct: 31 }),
+    ];
+    const map = axisSlotMap(out, NOW);
+
+    // The 4 s spacing and the boundary 6 s spacing carry the previous
+    // reading, exactly the slots axisSeries fills; before the first sample
+    // there is nothing to read.
+    expect(map[slot(NOW - 8_000)]?.t).toBe(NOW - 10_000);
+    expect(map[slot(NOW - 4_000)]?.t).toBe(NOW - 6_000);
+    expect(map[slot(NOW - 2_000)]?.t).toBe(NOW - 6_000);
+    expect(map[slot(NOW - 12_000)]).toBeNull();
+    expect(map[slot(NOW - 14_000)]).toBeNull();
   });
 });

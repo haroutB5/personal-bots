@@ -15,11 +15,13 @@ const feed = vi.hoisted(() => ({
   } as PerformanceFeedState,
 }));
 
-/** Every chart render, for the axis assertions (the pane draws three). */
+/** Every chart render, for the axis and scrub assertions (the pane draws three). */
 const charts = vi.hoisted(() => ({
   props: [] as Array<{
     ariaLabel: string;
     series: ReadonlyArray<{ values: ReadonlyArray<number | null> }>;
+    scrubIndex?: number | null;
+    onScrub?: (index: number | null) => void;
   }>,
 }));
 
@@ -39,6 +41,7 @@ vi.mock("./PerfSpark", () => ({ PerfSpark: () => null }));
 vi.mock("./PcAvatar", () => ({ PcAvatar: () => null }));
 
 import { PerformancePane } from "./PerformancePane";
+import { fmtClock } from "./performanceModel";
 
 const sample = (t: number, overrides: Partial<PerformanceSample> = {}): PerformanceSample => ({
   t,
@@ -275,5 +278,44 @@ describe("PerformancePane render", () => {
     // before the history empty.
     expect(values[369]).toBe(12); // 1_000_000, the oldest sample
     expect(values[368]).toBeNull();
+  });
+
+  it("reads Not measured over a gap, a sample's own time over a sample", () => {
+    // QA round 2 on 1.66.37: scrubbing a gap showed the last reading before
+    // it; the spec's Gap state says the readout reads "Not measured".
+    charts.props.length = 0;
+    act(() => {
+      renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const samples: PerformanceSample[] = [];
+    // The same shape as the slot-axis test: a minute watched, 70 s nobody
+    // watching, then 30 s watched.
+    for (let t = 1_000_000; t <= 1_060_000; t += 2_000) samples.push(sample(t));
+    for (let t = 1_130_000; t <= 1_160_000; t += 2_000) {
+      samples.push(sample(t, { cpuPct: 55 }));
+    }
+    act(() => {
+      feed.state = { ...feed.state, samples, lastSampleAt: Date.now(), status: "live" };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const cpu = charts.props
+      .filter((props) => props.ariaLabel.startsWith("CPU, last 15 minutes"))
+      .at(-1);
+    expect(cpu).toBeDefined();
+
+    // Slots 400 to 433 are the stretch nobody watched: the readout says so.
+    act(() => {
+      cpu!.onScrub!(416);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Not measured");
+
+    // Slot 399 is the last sample before the gap, at 1_060_000: its values
+    // come back, with its own time.
+    act(() => {
+      cpu!.onScrub!(399);
+    });
+    const text = JSON.stringify(renderer!.toJSON());
+    expect(text).not.toContain("Not measured");
+    expect(text).toContain(fmtClock(1_060_000, true));
   });
 });

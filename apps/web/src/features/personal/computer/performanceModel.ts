@@ -162,30 +162,33 @@ export function axisSeries(
 }
 
 /**
- * The scrub's view of the axis: what a finger at each slot is reading, the
- * newest real sample at or before it (before the oldest sample, the oldest
- * one). Whatever the finger crosses, the readouts show a sample that exists,
- * with its own timestamp, never a made-up point inside a stretch nobody
- * watched.
+ * The scrub's view of the axis: what a finger at each slot is reading. A slot
+ * reads the sample the chart draws there - its own sample, or the previous
+ * reading where a single missed tick was bridged - and null where the chart
+ * has nothing to draw: a stretch nobody watched, or the empty side before the
+ * history begins. The readout says "Not measured" there (QA round 2 on
+ * 1.66.37: the spec's Gap state) instead of a reading carried across the gap,
+ * which would read as if it had been measured at that time.
  */
 export function axisSlotMap(
   samples: ReadonlyArray<PerformanceSample>,
   newestT: number,
 ): ReadonlyArray<PerformanceSample | null> {
   const start = axisStart(newestT);
-  const at: Array<PerformanceSample | null> = new Array(PERF_AXIS_SLOTS).fill(null);
-  let first: PerformanceSample | null = null;
+  const out: Array<PerformanceSample | null> = new Array(PERF_AXIS_SLOTS).fill(null);
+  let previousSlot = -1;
+  let previousT = 0;
+  let previousSample: PerformanceSample | null = null;
   for (const sample of samples) {
     if (sample.t < start || sample.t > newestT) continue;
-    if (first === null) first = sample;
-    at[slotOf(sample.t, start)] = sample;
-  }
-  const out: Array<PerformanceSample | null> = new Array(PERF_AXIS_SLOTS).fill(null);
-  let last: PerformanceSample | null = null;
-  for (let i = 0; i < PERF_AXIS_SLOTS; i++) {
-    const sample = at[i] ?? null;
-    if (sample !== null) last = sample;
-    out[i] = last ?? first;
+    const slot = slotOf(sample.t, start);
+    if (previousSlot >= 0 && slot - previousSlot > 1 && sample.t - previousT <= PERF_GAP_MS) {
+      for (let i = previousSlot + 1; i < slot; i++) out[i] = previousSample;
+    }
+    out[slot] = sample;
+    previousSlot = slot;
+    previousT = sample.t;
+    previousSample = sample;
   }
   return out;
 }
