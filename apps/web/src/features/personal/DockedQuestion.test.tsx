@@ -7,6 +7,7 @@ import { derivePendingUserInputProgress } from "~/pendingUserInput";
 import { DockedQuestion } from "./DockedQuestion";
 import type { PendingUserInputDraftAnswer } from "~/pendingUserInput";
 import type { QuestionCardItem } from "./questionCards";
+import { clearQuestionDrafts, useQuestionDock } from "./questionDock";
 
 const question = (
   id: string,
@@ -182,6 +183,59 @@ describe("DockedQuestion", () => {
     expect(pickedSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "collects and toggles several multi-select options (keyboard %s)",
+    (keyboardOpen) => {
+      const requestId = `multi-regression-${keyboardOpen}`;
+      const input = {
+        ...card([question("multi", ["a", "b"], { multiSelect: true })]),
+        requestId,
+      } as Extract<QuestionCardItem, { readonly kind: "pending" }>;
+      const answered = vi.fn();
+      function Harness() {
+        const dock = useQuestionDock(input, answered)!;
+        return (
+          <DockedQuestion
+            card={input}
+            botName="Juno"
+            responding={false}
+            keyboardOpen={keyboardOpen}
+            progress={dock.progress}
+            onChoose={dock.chooseOption}
+            onSubmit={dock.submit}
+            onDismiss={() => {}}
+          />
+        );
+      }
+      let tree!: ReactTestRenderer;
+      act(() => {
+        tree = create(<Harness />);
+      });
+      const option = (index: number) =>
+        tree.root
+          .findByProps({
+            "data-testid": keyboardOpen ? "docked-question-chips" : "docked-question-rows",
+          })
+          .findAllByType("button")[index]!;
+      const submit = () =>
+        tree.root.find((node) => node.type === "button" && node.children.includes("Send answer"));
+      try {
+        act(() => option(0).props.onClick());
+        expect(option(0).props["aria-pressed"]).toBe(true);
+        act(() => option(1).props.onClick());
+        expect(option(1).props["aria-pressed"]).toBe(true);
+        act(() => option(0).props.onClick());
+        expect(option(0).props["aria-pressed"]).toBe(false);
+        expect(answered).not.toHaveBeenCalled();
+        act(() => submit().props.onClick());
+        expect(answered).toHaveBeenCalledWith(requestId, { multi: ["b"] });
+      } finally {
+        act(() => tree.unmount());
+        clearQuestionDrafts(requestId);
+      }
+    },
+  );
 
   it("shows Not now for a dismissible ask and the step dots for a set", () => {
     const { tree } = render({

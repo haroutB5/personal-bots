@@ -57,7 +57,9 @@ export function DockedQuestion({
   const current = progress.questionIndex + 1;
   const choose = (optionValue: string) => {
     if (sentRef.current || responding) return;
-    sentRef.current = true;
+    // A multi-select tap only changes the draft; it has not sent an answer.
+    // Keep collecting (and allow deselection) until Send answer is pressed.
+    if (!question.multiSelect) sentRef.current = true;
     onChoose(optionValue);
   };
   const options = question.options.map((option) => {
