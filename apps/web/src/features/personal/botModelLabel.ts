@@ -50,6 +50,9 @@ export function botModelLabel(
   const { slug, provider, listedName, effortId, effort } = resolved;
   const name = (listedName ?? slug).replace(/^Claude\s+/, "");
   if (effort === undefined) return name;
+  // A provider may write the effort into the model's own name ("Haiku 5.5 · M"):
+  // the label then must not say it twice.
+  if (nameCarriesEffort(name, effort)) return name;
   const optionLabel =
     provider?.models === undefined
       ? undefined
@@ -74,6 +77,25 @@ const EFFORT_ABBREVIATIONS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * True when the model's own name already ends with the effort - the provider
+ * wrote it into the name, as "Haiku 5.5 · M" - so a label must not repeat it.
+ * The effort has to stand alone at the end, so a name like "GLM" is not read
+ * as effort M.
+ */
+function nameCarriesEffort(name: string, effort: string): boolean {
+  const token = effort.trim().toLocaleLowerCase();
+  if (token === "") return false;
+  const abbreviation = EFFORT_ABBREVIATIONS[token];
+  const ending = name.trimEnd().toLocaleLowerCase();
+  const forms = abbreviation === undefined ? [token] : [token, abbreviation.toLocaleLowerCase()];
+  return forms.some((form) => {
+    if (form === "" || !ending.endsWith(form)) return false;
+    const before = ending.charAt(ending.length - form.length - 1);
+    return before === "" || /[\s·-]/.test(before);
+  });
+}
+
+/**
  * The picker name without what the pinned tile has no room for: the "Claude"
  * prefix, a plan word ("Free", "Preview", "Beta") and a context-window suffix
  * ("(1M context)", "[1m]", "200k").
@@ -92,8 +114,9 @@ function shortModelName(name: string): string {
  * The label for a pinned tile, 72px wide: "Opus 5.5 · M", "Sonnet 5.5 · H",
  * "GPT-6 Astra · M", "Haiku 4.5" (no effort set). The effort is L, M, H, X or
  * Max; an effort with no abbreviation (an OpenCode variant such as "minimal")
- * is left out rather than guessed. A model the provider does not list keeps
- * its raw id, which the tile then shrinks or cuts. Null without a model.
+ * is left out rather than guessed, and one the model's own name already ends
+ * with ("Haiku 5.5 · M") is never repeated. A model the provider does not list
+ * keeps its raw id, which the tile then shrinks or cuts. Null without a model.
  */
 export function botModelShortLabel(
   selection: ModelSelection,
@@ -105,9 +128,11 @@ export function botModelShortLabel(
     resolved.listedName === undefined
       ? resolved.slug
       : shortModelName(resolved.listedName) || resolved.slug;
-  const abbreviation =
-    resolved.effort === undefined ? undefined : EFFORT_ABBREVIATIONS[resolved.effort];
-  return abbreviation === undefined ? name : `${name} · ${abbreviation}`;
+  const effort = resolved.effort;
+  if (effort === undefined) return name;
+  const abbreviation = EFFORT_ABBREVIATIONS[effort];
+  if (abbreviation === undefined || nameCarriesEffort(name, effort)) return name;
+  return `${name} · ${abbreviation}`;
 }
 
 /** The word the short label ends with while a bot runs on its fallback model. */

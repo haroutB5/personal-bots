@@ -772,7 +772,7 @@ function TeamBoard({
           </span>
           <span className="block text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
             {groups.length} {groups.length === 1 ? "team" : "teams"} · {shown.length}{" "}
-            {shown.length === 1 ? "bot" : "bots"} · hold a bot to move it
+            {shown.length === 1 ? "bot" : "bots"}
           </span>
         </p>
       </div>

@@ -66,6 +66,8 @@ const providers = [
         ["1m", "1M"],
       ]),
     ]),
+    model("claude-echo-5-5", "Claude Echo 5.5 · M", [select("effort", EFFORTS)]),
+    model("claude-nova-2", "Claude Nova 2 low", [select("effort", EFFORTS)]),
   ]),
   provider("codex", "codex", [
     model("gpt-6-astra", "GPT-6 Astra", [select("reasoningEffort", EFFORTS)]),
@@ -74,6 +76,7 @@ const providers = [
     model("opencode/muse-spark-1.3-contributor-free", "Muse Spark 1.3 Free", [
       select("variant", [...EFFORTS, ["minimal", "Minimal"]]),
     ]),
+    model("opencode/glm", "GLM", [select("variant", EFFORTS)]),
   ]),
 ];
 
@@ -126,6 +129,15 @@ describe("botModelLabel", () => {
     expect(botModelLabel(selection("codex", "gpt-6-luna"), [])).toBe("gpt-6-luna");
     expect(botModelLabel(selection("codex", ""), providers)).toBeNull();
   });
+
+  it("never repeats an effort the model's own name already ends with", () => {
+    expect(
+      botModelLabel(selection("claudeAgent", "claude-echo-5-5", [["effort", "medium"]]), providers),
+    ).toBe("Echo 5.5 · M");
+    expect(
+      botModelLabel(selection("claudeAgent", "claude-nova-2", [["effort", "low"]]), providers),
+    ).toBe("Nova 2 low");
+  });
 });
 
 describe("botModelShortLabel", () => {
@@ -161,6 +173,15 @@ describe("botModelShortLabel", () => {
     expect(
       short("opencode", "opencode/muse-spark-1.3-contributor-free", [["variant", "minimal"]]),
     ).toBe("Muse Spark 1.3");
+  });
+
+  it("never repeats an effort the model's own name already ends with", () => {
+    // A provider that writes the effort into the name ("Haiku 5.5 · M" - the
+    // shape that doubled on the Team card) and one that spells it out.
+    expect(short("claudeAgent", "claude-echo-5-5", [["effort", "medium"]])).toBe("Echo 5.5 · M");
+    expect(short("claudeAgent", "claude-nova-2", [["effort", "low"]])).toBe("Nova 2 low");
+    // A name that merely ends in the same letter is not that effort.
+    expect(short("opencode", "opencode/glm", [["variant", "medium"]])).toBe("GLM · M");
   });
 
   it("keeps the raw id for a model the provider does not list, and is null without one", () => {
