@@ -51,6 +51,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { resolveDeepSeekHomePath } from "../provider/Drivers/DeepSeekEnvironment.ts";
+import { DSH_HOME_DIR_NAME, resolveDeepSeekEngine } from "../provider/Drivers/DeepSeekEngine.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
@@ -324,6 +325,8 @@ export const make = Effect.gen(function* () {
       fileName?: string;
     }> = [];
     const seen = new Set<string>();
+    // Harness-ledger directories, collected while the instances are walked.
+    const dshLedgerDirectories = new Set<string>();
     for (const driver of ["claudeAgent", "codex", "grok", "deepseek"] as const) {
       // Disabled accounts still have history. Explicit default slots replace
       // the legacy settings, just as they do in the provider registry.
@@ -357,10 +360,15 @@ export const make = Effect.gen(function* () {
         } else if (driver === "deepseek") {
           // DeepSeek sessions run the Claude Agent SDK against their own
           // isolated config home, so their transcripts are Claude-format
-          // `projects` JSONL exactly like Claude Code's.
+          // `projects` JSONL exactly like Claude Code's. On the harness engine
+          // the same instance's turns live in the adapter's own ledger instead
+          // (see `provider/dshUsageLedger.ts`), scoped to the data root.
           const decoded = decodeDeepSeekSettings(instance.config ?? {});
           if (Option.isNone(decoded)) continue;
           home = yield* resolveDeepSeekHomePath(decoded.value, environment);
+          if (resolveDeepSeekEngine(decoded.value, environment) === "dsh") {
+            dshLedgerDirectories.add(path.resolve(config.stateDir, DSH_HOME_DIR_NAME, "usage"));
+          }
         } else {
           home = expandHomePath(
             environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
@@ -406,6 +414,20 @@ export const make = Effect.gen(function* () {
           ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}),
         });
       }
+    }
+    // The DeepSeek Harness's ledger, as a second `deepseek` source: its lines
+    // are already in this scanner's Claude shape.
+    for (const ledgerDirectory of dshLedgerDirectories) {
+      const key = `deepseek\0${ledgerDirectory}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      dirs.push({
+        provider: "deepseek",
+        dir: yield* fileSystem
+          .realPath(ledgerDirectory)
+          .pipe(Effect.orElseSucceed(() => ledgerDirectory)),
+        volumeId: yield* Effect.promise(() => readDirectoryVolumeId(ledgerDirectory)),
+      });
     }
     return dirs;
   });

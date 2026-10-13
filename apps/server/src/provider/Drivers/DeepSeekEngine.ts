@@ -18,6 +18,9 @@ export const DEEPSEEK_ENGINE_ENV = "PERSONAL_DEEPSEEK_ENGINE";
 export const DSH_PINNED_VERSION = "0.2.0-rc.2";
 export const DSH_RUNTIME_DIR_NAME = `dsh-${DSH_PINNED_VERSION}`;
 
+/** The harness home inside a data root: `<stateDir>/dsh`. */
+export const DSH_HOME_DIR_NAME = "dsh";
+
 const CLAUDE_CODE_VALUES = new Set(["claude-code", "off", "0", "false", "no"]);
 
 /**
