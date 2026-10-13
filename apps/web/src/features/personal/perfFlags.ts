@@ -114,13 +114,7 @@ export type PerfOptimization =
   | "home-row-memo"
   // Preserve the hidden home's layout while Activity pauses all its effects.
   // Off (or unsupported): the original display:none path.
-  | "home-back-layout"
-  // A filtered list whose whole result already fits in the drawn slice needs
-  // no synchronous geometry read. Off: measure every row-count change.
-  | "home-filter-layout"
-  // Search updates the field and filtered rows in one commit, without first
-  // rendering the previous results. Off: the existing deferred search path.
-  | "home-search-sync";
+  | "home-back-layout";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

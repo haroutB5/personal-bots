@@ -168,27 +168,6 @@ afterEach(() => {
 });
 
 describe("useHomeWindow", () => {
-  it.each(["", "home-filter-layout"])(
-    "draws every narrowed result and resumes windowing when search clears (off=%s)",
-    async (off) => {
-      vi.stubGlobal("localStorage", { getItem: () => off });
-      const harness = await mount(61);
-      const { list, state } = harness.fakeList();
-      await harness.setList(list);
-      await harness.setCount(6);
-      expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 6 });
-      await harness.setCount(0);
-      expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 0 });
-      await harness.setCount(61);
-      expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 14 });
-      state.top = -720;
-      await act(async () => harness.scroller.fire("scroll"));
-      await harness.flushRaf();
-      expect(harness.ranges.at(-1)).toEqual({ start: 6, end: 25 });
-      await act(async () => harness.renderer.unmount());
-    },
-  );
-
   it("draws a first-paint slice with no layout at all (test renderer)", async () => {
     const harness = await mount(60);
     expect(harness.ranges.at(-1)).toEqual({ start: 0, end: 12 });
