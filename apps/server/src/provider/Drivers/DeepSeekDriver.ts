@@ -206,7 +206,9 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
       // ledger beside its home, and the Claude engine's own transcripts stay
       // where they are, so the balance card's "spent" covers both.
       const engine = resolveDeepSeekEngine(effectiveConfig, processEnv);
-      const dshHome = path.join(serverConfig.stateDir, DSH_HOME_DIR_NAME);
+      // The harness home sits beside the data root, as the design names it:
+      // `%USERPROFILE%/.personal-bots/dev/dsh`, not inside `userdata`.
+      const dshHome = path.join(serverConfig.baseDir, DSH_HOME_DIR_NAME);
       const ledgerDirectory = path.join(dshHome, "usage");
       const readSpend = () =>
         Effect.all([

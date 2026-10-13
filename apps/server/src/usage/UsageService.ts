@@ -367,7 +367,7 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(decoded)) continue;
           home = yield* resolveDeepSeekHomePath(decoded.value, environment);
           if (resolveDeepSeekEngine(decoded.value, environment) === "dsh") {
-            dshLedgerDirectories.add(path.resolve(config.stateDir, DSH_HOME_DIR_NAME, "usage"));
+            dshLedgerDirectories.add(path.resolve(config.baseDir, DSH_HOME_DIR_NAME, "usage"));
           }
         } else {
           home = expandHomePath(

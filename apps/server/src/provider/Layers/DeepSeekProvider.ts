@@ -297,10 +297,17 @@ const checkDeepSeekDshStatus = Effect.fn("checkDeepSeekDshStatus")(function* (
     );
   }).pipe(Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS), Effect.result);
   const output = Result.isSuccess(versionResult) ? versionResult.success : Option.none();
+  // The pin carries a pre-release suffix (`0.2.0-rc.2`), which a generic semver
+  // read drops, so the runtime's own line is compared as it prints it. The
+  // live smoke on 13 Oct caught exactly that mismatch on a real install.
   const printed = Option.isSome(output)
-    ? parseGenericCliVersion(`${output.value.stdout}\n${output.value.stderr}`)
+    ? dshPrintedVersion(output.value.stdout, output.value.stderr)
     : null;
-  const answered = Option.isSome(output) && output.value.code === 0 && printed === runtime.version;
+  const answered =
+    Option.isSome(output) &&
+    output.value.code === 0 &&
+    printed !== null &&
+    versionMatchesPin(printed, runtime.version);
   const base = {
     presentation: DEEPSEEK_PRESENTATION,
     enabled: true,
@@ -490,6 +497,34 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
     },
   });
 });
+
+const VERSION_LINE_SPLIT = /\r?\n/;
+const VERSION_TOKEN_SPLIT = /\s+/;
+
+/** The first line a `--version` run printed, trimmed: dsh answers `0.2.0-rc.2`. */
+export function dshPrintedVersion(stdout: string, stderr: string): string | null {
+  for (const line of `${stdout}\n${stderr}`.split(VERSION_LINE_SPLIT)) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return null;
+}
+
+/**
+ * Whether a printed version is the pinned one. The runtime answers with the
+ * bare pin, but a future build may prefix its name, and a general semver read
+ * ignores a pre-release suffix this pin has, so all three are accepted.
+ */
+export function versionMatchesPin(printed: string, pin: string): boolean {
+  const normalized = printed.trim();
+  const lastToken = normalized.split(VERSION_TOKEN_SPLIT).at(-1) ?? normalized;
+  return (
+    normalized === pin ||
+    lastToken === pin ||
+    parseGenericCliVersion(normalized) === pin ||
+    normalized.endsWith(` ${pin}`)
+  );
+}
 
 export function resolveDeepSeekCatalogForManifest(
   manifest: Parameters<typeof resolveDeepSeekModelCatalog>[0],

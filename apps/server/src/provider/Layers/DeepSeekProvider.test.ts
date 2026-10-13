@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { DeepSeekSettings } from "@t3tools/contracts";
@@ -12,6 +13,8 @@ import { BUNDLED_MODEL_MANIFEST } from "../ModelManifest.ts";
 import {
   buildInitialDeepSeekProviderSnapshot,
   checkDeepSeekProviderStatus,
+  dshPrintedVersion,
+  versionMatchesPin,
 } from "./DeepSeekProvider.ts";
 
 const decodeDeepSeekSettings = Schema.decodeSync(DeepSeekSettings);
@@ -70,6 +73,7 @@ describe("DeepSeekProvider", () => {
         decodeDeepSeekSettings({
           enabled: true,
           binaryPath: "/definitely/not/installed/claude-binary",
+          engine: "claude-code",
         }),
         { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
         catalog,
@@ -87,7 +91,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             stubBalance,
@@ -109,7 +117,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             stubBalance,
@@ -143,7 +155,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             { ...stubBalance, readSpent: () => Effect.succeed(spent) },
@@ -162,7 +178,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             {
@@ -182,7 +202,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             stubBalance,
@@ -199,7 +223,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             {
@@ -227,7 +255,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             {
@@ -254,7 +286,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             {
@@ -277,7 +313,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("claude 2.1.280\n", 0);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             {},
             catalog,
           );
@@ -295,7 +335,11 @@ describe("DeepSeekProvider", () => {
         Effect.gen(function* () {
           const claudePath = yield* writeFakeClaudeCli("broken\n", 2);
           return yield* checkDeepSeekProviderStatus(
-            decodeDeepSeekSettings({ enabled: true, binaryPath: claudePath }),
+            decodeDeepSeekSettings({
+              enabled: true,
+              binaryPath: claudePath,
+              engine: "claude-code",
+            }),
             { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
             catalog,
             stubBalance,
@@ -305,5 +349,92 @@ describe("DeepSeekProvider", () => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.status).toBe("error");
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("offers the agent mode on the harness engine, and not on the other", () =>
+    Effect.gen(function* () {
+      const dsh = yield* checkDeepSeekProviderStatus(
+        decodeDeepSeekSettings({ enabled: true, engine: "dsh" }),
+        { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+        catalog,
+        stubBalance,
+      );
+      const flash = dsh.models?.find((entry) => entry.slug === "deepseek-flash");
+      const agentMode = flash?.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "agentMode",
+      );
+      expect(agentMode?.type).toBe("select");
+      expect(
+        agentMode?.type === "select" ? agentMode.options.map((option) => option.id) : [],
+      ).toEqual(["standard", "code", "minimal"]);
+      expect(
+        agentMode?.type === "select" && agentMode.options.find((option) => option.isDefault)?.id,
+      ).toBe("standard");
+
+      const claude = yield* checkDeepSeekProviderStatus(
+        decodeDeepSeekSettings({ enabled: true, engine: "claude-code" }),
+        { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+        catalog,
+        stubBalance,
+      );
+      const claudeFlash = claude.models?.find((entry) => entry.slug === "deepseek-flash");
+      expect(
+        claudeFlash?.capabilities?.optionDescriptors?.some(
+          (descriptor) => descriptor.id === "agentMode",
+        ),
+      ).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(Path.layer)),
+  );
+
+  it("matches the pin as the runtime prints it, pre-release suffix and all", () => {
+    // The live harness answers `0.2.0-rc.2`, which a generic semver read turns
+    // into `0.2.0`. The live smoke on 13 Oct caught exactly that mismatch.
+    expect(dshPrintedVersion("0.2.0-rc.2\n", "")).toBe("0.2.0-rc.2");
+    expect(dshPrintedVersion("", "0.2.0-rc.2\n")).toBe("0.2.0-rc.2");
+    expect(dshPrintedVersion("\n\n", "")).toBeNull();
+    expect(versionMatchesPin("0.2.0-rc.2", "0.2.0-rc.2")).toBe(true);
+    expect(versionMatchesPin("dsh 0.2.0-rc.2", "0.2.0-rc.2")).toBe(true);
+    expect(versionMatchesPin("0.2.0", "0.2.0-rc.2")).toBe(false);
+    expect(versionMatchesPin("0.2.1-rc.2", "0.2.0-rc.2")).toBe(false);
+  });
+
+  it.effect("points at install-dsh.ps1 when the harness runtime is missing", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* checkDeepSeekProviderStatus(
+        decodeDeepSeekSettings({
+          enabled: true,
+          engine: "dsh",
+          dshRuntimePath: "C:/no/such/dsh-runtime",
+        }),
+        { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+        catalog,
+        stubBalance,
+      );
+      expect(snapshot.installed).toBe(false);
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toContain("install-dsh.ps1");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(Path.layer)),
+  );
+
+  it.effect("the kill switch forces the old engine whatever the setting says", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* checkDeepSeekProviderStatus(
+        decodeDeepSeekSettings({ enabled: true, engine: "dsh" }),
+        {
+          ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key",
+          PERSONAL_DEEPSEEK_ENGINE: "claude-code",
+          PATH: "",
+        },
+        catalog,
+        stubBalance,
+      );
+      // The Claude-engine probe ran: no harness, so it reports about the CLI.
+      expect(snapshot.models?.length).toBeGreaterThan(0);
+      expect(
+        snapshot.models
+          ?.find((entry) => entry.slug === "deepseek-flash")
+          ?.capabilities?.optionDescriptors?.some((descriptor) => descriptor.id === "agentMode"),
+      ).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(Path.layer)),
   );
 });
