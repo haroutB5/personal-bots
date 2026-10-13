@@ -257,6 +257,19 @@ describe("useHomeWindow", () => {
     await act(async () => harness.renderer.unmount());
   });
 
+  it("covers the visible rows after a jump beyond the buffer", async () => {
+    const harness = await mount(61);
+    const { list, state } = harness.fakeList();
+    await harness.setList(list);
+    state.top = -4000;
+    await act(async () => harness.scroller.fire("scroll"));
+    await harness.flushRaf();
+    const drawn = harness.ranges.at(-1)!;
+    expect(drawn.start).toBeLessThanOrEqual(Math.floor(4000 / 72));
+    expect(drawn.end).toBeGreaterThanOrEqual(Math.min(61, Math.ceil(4600 / 72)));
+    await act(async () => harness.renderer.unmount());
+  });
+
   it("corrects a stale slice on the frame after Back", async () => {
     const harness = await mount(61);
     const scroller = harness.scroller;

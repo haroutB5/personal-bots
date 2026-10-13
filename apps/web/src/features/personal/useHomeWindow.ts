@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import {
   clampHomeWindow,
@@ -91,43 +92,56 @@ export function useHomeWindow(
   const lastAboveRef = useRef<number | null>(null);
   const frameRef = useRef(0);
 
-  const measure = useCallback(() => {
-    if (!enabled) return;
-    const list = listRef.current;
-    if (list === null || typeof list.getBoundingClientRect !== "function") return;
-    const scroller = scrollerRef.current ?? findScrollParent(list);
-    if (scroller === null) return;
-    scrollerRef.current = scroller;
-    const listRect = list.getBoundingClientRect();
-    const scrollerRect = scroller.getBoundingClientRect();
-    // Not laid out (hidden under an open chat): keep the slice. A zero read
-    // here would draw the top of the list over the position Back restores.
-    if (listRect.width === 0 || scrollerRect.height === 0) return;
-    const hiddenAbove = scrollerRect.top - listRect.top;
-    const previousAbove = lastAboveRef.current;
-    lastAboveRef.current = hiddenAbove;
-    const next = homeWindowRange({
-      count,
-      pitch: measurePitch(list) ?? HOME_ROW_PITCH,
-      hiddenAbove,
-      // The header and rail take part of the scroller before the list starts.
-      // Count only the height available to rows while they are below its top.
-      viewport: Math.max(0, scroller.clientHeight + Math.min(0, hiddenAbove)),
-      overscan,
-      // The slice already drawn: while the visible band stays inside it by
-      // the hysteresis margin, the same slice comes back and nothing re-renders.
-      previous: rangeRef.current,
-      direction:
-        previousAbove === null || hiddenAbove === previousAbove
-          ? null
-          : hiddenAbove > previousAbove
-            ? "down"
-            : "up",
-    });
-    if (sameHomeWindow(rangeRef.current, next)) return;
-    rangeRef.current = next;
-    setRange(next);
-  }, [count, enabled, overscan]);
+  const measure = useCallback(
+    (allowUrgent = false) => {
+      if (!enabled) return;
+      const list = listRef.current;
+      if (list === null || typeof list.getBoundingClientRect !== "function") return;
+      const scroller = scrollerRef.current ?? findScrollParent(list);
+      if (scroller === null) return;
+      scrollerRef.current = scroller;
+      const listRect = list.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      // Not laid out (hidden under an open chat): keep the slice. A zero read
+      // here would draw the top of the list over the position Back restores.
+      if (listRect.width === 0 || scrollerRect.height === 0) return;
+      const hiddenAbove = scrollerRect.top - listRect.top;
+      const previousAbove = lastAboveRef.current;
+      lastAboveRef.current = hiddenAbove;
+      const pitch = measurePitch(list) ?? HOME_ROW_PITCH;
+      const viewport = Math.max(0, scroller.clientHeight + Math.min(0, hiddenAbove));
+      const previousRange = rangeRef.current;
+      const next = homeWindowRange({
+        count,
+        pitch,
+        hiddenAbove,
+        // The header and rail take part of the scroller before the list starts.
+        // Count only the height available to rows while they are below its top.
+        viewport,
+        overscan,
+        // The slice already drawn: while the visible band stays inside it by
+        // the hysteresis margin, the same slice comes back and nothing re-renders.
+        previous: rangeRef.current,
+        direction:
+          previousAbove === null || hiddenAbove === previousAbove
+            ? null
+            : hiddenAbove > previousAbove
+              ? "down"
+              : "up",
+      });
+      if (sameHomeWindow(rangeRef.current, next)) return;
+      rangeRef.current = next;
+      const above = Math.max(0, hiddenAbove);
+      const escaped =
+        Math.floor(above / pitch) < previousRange.start ||
+        Math.min(count, Math.ceil((above + viewport) / pitch)) > previousRange.end;
+      // A jump can outrun overscan. Commit it inside the animation-frame
+      // callback, before paint; never flush from the mount/layout effect.
+      if (allowUrgent && escaped) flushSync(() => setRange(next));
+      else setRange(next);
+    },
+    [count, enabled, overscan],
+  );
 
   const scheduleMeasure = useCallback(() => {
     if (frameRef.current !== 0) return;
@@ -135,7 +149,7 @@ export function useHomeWindow(
     if (typeof window.cancelAnimationFrame !== "function") return;
     frameRef.current = window.requestAnimationFrame(() => {
       frameRef.current = 0;
-      measure();
+      measure(true);
     });
   }, [measure]);
 
