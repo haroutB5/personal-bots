@@ -99,6 +99,7 @@ import {
   makeDshAcpRuntime,
   parseDshResumeCursor,
   resolveDshDenyPlugin,
+  resolveDshEffort,
   resolveDshSessionMode,
   resolveDshSkillDirs,
   serializeDshLaunchPatch,
@@ -230,6 +231,10 @@ interface SessionContext {
   nativeSessionId: string | undefined;
   /** The id a cursor named that dsh cannot resume, until the server renews it. */
   foreignCursorId: string | undefined;
+  /** A bot edit seen since the process started, applied by the next turn. */
+  pendingPersona: { readonly hash: string; readonly instructions: string } | undefined;
+  /** The reasoning effort the next turn should run at, when one was chosen. */
+  pendingEffort: string | undefined;
   session: ProviderSession;
   activeTurnId: TurnId | undefined;
   promptFiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> | undefined;
@@ -919,6 +924,8 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
           process: undefined,
           nativeSessionId: undefined,
           foreignCursorId,
+          pendingPersona: undefined,
+          pendingEffort: undefined,
           session: {
             provider: PROVIDER,
             providerInstanceId: options.instanceId,
@@ -978,6 +985,15 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         }
         if (started !== undefined) {
           context.process = started;
+          yield* started.runtime
+            .setConfigOption("reasoning_effort", resolveDshEffort(input.modelSelection))
+            .pipe(
+              Effect.catchCause(() =>
+                Effect.logWarning("dsh could not set the reasoning effort", {
+                  threadId: input.threadId,
+                }),
+              ),
+            );
           context.session = {
             ...context.session,
             resumeCursor: {
@@ -1026,14 +1042,40 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
       });
     }).pipe(Effect.uninterruptible);
 
-  /** Runs one turn start to finish: announce, prompt, settle, flush the ledger. */
-  const runTurn = Effect.fn("DeepSeekDshAdapter.runTurn")(function* (
+  /**
+   * Starts a turn, under the prompt lock: applies a pending bot edit (the
+   * persona is fixed at process start), announces the turn and dispatches the
+   * prompt. Returns the plan the caller settles outside the lock, so a steer
+   * arriving mid-turn can take the lock and be held instead of waiting behind
+   * the whole turn.
+   */
+  const beginTurnLocked = Effect.fn("DeepSeekDshAdapter.beginTurnLocked")(function* (
     context: SessionContext,
     turn: HeldTurn,
-    announce: boolean,
   ) {
+    const pending = context.pendingPersona;
+    if (pending !== undefined) {
+      context.pendingPersona = undefined;
+      const process = context.process;
+      if (process !== undefined && process.personaHash !== pending.hash) {
+        yield* restartForPersona(context, pending.instructions);
+      }
+    }
     const process = context.process;
-    if (process === undefined || context.stopped) return;
+    if (process === undefined || context.stopped) return undefined;
+    // Effort is a per-session config option; a change applies to the next turn.
+    const effort = context.pendingEffort;
+    context.pendingEffort = undefined;
+    if (effort !== undefined) {
+      yield* process.runtime.setConfigOption("reasoning_effort", effort).pipe(
+        Effect.catchCause(() =>
+          Effect.logWarning("dsh could not set the reasoning effort", {
+            threadId: context.threadId,
+            effort,
+          }),
+        ),
+      );
+    }
     const generation = ++context.generation;
     context.activeTurnId = turn.turnId;
     context.session = {
@@ -1042,21 +1084,21 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
       activeTurnId: turn.turnId,
       updatedAt: yield* nowIso,
     };
-    if (announce) {
-      yield* emit({
-        type: "turn.started",
-        ...(yield* stamp),
-        provider: PROVIDER,
-        threadId: context.threadId,
-        turnId: turn.turnId,
-        payload: { model: DEEPSEEK_FLASH_MODEL },
-      });
-    }
+    yield* emit({
+      type: "turn.started",
+      ...(yield* stamp),
+      provider: PROVIDER,
+      threadId: context.threadId,
+      turnId: turn.turnId,
+      payload: { model: DEEPSEEK_FLASH_MODEL },
+    });
     const dispatched = yield* Deferred.make<void>();
     const fiber = yield* process.runtime
       .prompt({ prompt: [...turn.prompt] }, { dispatched })
       .pipe(Effect.forkIn(process.scope));
     context.promptFiber = fiber;
+    // Hold the lock until the prompt is really the active one, so a steer that
+    // takes it next sees a turn in flight rather than racing this start.
     yield* Effect.raceFirst(
       Deferred.await(dispatched),
       Fiber.await(fiber).pipe(
@@ -1064,28 +1106,75 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         Effect.asVoid,
       ),
     );
-    const settled = yield* Fiber.await(fiber);
-    if (context.stopped || context.generation !== generation) return;
-    yield* process.runtime.drainEvents;
+    return { fiber, generation, process, turnId: turn.turnId };
+  });
+
+  /** Waits out a started turn and settles it, outside the prompt lock. */
+  const settleTurn = Effect.fn("DeepSeekDshAdapter.settleTurn")(function* (
+    context: SessionContext,
+    plan: {
+      readonly fiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+      readonly generation: number;
+      readonly process: DshProcess;
+      readonly turnId: TurnId;
+    },
+  ) {
+    const settled = yield* Fiber.await(plan.fiber).pipe(Effect.orElseSucceed(() => undefined));
+    if (context.stopped || context.generation !== plan.generation) return;
+    yield* plan.process.runtime.drainEvents;
     yield* flushLedger(context);
-    if (Exit.isSuccess(settled)) {
-      const record = context.turns.find((entry) => entry.id === turn.turnId);
-      if (record) record.items.push(settled.value);
-      else context.turns.push({ id: turn.turnId, items: [settled.value] });
-      yield* finishTurn(context, turn.turnId, {
-        state: settled.value.stopReason === "cancelled" ? "cancelled" : "completed",
-        stopReason: settled.value.stopReason,
-      });
-      return;
-    }
-    const translated = translateDshFailure(Cause.pretty(settled.cause));
-    yield* finishTurn(context, turn.turnId, {
-      state: "failed",
-      errorMessage: translated.text,
-      ...(translated.rateLimited
-        ? { retry: { kind: "rate_limited" as const, reason: "deepseek_usage_limit" } }
-        : {}),
-    });
+    yield* context.promptLock.withPermit(
+      Effect.gen(function* () {
+        if (context.stopped || context.generation !== plan.generation) return;
+        if (settled !== undefined && Exit.isSuccess(settled)) {
+          const record = context.turns.find((entry) => entry.id === plan.turnId);
+          if (record) record.items.push(settled.value);
+          else context.turns.push({ id: plan.turnId, items: [settled.value] });
+          yield* finishTurn(context, plan.turnId, {
+            state: settled.value.stopReason === "cancelled" ? "cancelled" : "completed",
+            stopReason: settled.value.stopReason,
+          });
+          return;
+        }
+        const translated =
+          settled === undefined
+            ? { text: "DeepSeek turn failed: the harness sent no result.", rateLimited: false }
+            : translateDshFailure(Cause.pretty(settled.cause));
+        yield* finishTurn(context, plan.turnId, {
+          state: "failed",
+          errorMessage: translated.text,
+          ...(translated.rateLimited
+            ? { retry: { kind: "rate_limited" as const, reason: "deepseek_usage_limit" } }
+            : {}),
+        });
+      }),
+    );
+  });
+
+  /**
+   * One send's turn: started when nothing is running, held when a turn is.
+   * The decision and the start both happen under the lock, so two sends can
+   * never start at once.
+   */
+  const attemptTurn = Effect.fn("DeepSeekDshAdapter.attemptTurn")(function* (
+    context: SessionContext,
+    turn: HeldTurn,
+  ) {
+    const outcome = yield* context.promptLock.withPermit(
+      Effect.gen(function* () {
+        if (context.stopped || context.process === undefined) return { kind: "closed" } as const;
+        if (context.activeTurnId !== undefined && context.promptFiber !== undefined) {
+          context.held.push(turn);
+          return { kind: "held" } as const;
+        }
+        const plan = yield* beginTurnLocked(context, turn);
+        return plan === undefined
+          ? ({ kind: "closed" } as const)
+          : ({ kind: "running", plan } as const);
+      }),
+    );
+    if (outcome.kind === "running") yield* settleTurn(context, outcome.plan).pipe(Effect.ignore);
+    return outcome.kind;
   });
 
   /**
@@ -1101,7 +1190,7 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         context.held.length = 0;
         return Effect.void;
       }
-      return runTurn(context, next, true).pipe(
+      return attemptTurn(context, next).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("A held DeepSeek Harness turn failed", {
             threadId: context.threadId,
@@ -1125,23 +1214,6 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         Effect.forkIn(context.process?.scope ?? ownerScope),
       );
     });
-
-  /** Runs the turn a send owns, and reports whether the session survived it. */
-  const runOwnTurn = (context: SessionContext, turn: HeldTurn) =>
-    runTurn(context, turn, true).pipe(
-      Effect.as(context.stopped ? ("stopped" as const) : ("done" as const)),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.succeed("stopped" as const)
-          : Effect.gen(function* () {
-              yield* finishTurn(context, turn.turnId, {
-                state: "failed",
-                errorMessage: translateDshFailure(Cause.pretty(cause)).text,
-              });
-              return "done" as const;
-            }),
-      ),
-    );
 
   /** Replaces the process so a bot edit takes effect, keeping the conversation. */
   const restartForPersona = Effect.fn("DeepSeekDshAdapter.restartForPersona")(function* (
@@ -1185,58 +1257,49 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         interactionMode: input.interactionMode,
       }).pipe(provideFs);
 
-      const result = yield* context.promptLock.withPermit(
-        Effect.gen(function* () {
-          const current = yield* requireSession(input.threadId);
-          const process = current.process;
-          if (process === undefined) {
-            return yield* new ProviderAdapterSessionClosedError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-            });
-          }
-          // The persona is fixed when the process starts, so a bot edited
-          // mid-chat gets a fresh process resumed onto the same conversation.
-          const wanted =
-            input.systemInstructions === undefined
-              ? undefined
-              : hashPersona(
-                  buildDshPersona(
-                    input.systemInstructions,
-                    buildRuntimeInstructions({ harness: "DeepSeek Harness" }),
-                  ),
-                );
-          if (wanted !== undefined && wanted !== process.personaHash) {
-            yield* restartForPersona(current, input.systemInstructions);
-          }
-          const turnId = TurnId.make(yield* randomId);
-          // A message that arrives while a turn is running is held, never
-          // folded into it: dsh refuses a second prompt, and cancelling to
-          // take the new one would kill the tool that turn is running.
-          if (current.activeTurnId !== undefined && current.promptFiber !== undefined) {
-            current.held.push({ turnId, prompt });
-            return {
-              threadId: input.threadId,
-              turnId,
-              resumeCursor: current.session.resumeCursor,
-            };
-          }
-          const outcome = yield* runOwnTurn(current, { turnId, prompt });
-          if (outcome === "stopped") {
-            return yield* new ProviderAdapterSessionClosedError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-            });
-          }
-          return {
-            threadId: input.threadId,
-            turnId,
-            resumeCursor: current.session.resumeCursor,
-          };
-        }),
+      // The persona is fixed when the process starts, so a bot edited mid-chat
+      // gets a fresh process resumed onto the same conversation. Recorded
+      // here and applied by the next turn that actually begins, so a hold
+      // cannot drop it.
+      if (input.systemInstructions !== undefined) {
+        const hash = hashPersona(
+          buildDshPersona(
+            input.systemInstructions,
+            buildRuntimeInstructions({ harness: "DeepSeek Harness" }),
+          ),
+        );
+        context.pendingPersona = { hash, instructions: input.systemInstructions };
+      }
+      context.pendingEffort = resolveDshEffort(input.modelSelection);
+      const turnId = TurnId.make(yield* randomId);
+      // A message that arrives while a turn is running is held, never folded
+      // into it: dsh refuses a second prompt, and cancelling to take the new
+      // one would kill the tool that turn is running.
+      const outcome = yield* attemptTurn(context, { turnId, prompt }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.succeed("closed" as const)
+            : Effect.gen(function* () {
+                yield* finishTurn(context, turnId, {
+                  state: "failed",
+                  errorMessage: translateDshFailure(Cause.pretty(cause)).text,
+                });
+                return "done" as const;
+              }),
+        ),
       );
+      if (outcome === "closed") {
+        return yield* new ProviderAdapterSessionClosedError({
+          provider: PROVIDER,
+          threadId: input.threadId,
+        });
+      }
       yield* scheduleDrain(context);
-      return result;
+      return {
+        threadId: input.threadId,
+        turnId,
+        resumeCursor: context.session.resumeCursor,
+      };
     });
 
   const interruptTurn: Adapter["interruptTurn"] = (threadId) =>

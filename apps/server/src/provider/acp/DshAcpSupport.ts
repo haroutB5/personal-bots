@@ -408,6 +408,41 @@ function decodeAgentMode(value: unknown): DshAgentMode | undefined {
     : undefined;
 }
 
+/**
+ * dsh's `reasoning_effort` values, and which hbots effort each one stands for.
+ * dsh offers `off`, `low`, `high` and `max`; hbots efforts above high all
+ * mean "think as long as you can", so they take `max`. Anything this map does
+ * not name (hbots' own default) keeps dsh's `high`.
+ */
+const DSH_EFFORT_BY_HBOTS_EFFORT: Readonly<Record<string, string>> = {
+  off: "off",
+  low: "low",
+  medium: "high",
+  high: "high",
+  xhigh: "max",
+  max: "max",
+  ultrathink: "max",
+};
+
+/** The model-selection option id every provider uses for reasoning effort. */
+const EFFORT_OPTION_ID = "effort";
+
+/** The `reasoning_effort` a turn should run at. */
+export function resolveDshEffort(
+  selection:
+    | {
+        readonly options?: ReadonlyArray<{
+          readonly id: string;
+          readonly value: string | boolean;
+        }>;
+      }
+    | undefined,
+): string {
+  const raw = selection?.options?.find((option) => option.id === EFFORT_OPTION_ID)?.value;
+  if (typeof raw !== "string") return "high";
+  return DSH_EFFORT_BY_HBOTS_EFFORT[raw.trim().toLowerCase()] ?? "high";
+}
+
 /** The agent mode a model selection carries, or the default when it names none. */
 export function dshAgentModeFromSelection(
   selection:
