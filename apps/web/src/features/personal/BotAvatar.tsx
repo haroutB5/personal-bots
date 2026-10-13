@@ -27,6 +27,13 @@ import {
 } from "./botAvatarShapes";
 
 export type { BotAvatarShape } from "@t3tools/contracts";
+/**
+ * Re-exported so a second, lazily-loaded caller (the Performance tab's PC
+ * avatar) does not make Rollup hoist the comet into a chunk of its own - on
+ * the Bots journeys that chunk would be one extra request for a module they
+ * already have.
+ */
+export { AvatarOrbitLayer } from "./BotAvatarComet";
 
 export interface BotAvatarProps {
   shape: BotAvatarShape;

@@ -2,7 +2,7 @@ import type { JSX } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { AvatarOrbitLayer } from "../BotAvatarComet";
+import { AvatarOrbitLayer } from "../BotAvatar";
 
 /*
  * The PC as one of the team (spec section 0.4): a laptop wearing the bots'
