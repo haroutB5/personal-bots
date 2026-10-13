@@ -594,36 +594,63 @@ export function ConversationScreen({
   // The composer has the field: on a phone that is the keyboard, so the dock
   // gives the thread its room (SPEC 2.9, D9). The inset alone cannot tell a
   // desktop browser it is "open"; focus is the state both share. The collapse
-  // is deferred a moment: a tap on a docked option blurs the field before the
-  // click dispatches, and swapping the chip row for the tall rows there would
-  // replace the very button under the finger and eat the answer (the same
-  // reason the composer's own keyboard inset waits a frame).
+  // never happens while a finger is down, and waits a moment after the field
+  // lets go: a tap on a docked option blurs the field on its way in, and
+  // swapping the chip row for the tall rows under that finger moved the very
+  // button being pressed, so the click landed on the dock behind it and the
+  // answer never went (QA's question journey, measured at 4x CPU: the click
+  // target was the dock section, not the option).
   const [composerActive, setComposerActive] = useState(false);
   useEffect(() => {
     const shell = shellRef.current;
     if (shell === null) return;
     let collapse: number | undefined;
-    const onFocusIn = (event: FocusEvent) => {
+    let fingerDown = false;
+    const clearCollapse = () => {
       if (collapse !== undefined) {
         window.clearTimeout(collapse);
         collapse = undefined;
       }
-      const target = event.target as HTMLElement | null;
-      setComposerActive(target?.getAttribute?.(COMPOSER_INPUT_ATTRIBUTE) === "");
     };
-    const onFocusOut = () => {
-      if (collapse !== undefined) window.clearTimeout(collapse);
+    const scheduleCollapse = () => {
+      clearCollapse();
       collapse = window.setTimeout(() => {
         collapse = undefined;
         setComposerActive(false);
       }, COMPOSER_FOCUS_COLLAPSE_MS);
     };
+    const onFocusIn = (event: FocusEvent) => {
+      clearCollapse();
+      const target = event.target as HTMLElement | null;
+      setComposerActive(target?.getAttribute?.(COMPOSER_INPUT_ATTRIBUTE) === "");
+    };
+    const onFocusOut = () => {
+      if (fingerDown) return;
+      scheduleCollapse();
+    };
+    const onPointerDown = () => {
+      fingerDown = true;
+      clearCollapse();
+    };
+    const onPointerUp = () => {
+      fingerDown = false;
+      if (collapse !== undefined) return;
+      // Still on the field (an attach tap, a send): the room it asked for stays.
+      const field = shell.querySelector(`[${COMPOSER_INPUT_ATTRIBUTE}]`);
+      if (field === null || field !== document.activeElement) scheduleCollapse();
+    };
     shell.addEventListener("focusin", onFocusIn);
     shell.addEventListener("focusout", onFocusOut);
+    shell.addEventListener("pointerdown", onPointerDown, true);
+    shell.addEventListener("pointerup", onPointerUp, true);
+    shell.addEventListener("pointercancel", onPointerUp, true);
     return () => {
-      if (collapse !== undefined) window.clearTimeout(collapse);
+      clearCollapse();
       shell.removeEventListener("focusin", onFocusIn);
       shell.removeEventListener("focusout", onFocusOut);
+      shell.removeEventListener("pointerdown", onPointerDown, true);
+      shell.removeEventListener("pointerup", onPointerUp, true);
+      shell.removeEventListener("pointercancel", onPointerUp, true);
     };
   }, [shellRef]);
   // D13: what the chat lands on. An explicit `?request=<id>` (the push, a deep
