@@ -236,20 +236,18 @@ export function BotAvatar({
       */}
       {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
       <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
-      <g>
-        {eyes.map((eye) => (
-          <rect
-            key={`${eye.cx}-${eye.cy}`}
-            x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
-            y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
-            width={BOT_AVATAR_EYE_WIDTH}
-            height={BOT_AVATAR_EYE_HEIGHT}
-            rx={eyeRx}
-            fill={BOT_AVATAR_EYE_COLOR}
-            transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
-          />
-        ))}
-      </g>
+      {eyes.map((eye) => (
+        <rect
+          key={`${eye.cx}-${eye.cy}`}
+          x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
+          y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
+          width={BOT_AVATAR_EYE_WIDTH}
+          height={BOT_AVATAR_EYE_HEIGHT}
+          rx={eyeRx}
+          fill={BOT_AVATAR_EYE_COLOR}
+          transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
+        />
+      ))}
     </svg>
   );
 }
