@@ -4,7 +4,11 @@ The whole hbots redesign in one release, as Harout asked (13 Oct): the Bots home
 design A, the bot form's name-and-look-first layout, safe model defaults, a push when a plain chat waits on you, and
 the home's speed work. It carries everything live 1.66.39 has (the Performance tab, the sliding browser sessions and
 the scrub fix), and it adds one fix QA found on live: every bot's CLI now groups under its own name in the
-Performance tab. What QA should look at is at the end.
+Performance tab. Another fix answers QA's own run on the staged 1.67.0 (13 Oct, NO-SHIP): the needs-input push and
+in-app notice now deep link to the request card itself (`?request=`), which they did not before. The other failure in that
+run, the update line, was the check racing the server's 5 s update-status cache, not an app bug: `UpdateStatusLine.tsx`
+and `updateStatus.ts` are byte-identical to live and 1.66.36 behaved the same way, so Frontend's branch adds a
+component test and no source change. What QA should look at is at the end.
 
 Three branches, each gated on its own, merged here by Backend:
 
@@ -20,7 +24,10 @@ Branch `release/hbots-1670`: the core merge (`3572011cdd`), the home merge (`c94
 (`071a8ec5b0`), the version bump (`c586c1b845`), then the merge of `origin/release/hbots-16638` (the sliding
 sessions, `4f0459795d`), the merge of IT's `origin/feat/hbots-1670-home` at `af239879cd` (`e06d0fca0a`), the merge of
 the live `origin/release/hbots-16639` (`3d6591faf6`), the Performance attribution fix (`b5340741fc`), the phone
-smoke's own update (`8d8cf31ff3`), and the merge of `origin/feat/hbots-1671-chat` at `a51a4fe1c7` (`6d85f58642`).
+smoke's own update (`8d8cf31ff3`), the merge of `origin/feat/hbots-1671-chat` at `a51a4fe1c7` (`6d85f58642`), and
+then QA's run on the staged build: the needs-input deep-link fix (`3b6ccbf148`), the merge of Frontend's
+`origin/fix/hbots-1670-version-line` at `bd02e08f54` (`120767e5b8`, a component test and no source change), and the
+notes (`5153173b52`).
 
 No conflict changed a behaviour. `personal.css` was the only shared file both sides changed, and every side was
 purely additive (the redesign and chat tokens on one side, IT's `--perf-*` tokens and the live-dot keyframes on the
@@ -60,12 +67,21 @@ Shuffle button, the shape and colour grids under a Look fieldset. A new bot take
 wears, walking all 84 palette combinations before reusing the least-worn one; the owner's own pick always wins, and
 an edit never touches a saved bot's look.
 
-**`chat_needs_input`** (core, `9bbc90a363`). A question or a tool approval in the owner's own chat with a bot now
-notifies: title `<Bot> · <chat title>`, body `Needs your answer: ...` or `Needs approval: ...`, a deep link to the
-chat, one push per request, suppressed while that chat is open, riding the needs-input preference. A sign-in or
-secret request parks the turn's caller task and sends the same chat notification instead of the task page one. Task,
-routine and group chats keep their own notifications. The integration tests drive the real event order
-(`runtimeEventToActivities` wrapped in the `thread.activity-appended` event the decider publishes).
+**`chat_needs_input`** (core, `9bbc90a363`; deep link fixed in `3b6ccbf148`). A question or a tool approval in the
+owner's own chat with a bot now notifies: title `<Bot> · <chat title>`, body `Needs your answer: ...` or
+`Needs approval: ...`, a deep link to the chat, one push per request, suppressed while that chat is open, riding the
+needs-input preference. A sign-in or secret request parks the turn's caller task and sends the same chat
+notification instead of the task page one. Task, routine and group chats keep their own notifications. The
+integration tests drive the real event order (`runtimeEventToActivities` wrapped in the
+`thread.activity-appended` event the decider publishes).
+
+The deep link opens the chat **at that request**: `/bots/<bot>/<thread>?request=<id>`, which is what the route's
+`?request=` landing (Frontend's `requestLanding.ts`, D13) needs to scroll to the card and wash it. It carries the
+provider's own request id for a question or an approval and the request row's `request_id` for a sign-in or a secret
+(`pendingChatRequest` reads it beside the label); a request the provider gave no id for keeps the bare chat link,
+because the transcript drops a card with no id and `?request=` would then name nothing. The push and the in-app
+notice are built from the same payload, so a tap on either lands on the card. QA's check found this the other way
+round: the notice showed and its tap opened the chat, but nothing in the url named the request.
 
 **`personalLoginRequestsListPending`** (core, `b10ab82d59`). One RPC, no input: every pending or filling sign-in
 request across all chats, same item shape and read scope as the per-thread list, metadata only. The home's needs-you
@@ -163,6 +179,15 @@ a row while the same five journeys in the same order passed on their own.
   first cut of the home was worse than 1.66.36 on DOM nodes, list-scroll fps and the long tasks of opening a chat;
   the windowed list and the lighter avatars are IT's answer to exactly those numbers, each behind its own switch.
 - The attribution fix: the live-shape proof above, its unit tests, and the throwaway re-check.
+- The needs-input deep link: the server tests drive the real event order and assert the whole stored payload
+  (`?request=` for a question, an approval, a sign-in and a secret; the bare chat link for a request with no id),
+  the page plan and the banner tap have their own tests, and the end-to-end proof is a throwaway server on the
+  staged release: the in-app notice for an off-screen question was tapped and landed on
+  `/bots/personal-seed-planner/<thread>?request=<id>` with the question on screen
+  (`qa/hbots-1670/backend/probe-push-deeplink.mjs`, and QA's own `push-in-app-deep-link` check PASS on
+  `qa/hbots-1670/qa/results/checks-b1670fix-*`). The check as QA re-wrote it (visible matches only) also passed on
+  the _previous_ staged build, so it is the probe and the server tests that prove the query string, not the check
+  alone.
 - QA's live 1.66.39 check (`qa/live16639-readonly/VERDICT.md`) is where the grouping bug was found; QA's final pass
   on this staged release is the 10-pair interleaved compare and the 32 checks, and its proof goes in below.
 
@@ -170,7 +195,7 @@ a row while the same five journeys in the same order passed on their own.
 
 - The phone: the home's first paint and the list scroll (the windowed list), Back from a chat keeping the filter and
   the scroll, and the Team screen's ring and captions when a bot is waiting on you.
-- A chat question: one push, deep-linked to the chat, nothing while the chat is open.
+- A chat question: one push, deep-linked to the chat at the request itself, nothing while the chat is open.
 - The Performance tab: each busy bot's CLI under its own name in "hbots on this PC", with its shell commands and
   builds inside it, and Chrome still its own group.
 
@@ -185,7 +210,9 @@ a row while the same five journeys in the same order passed on their own.
   and effort when idle, the amber ring on a bot waiting on you, and the N bots · Move sheet.
 - The bot form: a new bot takes a look no other bot wears, name and look first, and an edit leaves a saved bot's
   look alone.
-- A question in a plain chat: exactly one push, the right deep link, none while the chat is open.
+- A question in a plain chat: exactly one push, none while the chat is open, and the tap opening the chat **at the
+  question** (`/bots/<bot>/<thread>?request=<id>`) - the in-app notice and the push click both, including with the
+  app already open on another screen, and Back from there landing on `/bots`.
 - The chat's own look on the phone: the header's chips, the thread's runs and full-width replies, and above all the
   dock, where a tap on an answer must land (that is the bug Frontend fixed at the pointer level: tap an option with
   the keyboard up and with it down, and answer a multi-select set); `?request=` from a home pill lands on the request
@@ -193,22 +220,22 @@ a row while the same five journeys in the same order passed on their own.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=51ebaf57c33356050a60f32fcd1f16efb8300fbe release=51ebaf57c333 json-sha256=d343268fd364f9d216665ff6250ccc309a0a444498e1bac55832cc7a24db7823 result=PASS -->
+<!-- gate-evidence:begin sha=5153173b52b9434d92b63b63f1d32ae4aa93735e release=5153173b52b9 json-sha256=99548149a4202c41cbda02b018a5a079ff1127d03905e0eb017e2e18cc7e7726 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T16:41:55Z. Version 1.67.0, release `51ebaf57c333`, commit `51ebaf57c33356050a60f32fcd1f16efb8300fbe` on `release/hbots-1670`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T19:05:42Z. Version 1.67.0, release `5153173b52b9`, commit `5153173b52b9434d92b63b63f1d32ae4aa93735e` on `release/hbots-1670`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\51ebaf57c333\gate-evidence.json` (sha256 `d343268fd364f9d216665ff6250ccc309a0a444498e1bac55832cc7a24db7823`) and the full gate logs in `releases\51ebaf57c333\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\5153173b52b9\gate-evidence.json` (sha256 `99548149a4202c41cbda02b018a5a079ff1127d03905e0eb017e2e18cc7e7726`) and the full gate logs in `releases\5153173b52b9\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2581 tests passed, 0 failed, 3 skipped, in 188 files | 194.3   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 17.9    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2700 tests passed, 0 failed, 0 skipped, in 252 files | 28.5    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 3.4     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 58.8    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1670-core\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\51ebaf57c333" -Json` (in `.`)                                                                                                                 | 0    | pass: 12/12 journeys passed                                | 261.1   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2583 tests passed, 0 failed, 3 skipped, in 188 files | 228.8   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 30      |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2704 tests passed, 0 failed, 0 skipped, in 252 files | 33.9    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 5       |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 58.6    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1670-core\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\5153173b52b9" -Json` (in `.`)                                                                                                                 | 0    | pass: 12/12 journeys passed                                | 266.2   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `51ebaf57c33356050a60f32fcd1f16efb8300fbe`, at end `51ebaf57c33356050a60f32fcd1f16efb8300fbe`; tracked files modified: none. Staged release: version 1.67.0, sha 51ebaf57c333, dirty False, externals copied; `dist/bin.mjs` sha256 `e6f12302eae896e6f9e1b216ad69d567af3d5d939aa817af7050a0ccd59f2548`.
+Tree: HEAD at start `5153173b52b9434d92b63b63f1d32ae4aa93735e`, at end `5153173b52b9434d92b63b63f1d32ae4aa93735e`; tracked files modified: none. Staged release: version 1.67.0, sha 5153173b52b9, dirty False, externals copied; `dist/bin.mjs` sha256 `30980bd38c47426f4024640bbce3f9d3f361d4c70b1ced0890e688c675baf0be`.
 <!-- gate-evidence:end -->

@@ -236,6 +236,36 @@ describe("the line under the header", () => {
     expect(tree()).toContain("grid-rows-[0fr]");
   });
 
+  it("stays collapsed when the home is shown again after the note has run out", async () => {
+    // The 1.67.0 home keeps the list mounted while a chat is open, and coming
+    // Back re-shows it: neither the kept list's own poll nor the re-show may
+    // bring the once-per-version note back.
+    state.queue.push({ status: 200, body: answer("live_verified") });
+    await render();
+    expect(tree()).toContain("Updated to 1.66.34");
+
+    // The ten seconds run out and the row collapses.
+    state.queue.push({ status: 200, body: answer("live_verified") });
+    await advance(10_000);
+    await advance(300);
+    expect(state.answered).toBe(2);
+    expect(tree()).not.toContain("Updated to 1.66.34");
+    expect(tree()).toContain("grid-rows-[0fr]");
+
+    // Back to the kept list, the page shown again: it asks at once, the same
+    // finished phase comes back, and nothing opens.
+    state.queue.push({ status: 200, body: answer("live_verified") });
+    await act(async () => {
+      documentStub.visibilityState = "visible";
+      for (const listener of documentStub.listeners) listener();
+    });
+    await flush();
+    expect(state.answered).toBe(3);
+    expect(tree()).not.toContain("Updated to 1.66.34");
+    expect(tree()).toContain("grid-rows-[0fr]");
+    expect(tree()).toContain('"inert":true');
+  });
+
   it("shows a newer version's note again", async () => {
     state.queue.push({ status: 200, body: answer("live_verified", "1.66.34") });
     await render();

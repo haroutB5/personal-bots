@@ -273,6 +273,27 @@ export function pushPayloadForTask(
 export const chatPath = (botId: string, threadId: string): string =>
   `/bots/${encodeURIComponent(botId)}/${encodeURIComponent(threadId)}`;
 
+/**
+ * The deep link of a chat opened at one of its request cards: the chat route
+ * reads `?request=<id>` and lands the transcript on that card (D13). A chat
+ * opened without it lands on its own newest open request instead, so every
+ * caller that knows the request's id - the in-app notice and the push built
+ * from the same payload - names it. `approval.requested` ids are the
+ * provider's; a sign-in and a secret use their own row's `request_id`. Both
+ * are the ids the transcript's card is keyed by, so an unknown one is simply
+ * a landing the chat cannot find and falls back from.
+ */
+export const chatRequestPath = (
+  botId: string,
+  threadId: string,
+  requestId: string | null | undefined,
+): string => {
+  const base = chatPath(botId, threadId);
+  return requestId === null || requestId === undefined || requestId.length === 0
+    ? base
+    : `${base}?request=${encodeURIComponent(requestId)}`;
+};
+
 export function chatReplyPushPayload(input: {
   readonly botId: string;
   readonly bot: PushBotIdentity;
@@ -301,11 +322,13 @@ export function chatNeedsInputPushPayload(input: {
   readonly threadId: string;
   readonly chatTitle: string;
   readonly detail: string;
+  /** The request the chat is parked on, so the tap lands on its own card. */
+  readonly requestId?: string | null;
 }): PersonalPushPayload {
   return {
     title: chatNeedsInputTitle(input.bot.name, input.chatTitle),
     body: chatNeedsInputBody(input.kind, input.detail),
-    url: chatPath(input.botId, input.threadId),
+    url: chatRequestPath(input.botId, input.threadId, input.requestId),
     tag: `chat-${input.threadId}`,
     ...avatarFields(input.bot),
   };
@@ -1201,20 +1224,36 @@ export const make = Effect.gen(function* () {
    */
   const pendingChatRequest = (
     threadId: string,
-  ): Effect.Effect<{ readonly kind: ChatNeedsInputKind; readonly detail: string } | null> =>
+  ): Effect.Effect<{
+    readonly kind: ChatNeedsInputKind;
+    readonly detail: string;
+    readonly requestId: string;
+  } | null> =>
     Effect.gen(function* () {
-      const logins = yield* sql<{ readonly label: string }>`
-        SELECT label FROM personal_login_requests
+      const logins = yield* sql<{ readonly label: string; readonly requestId: string }>`
+        SELECT label, request_id AS "requestId" FROM personal_login_requests
         WHERE thread_id = ${threadId} AND status = 'pending'
         ORDER BY created_at DESC LIMIT 1
       `;
-      if (logins[0] !== undefined) return { kind: "sign-in" as const, detail: logins[0].label };
-      const secrets = yield* sql<{ readonly label: string }>`
-        SELECT label FROM personal_secret_requests
+      if (logins[0] !== undefined) {
+        return {
+          kind: "sign-in" as const,
+          detail: logins[0].label,
+          requestId: logins[0].requestId,
+        };
+      }
+      const secrets = yield* sql<{ readonly label: string; readonly requestId: string }>`
+        SELECT label, request_id AS "requestId" FROM personal_secret_requests
         WHERE status = 'pending' AND thread_id = ${threadId}
         ORDER BY created_at DESC LIMIT 1
       `;
-      if (secrets[0] !== undefined) return { kind: "secret" as const, detail: secrets[0].label };
+      if (secrets[0] !== undefined) {
+        return {
+          kind: "secret" as const,
+          detail: secrets[0].label,
+          requestId: secrets[0].requestId,
+        };
+      }
       return null;
     }).pipe(Effect.orElseSucceed(() => null));
 
@@ -1255,6 +1294,8 @@ export const make = Effect.gen(function* () {
     readonly botId: string | null;
     readonly threadId: ThreadId;
     readonly detail: string;
+    /** The request the tap should land on, or null when it has no id of its own. */
+    readonly requestId: string | null;
   }) =>
     Effect.gen(function* () {
       const preferences = yield* readPreferences;
@@ -1273,6 +1314,7 @@ export const make = Effect.gen(function* () {
           threadId: input.threadId,
           chatTitle: chat.chatTitle,
           detail: input.detail,
+          requestId: input.requestId,
         }),
         {
           bot,
@@ -1335,6 +1377,7 @@ export const make = Effect.gen(function* () {
               threadId: task.threadId,
               chatTitle: chat.chatTitle,
               detail: request.detail,
+              requestId: request.requestId,
             }),
             {
               bot,
@@ -1590,13 +1633,16 @@ export const make = Effect.gen(function* () {
         typeof activity.payload === "object" && activity.payload !== null ? activity.payload : {}
       ) as Record<string, unknown>;
       // The provider's request id dedupes a re-emitted request; the activity
-      // id is unique on its own when a provider gives none.
-      const requestId =
+      // id is unique on its own when a provider gives none. Only the
+      // provider's own id names a card in the transcript, so it alone goes
+      // into the deep link: the transcript drops a request with no id, and
+      // `?request=` for a card that is not there would land nowhere.
+      const providerRequestId =
         typeof payload.requestId === "string" && payload.requestId.length > 0
           ? payload.requestId
-          : activity.id;
+          : null;
       return notifyChatNeedsInput({
-        eventId: `chat-needs:${requestId}`,
+        eventId: `chat-needs:${providerRequestId ?? activity.id}`,
         kind: activity.kind === "approval.requested" ? "approval" : "question",
         botId: null,
         threadId: event.payload.threadId,
@@ -1604,6 +1650,7 @@ export const make = Effect.gen(function* () {
           activity.kind === "approval.requested"
             ? approvalDetail(payload)
             : firstQuestionText(payload.questions),
+        requestId: providerRequestId,
       });
     }
     if (event.type !== "thread.session-set") return Effect.void;

@@ -42,6 +42,26 @@ describe("planInAppNotifications", () => {
     ).toEqual({ ack: ["a"], show: null });
   });
 
+  it("reads `?request=` as a card inside the screen, not a different one", () => {
+    // A chat parked on a request deep links to the card: the owner is on that
+    // chat already, so the notice is taken and not drawn.
+    const seen = new Set<string>();
+    expect(
+      planInAppNotifications(seen, [note("a", "/bots/bot-1/a?request=req-1")], {
+        visible: true,
+        currentPath: "/bots/bot-1/a",
+      }),
+    ).toEqual({ ack: ["a"], show: null });
+    // Any other chat still gets it.
+    const other = new Set<string>();
+    expect(
+      planInAppNotifications(other, [note("b", "/bots/bot-1/b?request=req-2")], {
+        visible: true,
+        currentPath: "/bots/bot-1/a",
+      }),
+    ).toEqual({ ack: ["b"], show: note("b", "/bots/bot-1/b?request=req-2") });
+  });
+
   it("reading the chat a notification is about confirms it without a banner", () => {
     // A task finished in the chat on screen: its url is the task, its quiet
     // path the chat. The ack is what tells the server the user saw it.
