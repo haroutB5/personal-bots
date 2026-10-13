@@ -39,12 +39,15 @@ import {
   RotateCw,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -54,9 +57,11 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 import { useThreadShells } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { usePersonalEnvironmentId } from "../usePersonalBots";
+import { usePersonalEnvironmentId, usePersonalBotsList } from "../usePersonalBots";
+import { usePersonalTasks } from "../usePersonalAutomation";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { AvatarOrbitLayer } from "../BotAvatar";
 import { isThreadLive } from "../botSummaries";
 import { commandFailureMessage } from "../commandFeedback";
 import { inertOutside } from "../overlayInert";
@@ -108,12 +113,35 @@ export interface ComputerScreenProps {
 
 const ICON_STROKE = 1.75;
 
-type ComputerSegment = "browser" | "desktop" | "files";
+/**
+ * The Performance pane is its own chunk: its charts, model and feed together
+ * are ~60 KB of JS that the chat journeys (which include the Computer route's
+ * chunk) must not pay for. It loads the moment the segment opens.
+ */
+const PerformancePane = lazy(() =>
+  import("./PerformancePane").then((module) => ({ default: module.PerformancePane })),
+);
+
+/**
+ * The pane's comet, built in the screen that always loads before the pane and
+ * passed down: the lazy pane itself must not import BotAvatar, or rolldown
+ * hoists shared modules into an extra chunk every app open pays for (1.67.2).
+ */
+const PERF_ORBIT = <AvatarOrbitLayer shape="roundedSquare" />;
+
+type ComputerSegment = "browser" | "desktop" | "files" | "performance";
 const SEGMENT_LABELS: Record<ComputerSegment, string> = {
   browser: "Browser",
   desktop: "Desktop",
   files: "Files",
+  performance: "Performance",
 };
+/**
+ * The last chosen segment, for the app session only (spec section 0.1): a
+ * trip to a chat and Back reopens Performance, a fresh launch starts on the
+ * Browser.
+ */
+let lastSegment: ComputerSegment | null = null;
 const MAX_RECONNECTS = 5;
 const SCROLL_SLOP_PX = 8;
 /** Rotation and the keyboard resize the box in steps; the page relays out once. */
@@ -222,12 +250,42 @@ export function ComputerScreen({
 }: ComputerScreenProps) {
   const environmentId = usePersonalEnvironmentId();
   const { feed, error, loading } = useComputerFeed(environmentId);
-  const [segment, setSegment] = useState<ComputerSegment>("browser");
+  const [segment, setSegment] = useState<ComputerSegment>(lastSegment ?? "browser");
   const desktopStatus = useDesktopStatus(environmentId);
   // The PC's live view where there is a PC to show (the server runs on Windows).
   const segments: ReadonlyArray<ComputerSegment> =
-    desktopStatus?.available === false ? ["browser", "files"] : ["browser", "desktop", "files"];
+    desktopStatus?.available === false
+      ? ["browser", "files", "performance"]
+      : ["browser", "desktop", "files", "performance"];
   const shownSegment = segments.includes(segment) ? segment : "browser";
+  useEffect(() => {
+    lastSegment = shownSegment;
+  }, [shownSegment]);
+  // "N bots busy" and "M tasks running" for the Performance summary: the
+  // app's own live data, the same rule the Bots list and Team card read.
+  const shells = useThreadShells();
+  const botsList = usePersonalBotsList(environmentId);
+  const { tasks } = usePersonalTasks(shownSegment === "performance" ? environmentId : null);
+  const botsBusy = useMemo(() => {
+    const links = botsList.data?.threads ?? [];
+    const live = new Set<string>();
+    for (const link of links) {
+      const shell = shells.find((candidate) => candidate.id === link.threadId);
+      if (shell !== undefined && isThreadLive(shell)) live.add(link.botId);
+    }
+    return live.size;
+  }, [botsList.data, shells]);
+  const tasksRunning = useMemo(
+    () =>
+      [...(tasks?.values() ?? [])].filter(
+        (task) =>
+          task.status !== "completed" &&
+          task.status !== "failed" &&
+          task.status !== "interrupted" &&
+          task.status !== "cancelled",
+      ).length,
+    [tasks],
+  );
   const [fullScreen, setFullScreen] = useState(false);
   const screenRef = useRef<HTMLDivElement | null>(null);
   const state = describeComputerState({
@@ -310,7 +368,11 @@ export function ComputerScreen({
           // No track padding on the phone: each tab is the full 44 px, its
           // own padding draws the inset pill (was 40 px targets).
           "mt-3 grid h-11 rounded-[10px] bg-[var(--personal-fill-muted)] md:h-9",
-          segments.length === 3 ? "grid-cols-3" : "grid-cols-2",
+          segments.length === 4
+            ? "grid-cols-4"
+            : segments.length === 3
+              ? "grid-cols-3"
+              : "grid-cols-2",
           fullScreen && "hidden",
         )}
       >
@@ -321,7 +383,11 @@ export function ComputerScreen({
             role="tab"
             aria-selected={shownSegment === value}
             onClick={() => setSegment(value)}
-            className="flex h-11 rounded-[10px] p-0.5 text-[14px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-inset md:h-9"
+            className={cn(
+              "flex h-11 rounded-[10px] p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-inset md:h-9",
+              // Four labels at 390 px: 13/16 keeps "Performance" on one line.
+              segments.length === 4 ? "text-[13px]" : "text-[14px]",
+            )}
           >
             <span
               className={cn(
@@ -354,6 +420,16 @@ export function ComputerScreen({
           onOpenFullScreen={() => setFullScreen(true)}
           onExitFullScreen={() => setFullScreen(false)}
         />
+      ) : shownSegment === "performance" ? (
+        <Suspense
+          fallback={
+            <p className="mt-6 text-center text-[14px] text-[var(--personal-text-secondary)]">
+              Loading the dashboard.
+            </p>
+          }
+        >
+          <PerformancePane botsBusy={botsBusy} tasksRunning={tasksRunning} orbit={PERF_ORBIT} />
+        </Suspense>
       ) : (
         <FilesPane environmentId={environmentId} />
       )}

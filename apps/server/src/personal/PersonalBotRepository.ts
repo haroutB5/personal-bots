@@ -210,6 +210,15 @@ export interface PersonalMessageSearchRow {
   readonly snippetStart: number;
 }
 
+/** A bot chat with a live provider session, as the Performance sampler reads it. */
+export interface PersonalBotProviderSession {
+  readonly threadId: string;
+  readonly botId: PersonalBotId;
+  readonly botName: string;
+  /** The id the provider CLI carries (`--session-id=...`); what a PID is matched by. */
+  readonly providerSessionId: string;
+}
+
 export class PersonalBotRepository extends Context.Service<
   PersonalBotRepository,
   {
@@ -304,6 +313,15 @@ export class PersonalBotRepository extends Context.Service<
     ) => Effect.Effect<void, PersonalBotRepositoryError>;
     readonly listThreadLinks: () => Effect.Effect<
       ReadonlyArray<PersonalBotThread>,
+      PersonalBotRepositoryError
+    >;
+    /**
+     * Every unarchived bot chat with a provider session row, for the
+     * Performance tab: a running CLI process carries its session id
+     * (`--session-id=...`), and this maps it back to the bot's name.
+     */
+    readonly listBotProviderSessions: () => Effect.Effect<
+      ReadonlyArray<PersonalBotProviderSession>,
       PersonalBotRepositoryError
     >;
     /**
@@ -1851,6 +1869,36 @@ export const make = Effect.gen(function* () {
       Effect.andThen(listThreadLinkPreviews),
     );
 
+  const listBotProviderSessions: PersonalBotRepository["Service"]["listBotProviderSessions"] = () =>
+    sql<{
+      readonly threadId: string;
+      readonly botId: string;
+      readonly botName: string;
+      readonly providerSessionId: string;
+    }>`
+        SELECT s.thread_id AS "threadId",
+               t.bot_id AS "botId",
+               b.name AS "botName",
+               s.provider_session_id AS "providerSessionId"
+        FROM projection_thread_sessions s
+        JOIN personal_bot_threads t ON t.thread_id = s.thread_id
+        JOIN personal_bots b ON b.bot_id = t.bot_id
+        WHERE s.provider_session_id IS NOT NULL
+          AND s.provider_session_id <> ''
+          AND t.archived_at IS NULL
+          AND b.deleted_at IS NULL
+      `.pipe(
+      Effect.map((rows) =>
+        rows.map((row): PersonalBotProviderSession => ({
+          threadId: row.threadId,
+          botId: PersonalBotId.make(row.botId),
+          botName: row.botName,
+          providerSessionId: row.providerSessionId,
+        })),
+      ),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listBotProviderSessions:query")),
+    );
+
   const listGroupPresence: PersonalBotRepository["Service"]["listGroupPresence"] = () =>
     listGroupPresenceRows().pipe(
       Effect.mapError(
@@ -1961,6 +2009,7 @@ export const make = Effect.gen(function* () {
     searchMessages,
     deleteThreadLink,
     listThreadLinks,
+    listBotProviderSessions,
     listOpenChatTitles,
     listOpenChats,
     getChatFacts,
