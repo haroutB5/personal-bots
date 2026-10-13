@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -75,6 +75,7 @@ import {
   type HomeChatBase,
   type HomeChatRow,
   type HomeFilter,
+  type HomeRow,
   type RowPreviewTone,
 } from "./homeRows";
 import { MessageSearchResults } from "./MessageSearchResults";
@@ -569,6 +570,17 @@ export function ChatsScreen({
     () => visibleHomeRows({ rows, filter, query, nameOf }),
     [filter, nameOf, query, rows],
   );
+  // What the list last drew while it was on screen. Under an open chat the
+  // shell hides it, and these stay as they were: the rows do not re-render
+  // until Back (see HomeRowsList). Nothing else reads them.
+  const lastShownRef = useRef<{
+    readonly rows: ReadonlyArray<HomeRow>;
+    readonly now: number;
+  } | null>(null);
+  if (onScreen || lastShownRef.current === null) {
+    lastShownRef.current = { rows: shownRows, now };
+  }
+  const drawnRows = onScreen ? shownRows : lastShownRef.current.rows;
 
   // Avatar poses for the rows on screen. A row with nothing to say gets no
   // pose at all: the plain SVG avatar, no pose machinery, no observer. The
@@ -1134,32 +1146,18 @@ export function ChatsScreen({
             <HomeFilters active={filter} onSelect={setFilter} needsCount={needsYou.count} />
           </div>
 
-          {shownRows.length > 0 ? (
-            <ul aria-label="Your chats" className="home-rows">
-              {shownRows.map((row) =>
-                row.kind === "chat" ? (
-                  <HomeChatRowView
-                    key={row.key}
-                    row={row}
-                    preview={previewByKey.get(row.key)?.text ?? ""}
-                    tone={previewByKey.get(row.key)?.tone ?? "plain"}
-                    now={now}
-                    selected={openThreadId === row.key}
-                    motion={motionByKey.get(row.key)}
-                    comet={cometKeys.has(row.key)}
-                  />
-                ) : (
-                  <HomeGroupRowView
-                    key={row.key}
-                    row={row}
-                    bots={memberBotsOf(row.group)}
-                    nameOf={nameOf}
-                    now={now}
-                    selected={openGroupId === row.group.groupId}
-                  />
-                ),
-              )}
-            </ul>
+          {drawnRows.length > 0 ? (
+            <HomeRowsList
+              rows={drawnRows}
+              previewByKey={previewByKey}
+              motionByKey={motionByKey}
+              cometKeys={cometKeys}
+              now={lastShownRef.current?.now ?? now}
+              openThreadId={openThreadId}
+              openGroupId={openGroupId}
+              memberBotsOf={memberBotsOf}
+              nameOf={nameOf}
+            />
           ) : query.trim().length > 0 && snoozedRows.length === 0 ? (
             <p className="mt-6 px-4 text-center text-[15px] text-[var(--personal-text-secondary)]">
               No bots or chats match "{query.trim()}".
@@ -1263,6 +1261,63 @@ export function ChatsScreen({
     </div>
   );
 }
+
+/**
+ * The rows, in their own component so they can be frozen: on the phone the
+ * shell keeps this list mounted under an open chat (hidden), and a store
+ * change while it is hidden would otherwise reconcile every row (59 of them)
+ * for a screen nobody can see. The home hands this component the last props it
+ * had while it was visible, so React skips the whole subtree until Back.
+ */
+const HomeRowsList = memo(function HomeRowsList({
+  rows,
+  previewByKey,
+  motionByKey,
+  cometKeys,
+  now,
+  openThreadId,
+  openGroupId,
+  memberBotsOf,
+  nameOf,
+}: {
+  readonly rows: ReadonlyArray<HomeRow>;
+  readonly previewByKey: ReadonlyMap<string, { text: string; tone: RowPreviewTone }>;
+  readonly motionByKey: ReadonlyMap<string, AvatarMotion | undefined>;
+  readonly cometKeys: ReadonlySet<string>;
+  readonly now: number;
+  readonly openThreadId: string | null;
+  readonly openGroupId: string | null;
+  readonly memberBotsOf: (group: PersonalGroup) => ReadonlyArray<PersonalBot>;
+  readonly nameOf: (botId: string) => string | null;
+}): JSX.Element {
+  return (
+    <ul aria-label="Your chats" className="home-rows">
+      {rows.map((row) =>
+        row.kind === "chat" ? (
+          <HomeChatRowView
+            key={row.key}
+            row={row}
+            preview={previewByKey.get(row.key)?.text ?? ""}
+            tone={previewByKey.get(row.key)?.tone ?? "plain"}
+            now={now}
+            selected={openThreadId === row.key}
+            motion={motionByKey.get(row.key)}
+            comet={cometKeys.has(row.key)}
+          />
+        ) : (
+          <HomeGroupRowView
+            key={row.key}
+            row={row}
+            bots={memberBotsOf(row.group)}
+            nameOf={nameOf}
+            now={now}
+            selected={openGroupId === row.group.groupId}
+          />
+        ),
+      )}
+    </ul>
+  );
+});
 
 /** The chat threads with an open request of one kind (the summary join). */
 function threadIdsWithKind(model: NeedsYouModel, kind: "secret"): ReadonlySet<string> {
