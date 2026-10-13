@@ -83,10 +83,37 @@ Web (`vp test run --project unit src/features/personal` plus tsc): the agent-mod
 the model has it, the chosen mode round-trips through the form, an unknown one is dropped, and the label carries
 " · Code"/" · Minimal" but never writes Standard out.
 
+## Builder's live run (13 Oct, evidence in `qa/hbots-1671/backend/`)
+
+- `install-dsh.ps1` installed `@deepseek-ai/dsh@0.2.0-rc.2` with `npm ci --ignore-scripts` into
+  `%USERPROFILE%\.personal-bots\runtimes\dsh-0.2.0-rc.2` (483 MB), copied the deny plugin beside it, and the
+  runtime answers `0.2.0-rc.2`. **This is the first proof that an `--ignore-scripts` install is functional on this
+  laptop**; a second run is a no-op.
+- `scripts/personal/qa/dsh-live-smoke.mjs` runs the REAL harness with the REAL generated patch (deny row included)
+  and a deliberately invalid key, behind a CONNECT logging proxy. Result: `initialize` ok,
+  `agent-harness-acp 0.0.1`, `session/new` ok, `reasoning_effort` offered and accepted, the prompt reached
+  `api.deepseek.com:443` (**the only host contacted**) and came back with dsh's auth error; **0**
+  `session-log-deepseek/delivery-accepted` events; no `.credentials.yaml` under `DSH_HOME`; neither
+  `dsh_session_log` nor `dsh_plugin_packages` appears anywhere in the session log. The deny plugin row loads
+  without breaking boot.
+- The real adapter driving the real harness on a throwaway root: session `ready` with cursor
+  `{engine:"dsh", resume:<id>, mode:"standard"}`, turn `started` → `completed` failed with our own wording
+  ("DeepSeek could not authenticate…"), no crash.
+- The throwaway server (worktree build, Sonnet seed, a DeepSeek instance on the dsh engine) logs
+  `deepseek.engine.selected engine=dsh` and 0 ERRORs, and its provider card reads
+  `installed: true, version: 0.2.0-rc.2, status: ready` with the agent-mode options
+  `standard, code, minimal`.
+- **That live run found a real bug, fixed before this build**: the harness answers `0.2.0-rc.2`, and the generic
+  semver read dropped the pre-release suffix, so the pin check failed and every dsh instance showed an error
+  status. The version is now compared as the runtime prints it (`versionMatchesPin`), with a test.
+
+Keys: no valid DeepSeek key was available to this build, so a successful model turn, the persona/MCP/skill answers
+and the three modes were not exercised live. `scripts/personal/qa/dsh-live-smoke.mjs` is ready for whoever has one:
+put it as the sensitive `ANTHROPIC_AUTH_TOKEN` of a DeepSeek instance on a throwaway root and run it again.
+
 ## What QA should look at
 
-The live smoke on a throwaway root is the first proof that an `--ignore-scripts` install of the pinned runtime is
-functional on this laptop. The checks worth re-running against the staged build are the design's Q1, Q2, Q5 and Q9:
+The checks worth re-running against the staged build are the design's Q1, Q2, Q5 and Q9:
 a real DeepSeek bot on dsh answering with its persona, an hbots MCP tool and a skill; a cancel mid-tool within two
 seconds with no leftover shells; the three modes; and the privacy sweep through a CONNECT logging proxy, extended
 with Security's Q9 additions — the request body has neither `dsh_session_log` nor `dsh_plugin_packages`, no

@@ -13,6 +13,8 @@ import { BUNDLED_MODEL_MANIFEST } from "../ModelManifest.ts";
 import {
   buildInitialDeepSeekProviderSnapshot,
   checkDeepSeekProviderStatus,
+  dshPrintedVersion,
+  versionMatchesPin,
 } from "./DeepSeekProvider.ts";
 
 const decodeDeepSeekSettings = Schema.decodeSync(DeepSeekSettings);
@@ -71,6 +73,7 @@ describe("DeepSeekProvider", () => {
         decodeDeepSeekSettings({
           enabled: true,
           binaryPath: "/definitely/not/installed/claude-binary",
+          engine: "claude-code",
         }),
         { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
         catalog,
@@ -382,6 +385,18 @@ describe("DeepSeekProvider", () => {
       ).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer), Effect.provide(Path.layer)),
   );
+
+  it("matches the pin as the runtime prints it, pre-release suffix and all", () => {
+    // The live harness answers `0.2.0-rc.2`, which a generic semver read turns
+    // into `0.2.0`. The live smoke on 13 Oct caught exactly that mismatch.
+    expect(dshPrintedVersion("0.2.0-rc.2\n", "")).toBe("0.2.0-rc.2");
+    expect(dshPrintedVersion("", "0.2.0-rc.2\n")).toBe("0.2.0-rc.2");
+    expect(dshPrintedVersion("\n\n", "")).toBeNull();
+    expect(versionMatchesPin("0.2.0-rc.2", "0.2.0-rc.2")).toBe(true);
+    expect(versionMatchesPin("dsh 0.2.0-rc.2", "0.2.0-rc.2")).toBe(true);
+    expect(versionMatchesPin("0.2.0", "0.2.0-rc.2")).toBe(false);
+    expect(versionMatchesPin("0.2.1-rc.2", "0.2.0-rc.2")).toBe(false);
+  });
 
   it.effect("points at install-dsh.ps1 when the harness runtime is missing", () =>
     Effect.gen(function* () {
