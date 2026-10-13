@@ -60,6 +60,20 @@ function pathArguments(args) {
   return values;
 }
 
+/**
+ * True when a path reaches a protected folder by a spelling the full-path
+ * comparison misses: a Windows admin share (`//localhost/c$/...`), the
+ * `\\?\` long-path prefix, or a `..\..\` route from somewhere else. They all
+ * end in the same trailing segments, so a tail of the folder still matches.
+ * The same trick the server's Claude Code rules use, and the same false
+ * positives they accept.
+ */
+const tailMatches = (tails, candidate) => {
+  const target = norm(candidate);
+  if (target.length === 0) return false;
+  return tails.some((tail) => target.startsWith(tail) || target.includes(`/${tail}`));
+};
+
 /** Command text a shell tool would run. */
 function commandText(args) {
   for (const field of ["command", "cmd", "script", "input"]) {
@@ -77,10 +91,14 @@ export function apply(ctx, config) {
   // the full path misses `\\localhost\c$\...` and `..\..\` routes that reach
   // the same folder.
   const commandForms = [];
+  const readWriteTails = [];
   for (const root of readWrite) {
     commandForms.push(root);
-    const tail = root.split("/").filter(Boolean).slice(-2).join("/");
-    if (tail.includes("/")) commandForms.push(tail);
+    const segments = root.split("/").filter(Boolean);
+    const commandTail = segments.slice(-2).join("/");
+    if (commandTail.includes("/")) commandForms.push(commandTail);
+    const pathTail = segments.slice(-3).join("/");
+    if (pathTail.includes("/")) readWriteTails.push(pathTail);
   }
 
   ctx.on("tools/pre-execute", (exec, next) => {
@@ -90,7 +108,9 @@ export function apply(ctx, config) {
       if (FILE_TOOLS.has(exec?.name)) {
         const mayRead = FILE_TOOLS.get(exec.name) === true;
         for (const candidate of paths) {
-          if (under(readWrite, candidate)) return { kind: "deny", reason: DENY_REASON };
+          if (under(readWrite, candidate) || tailMatches(readWriteTails, candidate)) {
+            return { kind: "deny", reason: DENY_REASON };
+          }
           if (!mayRead && under(writeOnly, candidate)) {
             return { kind: "deny", reason: DENY_REASON };
           }
@@ -98,7 +118,9 @@ export function apply(ctx, config) {
       }
       if (SEARCH_TOOLS.has(exec?.name)) {
         for (const candidate of paths) {
-          if (under(readWrite, candidate)) return { kind: "deny", reason: DENY_REASON };
+          if (under(readWrite, candidate) || tailMatches(readWriteTails, candidate)) {
+            return { kind: "deny", reason: DENY_REASON };
+          }
         }
       }
       if (SHELL_TOOLS.has(exec?.name)) {

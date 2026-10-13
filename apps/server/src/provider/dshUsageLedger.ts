@@ -72,53 +72,70 @@ export interface DshFrameRead {
 }
 
 /**
+ * The exact length of the zstd frame starting at `start`, or `undefined` when
+ * the buffer does not hold the whole frame yet.
+ *
+ * It has to be exact: `zstdDecompressSync` happily decodes a buffer holding
+ * several concatenated frames and returns all of them joined, so guessing a
+ * frame's end from "the next frame magic" either swallows the frames in
+ * between or leaves the offset inside one. The frame header and its block
+ * headers say exactly where a frame stops.
+ */
+function zstdFrameLength(buffer: Buffer, start: number): number | undefined {
+  if (start + 5 > buffer.length) return undefined;
+  const descriptor = buffer[start + 4]!;
+  const contentSizeFlag = (descriptor >> 6) & 0b11;
+  const singleSegment = ((descriptor >> 5) & 0b1) === 1;
+  const dictionaryFlag = descriptor & 0b11;
+  const contentSizeBytes =
+    contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : ([2, 4, 8] as const)[contentSizeFlag - 1]!;
+  const dictionaryBytes = ([0, 1, 2, 4] as const)[dictionaryFlag]!;
+  let cursor = start + 5;
+  if (!singleSegment) {
+    if (cursor + 1 > buffer.length) return undefined;
+    cursor += 1;
+  }
+  cursor += dictionaryBytes + contentSizeBytes;
+  // Blocks: a 3-byte header holding the size in bits 3..23, then the payload.
+  // Bit 0 marks the last block; an RLE block stores one byte whatever its size.
+  for (;;) {
+    if (cursor + 3 > buffer.length) return undefined;
+    const value = buffer[cursor]! | (buffer[cursor + 1]! << 8) | (buffer[cursor + 2]! << 16);
+    const lastBlock = (value & 0b1) === 1;
+    const blockType = (value >> 1) & 0b11;
+    const blockSize = value >>> 3;
+    cursor += 3 + (blockType === 1 ? 1 : blockSize);
+    // A block whose payload runs past the buffer is a frame still being
+    // written, last block or not.
+    if (cursor > buffer.length) return undefined;
+    if (lastBlock) break;
+  }
+  return cursor - start;
+}
+
+/**
  * Decodes the zstd frames of a dsh session log from `fromOffset` on.
  *
- * The file is a concatenation of independently compressed frames, and a frame
- * still being written (or one cut mid-write) fails to decompress. Only whole
- * frames advance the returned offset, so the next read replays an unfinished
- * tail rather than losing it. A frame's magic can also occur inside compressed
- * data, so each candidate start is tried against every later one until one
- * span decodes.
+ * The file is a concatenation of independently compressed frames. Only whole
+ * frames advance the returned offset, so a frame still being written is read
+ * again next time rather than losing its bytes.
  */
 export function decodeDshSessionFrames(buffer: Buffer, fromOffset: number): DshFrameRead {
-  const starts: number[] = [];
-  for (let index = buffer.indexOf(ZSTD_MAGIC, fromOffset); index !== -1;) {
-    starts.push(index);
-    index = buffer.indexOf(ZSTD_MAGIC, index + 1);
-  }
-  let lines: string[] = [];
+  const lines: string[] = [];
   let offset = fromOffset;
-  let index = 0;
-  let wholeFrames = false;
-  while (index < starts.length) {
-    const start = starts[index]!;
-    if (start < offset) {
-      index += 1;
-      continue;
-    }
-    let decoded: string | undefined;
-    let nextIndex = index;
-    for (let end = index + 1; end <= starts.length; end += 1) {
-      const stop = end < starts.length ? starts[end]! : buffer.length;
-      try {
-        decoded = Zlib.zstdDecompressSync(buffer.subarray(start, stop)).toString("utf8");
-        nextIndex = end;
-        break;
-      } catch {
-        // Try a longer span: this "start" was compressed data, or the frame
-        // after it is the same frame.
-      }
-    }
-    if (decoded === undefined) break;
-    lines = lines.concat(decoded.split("\n").filter((line) => line.trim().length > 0));
-    offset = nextIndex < starts.length ? starts[nextIndex]! : buffer.length;
-    wholeFrames = true;
-    index = nextIndex;
+  for (;;) {
+    // Everything before a frame's own magic is skipped: a frame starts there.
+    const start = buffer.indexOf(ZSTD_MAGIC, offset);
+    if (start === -1) break;
+    const length = zstdFrameLength(buffer, start);
+    if (length === undefined) break;
+    const decoded = Zlib.zstdDecompressSync(buffer.subarray(start, start + length)).toString(
+      "utf8",
+    );
+    lines.push(...decoded.split("\n").filter((line) => line.trim().length > 0));
+    offset = start + length;
   }
-  // Nothing decodable from here: hold the offset where it was so the bytes are
-  // read again next time (a frame mid-write, or a file that has not flushed).
-  return { lines, offset: wholeFrames ? offset : fromOffset };
+  return { lines, offset };
 }
 
 /** One `assistant/message` step of a dsh session log. */
