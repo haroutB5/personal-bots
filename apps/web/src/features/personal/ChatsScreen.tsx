@@ -599,16 +599,16 @@ export function ChatsScreen({
     return previews;
   }, [progressNotes, rows]);
 
-  // The chip and the search box answer a tap or a key at once; the list below
-  // follows in time-sliced work. Swapping 16 rows is one long task at 4x CPU,
-  // which is the lag a tap on a chip showed. Everything that describes the
-  // list (rows, empty note, the Needs you footnote) reads the same deferred
-  // pair, so the chip and the list never disagree about an empty state.
+  // Chip taps retain their deferred list update. Search can narrow the rows
+  // in the input commit, avoiding an extra render of the old results first.
+  // Every list description (rows, empty note, Needs you footnote) reads the
+  // same pair on both paths.
   const [deferListInput] = useState(() => perfOptimizationOn("home-filter-defer"));
+  const [syncSearch] = useState(() => perfOptimizationOn("home-search-sync"));
   const deferredFilter = useDeferredValue(filter);
-  const deferredQuery = useDeferredValue(query);
+  const deferredQuery = useDeferredValue(syncSearch ? "" : query);
   const listFilter = deferListInput ? deferredFilter : filter;
-  const listQuery = deferListInput ? deferredQuery : query;
+  const listQuery = deferListInput && !syncSearch ? deferredQuery : query;
   const shownRows = useMemo(
     () => visibleHomeRows({ rows, filter: listFilter, query: listQuery, nameOf }),
     [listFilter, nameOf, listQuery, rows],
@@ -1112,7 +1112,7 @@ export function ChatsScreen({
       className="flex min-h-full min-w-0 flex-col pb-6"
     >
       <header className="flex h-[52px] items-center pr-2 pl-4">
-        <h1 className="text-[30px] leading-9 font-extrabold tracking-[-0.01em] text-[var(--personal-text)]">
+        <h1 className="text-3xl leading-9 font-extrabold tracking-[var(--personal-title-tracking)] text-[var(--personal-text)]">
           Bots
         </h1>
         <div className="ml-auto flex items-center">

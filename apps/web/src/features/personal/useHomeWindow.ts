@@ -75,6 +75,7 @@ export function useHomeWindow(
 ): HomeWindow {
   const [compact] = useState(() => perfOptimizationOn("home-window-compact"));
   const [deferRestore] = useState(() => perfOptimizationOn("home-scroll-restore"));
+  const [skipFullSliceMeasure] = useState(() => perfOptimizationOn("home-filter-layout"));
   const overscan = options.overscan ?? (compact ? 5 : HOME_ROW_OVERSCAN);
   const active = options.active ?? true;
   // Kill switch "home-window" (perfFlags.ts), read once per load like the
@@ -198,6 +199,10 @@ export function useHomeWindow(
     }
     if (measuredCountRef.current === count) return;
     measuredCountRef.current = count;
+    // Every result is already drawn: neither pitch nor viewport geometry can
+    // add a missing row. Scroll and resize still schedule their normal check.
+    // Avoid flushing the new filter DOM's style/layout inside its commit.
+    if (skipFullSliceMeasure && clamped.start === 0 && clamped.end === count) return;
     measure();
   });
 

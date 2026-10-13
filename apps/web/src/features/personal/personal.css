@@ -28,6 +28,7 @@
 @import "./avatarMotion.generated.css";
 
 .personal-app {
+  --personal-title-tracking: -0.01em;
   --personal-bg: #fafaf8;
   --personal-surface: #ffffff;
   --personal-fill-muted: #f3f3f1;

@@ -114,7 +114,19 @@ export type PerfOptimization =
   | "home-row-memo"
   // Preserve the hidden home's layout while Activity pauses all its effects.
   // Off (or unsupported): the original display:none path.
-  | "home-back-layout";
+  | "home-back-layout"
+  // The off-screen textarea sizes its own contents without invalidating the
+  // surrounding chat's layout. Off: the original uncontained measurer.
+  | "composer-measure-contain"
+  // A filtered list whose whole result already fits in the drawn slice needs
+  // no synchronous geometry read. Off: measure every row-count change.
+  | "home-filter-layout"
+  // Search updates the field and filtered rows in one commit, without first
+  // rendering the previous results. Off: the existing deferred search path.
+  | "home-search-sync"
+  // Ordinary bot composers have no mention lookup and need no caret state
+  // updates. Off: track selection on every input/select event, as before.
+  | "composer-caret";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {
