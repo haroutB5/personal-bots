@@ -213,19 +213,26 @@ describe("summaryFor", () => {
     groups: null,
     slow: null,
     now: NOW,
+    stale: false,
     lastSampleAt: NOW,
     botsBusy: 3,
   };
 
   it("measures before the first number", () => {
     const empty = evaluateThresholds({ samples: [], slow: null, now: NOW, previous: NO_WARNINGS });
-    const summary = summaryFor({ ...base, ...empty, samples: [], lastSampleAt: null });
+    const summary = summaryFor({
+      ...base,
+      ...empty,
+      samples: [],
+      lastSampleAt: null,
+      stale: false,
+    });
     expect(summary.headline).toBe("Measuring…");
     expect(summary.loading).toBe(true);
   });
 
   it("pauses when the numbers stop", () => {
-    const summary = summaryFor({ ...base, ...calm, lastSampleAt: NOW - 8_000 });
+    const summary = summaryFor({ ...base, ...calm, stale: true, lastSampleAt: NOW - 8_000 });
     expect(summary.headline).toBe("Paused");
     expect(summary.reason).toContain("No new numbers since");
   });

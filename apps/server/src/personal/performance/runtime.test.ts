@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSPromises from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";

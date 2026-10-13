@@ -168,6 +168,10 @@ export class PerformanceSampler {
   private helperStartedAt = 0;
   private hello: HelperHello | null = null;
   private latestTick: HelperTick | null = null;
+  /** The newest tick that carries the process snapshot (every second tick). */
+  private latestGroupTick: HelperTick | null = null;
+  /** The snapshot that has been grouped already; never grouped twice. */
+  private lastGroupedTick: HelperTick | null = null;
   private latestGroups: GroupedProcesses | null = null;
   private lastGroupsEvent: PerformanceGroups | null = null;
   private lastSample: PerformanceSample | null = null;
@@ -295,12 +299,17 @@ export class PerformanceSampler {
         return;
       }
       const tick = parseHelperTick(line);
-      if (tick !== null) this.latestTick = tick;
+      if (tick !== null) {
+        this.latestTick = tick;
+        if (tick.parents !== null) this.latestGroupTick = tick;
+      }
     });
     helper.onExit(() => {
       if (this.helper !== helper) return;
       this.helper = null;
       this.latestTick = null;
+      this.latestGroupTick = null;
+      this.lastGroupedTick = null;
       this.restartBlockedUntil = this.deps.now() + this.deps.helperRestartMs;
       this.deps.log?.("performance counter helper exited");
     });
@@ -322,35 +331,35 @@ export class PerformanceSampler {
     const fresh = tickAgeMs <= this.deps.tickMs * 2.5 ? tick : null;
     const logical = this.hello?.logicalProcessors ?? NodeOS.cpus().length;
 
-    // Attribution is a database read; it runs at most once per group refresh
-    // and never blocks a tick.
-    if (
-      fresh !== null &&
-      fresh.parents !== null &&
-      !this.attributionInFlight &&
-      this.deps.attribute !== undefined
-    ) {
-      this.attributionInFlight = true;
-      void this.deps
-        .attribute(fresh.children)
-        .then((map) => {
-          this.attribution = map;
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          this.attributionInFlight = false;
-        });
-    }
-
-    if (
-      fresh !== null &&
-      fresh.parents !== null &&
-      this.tickCount % PERFORMANCE_GROUP_EVERY === 0
-    ) {
+    // The newest tick that carries the process snapshot, grouped once per it:
+    // the helper's group ticks and this sampler's cadence have no fixed phase,
+    // so "whatever arrived last" would sometimes never carry parents.
+    const groupTick =
+      this.latestGroupTick !== null &&
+      this.latestGroupTick !== this.lastGroupedTick &&
+      now - this.latestGroupTick.t <= this.deps.tickMs * 3
+        ? this.latestGroupTick
+        : null;
+    if (groupTick !== null && this.tickCount % PERFORMANCE_GROUP_EVERY === 0) {
+      // Attribution is a database read; it runs at most once per group
+      // refresh and never blocks a tick.
+      if (!this.attributionInFlight && this.deps.attribute !== undefined) {
+        this.attributionInFlight = true;
+        void this.deps
+          .attribute(groupTick.children)
+          .then((map) => {
+            this.attribution = map;
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            this.attributionInFlight = false;
+          });
+      }
+      this.lastGroupedTick = groupTick;
       this.latestGroups = groupProcesses({
-        processes: fresh.processes,
-        parents: fresh.parents,
-        children: fresh.children,
+        processes: groupTick.processes,
+        parents: groupTick.parents ?? [],
+        children: groupTick.children,
         attributed: this.attribution,
         serverPid: this.deps.serverPid ?? process.pid,
         logicalProcessors: logical,

@@ -149,6 +149,24 @@ export const LHM_SENSOR_URL = "http://127.0.0.1:8085/data.json";
 export const FAN_SENSOR_URL = "http://127.0.0.1:8086/fan.json";
 export const SENSOR_TIMEOUT_MS = 1_000;
 
+/**
+ * Where the two readers look. Always loopback unless a test points them at a
+ * stub or a closed port (`T3CODE_PERF_LHM_URL`, `T3CODE_PERF_FAN_URL`) - the
+ * calm "sensors app not running" states are proven that way without touching
+ * the laptop's real sensor apps.
+ */
+export function sensorUrls(env: NodeJS.ProcessEnv = process.env): {
+  readonly lhm: string;
+  readonly fan: string;
+} {
+  const lhm = env.T3CODE_PERF_LHM_URL?.trim();
+  const fan = env.T3CODE_PERF_FAN_URL?.trim();
+  return {
+    lhm: lhm === undefined || lhm === "" ? LHM_SENSOR_URL : lhm,
+    fan: fan === undefined || fan === "" ? FAN_SENSOR_URL : fan,
+  };
+}
+
 const NO_SENSORS: LhmSensors = {
   cpuTempC: null,
   pCoreC: null,
@@ -176,6 +194,8 @@ export const SENSORS_DOWN: SensorsReading = {
 
 export interface SensorReaderDeps {
   readonly fetchJson?: (url: string, timeoutMs: number) => Promise<unknown | null>;
+  /** Where to look; defaults to `sensorUrls()` (loopback, env-overridable). */
+  readonly urls?: { readonly lhm: string; readonly fan: string };
 }
 
 const defaultFetchJson = async (url: string, timeoutMs: number): Promise<unknown | null> => {
@@ -196,18 +216,20 @@ const defaultFetchJson = async (url: string, timeoutMs: number): Promise<unknown
  */
 export class SensorReaders {
   private readonly fetchJson: (url: string, timeoutMs: number) => Promise<unknown | null>;
+  private readonly urls: { readonly lhm: string; readonly fan: string };
   private lhmInFlight = false;
   private fanInFlight = false;
   private latest: SensorsReading = SENSORS_DOWN;
 
   constructor(deps: SensorReaderDeps = {}) {
     this.fetchJson = deps.fetchJson ?? defaultFetchJson;
+    this.urls = deps.urls ?? sensorUrls();
   }
 
   read(): SensorsReading {
     if (!this.lhmInFlight) {
       this.lhmInFlight = true;
-      void this.fetchJson(LHM_SENSOR_URL, SENSOR_TIMEOUT_MS)
+      void this.fetchJson(this.urls.lhm, SENSOR_TIMEOUT_MS)
         .then((data) => {
           // A failed answer clears the values: showing last minute's
           // temperature as if it were now is worse than the calm note.
@@ -222,7 +244,7 @@ export class SensorReaders {
     }
     if (!this.fanInFlight) {
       this.fanInFlight = true;
-      void this.fetchJson(FAN_SENSOR_URL, SENSOR_TIMEOUT_MS)
+      void this.fetchJson(this.urls.fan, SENSOR_TIMEOUT_MS)
         .then((data) => {
           const fan = data === null ? FAN_DOWN : parseFanJson(data);
           this.latest = { ...this.latest, fans: fan.status === "down" ? "down" : "ok", fan };

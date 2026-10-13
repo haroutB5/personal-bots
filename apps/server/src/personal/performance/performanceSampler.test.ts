@@ -226,14 +226,26 @@ describe("parseHelperTick sanity for the sampler fixture", () => {
 });
 
 describe("child attribution input", () => {
-  it("the sampler asks for attribution with the helper's children", async () => {
+  it("the sampler asks for attribution with the helper's children on group ticks", async () => {
     vi.useFakeTimers();
     try {
       const helper = fakeHelper();
       const attribute = vi.fn(async (_children: ReadonlyArray<HelperChild>) => new Map());
       const { sampler, advance } = make({ startHelper: () => helper.handle, attribute }, helper);
       sampler.subscribe(() => undefined);
+      // Group ticks carry parents; the sampler groups (and attributes) once
+      // per snapshot, on its every-second tick.
       helper.push(tickLine(1_000_000, true));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+      expect(attribute).not.toHaveBeenCalled();
+      helper.push(tickLine(1_002_000, true));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attribute).toHaveBeenCalledTimes(1);
+      // The same snapshot is never attributed twice.
+      helper.push(tickLine(1_004_000, false));
       await vi.advanceTimersByTimeAsync(2_000);
       advance(2_000);
       await vi.advanceTimersByTimeAsync(0);

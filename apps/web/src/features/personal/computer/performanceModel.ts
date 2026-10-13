@@ -237,7 +237,15 @@ export interface SummaryInput extends ThresholdResult {
   readonly samples: ReadonlyArray<PerformanceSample>;
   readonly groups: PerformanceGroups | null;
   readonly slow: PerformanceSlow | null;
+  /** The newest sample's own time (server clock), for the durations. */
   readonly now: number;
+  /**
+   * Whether the feed has gone quiet. The caller decides it on ITS clock, so a
+   * phone whose clock differs from the laptop's still flips at the right
+   * moment; this function stays a pure function of its inputs.
+   */
+  readonly stale: boolean;
+  /** When the newest sample arrived (client clock), for the paused copy. */
   readonly lastSampleAt: number | null;
   readonly botsBusy: number;
 }
@@ -272,11 +280,19 @@ const mostly = (
 
 const bold = (text: string): string => `\u0001${text}\u0001`;
 
+/** The newest sample without sorting a copy of the whole history. */
+const sampleAtEnd = (samples: ReadonlyArray<PerformanceSample>): PerformanceSample | null => {
+  let newest: PerformanceSample | null = null;
+  for (const sample of samples) {
+    if (newest === null || sample.t > newest.t) newest = sample;
+  }
+  return newest;
+};
+
 /** The summary card's words, first match wins (spec section 3). */
 export function summaryFor(input: SummaryInput): PerfSummary {
-  const { samples, groups, now, lastSampleAt, botsBusy } = input;
-  const stale = lastSampleAt !== null && now - lastSampleAt > PERF_STALE_AFTER_MS;
-  const newest = [...samples].sort((a, b) => a.t - b.t).at(-1) ?? null;
+  const { samples, groups, now, lastSampleAt, botsBusy, stale } = input;
+  const newest = sampleAtEnd(samples);
 
   if (newest === null) {
     return {

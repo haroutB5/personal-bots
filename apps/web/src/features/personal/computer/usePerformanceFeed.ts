@@ -77,17 +77,6 @@ export function applyEvent(event: PerformanceStreamEvent, now: number): void {
   }
 }
 
-/** Test seam: push a frame as if it arrived over the stream. */
-export function ingestForTest(event: PerformanceStreamEvent, now = Date.now()): void {
-  applyEvent(event, now);
-}
-
-/** Test seam: wipe the store between tests. */
-export function resetForTest(): void {
-  state = EMPTY;
-  listeners.clear();
-}
-
 const subscribeStore = (listener: () => void): (() => void) => {
   listeners.add(listener);
   return () => listeners.delete(listener);

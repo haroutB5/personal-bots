@@ -227,33 +227,73 @@ export interface PerformancePaneProps {
   readonly tasksRunning: number;
 }
 
-export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps): JSX.Element {
-  const feed = usePerformanceFeed(true);
-  const [visibleNow, setVisibleNow] = useState(() => Date.now());
+/**
+ * Staleness flips once, at the moment it happens: a timer armed on each
+ * sample instead of a once-a-second re-render of every card.
+ */
+function useStaleFlip(lastSampleAt: number | null): boolean {
+  const [, bump] = useState(0);
   useEffect(() => {
-    const timer = window.setInterval(() => setVisibleNow(Date.now()), 1_000);
+    if (lastSampleAt === null) return;
+    const timer = window.setTimeout(() => bump((count) => count + 1), PERF_STALE_AFTER_MS + 50);
+    return () => window.clearTimeout(timer);
+  }, [lastSampleAt]);
+  return lastSampleAt !== null && Date.now() - lastSampleAt > PERF_STALE_AFTER_MS;
+}
+
+/** "2 h 14 min", ticking once a minute, in its own tiny component. */
+function UpFor({
+  since,
+  withDays = false,
+  prefix = "",
+}: {
+  readonly since: number;
+  readonly withDays?: boolean;
+  readonly prefix?: string;
+}): JSX.Element {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+  return (
+    <>
+      {prefix}
+      {upFor(since, now, withDays)}
+    </>
+  );
+}
 
+export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps): JSX.Element {
+  const feed = usePerformanceFeed(true);
   const { samples, groups, slow, statics } = feed;
   const newest = samples.at(-1) ?? null;
-  const stale = feed.lastSampleAt !== null && visibleNow - feed.lastSampleAt > PERF_STALE_AFTER_MS;
   const loading = samples.length === 0;
+  const stale = useStaleFlip(feed.lastSampleAt);
 
+  // Every heavy derivation below runs once per 2 s sample, not per render:
+  // `now` is the newest sample's own time, so no wall-clock dependency leaks
+  // into the memo (the profile on 13 Oct showed per-second recomputation was
+  // the hot path at 4x throttle).
+  const now = newest?.t ?? 0;
   const threshold = useMemo(
-    () => evaluateThresholds({ samples, slow, now: visibleNow, previous: NO_WARNINGS }),
-    // Re-evaluating per second is fine: the windows are means over history.
-    [samples, slow, visibleNow],
+    () => evaluateThresholds({ samples, slow, now, previous: NO_WARNINGS }),
+    [samples, slow, now],
   );
-  const summary = summaryFor({
-    ...threshold,
-    samples,
-    groups,
-    slow,
-    now: visibleNow,
-    lastSampleAt: feed.lastSampleAt,
-    botsBusy,
-  });
+  const summary = useMemo(
+    () =>
+      summaryFor({
+        ...threshold,
+        samples,
+        groups,
+        slow,
+        now,
+        stale,
+        lastSampleAt: feed.lastSampleAt,
+        botsBusy,
+      }),
+    [threshold, samples, groups, slow, now, stale, feed.lastSampleAt, botsBusy],
+  );
   const pose: PcPose = summary.stale
     ? "paused"
     : summary.headline === "Under strain"
@@ -307,13 +347,26 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
     return top;
   })();
 
-  const gpuSeries = series(samples, (sample) => sample.gpuPct);
-  const diskSeries = series(samples, (sample) => sample.diskActivePct);
-  const downSeries = series(samples, (sample) => sample.netDownMbps);
-  const upSeries = series(samples, (sample) => sample.netUpMbps);
-  const cpuPowerSeries = series(samples, (sample) => sample.powerCpuW);
-  const gpuPowerSeries = series(samples, (sample) => sample.powerGpuW);
-  const platformPowerSeries = series(samples, (sample) => sample.powerPlatformW);
+  // One array per charted field, built once per sample (not per render): a
+  // scrub or a stale flip reuses these identities, so the memoized chart and
+  // spark components below skip redrawing.
+  const gpuSeries = useMemo(() => series(samples, (sample) => sample.gpuPct), [samples]);
+  const diskSeries = useMemo(() => series(samples, (sample) => sample.diskActivePct), [samples]);
+  const downSeries = useMemo(() => series(samples, (sample) => sample.netDownMbps), [samples]);
+  const upSeries = useMemo(() => series(samples, (sample) => sample.netUpMbps), [samples]);
+  const cpuPowerSeries = useMemo(() => series(samples, (sample) => sample.powerCpuW), [samples]);
+  const gpuPowerSeries = useMemo(() => series(samples, (sample) => sample.powerGpuW), [samples]);
+  const platformPowerSeries = useMemo(
+    () => series(samples, (sample) => sample.powerPlatformW),
+    [samples],
+  );
+  const cpuSeries = useMemo(() => series(samples, (sample) => sample.cpuPct), [samples]);
+  const hbotsSeries = useMemo(() => series(samples, (sample) => sample.hbotsPct), [samples]);
+  const memSeries = useMemo(() => series(samples, (sample) => sample.memUsedGB), [samples]);
+  const hbotsMemSeries = useMemo(() => series(samples, (sample) => sample.hbotsGB), [samples]);
+  const tempSeries = useMemo(() => series(samples, (sample) => sample.cpuTempC), [samples]);
+  const fan1Series = useMemo(() => series(samples, (sample) => sample.fan1Rpm), [samples]);
+  const fan2Series = useMemo(() => series(samples, (sample) => sample.fan2Rpm), [samples]);
 
   const hbotsRows = groups?.hbots ?? null;
   const storageHbotsGB =
@@ -436,8 +489,8 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
         />
         <PerfChart
           series={[
-            { name: "This PC", hbots: false, values: series(samples, (s) => s.cpuPct) },
-            { name: "hbots", hbots: true, values: series(samples, (s) => s.hbotsPct) },
+            { name: "This PC", hbots: false, values: cpuSeries },
+            { name: "hbots", hbots: true, values: hbotsSeries },
           ]}
           min={0}
           max={100}
@@ -509,8 +562,8 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
         />
         <PerfChart
           series={[
-            { name: "This PC", hbots: false, values: series(samples, (s) => s.memUsedGB) },
-            { name: "hbots", hbots: true, values: series(samples, (s) => s.hbotsGB) },
+            { name: "This PC", hbots: false, values: memSeries },
+            { name: "hbots", hbots: true, values: hbotsMemSeries },
           ]}
           min={0}
           max={16}
@@ -556,12 +609,15 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
 
       {/* 4. Temperatures and fans */}
       <TempsCard
-        feed={feed}
+        samples={samples}
         stale={stale}
         scrubIndex={scrubIndex}
         onScrub={setScrub}
         warnPillHot={cpuTempWarn}
         fansFastest={fansFastest}
+        tempSeries={tempSeries}
+        fan1Series={fan1Series}
+        fan2Series={fan2Series}
       />
 
       {/* 5. hbots */}
@@ -574,9 +630,13 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
             </span>
           }
           meta={
-            statics === null
-              ? ""
-              : `${statics.hbotsVersion ?? "?"} · up ${upFor(statics.hbotsStartedAt, visibleNow)}`
+            statics === null ? (
+              ""
+            ) : (
+              <>
+                {statics.hbotsVersion ?? "?"} · up <UpFor since={statics.hbotsStartedAt} />
+              </>
+            )
           }
         />
         <div className="mt-1 flex items-center gap-2 text-[15px] leading-5">
@@ -746,7 +806,12 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
           : ` · ${statics.pcCpu}, ${statics.pcCores ?? "?"} cores, ${statics.pcThreads ?? "?"} threads`}
         {statics?.pcGpu === null || statics?.pcGpu === undefined ? "" : ` · ${statics.pcGpu}`}
         {statics?.ramGB == null ? "" : ` · ${statics.ramGB} GB`}
-        {statics?.pcBootAt == null ? "" : ` · On for ${upFor(statics.pcBootAt, visibleNow, true)}`}
+        {statics?.pcBootAt == null ? null : (
+          <>
+            {" · "}
+            <UpFor since={statics.pcBootAt} withDays prefix="On for " />
+          </>
+        )}
       </p>
       <p className="px-1 pb-6 text-[11px] leading-[15px] text-[var(--personal-text-tertiary)]">
         Updates every 2 seconds while this tab is open. Charts keep the last 15 minutes it was open.
@@ -865,21 +930,26 @@ function HbotsRow({
 }
 
 function TempsCard({
-  feed,
+  samples,
   stale,
   scrubIndex,
   onScrub,
   warnPillHot,
   fansFastest,
+  tempSeries,
+  fan1Series,
+  fan2Series,
 }: {
-  readonly feed: PerformanceFeedState;
+  readonly samples: ReadonlyArray<PerformanceSample>;
   readonly stale: boolean;
   readonly scrubIndex: number | null;
   readonly onScrub: (index: number | null) => void;
   readonly warnPillHot: boolean;
   readonly fansFastest: number;
+  readonly tempSeries: ReadonlyArray<number | null>;
+  readonly fan1Series: ReadonlyArray<number | null>;
+  readonly fan2Series: ReadonlyArray<number | null>;
 }): JSX.Element {
-  const { samples } = feed;
   const newest = samples.at(-1) ?? null;
   const shown = scrubIndex === null ? newest : (samples[scrubIndex] ?? newest);
   const sensorsDown = newest?.lhm === "down";
@@ -906,7 +976,13 @@ function TempsCard({
           </div>
         </div>
         <div className="mt-2">
-          <FanRows samples={samples} fansUnavailable={true} visibleCount={0} />
+          <FanRows
+            newest={newest}
+            fan1Series={fan1Series}
+            fan2Series={fan2Series}
+            fansUnavailable={true}
+            fastest={0}
+          />
         </div>
       </Card>
     );
@@ -1004,9 +1080,10 @@ function TempsCard({
           value={shown?.ramC == null ? "–" : `${fmt(shown.ramC)} °C`}
         />
         <FanRows
-          samples={samples}
+          newest={newest}
+          fan1Series={fan1Series}
+          fan2Series={fan2Series}
           fansUnavailable={fansUnavailable}
-          visibleCount={samples.length}
           fastest={fansFastest}
         />
       </div>
@@ -1029,17 +1106,18 @@ function CoreBar({ value }: { readonly value: number }): JSX.Element {
 }
 
 function FanRows({
-  samples,
+  newest,
+  fan1Series,
+  fan2Series,
   fansUnavailable,
-  visibleCount,
   fastest = 0,
 }: {
-  readonly samples: ReadonlyArray<PerformanceSample>;
+  readonly newest: PerformanceSample | null;
+  readonly fan1Series: ReadonlyArray<number | null>;
+  readonly fan2Series: ReadonlyArray<number | null>;
   readonly fansUnavailable: boolean;
-  readonly visibleCount: number;
   readonly fastest?: number;
 }): JSX.Element {
-  const newest = samples.at(-1) ?? null;
   if (fansUnavailable || newest === null) {
     return (
       <div className="flex min-h-12 items-center border-t border-[var(--personal-border)] py-1.5">
@@ -1051,8 +1129,6 @@ function FanRows({
     );
   }
   const shared = { min: 0, max: Math.max(1, fastest) };
-  const fan1 = samples.map((sample) => sample.fan1Rpm);
-  const fan2 = samples.map((sample) => sample.fan2Rpm);
   return (
     <>
       <div className="flex min-h-12 items-center gap-3 border-t border-[var(--personal-border)] py-1.5">
@@ -1069,8 +1145,8 @@ function FanRows({
             : `${newest.fan1Rpm.toLocaleString("en-GB")} rpm`
         }
         spark={
-          visibleCount > 0 && newest.fan1Rpm !== null ? (
-            <PerfSpark values={fan1} width={128} height={28} {...shared} />
+          newest.fan1Rpm !== null ? (
+            <PerfSpark values={fan1Series} width={128} height={28} {...shared} />
           ) : null
         }
       />
@@ -1082,8 +1158,8 @@ function FanRows({
             : `${newest.fan2Rpm.toLocaleString("en-GB")} rpm`
         }
         spark={
-          visibleCount > 0 && newest.fan2Rpm !== null ? (
-            <PerfSpark values={fan2} width={128} height={28} {...shared} />
+          newest.fan2Rpm !== null ? (
+            <PerfSpark values={fan2Series} width={128} height={28} {...shared} />
           ) : null
         }
       />

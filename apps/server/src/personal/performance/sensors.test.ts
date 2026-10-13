@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off
 import { describe, expect, it } from "@effect/vitest";
 
 import { parseFanJson, parseLhmSensors, SensorReaders } from "./sensors.ts";
@@ -144,7 +145,7 @@ describe("SensorReaders", () => {
         lhmCalls += 1;
         inflight += 1;
         maxInflight = Math.max(maxInflight, inflight);
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await new Promise((resolve) => setTimeout(resolve, 10));
         inflight -= 1;
         return lhmResult;
       },
@@ -153,7 +154,7 @@ describe("SensorReaders", () => {
     readers.read();
     readers.read();
     readers.read();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     expect(lhmCalls).toBe(1);
     expect(maxInflight).toBe(1);
     const ok = readers.read();
@@ -164,7 +165,7 @@ describe("SensorReaders", () => {
     // Now LHM stops answering: the next completed fetch clears the values.
     lhmResult = null;
     readers.read();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     const down = readers.read();
     expect(down.lhm).toBe("down");
     expect(down.sensors.cpuTempC).toBeNull();

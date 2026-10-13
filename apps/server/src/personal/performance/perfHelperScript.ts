@@ -102,6 +102,10 @@ public sealed class PdhCounter : IDisposable
     IntPtr query;
     readonly List<Entry> entries = new List<Entry>();
 
+    /// True on ticks that do not need the process rows (the sampler groups
+    /// every second tick): the process array is the bulk of the line.
+    public bool SkipProcess { get; set; }
+
     public PdhCounter()
     {
         uint rc = PdhOpenQueryW(null, IntPtr.Zero, out query);
@@ -216,6 +220,9 @@ public sealed class PdhCounter : IDisposable
             }
             if (e.Mode == 2)
             {
+                // The process rows are the bulk of the line and the sampler
+                // only groups every second tick, so odd ticks skip them.
+                if (SkipProcess) { sb.Append("null"); continue; }
                 // Process(*): one zipped row per process; the three counter
                 // instance lists are identical within a collect.
                 var cpu = ReadArray(e.Counter);
@@ -334,30 +341,37 @@ while ($true) {
     try { $parent = [System.Diagnostics.Process]::GetProcessById($ParentPid) } catch { }
     if ($null -eq $parent) { break }
   }
+  $groupTick = ($tick % 2 -eq 0)
+  $pdh.SkipProcess = -not $groupTick
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
   $pdh.Collect()
   $counters = $pdh.ReadJson()
   $collectMs = $sw.ElapsedMilliseconds
 
-  # The server's direct children: few rows, with command lines, for attribution.
+  # The server's direct children (few rows, with command lines, for
+  # attribution): only on group ticks, together with the parent map.
   $sb = New-Object System.Text.StringBuilder
-  $sb.Append('[') | Out-Null
-  $first = $true
-  try {
-    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId=$ParentPid" -Property ProcessId, Name, CommandLine, KernelModeTime, UserModeTime, WorkingSetSize
-    foreach ($c in $children) {
-      if (-not $first) { $sb.Append(',') | Out-Null }
-      $first = $false
-      $cmd = $c.CommandLine
-      if ($null -eq $cmd) { $cmd = '' }
-      if ($cmd.Length -gt 4000) { $cmd = $cmd.Substring(0, 4000) }
-      $cmdJson = $cmd | ConvertTo-Json -Compress
-      $nameJson = [string]$c.Name | ConvertTo-Json -Compress
-      $cpu100ns = [long]$c.KernelModeTime + [long]$c.UserModeTime
-      $sb.Append('{"pid":' + $c.ProcessId + ',"name":' + $nameJson + ',"cpu100ns":' + $cpu100ns + ',"wsBytes":' + [long]$c.WorkingSetSize + ',"cmd":' + $cmdJson + '}') | Out-Null
-    }
-  } catch { }
-  $sb.Append(']') | Out-Null
+  if ($groupTick) {
+    $sb.Append('[') | Out-Null
+    $first = $true
+    try {
+      $children = Get-CimInstance Win32_Process -Filter "ParentProcessId=$ParentPid" -Property ProcessId, Name, CommandLine, KernelModeTime, UserModeTime, WorkingSetSize
+      foreach ($c in $children) {
+        if (-not $first) { $sb.Append(',') | Out-Null }
+        $first = $false
+        $cmd = $c.CommandLine
+        if ($null -eq $cmd) { $cmd = '' }
+        if ($cmd.Length -gt 4000) { $cmd = $cmd.Substring(0, 4000) }
+        $cmdJson = $cmd | ConvertTo-Json -Compress
+        $nameJson = [string]$c.Name | ConvertTo-Json -Compress
+        $cpu100ns = [long]$c.KernelModeTime + [long]$c.UserModeTime
+        $sb.Append('{"pid":' + $c.ProcessId + ',"name":' + $nameJson + ',"cpu100ns":' + $cpu100ns + ',"wsBytes":' + [long]$c.WorkingSetSize + ',"cmd":' + $cmdJson + '}') | Out-Null
+      }
+    } catch { }
+    $sb.Append(']') | Out-Null
+  } else {
+    $sb.Append('[]') | Out-Null
+  }
 
   # Every tenth tick (~20 s): the slow facts - battery and the C: drive.
   $slow = ''
@@ -398,7 +412,7 @@ while ($true) {
   # Every other tick: the whole process tree's parent links and sessions, so
   # the sampler can group descendants of the server's children.
   $pp = ''
-  if ($tick % 2 -eq 0) {
+  if ($groupTick) {
     $sb2 = New-Object System.Text.StringBuilder
     $sb2.Append('[') | Out-Null
     $first2 = $true
