@@ -285,6 +285,73 @@ public sealed class PdhCounter : IDisposable
     {
         if (query != IntPtr.Zero) { PdhCloseQuery(query); query = IntPtr.Zero; }
     }
+
+    // ---- The process tree, natively -------------------------------------
+    // CreateToolhelp32Snapshot gives pid, parent pid and image name for every
+    // process in a few milliseconds. The WMI alternative (Get-CimInstance) was
+    // measured at 350-450 ms of wall time per call on this laptop and spends
+    // its CPU in the WMI service; this is the same data without that tax.
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    static extern bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll")]
+    static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct PROCESSENTRY32W
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szExeFile;
+    }
+
+    // [[pid, parentPid, sessionId], ...] for every live process, or "null".
+    public static string ProcessTreeJson()
+    {
+        const uint TH32CS_SNAPPROCESS = 0x00000002;
+        IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snapshot == new IntPtr(-1)) return "null";
+        try
+        {
+            var sb = new StringBuilder(8192);
+            sb.Append('[');
+            var entry = new PROCESSENTRY32W();
+            entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32W));
+            bool first = true;
+            if (Process32FirstW(snapshot, ref entry))
+            {
+                do
+                {
+                    uint session = 0;
+                    ProcessIdToSessionId(entry.th32ProcessID, out session);
+                    if (!first) sb.Append(',');
+                    first = false;
+                    sb.Append('[').Append(entry.th32ProcessID).Append(',').Append(entry.th32ParentProcessID).Append(',').Append(session).Append(']');
+                }
+                while (Process32NextW(snapshot, ref entry));
+            }
+            sb.Append(']');
+            return sb.ToString();
+        }
+        finally
+        {
+            CloseHandle(snapshot);
+        }
+    }
 }
 '@
 
@@ -414,22 +481,11 @@ while ($true) {
   }
 
   # Every other tick: the whole process tree's parent links and sessions, so
-  # the sampler can group descendants of the server's children.
+  # the sampler can group descendants of the server's children. Native, a few
+  # milliseconds, no WMI.
   $pp = ''
   if ($groupTick) {
-    $sb2 = New-Object System.Text.StringBuilder
-    $sb2.Append('[') | Out-Null
-    $first2 = $true
-    try {
-      $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, SessionId
-      foreach ($p in $all) {
-        if (-not $first2) { $sb2.Append(',') | Out-Null }
-        $first2 = $false
-        $sb2.Append('[' + $p.ProcessId + ',' + $p.ParentProcessId + ',' + $p.SessionId + ']') | Out-Null
-      }
-    } catch { }
-    $sb2.Append(']') | Out-Null
-    $pp = ',"pp":' + $sb2.ToString()
+    $pp = ',"pp":' + [PdhCounter]::ProcessTreeJson()
   }
 
   $line = '{"t":' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ',"ms":' + $collectMs + ',"c":' + $counters + ',"k":' + $sb.ToString() + $pp + $slow + '}'
