@@ -485,24 +485,9 @@ export function ChatsScreen({
     [pendingApprovalsQuery.data],
   );
   const browserHelpThreadId = computerFeed.status?.helpRequest?.threadId ?? null;
-  // A chat parked on the owner may hold a sign-in request: those chats are the
-  // ones the home asks about (the login-request RPC is per chat). Both waiting
-  // statuses are candidates and `waiting_for_browser` is the usual one; the
-  // query answers nothing for a chat parked on something else.
-  const browserWaitingThreadIds = useMemo(
-    () =>
-      tasks.flatMap((task) =>
-        (task.status === "waiting_for_browser" || task.status === "waiting_for_user") &&
-        task.threadId !== null
-          ? [String(task.threadId)]
-          : [],
-      ),
-    [tasks],
-  );
-  const openLoginRequests = useNeedsYouLoginRequests(
-    tasksArmed ? environmentId : null,
-    browserWaitingThreadIds,
-  );
+  // The whole machine's open sign-ins, one RPC (1.67.0): plain chats included,
+  // no per-chat asks and no dependence on the tasks feed.
+  const openLoginRequests = useNeedsYouLoginRequests(tasksArmed ? environmentId : null);
   const chatBases = useMemo(
     () =>
       homeChatBases({
@@ -528,8 +513,8 @@ export function ChatsScreen({
           shell: base.shell,
         })),
         secretRequests: pendingSecretsQuery.data?.requests ?? [],
-        // The chats parked on the browser, asked about one by one (see
-        // useNeedsYouLoginRequests for why, and what the server should add).
+        // The machine's open sign-ins, from one global list (see
+        // useNeedsYouLoginRequests).
         loginRequests: openLoginRequests,
         browserHelpThreadId,
         approvalThreadIds,

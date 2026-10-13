@@ -106,10 +106,9 @@ export interface NeedsYouInput {
   /**
    * The login requests whose status is `pending` or `filling`.
    *
-   * The home fills these from the chats the tasks feed reports as parked on
-   * the browser (`waiting_for_browser`), a couple of queries at most
-   * (`useNeedsYouLoginRequests`). A global pending list on the server would
-   * make that exact (named in the 1.67.0 result).
+   * The home fills these from the whole machine's pending list
+   * (`personalLoginRequests.listPending`, `useNeedsYouLoginRequests`): every
+   * chat's open sign-in is in it, plain chats included.
    */
   readonly loginRequests: ReadonlyArray<PersonalLoginRequest>;
   /** A chat waiting on the owner in the browser (`helpRequest.threadId`). */

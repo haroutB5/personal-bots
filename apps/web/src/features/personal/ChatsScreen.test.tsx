@@ -39,7 +39,6 @@ const state = vi.hoisted(() => ({
   groupFeedCalls: [] as Array<string | null>,
   taskFeed: new Map<string, unknown>(),
   loginRequests: [] as unknown[],
-  loginAsked: [] as string[],
   progressNotes: new Map<string, { note: string; turnId: string | null; toolStep?: boolean }>(),
   progressTargets: [] as Array<{ threadId: string; updatedAt: string }>,
   pickerOpen: false,
@@ -207,13 +206,7 @@ vi.mock("./computer/desktopState", () => ({
   useDesktopSummaryInput: () => null,
 }));
 vi.mock("./useNeedsYouLoginRequests", () => ({
-  useNeedsYouLoginRequests: (
-    _environmentId: string | null,
-    browserWaitingThreadIds: ReadonlyArray<string>,
-  ) => {
-    state.loginAsked = [...browserWaitingThreadIds];
-    return state.loginRequests;
-  },
+  useNeedsYouLoginRequests: (_environmentId: string | null) => state.loginRequests,
 }));
 vi.mock("./useSecretRequests", () => ({
   usePendingSecretRequests: () => ({ data: { requests: state.secretRequests }, error: null }),
@@ -448,7 +441,6 @@ afterEach(async () => {
   state.groupFeedCalls.length = 0;
   state.taskFeed = new Map();
   state.loginRequests = [];
-  state.loginAsked = [];
   state.progressNotes = new Map();
   state.progressTargets = [];
   state.pickerOpen = false;
@@ -763,22 +755,18 @@ describe("ChatsScreen rows and filters", () => {
     expect(rowLabels()).toHaveLength(2);
   });
 
-  it("counts a sign-in the owner has to make, on the chats parked on the browser", async () => {
+  it("counts a sign-in in a plain chat, with no task parked on the browser", async () => {
     setList({
       bots: [bot("bot-scout", "Scout")],
       chats: [{ botId: "bot-scout", threadId: "t-signin" }],
     });
     state.shells = [threadShell("t-signin", { title: "Book the court" })];
-    state.taskFeed = new Map([
-      ["task-1", { taskId: "task-1", status: "waiting_for_browser", threadId: "t-signin" }],
-    ]);
+    // The global pending list is the source now: no task, no browser wait.
     state.loginRequests = [
       { requestId: "login-1", threadId: "t-signin", botId: "bot-scout", status: "pending" },
     ];
     await render();
 
-    // The home asks the login-request RPC about the browser-waiting chat only.
-    expect(state.loginAsked).toEqual(["t-signin"]);
     const row = hostLabelStarts("a", "Book the court");
     expect(row!.findByProps({ "data-testid": "needs-pill" }).props["data-kind"]).toBe("login");
     expect(chipCount()).toBe(1);
