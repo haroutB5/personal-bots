@@ -230,6 +230,16 @@ describe("personal.css appearances", () => {
       "--personal-destructive-text",
       "--personal-reading-column",
       "--personal-form-column",
+      // The state aliases (working/thinking/idle) point at tokens that ARE
+      // themed (--personal-live, --personal-text-secondary/tertiary), so the
+      // alias itself needs no dark value; --personal-state-needs is themed.
+      "--personal-state-working",
+      "--personal-state-thinking",
+      "--personal-state-idle",
+      // Not colours: the 0.5 px separator and the two design easings.
+      "--personal-hairline",
+      "--personal-ease-out",
+      "--personal-ease-push",
     ]);
     const darkOnly = tokensIn(":root.dark .personal-app {");
     const missing = Object.keys(light).filter(

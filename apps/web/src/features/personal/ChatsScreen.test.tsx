@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { BotAvatar } from "./BotAvatar";
 import { ChatsScreen } from "./ChatsScreen";
 import { buildChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
-import { SwipeToDelete } from "./SwipeToDelete";
+import { resetNeedsYouCount } from "./needsYouStore";
+import { NEEDS_YOU_PILL_LABEL } from "./needsYou";
+import { readNeedsYouCount } from "./needsYouStore";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 
@@ -17,16 +19,12 @@ const state = vi.hoisted(() => ({
   shells: [] as unknown[],
   refresh: vi.fn(),
   tasksCalls: [] as Array<string | null>,
-  deleteOutcome: { status: "done" } as
-    | { readonly status: "done" }
-    | { readonly status: "cancelled" }
-    | { readonly status: "failed"; readonly message: string },
+  secretRequests: [] as unknown[],
+  approvalThreadIds: [] as string[],
   rafQueue: [] as Array<FrameRequestCallback>,
   timeouts: new Map<number, () => void>(),
   nextTimeoutId: 1,
   reload: vi.fn(),
-  togglePin: vi.fn(),
-  setMute: vi.fn(async (_bot: unknown, _mute: unknown) => true),
   navigate: vi.fn(),
   bulk: vi.fn(async (..._args: unknown[]) => ({
     status: "settled" as const,
@@ -40,6 +38,8 @@ const state = vi.hoisted(() => ({
   groupFeedCalls: [] as Array<string | null>,
   progressNotes: new Map<string, { note: string; turnId: string | null; toolStep?: boolean }>(),
   progressTargets: [] as Array<{ threadId: string; updatedAt: string }>,
+  pickerOpen: false,
+  params: {} as Record<string, string>,
   versionInfo: { label: "v9.9.9-test", updateAvailable: false } as {
     label: string | null;
     updateAvailable: boolean;
@@ -91,7 +91,10 @@ function stubWindow() {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 }
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => [],
+  useAtomRefresh: () => () => undefined,
+}));
 vi.mock("~/state/entities", () => ({ useThreadShells: () => state.shells }));
 vi.mock("~/state/server", () => ({
   primaryServerProvidersAtom: {},
@@ -99,11 +102,30 @@ vi.mock("~/state/server", () => ({
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  Link: ({
+    children,
+    to,
+    params,
+    ...rest
+  }: {
+    children: React.ReactNode;
+    to?: string;
+    params?: Record<string, string>;
+    [key: string]: unknown;
+  }) => (
+    <a
+      data-to={to}
+      data-params={params === undefined ? undefined : JSON.stringify(params)}
+      {...(rest as Record<string, unknown>)}
+    >
+      {children}
+    </a>
+  ),
   useNavigate: () => state.navigate,
+  useParams: (options?: { select?: (params: Record<string, string>) => unknown }) =>
+    options?.select ? options.select(state.params) : state.params,
   useRouter: () => ({ routesById: {}, loadRouteChunk: async () => undefined }),
 }));
-// Base UI's menu needs a DOM; the list only cares that the two items exist.
 vi.mock("~/components/ui/menu", () => ({
   Menu: ({ open, children }: { open?: boolean; children: React.ReactNode }) => (
     <div data-menu-open={String(open === true)}>{children}</div>
@@ -118,6 +140,21 @@ vi.mock("~/components/ui/menu", () => ({
       {children}
     </button>
   ),
+}));
+vi.mock("~/components/ui/sheet", () => ({
+  Sheet: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  SheetPopup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  SheetTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
+  SheetClose: ({ children }: { children: React.ReactNode }) => (
+    <button type="button">{children}</button>
+  ),
+}));
+// The picker has its own suite; here it only has to open and receive the bots.
+vi.mock("./BotPickerSheet", () => ({
+  BotPickerSheet: ({ open, bots }: { open: boolean; bots: unknown[] }) => {
+    state.pickerOpen = open;
+    return <div data-testid="pick-bot-sheet" data-open={String(open)} data-bots={bots.length} />;
+  },
 }));
 vi.mock("./usePersonalGroups", () => ({
   usePersonalGroupsList: () => ({ data: state.groupsData, error: null, refresh: vi.fn() }),
@@ -158,18 +195,22 @@ vi.mock("./usePersonalAutomation", () => ({
   usePersonalRoutines: () => ({ data: { routines: [], occurrences: [] }, error: null }),
 }));
 vi.mock("./computer/computerState", () => ({
-  useComputerFeed: () => ({
-    feed: { status: null, events: [] },
-    error: null,
-    loading: false,
-  }),
+  useComputerFeed: () => ({ feed: { status: null, events: [] }, error: null, loading: false }),
 }));
 vi.mock("./computer/desktopState", () => ({
   useDesktopStatus: () => null,
   useDesktopSummaryInput: () => null,
 }));
 vi.mock("./useSecretRequests", () => ({
-  usePendingSecretRequests: () => ({ data: null, error: null, refresh: () => {} }),
+  usePendingSecretRequests: () => ({ data: { requests: state.secretRequests }, error: null }),
+}));
+vi.mock("./useConnectionApprovals", () => ({
+  usePendingConnectionApprovals: () => ({
+    data: {
+      approvals: state.approvalThreadIds.map((threadId) => ({ threadId, approvalId: threadId })),
+    },
+    error: null,
+  }),
 }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./useBulkChatActions", () => ({ useBulkChatActions: () => state.bulk }));
@@ -181,25 +222,17 @@ vi.mock("./MessageSearchResults", () => ({
     <section data-testid="message-search" data-query={query} />
   ),
 }));
-vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => state.deleteOutcome }));
-vi.mock("./usePinBot", () => ({ useTogglePinBot: () => state.togglePin }));
-vi.mock("./BotMute", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./BotMute")>()),
-  useSetBotMute: () => state.setMute,
-}));
-vi.mock("./startBotChat", () => ({
-  useStartBotChat: () => ({ start: vi.fn(), starting: false }),
-}));
 vi.mock("./appVersion", () => ({
   useAppVersion: () => state.versionInfo,
   reloadLatestApp: async () => state.reload(),
 }));
-// The line polls and owns its own storage; the screen only has to place it
-// and hand it the version it already shows.
 vi.mock("./UpdateStatusLine", () => ({
   UpdateStatusLine: ({ versionLabel }: { versionLabel?: string | null }) => (
     <span data-update-status-line={versionLabel ?? ""} />
   ),
+}));
+vi.mock("./PersonalUsageStrip", () => ({
+  PersonalUsageStrip: () => <span data-testid="usage-line" />,
 }));
 
 let renderer: ReactTestRenderer | undefined;
@@ -212,7 +245,7 @@ async function flushRaf() {
   });
 }
 
-function snapshotRow(botId: string, name: string, pinned = false) {
+function snapshotRow(botId: string, name: string, pinned = false, threadTitle = "Cached thread") {
   return {
     botId,
     name,
@@ -222,7 +255,7 @@ function snapshotRow(botId: string, name: string, pinned = false) {
     previewLabel: "cached preview line",
     previewAtMs: 1_757_800_000_000,
     threadId: `thread-${botId}`,
-    threadTitle: "Cached thread",
+    threadTitle,
     pinned,
   };
 }
@@ -237,13 +270,12 @@ function seedSnapshot(rows = [snapshotRow("bot-cached", "Cached Ada")]) {
 function bot(
   botId: string,
   name: string,
-  team: {
-    team?: "dev" | "assistant";
+  extra: {
     lead?: boolean;
     pinned?: boolean;
-    notificationsMutedUntil?: string | null;
     groupOnly?: boolean;
     groupIds?: ReadonlyArray<string>;
+    hidePreviews?: boolean;
   } = {},
 ) {
   return decodeBot({
@@ -259,9 +291,123 @@ function bot(
     sortOrder: 0,
     createdAt: "2026-09-01T10:00:00.000Z",
     updatedAt: "2026-09-01T10:00:00.000Z",
-    ...team,
+    ...extra,
   });
 }
+
+const threadLink = (
+  threadId: string,
+  botId: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  botId,
+  threadId,
+  createdAt: "2026-09-01T10:00:00.000Z",
+  archivedAt: null,
+  ...extra,
+});
+
+const threadShell = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+  id,
+  environmentId: "env-1",
+  title: id,
+  updatedAt: "2026-09-01T10:00:00.000Z",
+  createdAt: "2026-09-01T10:00:00.000Z",
+  latestUserMessageAt: null,
+  latestTurn: null,
+  session: null,
+  archivedAt: null,
+  hasPendingApprovals: false,
+  hasPendingUserInput: false,
+  ...extra,
+});
+
+const turn = (turnId: string, extra: Record<string, unknown> = {}) => ({
+  turnId,
+  state: "running",
+  requestedAt: "2026-09-01T10:00:00.000Z",
+  startedAt: "2026-09-01T10:00:00.000Z",
+  completedAt: null,
+  assistantMessageId: null,
+  ...extra,
+});
+
+/** One live list: bots, their chat links, and the shells those chats read. */
+function setList(input: {
+  bots: ReadonlyArray<unknown>;
+  chats?: ReadonlyArray<{ botId: string; threadId: string; extra?: Record<string, unknown> }>;
+}) {
+  state.listData = {
+    bots: [...input.bots],
+    threads: (input.chats ?? []).map((chat) => threadLink(chat.threadId, chat.botId, chat.extra)),
+    personalProjectId: null,
+  };
+}
+
+async function render(selected: string | null = null, params: Record<string, string> = {}) {
+  stubWindow();
+  state.params = params;
+  await act(async () => {
+    renderer = create(<ChatsScreen selectedChat={selected as never} />);
+  });
+}
+
+/** The same, with the local storage stub in place first (a snapshot can only be seeded after it). */
+async function renderWithSnapshot(
+  seed: () => void,
+  selected: string | null = null,
+  params: Record<string, string> = {},
+) {
+  stubWindow();
+  seed();
+  state.params = params;
+  await act(async () => {
+    renderer = create(<ChatsScreen selectedChat={selected as never} />);
+  });
+}
+
+const json = () => JSON.stringify(renderer!.toJSON());
+/** Host elements of one tag (never the composite wrappers a props query can return). */
+const hosts = (tag: string) => renderer!.root.findAll((node) => node.type === tag);
+const hostWithLabel = (tag: string, label: string) =>
+  hosts(tag).find((node) => node.props["aria-label"] === label);
+const hostLabelStarts = (tag: string, prefix: string) =>
+  hosts(tag).find(
+    (node) =>
+      typeof node.props["aria-label"] === "string" && node.props["aria-label"].startsWith(prefix),
+  );
+/** The visible strings inside a node, in order. */
+function textOf(node: ReactTestInstance): string {
+  const parts: string[] = [];
+  const walk = (value: unknown): void => {
+    if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+    else if (Array.isArray(value)) for (const item of value) walk(item);
+  };
+  try {
+    walk(node.props?.children);
+    for (const child of node.findAll(() => true)) walk(child.props?.children);
+  } catch {
+    // A composite instance with no props: nothing to read.
+  }
+  return parts.join("");
+}
+const buttonWithText = (needle: string) =>
+  hosts("button").find((node) => textOf(node).includes(needle));
+const rows = () => hostWithLabel("ul", "Your chats")!;
+const rowLabels = () =>
+  rows()
+    .findAll((node) => node.type === "li")
+    .map((row) => {
+      const anchor = row.findAll((node) => node.type === "a")[0];
+      return (anchor?.props["aria-label"] as string | undefined) ?? "?";
+    });
+const railCaptions = () =>
+  renderer!.root
+    .findAll((node) => node.props?.["data-testid"] === "rail-cap" && node.type === "span")
+    .map((cap) => (cap.props.children as string).trim());
+const chipCount = () =>
+  Number(renderer!.root.findByProps({ "data-testid": "needs-filter-count" }).props.children);
+const chip = (label: string) => hosts("button").find((node) => textOf(node).includes(label));
 
 afterEach(async () => {
   await act(async () => renderer?.unmount());
@@ -270,9 +416,9 @@ afterEach(async () => {
   state.listData = null;
   state.shells = [];
   state.refresh.mockClear();
-  state.deleteOutcome = { status: "done" };
-  state.togglePin.mockClear();
   state.tasksCalls.length = 0;
+  state.secretRequests = [];
+  state.approvalThreadIds = [];
   state.rafQueue.length = 0;
   state.timeouts.clear();
   state.reload.mockClear();
@@ -284,419 +430,346 @@ afterEach(async () => {
   state.groupFeedCalls.length = 0;
   state.progressNotes = new Map();
   state.progressTargets = [];
+  state.pickerOpen = false;
+  state.params = {};
   state.versionInfo = { label: "v9.9.9-test", updateAvailable: false };
+  resetNeedsYouCount();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("ChatsScreen cold start", () => {
   it("shows skeletons with aria-busy and holds the tasks feed until paint", async () => {
-    stubWindow();
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-
+    await render();
     const status = renderer!.root.findByProps({ role: "status" });
     expect(String(status.props["aria-busy"])).toBe("true");
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Loading your bots");
-    // Subscription not armed: nothing scheduled, nothing subscribed.
+    expect(json()).toContain("Loading your bots");
     expect(state.tasksCalls).toEqual([null]);
     await flushRaf();
     expect(state.tasksCalls).toEqual([null]);
   });
 
-  it("paints the snapshot instantly with neutral indicators, then arms tasks", async () => {
-    stubWindow();
-    seedSnapshot();
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-
-    const json = JSON.stringify(renderer!.toJSON());
-    expect(json).toContain("Cached Ada");
-    expect(json).toContain("General assistant");
-    expect(json).toContain("cached preview line");
-    // Neutral live state: no working dot, no review row.
-    expect(json).not.toContain("working");
-    expect(json).not.toContain("needs your review");
-    // Tasks feed held back on first paint…
+  it("paints the snapshot as chat rows, then arms the tasks feed", async () => {
+    await renderWithSnapshot(() =>
+      seedSnapshot([snapshotRow("bot-cached", "Cached Ada", false, "Weekend in Lisbon")]),
+    );
+    const painted = json();
+    expect(painted).toContain("Weekend in Lisbon");
+    expect(painted).toContain("cached preview line");
+    // Neutral live state: no working dot, no pill.
+    expect(painted).not.toContain("Working");
     expect(state.tasksCalls).toEqual([null]);
-    // …and armed after paint frames.
     await flushRaf();
     await flushRaf();
     expect(state.tasksCalls).toEqual([null, "env-1"]);
-    // The running version sits small beside the Bots heading, always visible.
-    expect(json).toContain("v9.9.9-test");
-    // No provider data yet: the usage strip stays out of the layout entirely.
-    expect(json).not.toContain("Open details");
   });
 
-  it("paints the snapshot before the environment is known, and drops a foreign one once it is", async () => {
-    // The app boots without an environment id for a few hundred ms; the
-    // skeleton used to sit there over a good snapshot until it arrived.
-    stubWindow();
-    seedSnapshot();
+  it("paints the snapshot before the environment is known, and drops a foreign one after", async () => {
     state.environmentId = null;
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Cached Ada");
+    await renderWithSnapshot(() => seedSnapshot());
+    expect(json()).toContain("Cached Ada");
 
-    // The id arrives and it is the snapshot's own: the rows stay.
     state.environmentId = "env-1";
     await act(async () => renderer!.update(<ChatsScreen />));
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Cached Ada");
-  });
+    expect(json()).toContain("Cached Ada");
 
-  it("replaces an early snapshot from another environment with the skeleton", async () => {
-    stubWindow();
-    seedSnapshot();
-    state.environmentId = null;
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Cached Ada");
     state.environmentId = "env-2";
     await act(async () => renderer!.update(<ChatsScreen />));
-    const json = JSON.stringify(renderer!.toJSON());
-    expect(json).not.toContain("Cached Ada");
-    expect(json).toContain("Loading your bots");
+    expect(json()).not.toContain("Cached Ada");
+    expect(json()).toContain("Loading your bots");
   });
 
   it("waits for the environment when the early paint is switched off", async () => {
-    stubWindow();
-    seedSnapshot();
     state.environmentId = null;
-    localStorage.setItem("bots:perf-off", "snapshot-early");
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
+    await renderWithSnapshot(() => {
+      seedSnapshot();
+      localStorage.setItem("bots:perf-off", "snapshot-early");
     });
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Cached Ada");
+    expect(json()).not.toContain("Cached Ada");
     localStorage.removeItem("bots:perf-off");
   });
 
-  it("keeps the actionable update prompt on the home screen", async () => {
-    stubWindow();
-    state.versionInfo = { label: "v9.9.10-test", updateAvailable: true };
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-
-    const update = renderer!.root
-      .findAllByType("button")
-      .find((button) => JSON.stringify(button.props.children).includes("Update to"));
-    expect(update).toBeDefined();
-    await act(async () => update!.props.onClick());
-    expect(state.reload).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Updating");
-  });
-
-  /**
-   * The reported bug: "the pinned bots aren't showing when I first open the
-   * app, they appear after a couple of sends". The snapshot carried no pin, so
-   * the strip only existed once `personalBots.list` landed.
-   */
-  it("paints the favourites strip from the snapshot alone, before the live list", async () => {
-    stubWindow();
-    seedSnapshot([
-      snapshotRow("bot-cto", "Cached CTO", true),
-      snapshotRow("bot-scout", "Cached Scout"),
-    ]);
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-
-    // No live list yet — this is the cold paint.
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Loading your bots");
-    const namesIn = (scope: ReactTestInstance) =>
-      scope.findAllByType(BotAvatar).map((avatar) => avatar.props.label as string);
-    const box = renderer!.root.findByProps({ "aria-label": "Pinned" });
-    expect(namesIn(box)).toEqual(["Cached CTO"]);
-    // And the unpinned bot is listed once, under the strip, not duplicated in it.
-    expect(namesIn(renderer!.root.findByProps({ "aria-label": "Your bots" }))).toEqual([
-      "Cached Scout",
-    ]);
-  });
-
-  it("leaves the strip out when the snapshot has nothing pinned", async () => {
-    stubWindow();
-    seedSnapshot();
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-
-    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned" })).toEqual([]);
-  });
-
-  it("replaces the snapshot seamlessly when live data arrives", async () => {
-    stubWindow();
-    seedSnapshot();
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Cached Ada");
+  it("replaces the snapshot with the live rows in place", async () => {
+    await renderWithSnapshot(() => seedSnapshot());
+    expect(json()).toContain("Cached Ada");
 
     await act(async () => {
-      state.listData = {
+      setList({
         bots: [bot("bot-live", "Live Ada")],
-        threads: [],
-        personalProjectId: null,
-      };
+        chats: [{ botId: "bot-live", threadId: "thread-live" }],
+      });
+      state.shells = [threadShell("thread-live", { title: "Live thread" })];
       renderer!.update(<ChatsScreen />);
     });
 
-    const json = JSON.stringify(renderer!.toJSON());
-    expect(json).toContain("Live Ada");
-    expect(json).not.toContain("Cached Ada");
-    expect(json).not.toContain("Loading your bots");
+    const live = json();
+    expect(live).toContain("Live thread");
+    expect(live).not.toContain("Cached Ada");
+    expect(live).not.toContain("Loading your bots");
+  });
+
+  it("keeps the actionable update prompt, and the version out of the header", async () => {
+    state.versionInfo = { label: "v9.9.10-test", updateAvailable: true };
+    await render();
+    const update = buttonWithText("Update to");
+    expect(update).toBeDefined();
+    await act(async () => update!.props.onClick());
+    expect(state.reload).toHaveBeenCalledTimes(1);
+    expect(json()).toContain("Updating");
+    // The version is not shown beside the title any more (design decision).
+    expect(
+      renderer!.root.findAllByProps({ "data-update-status-line": "v9.9.10-test" }),
+    ).toHaveLength(1);
   });
 });
 
-describe("ChatsScreen delete failures", () => {
-  async function renderWithOneBot() {
-    stubWindow();
-    state.listData = { bots: [bot("bot-live", "Live Ada")], threads: [], personalProjectId: null };
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
+describe("ChatsScreen header and rail", () => {
+  const withRail = async () => {
+    setList({
+      bots: [bot("bot-juno", "Juno"), bot("bot-forge", "Forge")],
+      chats: [
+        {
+          botId: "bot-juno",
+          threadId: "t-pinned",
+          extra: { pinnedAt: DateTime.makeUnsafe("2026-09-01T09:00:00.000Z") },
+        },
+        { botId: "bot-juno", threadId: "t-lisbon" },
+        { botId: "bot-forge", threadId: "t-release" },
+      ],
     });
-  }
+    state.shells = [
+      threadShell("t-pinned", { title: "Packing list" }),
+      threadShell("t-lisbon", { title: "Weekend in Lisbon", latestTurn: turn("turn-1") }),
+      threadShell("t-release", { title: "Release 2.4" }),
+    ];
+    await render();
+  };
 
-  const swipeDelete = () => renderer!.root.findByProps({ label: "Delete Live Ada" }).props.onDelete;
+  it("carries the four header controls, the Settings gear included", async () => {
+    await withRail();
+    const labels = renderer!.root
+      .findAllByType("a")
+      .concat(renderer!.root.findAllByType("button"))
+      .map((node) => node.props["aria-label"] as string | undefined)
+      .filter((label): label is string => typeof label === "string");
+    expect(labels).toContain("Search chats");
+    expect(labels).toContain("Team");
+    expect(labels).toContain("Settings");
+    expect(labels).toContain("New chat, pick a bot");
+  });
 
-  it("puts a refused delete on screen instead of only in the console", async () => {
-    await renderWithOneBot();
-    state.deleteOutcome = { status: "failed", message: "Laptop unreachable" };
+  it("shows the pinned chat as a card in the rail, not as a row again", async () => {
+    await withRail();
+    const card = hostLabelStarts("a", "Pinned chat Packing list with Juno");
+    expect(card?.props["data-params"]).toContain("t-pinned");
+    // Not repeated in All.
+    expect(rowLabels().some((label) => label.includes("Packing list"))).toBe(false);
+  });
 
-    await act(async () => {
-      await swipeDelete()();
+  it("gives every bot a rail tile that opens the bot's page", async () => {
+    await withRail();
+    const tile = hostLabelStarts("a", "Forge,");
+    expect(tile?.props["data-to"]).toBe("/bots/$botId");
+    expect(tile?.props["data-params"]).toContain("bot-forge");
+  });
+
+  it("says the state in words in the rail caption", async () => {
+    setList({
+      bots: [bot("bot-forge", "Forge")],
+      chats: [{ botId: "bot-forge", threadId: "t-live" }],
     });
-
-    // The swipe row just slides shut, so this alert is the only feedback that
-    // the bot is still there.
-    const alert = renderer!.root.findByProps({ role: "alert" });
-    expect(JSON.stringify(alert.props.children)).toContain("Laptop unreachable");
-  });
-
-  it("says nothing when the delete succeeded or was cancelled", async () => {
-    await renderWithOneBot();
-    for (const outcome of [{ status: "done" } as const, { status: "cancelled" } as const]) {
-      state.deleteOutcome = outcome;
-      await act(async () => {
-        await swipeDelete()();
-      });
-      expect(renderer!.root.findAllByProps({ role: "alert" })).toEqual([]);
-    }
-  });
-});
-
-/**
- * The pinned chats are a strip of faces above the list, not a bordered card
- * wrapping full rows. A pinned bot belongs to the strip only — listing it twice
- * would make the short list longer, not shorter — and because it is no longer
- * in the list, Unpin has to be reachable from the strip itself.
- */
-describe("ChatsScreen favourites strip", () => {
-  async function renderBots(bots: ReturnType<typeof bot>[]) {
-    stubWindow();
-    state.listData = { bots, threads: [], personalProjectId: null };
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-  }
-
-  const rowLabels = (scope: ReactTestInstance) =>
-    scope.findAllByType(SwipeToDelete).map((row) => row.props.label as string);
-  const faceNames = (scope: ReactTestInstance) =>
-    scope.findAllByType(BotAvatar).map((avatar) => avatar.props.label as string);
-  const strip = () => renderer!.root.findByProps({ "aria-label": "Pinned" });
-
-  it("renders no strip and no empty gap when nothing is pinned", async () => {
-    await renderBots([bot("bot-scout", "Scout")]);
-
-    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned" })).toEqual([]);
-    expect(rowLabels(renderer!.root)).toEqual(["Delete Scout"]);
-  });
-
-  it("puts the leads in the strip, CTO first, and lists every bot exactly once", async () => {
-    await renderBots([
-      bot("bot-assistant", "Assistant", { lead: true, pinned: true }),
-      bot("bot-scout", "Scout"),
-      bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true }),
-    ]);
-
-    expect(faceNames(strip())).toEqual(["CTO", "Assistant"]);
-    // A pinned bot is out of the list below: the strip is the whole of it.
-    expect(rowLabels(renderer!.root)).toEqual(["Delete Scout"]);
-  });
-
-  /**
-   * The strip drops the preview line, so the badge is the only place "this bot
-   * needs you" can live. It is read off `botStatus` — the same call the row's
-   * status line makes — and spoken in the tile's accessible name, so the state
-   * survives for someone who cannot see the amber.
-   */
-  it("carries the needs-you state on the face and in the accessible name", async () => {
-    await renderBots([bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true })]);
-
-    // No provider is configured in this harness, so the bot's real status is
-    // the review-toned "Unavailable · tap to fix".
-    expect(strip().findAllByProps({ "data-pinned-badge": "attention" }).length).toBeGreaterThan(0);
-    const tile = strip().findByProps({ to: "/bots/$botId/edit" });
-    expect(tile.props["aria-label"]).toBe("CTO, some-model, Unavailable · tap to fix, edit bot");
-  });
-
-  /** Same destination the pinned row opened: a bot that cannot run opens its editor. */
-  it("opens the same destination the pinned row opened", async () => {
-    await renderBots([bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true })]);
-
-    const tile = strip().findByProps({ to: "/bots/$botId/edit" });
-    expect(tile.props.params).toEqual({ botId: "bot-cto" });
-  });
-
-  it("unpins from the strip's own menu", async () => {
-    await renderBots([bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true })]);
-
-    const unpin = strip()
-      .findAllByType("button")
-      .find((button) => JSON.stringify(button.props.children ?? "").includes("Unpin"));
-    expect(unpin).toBeDefined();
-    await act(async () => {
-      unpin!.props.onClick();
-    });
-    expect(state.togglePin).toHaveBeenCalledTimes(1);
-    // And the menu is reachable without a gesture: a named button in the tab
-    // order, because a long press is not an affordance VoiceOver can find.
-    expect(JSON.stringify(renderer!.toJSON())).toContain('"Options for ","CTO"');
-  });
-
-  it("still offers Pin on an unpinned row", async () => {
-    await renderBots([bot("bot-scout", "Scout")]);
-
-    const scout = renderer!.root.findByProps({ label: "Delete Scout" });
-    expect(scout.props.secondaryActions[0].text).toBe("Pin");
-    await act(async () => {
-      await scout.props.secondaryActions[0].run();
-    });
-    expect(state.togglePin).toHaveBeenCalledTimes(1);
-  });
-});
-
-/**
- * Per-bot mute lives on the gestures and menus the list already has: swipe
- * right shows Mute beside Pin (as in Messages), and it opens the mute lengths
- * in a menu on the row. A muted bot carries a bell-slash beside its name.
- */
-describe("ChatsScreen notification mute", () => {
-  const INDEFINITE = "9999-12-31T23:59:59.000Z";
-
-  async function renderBots(bots: ReturnType<typeof bot>[]) {
-    stubWindow();
-    state.listData = { bots, threads: [], personalProjectId: null };
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-  }
-
-  const bells = () => renderer!.root.findAll((node) => node.props["data-muted-bell"] === "");
-  const buttonNamed = (text: string) =>
-    renderer!.root.findAllByType("button").find((button) => {
-      // Text children only, so an item with an icon ("Mute" + bell-slash) matches by its words.
-      const children = [button.props.children ?? ""].flat();
-      return children.filter((child) => typeof child === "string").join("") === text;
-    });
-
-  afterEach(() => {
-    state.setMute.mockClear();
-  });
-
-  it("swipes to Mute beside Pin, and Mute offers the lengths in the row's menu", async () => {
-    await renderBots([bot("bot-scout", "Scout")]);
-
-    expect(bells()).toEqual([]);
-    const scout = renderer!.root.findByProps({ label: "Delete Scout" });
-    expect(scout.props.secondaryActions.map((action: { text: string }) => action.text)).toEqual([
-      "Pin",
-      "Mute",
-    ]);
-    const openMenus = () => renderer!.root.findAllByProps({ "data-menu-open": "true" });
-    expect(openMenus()).toEqual([]);
-    await act(async () => {
-      await scout.props.secondaryActions[1].run();
-    });
-    expect(openMenus().length).toBe(1);
-    // Nothing is muted until a length is picked.
-    expect(state.setMute).not.toHaveBeenCalled();
-
-    for (const label of ["For 1 hour", "For 8 hours", "Mute"]) {
-      expect(buttonNamed(label)).toBeDefined();
-    }
-    await act(async () => {
-      buttonNamed("For 8 hours")!.props.onClick();
-    });
-    expect(state.setMute).toHaveBeenCalledTimes(1);
-    expect(state.setMute.mock.calls[0]![1]).toEqual({ forMinutes: 480 });
-    // The menu is reachable without the gesture too.
-    expect(JSON.stringify(renderer!.toJSON())).toContain('"Notifications for ","Scout"');
-  });
-
-  it("marks a muted bot with the bell-slash and swipes straight to Unmute", async () => {
-    await renderBots([bot("bot-scout", "Scout", { notificationsMutedUntil: INDEFINITE })]);
-
-    expect(bells().length).toBe(1);
-    const scout = renderer!.root.findByProps({ label: "Delete Scout" });
-    expect(scout.props.secondaryActions[1].text).toBe("Unmute");
-    await act(async () => {
-      await scout.props.secondaryActions[1].run();
-    });
-    expect(state.setMute.mock.calls[0]![1]).toBe("on");
-    // The row's menu says how long, and offers Unmute instead of the lengths.
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Muted until you turn it back on");
-    expect(buttonNamed("Unmute notifications")).toBeDefined();
-    expect(buttonNamed("For 1 hour")).toBeUndefined();
-  });
-
-  it("shows no bell once a timed mute has run out", async () => {
-    await renderBots([
-      bot("bot-scout", "Scout", { notificationsMutedUntil: "2026-01-01T00:00:00.000Z" }),
-    ]);
-
-    expect(bells()).toEqual([]);
-    const scout = renderer!.root.findByProps({ label: "Delete Scout" });
-    expect(scout.props.secondaryActions[1].text).toBe("Mute");
-  });
-
-  it("marks a muted pinned face and unmutes from its menu", async () => {
-    await renderBots([
-      bot("bot-cto", "CTO", {
-        team: "dev",
-        lead: true,
-        pinned: true,
-        notificationsMutedUntil: INDEFINITE,
+    state.shells = [
+      threadShell("t-live", {
+        title: "Release 2.4",
+        latestTurn: turn("turn-1", { assistantMessageId: "m-1" }),
+        session: { status: "running", activeTurnId: "turn-1" },
       }),
-    ]);
+    ];
+    await render();
+    expect(railCaptions()).toContain("Working");
+  });
 
-    const strip = renderer!.root.findByProps({ "aria-label": "Pinned" });
-    expect(strip.findAll((node) => node.props["data-muted-bell"] === "").length).toBe(1);
-    const tile = strip.findByProps({ to: "/bots/$botId/edit" });
-    expect(tile.props["aria-label"]).toBe(
-      "CTO, some-model, notifications muted, Unavailable · tap to fix, edit bot",
-    );
-    await act(async () => {
-      buttonNamed("Unmute notifications")!.props.onClick();
+  it("marks a rail card whose chat has an open request, and names it", async () => {
+    setList({
+      bots: [bot("bot-juno", "Juno")],
+      chats: [
+        {
+          botId: "bot-juno",
+          threadId: "t-ask",
+          extra: { pinnedAt: DateTime.makeUnsafe("2026-09-01T09:00:00.000Z") },
+        },
+      ],
     });
-    expect(state.setMute.mock.calls[0]![1]).toBe("on");
+    state.shells = [threadShell("t-ask", { title: "Table?", hasPendingUserInput: true })];
+    await render();
+    const card = hostWithLabel("a", "Pinned chat Table? with Juno, Needs you");
+    expect(card).toBeDefined();
+    expect(railCaptions()).toContain("Needs you");
+  });
+
+  it("unpins a chat from the card's own menu", async () => {
+    await withRail();
+    const unpin = buttonWithText("Unpin Packing list");
+    await act(async () => unpin!.props.onClick());
+    expect(state.bulk).toHaveBeenCalledWith("unpin", ["t-pinned"], 0);
+  });
+
+  it("opens the bot picker from the header's plus", async () => {
+    await withRail();
+    expect(state.pickerOpen).toBe(false);
+    const plus = hostWithLabel("button", "New chat, pick a bot")!;
+    await act(async () => plus.props.onClick());
+    expect(state.pickerOpen).toBe(true);
+    const sheet = renderer!.root.findByProps({ "data-testid": "pick-bot-sheet" });
+    expect(sheet.props["data-bots"]).toBe(2);
+  });
+
+  it("opens the search field from the header and clears it on close", async () => {
+    await withRail();
+    await act(async () => hostWithLabel("button", "Search chats")!.props.onClick());
+    const field = hostWithLabel("input", "Search bots and chats")!;
+    await act(async () => field.props.onChange({ target: { value: "lisbon" } }));
+    await act(async () => hostWithLabel("button", "Close search")!.props.onClick());
+    expect(hostWithLabel("input", "Search bots and chats")).toBeUndefined();
   });
 });
 
-/**
- * Groups live together immediately after pinned bots, before ordinary bot
- * chats; their members' relay threads must not show up as bot chats.
- */
+describe("ChatsScreen rows and filters", () => {
+  const withChats = async () => {
+    setList({
+      bots: [bot("bot-juno", "Juno"), bot("bot-forge", "Forge")],
+      chats: [
+        { botId: "bot-juno", threadId: "t-ask" },
+        { botId: "bot-juno", threadId: "t-plain" },
+        {
+          botId: "bot-forge",
+          threadId: "t-unread",
+          extra: { unread: true, lastReplyAt: "2026-09-01T10:00:00.000Z" },
+        },
+        { botId: "bot-forge", threadId: "t-secret" },
+      ],
+    });
+    state.shells = [
+      threadShell("t-ask", { title: "Weekend in Lisbon", hasPendingUserInput: true }),
+      threadShell("t-plain", { title: "Packing list" }),
+      threadShell("t-unread", { title: "Release 2.4" }),
+      threadShell("t-secret", { title: "October bills" }),
+    ];
+    state.secretRequests = [
+      { requestId: "req-1", threadId: "t-secret", botId: "bot-forge", status: "pending" },
+    ];
+    await render();
+  };
+
+  it("draws one row per chat with the bot's name in front of the preview", async () => {
+    await withChats();
+    expect(rowLabels()).toContain("Packing list, Juno: No messages yet");
+    expect(rowLabels()).toContain(
+      "October bills, Forge, Needs a secret: No messages yet. Opens the chat at the request",
+    );
+  });
+
+  it("puts the pill inside the row's own link, never a button of its own", async () => {
+    await withChats();
+    const row = hostLabelStarts("a", "October bills");
+    const pills = row!.findAllByProps({ "data-testid": "needs-pill" });
+    expect(pills).toHaveLength(1);
+    expect(pills[0]!.props["data-kind"]).toBe("secret");
+    // The row is the link to the chat: no extra buttons inside it.
+    expect(row!.findAll((node) => node.type === "button")).toHaveLength(0);
+  });
+
+  it("counts the open requests on the chip, in the store and in the list alike", async () => {
+    await withChats();
+    // The chip's number, the rows the Needs you filter shows and the tab
+    // badge all come from the one derivation.
+    expect(chipCount()).toBe(2);
+    expect(readNeedsYouCount()).toBe(2);
+    await act(async () => chip("Needs you")!.props.onClick());
+    expect(rowLabels()).toHaveLength(2);
+  });
+
+  it("filters to unread and to groups", async () => {
+    await withChats();
+    await act(async () => chip("Unread")!.props.onClick());
+    expect(rowLabels()).toEqual(["Release 2.4, Forge: No messages yet"]);
+    await act(async () => chip("Groups")!.props.onClick());
+    expect(hostWithLabel("ul", "Your chats")).toBeUndefined();
+    expect(json()).toContain("No groups yet.");
+  });
+
+  it("keeps the chosen filter when the screen re-renders (a chat opening and Back)", async () => {
+    await withChats();
+    await act(async () => chip("Unread")!.props.onClick());
+    await act(async () => renderer!.update(<ChatsScreen />));
+    const selected = hosts("button").filter((button) => button.props["aria-selected"] === true);
+    expect(selected).toHaveLength(1);
+    expect(textOf(selected[0]!)).toContain("Unread");
+  });
+
+  it("shows the design's note under the Needs you filter only", async () => {
+    await withChats();
+    expect(json()).not.toContain("Answered requests leave this list.");
+    await act(async () => chip("Needs you")!.props.onClick());
+    expect(json()).toContain("Answered requests leave this list.");
+  });
+
+  it("draws the unread badge and the bold title on an unread chat", async () => {
+    await withChats();
+    const row = hostLabelStarts("a", "Release 2.4");
+    expect(row!.findAllByProps({ "data-testid": "unread-badge" })).toHaveLength(1);
+  });
+
+  it("never shows a chat as unread while it is open on this device", async () => {
+    setList({
+      bots: [bot("bot-forge", "Forge")],
+      chats: [
+        {
+          botId: "bot-forge",
+          threadId: "t-open",
+          extra: { unread: true, lastReplyAt: "2026-09-01T10:00:00.000Z" },
+        },
+      ],
+    });
+    state.shells = [threadShell("t-open", { title: "Release 2.4" })];
+    await render(null);
+    // The seen state is module-level and the conversation screen marks it; here
+    // the list itself has nothing open, so the server's flag stands.
+    expect(rows().findAllByProps({ "data-testid": "unread-badge" })).toHaveLength(1);
+  });
+
+  it("searches across bots and chats, and hands the query to the message search", async () => {
+    await withChats();
+    await act(async () => hostWithLabel("button", "Search chats")!.props.onClick());
+    await act(async () =>
+      hostWithLabel("input", "Search bots and chats")!.props.onChange({
+        target: { value: "october" },
+      }),
+    );
+    expect(rowLabels()).toEqual([expect.stringContaining("October bills")]);
+    expect(
+      renderer!.root.findByProps({ "data-testid": "message-search" }).props["data-query"],
+    ).toBe("october");
+  });
+
+  it("says when nothing matches", async () => {
+    await withChats();
+    await act(async () => hostWithLabel("button", "Search chats")!.props.onClick());
+    await act(async () =>
+      hostWithLabel("input", "Search bots and chats")!.props.onChange({
+        target: { value: "nothing at all" },
+      }),
+    );
+    expect(json()).toContain("No bots or chats match");
+    expect(json()).toContain("nothing at all");
+  });
+});
+
 describe("ChatsScreen groups", () => {
   const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
 
-  function group(overrides: Record<string, unknown> = {}) {
-    return decodeGroup({
+  const group = (overrides: Record<string, unknown> = {}) =>
+    decodeGroup({
       groupId: "group-1",
       name: "Launch crew",
       description: "",
@@ -719,799 +792,301 @@ describe("ChatsScreen groups", () => {
       archivedAt: null,
       ...overrides,
     });
-  }
 
-  async function render() {
-    stubWindow();
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
+  it("draws a group among the chat rows, with the members' faces", async () => {
+    setList({
+      bots: [bot("bot-ada", "Ada")],
+      chats: [{ botId: "bot-ada", threadId: "t-ada" }],
     });
-  }
-
-  it("renders a group row in the same list as the bots", async () => {
-    state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
-    state.groupsData = { groups: [group()], rounds: [] };
-    await render();
-
-    // In the one list, not a section of its own.
-    const list = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    const rows = list.findAllByProps({ "aria-label": "Launch crew, group chat" });
-    expect(rows).toHaveLength(1);
-    const json = JSON.stringify(renderer!.toJSON());
-    expect(json).toContain("Launch crew");
-    // The subtitle names the members, so the row says who is in it without a tap.
-    expect(json).toContain("Ada");
-    // The cluster is the group's face: the member's own avatar, not a group icon.
-    expect(rows[0]!.findAllByType(BotAvatar).map((avatar) => avatar.props.label)).toEqual(["Ada"]);
-  });
-
-  it("keeps every group before ordinary bot chats", async () => {
-    state.listData = {
-      bots: [bot("bot-ada", "Ada"), bot("bot-latest", "Latest bot")],
-      threads: [],
-      personalProjectId: null,
-    };
+    state.shells = [threadShell("t-ada", { title: "Ada's chat" })];
     state.groupsData = {
-      groups: [
-        group({ groupId: "group-old", threadId: "group-thread-old", name: "Older group" }),
-        group({
-          groupId: "group-new",
-          threadId: "group-thread-new",
-          name: "Newer group",
-          updatedAt: "2026-09-19T11:00:00.000Z",
-        }),
-      ],
+      groups: [group({ updatedAt: "2026-09-19T11:00:00.000Z" })],
       rounds: [],
     };
     await render();
 
-    const rows = renderer!.root.findByProps({ "aria-label": "Your chats" }).findAllByType("li");
-    const indexOf = (props: Record<string, unknown>) =>
-      rows.findIndex((row) => row.findAllByProps(props).length > 0);
-    const older = indexOf({ "aria-label": "Older group, group chat" });
-    const newer = indexOf({ "aria-label": "Newer group, group chat" });
-    const ada = indexOf({ label: "Delete Ada" });
-    const latest = indexOf({ label: "Delete Latest bot" });
-    expect(older).toBeGreaterThanOrEqual(0);
-    expect(newer).toBeGreaterThanOrEqual(0);
-    expect(older).toBeLessThan(ada);
-    expect(newer).toBeLessThan(ada);
-    expect(older).toBeLessThan(latest);
-    expect(newer).toBeLessThan(latest);
+    const labels = rowLabels();
+    expect(labels).toContain("Launch crew, Group: No messages yet");
+    const groupRow = hostLabelStarts("a", "Launch crew");
+    expect(groupRow!.findAllByType(BotAvatar).map((avatar) => avatar.props.label)).toEqual(["Ada"]);
+    // Groups interleave by activity with the chats (Ada's chat has no messages
+    // and sorts by creation time, before the group's later update).
+    expect(labels[0]).toContain("Launch crew");
   });
 
-  it("hides a group's member threads from that bot's own chats", async () => {
-    state.listData = {
-      bots: [bot("bot-ada", "Ada")],
-      threads: [
-        {
-          botId: "bot-ada",
-          threadId: "member-thread-ada",
-          createdAt: "2026-09-19T09:00:00.000Z",
-          archivedAt: null,
-        },
-      ],
-      personalProjectId: null,
-    };
-    state.shells = [
-      {
-        id: "member-thread-ada",
-        environmentId: "env-1",
-        title: "Relay of Launch crew",
-        updatedAt: "2026-09-19T09:05:00.000Z",
-        archivedAt: null,
-        latestTurn: null,
-        session: null,
-        hasPendingApprovals: false,
-        hasPendingUserInput: false,
-      },
-    ];
-    state.groupsData = { groups: [group()], rounds: [] };
-    await render();
-
-    // Without the filter the bot row would preview the group's relay thread.
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");
-  });
-
-  it("paints live rows before the groups load, and a relay the list marks never previews (H7, H8)", async () => {
-    state.listData = {
-      bots: [bot("bot-ada", "Ada")],
-      threads: [
-        {
-          botId: "bot-ada",
-          threadId: "member-thread-ada",
-          createdAt: "2026-09-19T09:00:00.000Z",
-          archivedAt: null,
-          groupRelay: true,
-        },
-      ],
-      personalProjectId: null,
-    };
-    state.shells = [
-      {
-        id: "member-thread-ada",
-        environmentId: "env-1",
-        title: "Relay of Launch crew",
-        updatedAt: "2026-09-19T09:05:00.000Z",
-        archivedAt: null,
-        latestTurn: null,
-        session: null,
-        hasPendingApprovals: false,
-        hasPendingUserInput: false,
-      },
-    ];
-    state.groupsData = null;
-    await render();
-    expect(renderer!.root.findAllByProps({ "aria-label": "Your chats" })).toHaveLength(1);
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");
-  });
-
-  it("holds the groups feed back until after the first paint, like the tasks feed", async () => {
-    state.groupsData = { groups: [group()], rounds: [] };
-    state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
-    await render();
-
-    expect(state.groupFeedCalls).toEqual([null]);
-    await flushRaf();
-    await flushRaf();
-    expect(state.groupFeedCalls.at(-1)).toBe("env-1");
-  });
-
-  it("keeps an archived group out of the list but in Archived groups and search", async () => {
-    state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
+  it("shows the Decide pill on a group waiting for a vote", async () => {
+    setList({ bots: [], chats: [] });
     state.groupsData = {
-      groups: [group({ archivedAt: "2026-09-19T10:00:00.000Z" })],
+      groups: [group()],
+      rounds: [
+        {
+          roundId: "round-1",
+          groupId: "group-1",
+          triggerMessageId: "m1",
+          status: "paused_vote",
+          budgetRemaining: 1,
+          queue: [],
+          spoken: [],
+          activeBotId: null,
+          activeThreadId: null,
+          activeMessageId: null,
+          relayedChars: 0,
+          availableAt: null,
+          deadlineAt: "2026-09-20T09:00:00.000Z",
+          errorMessage: null,
+          createdAt: "2026-09-19T09:00:00.000Z",
+          updatedAt: "2026-09-19T09:00:00.000Z",
+        },
+      ],
+    };
+    await render();
+
+    const groupRow = hostLabelStarts("a", "Launch crew");
+    const pill = groupRow!.findByProps({ "data-testid": "needs-pill" });
+    expect(pill.props["data-kind"]).toBe("vote");
+    expect(NEEDS_YOU_PILL_LABEL.vote).toBe("Decide");
+    expect(chipCount()).toBe(1);
+  });
+
+  it("keeps a group's relay threads out of the rows", async () => {
+    setList({
+      bots: [bot("bot-ada", "Ada")],
+      chats: [{ botId: "bot-ada", threadId: "member-thread-ada" }],
+    });
+    state.shells = [threadShell("member-thread-ada", { title: "Relay of Launch crew" })];
+    state.groupsData = { groups: [group()], rounds: [] };
+    await render();
+
+    expect(rowLabels().some((label) => label.includes("Relay of Launch crew"))).toBe(false);
+    expect(rowLabels()).toContain("Launch crew, Group: No messages yet");
+  });
+
+  it("keeps an archived group out of the rows but in the collapsed section", async () => {
+    setList({ bots: [], chats: [] });
+    state.groupsData = {
+      groups: [group({ archivedAt: "2026-09-20T09:00:00.000Z" })],
       rounds: [],
     };
     await render();
-
-    const list = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(list.findAllByProps({ "aria-label": "Launch crew, archived group chat" })).toHaveLength(
-      0,
-    );
-    const archived = renderer!.root.findByProps({ "aria-label": "Archived groups" });
-    expect(
-      archived.findAllByProps({ "aria-label": "Launch crew, archived group chat" }).length,
-    ).toBeGreaterThan(0);
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Archived groups (");
-
-    const search = renderer!.root.findByProps({ "aria-label": "Search bots and chats" });
-    await act(async () => search.props.onChange({ target: { value: "launch" } }));
-    const hits = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(
-      hits.findAllByProps({ "aria-label": "Launch crew, archived group chat" }).length,
-    ).toBeGreaterThan(0);
-    expect(renderer!.root.findAllByProps({ "aria-label": "Archived groups" })).toHaveLength(0);
+    expect(hostWithLabel("ul", "Your chats")).toBeUndefined();
+    expect(json()).toContain("Archived groups (");
   });
 
-  // A bot only in groups lives inside them: out of the list, the strip, the
-  // search results and the cold-start snapshot, and back the moment the
-  // server stops calling it group-only (its first private message).
-  it("hides a group-only bot and shows it again once it has a private chat", async () => {
-    state.listData = {
-      bots: [
-        bot("bot-ada", "Ada", { groupOnly: true, groupIds: ["group-1"], pinned: true }),
-        bot("bot-grace", "Grace"),
-      ],
-      threads: [],
-      personalProjectId: null,
-    };
+  it("hides a group-only bot's tile until it has a private chat", async () => {
+    setList({
+      bots: [bot("bot-ada", "Ada", { groupOnly: true, groupIds: ["group-1"] })],
+      chats: [],
+    });
     state.groupsData = { groups: [group()], rounds: [] };
     await render();
-
-    const list = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(list.findAllByProps({ label: "Delete Ada" })).toHaveLength(0);
-    expect(list.findAllByProps({ label: "Delete Grace" })).toHaveLength(1);
-    // Pinned or not, a hidden bot has no face in the strip.
-    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned" })).toHaveLength(0);
-    // The group row still names it, so the owner can see where it went.
-    expect(list.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(1);
-    // Nor does it come back into the snapshot a cold start paints from.
-    const saved = JSON.stringify(
-      Object.fromEntries(
-        Array.from({ length: localStorage.length }, (_, index) => {
-          const key = localStorage.key(index)!;
-          return [key, localStorage.getItem(key)];
-        }),
-      ),
-    );
-    expect(saved).toContain("Grace");
-    expect(saved).not.toContain("bot-ada");
-
-    // Searching its name finds the group it lives in, not a bot row.
-    const search = renderer!.root.findByProps({ "aria-label": "Search bots and chats" });
-    await act(async () => search.props.onChange({ target: { value: "Ada" } }));
-    const filtered = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(filtered.findAllByProps({ label: "Delete Ada" })).toHaveLength(0);
-    expect(filtered.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(1);
-    await act(async () => search.props.onChange({ target: { value: "" } }));
-
-    // "Message privately", then a first message: the server now says it is not
-    // group-only, and the row is back.
-    state.listData = {
-      bots: [
-        bot("bot-ada", "Ada", { groupOnly: false, groupIds: ["group-1"] }),
-        bot("bot-grace", "Grace"),
-      ],
-      threads: [],
-      personalProjectId: null,
-    };
-    await act(async () => renderer!.update(<ChatsScreen />));
-    const after = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(after.findAllByProps({ label: "Delete Ada" })).toHaveLength(1);
-
-    // Deleting that chat hides it again.
-    state.listData = {
-      bots: [
-        bot("bot-ada", "Ada", { groupOnly: true, groupIds: ["group-1"] }),
-        bot("bot-grace", "Grace"),
-      ],
-      threads: [],
-      personalProjectId: null,
-    };
-    await act(async () => renderer!.update(<ChatsScreen />));
-    const again = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(again.findAllByProps({ label: "Delete Ada" })).toHaveLength(0);
+    expect(hostLabelStarts("a", "Ada,")).toBeUndefined();
   });
 
-  it("offers New bot, New group and New team behind the one header button", async () => {
-    state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
+  it("unpins a pinned group's card from its own menu", async () => {
+    setList({ bots: [], chats: [] });
+    state.groupsData = {
+      groups: [group({ pinnedAt: "2026-09-19T09:00:00.000Z" })],
+      rounds: [],
+    };
     await render();
-
-    const items = renderer!.root
-      .findAllByType("button")
-      .filter((button) => typeof button.props.children === "string");
-    const labels = items.map((button) => button.props.children as string);
-    expect(labels).toContain("New bot");
-    expect(labels).toContain("New group");
-
-    const newGroup = items.find((button) => button.props.children === "New group")!;
-    await act(async () => newGroup.props.onClick());
-    expect(state.navigate).toHaveBeenCalledWith({ to: "/bots/groups/new" });
-
-    expect(labels).toContain("New team");
-    const newTeam = items.find((button) => button.props.children === "New team")!;
-    await act(async () => newTeam.props.onClick());
-    expect(state.navigate).toHaveBeenCalledWith({ to: "/bots/teams/new" });
+    const unpin = buttonWithText("Unpin Launch crew");
+    await act(async () => unpin!.props.onClick());
+    expect(state.groupPin).toHaveBeenCalledWith("group-1", false);
   });
 });
 
-/**
- * Desktop (md+): the shell passes the chat open in the pane, and exactly that
- * bot's row, tile or group row is marked. The phone renders the list without
- * the prop, so nothing is ever marked there.
- */
-describe("ChatsScreen selected chat", () => {
-  const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
-  const crew = () =>
-    decodeGroup({
-      groupId: "group-1",
-      name: "Launch crew",
-      description: "",
-      threadId: "group-thread-1",
-      maxBotTurns: 6,
-      members: [],
-      createdAt: "2026-09-19T09:00:00.000Z",
-      updatedAt: "2026-09-19T09:00:00.000Z",
-      archivedAt: null,
-    });
-
-  async function render(selectedChat?: "bot:bot-cto" | "bot:bot-scout" | "group:group-1") {
-    stubWindow();
-    state.listData = {
-      bots: [
-        bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true }),
-        bot("bot-scout", "Scout"),
+describe("ChatsScreen snoozed chats", () => {
+  it("moves a snoozed chat out of the rows into Snoozed, with Wake now", async () => {
+    setList({
+      bots: [bot("bot-juno", "Juno")],
+      chats: [
+        {
+          botId: "bot-juno",
+          threadId: "t-asleep",
+          extra: { snoozedUntil: DateTime.makeUnsafe("2027-01-01T18:00:00.000Z") },
+        },
       ],
-      threads: [],
-      personalProjectId: null,
-    };
-    state.groupsData = { groups: [crew()], rounds: [] };
-    await act(async () => {
-      renderer = create(<ChatsScreen selectedChat={selectedChat} />);
     });
-  }
-
-  /** Every element marked as the open chat. Host `<a>`s from the Link mock carry no props. */
-  const marked = () =>
-    renderer!.root.findAll(
-      (node) => node.props["aria-current"] === "page" && node.props["data-sidebar-selected"] === "",
-    );
-
-  it("marks nothing without a selection (the phone, Team, Tasks, Files, Computer)", async () => {
+    state.shells = [threadShell("t-asleep", { title: "Later" })];
     await render();
-    expect(marked()).toEqual([]);
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain("md:bg-[var(--personal-fill-muted)]");
+
+    expect(hostWithLabel("ul", "Your chats")).toBeUndefined();
+    expect(json()).toContain("Snoozed (");
+    const wake = hostWithLabel("button", "Wake Later now")!;
+    await act(async () => wake.props.onClick());
+    expect(state.bulk).toHaveBeenCalledWith("wake", ["t-asleep"], 0);
   });
 
-  it("marks the open bot's row, and only it", async () => {
-    await render("bot:bot-scout");
-    const [row, ...rest] = marked();
-    expect(rest).toEqual([]);
-    expect(row!.props.params).toEqual({ botId: "bot-scout" });
-    expect(row!.props.className).toContain("md:bg-[var(--personal-fill-muted)]");
-  });
-
-  it("marks a pinned bot's tile in the strip", async () => {
-    await render("bot:bot-cto");
-    const [tile, ...rest] = marked();
-    expect(rest).toEqual([]);
-    expect(tile!.props["aria-label"]).toContain("CTO");
-    expect(tile!.props.className).toContain("md:bg-[var(--personal-fill-muted)]");
-  });
-
-  it("marks a group chat's row and follows the selection when it changes", async () => {
-    await render("group:group-1");
-    expect(marked().map((node) => node.props["aria-label"])).toEqual(["Launch crew, group chat"]);
-
-    await act(async () => renderer!.update(<ChatsScreen selectedChat="bot:bot-scout" />));
-    expect(marked().map((node) => node.props.params)).toEqual([{ botId: "bot-scout" }]);
-
-    await act(async () => renderer!.update(<ChatsScreen selectedChat={null} />));
-    expect(marked()).toEqual([]);
-  });
-});
-
-/**
- * The preview-refresh effect exists to catch a message landing on a bot's
- * newest thread. Its key is built from the thread shells, which arrive after
- * the bot list, so seeding the baseline from the pre-data render made the
- * initial population look like a message arriving: every cold start fetched
- * `personalBots.list` twice (measured as two byte-identical 12,035 B
- * responses, 28 ms apart).
- */
-describe("ChatsScreen preview refresh", () => {
-  const link = (botId: string, threadId: string) => ({
-    botId,
-    threadId,
-    createdAt: "2026-09-01T10:00:00.000Z",
-    archivedAt: null,
-  });
-  const shell = (id: string, updatedAt: string) => ({
-    id,
-    environmentId: "env-1",
-    title: `Thread ${id}`,
-    updatedAt,
-    archivedAt: null,
-    latestTurn: null,
-    session: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-  });
-
-  async function populate() {
-    stubWindow();
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
+  it("says why when waking a chat is refused", async () => {
+    state.bulk = vi.fn(async () => ({
+      status: "settled" as const,
+      notice: "Laptop unreachable",
+      failedIds: ["t-asleep"],
+      anyFailed: true,
+    }));
+    setList({
+      bots: [bot("bot-juno", "Juno")],
+      chats: [
+        {
+          botId: "bot-juno",
+          threadId: "t-asleep",
+          extra: { snoozedUntil: DateTime.makeUnsafe("2027-01-01T18:00:00.000Z") },
+        },
+      ],
     });
-    // The list lands first, then the thread shells.
-    state.listData = {
-      bots: [bot("bot-live", "Live Ada")],
-      threads: [link("bot-live", "thread-1")],
-      personalProjectId: null,
-    };
-    await act(async () => renderer!.update(<ChatsScreen />));
-    state.shells = [shell("thread-1", "2026-09-01T10:00:00.000Z")];
-    await act(async () => renderer!.update(<ChatsScreen />));
-  }
+    state.shells = [threadShell("t-asleep", { title: "Later" })];
+    await render();
 
-  it("does not refetch the list while it is still populating", async () => {
-    await populate();
-    expect(state.refresh).not.toHaveBeenCalled();
-  });
-
-  /** Runs the timers scheduled since `since` (the debounced refetch among them). */
-  async function flushTimersAfter(since: number) {
-    const due = [...state.timeouts.entries()].filter(([id]) => id >= since);
-    for (const [id] of due) state.timeouts.delete(id);
-    await act(async () => {
-      for (const [, callback] of due) callback();
-    });
-  }
-
-  const running = (assistantMessageId: string) => ({
-    turnId: "turn-1",
-    state: "running",
-    requestedAt: "2026-09-01T10:04:00.000Z",
-    startedAt: "2026-09-01T10:04:00.000Z",
-    completedAt: null,
-    assistantMessageId,
-  });
-
-  it("does not refetch per streamed chunk (updatedAt alone moving)", async () => {
-    await populate();
-    const since = state.nextTimeoutId;
-    for (const second of ["01", "02", "03"]) {
-      state.shells = [shell("thread-1", `2026-09-01T10:05:${second}.000Z`)];
-      await act(async () => renderer!.update(<ChatsScreen />));
-    }
-    await flushTimersAfter(since);
-    expect(state.refresh).not.toHaveBeenCalled();
-  });
-
-  it("refetches once per message boundary, coalescing moves that land together", async () => {
-    await populate();
-    const since = state.nextTimeoutId;
-    // The owner's message and the turn it starts arrive tens of ms apart.
-    state.shells = [
-      {
-        ...shell("thread-1", "2026-09-01T10:04:00.000Z"),
-        latestUserMessageAt: "2026-09-01T10:04:00.000Z",
-      },
-    ];
-    await act(async () => renderer!.update(<ChatsScreen />));
-    state.shells = [
-      {
-        ...shell("thread-1", "2026-09-01T10:04:00.050Z"),
-        latestUserMessageAt: "2026-09-01T10:04:00.000Z",
-        latestTurn: running("msg-1"),
-      },
-    ];
-    await act(async () => renderer!.update(<ChatsScreen />));
-    expect(state.refresh).not.toHaveBeenCalled();
-    await flushTimersAfter(since);
-    expect(state.refresh).toHaveBeenCalledTimes(1);
+    await act(async () => hostWithLabel("button", "Wake Later now")!.props.onClick());
+    expect(json()).toContain("Laptop unreachable");
   });
 });
 
 describe("ChatsScreen working progress", () => {
-  const link = (botId: string, threadId: string) => ({
-    botId,
-    threadId,
-    createdAt: "2026-09-01T10:00:00.000Z",
-    archivedAt: null,
-    newestMessage: { id: "m-1", role: "assistant", text: "The stale last message" },
-  });
-  const shell = (id: string, session: { status: string } | null) => ({
-    id,
-    environmentId: "env-1",
-    title: `Thread ${id}`,
-    updatedAt: "2026-09-29T10:00:00.000Z",
-    archivedAt: null,
-    latestTurn: null,
-    session,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-  });
-
-  async function render() {
-    stubWindow();
-    state.listData = {
-      bots: [bot("bot-busy", "Busy Ada"), bot("bot-idle", "Idle Bo")],
-      threads: [link("bot-busy", "thread-busy"), link("bot-idle", "thread-idle")],
-      personalProjectId: null,
-    };
-    state.shells = [
-      shell("thread-busy", { status: "running" }),
-      shell("thread-idle", { status: "ready" }),
-    ];
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
+  it("asks only about the live chats, and shows a note instead of the last message", async () => {
+    setList({
+      bots: [bot("bot-forge", "Forge")],
+      chats: [
+        { botId: "bot-forge", threadId: "t-live" },
+        { botId: "bot-forge", threadId: "t-idle" },
+      ],
     });
-  }
-
-  it("asks only about the working bot's chat, and shows its note instead of the last message", async () => {
+    state.shells = [
+      threadShell("t-live", { title: "Release 2.4", latestTurn: turn("turn-1") }),
+      threadShell("t-idle", { title: "Docs" }),
+    ];
     state.progressNotes = new Map([
-      ["thread-busy", { note: "Reading the failing test", turnId: null }],
+      ["t-live", { note: "Running the e2e suite again", turnId: "turn-1" }],
     ]);
     await render();
-    const json = JSON.stringify(renderer!.toJSON());
-    expect(state.progressTargets).toEqual([
-      { threadId: "thread-busy", updatedAt: "2026-09-29T10:00:00.000Z" },
-    ]);
-    expect(json).toContain("Reading the failing test");
-    // The idle bot keeps its last message; the working one lost the stale one.
-    expect(json).toContain("The stale last message");
-    expect(json.split("The stale last message").length - 1).toBe(1);
+
+    expect(state.progressTargets.map((target) => target.threadId)).toEqual(["t-live"]);
+    expect(rowLabels()).toContain("Release 2.4, Forge: Running the e2e suite again");
   });
 
-  it("never shows an earlier turn's note when a new turn starts, only the new turn's", async () => {
-    const turn = (turnId: string) => ({
-      turnId,
-      state: "running",
-      requestedAt: "2026-09-29T10:00:00.000Z",
-      startedAt: "2026-09-29T10:00:00.000Z",
-      completedAt: null,
-      assistantMessageId: null,
+  it("says Couldn't reply for a failed chat, but not when it is waiting on you", async () => {
+    setList({
+      bots: [bot("bot-forge", "Forge")],
+      chats: [
+        { botId: "bot-forge", threadId: "t-failed" },
+        { botId: "bot-forge", threadId: "t-asking" },
+      ],
     });
-    // The query still holds turn-1's last note (cached after its turn ended).
-    state.progressNotes = new Map([["thread-busy", { note: "MCP tool call", turnId: "turn-1" }]]);
-    await render();
     state.shells = [
-      { ...shell("thread-busy", { status: "running" }), latestTurn: turn("turn-2") },
-      shell("thread-idle", { status: "ready" }),
+      threadShell("t-failed", {
+        title: "Release 2.4",
+        session: { status: "error", activeTurnId: null },
+      }),
+      threadShell("t-asking", {
+        title: "Table?",
+        hasPendingUserInput: true,
+        session: { status: "error", activeTurnId: null },
+      }),
     ];
-    await act(async () => renderer!.update(<ChatsScreen />));
-    let json = JSON.stringify(renderer!.toJSON());
-    expect(json).not.toContain("MCP tool call");
-    expect(json.split("The stale last message").length - 1).toBe(2);
-    // The new turn's own note replaces it as soon as the read lands.
-    state.progressNotes = new Map([
-      ["thread-busy", { note: "Reading the diff", turnId: "turn-2" }],
-    ]);
-    await act(async () => renderer!.update(<ChatsScreen />));
-    json = JSON.stringify(renderer!.toJSON());
-    expect(json).toContain("Reading the diff");
-    expect(json).not.toContain("MCP tool call");
+    await render();
+    const labels = rowLabels();
+    expect(labels.find((label) => label.startsWith("Release 2.4"))).toContain("Couldn't reply");
+    // The open request is the thing to act on, so it keeps the row's own words.
+    expect(labels.find((label) => label.startsWith("Table?"))).toContain("Needs your answer");
+    expect(labels.find((label) => label.startsWith("Table?"))).not.toContain("Couldn't reply");
   });
 
-  it("keeps the last message when there is no note yet", async () => {
-    await render();
-    const json = JSON.stringify(renderer!.toJSON());
-    expect(json.split("The stale last message").length - 1).toBe(2);
-  });
-
-  /**
-   * Harout's 1.57.3 screenshot: a pinned CFO mid-turn showed the live dot but
-   * no comet. Its turn had run tools for 95 s without a line of text, and the
-   * list read that as thinking (shells only know reply text). A tool step in
-   * the live turn now makes it working, in the strip and in the list alike.
-   */
-  it.each([
-    ["pinned", true],
-    ["listed", false],
-  ])("a %s bot whose turn went straight to tools gets the working comet", async (_, pinned) => {
-    stubWindow();
-    state.listData = {
-      bots: [bot("bot-busy", "Busy Ada", { pinned }), bot("bot-idle", "Idle Bo")],
-      threads: [link("bot-busy", "thread-busy"), link("bot-idle", "thread-idle")],
-      personalProjectId: null,
-    };
-    state.shells = [
-      {
-        ...shell("thread-busy", { status: "running" }),
-        latestTurn: {
-          turnId: "turn-1",
-          state: "running",
-          requestedAt: "2026-09-29T10:00:00.000Z",
-          startedAt: "2026-09-29T10:00:00.000Z",
-          completedAt: null,
-          assistantMessageId: null,
-        },
-      },
-      shell("thread-idle", { status: "ready" }),
-    ];
-    // Thinking only so far: the thinking pose, no comet.
-    state.progressNotes = new Map([
-      ["thread-busy", { note: "Planning the fix", turnId: "turn-1", toolStep: false }],
-    ]);
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
+  it("says Thinking while the turn has produced nothing, and Working after a tool step", async () => {
+    setList({
+      bots: [bot("bot-forge", "Forge")],
+      chats: [{ botId: "bot-forge", threadId: "t-live" }],
     });
-    const busyAvatar = () =>
-      renderer!.root.find(
-        (node) => node.props["aria-label"] === "Busy Ada" && node.props["data-motion"] != null,
-      );
-    const text = () => JSON.stringify(renderer!.toJSON());
-    const thought = () =>
-      busyAvatar().findAll((node) => node.props.className === "bot-avatar-thought");
-    expect(busyAvatar().props["data-motion"]).toBe("thinking");
-    expect(busyAvatar().findAll((node) => node.props.className === "bot-avatar-orbit")).toEqual([]);
-    // The status text and the thought cloud follow the same tool-aware check.
-    // (A pinned face has no visible status line; its label is on the mocked link.)
-    expect(thought()).toHaveLength(1);
-    if (!pinned) expect(text()).toContain("Thinking");
-    expect(text()).not.toContain('"Working"');
-    // The turn starts a tool step: working, comet on.
-    state.progressNotes = new Map([
-      ["thread-busy", { note: "Command run", turnId: "turn-1", toolStep: true }],
-    ]);
+    state.shells = [
+      threadShell("t-live", {
+        title: "Release 2.4",
+        latestTurn: turn("turn-1"),
+        session: { status: "running", activeTurnId: "turn-1" },
+      }),
+    ];
+    await render();
+    expect(rowLabels()[0]).toContain("Thinking");
+
+    state.progressNotes = new Map([["t-live", { note: "", turnId: "turn-1", toolStep: true }]]);
     await act(async () => renderer!.update(<ChatsScreen />));
-    expect(busyAvatar().props["data-motion"]).toBe("working");
-    if (!pinned) expect(text()).toContain("Working");
-    expect(text()).not.toContain("Thinking");
-    expect(thought()[0]?.props["data-leaving"]).toBe("");
-    expect(
-      busyAvatar().findAll((node) => node.props.className === "bot-avatar-orbit"),
-    ).toHaveLength(1);
-    // A tool step from an earlier turn does not count for this one.
-    state.progressNotes = new Map([
-      ["thread-busy", { note: "Command run", turnId: "turn-0", toolStep: true }],
-    ]);
-    await act(async () => renderer!.update(<ChatsScreen />));
-    expect(busyAvatar().props["data-motion"]).toBe("thinking");
+    expect(rowLabels()[0]).toContain("Working");
   });
 });
 
-describe("ChatsScreen snoozed, pinned-group and unread chats", () => {
-  const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
-  const NOW = Date.now();
-  const at = (hours: number) => DateTime.makeUnsafe(NOW + hours * 3_600_000);
-  const iso = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
-
-  const link = (threadId: string, extra: Record<string, unknown> = {}, botId = "bot-ada") => ({
-    botId,
-    threadId,
-    createdAt: iso(-100),
-    archivedAt: null,
-    ...extra,
-  });
-  const shell = (id: string, hoursAgo: number, title = `Thread ${id}`) => ({
-    id,
-    environmentId: "env-1",
-    title,
-    updatedAt: iso(-hoursAgo),
-    createdAt: iso(-hoursAgo),
-    latestUserMessageAt: null,
-    archivedAt: null,
-    latestTurn: null,
-    session: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-  });
-  const group = (extra: Record<string, unknown> = {}) =>
-    decodeGroup({
-      groupId: "group-1",
-      name: "Launch crew",
-      description: "",
-      threadId: "group-thread-1",
-      maxBotTurns: 6,
-      members: [],
-      createdAt: "2026-09-19T09:00:00.000Z",
-      updatedAt: "2026-09-19T09:00:00.000Z",
-      archivedAt: null,
-      ...extra,
+describe("ChatsScreen preview refresh", () => {
+  const withOneChat = () => {
+    setList({
+      bots: [bot("bot-forge", "Forge")],
+      chats: [{ botId: "bot-forge", threadId: "t-1" }],
     });
-
-  async function render() {
-    stubWindow();
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
-    });
-  }
-  const json = () => JSON.stringify(renderer!.toJSON());
-  const press = async (node: ReactTestInstance | undefined) => {
-    expect(node).toBeDefined();
-    await act(async () => {
-      node!.props.onClick();
-    });
+    state.shells = [threadShell("t-1", { title: "Release 2.4" })];
   };
-  const buttonWithText = (label: string) =>
-    renderer!.root.findAll(
-      (node) =>
-        node.type === "button" &&
-        node.children.some((child) => typeof child === "string" && child === label),
-    );
-  const buttonLabelled = (label: string) =>
-    renderer!.root.findAll((node) => node.type === "button" && node.props["aria-label"] === label);
 
-  function seed(
-    threads: Array<Record<string, unknown>>,
-    shells: Array<ReturnType<typeof shell>>,
-    groups: unknown[] = [],
-    bots = [bot("bot-ada", "Ada")],
-  ) {
-    state.listData = { bots, threads, personalProjectId: null };
-    state.shells = shells;
-    state.groupsData = { groups, rounds: [] };
-  }
-
-  it("draws no Pinned or Snoozed section when nothing is pinned or snoozed", async () => {
-    seed([link("t1")], [shell("t1", 1)]);
+  it("does not refetch the list while it is still populating", async () => {
+    state.listData = null;
     await render();
-    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned chats" })).toHaveLength(0);
-    expect(renderer!.root.findAllByProps({ "data-testid": "snoozed-chats" })).toHaveLength(0);
+    expect(state.refresh).not.toHaveBeenCalled();
   });
 
-  it("lists no pinned chat on the Bots page: the pin shows in the bot's own chat list", async () => {
-    seed(
-      [link("t1", { pinnedAt: at(-30) }), link("t2")],
-      [shell("t1", 3, "Launch plans"), shell("t2", 1)],
-    );
+  it("does not refetch per streamed chunk (updatedAt alone moving)", async () => {
+    withOneChat();
     await render();
-    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned chats" })).toHaveLength(0);
-    expect(renderer!.root.findAllByProps({ "data-testid": "pinned-chats" })).toHaveLength(0);
-    // Neither chat is listed as a row of its own: only the bot is.
-    expect(json()).not.toContain("Launch plans");
-    expect(buttonWithText("Unpin chat")).toHaveLength(0);
+    state.shells = [
+      threadShell("t-1", { title: "Release 2.4", updatedAt: "2026-09-01T10:05:00.000Z" }),
+    ];
+    await act(async () => renderer!.update(<ChatsScreen />));
+    expect(state.refresh).not.toHaveBeenCalled();
   });
 
-  it("keeps a pinned group among the group rows, first, with its pin, listed once", async () => {
-    seed(
-      [],
-      [],
-      [
-        group({ groupId: "group-2", name: "Plain crew", threadId: "group-thread-2" }),
-        group({ pinnedAt: iso(-20) }),
-      ],
-    );
+  it("refetches once per message boundary, coalescing moves that land together", async () => {
+    withOneChat();
     await render();
-    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned chats" })).toHaveLength(0);
-    const text = json();
-    // Listed once, and ahead of the plain group although it comes second in the data.
-    expect(text.split("Launch crew")).toHaveLength(2);
-    expect(text.indexOf("Launch crew")).toBeLessThan(text.indexOf("Plain crew"));
-    const rows = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(
-      rows.findAllByProps({ "aria-label": "Launch crew, pinned group chat" }),
-    ).not.toHaveLength(0);
-    expect(buttonWithText("Unpin group")).toHaveLength(0);
-  });
-
-  it("says why when waking a group is refused", async () => {
-    state.groupSnooze.mockResolvedValueOnce("Could not wake this group. Try again.");
-    seed([], [], [group({ snoozedUntil: iso(30) })]);
-    await render();
-    await press(buttonLabelled("Wake Launch crew now")[0]);
-    expect(json()).toContain("Could not wake this group. Try again.");
-  });
-
-  it("moves a snoozed chat and group out of the rows into Snoozed, each with Wake now", async () => {
-    seed(
-      [link("t1", { snoozedUntil: at(5) })],
-      [shell("t1", 1, "Launch plans")],
-      [group({ snoozedUntil: iso(30) })],
-    );
-    await render();
-    expect(renderer!.root.findAllByProps({ "data-testid": "snoozed-chats" })).not.toHaveLength(0);
-    expect(json()).toContain('"Snoozed (","2",")"');
-    expect(json()).toContain("Wakes ");
-    // The group is not among the rows either.
-    for (const list of renderer!.root.findAllByProps({ "aria-label": "Your chats" })) {
-      expect(list.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(0);
-    }
-    await press(buttonLabelled("Wake Launch plans now")[0]);
-    expect(state.bulk).toHaveBeenLastCalledWith("wake", ["t1"], 0);
-    await press(buttonLabelled("Wake Launch crew now")[0]);
-    expect(state.groupSnooze).toHaveBeenCalledWith("group-1", null);
-  });
-
-  it("a snooze that has run out is awake: the group is back among the rows", async () => {
-    seed([], [], [group({ snoozedUntil: iso(-1) })]);
-    await render();
-    expect(renderer!.root.findAllByProps({ "data-testid": "snoozed-chats" })).toHaveLength(0);
-    const rows = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(rows.findAllByProps({ "aria-label": "Launch crew, group chat" })).not.toHaveLength(0);
-  });
-
-  it("the search hands the query to the in-messages section and still lists no pinned chat", async () => {
-    seed(
-      [link("t1", { pinnedAt: at(-30) }), link("t2", { pinnedAt: at(-20) })],
-      [shell("t1", 3, "Launch plans"), shell("t2", 2, "Taxes")],
-    );
-    await render();
-    expect(renderer!.root.findAllByProps({ "data-testid": "message-search" })).toHaveLength(0);
-    const input = renderer!.root.findByType("input");
+    state.shells = [
+      threadShell("t-1", { title: "Release 2.4", latestUserMessageAt: "2026-09-01T10:05:00.000Z" }),
+    ];
+    await act(async () => renderer!.update(<ChatsScreen />));
+    expect(state.refresh).not.toHaveBeenCalled();
+    // The debounce timer is stubbed; run it.
     await act(async () => {
-      input.props.onChange({ target: { value: "tax" } });
+      for (const callback of state.timeouts.values()) callback();
     });
-    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned chats" })).toHaveLength(0);
-    expect(renderer!.root.findAllByProps({ "aria-label": "Taxes, Ada, pinned" })).toHaveLength(0);
-    // The hook behind it decides when 2 characters are enough; the screen hands the query over.
-    expect(
-      renderer!.root.findAllByProps({ "data-testid": "message-search" })[0]?.props["data-query"],
-    ).toBe("tax");
-  });
-
-  it("counts a chat marked unread on a bot that is not a lead, and not a plain unread reply", async () => {
-    seed(
-      [
-        link("t1", { unread: true, markedUnread: true, lastReplyAt: at(-1) }),
-        link("t2", { unread: true, lastReplyAt: at(-1) }),
-      ],
-      [shell("t1", 3), shell("t2", 2)],
-    );
-    await render();
-    const text = json();
-    expect(text).toContain("1 unread chat");
-    expect(text).not.toContain("2 unread chats");
+    expect(state.refresh).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("ChatsScreen update status line", () => {
-  it("places the update status line under the header, carrying the version the page shows", async () => {
-    stubWindow();
-    seedSnapshot();
-    await act(async () => {
-      renderer = create(<ChatsScreen />);
+describe("ChatsScreen selected chat", () => {
+  it("marks the exact open chat's row and nothing else", async () => {
+    setList({
+      bots: [bot("bot-forge", "Forge")],
+      chats: [
+        { botId: "bot-forge", threadId: "t-1" },
+        { botId: "bot-forge", threadId: "t-2" },
+      ],
     });
-    // In place and told which version is live, so a "still on 1.66.y" line
-    // has its fallback even with no server answer.
-    const line = renderer!.root.findByProps({
-      "data-update-status-line": "v9.9.9-test",
+    state.shells = [threadShell("t-1", { title: "One" }), threadShell("t-2", { title: "Two" })];
+    await render("bot:bot-forge", { botId: "bot-forge", threadId: "t-2" });
+
+    const marked = rows().findAll(
+      (node) => node.type === "a" && node.props["aria-current"] === "page",
+    );
+    expect(marked).toHaveLength(1);
+    expect(marked[0]!.props["aria-label"]).toContain("Two");
+  });
+
+  it("marks a pinned chat's rail card when it is the open one", async () => {
+    setList({
+      bots: [bot("bot-juno", "Juno")],
+      chats: [
+        {
+          botId: "bot-juno",
+          threadId: "t-pinned",
+          extra: { pinnedAt: DateTime.makeUnsafe("2026-09-01T09:00:00.000Z") },
+        },
+      ],
     });
-    const json = JSON.stringify(renderer!.toJSON());
-    expect(json.indexOf('"data-update-status-line"')).toBeGreaterThan(json.indexOf('"Bots"'));
-    expect(String(line.props["data-update-status-line"])).toBe("v9.9.9-test");
+    state.shells = [threadShell("t-pinned", { title: "Packing list" })];
+    await render("bot:bot-juno", { botId: "bot-juno", threadId: "t-pinned" });
+
+    const card = hostLabelStarts("a", "Pinned chat Packing list with Juno");
+    expect(card?.props["aria-current"]).toBe("page");
   });
 });

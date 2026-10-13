@@ -118,6 +118,36 @@
   --personal-radius-card: 14px;
   --personal-radius-button: 10px;
   --personal-radius-bubble: 16px;
+  /* The redesign's scale (spec section 1): 8 small, 12 controls, 16 cards,
+   * 20 sheets and the docked question. The four above are kept as they are
+   * (Backend's Team work and every existing screen read them). */
+  --personal-radius-sm: 8px;
+  --personal-radius-control: 12px;
+  --personal-radius-card-lg: 16px;
+  --personal-radius-xl: 20px;
+
+  /* State colours: the same colour for the same state on every screen. In
+   * light the amber for text is the darker one (--personal-review-text); the
+   * bright --personal-review is for rings, dots and fills only. In dark they
+   * are the same value. */
+  --personal-state-working: var(--personal-live);
+  --personal-state-thinking: var(--personal-text-secondary);
+  --personal-state-idle: var(--personal-text-tertiary);
+  --personal-state-needs: var(--personal-review-text);
+  /* Raised surface: the progress row and the docked question (dark: #202020). */
+  --personal-surface-raised: #ffffff;
+  /* Pressed overlay for rows, cards and options. */
+  --personal-pressed: rgb(0 0 0 / 0.05);
+  /* The tab bar (and the design's chat header): near-opaque, drawn over what
+   * scrolls behind it. --personal-bar-solid is the same colour without alpha,
+   * for the 2 px cut-out ring around the tab badge. */
+  --personal-bar: rgb(250 250 248 / 0.94);
+  --personal-bar-solid: #fafaf8;
+  /* List separators (the design's 0.5 px hairline). */
+  --personal-hairline: 0.5px;
+  /* Motion: the two easings the design names. */
+  --personal-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --personal-ease-push: cubic-bezier(0.32, 0.72, 0, 1);
 
   /* Desktop (md+) layout. A chat's messages, header and composer share the
    * reading column; lists and detail screens use it too. Editors and settings
@@ -189,6 +219,15 @@
   --personal-avatar-halo: #6f6f6b;
   --personal-thought: #807f7b;
   --personal-thought-ink: #0f0f0e;
+
+  /* Redesign tokens (spec section 1), dark values. In dark the amber for text
+   * is the bright one, so --personal-state-needs and --personal-review agree
+   * (10.3:1 on bg, 9.3:1 on the surface). */
+  --personal-state-needs: var(--personal-review);
+  --personal-surface-raised: #202020;
+  --personal-pressed: rgb(255 255 255 / 0.06);
+  --personal-bar: rgb(22 22 21 / 0.96);
+  --personal-bar-solid: #161615;
 }
 
 /* Native checkboxes (bot form's "Team lead"/"Pin to top", the group and
@@ -1177,4 +1216,137 @@
     background-color: transparent;
     box-shadow: 0 0 0 6px transparent;
   }
+}
+
+/* ---------- Bots home (1.67.0): rail, chat rows, avatar ring ----------------
+ *
+ * The rail's fade, the row separators and the two avatar decorations the
+ * redesign added (the "needs you" ring and the paired group face). Everything
+ * here is compositor-friendly: transform and opacity only, no per-frame work.
+ */
+
+/* The rail's scroll cue: a 44 px fade while there is more to the right, a
+ * matching left fade once it has been scrolled, neither at the end. Two
+ * overlays of the page colour, not a mask: a mask on this scroller made
+ * Chrome repaint the whole layer every frame while the frosted tab bar was up
+ * (measured with the phone profile: p95 frame 36 ms and 52 ms of long tasks
+ * per scroll, against 18 ms and none with the overlays). The edge state is one
+ * attribute set on scroll (HomeRail). */
+.rail-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 44px;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 120ms linear;
+}
+
+.rail-fade[data-on] {
+  opacity: 1;
+}
+
+.rail-fade:not([data-on]) {
+  opacity: 0;
+}
+
+.rail-fade-right {
+  right: 0;
+  background: linear-gradient(90deg, transparent, var(--personal-bg));
+}
+
+.rail-fade-left {
+  left: 0;
+  background: linear-gradient(90deg, var(--personal-bg), transparent);
+}
+
+/* A chat row's separator: 0.5 px, inset to where the text starts (16 + 48 + 12). */
+.home-rows > li + li .home-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 76px;
+  right: 0;
+  height: var(--personal-hairline);
+  background: var(--personal-border);
+}
+
+/* Pressed states, per the design: the row, a rail card, a picker row. */
+.home-row:active,
+.personal-press:active {
+  background-color: var(--personal-pressed);
+}
+
+/* The "needs you" ring: 2 px of --personal-review, 4 px outside the avatar
+ * (the design's ring. The amber is the state's own colour; in light the bright
+ * #d4a017 is right for a ring and wrong for text). */
+.bot-avatar-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px var(--personal-review);
+  pointer-events: none;
+  animation: personal-ring-in 240ms var(--personal-ease-out);
+}
+
+@keyframes personal-ring-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* The pin mark on a rail card's avatar: a 20 px disc at the avatar's bottom
+ * right, ringed in the card's own surface colour so it reads as attached. */
+.bot-avatar-pin {
+  position: absolute;
+  right: -6px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--personal-fill-muted);
+  box-shadow: 0 0 0 2px var(--personal-surface);
+  color: var(--personal-text-secondary);
+  pointer-events: none;
+}
+
+/* A rail caption swaps in place when the state changes (the design's moment 1):
+ * the new words rise 4 px into place. The old ones are not animated out - the
+ * words are the signal and the swap is instant, which is also the reduce-motion
+ * version, so nothing is lost when the animation is off. */
+.rail-cap {
+  animation: personal-rail-cap-in 180ms var(--personal-ease-out);
+}
+
+@keyframes personal-rail-cap-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The paired group face (GroupFacePair): two 32 px faces, the front one at the
+ * bottom right. Its own silhouette carries a background-coloured outline, so
+ * it cuts cleanly out of the face behind it (the design's two-avatar cluster).
+ * The colour follows the row: --personal-bg is remapped on a selected row. */
+.group-face-front {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+}
+
+.group-face-front > * {
+  filter: drop-shadow(2px 0 0 var(--personal-bg)) drop-shadow(-2px 0 0 var(--personal-bg))
+    drop-shadow(0 2px 0 var(--personal-bg)) drop-shadow(0 -2px 0 var(--personal-bg));
 }
