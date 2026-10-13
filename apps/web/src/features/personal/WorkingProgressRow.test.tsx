@@ -1,31 +1,39 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { PROGRESS_FOLD_MS, WorkingProgressRow } from "./WorkingProgressRow";
+import {
+  PROGRESS_FOLD_MS,
+  PROGRESS_STEP_THROTTLE_MS,
+  WorkingProgressRow,
+} from "./WorkingProgressRow";
 
 const FACE = { shape: "blob" as const, color: "#E8711A" };
 
 let renderer: ReactTestRenderer | undefined;
 
-function render(input: {
+function element(input: {
   working: boolean;
   step?: string | null;
   thinking?: boolean;
   startedAtMs?: number | null;
-}): ReactTestRenderer {
+}) {
+  return (
+    <WorkingProgressRow
+      botName="Forge"
+      face={FACE}
+      motion={input.working ? "working" : "idle"}
+      comet
+      step={input.step ?? null}
+      thinking={input.thinking ?? false}
+      startedAtMs={input.startedAtMs ?? null}
+      working={input.working}
+    />
+  );
+}
+
+function render(input: Parameters<typeof element>[0]): ReactTestRenderer {
   act(() => {
-    renderer = create(
-      <WorkingProgressRow
-        botName="Forge"
-        face={FACE}
-        motion={input.working ? "working" : "idle"}
-        comet
-        step={input.step ?? null}
-        thinking={input.thinking ?? false}
-        startedAtMs={input.startedAtMs ?? null}
-        working={input.working}
-      />,
-    );
+    renderer = create(element(input));
   });
   return renderer!;
 }
@@ -86,23 +94,33 @@ describe("WorkingProgressRow", () => {
     );
   });
 
+  it("moves the step on at most once per 1.5 s, and the newest step wins", async () => {
+    vi.useFakeTimers();
+    const tree = render({ working: true, step: "Reading files", startedAtMs: null });
+    await act(async () => {
+      renderer!.update(element({ working: true, step: "Running tests", startedAtMs: null }));
+    });
+    // Too soon: the line still holds the step it showed.
+    expect(JSON.stringify(tree.toJSON())).toContain("Reading files");
+    await act(async () => {
+      renderer!.update(element({ working: true, step: "Built the bundle", startedAtMs: null }));
+    });
+    expect(JSON.stringify(tree.toJSON())).toContain("Reading files");
+    await act(async () => {
+      vi.advanceTimersByTime(PROGRESS_STEP_THROTTLE_MS);
+    });
+    // The step in between was skipped: the newest one is what shows.
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain("Built the bundle");
+    expect(json).not.toContain("Reading files");
+  });
+
   it("says Thinking when the turn has nothing out yet, and folds when it ends", async () => {
     vi.useFakeTimers();
     const tree = render({ working: true, thinking: true });
     expect(JSON.stringify(tree.toJSON())).toContain("Thinking");
     await act(async () => {
-      renderer!.update(
-        <WorkingProgressRow
-          botName="Forge"
-          face={FACE}
-          motion="idle"
-          comet
-          step={null}
-          thinking={false}
-          startedAtMs={null}
-          working={false}
-        />,
-      );
+      renderer!.update(element({ working: false }));
     });
     expect(tree.root.findByProps({ "data-testid": "working-progress" }).props["data-open"]).toBe(
       "false",

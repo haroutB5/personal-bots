@@ -1173,6 +1173,20 @@
   opacity: 0;
   border-width: 0;
 }
+/* A new step rises in from 6 px below (SPEC 2.9, D3). */
+.personal-progress-step {
+  animation: personal-progress-step 200ms var(--personal-ease-out);
+}
+@keyframes personal-progress-step {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
 
 /* The docked question: radius 20, raised, 12 px padding (SPEC 2.9). It rises
  * into place (motion section 3). */
