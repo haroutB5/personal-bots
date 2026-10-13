@@ -1771,7 +1771,9 @@ it.effect("a question in a plain chat notifies once, and the tap opens the chat"
     expect(JSON.parse(rows[0]!.payload)).toEqual({
       title: "Assistant · Weekend in Lisbon",
       body: "Needs your answer: Which table should I book for Saturday?",
-      url: `/bots/${BOT}/${CHAT}`,
+      // The tap opens the chat at the question's own card: the route reads
+      // `?request=<provider id>` and lands on it (D13).
+      url: `/bots/${BOT}/${CHAT}?request=req-1`,
       tag: `chat-${CHAT}`,
       avatarShape: "blob",
       avatarColor: "#1A73E8",
@@ -1789,10 +1791,73 @@ it.effect("a question in a plain chat notifies once, and the tap opens the chat"
     yield* push.drain;
     const second = JSON.parse((yield* outbox)[1]!.payload);
     expect(second.body).toBe("Needs approval: rm -rf build");
-    expect(second.url).toBe(`/bots/${BOT}/${CHAT}`);
+    expect(second.url).toBe(`/bots/${BOT}/${CHAT}?request=req-2`);
     expect(second.tag).toBe(`chat-${CHAT}`);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect("the in-app notice for a question carries the same deep link as the push", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    yield* chatRow(CHAT, "Weekend in Lisbon");
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    // The app is open on another screen: the notice comes over the socket,
+    // not as a push, which is the path the tap is taken on.
+    const received = yield* listenInApp("phone");
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+
+    yield* push.ingestDomainEvent(questionAsked(CHAT, "req-app", "Which table?"));
+    yield* TestClock.adjust("1 millis");
+
+    expect(received.length).toBe(1);
+    expect(received[0]!.url).toBe(`/bots/${BOT}/${CHAT}?request=req-app`);
+    // The quiet path stays the bare chat: it decides "the owner is looking at
+    // this screen", and `?request=` names a card inside it.
+    expect(received[0]!.quietPath).toBe(`/bots/${BOT}/${CHAT}`);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a request the provider gave no id for opens the chat, not a card that is not there",
+  () => {
+    const harness: Harness = { sent: [], status: 201 };
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+      yield* seedBot;
+      yield* linkThread(CHAT);
+      yield* chatRow(CHAT, "Weekend in Lisbon");
+      const push = yield* PersonalPushService.PersonalPushService;
+      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+      const activity = runtimeEventToActivities({
+        provider: "claudeAgent",
+        threadId: CHAT,
+        eventId: "evt-no-id",
+        createdAt: "2026-09-18T09:00:00.000Z",
+        turnId: "turn-1",
+        type: "user-input.requested",
+        payload: { questions: [{ id: "q1", header: "Dinner", question: "Which table?" }] },
+      } as unknown as ProviderRuntimeEvent)[0];
+      if (activity === undefined) throw new Error("the runtime event produced no activity");
+      yield* push.ingestDomainEvent({
+        type: "thread.activity-appended",
+        payload: { threadId: CHAT, activity },
+      } as unknown as OrchestrationEvent);
+      yield* push.drain;
+
+      const rows = yield* outbox;
+      expect(rows.length).toBe(1);
+      const payload = JSON.parse(rows[0]!.payload);
+      expect(payload.url).toBe(`/bots/${BOT}/${CHAT}`);
+      // One notification per request either way: the activity id is the key.
+      expect(rows[0]!.eventId).toBe("chat-needs:evt-no-id");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
 
 it.effect("a task chat, a routine chat and a group thread never notify the chat", () => {
   const harness: Harness = { sent: [], status: 201 };
@@ -1944,7 +2009,8 @@ it.effect("a sign-in and a secret in a plain chat notify the chat, not the task 
     expect(first).toEqual({
       title: "Assistant · Weekend in Lisbon",
       body: "Needs a sign-in: skyfare.example",
-      url: `/bots/${BOT}/${CHAT}`,
+      // The request row's own id: the transcript keys its sign-in card by it.
+      url: `/bots/${BOT}/${CHAT}?request=login-1`,
       tag: `chat-${CHAT}`,
       avatarShape: "blob",
       avatarColor: "#1A73E8",
@@ -1975,7 +2041,7 @@ it.effect("a sign-in and a secret in a plain chat notify the chat, not the task 
 
     const second = JSON.parse((yield* outbox)[1]!.payload);
     expect(second.body).toBe("Needs a secret: Skyfare API key");
-    expect(second.url).toBe(`/bots/${BOT}/${CHAT}`);
+    expect(second.url).toBe(`/bots/${BOT}/${CHAT}?request=secret-1`);
 
     // A delegation task's own chat keeps the task notification it always had.
     const taskChat = ThreadId.make("thread-task-secret");

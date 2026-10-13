@@ -89,4 +89,22 @@ describe("in-app banner routing", () => {
     expect(renderer!.toJSON()).toBeNull();
     expect(state.acks).toHaveLength(1);
   });
+
+  it("opens the chat at the request the notice is about", async () => {
+    // A chat parked on a request: the push and the notice carry `?request=`,
+    // so the tap lands on that card and not just on the chat.
+    state.feed = [note("chat-needs:req-1", "/bots/bot-1/t1?request=req-1")];
+    await renderOn("/bots");
+    await act(async () => renderer!.root.findAllByType("button")[0]!.props.onClick());
+    expect(state.pushed).toEqual(["/bots/bot-1/t1?request=req-1"]);
+  });
+
+  it("stays quiet for the chat it is about when that chat is on screen", async () => {
+    // `?request=` names a card inside the chat, not another screen: the owner
+    // is already there, so the notice is acknowledged and not shown.
+    state.feed = [note("chat-needs:req-1", "/bots/bot-1/t1?request=req-1")];
+    await renderOn("/bots/bot-1/t1");
+    expect(renderer!.toJSON()).toBeNull();
+    expect(state.acks).toHaveLength(1);
+  });
 });
