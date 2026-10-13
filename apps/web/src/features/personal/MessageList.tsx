@@ -44,6 +44,7 @@ import { ChoiceButtons, type ChoicesState } from "./ChoiceButtons";
 import { mayHaveChoices, splitChoices } from "./choices";
 import { describeAnswer, type QuestionCardItem, type UserInputAnswers } from "./questionCards";
 import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
+import { REQUEST_WASH_ATTRIBUTE, REQUEST_WASH_MS } from "./requestLanding";
 import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
 import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
@@ -888,6 +889,7 @@ export function MessageList({
   choicesBusy = false,
   dockQuestions = false,
   answeredHere = NO_ANSWERED_HERE,
+  landingItemId = null,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -985,6 +987,13 @@ export function MessageList({
   onChoose?: ((text: string) => Promise<boolean>) | undefined;
   /** The chat cannot take a message now (the bot is busy, offline, ...): open choices wait. */
   choicesBusy?: boolean;
+  /**
+   * The transcript row the chat opened at (D13): a request card from the
+   * `?request=` deep link or the chat's own open request. The list pages the
+   * row into its window if it has to, lands on it without an animated scroll
+   * and washes it.
+   */
+  landingItemId?: string | null;
   /**
    * The 1:1 chat passes true: an open question is drawn in the dock above the
    * composer, not in the thread (SPEC 2.9). Groups keep the card inline.
@@ -1477,6 +1486,36 @@ export function MessageList({
     jumpToQuoted(messageId);
     // `items` is the trigger: a thread that loads in pages may bring the message later.
   }, [threadId, items]);
+
+  // D13: the chat opened at a request. The card is paged into the window if it
+  // has to be, then landed on at once - no long animated scroll - and washed.
+  // A question docked above the composer has no node here: it is already on
+  // screen, and the dock does its own wash.
+  const landingKey = landingItemId === null ? null : `${threadId}:${landingItemId}`;
+  const landedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (landingKey === null || landingItemId === null) {
+      landedRef.current = null;
+      return;
+    }
+    if (landedRef.current === landingKey) return;
+    const index = items.findIndex((item) => item.id === landingItemId);
+    if (index >= 0 && (index < range.start || index >= range.end)) {
+      stickRef.current = false;
+      setPage({ threadId, firstId: items[Math.max(0, index - TRANSCRIPT_WINDOW_STEP)]!.id });
+      return;
+    }
+    landedRef.current = landingKey;
+    // The reader is at the request, not at the newest message: no following.
+    stickRef.current = false;
+    const node = contentRef.current?.querySelector<HTMLElement>(
+      `[data-transcript-row="${landingItemId}"]`,
+    );
+    if (node === null || node === undefined) return;
+    node.scrollIntoView({ block: "center", behavior: "instant" });
+    node.setAttribute(REQUEST_WASH_ATTRIBUTE, "");
+    window.setTimeout(() => node.removeAttribute(REQUEST_WASH_ATTRIBUTE), REQUEST_WASH_MS);
+  }, [landingKey, landingItemId, items, range.start, range.end, threadId]);
 
   const jumpToLatest = () => {
     const scroller = scrollerRef.current;
@@ -2025,7 +2064,13 @@ export function MessageList({
           ))}
 
           {(readOnly ? NO_PINNED_APPROVALS : approvals).map((approval) => (
-            <div key={approval.requestId} className="mt-4">
+            // A pinned approval is a landing target too (D13), under the id a
+            // `?request=` carries.
+            <div
+              key={approval.requestId}
+              data-transcript-row={`approval:${approval.requestId}`}
+              className="mt-4"
+            >
               <ApprovalCard
                 approval={approval}
                 botName={botName}

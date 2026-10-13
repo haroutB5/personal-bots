@@ -1240,6 +1240,35 @@
   font-weight: 600;
 }
 
+/* The request a deep link landed on (SPEC 2.9, M2): a --personal-review-bg
+ * wash, held 200 ms and faded over 1200 (14% of 1.4 s is the 200 ms hold). */
+[data-request-wash] {
+  border-radius: var(--personal-radius-card-lg);
+  animation: personal-request-wash 1.4s ease-out;
+}
+@keyframes personal-request-wash {
+  0%,
+  14% {
+    background-color: var(--personal-review-bg);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* A deep link pushes the chat in (SPEC 3): 340 ms, ease-push. */
+.personal-chat-push {
+  animation: personal-chat-push 340ms var(--personal-ease-push);
+}
+@keyframes personal-chat-push {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
 /* One dot per chip, the strongest state wins (chatChipRows.ts). */
 .personal-chip-dot {
   flex-shrink: 0;
@@ -1318,6 +1347,10 @@
   }
   .personal-progress[data-open="false"] {
     height: 56px;
+  }
+  /* The landing wash: the same shape, a short fade (M3). */
+  [data-request-wash] {
+    animation: personal-request-wash 200ms linear !important;
   }
 }
 

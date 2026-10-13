@@ -169,6 +169,7 @@ import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
 import { DockedQuestion } from "./DockedQuestion";
 import { clearQuestionDrafts, useQuestionDock } from "./questionDock";
+import { findRequestItemId, openRequestLandingItemId } from "./requestLanding";
 import { WorkingProgressRow } from "./WorkingProgressRow";
 import { deriveLatestProgressNote } from "./latestProgress";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
@@ -222,9 +223,12 @@ function useMinuteNow(): Date {
 export function ConversationScreen({
   botId,
   threadId: threadIdParam,
+  requestId = null,
 }: {
   botId: string;
   threadId: string;
+  /** `?request=<id>`: the card to open at (D13). Without it, a chat opened fresh lands on its own open request. */
+  requestId?: string | null;
 }): JSX.Element {
   const navigate = useNavigate();
   const backTarget = usePersonalBackTarget();
@@ -580,6 +584,17 @@ export function ConversationScreen({
     }
     return null;
   }, [items]);
+  // D13: what the chat lands on. An explicit `?request=<id>` (the push, a deep
+  // link) names the card outright, an approval included; a chat opened fresh
+  // lands on its own newest open request card.
+  const landingItemId = useMemo(() => {
+    if (requestId === null) return openRequestLandingItemId(items);
+    const fromItems = findRequestItemId(items, requestId);
+    if (fromItems !== null) return fromItems;
+    return approvals.some((approval) => String(approval.requestId) === requestId)
+      ? `approval:${requestId}`
+      : null;
+  }, [approvals, items, requestId]);
   const latestMessageStatus = useMemo(
     () =>
       deriveLatestMessageReadStatus({ items: baseItems, activities, busy: turnBusy, latestTurn }),
@@ -1225,7 +1240,11 @@ export function ConversationScreen({
       ref={shellRef}
       // Pinned: nothing inside may overflow into the page column, which
       // would let the whole chat scroll away (see MessageList).
-      className="relative flex h-full min-h-0 flex-col overflow-clip"
+      className={cn(
+        "relative flex h-full min-h-0 flex-col overflow-clip",
+        // A deep link pushes the chat in (SPEC 3, M2); Back and a chip switch keep their own motion.
+        requestId !== null && "personal-chat-push",
+      )}
       style={{
         paddingBottom: keyboardInset > 0 ? keyboardInset : "max(env(safe-area-inset-bottom), 8px)",
       }}
@@ -1502,6 +1521,7 @@ export function ConversationScreen({
             choicesBusy={turnBusy || sendBlockedReason !== null}
             dockQuestions
             answeredHere={answeredHere}
+            landingItemId={landingItemId}
           />
           <ConversationDesktopLine
             environmentId={environmentId}
@@ -1560,6 +1580,7 @@ export function ConversationScreen({
                     onChoose={dock.chooseOption}
                     onSubmit={dock.submit}
                     onDismiss={() => void onDismissQuestion(dockedCard.requestId)}
+                    highlight={requestId !== null && dockedCard.requestId === requestId}
                   />
                 ) : null}
               </div>

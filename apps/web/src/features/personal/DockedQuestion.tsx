@@ -7,6 +7,7 @@ import type { PendingUserInputProgress } from "~/pendingUserInput";
 import { cn } from "~/lib/utils";
 
 import type { QuestionCardItem } from "./questionCards";
+import { REQUEST_WASH_ATTRIBUTE } from "./requestLanding";
 
 /**
  * The bot's open question, docked above the composer (SPEC 2.9): an amber dot
@@ -26,6 +27,7 @@ export function DockedQuestion({
   onChoose,
   onSubmit,
   onDismiss,
+  highlight = false,
 }: {
   card: Extract<QuestionCardItem, { readonly kind: "pending" }>;
   botName: string;
@@ -36,6 +38,8 @@ export function DockedQuestion({
   onChoose: (optionValue: string) => void;
   onSubmit: () => void;
   onDismiss: () => void;
+  /** The chat opened at this request (`?request=`): the dock takes the wash (D13). */
+  highlight?: boolean;
 }): JSX.Element | null {
   const question = progress.activeQuestion;
   const sentRef = useRef(false);
@@ -72,6 +76,7 @@ export function DockedQuestion({
       aria-label={`${botName}'s question, ${current} of ${total}`}
       data-testid="docked-question"
       className="personal-dock"
+      {...(highlight ? { [REQUEST_WASH_ATTRIBUTE]: "" } : {})}
     >
       <div className="flex h-5 items-center gap-2 px-1 text-[13px] leading-4 font-semibold text-[var(--personal-state-needs)]">
         <span
