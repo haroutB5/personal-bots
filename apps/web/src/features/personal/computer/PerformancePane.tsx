@@ -56,7 +56,14 @@ function Marked({ text }: { readonly text: string }): JSX.Element {
  * placeholder holds the height the card had, so nothing shifts when it comes
  * back; before the first measure the card renders normally, once.
  */
-function Gate({ children }: { readonly children: ReactNode }): JSX.Element {
+function Gate({
+  id,
+  children,
+}: {
+  /** The scroll target for the KPI taps: it must exist while gated too. */
+  readonly id?: string;
+  readonly children: ReactNode;
+}): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [near, setNear] = useState(true);
   const [height, setHeight] = useState<number | null>(null);
@@ -80,7 +87,11 @@ function Gate({ children }: { readonly children: ReactNode }): JSX.Element {
     return () => observer.disconnect();
   }, []);
   return (
-    <div ref={hostRef} style={near ? undefined : { height: height ?? undefined }}>
+    <div
+      {...(id === undefined ? {} : { id })}
+      ref={hostRef}
+      style={near ? undefined : { height: height ?? undefined }}
+    >
       {near ? children : null}
     </div>
   );
@@ -601,8 +612,8 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
       </Card>
 
       {/* 3. Memory */}
-      <Gate>
-        <Card id="perf-mem" label="Memory" dim={stale}>
+      <Gate id="perf-mem">
+        <Card label="Memory" dim={stale}>
           <CardHead
             title="Memory"
             meta={shown?.memTotalGB == null ? "–" : `${shown.memTotalGB.toFixed(1)} GB usable`}
@@ -663,7 +674,7 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
       </Gate>
 
       {/* 4. Temperatures and fans */}
-      <Gate>
+      <Gate id="perf-temps">
         <TempsCard
           samples={samples}
           stale={stale}
@@ -679,8 +690,8 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
       </Gate>
 
       {/* 5. hbots */}
-      <Gate>
-        <Card id="perf-hbots" label="hbots on this PC" dim={stale}>
+      <Gate id="perf-hbots">
+        <Card label="hbots on this PC" dim={stale}>
           <CardHead
             title={
               <span className="flex items-center gap-1.5">
@@ -752,12 +763,12 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
       </Gate>
 
       {/* 6. Heaviest right now */}
-      <Gate>
+      <Gate id="perf-apps">
         <HeaviestCard groups={groups} dim={stale} />
       </Gate>
 
       {/* 7. Battery */}
-      <Gate>
+      <Gate id="perf-power">
         <BatteryCard
           feed={feed}
           stale={stale}
@@ -768,8 +779,8 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
       </Gate>
 
       {/* 8. Tiles */}
-      <Gate>
-        <div id="perf-more" className={cn("grid grid-cols-2 gap-3", stale && "opacity-45")}>
+      <Gate id="perf-more">
+        <div className={cn("grid grid-cols-2 gap-3", stale && "opacity-45")}>
           <Tile
             label="Graphics"
             value={fmt(shown?.gpuPct ?? null)}
@@ -805,9 +816,9 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
       </Gate>
 
       {/* 9. Storage */}
-      <Gate>
+      <Gate id="perf-storage">
         <div className="mt-3">
-          <Card id="perf-storage" label="Storage" dim={stale}>
+          <Card label="Storage" dim={stale}>
             <CardHead title="Storage" meta="Drive C:" />
             <Value
               main={fmt(slow?.diskFreeGB ?? null)}
@@ -1030,7 +1041,7 @@ function TempsCard({
 
   if (sensorsDown) {
     return (
-      <Card id="perf-temps" label="Temperatures" dim={stale}>
+      <Card label="Temperatures" dim={stale}>
         <CardHead title="Temperatures and fans" />
         <div className="mt-2 flex items-start gap-3 rounded-[10px] bg-[var(--personal-fill-muted)] p-3">
           <span
@@ -1067,7 +1078,7 @@ function TempsCard({
   const hottestIndex = allCores === null ? -1 : allCores.indexOf(hottest!);
 
   return (
-    <Card id="perf-temps" label="Temperatures and fans" dim={stale}>
+    <Card label="Temperatures and fans" dim={stale}>
       <CardHead
         title="Temperatures and fans"
         meta={scrubIndex === null ? "CPU package" : "Lift to go back to now"}
@@ -1256,7 +1267,7 @@ function HeaviestCard({
   const max =
     top === undefined ? 1 : by === "cpu" ? Math.max(1, top.cpuPct) : Math.max(0.1, top.memGB);
   return (
-    <Card id="perf-apps" label="Heaviest right now" dim={dim}>
+    <Card label="Heaviest right now" dim={dim}>
       <div className="flex min-h-6 items-center justify-between gap-2">
         <h2 className="text-[15px] leading-5 font-bold">Heaviest right now</h2>
         <div role="group" aria-label="Sort by" className="flex gap-1">
@@ -1385,7 +1396,7 @@ function BatteryCard({
   const charging = slow?.batteryState === "charging" || slow?.batteryState === "full";
   const newest = samples.at(-1) ?? null;
   return (
-    <Card id="perf-power" label="Battery" dim={stale}>
+    <Card label="Battery" dim={stale}>
       <CardHead
         title="Battery"
         meta={

@@ -37,6 +37,7 @@ import {
   threadPct,
   type HelperChild,
   type HelperHello,
+  type HelperSlow,
   type HelperTick,
 } from "./counterSample.ts";
 import {
@@ -172,6 +173,8 @@ export class PerformanceSampler {
   private latestGroupTick: HelperTick | null = null;
   /** The snapshot that has been grouped already; never grouped twice. */
   private lastGroupedTick: HelperTick | null = null;
+  /** The newest slow block (battery, C: drive); sticky between its ticks. */
+  private latestSlow: HelperSlow | null = null;
   private latestGroups: GroupedProcesses | null = null;
   private lastGroupsEvent: PerformanceGroups | null = null;
   private lastSample: PerformanceSample | null = null;
@@ -302,6 +305,8 @@ export class PerformanceSampler {
       if (tick !== null) {
         this.latestTick = tick;
         if (tick.parents !== null) this.latestGroupTick = tick;
+        // The slow block rides every tenth tick; keep it until the next one.
+        if (tick.slow !== null) this.latestSlow = tick.slow;
       }
     });
     helper.onExit(() => {
@@ -392,7 +397,12 @@ export class PerformanceSampler {
 
     const sample: PerformanceSample = {
       t: now,
-      cpuPct: fresh?.cpuUtility ?? osCpu,
+      // % Processor Utility can read past 100 under turbo; the machine is
+      // still just 100% busy.
+      cpuPct:
+        fresh?.cpuUtility === null || fresh?.cpuUtility === undefined
+          ? osCpu
+          : Math.min(100, Math.round(fresh.cpuUtility * 10) / 10),
       clockGHz:
         fresh === null ? null : clockGHz(fresh.cpuPerformance, this.hello?.maxClockMHz ?? null),
       threadPct: fresh === null ? null : threadPct(fresh.threads, logical),
@@ -402,7 +412,7 @@ export class PerformanceSampler {
           : Math.round((memoryTotalGB - availableMB / 1024) * 10) / 10,
       memFreeGB: availableMB === null ? null : Math.round((availableMB / 1024) * 10) / 10,
       memTotalGB: memoryTotalGB,
-      hbotsPct: hbots === null ? null : hbots.total.cpuPct,
+      hbotsPct: hbots === null ? null : Math.min(100, hbots.total.cpuPct),
       hbotsGB: hbots === null ? null : hbots.total.memGB,
       gpuPct: gpu === null ? null : Math.round(gpu.pct * 10) / 10,
       gpuEngine: gpu === null ? null : gpu.engine,
@@ -488,19 +498,19 @@ export class PerformanceSampler {
    * (every 20 s), read here from the newest tick.
    */
   private get batteryPct(): number | null {
-    return this.latestTick?.slow?.batteryPct ?? null;
+    return this.latestSlow?.batteryPct ?? null;
   }
   private get batteryState(): PerformanceSlow["batteryState"] {
-    return this.latestTick?.slow?.batteryState ?? "unknown";
+    return this.latestSlow?.batteryState ?? "unknown";
   }
   private get batteryMinutes(): number | null {
-    return this.latestTick?.slow?.batteryMinutesLeft ?? null;
+    return this.latestSlow?.batteryMinutesLeft ?? null;
   }
   private get diskTotalGB(): number | null {
-    return this.latestTick?.slow?.diskTotalGB ?? null;
+    return this.latestSlow?.diskTotalGB ?? null;
   }
   private get diskFreeGB(): number | null {
-    return this.latestTick?.slow?.diskFreeGB ?? null;
+    return this.latestSlow?.diskFreeGB ?? null;
   }
 
   private sampleDiskUsage(now: number): void {

@@ -202,14 +202,27 @@ describe("PerformanceSampler lifecycle", () => {
       const helper = fakeHelper();
       const { sampler, advance } = make({ startHelper: () => helper.handle }, helper);
       sampler.subscribe(() => undefined);
-      helper.push(tickLine(1_000_000, false));
+      // One group tick so the hbots share has a value to hold.
+      helper.push(tickLine(1_000_000, true));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+      helper.push(tickLine(1_002_000, true));
       await vi.advanceTimersByTimeAsync(2_000);
       advance(2_000);
       expect(sampler.lastSampleForTest()?.cpuPct).toBe(12.5);
-      // The helper goes quiet for longer than a tick: the counters go null.
+      const held = sampler.lastSampleForTest()?.hbotsPct ?? null;
+
+      // The helper goes quiet for longer than a tick: the counter fields go
+      // null (cpu falls back to the os reader, never last tick's number), and
+      // the hbots share holds its last grouped value until the next groups.
       advance(20_000);
       await vi.advanceTimersByTimeAsync(2_000);
-      expect(sampler.lastSampleForTest()?.cpuPct).toBeNull();
+      const sample = sampler.lastSampleForTest();
+      expect(sample?.clockGHz).toBeNull();
+      expect(sample?.threadPct).toBeNull();
+      expect(sample?.gpuPct).toBeNull();
+      expect(sample?.cpuPct).not.toBe(12.5);
+      expect(sample?.hbotsPct).toBe(held);
     } finally {
       vi.useRealTimers();
     }
