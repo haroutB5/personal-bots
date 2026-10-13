@@ -1506,13 +1506,23 @@ export function MessageList({
       return;
     }
     landedRef.current = landingKey;
-    // The reader is at the request, not at the newest message: no following.
-    stickRef.current = false;
     const node = contentRef.current?.querySelector<HTMLElement>(
       `[data-transcript-row="${landingItemId}"]`,
     );
     if (node === null || node === undefined) return;
-    node.scrollIntoView({ block: "center", behavior: "instant" });
+    // A card already on screen - the usual case, where the request is the
+    // newest thing said - leaves the chat where it opened: latest messages
+    // shown, as ever. Only a card the bottom would hide moves the reader, and
+    // then the reader stays there (no following) until they ask for latest.
+    const scroller = scrollerRef.current;
+    if (scroller !== null && typeof node.getBoundingClientRect === "function") {
+      const card = node.getBoundingClientRect();
+      const view = scroller.getBoundingClientRect();
+      if (card.top < view.top || card.bottom > view.bottom) {
+        stickRef.current = false;
+        node.scrollIntoView({ block: "center", behavior: "instant" });
+      }
+    }
     node.setAttribute(REQUEST_WASH_ATTRIBUTE, "");
     window.setTimeout(() => node.removeAttribute(REQUEST_WASH_ATTRIBUTE), REQUEST_WASH_MS);
   }, [landingKey, landingItemId, items, range.start, range.end, threadId]);
