@@ -1,5 +1,5 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   BotAvatarColor,
@@ -19,7 +19,9 @@ import { BotAvatar } from "./BotAvatar";
 import { selectedChatProps } from "./BotRow";
 import { GroupFacePair } from "./GroupFacePair";
 import type { RailCaption } from "./homeRows";
+import { perfOptimizationOn } from "./perfFlags";
 import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
+import { useStagedCount } from "./useStagedCount";
 
 /**
  * The rail above the filters: the pinned chats as small cards, a divider, then
@@ -97,23 +99,119 @@ export interface RailGroupItem {
   readonly caption: RailCaption;
 }
 
-export function HomeRail({
+/** Rail items drawn in the first commit, then added per frame (useStagedCount): five fit the screen. */
+const RAIL_FIRST_ITEMS = 6;
+const RAIL_STEP_ITEMS = 4;
+
+interface HomeRailProps {
+  readonly chats: ReadonlyArray<RailChatItem>;
+  readonly groups: ReadonlyArray<RailGroupItem>;
+  readonly bots: ReadonlyArray<RailBotItem>;
+  /** Mount the items in steps (a first launch with nothing saved to show). */
+  readonly stage?: boolean;
+  /** Unpin a chat card. The only home-level way back out of the pinned set. */
+  readonly onUnpinChat: (chat: RailChatItem) => void;
+  readonly onUnpinGroup: (group: RailGroupItem) => void;
+}
+
+function sameCaption(a: RailCaption, b: RailCaption): boolean {
+  return a === b || (a.label === b.label && a.tone === b.tone);
+}
+
+function sameChatItem(a: RailChatItem, b: RailChatItem): boolean {
+  return (
+    a === b ||
+    (a.threadId === b.threadId &&
+      a.selected === b.selected &&
+      a.botId === b.botId &&
+      a.botName === b.botName &&
+      a.title === b.title &&
+      a.avatarShape === b.avatarShape &&
+      a.avatarColor === b.avatarColor &&
+      sameCaption(a.caption, b.caption) &&
+      a.motion === b.motion &&
+      a.comet === b.comet &&
+      a.ring === b.ring &&
+      a.unread === b.unread)
+  );
+}
+
+function sameGroupItem(a: RailGroupItem, b: RailGroupItem): boolean {
+  if (a === b) return true;
+  if (
+    a.groupId !== b.groupId ||
+    a.selected !== b.selected ||
+    a.name !== b.name ||
+    !sameCaption(a.caption, b.caption) ||
+    a.members.length !== b.members.length
+  ) {
+    return false;
+  }
+  return a.members.every((member, index) => member === b.members[index]);
+}
+
+function sameBotItem(a: RailBotItem, b: RailBotItem): boolean {
+  return (
+    a === b ||
+    (a.botId === b.botId &&
+      a.name === b.name &&
+      a.avatarShape === b.avatarShape &&
+      a.avatarColor === b.avatarColor &&
+      sameCaption(a.caption, b.caption) &&
+      a.motion === b.motion &&
+      a.comet === b.comet)
+  );
+}
+
+function sameItems<T>(
+  a: ReadonlyArray<T>,
+  b: ReadonlyArray<T>,
+  same: (left: T, right: T) => boolean,
+): boolean {
+  return a === b || (a.length === b.length && a.every((item, index) => same(item, b[index]!)));
+}
+
+/** Kill switch "home-rail-memo" (perfFlags.ts), read once per load. */
+const RAIL_MEMO_ON = perfOptimizationOn("home-rail-memo");
+
+function HomeRailView({
   chats,
   groups,
   bots,
   onUnpinChat,
   onUnpinGroup,
+  stage = false,
 }: {
   readonly chats: ReadonlyArray<RailChatItem>;
   readonly groups: ReadonlyArray<RailGroupItem>;
   readonly bots: ReadonlyArray<RailBotItem>;
+  /** Mount the items in steps (a first launch with nothing saved to show). */
+  readonly stage?: boolean;
   /** Unpin a chat card. The only home-level way back out of the pinned set. */
   readonly onUnpinChat: (chat: RailChatItem) => void;
   readonly onUnpinGroup: (group: RailGroupItem) => void;
 }): JSX.Element {
   const scroller = useRef<HTMLUListElement | null>(null);
   const lastScrollLeft = useRef(0);
+  // Kill switch "home-rail-edge-dom" (perfFlags.ts), read once per load. On, the
+  // edge is written straight to the scroller's attribute: crossing an edge while
+  // the rail scrolls costs one attribute write and a repaint of the mask, not a
+  // render of every card and tile (their menus and links) in the middle of a drag.
+  const [edgeInDom] = useState(() => perfOptimizationOn("home-rail-edge-dom"));
   const [edge, setEdge] = useState<RailEdge>("start");
+  const applyEdge = useCallback(
+    (next: RailEdge) => {
+      if (!edgeInDom) {
+        setEdge((current) => (current === next ? current : next));
+        return;
+      }
+      const element = scroller.current;
+      if (element !== null && element.getAttribute("data-edge") !== next) {
+        element.setAttribute("data-edge", next);
+      }
+    },
+    [edgeInDom],
+  );
   const measure = useCallback(() => {
     const element = scroller.current;
     if (element === null) return;
@@ -125,8 +223,8 @@ export function HomeRail({
         : element.scrollLeft >= max - EDGE_SLACK_PX
           ? "end"
           : "middle";
-    setEdge((current) => (current === next ? current : next));
-  }, []);
+    applyEdge(next);
+  }, [applyEdge]);
   // Re-measure when the items change (a new pin, a bot leaving), not on every
   // render: reading scrollWidth during a render is a layout read in the
   // opening tap's frame.
@@ -135,18 +233,32 @@ export function HomeRail({
     // At the left edge the answer is already known. In particular, mounting
     // and waking the kept home need no scrollWidth read after React's writes.
     if (lastScrollLeft.current <= EDGE_SLACK_PX) {
-      setEdge((current) => (current === "start" ? current : "start"));
+      applyEdge("start");
     } else {
       measure();
     }
-  }, [measure, itemCount]);
+  }, [applyEdge, measure, itemCount]);
 
   const empty = itemCount === 0;
+  // The first commit draws only what the screen shows; the rest follows frame by
+  // frame. Chats first, then groups, then bots, as the rail reads.
+  const drawnCount = useStagedCount(itemCount, {
+    enabled: stage,
+    first: RAIL_FIRST_ITEMS,
+    step: RAIL_STEP_ITEMS,
+  });
+  const drawnChats = drawnCount >= itemCount ? chats : chats.slice(0, drawnCount);
+  const drawnGroups =
+    drawnCount >= itemCount ? groups : groups.slice(0, Math.max(0, drawnCount - chats.length));
+  const drawnBots =
+    drawnCount >= itemCount
+      ? bots
+      : bots.slice(0, Math.max(0, drawnCount - chats.length - groups.length));
   return (
     <section aria-label="Pinned chats, then bots" className="relative">
       <ul
         ref={scroller}
-        data-edge={edge}
+        data-edge={edgeInDom ? "start" : edge}
         onScroll={measure}
         data-testid="home-rail"
         className={cn(
@@ -156,19 +268,19 @@ export function HomeRail({
           "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         )}
       >
-        {chats.map((chat) => (
-          <RailChatCard key={chat.threadId} chat={chat} onUnpin={() => onUnpinChat(chat)} />
+        {drawnChats.map((chat) => (
+          <RailChatCard key={chat.threadId} chat={chat} onUnpinChat={onUnpinChat} />
         ))}
-        {groups.map((group) => (
-          <RailGroupCard key={group.groupId} group={group} onUnpin={() => onUnpinGroup(group)} />
+        {drawnGroups.map((group) => (
+          <RailGroupCard key={group.groupId} group={group} onUnpinGroup={onUnpinGroup} />
         ))}
-        {chats.length + groups.length > 0 && bots.length > 0 ? (
+        {chats.length + groups.length > 0 && drawnBots.length > 0 ? (
           <li
             aria-hidden="true"
             className="mx-1 mt-[18px] h-14 w-px shrink-0 bg-[var(--personal-border)]"
           />
         ) : null}
-        {bots.map((bot) => (
+        {drawnBots.map((bot) => (
           <RailBotTile key={bot.botId} bot={bot} />
         ))}
         {empty ? <li aria-hidden="true" className="h-14 w-px" /> : null}
@@ -176,6 +288,26 @@ export function HomeRail({
     </section>
   );
 }
+
+/**
+ * The rail, drawn again only when something it shows changed. The home renders
+ * on every store change (a shell update while a bot streams, a task feed tick),
+ * and the rail's items are rebuilt each time with the same contents: without
+ * this every card and tile (links, menus, avatars) rendered again for nothing,
+ * also while a chat covers the list.
+ */
+export const HomeRail = RAIL_MEMO_ON
+  ? memo(HomeRailView, (previous: HomeRailProps, next: HomeRailProps) => {
+      return (
+        previous.stage === next.stage &&
+        previous.onUnpinChat === next.onUnpinChat &&
+        previous.onUnpinGroup === next.onUnpinGroup &&
+        sameItems(previous.chats, next.chats, sameChatItem) &&
+        sameItems(previous.groups, next.groups, sameGroupItem) &&
+        sameItems(previous.bots, next.bots, sameBotItem)
+      );
+    })
+  : HomeRailView;
 
 /** The caption under a rail name: the state in words, in the state's colour. */
 function RailCap({ caption }: { readonly caption: RailCaption }): JSX.Element {
@@ -280,12 +412,12 @@ function useCardPressMenu(): {
 }
 
 /** A pinned chat's card: it opens the chat, not the bot. */
-function RailChatCard({
+function RailChatCardView({
   chat,
-  onUnpin,
+  onUnpinChat,
 }: {
   readonly chat: RailChatItem;
-  readonly onUnpin: () => void;
+  readonly onUnpinChat: (chat: RailChatItem) => void;
 }): JSX.Element {
   const { menuOpen, setMenuOpen, anchor, pressProps, guard } = useCardPressMenu();
   const label = `Pinned chat ${chat.title} with ${chat.botName}${
@@ -308,6 +440,7 @@ function RailChatCard({
             size={48}
             label={chat.title}
             motion={chat.motion}
+            compactIdle
             comet={chat.comet}
             thought="pinned"
           />
@@ -324,19 +457,27 @@ function RailChatCard({
         setMenuOpen={setMenuOpen}
         guard={guard}
         anchor={anchor}
-        onUnpin={onUnpin}
+        onUnpin={() => onUnpinChat(chat)}
       />
     </li>
   );
 }
 
+const RailChatCard = RAIL_MEMO_ON
+  ? memo(
+      RailChatCardView,
+      (previous, next) =>
+        previous.onUnpinChat === next.onUnpinChat && sameChatItem(previous.chat, next.chat),
+    )
+  : RailChatCardView;
+
 /** A pinned group's card: a group is a chat, so it rides the rail the same way. */
-function RailGroupCard({
+function RailGroupCardView({
   group,
-  onUnpin,
+  onUnpinGroup,
 }: {
   readonly group: RailGroupItem;
-  readonly onUnpin: () => void;
+  readonly onUnpinGroup: (group: RailGroupItem) => void;
 }): JSX.Element {
   const { menuOpen, setMenuOpen, anchor, pressProps, guard } = useCardPressMenu();
   const label = `Pinned chat ${group.name}, group${
@@ -367,14 +508,22 @@ function RailGroupCard({
         setMenuOpen={setMenuOpen}
         guard={guard}
         anchor={anchor}
-        onUnpin={onUnpin}
+        onUnpin={() => onUnpinGroup(group)}
       />
     </li>
   );
 }
 
+const RailGroupCard = RAIL_MEMO_ON
+  ? memo(
+      RailGroupCardView,
+      (previous, next) =>
+        previous.onUnpinGroup === next.onUnpinGroup && sameGroupItem(previous.group, next.group),
+    )
+  : RailGroupCardView;
+
 /** A bot tile: it opens the bot's page, where its chats and Edit live. */
-function RailBotTile({ bot }: { readonly bot: RailBotItem }): JSX.Element {
+function RailBotTileView({ bot }: { readonly bot: RailBotItem }): JSX.Element {
   const label = `${bot.name}, ${bot.caption.label}, open bot`;
   return (
     <li className="w-[68px] shrink-0 snap-start">
@@ -394,6 +543,7 @@ function RailBotTile({ bot }: { readonly bot: RailBotItem }): JSX.Element {
             size={56}
             label={bot.name}
             motion={bot.motion}
+            compactIdle
             comet={bot.comet}
             thought="pinned"
           />
@@ -404,6 +554,10 @@ function RailBotTile({ bot }: { readonly bot: RailBotItem }): JSX.Element {
     </li>
   );
 }
+
+const RailBotTile = RAIL_MEMO_ON
+  ? memo(RailBotTileView, (previous, next) => sameBotItem(previous.bot, next.bot))
+  : RailBotTileView;
 
 /**
  * The card menu behind a long press, a right-click or the keyboard's own quiet

@@ -1,5 +1,14 @@
 import type { JSX } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -87,6 +96,7 @@ import { useBulkChatActions } from "./useBulkChatActions";
 import { useGroupChatState } from "./useGroupChatState";
 import { findScrollParent, useHomeWindow } from "./useHomeWindow";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
+import { useStagedCount } from "./useStagedCount";
 import { useComputerFeed } from "./computer/computerState";
 import { useDesktopStatus, useDesktopSummaryInput } from "./computer/desktopState";
 import { threadIdsAwaitingApproval } from "./connectionApprovalCards";
@@ -118,6 +128,9 @@ import { formatRelativeTime } from "./relativeTime";
 import { revealDelta, revealInSidebar } from "./sidebarReveal";
 
 const MINUTE_MS = 60_000;
+/** Rows the first live commit draws on a first launch, and rows added per frame after it. */
+const HOME_FIRST_ROWS = 6;
+const HOME_STEP_ROWS = 3;
 /** Coalesces preview-key moves that land together (message sent + turn start). */
 const PREVIEW_REFRESH_DEBOUNCE_MS = 250;
 /**
@@ -412,6 +425,17 @@ export function ChatsScreen({
 
   const loaded = list.data !== null;
   const showingSnapshot = !loaded && snapshot !== null && snapshot.rows.length > 0;
+  // Whether the saved rows were on screen before the live list arrived. When
+  // they were, the live list must replace them whole (fewer rows for a frame
+  // would read as a flicker); with nothing saved to show (a first launch) the
+  // live list mounts in steps instead (useStagedCount).
+  const snapshotShownRef = useRef(false);
+  if (showingSnapshot) snapshotShownRef.current = true;
+  // The live list has been on screen once: a later mount of its parts (a
+  // filter that was empty and is not any more) draws at once.
+  const liveShownRef = useRef(false);
+  const [stageMountOn] = useState(() => perfOptimizationOn("home-stage-mount"));
+  const stageMount = stageMountOn && !snapshotShownRef.current && !liveShownRef.current;
   const firstPaintReady = loaded || showingSnapshot || list.error !== null;
   usePreloadChatRoute(firstPaintReady);
   const rowsPainted = showingSnapshot || (list.data !== null && list.data.threads.length > 0);
@@ -590,9 +614,19 @@ export function ChatsScreen({
     return previews;
   }, [progressNotes, rows]);
 
+  // The chip and the search box answer a tap or a key at once; the list below
+  // follows in time-sliced work. Swapping 16 rows is one long task at 4x CPU,
+  // which is the lag a tap on a chip showed. Everything that describes the
+  // list (rows, empty note, the Needs you footnote) reads the same deferred
+  // pair, so the chip and the list never disagree about an empty state.
+  const [deferListInput] = useState(() => perfOptimizationOn("home-filter-defer"));
+  const deferredFilter = useDeferredValue(filter);
+  const deferredQuery = useDeferredValue(query);
+  const listFilter = deferListInput ? deferredFilter : filter;
+  const listQuery = deferListInput ? deferredQuery : query;
   const shownRows = useMemo(
-    () => visibleHomeRows({ rows, filter, query, nameOf }),
-    [filter, nameOf, query, rows],
+    () => visibleHomeRows({ rows, filter: listFilter, query: listQuery, nameOf }),
+    [listFilter, nameOf, listQuery, rows],
   );
   // What the list last drew while it was on screen. Under an open chat the
   // shell hides it, and these stay as they were: the rows do not re-render
@@ -605,6 +639,10 @@ export function ChatsScreen({
     lastShownRef.current = { rows: shownRows, now };
   }
   const drawnRows = onScreen ? shownRows : lastShownRef.current.rows;
+  const rowsDrawn = drawnRows.length > 0;
+  useEffect(() => {
+    if (rowsDrawn) liveShownRef.current = true;
+  }, [rowsDrawn]);
 
   // Avatar poses for the rows on screen. A row with nothing to say gets no
   // pose at all: the plain SVG avatar, no pose machinery, no observer. The
@@ -833,8 +871,8 @@ export function ChatsScreen({
     [memberBotsOf],
   );
   const snoozedRows = useMemo(
-    () => sections.snoozed.filter((row) => sectionRowMatches(row, query, memberNames)),
-    [memberNames, query, sections.snoozed],
+    () => sections.snoozed.filter((row) => sectionRowMatches(row, listQuery, memberNames)),
+    [listQuery, memberNames, sections.snoozed],
   );
   const runBulk = useBulkChatActions(environmentId);
   const groupChatState = useGroupChatState(environmentId);
@@ -859,21 +897,30 @@ export function ChatsScreen({
       ),
   };
   // A rail card's Unpin: the same thread update the bot page's select mode sends.
-  const onUnpinChat = (chat: RailChatItem) =>
+  const unpinChat = (chat: RailChatItem) =>
     void runSectionAction(async () => {
       const outcome = await runBulk("unpin", [chat.threadId], 0);
       return outcome.status === "settled" && outcome.anyFailed ? outcome.notice : null;
     });
-  const onUnpinGroup = (item: RailGroupItem) =>
+  const unpinGroup = (item: RailGroupItem) =>
     void runSectionAction(() => groupChatState.setPinned(item.groupId, false));
+  // The rail is drawn again only when its items change (HomeRail), so it gets
+  // handlers that keep their identity and always call the latest ones.
+  const unpinRef = useRef({ unpinChat, unpinGroup });
+  useLayoutEffect(() => {
+    unpinRef.current = { unpinChat, unpinGroup };
+  });
+  const onUnpinChat = useCallback((chat: RailChatItem) => unpinRef.current.unpinChat(chat), []);
+  const onUnpinGroup = useCallback((item: RailGroupItem) => unpinRef.current.unpinGroup(item), []);
 
   const visibleGroups = useMemo(
-    () => pinnedFirst(filterGroups(plainGroups(groups, wakeClock), query, nameOf), isChatPinned),
-    [groups, nameOf, query, wakeClock],
+    () =>
+      pinnedFirst(filterGroups(plainGroups(groups, wakeClock), listQuery, nameOf), isChatPinned),
+    [groups, listQuery, nameOf, wakeClock],
   );
   const searchedArchivedGroups = useMemo(
-    () => (query.trim().length === 0 ? [] : filterGroups(archivedGroups, query, nameOf)),
-    [archivedGroups, nameOf, query],
+    () => (listQuery.trim().length === 0 ? [] : filterGroups(archivedGroups, listQuery, nameOf)),
+    [archivedGroups, listQuery, nameOf],
   );
 
   // --- Snapshot persistence -----------------------------------------------------------
@@ -1063,11 +1110,11 @@ export function ChatsScreen({
     archivedGroups.length === 0 &&
     sections.snoozed.length === 0;
   const filterLabel =
-    filter === "needs"
+    listFilter === "needs"
       ? "Nothing needs you."
-      : filter === "unread"
+      : listFilter === "unread"
         ? "No unread chats."
-        : filter === "groups"
+        : listFilter === "groups"
           ? "No groups yet."
           : null;
 
@@ -1204,6 +1251,7 @@ export function ChatsScreen({
             bots={railBotItems}
             onUnpinChat={onUnpinChat}
             onUnpinGroup={onUnpinGroup}
+            stage={stageMount}
           />
           <div className="px-4">
             <HomeFilters active={filter} onSelect={setFilter} needsCount={needsYou.count} />
@@ -1221,10 +1269,11 @@ export function ChatsScreen({
               memberBotsOf={memberBotsOf}
               nameOf={nameOf}
               onScreen={onScreen}
+              stage={stageMount}
             />
-          ) : query.trim().length > 0 && snoozedRows.length === 0 ? (
+          ) : listQuery.trim().length > 0 && snoozedRows.length === 0 ? (
             <p className="mt-6 px-4 text-center text-[15px] text-[var(--personal-text-secondary)]">
-              No bots or chats match "{query.trim()}".
+              No bots or chats match "{listQuery.trim()}".
             </p>
           ) : filterLabel !== null ? (
             <p className="mt-6 px-4 text-center text-[15px] text-[var(--personal-text-secondary)]">
@@ -1233,16 +1282,16 @@ export function ChatsScreen({
           ) : null}
 
           {/* The design's own note under the Needs you filter. */}
-          {filter === "needs" && query.trim().length === 0 ? (
+          {listFilter === "needs" && listQuery.trim().length === 0 ? (
             <p className="px-4 py-4 text-center text-[13px] leading-4 text-[var(--personal-text-secondary)]">
               Answered requests leave this list.
             </p>
           ) : null}
 
-          {query.trim().length > 0 ? (
+          {listQuery.trim().length > 0 ? (
             <MessageSearchResults
               environmentId={environmentId}
-              query={query}
+              query={listQuery}
               now={now}
               bots={list.data?.bots ?? []}
               groups={[...groups, ...archivedGroups]}
@@ -1258,7 +1307,7 @@ export function ChatsScreen({
             busy={sectionBusy}
           />
 
-          {query.trim().length === 0 && archivedGroups.length > 0 ? (
+          {listQuery.trim().length === 0 && archivedGroups.length > 0 ? (
             /* Like a bot's Archived chats: collapsed, at the bottom, one tap away. */
             <details className="mx-4 mt-6">
               <summary className="flex min-h-11 cursor-pointer items-center text-[15px] font-medium text-[var(--personal-text-secondary)]">
@@ -1350,6 +1399,7 @@ const HomeRowsList = memo(function HomeRowsList({
   memberBotsOf,
   nameOf,
   onScreen,
+  stage,
 }: {
   readonly rows: ReadonlyArray<HomeRow>;
   readonly previewByKey: ReadonlyMap<string, { text: string; tone: RowPreviewTone }>;
@@ -1361,8 +1411,21 @@ const HomeRowsList = memo(function HomeRowsList({
   readonly memberBotsOf: (group: PersonalGroup) => ReadonlyArray<PersonalBot>;
   readonly nameOf: (botId: string) => string | null;
   readonly onScreen: boolean;
+  /** Mount the first slice in steps (a first launch with nothing saved to show). */
+  readonly stage: boolean;
 }): JSX.Element {
-  const { listRef, range } = useHomeWindow(rows.length, { active: onScreen });
+  const { listRef, range: windowRange } = useHomeWindow(rows.length, { active: onScreen });
+  // The slice itself is drawn in steps while the list first mounts: the rows
+  // the screen shows first, the overscan a few frames later.
+  const stagedRows = useStagedCount(windowRange.end - windowRange.start, {
+    enabled: stage,
+    first: HOME_FIRST_ROWS,
+    step: HOME_STEP_ROWS,
+  });
+  const range =
+    stagedRows >= windowRange.end - windowRange.start
+      ? windowRange
+      : { start: windowRange.start, end: windowRange.start + stagedRows };
   const spacers = homeWindowSpacers(range, rows.length);
   const drawn =
     range.start === 0 && range.end === rows.length ? rows : rows.slice(range.start, range.end);
