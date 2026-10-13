@@ -1,24 +1,34 @@
 # HANDOFF 1.67.0
 
-The hbots redesign's first release: the Bots home, Team in design A, the bot form's name-and-look-first layout, safe
-model defaults, a push when a plain chat waits on you, and the home's speed work. It carries everything live 1.66.39
-has (the Performance tab, the sliding browser sessions and the scrub fix), and it adds one fix QA found on live:
-every bot's CLI now groups under its own name in the Performance tab. What QA should look at is at the end.
+The whole hbots redesign in one release, as Harout asked (13 Oct): the Bots home, the chat's new look, Team in
+design A, the bot form's name-and-look-first layout, safe model defaults, a push when a plain chat waits on you, and
+the home's speed work. It carries everything live 1.66.39 has (the Performance tab, the sliding browser sessions and
+the scrub fix), and it adds one fix QA found on live: every bot's CLI now groups under its own name in the
+Performance tab. What QA should look at is at the end.
 
-Two worktrees, each gated on its own, merged here by Backend:
+Three branches, each gated on its own, merged here by Backend:
 
 - `feat/hbots-1670-core` - the server and non-home parts (`aedc4282bc`..`f24c321521`): model defaults, the bot form's
   name and look, Team in design A, `chat_needs_input`, the machine-wide pending-sign-in RPC, model family names.
 - `feat/hbots-1670-home` - the home redesign (Frontend, `4987343057`..`fc79302a60`) plus IT's speed work
   (`0e54d51ff6`..`af239879cd`): the windowed list, lighter avatars, the kept list's scroll and Back, each change
   behind its own `bots:perf-off` switch.
+- `feat/hbots-1671-chat` - the chat's look (Frontend, `ea97f6a7fd`..`a51a4fe1c7`), with IT's dock fixes and the
+  live 1.66.39 merge already in it. It called itself 1.67.1; this release is **1.67.0** and the version file says so.
 
 Branch `release/hbots-1670`: the core merge (`3572011cdd`), the home merge (`c94b01588b`), the sign-in count fix
 (`071a8ec5b0`), the version bump (`c586c1b845`), then the merge of `origin/release/hbots-16638` (the sliding
 sessions, `4f0459795d`), the merge of IT's `origin/feat/hbots-1670-home` at `af239879cd` (`e06d0fca0a`), the merge of
-the live `origin/release/hbots-16639` (`3d6591faf6`), and the Performance attribution fix (`b5340741fc`). No
-conflict changed a behaviour: the two CSS conflicts were two independent blocks (the redesign tokens beside the
-Performance tokens, the home section beside the performance keyframes) and both sides were kept.
+the live `origin/release/hbots-16639` (`3d6591faf6`), the Performance attribution fix (`b5340741fc`), the phone
+smoke's own update (`8d8cf31ff3`), and the merge of `origin/feat/hbots-1671-chat` at `a51a4fe1c7` (`6d85f58642`).
+
+No conflict changed a behaviour. `personal.css` was the only shared file both sides changed, and every side was
+purely additive (the redesign and chat tokens on one side, IT's `--perf-*` tokens and the live-dot keyframes on the
+other), so all of it was kept; `scripts/personal/app-version.txt` was the only real conflict (1.67.0 against the chat
+branch's 1.67.1) and it keeps 1.67.0. Checked after the merge that all three survive: IT's windowing
+(`home-window`, `home-window-compact`) and the Back fix (`home-back-layout`, `KeptBotsHome`, `useHomeWindow`), and
+Frontend's dock (`DockedQuestion`, `WorkingProgressRow`) and `?request=` landing (`requestLanding.ts`), the last two
+wired into `ConversationScreen` and green in the web gate.
 
 Migration max **106 -> 106** (no new migration). `PERSONAL_TASKS_CONCURRENCY = 5` unchanged, as every release must
 keep it.
@@ -106,6 +116,30 @@ the bug reached live QA. A throwaway with the fake CLI was re-checked after the 
 dark, 0 page errors, `hbots: server 0.2 GB · bots 0.0 GB · browser 0.0 GB`, which is right for a root with no real
 provider processes.
 
+**The chat's new look** (Frontend, `feat/hbots-1671-chat`; full story in `qa/hbots-1670/frontend/REPORT-1671.md`).
+The header is two rows: back, the avatar button (tap = Edit bot), the name over its state caption in the state's own
+colour ("Working", "Thinking", "Needs you", the model when idle), then "…"; under it the chip strip, 32 px pills in
+44 px bands with the open chat filled, "+ New" outlined, and a fade that swaps side once scrolled. The thread reads in
+runs: bubbles for the owner and short plain replies, full-width replies (with a sender row) for anything carrying a
+list, table, code, steps or a card, one time per run (the swipe still gives every message's exact time), and a
+question another device answered becomes a centred receipt. The dock: a 56 px progress row with the running turn's
+latest real step and "Working · 4m 12s" ticking, folding away when the turn ends, and the docked question, whose
+options are 48 px rows, or one sideways row of 44 px chips while the keyboard is up, with a step dot per question and
+drafts kept per request. A multi-select set keeps its Send answer; a fast double tap sends one answer. `?request=<id>`
+lands a chat on that request card (paged into the window if it sits above it, washed for 1.4 s, no long animated
+scroll), and a chat opened with no param lands on its own newest open request, which is how the home's pills land on
+the request with no home change and no server change. The dock tap bug (an option's own focus was read as "the field
+lost focus", so the dock swapped layout under a finger already down and the answer never went) was found at the
+pointer level and fixed (`1887aae78f`, `a51a4fe1c7`), and it is why the smoke's `question` journey is measurable
+again.
+
+The chat's speed, measured by Frontend under the lock, 5 interleaved pairs against 1.66.36 both fixtures seeded
+alike (`qa/hbots-1670/qa/results/compare-fe1671base-vs-fe1671cand-2026-10-13T14-56-17`): equal or better on every
+metric of `longChat`, `railScroll`, `listScroll`, `filter` and `type`; DOM nodes are higher where the redesign adds
+UI (cold 797 against 602, open chat 1,367 against 1,026, Team 1,243 against 969) and `question` is a little slower to
+paint (wall 135.3 against 117.6 ms, long tasks 747 against 628 ms) because the journey now actually answers the
+question. The list remounted on Back in 0 of 5 runs, so the structural rule holds.
+
 **The phone smoke follows the new home** (`8d8cf31ff3`). The suite waited on the search field's own label to mean
 "the Bots screen is up", which every build before 1.67.0 rendered always; the redesign shows that field only once
 the header's button opens it, and a fresh root has no chat rows yet, so the smoke now waits on the screen's own
@@ -149,25 +183,29 @@ not Chats, in the six places `offlineNetwork` taps it. Run against the staged re
 - The bot form: a new bot takes a look no other bot wears, name and look first, and an edit leaves a saved bot's
   look alone.
 - A question in a plain chat: exactly one push, the right deep link, none while the chat is open.
+- The chat's own look on the phone: the header's chips, the thread's runs and full-width replies, and above all the
+  dock, where a tap on an answer must land (that is the bug Frontend fixed at the pointer level: tap an option with
+  the keyboard up and with it down, and answer a multi-select set); `?request=` from a home pill lands on the request
+  card, washed, and a chat with no param lands on its newest open request.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=8d8cf31ff3764e991316019879ff57b3b0fecc1e release=8d8cf31ff376 json-sha256=4ad1ead4c002f837bbd90f66bbc69fdf22d86de20433c03a553c915ad16398cf result=PASS -->
+<!-- gate-evidence:begin sha=6d85f586427985a604773dc540b10d29f6215356 release=6d85f5864279 json-sha256=577168aee4cb8daad74941a5fbce00506cb8943a920c05beacc7899c843552eb result=FAIL -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T16:00:31Z. Version 1.67.0, release `8d8cf31ff376`, commit `8d8cf31ff3764e991316019879ff57b3b0fecc1e` on `release/hbots-1670`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T16:18:09Z. Version 1.67.0, release `6d85f5864279`, commit `6d85f586427985a604773dc540b10d29f6215356` on `release/hbots-1670`, working tree NOT clean, result **FAIL**.
 
-Machine-readable copy: `releases\8d8cf31ff376\gate-evidence.json` (sha256 `4ad1ead4c002f837bbd90f66bbc69fdf22d86de20433c03a553c915ad16398cf`) and the full gate logs in `releases\8d8cf31ff376\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\6d85f5864279\gate-evidence.json` (sha256 `577168aee4cb8daad74941a5fbce00506cb8943a920c05beacc7899c843552eb`) and the full gate logs in `releases\6d85f5864279\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2581 tests passed, 0 failed, 3 skipped, in 188 files | 222.1   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 22.4    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2659 tests passed, 0 failed, 0 skipped, in 246 files | 31.6    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 7.1     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 68.6    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1670-core\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\8d8cf31ff376" -Json` (in `.`)                                                                                                                 | 0    | pass: 12/12 journeys passed                                | 260.1   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2581 tests passed, 0 failed, 3 skipped, in 188 files | 194.1   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 17.5    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2700 tests passed, 0 failed, 0 skipped, in 252 files | 29.1    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.1     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 56.1    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1670-core\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\6d85f5864279" -Json` (in `.`)                                                                                                                 | 1    | FAIL: 11/12 journeys passed                                | 270.9   |
 
-E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` FAILED, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `8d8cf31ff3764e991316019879ff57b3b0fecc1e`, at end `8d8cf31ff3764e991316019879ff57b3b0fecc1e`; tracked files modified: none. Staged release: version 1.67.0, sha 8d8cf31ff376, dirty False, externals copied; `dist/bin.mjs` sha256 `e6f12302eae896e6f9e1b216ad69d567af3d5d939aa817af7050a0ccd59f2548`.
+Tree: HEAD at start `6d85f586427985a604773dc540b10d29f6215356`, at end `6d85f586427985a604773dc540b10d29f6215356`; tracked files modified: M docs/releases/HANDOFF-1670.md. Staged release: version 1.67.0, sha 6d85f5864279, dirty False, externals copied; `dist/bin.mjs` sha256 `e6f12302eae896e6f9e1b216ad69d567af3d5d939aa817af7050a0ccd59f2548`.
 <!-- gate-evidence:end -->
