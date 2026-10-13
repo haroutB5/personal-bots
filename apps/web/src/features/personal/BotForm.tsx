@@ -35,6 +35,8 @@ import { BotAvatarPicker } from "./BotAvatarPicker";
 import { BotFallbackSection } from "./BotFallbackSection";
 import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
 import {
+  agentModeOfSelection,
+  botAgentModeDescriptor,
   botContextWindowDescriptor,
   botEffortDescriptor,
   botInstructionSupportWarning,
@@ -88,6 +90,8 @@ interface BotDraft {
   effort: string;
   /** Context window option id (e.g. "1m"); "" keeps the model's default. */
   contextWindow: string;
+  /** Agent mode option id (DeepSeek Harness only); "standard" is the default. */
+  agentMode: string;
   /** The usage-limit fallback: on/off and its model, effort and context window. */
   fallbackEnabled: boolean;
   fallbackInstanceId: string;
@@ -128,6 +132,9 @@ function fallbackDraftOf(draft: BotDraft): FallbackDraft {
     model: draft.fallbackModel,
     effort: draft.fallbackEffort,
     contextWindow: draft.fallbackContextWindow,
+    // The fallback runs on its own provider; the mode belongs to the bot's own
+    // model, never to the model it falls back to.
+    agentMode: "",
   };
 }
 
@@ -159,6 +166,7 @@ function draftFromBot(bot: PersonalBot): BotDraft {
       ).find((value) => value !== undefined) ?? "",
     contextWindow:
       getModelSelectionStringOptionValue(bot.modelSelection, CONTEXT_WINDOW_OPTION_ID) ?? "",
+    agentMode: agentModeOfSelection(bot.modelSelection),
   };
 }
 
@@ -272,6 +280,7 @@ function BotForm({
       model: defaultModelFor(first),
       effort: "",
       contextWindow: "",
+      agentMode: "",
       ...fallbackFields(fallbackDraftFromBot(null)),
       team: DEFAULT_PERSONAL_BOT_TEAM,
       lead: false,
@@ -377,6 +386,12 @@ function BotForm({
   const effortValue =
     effortDescriptor?.options.some((option) => option.id === draft.effort) === true
       ? draft.effort
+      : "";
+  const agentModeDescriptor = botAgentModeDescriptor(selectedProvider, draft.model);
+  // A saved mode the new model does not offer falls back to its default.
+  const agentModeValue =
+    agentModeDescriptor?.options.some((option) => option.id === draft.agentMode) === true
+      ? draft.agentMode
       : "";
   const contextWindowDescriptor = botContextWindowDescriptor(selectedProvider, draft.model);
   const contextWindowValue =
@@ -749,6 +764,38 @@ function BotForm({
           <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
             A bigger window keeps longer chats in memory, but every reply resends it, so long chats
             use your plan's limits faster.
+          </p>
+        </div>
+      ) : null}
+
+      {agentModeDescriptor !== null ? (
+        <div>
+          <label htmlFor="bot-agent-mode" className={LABEL_CLASS}>
+            Agent mode
+          </label>
+          <select
+            id="bot-agent-mode"
+            value={agentModeValue}
+            onChange={(event) => update({ agentMode: event.target.value })}
+            className={`${FIELD_CLASS} h-11`}
+          >
+            <option value="">
+              Default
+              {(() => {
+                const fallback = agentModeDescriptor.options.find((option) => option.isDefault);
+                return fallback === undefined ? "" : ` (${fallback.label})`;
+              })()}
+            </option>
+            {agentModeDescriptor.options.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+            Standard gives the bot every tool. Code has it write small programs that call its tools
+            (tool cards show as code). Minimal gives it a shell and its own tools only, with no
+            skills. The mode is fixed when a chat starts, so a change applies to new chats.
           </p>
         </div>
       ) : null}

@@ -51,6 +51,20 @@ const provider = (
 ): ServerProvider =>
   ({ instanceId, driver: ProviderDriverKind.make(driver), models }) as unknown as ServerProvider;
 
+/** The agent mode control a DeepSeek instance gets on the harness engine. */
+const AGENT_MODES = [
+  { id: "standard", label: "Standard", isDefault: true },
+  { id: "code", label: "Code" },
+  { id: "minimal", label: "Minimal" },
+];
+
+const deepseek = provider("deepseek", "deepseek", [
+  model("deepseek-flash", "DeepSeek V4.1 Flash", [
+    select("effort", EFFORTS),
+    { id: "agentMode", label: "Agent mode", type: "select" as const, options: AGENT_MODES },
+  ]),
+]);
+
 const providers = [
   provider("claudeAgent", "claudeAgent", [
     model("claude-opus-5-5", "Claude Opus 5.5", [select("effort", EFFORTS)]),
@@ -92,6 +106,64 @@ const selection = (
   }) as unknown as ModelSelection;
 
 describe("botModelLabel", () => {
+  it("marks the agent mode on a DeepSeek Harness bot, and nothing for Standard", () => {
+    const withDeepSeek = [...providers, deepseek];
+    expect(
+      botModelLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "code"],
+        ]),
+        withDeepSeek,
+      ),
+    ).toBe("DeepSeek V4.1 Flash high · Code");
+    expect(
+      botModelShortLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "minimal"],
+        ]),
+        withDeepSeek,
+      ),
+    ).toBe("DeepSeek V4.1 Flash · H · Minimal");
+    // Standard is the default, so it is never written out.
+    expect(
+      botModelLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "standard"],
+        ]),
+        withDeepSeek,
+      ),
+    ).toBe("DeepSeek V4.1 Flash high");
+    expect(
+      botModelLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "standard"],
+        ]),
+        withDeepSeek,
+      ),
+    ).not.toContain("·");
+    // On the Claude Code engine the option is absent and a stray value is
+    // simply not shown.
+    expect(
+      botModelLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "code"],
+        ]),
+        providers,
+      ),
+    ).toBe("deepseek-flash high");
+    // A provider with no model list at all says nothing either.
+    expect(
+      botModelLabel(selection("deepseek", "deepseek-flash", [["agentMode", "code"]]), [
+        provider("deepseek", "deepseek", []),
+      ]),
+    ).toBe("deepseek-flash");
+  });
+
   it("names the model as the picker does, without Claude, plus the effort", () => {
     expect(
       botModelLabel(selection("claudeAgent", "claude-opus-5-5", [["effort", "medium"]]), providers),
