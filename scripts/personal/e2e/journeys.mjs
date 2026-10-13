@@ -113,8 +113,22 @@ async function longPressReply({ page, context, origin, step }) {
   const botMessage = transcript(page).locator("[data-message-id]", { hasText: "Got it." }).first();
   await expect(botMessage).toBeVisible();
   step("a bot message to reply to is on screen");
-  await longPress(context, page, botMessage);
-  await expect(page.getByRole("menuitem", { name: "Reply" })).toBeVisible();
+  // A long press is timing-sensitive, and this suite shares the laptop with the
+  // other bots: a re-render while the finger is down (a settling turn, the fake
+  // reply landing, a loaded machine) cancels the press. Press again when the
+  // menu has not opened, and still fail if it never does.
+  const replyItem = page.getByRole("menuitem", { name: "Reply" });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await longPress(context, page, botMessage);
+    const opened = await replyItem
+      .filter({ visible: true })
+      .first()
+      .waitFor({ state: "attached", timeout: 1_500 })
+      .then(() => true)
+      .catch(() => false);
+    if (opened) break;
+  }
+  await expect(replyItem).toBeVisible({ timeout: 5_000 });
   step("long press opened the message menu");
   await page.getByRole("menuitem", { name: "Reply" }).tap();
   await expect(page.getByRole("button", { name: "Cancel reply" })).toBeVisible();

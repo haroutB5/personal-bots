@@ -147,7 +147,10 @@ heading and the one journey that searches opens the field through the header but
 list now opens its screen (the bots are the rail's tiles) rather than the name sheet in place, so the two journeys
 that start a chat from the list press that screen's New chat button, and the tab bar's first link is named Bots,
 not Chats, in the six places `offlineNetwork` taps it. Run against the staged release: **12/12 journeys in 242 s**
-(9 of 12 before the change).
+(9 of 12 before the change). The long-press journey presses again when the menu has not opened (up to three times,
+the assertion unchanged): a long press is timing-sensitive, and on this laptop a re-render while the finger is down
+cancels it. It passes alone and in the suite after that; before it, the full suite failed that one journey twice in
+a row while the same five journeys in the same order passed on their own.
 
 ## Proof
 
