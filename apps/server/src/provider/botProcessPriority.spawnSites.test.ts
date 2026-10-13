@@ -18,6 +18,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach, describe, expect, vi } from "vite-plus/test";
 
 import { BOT_PROCESS_PRIORITY_ENV } from "./botProcessPriority.ts";
+import { listBotProviderProcesses, resetBotProviderProcesses } from "./botProviderProcesses.ts";
 import { make as makeAcpSessionRuntime } from "./acp/AcpSessionRuntime.ts";
 import { makeCodexSessionRuntime } from "./Layers/CodexSessionRuntime.ts";
 import { OpenCodeRuntime, OpenCodeRuntimeLive } from "./opencodeRuntime.ts";
@@ -162,3 +163,30 @@ describe.skipIf(NodeOS.platform() !== "win32")(
     }
   },
 );
+
+// The Performance tab groups a bot by its CLI's PID for the providers that name
+// no session on the command line. Codex is the one that ships today, so its
+// spawn site is the one that has to record it.
+describe("provider spawn paths record the bot's process", () => {
+  beforeEach(() => {
+    spawned.length = 0;
+    resetBotProviderProcesses();
+  });
+
+  it.live("Codex app-server: the PID is recorded under the chat that spawned it", () =>
+    Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        startCodex.pipe(Effect.scoped, Effect.provide(baseLayer)),
+      );
+      for (let attempt = 0; attempt < 300 && spawned.length === 0; attempt++) {
+        yield* Effect.sleep("10 millis");
+      }
+      // The registration follows the spawn on the same fiber.
+      yield* Effect.sleep("100 millis");
+      expect(listBotProviderProcesses()).toEqual([
+        { threadId: "thread-priority", provider: "codex", pid: FAKE_PID },
+      ]);
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+});

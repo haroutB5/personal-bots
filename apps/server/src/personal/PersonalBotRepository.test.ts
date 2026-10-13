@@ -350,12 +350,25 @@ it.effect("lists each bot chat's provider session for process attribution", () =
         createdAt: "2026-10-13T00:00:00.000Z",
       }),
     );
+    // A real Claude row: the session id the CLI carries lives in the cursor,
+    // not in `projection_thread_sessions.provider_session_id` (empty on live,
+    // which is what made the tab attribute nothing).
     yield* sql`
-      INSERT INTO projection_thread_sessions (thread_id, status, updated_at, provider_session_id)
-      VALUES (${perfThread}, 'running', '2026-10-13T00:01:00.000Z', 'b1ef3808-58f4-40ec-81ed-a9a6af7a8f65')
+      INSERT INTO provider_session_runtime (
+        thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json
+      )
+      VALUES (
+        ${perfThread}, 'claudeAgent', 'claudeAgent', 'full-access', 'running',
+        '2026-10-13T00:01:00.000Z',
+        '{"threadId":"thread-perf","resume":"d74b867f-dfb5-4e23-bb85-7deac41c86c4","resumeSessionAt":"1a874895-d0db-41d7-8b94-fa1ed16f35e3"}'
+      )
     `;
-    // A chat with no session row (nothing running) stays out; so does a row
-    // with no session id.
+    yield* sql`
+      INSERT INTO projection_thread_sessions (thread_id, status, updated_at)
+      VALUES (${perfThread}, 'running', '2026-10-13T00:01:00.000Z')
+    `;
+    // A chat with no session row (nothing running) stays out; so does an
+    // archived one, and one whose bot was deleted.
     const idleThread = ThreadId.make("thread-perf-idle");
     yield* repository.insertThreadLink(
       decodeInsertThreadLink({
@@ -364,15 +377,36 @@ it.effect("lists each bot chat's provider session for process attribution", () =
         createdAt: "2026-10-13T00:00:00.000Z",
       }),
     );
+    const archivedThread = ThreadId.make("thread-perf-archived");
+    yield* repository.insertThreadLink(
+      decodeInsertThreadLink({
+        botId,
+        threadId: archivedThread,
+        createdAt: "2026-10-13T00:00:00.000Z",
+      }),
+    );
     yield* sql`
-      INSERT INTO projection_thread_sessions (thread_id, status, updated_at)
-      VALUES (${idleThread}, 'ready', '2026-10-13T00:01:00.000Z')
+      UPDATE personal_bot_threads SET archived_at = '2026-10-13T00:02:00.000Z'
+      WHERE thread_id = ${archivedThread}
+    `;
+    // The archived chat has a running Codex session of its own, and stays out.
+    yield* sql`
+      INSERT INTO provider_session_runtime (
+        thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json
+      )
+      VALUES (
+        ${archivedThread}, 'codex', 'codex', 'full-access', 'running',
+        '2026-10-13T00:01:00.000Z', '{"threadId":"01a13577-61ae-7c22-93fa-9c636f634c89"}'
+      )
     `;
 
     const sessions = yield* repository.listBotProviderSessions();
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.botName).toBe("Atlas");
     expect(sessions[0]?.threadId).toBe("thread-perf");
-    expect(sessions[0]?.providerSessionId).toBe("b1ef3808-58f4-40ec-81ed-a9a6af7a8f65");
+    expect(sessions[0]?.providerName).toBe("claudeAgent");
+    expect(sessions[0]?.resumeCursorJson).toContain(
+      '"resume":"d74b867f-dfb5-4e23-bb85-7deac41c86c4"',
+    );
   }).pipe(Effect.provide(testLayer)),
 );

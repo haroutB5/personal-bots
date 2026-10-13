@@ -21,6 +21,7 @@ import * as NodeChildProcess from "node:child_process";
 import type { SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
 
 import { lowerBotProcessPriority } from "../botProcessPriority.ts";
+import { forgetBotProviderProcess, registerBotProviderProcess } from "../botProviderProcesses.ts";
 
 const STDERR_TAIL_CHARS = 8_192;
 
@@ -50,6 +51,12 @@ export function claudeSdkSpawnDisabled(env: NodeJS.ProcessEnv = process.env): bo
   return env.PERSONAL_CLAUDE_SDK_SPAWN === "1";
 }
 
+/** The chat this CLI belongs to, so the Performance tab can group its tree. */
+export interface ClaudeProcessOwner {
+  readonly threadId: string;
+  readonly provider: string;
+}
+
 export function makeRecordingClaudeSpawner(
   handle: ClaudeProcessHandle,
   onAbnormalExit?: (detail: {
@@ -60,6 +67,7 @@ export function makeRecordingClaudeSpawner(
     readonly requested: boolean;
   }) => void,
   lowerPriority: (pid: number | undefined) => void = (pid) => void lowerBotProcessPriority(pid),
+  owner?: ClaudeProcessOwner,
 ): (options: SpawnOptions) => SpawnedProcess {
   return (options) => {
     const child = NodeChildProcess.spawn(options.command, options.args, {
@@ -71,6 +79,10 @@ export function makeRecordingClaudeSpawner(
     });
     // Every shell command and build this CLI runs inherits its priority class.
     lowerPriority(child.pid);
+    const pid = child.pid;
+    if (owner !== undefined && pid !== undefined) {
+      registerBotProviderProcess({ threadId: owner.threadId, provider: owner.provider, pid });
+    }
     handle.child = child;
     handle.stderrTail = "";
     // A resumed session spawns again: that process has not been asked to stop.
@@ -84,6 +96,9 @@ export function makeRecordingClaudeSpawner(
     });
     child.stderr.on("error", () => undefined);
     child.once("exit", (code, signal) => {
+      if (owner !== undefined && pid !== undefined) {
+        forgetBotProviderProcess(owner.threadId, pid);
+      }
       // An abort (session stop) ends the CLI on purpose and says nothing; a stop the session
       // asked for through the SDK (SIGTERM, then SIGKILL) is reported as such, and only an exit
       // nobody asked for is a fault.

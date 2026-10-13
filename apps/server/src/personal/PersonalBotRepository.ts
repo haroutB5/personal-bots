@@ -215,8 +215,15 @@ export interface PersonalBotProviderSession {
   readonly threadId: string;
   readonly botId: PersonalBotId;
   readonly botName: string;
-  /** The id the provider CLI carries (`--session-id=...`); what a PID is matched by. */
-  readonly providerSessionId: string;
+  /** The provider that owns the session (`claudeAgent`, `codex`, `opencode`, ...). */
+  readonly providerName: string;
+  /**
+   * `provider_session_runtime.resume_cursor_json`, as stored. The session id a
+   * Claude CLI carries on its command line lives in here (`$.resume`), not in
+   * `projection_thread_sessions.provider_session_id`, which is empty on a real
+   * data root; `sessionIdFromResumeCursor` reads it for the provider at hand.
+   */
+  readonly resumeCursorJson: string | null;
 }
 
 export class PersonalBotRepository extends Context.Service<
@@ -317,8 +324,9 @@ export class PersonalBotRepository extends Context.Service<
     >;
     /**
      * Every unarchived bot chat with a provider session row, for the
-     * Performance tab: a running CLI process carries its session id
-     * (`--session-id=...`), and this maps it back to the bot's name.
+     * Performance tab: a running Claude CLI carries its session id on the
+     * command line (`--session-id=` or `--resume=`), and the chat's resume
+     * cursor names that same id, so this maps the process back to the bot.
      */
     readonly listBotProviderSessions: () => Effect.Effect<
       ReadonlyArray<PersonalBotProviderSession>,
@@ -1874,18 +1882,18 @@ export const make = Effect.gen(function* () {
       readonly threadId: string;
       readonly botId: string;
       readonly botName: string;
-      readonly providerSessionId: string;
+      readonly providerName: string;
+      readonly resumeCursorJson: string | null;
     }>`
         SELECT s.thread_id AS "threadId",
                t.bot_id AS "botId",
                b.name AS "botName",
-               s.provider_session_id AS "providerSessionId"
-        FROM projection_thread_sessions s
+               s.provider_name AS "providerName",
+               s.resume_cursor_json AS "resumeCursorJson"
+        FROM provider_session_runtime s
         JOIN personal_bot_threads t ON t.thread_id = s.thread_id
         JOIN personal_bots b ON b.bot_id = t.bot_id
-        WHERE s.provider_session_id IS NOT NULL
-          AND s.provider_session_id <> ''
-          AND t.archived_at IS NULL
+        WHERE t.archived_at IS NULL
           AND b.deleted_at IS NULL
       `.pipe(
       Effect.map((rows) =>
@@ -1893,7 +1901,8 @@ export const make = Effect.gen(function* () {
           threadId: row.threadId,
           botId: PersonalBotId.make(row.botId),
           botName: row.botName,
-          providerSessionId: row.providerSessionId,
+          providerName: row.providerName,
+          resumeCursorJson: row.resumeCursorJson,
         })),
       ),
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listBotProviderSessions:query")),

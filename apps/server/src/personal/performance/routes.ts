@@ -16,20 +16,17 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
+import { listBotProviderProcesses } from "../../provider/botProviderProcesses.ts";
 import { ServerConfig } from "../../config.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
 import {
   PersonalBotRepository,
   type PersonalBotProviderSession,
 } from "../PersonalBotRepository.ts";
+import { attributeBotProcesses } from "./botAttribution.ts";
 import type { BotOwner } from "./processGroups.ts";
 import type { PerformanceSampler } from "./performanceSampler.ts";
-import {
-  buildPerformanceSampler,
-  childSessionIds,
-  processStartedAt,
-  type BuildSamplerDeps,
-} from "./runtime.ts";
+import { buildPerformanceSampler, processStartedAt, type BuildSamplerDeps } from "./runtime.ts";
 import type { PerformanceStreamEvent } from "@t3tools/contracts";
 
 export const PERSONAL_PERFORMANCE_STREAM_PATH = "/api/personal/performance/stream";
@@ -84,26 +81,22 @@ export const makePersonalPerformanceStreamRouteLayer = (options: PerformanceRout
           hbotsVersion: version,
           hbotsStartedAt: startedAtMs,
         });
-        // pid -> bot, from the CLI command lines and the session projection.
+        // pid -> bot: the chats whose session a CLI names, plus the PIDs the
+        // provider spawn sites recorded for the ones that name nothing.
         const attribute = (
           children: Parameters<NonNullable<BuildSamplerDeps["attribute"]>>[0],
         ): Promise<ReadonlyMap<number, BotOwner>> => {
-          const pairs = childSessionIds(children);
-          if (pairs.length === 0) return Promise.resolve(new Map());
+          if (children.length === 0) return Promise.resolve(new Map());
           const query = repository
             .listBotProviderSessions()
             .pipe(Effect.orElseSucceed((): ReadonlyArray<PersonalBotProviderSession> => []));
-          return Effect.runPromiseWith(context)(query).then((rows) => {
-            const bySession = new Map(
-              rows.map((row) => [row.providerSessionId.toLowerCase(), row] as const),
-            );
-            const owners = new Map<number, BotOwner>();
-            for (const pair of pairs) {
-              const row = bySession.get(pair.sessionId);
-              if (row !== undefined) owners.set(pair.pid, { botId: row.botId, name: row.botName });
-            }
-            return owners;
-          });
+          return Effect.runPromiseWith(context)(query).then((sessions) =>
+            attributeBotProcesses({
+              children,
+              sessions,
+              providerProcesses: listBotProviderProcesses(),
+            }),
+          );
         };
         sampler = build({
           baseDir: baseDir ?? ".",

@@ -44,7 +44,8 @@ export interface ChatSessionRow {
   readonly resumeCursorJson: string | null;
 }
 
-function usageProviderOf(providerName: string): UsageProviderKind | null {
+/** The usage provider a `provider_session_runtime.provider_name` names. */
+export function usageProviderOf(providerName: string): UsageProviderKind | null {
   switch (providerName) {
     case "claudeAgent":
       return "claude";

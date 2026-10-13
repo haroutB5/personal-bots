@@ -41,6 +41,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { lowerBotProcessPriorityEffect } from "../botProcessPriority.ts";
+import { forgetBotProviderProcess, registerBotProviderProcess } from "../botProviderProcesses.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
@@ -1390,6 +1391,14 @@ export const makeCodexSessionRuntime = (
         ),
       );
     yield* lowerBotProcessPriorityEffect(Number(child.pid), "codex");
+    // The app-server carries no session id on its command line, so the
+    // Performance tab groups the bot by this PID (botProviderProcesses).
+    const codexPid = Number(child.pid);
+    registerBotProviderProcess({
+      threadId: options.threadId,
+      provider: "codex",
+      pid: codexPid,
+    });
 
     const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
       Layer.build,
@@ -2570,6 +2579,7 @@ export const makeCodexSessionRuntime = (
         ),
       );
       yield* Scope.close(runtimeScope, Exit.void);
+      forgetBotProviderProcess(options.threadId, codexPid);
       yield* Queue.shutdown(serverNotifications);
       yield* Queue.shutdown(events);
     });
