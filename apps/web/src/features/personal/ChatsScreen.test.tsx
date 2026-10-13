@@ -9,6 +9,7 @@ import { ChatsScreen } from "./ChatsScreen";
 import { buildChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
 import { resetNeedsYouCount } from "./needsYouStore";
 import { NEEDS_YOU_PILL_LABEL } from "./needsYou";
+import { PERF_OFF_STORAGE_KEY } from "./perfFlags";
 import { readNeedsYouCount } from "./needsYouStore";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
@@ -69,8 +70,9 @@ function createLocalStorageStub(): Storage {
   };
 }
 
-function stubWindow() {
+function stubWindow(perfOff = "") {
   const localStorage = createLocalStorageStub();
+  if (perfOff !== "") localStorage.setItem(PERF_OFF_STORAGE_KEY, perfOff);
   vi.stubGlobal("window", {
     localStorage,
     setInterval: () => 0,
@@ -356,8 +358,12 @@ function setList(input: {
   };
 }
 
-async function render(selected: string | null = null, params: Record<string, string> = {}) {
-  stubWindow();
+async function render(
+  selected: string | null = null,
+  params: Record<string, string> = {},
+  perfOff = "",
+) {
+  stubWindow(perfOff);
   state.params = params;
   await act(async () => {
     renderer = create(<ChatsScreen selectedChat={selected as never} />);
@@ -689,6 +695,51 @@ describe("ChatsScreen rows and filters", () => {
     expect(rowLabels()).toContain("Packing list, Juno: No messages yet");
     expect(rowLabels()).toContain(
       "October bills, Forge, Needs a secret: No messages yet. Opens the chat at the request",
+    );
+  });
+
+  it("draws a slice of a long list, the rest standing in as one spacer (windowed rows)", async () => {
+    const chats = Array.from({ length: 30 }, (_, index) => ({
+      botId: "bot-juno",
+      threadId: `t-${index}`,
+    }));
+    setList({ bots: [bot("bot-juno", "Juno")], chats });
+    state.shells = chats.map((chat, index) =>
+      threadShell(chat.threadId, { title: `Chat ${index}` }),
+    );
+    await render();
+    // No layout to measure in this renderer: the first-paint slice is 24 rows
+    // (homeWindow.ts) and the six undrawn rows stand in as one spacer <li>
+    // whose height keeps the list's full height, and so the scroll position,
+    // exact.
+    const items = rows().findAll((node) => node.type === "li");
+    const drawn = items.filter((node) => node.props["data-home-window-pad"] === undefined);
+    const pads = items.filter((node) => node.props["data-home-window-pad"] !== undefined);
+    expect(drawn).toHaveLength(24);
+    expect(pads).toHaveLength(1);
+    expect(pads[0]!.props.style).toEqual({ height: 6 * 72 });
+    // A screen reader hears the row's real place and the list's real length,
+    // not the drawn slice's.
+    expect(drawn[0]!.props["aria-posinset"]).toBe(1);
+    expect(drawn[0]!.props["aria-setsize"]).toBe(30);
+    expect(drawn.at(-1)!.props["aria-posinset"]).toBe(24);
+    for (const row of drawn) expect(row.props["aria-setsize"]).toBe(30);
+  });
+
+  it("draws every row with the home-window kill switch off", async () => {
+    const chats = Array.from({ length: 30 }, (_, index) => ({
+      botId: "bot-juno",
+      threadId: `t-${index}`,
+    }));
+    setList({ bots: [bot("bot-juno", "Juno")], chats });
+    state.shells = chats.map((chat, index) =>
+      threadShell(chat.threadId, { title: `Chat ${index}` }),
+    );
+    await render(null, {}, "home-window");
+    const items = rows().findAll((node) => node.type === "li");
+    expect(items).toHaveLength(30);
+    expect(items.filter((node) => node.props["data-home-window-pad"] !== undefined)).toHaveLength(
+      0,
     );
   });
 

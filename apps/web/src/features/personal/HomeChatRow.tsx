@@ -161,6 +161,8 @@ export const HomeChatRowView = memo(function HomeChatRowView({
   selected = false,
   motion,
   comet = false,
+  posInSet,
+  setSize,
 }: {
   readonly row: HomeChatRow;
   readonly preview: string;
@@ -169,9 +171,17 @@ export const HomeChatRowView = memo(function HomeChatRowView({
   readonly selected?: boolean | undefined;
   readonly motion?: AvatarMotion | undefined;
   readonly comet?: boolean | undefined;
+  /**
+   * This row's place in the whole list (1-based) and the list's length. The
+   * list is windowed (homeWindow.ts): only the rows near the viewport are
+   * drawn, so these tell a screen reader the full count and the row's real
+   * place in it.
+   */
+  readonly posInSet?: number | undefined;
+  readonly setSize?: number | undefined;
 }): JSX.Element {
   return (
-    <li>
+    <li aria-posinset={posInSet} aria-setsize={setSize}>
       <Link
         to="/bots/$botId/$threadId"
         params={{ botId: row.bot.botId, threadId: row.link.threadId }}
@@ -217,6 +227,8 @@ export const HomeGroupRowView = memo(function HomeGroupRowView({
   nameOf,
   now,
   selected = false,
+  posInSet,
+  setSize,
 }: {
   readonly row: HomeGroupRow;
   /** Member bots that have loaded, in sort order. */
@@ -224,13 +236,16 @@ export const HomeGroupRowView = memo(function HomeGroupRowView({
   readonly nameOf: (botId: string) => string | null;
   readonly now: number;
   readonly selected?: boolean | undefined;
+  /** See HomeChatRowView: the row's place in the windowed list, and its length. */
+  readonly posInSet?: number | undefined;
+  readonly setSize?: number | undefined;
 }): JSX.Element {
   const live = isGroupRoundLive(row.round);
   const status = groupStatusLine(row.round, nameOf);
   const preview = live ? status.label : groupPreviewLine(row.group);
   const tone: RowPreviewTone = live ? "working" : "plain";
   return (
-    <li>
+    <li aria-posinset={posInSet} aria-setsize={setSize}>
       <Link
         to="/bots/groups/$groupId"
         params={{ groupId: row.group.groupId }}

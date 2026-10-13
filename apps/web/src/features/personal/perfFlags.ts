@@ -74,7 +74,11 @@ export type PerfOptimization =
   // Once the app is quiet it preloads the personal screens' code (Team, Settings,
   // Memory, Files, Tasks, Computer) so they still open when the phone loses its
   // network (warmRoutes.ts, 1.66.11); off: each is fetched when first opened.
-  | "warm-routes";
+  | "warm-routes"
+  // The Bots home draws only the rows near the scroll position, standing in for
+  // the rest with spacers (homeWindow.ts, 1.67.0); off: every row is drawn, as
+  // the first 1.67.0 builds did.
+  | "home-window";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

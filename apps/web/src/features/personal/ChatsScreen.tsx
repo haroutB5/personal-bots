@@ -78,12 +78,14 @@ import {
   type HomeRow,
   type RowPreviewTone,
 } from "./homeRows";
+import { HOME_ROW_PITCH, homeWindowSpacers } from "./homeWindow";
 import { MessageSearchResults } from "./MessageSearchResults";
 import { deriveNeedsYou, type NeedsYouModel } from "./needsYou";
 import { publishNeedsYouCount } from "./needsYouStore";
 import { useChatSeenState } from "./unreadChats";
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useGroupChatState } from "./useGroupChatState";
+import { findScrollParent, useHomeWindow } from "./useHomeWindow";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
 import { useComputerFeed } from "./computer/computerState";
 import { useDesktopStatus, useDesktopSummaryInput } from "./computer/desktopState";
@@ -113,7 +115,7 @@ import { reportChatsListPainted } from "./perfRum";
 import { perfOptimizationOn } from "./perfFlags";
 import { botSelectionKey, groupSelectionKey, type SidebarSelectionKey } from "./personalMode";
 import { formatRelativeTime } from "./relativeTime";
-import { revealInSidebar } from "./sidebarReveal";
+import { revealDelta, revealInSidebar } from "./sidebarReveal";
 
 const MINUTE_MS = 60_000;
 /** Coalesces preview-key moves that land together (message sent + turn start). */
@@ -230,17 +232,35 @@ function SnapshotRows({
   now: number;
   selectedChat: SidebarSelectionKey | null;
 }): JSX.Element {
+  const { listRef, range } = useHomeWindow(snapshot.rows.length);
   if (snapshot.rows.length === 0) return <ChatsSkeletonRows />;
+  const spacers = homeWindowSpacers(range, snapshot.rows.length);
+  const all = snapshot.rows;
+  const drawn =
+    range.start === 0 && range.end === all.length ? all : all.slice(range.start, range.end);
   return (
-    <ul aria-label="Your chats" data-testid="snapshot-rows" className="home-rows mt-1">
-      {snapshot.rows.map((row) => (
+    <ul
+      ref={listRef}
+      aria-label="Your chats"
+      data-testid="snapshot-rows"
+      className="home-rows mt-1"
+    >
+      {spacers.above > 0 ? (
+        <li aria-hidden="true" data-home-window-pad="" style={{ height: spacers.above }} />
+      ) : null}
+      {drawn.map((row, index) => (
         <SnapshotRow
           key={`${row.botId}:${row.threadId ?? row.name}`}
           row={row}
           now={now}
           selected={selectedChat === botSelectionKey(row.botId)}
+          posInSet={range.start + index + 1}
+          setSize={all.length}
         />
       ))}
+      {spacers.below > 0 ? (
+        <li aria-hidden="true" data-home-window-pad="" style={{ height: spacers.below }} />
+      ) : null}
     </ul>
   );
 }
@@ -249,10 +269,14 @@ function SnapshotRow({
   row,
   now,
   selected,
+  posInSet,
+  setSize,
 }: {
   row: ChatsSnapshotRow;
   now: number;
   selected: boolean;
+  posInSet: number;
+  setSize: number;
 }): JSX.Element {
   const rowClass = cn(
     "home-row relative flex h-[72px] w-full min-w-0 items-center gap-3 px-4 text-left",
@@ -284,7 +308,7 @@ function SnapshotRow({
     </>
   );
   return (
-    <li>
+    <li aria-posinset={posInSet} aria-setsize={setSize}>
       {row.threadId !== null ? (
         <Link
           to="/bots/$botId/$threadId"
@@ -964,23 +988,62 @@ export function ChatsScreen({
     }
     if (shownRows.length === 0) return;
     const root = rootRef.current;
-    const row = root?.querySelector<HTMLElement>("[data-sidebar-selected]") ?? null;
-    if (root == null || row === null) return;
+    if (root === null) return;
     const boundary = root.closest("aside");
-    const prior = revealedRef.current;
-    if (prior !== null && prior.key === selectedChat) {
-      if (!prior.fromList && performance.now() - prior.at < REVEAL_SETTLE_MS) {
-        revealInSidebar(row, boundary);
+    const reveal = (row: HTMLElement) => {
+      const prior = revealedRef.current;
+      if (prior !== null && prior.key === selectedChat) {
+        if (!prior.fromList && performance.now() - prior.at < REVEAL_SETTLE_MS) {
+          revealInSidebar(row, boundary);
+        }
+        return;
       }
+      const clicked = clickedRef.current;
+      clickedRef.current = null;
+      const fromList =
+        clicked !== null && (clicked === row || clicked.contains(row) || row.contains(clicked));
+      revealedRef.current = { key: selectedChat, at: performance.now(), fromList };
+      if (!fromList) revealInSidebar(row, boundary);
+    };
+    const found = root.querySelector<HTMLElement>("[data-sidebar-selected]");
+    if (found !== null) {
+      reveal(found);
       return;
     }
-    const clicked = clickedRef.current;
-    clickedRef.current = null;
-    const fromList =
-      clicked !== null && (clicked === row || clicked.contains(row) || row.contains(clicked));
-    revealedRef.current = { key: selectedChat, at: performance.now(), fromList };
-    if (!fromList) revealInSidebar(row, boundary);
-  }, [selectedChat, shownRows]);
+    // The open chat's row is outside the drawn slice (the list is windowed):
+    // scroll the list to it, then reveal it once a frame has drawn it.
+    const list = root.querySelector<HTMLElement>('[data-testid="home-rows"]');
+    if (list === null) return;
+    const scroller = findScrollParent(list);
+    if (scroller === null) return;
+    const index = shownRows.findIndex((candidate) =>
+      candidate.kind === "chat" ? candidate.key === openThreadId : candidate.key === openGroupId,
+    );
+    if (index < 0) return;
+    const hiddenAbove = scroller.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    const delta = revealDelta(
+      index * HOME_ROW_PITCH,
+      (index + 1) * HOME_ROW_PITCH,
+      hiddenAbove,
+      hiddenAbove + scroller.clientHeight,
+    );
+    if (delta !== 0) scroller.scrollTop += delta;
+    let frame = 0;
+    let attempts = 0;
+    const settle = () => {
+      const row = root.querySelector<HTMLElement>("[data-sidebar-selected]");
+      if (row !== null) {
+        reveal(row);
+        return;
+      }
+      if (attempts < 8) {
+        attempts += 1;
+        frame = requestAnimationFrame(settle);
+      }
+    };
+    frame = requestAnimationFrame(settle);
+    return () => cancelAnimationFrame(frame);
+  }, [openGroupId, openThreadId, selectedChat, shownRows]);
 
   // --- Header, update line, usage -----------------------------------------------------
   const { label: versionLabel, updateAvailable } = useAppVersion();
@@ -1157,6 +1220,7 @@ export function ChatsScreen({
               openGroupId={openGroupId}
               memberBotsOf={memberBotsOf}
               nameOf={nameOf}
+              onScreen={onScreen}
             />
           ) : query.trim().length > 0 && snoozedRows.length === 0 ? (
             <p className="mt-6 px-4 text-center text-[15px] text-[var(--personal-text-secondary)]">
@@ -1268,6 +1332,12 @@ export function ChatsScreen({
  * change while it is hidden would otherwise reconcile every row (59 of them)
  * for a screen nobody can see. The home hands this component the last props it
  * had while it was visible, so React skips the whole subtree until Back.
+ *
+ * The list is windowed (`homeWindow.ts`): of the 60 chats the fixture holds,
+ * only the ones near the scroll position are drawn, with two spacer `<li>`s
+ * keeping the list's height - and so the kept scroll position - exactly what
+ * the full list's would be. Scroll position lives here, in this memo, so a
+ * window shift on scroll re-renders these rows and nothing above them.
  */
 const HomeRowsList = memo(function HomeRowsList({
   rows,
@@ -1279,6 +1349,7 @@ const HomeRowsList = memo(function HomeRowsList({
   openGroupId,
   memberBotsOf,
   nameOf,
+  onScreen,
 }: {
   readonly rows: ReadonlyArray<HomeRow>;
   readonly previewByKey: ReadonlyMap<string, { text: string; tone: RowPreviewTone }>;
@@ -1289,11 +1360,22 @@ const HomeRowsList = memo(function HomeRowsList({
   readonly openGroupId: string | null;
   readonly memberBotsOf: (group: PersonalGroup) => ReadonlyArray<PersonalBot>;
   readonly nameOf: (botId: string) => string | null;
+  readonly onScreen: boolean;
 }): JSX.Element {
+  const { listRef, range } = useHomeWindow(rows.length, { active: onScreen });
+  const spacers = homeWindowSpacers(range, rows.length);
+  const drawn =
+    range.start === 0 && range.end === rows.length ? rows : rows.slice(range.start, range.end);
   return (
-    <ul aria-label="Your chats" className="home-rows">
-      {rows.map((row) =>
-        row.kind === "chat" ? (
+    <ul ref={listRef} aria-label="Your chats" data-testid="home-rows" className="home-rows">
+      {spacers.above > 0 ? (
+        <li aria-hidden="true" data-home-window-pad="" style={{ height: spacers.above }} />
+      ) : null}
+      {drawn.map((row, index) => {
+        // The row's real place in the whole list, for a screen reader (the
+        // drawn slice is not the list).
+        const posInSet = range.start + index + 1;
+        return row.kind === "chat" ? (
           <HomeChatRowView
             key={row.key}
             row={row}
@@ -1303,6 +1385,8 @@ const HomeRowsList = memo(function HomeRowsList({
             selected={openThreadId === row.key}
             motion={motionByKey.get(row.key)}
             comet={cometKeys.has(row.key)}
+            posInSet={posInSet}
+            setSize={rows.length}
           />
         ) : (
           <HomeGroupRowView
@@ -1312,9 +1396,14 @@ const HomeRowsList = memo(function HomeRowsList({
             nameOf={nameOf}
             now={now}
             selected={openGroupId === row.group.groupId}
+            posInSet={posInSet}
+            setSize={rows.length}
           />
-        ),
-      )}
+        );
+      })}
+      {spacers.below > 0 ? (
+        <li aria-hidden="true" data-home-window-pad="" style={{ height: spacers.below }} />
+      ) : null}
     </ul>
   );
 });
