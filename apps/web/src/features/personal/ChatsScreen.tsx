@@ -344,6 +344,26 @@ export function ChatsScreen({
   });
   const [sectionError, setSectionError] = useState<string | null>(null);
   const [sectionBusy, setSectionBusy] = useState(false);
+  /**
+   * Whether the list is the thing on screen. On the phone the shell keeps it
+   * mounted under an open chat (`keep-list`), hidden with `display: none`:
+   * while that is the case the home stops the work only the rows need - the
+   * cold-start snapshot write, the per-chat progress reads and the
+   * list-refetch timer - so an open chat owns the main thread. Everything
+   * resumes on the first paint after Back, and the queries that feed the
+   * badge stay mounted so the count never flickers.
+   */
+  const [onScreen, setOnScreen] = useState(true);
+  useEffect(() => {
+    const node = rootRef.current;
+    if (node === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries.at(-1);
+      setOnScreen(entry?.isIntersecting ?? true);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const shells = useMemo(
     () => allShells.filter((shell) => shell.environmentId === environmentId),
@@ -513,12 +533,14 @@ export function ChatsScreen({
   // shows). One thread per live chat, never a subscription per row.
   const progressTargets = useMemo(
     () =>
-      chatBases.flatMap((base) =>
-        isChatRowLive(base) && !hidesBotPreviews(base.bot)
-          ? [{ threadId: base.key, updatedAt: base.shell.updatedAt }]
-          : [],
-      ),
-    [chatBases],
+      onScreen
+        ? chatBases.flatMap((base) =>
+            isChatRowLive(base) && !hidesBotPreviews(base.bot)
+              ? [{ threadId: base.key, updatedAt: base.shell.updatedAt }]
+              : [],
+          )
+        : [],
+    [chatBases, onScreen],
   );
   const progressNotes = useWorkingProgressNotes(environmentId, progressTargets);
 
@@ -857,6 +879,7 @@ export function ChatsScreen({
   const snapshotKey = snapshotRows === null ? null : JSON.stringify(snapshotRows);
   const lastPersistedKey = useRef<string | null>(null);
   useEffect(() => {
+    if (!onScreen) return;
     if (environmentId === null || snapshotRows === null || snapshotKey === null) return;
     if (lastPersistedKey.current === snapshotKey) return;
     lastPersistedKey.current = snapshotKey;
@@ -864,7 +887,7 @@ export function ChatsScreen({
       environmentId,
       buildChatsSnapshot({ environmentId, savedAtMs: Date.now(), rows: snapshotRows }),
     );
-  }, [environmentId, snapshotRows, snapshotKey]);
+  }, [environmentId, onScreen, snapshotRows, snapshotKey]);
 
   // --- One list refetch per message boundary ------------------------------------------
   const previewKey = useMemo(
@@ -889,7 +912,7 @@ export function ChatsScreen({
   const previewKeyReady = list.data !== null && shells.length > 0;
   useEffect(() => {
     previewRefreshRef.current = list.refresh;
-    if (!previewKeyReady) return;
+    if (!previewKeyReady || !onScreen) return;
     if (previewKeyRef.current === null) {
       previewKeyRef.current = previewKey;
       return;
@@ -903,7 +926,7 @@ export function ChatsScreen({
       previewRefreshTimerRef.current = null;
       previewRefreshRef.current();
     }, PREVIEW_REFRESH_DEBOUNCE_MS);
-  }, [list, previewKey, previewKeyReady]);
+  }, [list, onScreen, previewKey, previewKeyReady]);
   useEffect(
     () => () => {
       if (previewRefreshTimerRef.current !== null) {

@@ -1280,14 +1280,12 @@ body:has(.personal-app) {
   touch-action: pan-y;
 }
 
-/* A chat list is long (one row per chat, where the old home drew one per bot):
- * off-screen rows are skipped by layout and paint, and the reserved height is
- * the row's own 72 px so the scrollbar never moves. Browsers without
- * `content-visibility` ignore both lines. */
-.home-rows > li {
-  content-visibility: auto;
-  contain-intrinsic-size: 72px;
-}
+/* Tested and dropped: `content-visibility: auto` on the rows made scrolling
+ * WORSE, not better (QA's interleaved compare, 4x CPU: list scroll fps 34.6
+ * against 42.4 without it, frame p95 69 against 36), because every row coming
+ * back into view is laid out and painted on the spot. It also empties
+ * `innerText` for off-screen rows, which is what a person's text selection and
+ * a scripted check both read. */
 
 /* A chat row's separator: 0.5 px, inset to where the text starts (16 + 48 + 12). */
 .home-rows > li + li .home-row::before {
