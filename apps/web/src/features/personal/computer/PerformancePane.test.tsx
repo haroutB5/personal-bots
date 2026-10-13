@@ -1,5 +1,5 @@
 import type { PerformanceSample } from "@t3tools/contracts";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { PerformanceFeedState } from "./usePerformanceFeed";
@@ -111,5 +111,60 @@ describe("PerformancePane render", () => {
     expect(text).not.toContain("Measuring");
     expect(text).toContain("Running smoothly");
     expect(text).toContain("CPU");
+  });
+
+  it("fills the footer's model line when the statics frame arrives", () => {
+    // The first open predates the helper's greeting, so statics come in a
+    // later frame; the footer must show them as soon as they do, without a
+    // reload (CTO review, 13 Oct).
+    act(() => {
+      renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    act(() => {
+      feed.state = {
+        ...feed.state,
+        samples: [sample(1_000_000)],
+        lastSampleAt: Date.now(),
+        status: "live",
+      };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    // The footer paragraph (`pb-4`), not the chart legends, which also say
+    // "This PC" as a series name.
+    const footerText = (): string => {
+      const footers = renderer!.root.findAll(
+        (node) =>
+          node.type === "p" &&
+          typeof node.props.className === "string" &&
+          node.props.className.includes("pb-4 text-[11px]"),
+      );
+      expect(footers.length).toBe(1);
+      const text = (node: ReactTestInstance): string =>
+        node.children.map((child) => (typeof child === "string" ? child : text(child))).join("");
+      return text(footers[0]!);
+    };
+    expect(footerText()).toContain("This PC");
+
+    act(() => {
+      feed.state = {
+        ...feed.state,
+        statics: {
+          pcModel: "Inspiron 16 Plus 7620",
+          pcCpu: "12th Gen Intel(R) Core(TM) i7-12700H",
+          pcCores: 14,
+          pcThreads: 20,
+          pcGpu: "NVIDIA GeForce RTX 3050 Laptop GPU",
+          ramGB: 15.7,
+          pcBootAt: 1_727_000_000_000,
+          hbotsVersion: "1.67.2",
+          hbotsStartedAt: 1_000,
+        },
+      };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const footer = footerText();
+    expect(footer).not.toContain("This PC");
+    expect(footer).toContain("Inspiron 16 Plus 7620");
+    expect(footer).toContain("i7-12700H");
   });
 });

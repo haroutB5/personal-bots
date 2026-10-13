@@ -299,6 +299,11 @@ export class PerformanceSampler {
       const hello = parseHelperHello(line);
       if (hello !== null) {
         this.hello = hello;
+        // A viewer that started sampling built its own `hello` before the
+        // helper answered, so its statics miss the model, CPU, GPU and boot
+        // time; this frame hands them over the moment they exist instead of
+        // at the next reload (CTO review, 13 Oct).
+        this.broadcast({ kind: "statics", statics: this.statics() });
         return;
       }
       const tick = parseHelperTick(line);

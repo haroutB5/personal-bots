@@ -150,6 +150,48 @@ describe("PerformanceSampler lifecycle", () => {
     }
   });
 
+  it("hands a viewer the statics the moment the helper greets, without a reload", () => {
+    vi.useFakeTimers();
+    try {
+      const helper = fakeHelper();
+      const { sampler } = make({ startHelper: () => helper.handle }, helper);
+      const events: PerformanceStreamEvent[] = [];
+      const subscription = sampler.subscribe((event) => events.push(event));
+
+      // The first hello is built before the helper has answered, so the PC's
+      // identity is still unknown in it (the footer's model line waited for a
+      // reload without the frame this test pins).
+      expect(subscription.hello.kind).toBe("hello");
+      if (subscription.hello.kind === "hello") {
+        expect(subscription.hello.statics.pcModel).toBeNull();
+        expect(subscription.hello.statics.pcCpu).toBeNull();
+      }
+
+      helper.push(
+        '{"kind":"hello","hv":1,"memTotalMB":16200,"pcBootAt":1727000000000,' +
+          '"model":"Inspiron 16 Plus 7620",' +
+          '"cpuName":"12th Gen Intel(R) Core(TM) i7-12700H",' +
+          '"physCores":14,"logicalProcessors":20,"maxClockMHz":4700,' +
+          '"gpuName":"NVIDIA GeForce RTX 3050 Laptop GPU"}',
+      );
+
+      const frames = events.filter((event) => event.kind === "statics");
+      expect(frames.length).toBe(1);
+      const frame = frames[0];
+      if (frame?.kind === "statics") {
+        expect(frame.statics.pcModel).toBe("Inspiron 16 Plus 7620");
+        expect(frame.statics.pcCpu).toBe("12th Gen Intel(R) Core(TM) i7-12700H");
+        expect(frame.statics.pcCores).toBe(14);
+        expect(frame.statics.pcThreads).toBe(20);
+        expect(frame.statics.pcGpu).toBe("NVIDIA GeForce RTX 3050 Laptop GPU");
+        expect(frame.statics.pcBootAt).toBe(1_727_000_000_000);
+      }
+      subscription.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("emits groups every other tick, from the helper's parent map", async () => {
     vi.useFakeTimers();
     try {

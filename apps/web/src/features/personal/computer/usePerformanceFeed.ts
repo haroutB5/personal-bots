@@ -89,6 +89,9 @@ export function applyEvent(event: PerformanceStreamEvent, now: number): void {
     case "slow":
       emit({ ...state, slow: event.slow });
       return;
+    case "statics":
+      emit({ ...state, statics: event.statics });
+      return;
   }
 }
 

@@ -140,5 +140,11 @@ export const PerformanceStreamEvent = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("sample"), sample: PerformanceSample }),
   Schema.Struct({ kind: Schema.Literal("groups"), groups: PerformanceGroups }),
   Schema.Struct({ kind: Schema.Literal("slow"), slow: PerformanceSlow }),
+  /**
+   * The PC's identity, once the helper has answered (a viewer that started
+   * sampling before the helper's greeting gets a statics frame when it
+   * arrives; without it the footer's model line waited for a reload).
+   */
+  Schema.Struct({ kind: Schema.Literal("statics"), statics: PerformanceStatics }),
 ]);
 export type PerformanceStreamEvent = typeof PerformanceStreamEvent.Type;
