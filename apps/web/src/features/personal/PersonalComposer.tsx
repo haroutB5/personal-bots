@@ -69,7 +69,6 @@ import { COMPOSER_INPUT_ATTRIBUTE, consumeComposerRefocus } from "./composerRefo
 import { ReplyBar } from "./ReplyQuote";
 import { useHoldCue } from "./useHoldCue";
 import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
-import { perfOptimizationOn } from "./perfFlags";
 
 const LINE_HEIGHT_PX = 22;
 const MAX_LINES = 5;
@@ -124,11 +123,6 @@ function measureField(textarea: HTMLTextAreaElement): HTMLTextAreaElement | null
   measurer.style.pointerEvents = "none";
   measurer.style.overflowY = "hidden";
   measurer.style.zIndex = "-1";
-  // This out-of-flow field has no descendants or visible paint. Its text
-  // layout must not invalidate the transcript when a key changes its value.
-  measurer.style.contain = perfOptimizationOn("composer-measure-contain")
-    ? "layout style paint"
-    : "";
   return measurer;
 }
 
@@ -476,7 +470,6 @@ export function PersonalComposer({
   // what is left here is the caret, the highlighted row and Escape.
   // ---------------------------------------------------------------------
   const [caret, setCaret] = useState(prompt.length);
-  const [skipUnusedCaret] = useState(() => perfOptimizationOn("composer-caret"));
   /** The token the owner dismissed with Escape, so it stays shut while typed. */
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -1158,9 +1151,7 @@ export function PersonalComposer({
               // React puts the field back to the (empty) draft on its own.
               if (dropSentEcho(event.target.value)) return;
               setPrompt(threadRef, event.target.value);
-              if (!skipUnusedCaret || mentionCandidates !== undefined) {
-                setCaret(event.target.selectionStart ?? event.target.value.length);
-              }
+              setCaret(event.target.selectionStart ?? event.target.value.length);
             }}
             onCompositionEnd={(event) => {
               // A composition that ends with no input event after it can leave
@@ -1171,11 +1162,7 @@ export function PersonalComposer({
             onKeyDown={onKeyDown}
             // The caret can move without the text changing (tap, arrow keys),
             // and a mention token is defined by where the caret is.
-            onSelect={(event) => {
-              if (!skipUnusedCaret || mentionCandidates !== undefined) {
-                setCaret(event.currentTarget.selectionStart ?? prompt.length);
-              }
-            }}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? prompt.length)}
             placeholder={
               answerOpen
                 ? "Or type your answer…"
