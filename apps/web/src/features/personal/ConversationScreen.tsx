@@ -593,13 +593,14 @@ export function ConversationScreen({
   }, [items]);
   // The composer has the field: on a phone that is the keyboard, so the dock
   // gives the thread its room (SPEC 2.9, D9). The inset alone cannot tell a
-  // desktop browser it is "open"; focus is the state both share. The collapse
-  // never happens while a finger is down, and waits a moment after the field
-  // lets go: a tap on a docked option blurs the field on its way in, and
-  // swapping the chip row for the tall rows under that finger moved the very
-  // button being pressed, so the click landed on the dock behind it and the
-  // answer never went (QA's question journey, measured at 4x CPU: the click
-  // target was the dock section, not the option).
+  // desktop browser it is "open"; focus is the state both share. Nothing about
+  // that state moves while a finger is down: a tap on a docked option blurs the
+  // field AND focuses the option on its way in, and either one on its own swaps
+  // the chip row for the tall rows under the finger, moving the very button
+  // being pressed, so the click lands on the dock behind it and the answer never
+  // goes (QA's question journey, measured at 4x CPU: the click target was
+  // SECTION.personal-dock). The truth applies once the finger lifts: at once
+  // when the field still has the focus, after the settle when it does not.
   const [composerActive, setComposerActive] = useState(false);
   useEffect(() => {
     const shell = shellRef.current;
@@ -621,6 +622,15 @@ export function ConversationScreen({
     };
     const onFocusIn = (event: FocusEvent) => {
       clearCollapse();
+      // A tap focuses whatever it lands on: a docked option, the composer, or
+      // nothing at all. While a finger is down the room the composer asked for
+      // stays as it was whichever way the focus moved. A tap on a docked option
+      // focuses the option on its way in, and treating that as "the field let
+      // go" swapped the chip row for the tall rows between the mousedown and the
+      // mouseup, so the gesture ended on a different button and the click landed
+      // on the dock behind it: no answer, ever (QA's question journey, measured
+      // at 4x CPU, click target SECTION.personal-dock).
+      if (fingerDown) return;
       const target = event.target as HTMLElement | null;
       setComposerActive(target?.getAttribute?.(COMPOSER_INPUT_ATTRIBUTE) === "");
     };
@@ -634,10 +644,18 @@ export function ConversationScreen({
     };
     const onPointerUp = () => {
       fingerDown = false;
-      if (collapse !== undefined) return;
-      // Still on the field (an attach tap, a send): the room it asked for stays.
+      // The gesture is over, so the truth applies now: a tap that left the
+      // field focused (the composer itself, an attach tap, a send) keeps the
+      // room the composer asked for, and one that moved the focus away brings
+      // the tall rows back after the settle.
       const field = shell.querySelector(`[${COMPOSER_INPUT_ATTRIBUTE}]`);
-      if (field === null || field !== document.activeElement) scheduleCollapse();
+      if (field !== null && field === document.activeElement) {
+        clearCollapse();
+        setComposerActive(true);
+        return;
+      }
+      if (collapse !== undefined) return;
+      scheduleCollapse();
     };
     shell.addEventListener("focusin", onFocusIn);
     shell.addEventListener("focusout", onFocusOut);
