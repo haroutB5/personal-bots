@@ -12,9 +12,138 @@ already carries the Performance tab and the sliding browser sessions fix. On top
 (`eb80ad6bd0`, `e455f38b0e`, `38e8c52e2d`, `6fc7bba02d`, `96e4fce0e2`), the version bump `160e89ba5a` and the
 rebuild fix `88d431bc8c`. Version **1.66.40**, deliberately not 1.67.x, so it cannot be confused with the redesign.
 
-Staged release `88d431bc8cf2`, externals copied, 4 env keys loaded, gate evidence PASS.
-Migration max **106 -> 106** (no new migration; the dsh commits add none). `PERSONAL_TASKS_CONCURRENCY = 5`
-unchanged.
+Staged first as `88d431bc8cf2`, then again as **`203c928ff8fe`** after QA's two scripts, with three more commits
+(`4d935446de`, `203c928ff8`); externals copied, 4 env keys loaded, gate evidence PASS. **`88d431bc8cf2` and
+`3da1e51f0d39` are superseded and must not be activated.** Migration max **106 -> 106** (no new migration; the dsh
+commits add none). `PERSONAL_TASKS_CONCURRENCY = 5` unchanged.
+
+## QA on the first 1.66.40 build (88d431bc8cf2), and the three fixes after it
+
+**Script A** (fake DeepSeek key, fake Claude CLI, throwaway root, 390x844 dark, 13 Oct 23:17-23:27;
+`qa/hbots-1671/qa/RESULTS-A-88d431bc8cf2.md`): Q1 PASS (the A part), **Q5 PASS** (the agent-mode picker, the
+" · Code"/" · Minimal" labels and the per-chat pin), **Q6 PASS** (engine select and switching), **Q7 PASS** (the
+kill switch), **Q9 PASS** (the privacy rows in every patch, 3 session logs, 0 uploads, no `web_search`, no
+`.credentials.yaml`, the key only in the secret store and never on a command line), **C3 PASS** (the request bodies
+through the QA proxy carried no `dsh_session_log`/`dsh_plugin_packages`, 0 `web_search`, `api.deepseek.com` only)
+and **REG PASS** (the old home, a seeded Claude bot's chat, Team with Token usage). Q2, Q3, Q4 and Q8 need a model
+reply and are script B's; **Q10 FAIL** and **Q11 FAIL (card only)** are below.
+
+**Script B** (real key, run by the CTO; `qa/hbots-1671/qa/run-b-88d431bc8cf2-2026-10-13T22-47-47/`): the persona,
+`save_memory` then `search_memory` through hbots' own MCP, a skill, an image, Stop in 52 ms with no leftover
+shells, resume after a server restart, the mode pinned per chat, engine switching both ways, the kill switch, the
+usage ledger with Flash pricing, the balance card and the Team tokens, 0 session-log uploads, no credentials file
+and the key only in the secret store: all pass. Two findings from it became fixes 2 and 3.
+
+### 1. Q11: the false "Update available" on the DeepSeek card. Fixed.
+
+The card showed "Update available — Install the update now or review provider settings." beside the harness version
+(v0.2.0-rc.2). Cause: the driver's maintenance capabilities always named `@anthropic-ai/claude-code`, so the
+advisory compared the harness with the Claude CLI's latest (2.1.296 per the toast in the r3 run).
+
+The harness is pinned and moves only with `install-dsh.ps1` and a new pin: it has no package channel. On the dsh
+engine the capabilities now carry no package name, so `resolveLatestProviderVersion` returns without looking
+anything up, the advisory stays `status: "unknown"`, and the card's presentation turns that into no arrow and no
+advisory line. The Claude engine is untouched (`apps/server/src/provider/Drivers/DeepSeekDriver.ts`).
+
+`DeepSeekDriver.test.ts` (new) drives both engines through the same two calls the driver's own `enrichSnapshot`
+makes — `resolveMaintenance()` and `enrichProviderSnapshotWithVersionAdvisory` — with a stub registry that records
+what was asked for: on dsh, no request is made and the advisory is `unknown` with a null message; on `claude-code`
+the Claude CLI's package is looked up exactly once and a newer registry version still reads `behind_latest`. With
+the fix reverted the dsh test fails at the first assertion, so the test is not decoration.
+
+### 2. The Claude engine's `api.anthropic.com` traffic. Fixed in the environment, with a unit test; the end-to-end re-check is QA's.
+
+The CONNECT log shows `api.anthropic.com:443` opened only while the Claude Code engine ran (the Q6/Q7 windows, plus
+once 1.4 s after switching back, from the exiting CLI) and none in about six minutes of dsh-only windows. That is
+today's live DeepSeek path on the Claude engine, and what those requests carry is tunnelled, so it cannot be read.
+
+`makeDeepSeekEnvironment` now sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_TELEMETRY=1` **on the
+Claude engine only** — resolved through `resolveDeepSeekEngine`, so `PERSONAL_DEEPSEEK_ENGINE=claude-code` (which
+runs the CLI) gets them too, and the harness engine gets neither. Tests cover all three cases.
+
+The switches are the CLI's own: the bundled Claude Agent SDK bundle resolves its traffic mode as
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC -> "essential-traffic"`, then `DISABLE_TELEMETRY -> "no-telemetry"`,
+then `DO_NOT_TRACK`, then `"default"` (`core-czfq02x9.mjs` in `@anthropic-ai/claude-agent-sdk`, checked 14 Oct), so
+the first switch is the strongest setting the CLI has.
+
+Honest scope: the switch is proven present in the env this engine builds, and present in the CLI's own gate, but
+the CONNECT re-check needs a Claude-engine turn, which needs a key the builder does not have — and running the
+real CLI against a _fake_ token is the one case where it could fall back to Harout's own Claude account, so it was
+not done here. **QA: `run-b.ps1 -Release 203c928ff8fe -Only Q6,Q7`**, the measurement that found this, and report
+the hosts.
+
+### 3. Duplicate environment names inside the dsh pwsh tool. NOT fixed; here is everything that was ruled out.
+
+QA could not run `Get-ChildItem Env:` inside a dsh pwsh tool: PowerShell 5.1 threw `ArgumentException` ("An item
+with the same key has already been added"), which is what its environment provider does when the process
+environment block holds two names that differ only in case. The probe printed its first line (`KEY-EMPTY`) and
+died on the environment count, and no pwsh 7 is installed on this laptop, so 5.1 is the shell dsh resolves.
+
+What was tested on 14 Oct, on this laptop, with the real dsh runtime:
+
+- **Our side is unique.** `buildDshEnvironment` de-duplicates case-insensitively twice. Node itself never lets a
+  case-variant duplicate reach a child block: a `spawn` given `{Path: A, PATH: B}` writes one entry and keeps the
+  last key, and writing `process.env.PATH` or `process.env.COMSPEC` where `Path`/`ComSpec` already exists leaves one
+  entry under the original spelling — both measured with `cmd /c set` reading the raw block.
+- **dsh's own chain de-duplicates.** `dsh-subprocess`'s `scrubbedParentEnv` reads node's collapsed view; its
+  `childEnv` filters inherited entries by uppercased name before pushing an override; `targetEnvironment` drops
+  undefined tombstones. The one native block builder, `encodeWindowsEnvironment`
+  (`dsh-win32-process/lib/index.js:382`), does **not** de-duplicate, but it is handed the already-unique object.
+- **The one native environment writer in the harness was run live.** `dsh-sandbox-windows-acl/lib/runner.js:154`
+  calls `SetEnvironmentVariableW("TMP"/"TEMP", …)` and then spawns the tool with `lpEnvironment NULL`, so the tool
+  inherits the runner's block verbatim. Driving that runner standalone — `node
+.../dsh-sandbox-windows-acl/lib/runner.js --workspace <dir> --temp <dir> --mode workspace-write -- powershell
+-NoProfile -File diag.ps1` — printed `COUNT=77`, `ENVVARS=77` and no throw, against the machine's own block. Its
+  hardcoded names are already the machine's spellings (`Path`, `TEMP`, `TMP`), so they collide with nothing.
+- Two paths could not be driven from a shell here, and both are worth checking if the duplicate turns up in a
+  Code/Minimal chat rather than a Standard one: the persistent shell, which goes through `node-pty`
+  (`spawnTerminal`, a native ConPTY spawn that builds its own block from the env object), and the PTC runtime's
+  pruned startup environment (`dsh-ptc-runtime-node`, the six startup names only). The Standard tool, which is
+  what QA's probe used, takes the Windows Job path that was read above.
+
+So the caller is not identified, and this note does not claim it is fixed. What is true: our boundary is provably
+clean, and so is every dsh path that could be read or driven from here, which leaves a spawn path in the pinned
+runtime that cannot be walked on this laptop without a model turn. **Next step, for whoever has a key:** inside a
+dsh pwsh tool run, as ONE command,
+
+```powershell
+(cmd /c set) | ForEach-Object { ($_ -split '=', 2)[0] } | Group-Object { $_.ToUpperInvariant() } | Where-Object Count -gt 1
+```
+
+That names the duplicate; the command in the brief cannot, because `[Environment]::GetEnvironmentVariables()`
+returns a case-insensitive collection (checked here: 77 entries, no duplicates, no throw) while `cmd /c set` reads
+the raw block. With the name in hand the fix is a two-line env change on our side or a report against dsh 0.2.0-rc.2.
+
+One real bug in our own de-duplication was found and fixed on the way, and it is worth having whatever the duplicate
+turns out to be: `dedupeEnvironmentNames` kept the FIRST value seen, so an instance variable whose name differed
+only in case from an inherited one (`PATH` next to the machine's `Path`, `TEMP` next to `Temp`) was silently
+dropped. Windows has one variable per name, so the instance's value now wins while the first spelling is kept —
+one name in the child, the instance's value applied, with tests.
+
+### Q10: the Performance tab does not group a dsh bot's process. Known, not a regression, 1.66.41.
+
+On 1.66.39 no bot's processes are grouped at all, so this is not something this release broke. 1.66.40 registers
+the dsh PID (`provider/botProviderProcesses.ts`, carried in for the adapter) but the 1.66.39 route
+(`personal/performance/routes.ts:88-107`) only matches Claude CLI command lines and never reads
+`listBotProviderProcesses()`; that attribution came with 1.67.0's `b5340741fc`. Frontend is porting the bot-name
+grouping into 1.66.41 and will read that registry for DeepSeek/dsh PIDs. QA's evidence: feed `bots.processCount: 0`
+and `a-q10-performance.png`.
+
+### Engine switch: up to a few seconds before an open chat uses the new engine. Known, not a bug.
+
+In script A a message sent about 1 s after switching the engine back to dsh was still answered by the Claude engine;
+with 5 s it moves to dsh. The switch is read when the driver instance is built and the first turn renews the
+session, so the gap is the renewal, not a lost setting. The card could say "applies in a few seconds"; no code
+change.
+
+### Findings from the two scripts that are not bugs
+
+- Code mode shows no separate `run_code` card on 1.66.39's chat: the memory chip and the reply appear and the save
+  worked, so the expectation was wrong, not the build.
+- Q3 (steer) failed in QA's script because it could not find the Send button while the turn was busy; QA is fixing
+  the script and no code change follows.
+- Script A's r3 runtime-missing miss (the message did not appear within 45 s) did not repeat in r4/r5, which showed
+  the path is saved and the message appears: a slow re-probe, not a bug.
 
 ## What the rebuild had to change
 
@@ -140,7 +269,9 @@ env test Security asked for.
 Note on coverage: the gate's server filter is `src/personal src/mcp`, which does **not** match `src/provider`, so
 the gate does not run the dsh adapter tests. The builder ran the whole provider tree on this branch instead:
 **104 files passed, 2 skipped, 1716 tests passed, 58 skipped, 0 failed** (178 s), and the DeepSeek provider file on
-its own: 15 passed.
+its own: 15 passed. After the three QA fixes the same tree ran again on `203c928ff8`: **105 files passed, 2
+skipped, 1722 tests passed, 58 skipped, 0 failed** (195 s; the new file and the four new cases are in it), with the
+server typecheck at exit 0.
 
 Web (`vp test run --project unit src/features/personal` plus tsc, 2539 passed in 233 files): the agent-mode
 descriptor is offered only where the model has it, the chosen mode round-trips through the form, an unknown one is
@@ -195,7 +326,17 @@ dsh answering with its persona, an hbots MCP tool and a skill; a cancel mid-tool
 leftover shells; the three modes; and the privacy sweep through a CONNECT logging proxy, extended with Security's
 Q9 additions (no `dsh_session_log` or `dsh_plugin_packages` in the request body, no
 `dsh-otel-collector.deepseeksvc.com` connection, no `.credentials.yaml` under `DSH_HOME`, and no credential-shaped
-variable inside the `pwsh` tool). Because this build is on 1.66.39, also worth a look: the bot form's agent-mode
+variable inside the `pwsh` tool).
+
+Everything on this build can be re-run with the QA scripts as they are: `run-a.ps1 -Release 203c928ff8fe -Only
+Q11` (fake key, cheap) for the DeepSeek card, and `run-b.ps1 -Release 203c928ff8fe -Only Q6,Q7,Q9` (real key) for
+the rest. Q11 must now show no update arrow and no advisory on the dsh engine, while a Claude-engine instance still
+gets its own advisory; Q6/Q7 must show no `api.anthropic.com` in the CONNECT log now that
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and `DISABLE_TELEMETRY` are set; Q9's pwsh probe is expected to pass,
+and if it still fails, the `cmd /c set` probe in section 3 names the duplicate. Q10 is expected to fail until
+1.66.41.
+
+Because this build is on 1.66.39, also worth a look: the bot form's agent-mode
 picker on a DeepSeek bot and its absence on a Claude Code bot, and that the app looks exactly like 1.66.39
 everywhere else.
 
@@ -208,8 +349,11 @@ everywhere else.
 - Mode changes do not apply to an open chat (a DeepSeek API constraint, not a choice).
 - No live token streaming: dsh commits one whole block per model step, so a long answer arrives at once. Thoughts
   still arrive per step, and the working indicator stays.
-- The dsh process's PID is recorded, but 1.66.39's Performance tab does not yet group a bot's CLI by it; that
-  attribution is 1.67.0 work and is not in this release.
+- The dsh process's PID is recorded, but 1.66.39's Performance tab does not yet group a bot's CLI by it: **Q10**,
+  not a regression, and Frontend ports the bot-name grouping into 1.66.41 from that registry. See above.
+- **The dsh pwsh tool's environment holds one name twice on QA's run**, which stops `Get-ChildItem Env:` in
+  PowerShell 5.1. Not fixed: our boundary and every dsh path reachable from here are provably clean, and the
+  diagnostic that names the duplicate is in section 3 above. This is the one open item before the ship.
 
 ## Rollback
 
@@ -217,24 +361,28 @@ Binary only: `restart.ps1 -Release <1.66.39 sha> -NoPrune` (live release `b03c41
 to restore. Setting the DeepSeek instance's engine back to `claude-code`, or `PERSONAL_DEEPSEEK_ENGINE=claude-code`,
 also returns every bot to the old engine without touching the release.
 
+Two staged 1.66.40 folders exist: `203c928ff8fe` is this build and the only one to ship; `88d431bc8cf2` (the
+first, which QA's two scripts ran on) and `3da1e51f0d39` (the abandoned 1.67.0-era stage) are superseded and must
+never be activated. This version keeps 1.66.40 in `app-version.txt` deliberately: it is the same feature, corrected.
+
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=88d431bc8cf22aba6ce63b03cc859a98d65dd3e5 release=88d431bc8cf2 json-sha256=3111f6319d560b8a9df86a782f50bf7089f35867b5332a5edb8734125c57328d result=PASS -->
+<!-- gate-evidence:begin sha=203c928ff8fe8eb5965896dad08b42e21d26e9fe release=203c928ff8fe json-sha256=de416506ee9c900a9835e6e87eda377ce46fb0f76f432de6ba28d1bc037b355d result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T22:13:07Z. Version 1.66.40, release `88d431bc8cf2`, commit `88d431bc8cf22aba6ce63b03cc859a98d65dd3e5` on `release/hbots-16640`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T23:20:36Z. Version 1.66.40, release `203c928ff8fe`, commit `203c928ff8fe8eb5965896dad08b42e21d26e9fe` on `release/hbots-16640`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\88d431bc8cf2\gate-evidence.json` (sha256 `3111f6319d560b8a9df86a782f50bf7089f35867b5332a5edb8734125c57328d`) and the full gate logs in `releases\88d431bc8cf2\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\203c928ff8fe\gate-evidence.json` (sha256 `de416506ee9c900a9835e6e87eda377ce46fb0f76f432de6ba28d1bc037b355d`) and the full gate logs in `releases\203c928ff8fe\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2563 tests passed, 0 failed, 3 skipped, in 186 files | 195.2   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 17.7    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2539 tests passed, 0 failed, 0 skipped, in 233 files | 26.9    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.3     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 56      |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1671-dsh\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\88d431bc8cf2" -Json` (in `.`)                                                                                                                  | 0    | pass: 12/12 journeys passed                                | 244.8   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2563 tests passed, 0 failed, 3 skipped, in 186 files | 199.2   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 18      |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2539 tests passed, 0 failed, 0 skipped, in 233 files | 29.2    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.1     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 62.6    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1671-dsh\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\203c928ff8fe" -Json` (in `.`)                                                                                                                  | 0    | pass: 12/12 journeys passed                                | 259.8   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `88d431bc8cf22aba6ce63b03cc859a98d65dd3e5`, at end `88d431bc8cf22aba6ce63b03cc859a98d65dd3e5`; tracked files modified: none. Staged release: version 1.66.40, sha 88d431bc8cf2, dirty False, externals copied; `dist/bin.mjs` sha256 `9dc0806e03960a6e42d986a86e5c0a671c1887840e5c6834b04b565308fa9851`.
+Tree: HEAD at start `203c928ff8fe8eb5965896dad08b42e21d26e9fe`, at end `203c928ff8fe8eb5965896dad08b42e21d26e9fe`; tracked files modified: none. Staged release: version 1.66.40, sha 203c928ff8fe, dirty False, externals copied; `dist/bin.mjs` sha256 `3af6e0293d87d8ba72755fff4528c772afddfcb54618844385e384d763c1f3ed`.
 <!-- gate-evidence:end -->
