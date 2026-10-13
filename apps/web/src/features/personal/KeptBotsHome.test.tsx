@@ -19,8 +19,25 @@ describe("KeptBotsHome", () => {
       });
       vi.stubGlobal("requestIdleCallback", undefined);
       class ContentElement {
-        style = { setProperty: vi.fn() };
+        style = {
+          display: "none",
+          setProperty: vi.fn((_name: string, value: string) => {
+            this.style.display = value;
+          }),
+        };
       }
+      let notifyStyleChange: (() => void) | undefined;
+      const disconnect = vi.fn();
+      vi.stubGlobal(
+        "MutationObserver",
+        class {
+          constructor(callback: () => void) {
+            notifyStyleChange = callback;
+          }
+          observe() {}
+          disconnect = disconnect;
+        },
+      );
       vi.stubGlobal("HTMLElement", ContentElement);
       const content = new ContentElement();
       let ticks = 0;
@@ -58,11 +75,19 @@ describe("KeptBotsHome", () => {
       const paused = ticks;
       // Overwriting Activity's host display must not reconnect its effects.
       expect(content.style.setProperty).toHaveBeenCalledTimes(variant === "supported" ? 1 : 0);
+      if (variant === "supported") {
+        content.style.display = "none";
+        notifyStyleChange!();
+        expect(content.style.display).toBe("block");
+        notifyStyleChange!();
+        expect(content.style.setProperty).toHaveBeenCalledTimes(2);
+      }
       act(() => {
         vi.advanceTimersByTime(5_000);
       });
       expect(ticks).toBe(paused);
       act(() => renderer.update(<KeptBotsHome shown>{child}</KeptBotsHome>));
+      expect(disconnect).toHaveBeenCalledTimes(variant === "supported" ? 1 : 0);
       expect(renderer.root.findByType("span").children).toEqual(["unread"]);
       expect(initializations).toBe(1);
       act(() => {

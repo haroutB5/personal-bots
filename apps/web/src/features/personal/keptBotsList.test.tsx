@@ -107,12 +107,15 @@ describe("kept list scroll restoration", () => {
   it("restores the exact saved offset before paint and cancels stale restores on navigation", () => {
     let nextId = 0;
     const frames = new Map<number, FrameRequestCallback>();
+    const microtasks: Array<() => void> = [];
+    vi.stubGlobal("queueMicrotask", (callback: () => void) => microtasks.push(callback));
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       frames.set(++nextId, callback);
       return nextId;
     });
     vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
     const flush = () => {
+      act(() => microtasks.splice(0).forEach((callback) => callback()));
       const callbacks = [...frames.values()];
       frames.clear();
       act(() => callbacks.forEach((callback) => callback(0)));

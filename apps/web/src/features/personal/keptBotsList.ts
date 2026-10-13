@@ -95,14 +95,17 @@ export function useKeptBotsListScroll(
         scroller.scrollTop = savedScrollTop;
         return;
       }
-      // Restore before paint, after React finishes all of the route's DOM
-      // writes. Doing it inside the commit forces a layout halfway through
-      // those writes, followed by another layout for the remaining changes.
+      // Restore after the commit's DOM writes but before the browser can
+      // paint. An rAF queued during another rAF can miss this frame in WebKit,
+      // showing the top of the list for one frame before restoring its offset.
       const top = savedScrollTop;
-      const frame = requestAnimationFrame(() => {
-        scroller.scrollTop = top;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) scroller.scrollTop = top;
       });
-      return () => cancelAnimationFrame(frame);
+      return () => {
+        cancelled = true;
+      };
     }
     // Hidden: the page on top starts at the top. In the next frame's rAF,
     // still before it paints: touching scrollTop here forced a layout inside

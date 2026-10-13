@@ -24,7 +24,18 @@ export function KeptBotsHome({ shown, children }: { shown: boolean; children: Re
     // Replace that write after the mutation phase: our outer wrapper hides
     // the content, while the browser retains its layout for Back.
     const content = rootRef.current?.firstElementChild;
-    if (content && content instanceof HTMLElement) content.style.setProperty("display", "block");
+    if (!content || !(content instanceof HTMLElement)) return;
+    const restoreDisplay = () => {
+      if (content.style.display === "none") content.style.setProperty("display", "block");
+    };
+    restoreDisplay();
+    // Activity can finish hiding its host in a later commit without rendering
+    // this parent again. Watch only that host while asleep; changing its style
+    // does not reconnect Activity's descendant effects.
+    if (typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(restoreDisplay);
+    observer.observe(content, { attributes: true, attributeFilter: ["style"] });
+    return () => observer.disconnect();
   }, [retainLayout, asleep, shown]);
   useEffect(() => {
     const node = rootRef.current;
