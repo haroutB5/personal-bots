@@ -204,6 +204,16 @@ import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
  */
 const COMPOSER_FOCUS_COLLAPSE_MS = 180;
 
+/**
+ * How long a gesture stays open after its pointer lifts. A tap's focus events
+ * and its click all land after pointerup on touch (pointerdown, touchend,
+ * mousedown, focusout/in, mouseup, click), so the dock's layout has to hold
+ * still across them; the click itself ends the window sooner. Long enough to
+ * cover the compatibility events under load, short enough not to read as lag
+ * when a gesture produces no click at all (SPEC 2.9, D9).
+ */
+const GESTURE_SETTLE_MS = 250;
+
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
 
@@ -593,20 +603,28 @@ export function ConversationScreen({
   }, [items]);
   // The composer has the field: on a phone that is the keyboard, so the dock
   // gives the thread its room (SPEC 2.9, D9). The inset alone cannot tell a
-  // desktop browser it is "open"; focus is the state both share. Nothing about
-  // that state moves while a finger is down: a tap on a docked option blurs the
-  // field AND focuses the option on its way in, and either one on its own swaps
-  // the chip row for the tall rows under the finger, moving the very button
-  // being pressed, so the click lands on the dock behind it and the answer never
-  // goes (QA's question journey, measured at 4x CPU: the click target was
-  // SECTION.personal-dock). The truth applies once the finger lifts: at once
-  // when the field still has the focus, after the settle when it does not.
+  // desktop browser it is "open"; focus is the state both share.
+  //
+  // Nothing about that state moves while a gesture is in flight. A tap on a
+  // docked option both blurs the field AND focuses the option button on its way
+  // in, and either one on its own swaps the chip row for the tall rows under the
+  // finger: the finger's own button moves, so the mouseup and the click land on
+  // whatever slid into that spot (measured at 4x CPU: the click target was
+  // SECTION.personal-dock) and the answer is never sent. That is why the guard
+  // cannot key on "the pointer is down": a tap's focus events come AFTER
+  // pointerup for touch (pointerdown, touchend, mousedown, focusout/in, mouseup,
+  // click), so the gesture is held open until its click lands, or for
+  // GESTURE_SETTLE_MS after the pointer lifts when no click follows.
+  //
+  // Once the gesture is over the truth applies: at once when the field still has
+  // the focus (the composer, an attach tap, a send), after the settle when not.
   const [composerActive, setComposerActive] = useState(false);
   useEffect(() => {
     const shell = shellRef.current;
     if (shell === null) return;
     let collapse: number | undefined;
-    let fingerDown = false;
+    let gesture: number | undefined;
+    let gestureOpen = false;
     const clearCollapse = () => {
       if (collapse !== undefined) {
         window.clearTimeout(collapse);
@@ -620,34 +638,8 @@ export function ConversationScreen({
         setComposerActive(false);
       }, COMPOSER_FOCUS_COLLAPSE_MS);
     };
-    const onFocusIn = (event: FocusEvent) => {
-      clearCollapse();
-      // A tap focuses whatever it lands on: a docked option, the composer, or
-      // nothing at all. While a finger is down the room the composer asked for
-      // stays as it was whichever way the focus moved. A tap on a docked option
-      // focuses the option on its way in, and treating that as "the field let
-      // go" swapped the chip row for the tall rows between the mousedown and the
-      // mouseup, so the gesture ended on a different button and the click landed
-      // on the dock behind it: no answer, ever (QA's question journey, measured
-      // at 4x CPU, click target SECTION.personal-dock).
-      if (fingerDown) return;
-      const target = event.target as HTMLElement | null;
-      setComposerActive(target?.getAttribute?.(COMPOSER_INPUT_ATTRIBUTE) === "");
-    };
-    const onFocusOut = () => {
-      if (fingerDown) return;
-      scheduleCollapse();
-    };
-    const onPointerDown = () => {
-      fingerDown = true;
-      clearCollapse();
-    };
-    const onPointerUp = () => {
-      fingerDown = false;
-      // The gesture is over, so the truth applies now: a tap that left the
-      // field focused (the composer itself, an attach tap, a send) keeps the
-      // room the composer asked for, and one that moved the focus away brings
-      // the tall rows back after the settle.
+    /** What the composer's room should be, now that nothing is in flight. */
+    const settle = () => {
       const field = shell.querySelector(`[${COMPOSER_INPUT_ATTRIBUTE}]`);
       if (field !== null && field === document.activeElement) {
         clearCollapse();
@@ -657,18 +649,52 @@ export function ConversationScreen({
       if (collapse !== undefined) return;
       scheduleCollapse();
     };
+    const endGesture = () => {
+      if (gesture !== undefined) {
+        window.clearTimeout(gesture);
+        gesture = undefined;
+      }
+      if (!gestureOpen) return;
+      gestureOpen = false;
+      settle();
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      clearCollapse();
+      if (gestureOpen) return;
+      const target = event.target as HTMLElement | null;
+      setComposerActive(target?.getAttribute?.(COMPOSER_INPUT_ATTRIBUTE) === "");
+    };
+    const onFocusOut = () => {
+      if (gestureOpen) return;
+      scheduleCollapse();
+    };
+    const onPointerDown = () => {
+      gestureOpen = true;
+      clearCollapse();
+      if (gesture !== undefined) {
+        window.clearTimeout(gesture);
+        gesture = undefined;
+      }
+    };
+    const onPointerUp = () => {
+      if (gesture !== undefined) window.clearTimeout(gesture);
+      gesture = window.setTimeout(endGesture, GESTURE_SETTLE_MS);
+    };
     shell.addEventListener("focusin", onFocusIn);
     shell.addEventListener("focusout", onFocusOut);
     shell.addEventListener("pointerdown", onPointerDown, true);
     shell.addEventListener("pointerup", onPointerUp, true);
-    shell.addEventListener("pointercancel", onPointerUp, true);
+    shell.addEventListener("pointercancel", endGesture, true);
+    shell.addEventListener("click", endGesture, true);
     return () => {
       clearCollapse();
+      if (gesture !== undefined) window.clearTimeout(gesture);
       shell.removeEventListener("focusin", onFocusIn);
       shell.removeEventListener("focusout", onFocusOut);
       shell.removeEventListener("pointerdown", onPointerDown, true);
       shell.removeEventListener("pointerup", onPointerUp, true);
-      shell.removeEventListener("pointercancel", onPointerUp, true);
+      shell.removeEventListener("pointercancel", endGesture, true);
+      shell.removeEventListener("click", endGesture, true);
     };
   }, [shellRef]);
   // D13: what the chat lands on. An explicit `?request=<id>` (the push, a deep
