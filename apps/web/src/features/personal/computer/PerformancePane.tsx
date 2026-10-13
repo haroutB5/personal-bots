@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PerformanceGroup, PerformanceGroups, PerformanceSample } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -47,6 +47,42 @@ function Marked({ text }: { readonly text: string }): JSX.Element {
         ),
       )}
     </>
+  );
+}
+
+/**
+ * Keeps a card's contents mounted only when the card is within a screenful of
+ * the viewport (spec section 8: off-screen cards cost nothing per tick). The
+ * placeholder holds the height the card had, so nothing shifts when it comes
+ * back; before the first measure the card renders normally, once.
+ */
+function Gate({ children }: { readonly children: ReactNode }): JSX.Element {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [near, setNear] = useState(true);
+  const [height, setHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (host === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry === undefined) return;
+        if (!entry.isIntersecting) {
+          setHeight(host.getBoundingClientRect().height);
+          setNear(false);
+        } else {
+          setNear(true);
+        }
+      },
+      { rootMargin: "400px 0px" },
+    );
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={hostRef} style={near ? undefined : { height: height ?? undefined }}>
+      {near ? children : null}
+    </div>
   );
 }
 
@@ -565,256 +601,272 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
       </Card>
 
       {/* 3. Memory */}
-      <Card id="perf-mem" label="Memory" dim={stale}>
-        <CardHead
-          title="Memory"
-          meta={shown?.memTotalGB == null ? "–" : `${shown.memTotalGB.toFixed(1)} GB usable`}
-          warn={memoryWarn ? "Over 90%" : null}
-        />
-        <Value
-          main={fmt(shown?.memUsedGB ?? null, 1)}
-          unit="GB"
-          context={
-            shown?.memUsedGB == null || shown?.memTotalGB == null
-              ? undefined
-              : `${Math.round((shown.memUsedGB / shown.memTotalGB) * 100)}% used · ${fmt(shown.memFreeGB, 1)} GB free`
-          }
-        />
-        <PerfChart
-          series={memChart}
-          min={0}
-          max={16}
-          ticks={[
-            { v: 8, l: "8 GB" },
-            { v: 16, l: "16 GB" },
-          ]}
-          scrubIndex={scrubIndex}
-          onScrub={setScrub}
-          ariaLabel={`Memory, last 15 minutes: ${fmt(shown?.memUsedGB ?? null, 1)} of ${fmt(shown?.memTotalGB ?? null, 1)} gigabytes used`}
-        />
-        <div className="mt-1 flex items-center justify-between text-[13px] leading-4 text-[var(--personal-text-secondary)]">
-          <span>
-            <LegendKey /> This PC{" "}
-            <b className="font-semibold text-[var(--personal-text)]">
-              {fmt(shown?.memUsedGB ?? null, 1)} GB
-            </b>
-          </span>
-          <span>
-            <LegendKey hbots /> hbots{" "}
-            <b className="font-semibold text-[var(--personal-text)]">
-              {fmt(shown?.hbotsGB ?? null, 1)} GB
-            </b>
-          </span>
-        </div>
-        {hbotsRows === null ? null : (
-          <p className="mt-2.5 text-[13px] leading-4 text-[var(--personal-text-secondary)]">
-            hbots: server{" "}
-            <b className="font-semibold text-[var(--personal-text)]">
-              {hbotsRows.server.memGB.toFixed(1)} GB
-            </b>{" "}
-            · bots{" "}
-            <b className="font-semibold text-[var(--personal-text)]">
-              {hbotsRows.bots.memGB.toFixed(1)} GB
-            </b>{" "}
-            · browser{" "}
-            <b className="font-semibold text-[var(--personal-text)]">
-              {hbotsRows.browser.memGB.toFixed(1)} GB
-            </b>
-          </p>
-        )}
-      </Card>
-
-      {/* 4. Temperatures and fans */}
-      <TempsCard
-        samples={samples}
-        stale={stale}
-        scrubIndex={scrubIndex}
-        onScrub={setScrub}
-        warnPillHot={cpuTempWarn}
-        fansFastest={fansFastest}
-        tempSeries={tempSeries}
-        tempChart={tempChart}
-        fan1Series={fan1Series}
-        fan2Series={fan2Series}
-      />
-
-      {/* 5. hbots */}
-      <Card id="perf-hbots" label="hbots on this PC" dim={stale}>
-        <CardHead
-          title={
-            <span className="flex items-center gap-1.5">
-              <LegendKey hbots />
-              hbots
-            </span>
-          }
-          meta={
-            statics === null ? (
-              ""
-            ) : (
-              <>
-                {statics.hbotsVersion ?? "?"} · up <UpFor since={statics.hbotsStartedAt} />
-              </>
-            )
-          }
-        />
-        <div className="mt-1 flex items-center gap-2 text-[15px] leading-5">
-          <i
-            aria-hidden="true"
-            className={cn(
-              "inline-block size-2 rounded-full",
-              botsBusy > 0
-                ? "bg-[var(--perf-charge,var(--personal-live))]"
-                : "bg-[var(--personal-text-tertiary)]",
-            )}
+      <Gate>
+        <Card id="perf-mem" label="Memory" dim={stale}>
+          <CardHead
+            title="Memory"
+            meta={shown?.memTotalGB == null ? "–" : `${shown.memTotalGB.toFixed(1)} GB usable`}
+            warn={memoryWarn ? "Over 90%" : null}
           />
-          <span>
-            <b className="font-semibold">{botsBusy}</b> {botsBusy === 1 ? "bot" : "bots"} busy
-          </span>
-          <span aria-hidden="true" className="text-[var(--personal-text-tertiary)]">
-            ·
-          </span>
-          <span>
-            <b className="font-semibold">{tasksRunning}</b> {tasksRunning === 1 ? "task" : "tasks"}{" "}
-            running
-          </span>
-        </div>
-        <table className="mt-2 w-full border-collapse text-[15px] leading-5">
-          <thead>
-            <tr className="text-[13px] leading-4 font-semibold text-[var(--personal-text-secondary)]">
-              <th scope="col" className="py-1 text-left">
-                <span className="sr-only">Part</span>
-              </th>
-              <th scope="col" className="w-[92px] py-1 text-right">
-                CPU
-              </th>
-              <th scope="col" className="w-[92px] py-1 text-right">
-                Memory
-              </th>
-            </tr>
-          </thead>
-          <tbody className="tabular-nums">
-            {hbotsRows === null ? null : (
-              <>
-                <HbotsRow row={hbotsRows.server} count={null} />
-                <HbotsRow row={hbotsRows.bots} count={hbotsRows.bots.processCount} />
-                <HbotsRow row={hbotsRows.browser} count={hbotsRows.browser.processCount} />
-                <tr className="border-t border-[var(--personal-border)] font-semibold">
-                  <td className="py-1.5">Total</td>
-                  <td className="py-1.5 text-right">{hbotsRows.total.cpuPct.toFixed(1)}%</td>
-                  <td className="py-1.5 text-right">{hbotsRows.total.memGB.toFixed(1)} GB</td>
-                </tr>
-              </>
-            )}
-          </tbody>
-        </table>
-      </Card>
-
-      {/* 6. Heaviest right now */}
-      <HeaviestCard groups={groups} dim={stale} />
-
-      {/* 7. Battery */}
-      <BatteryCard
-        feed={feed}
-        stale={stale}
-        cpuPower={cpuPowerSeries}
-        gpuPower={gpuPowerSeries}
-        platformPower={platformPowerSeries}
-      />
-
-      {/* 8. Tiles */}
-      <div id="perf-more" className={cn("grid grid-cols-2 gap-3", stale && "opacity-45")}>
-        <Tile
-          label="Graphics"
-          value={fmt(shown?.gpuPct ?? null)}
-          unit="%"
-          lines={[statics?.pcGpu ?? "GPU", gpuEngineLabel(shown?.gpuEngine ?? null)]}
-          spark={<PerfSpark values={gpuSeries} min={0} max={100} />}
-        />
-        <Tile
-          label="Disk activity"
-          value={fmt(shown?.diskActivePct ?? null)}
-          unit="%"
-          lines={[
-            `Read ${fmt(shown?.diskReadMBps ?? null, 1)} MB/s`,
-            `Write ${fmt(shown?.diskWriteMBps ?? null, 1)} MB/s`,
-          ]}
-          spark={<PerfSpark values={diskSeries} min={0} max={100} />}
-        />
-        <Tile
-          label="Download"
-          value={fmt(shown?.netDownMbps ?? null, 1)}
-          unit="Mb/s"
-          lines={[shown?.netAdapter ?? "Network", `Peak ${fmt(highest(downSeries), 1)} Mb/s`]}
-          spark={<PerfSpark values={downSeries} />}
-        />
-        <Tile
-          label="Upload"
-          value={fmt(shown?.netUpMbps ?? null, 1)}
-          unit="Mb/s"
-          lines={[shown?.netAdapter ?? "Network", `Peak ${fmt(highest(upSeries), 1)} Mb/s`]}
-          spark={<PerfSpark values={upSeries} />}
-        />
-      </div>
-
-      {/* 9. Storage */}
-      <div className="mt-3">
-        <Card id="perf-storage" label="Storage" dim={stale}>
-          <CardHead title="Storage" meta="Drive C:" />
           <Value
-            main={fmt(slow?.diskFreeGB ?? null)}
-            unit="GB free"
-            context={slow?.diskTotalGB == null ? undefined : `of ${fmt(slow.diskTotalGB)} GB`}
+            main={fmt(shown?.memUsedGB ?? null, 1)}
+            unit="GB"
+            context={
+              shown?.memUsedGB == null || shown?.memTotalGB == null
+                ? undefined
+                : `${Math.round((shown.memUsedGB / shown.memTotalGB) * 100)}% used · ${fmt(shown.memFreeGB, 1)} GB free`
+            }
           />
-          {slow?.diskTotalGB == null || slow?.diskFreeGB == null ? null : (
-            <>
-              <span
-                className="mt-2 flex h-2 w-full gap-0.5 overflow-hidden rounded-full"
-                role="img"
-                aria-label={`hbots ${fmt(storageHbotsGB)} gigabytes, everything else ${fmt(slow.diskTotalGB - slow.diskFreeGB - (storageHbotsGB ?? 0) < 0 ? 0 : slow.diskTotalGB - slow.diskFreeGB - (storageHbotsGB ?? 0))}, free ${fmt(slow.diskFreeGB)}`}
-              >
-                <i
-                  className="block h-full rounded-full bg-[var(--perf-hbots)]"
-                  style={{ width: `${((storageHbotsGB ?? 0) / slow.diskTotalGB) * 100}%` }}
-                />
-                <i
-                  className="block h-full rounded-full bg-[var(--perf-pc)]"
-                  style={{
-                    width: `${(Math.max(0, slow.diskTotalGB - slow.diskFreeGB - (storageHbotsGB ?? 0)) / slow.diskTotalGB) * 100}%`,
-                  }}
-                />
-              </span>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] leading-4 text-[var(--personal-text-secondary)]">
-                <span>
-                  <LegendSquare hbots /> hbots{" "}
-                  <b className="font-semibold text-[var(--personal-text)]">
-                    {fmt(storageHbotsGB)} GB
-                  </b>
-                </span>
-                <span>
-                  <LegendSquare /> Everything else{" "}
-                  <b className="font-semibold text-[var(--personal-text)]">
-                    {fmt(Math.max(0, slow.diskTotalGB - slow.diskFreeGB - (storageHbotsGB ?? 0)))}{" "}
-                    GB
-                  </b>
-                </span>
-                <span>
-                  <LegendSquare free /> Free{" "}
-                  <b className="font-semibold text-[var(--personal-text)]">
-                    {fmt(slow.diskFreeGB)} GB
-                  </b>
-                </span>
-              </div>
-            </>
-          )}
-          {slow?.backupsGB == null ? null : (
-            <p className="mt-2 text-[13px] leading-4 text-[var(--personal-text-secondary)]">
-              <b className="font-semibold text-[var(--personal-text)]">{fmt(slow.backupsGB)} GB</b>{" "}
-              of that is release backups
-              {slow.backupsCount === null ? "" : ` (${slow.backupsCount} kept)`}.
+          <PerfChart
+            series={memChart}
+            min={0}
+            max={16}
+            ticks={[
+              { v: 8, l: "8 GB" },
+              { v: 16, l: "16 GB" },
+            ]}
+            scrubIndex={scrubIndex}
+            onScrub={setScrub}
+            ariaLabel={`Memory, last 15 minutes: ${fmt(shown?.memUsedGB ?? null, 1)} of ${fmt(shown?.memTotalGB ?? null, 1)} gigabytes used`}
+          />
+          <div className="mt-1 flex items-center justify-between text-[13px] leading-4 text-[var(--personal-text-secondary)]">
+            <span>
+              <LegendKey /> This PC{" "}
+              <b className="font-semibold text-[var(--personal-text)]">
+                {fmt(shown?.memUsedGB ?? null, 1)} GB
+              </b>
+            </span>
+            <span>
+              <LegendKey hbots /> hbots{" "}
+              <b className="font-semibold text-[var(--personal-text)]">
+                {fmt(shown?.hbotsGB ?? null, 1)} GB
+              </b>
+            </span>
+          </div>
+          {hbotsRows === null ? null : (
+            <p className="mt-2.5 text-[13px] leading-4 text-[var(--personal-text-secondary)]">
+              hbots: server{" "}
+              <b className="font-semibold text-[var(--personal-text)]">
+                {hbotsRows.server.memGB.toFixed(1)} GB
+              </b>{" "}
+              · bots{" "}
+              <b className="font-semibold text-[var(--personal-text)]">
+                {hbotsRows.bots.memGB.toFixed(1)} GB
+              </b>{" "}
+              · browser{" "}
+              <b className="font-semibold text-[var(--personal-text)]">
+                {hbotsRows.browser.memGB.toFixed(1)} GB
+              </b>
             </p>
           )}
         </Card>
-      </div>
+      </Gate>
+
+      {/* 4. Temperatures and fans */}
+      <Gate>
+        <TempsCard
+          samples={samples}
+          stale={stale}
+          scrubIndex={scrubIndex}
+          onScrub={setScrub}
+          warnPillHot={cpuTempWarn}
+          fansFastest={fansFastest}
+          tempSeries={tempSeries}
+          tempChart={tempChart}
+          fan1Series={fan1Series}
+          fan2Series={fan2Series}
+        />
+      </Gate>
+
+      {/* 5. hbots */}
+      <Gate>
+        <Card id="perf-hbots" label="hbots on this PC" dim={stale}>
+          <CardHead
+            title={
+              <span className="flex items-center gap-1.5">
+                <LegendKey hbots />
+                hbots
+              </span>
+            }
+            meta={
+              statics === null ? (
+                ""
+              ) : (
+                <>
+                  {statics.hbotsVersion ?? "?"} · up <UpFor since={statics.hbotsStartedAt} />
+                </>
+              )
+            }
+          />
+          <div className="mt-1 flex items-center gap-2 text-[15px] leading-5">
+            <i
+              aria-hidden="true"
+              className={cn(
+                "inline-block size-2 rounded-full",
+                botsBusy > 0
+                  ? "bg-[var(--perf-charge,var(--personal-live))]"
+                  : "bg-[var(--personal-text-tertiary)]",
+              )}
+            />
+            <span>
+              <b className="font-semibold">{botsBusy}</b> {botsBusy === 1 ? "bot" : "bots"} busy
+            </span>
+            <span aria-hidden="true" className="text-[var(--personal-text-tertiary)]">
+              ·
+            </span>
+            <span>
+              <b className="font-semibold">{tasksRunning}</b>{" "}
+              {tasksRunning === 1 ? "task" : "tasks"} running
+            </span>
+          </div>
+          <table className="mt-2 w-full border-collapse text-[15px] leading-5">
+            <thead>
+              <tr className="text-[13px] leading-4 font-semibold text-[var(--personal-text-secondary)]">
+                <th scope="col" className="py-1 text-left">
+                  <span className="sr-only">Part</span>
+                </th>
+                <th scope="col" className="w-[92px] py-1 text-right">
+                  CPU
+                </th>
+                <th scope="col" className="w-[92px] py-1 text-right">
+                  Memory
+                </th>
+              </tr>
+            </thead>
+            <tbody className="tabular-nums">
+              {hbotsRows === null ? null : (
+                <>
+                  <HbotsRow row={hbotsRows.server} count={null} />
+                  <HbotsRow row={hbotsRows.bots} count={hbotsRows.bots.processCount} />
+                  <HbotsRow row={hbotsRows.browser} count={hbotsRows.browser.processCount} />
+                  <tr className="border-t border-[var(--personal-border)] font-semibold">
+                    <td className="py-1.5">Total</td>
+                    <td className="py-1.5 text-right">{hbotsRows.total.cpuPct.toFixed(1)}%</td>
+                    <td className="py-1.5 text-right">{hbotsRows.total.memGB.toFixed(1)} GB</td>
+                  </tr>
+                </>
+              )}
+            </tbody>
+          </table>
+        </Card>
+      </Gate>
+
+      {/* 6. Heaviest right now */}
+      <Gate>
+        <HeaviestCard groups={groups} dim={stale} />
+      </Gate>
+
+      {/* 7. Battery */}
+      <Gate>
+        <BatteryCard
+          feed={feed}
+          stale={stale}
+          cpuPower={cpuPowerSeries}
+          gpuPower={gpuPowerSeries}
+          platformPower={platformPowerSeries}
+        />
+      </Gate>
+
+      {/* 8. Tiles */}
+      <Gate>
+        <div id="perf-more" className={cn("grid grid-cols-2 gap-3", stale && "opacity-45")}>
+          <Tile
+            label="Graphics"
+            value={fmt(shown?.gpuPct ?? null)}
+            unit="%"
+            lines={[statics?.pcGpu ?? "GPU", gpuEngineLabel(shown?.gpuEngine ?? null)]}
+            spark={<PerfSpark values={gpuSeries} min={0} max={100} />}
+          />
+          <Tile
+            label="Disk activity"
+            value={fmt(shown?.diskActivePct ?? null)}
+            unit="%"
+            lines={[
+              `Read ${fmt(shown?.diskReadMBps ?? null, 1)} MB/s`,
+              `Write ${fmt(shown?.diskWriteMBps ?? null, 1)} MB/s`,
+            ]}
+            spark={<PerfSpark values={diskSeries} min={0} max={100} />}
+          />
+          <Tile
+            label="Download"
+            value={fmt(shown?.netDownMbps ?? null, 1)}
+            unit="Mb/s"
+            lines={[shown?.netAdapter ?? "Network", `Peak ${fmt(highest(downSeries), 1)} Mb/s`]}
+            spark={<PerfSpark values={downSeries} />}
+          />
+          <Tile
+            label="Upload"
+            value={fmt(shown?.netUpMbps ?? null, 1)}
+            unit="Mb/s"
+            lines={[shown?.netAdapter ?? "Network", `Peak ${fmt(highest(upSeries), 1)} Mb/s`]}
+            spark={<PerfSpark values={upSeries} />}
+          />
+        </div>
+      </Gate>
+
+      {/* 9. Storage */}
+      <Gate>
+        <div className="mt-3">
+          <Card id="perf-storage" label="Storage" dim={stale}>
+            <CardHead title="Storage" meta="Drive C:" />
+            <Value
+              main={fmt(slow?.diskFreeGB ?? null)}
+              unit="GB free"
+              context={slow?.diskTotalGB == null ? undefined : `of ${fmt(slow.diskTotalGB)} GB`}
+            />
+            {slow?.diskTotalGB == null || slow?.diskFreeGB == null ? null : (
+              <>
+                <span
+                  className="mt-2 flex h-2 w-full gap-0.5 overflow-hidden rounded-full"
+                  role="img"
+                  aria-label={`hbots ${fmt(storageHbotsGB)} gigabytes, everything else ${fmt(slow.diskTotalGB - slow.diskFreeGB - (storageHbotsGB ?? 0) < 0 ? 0 : slow.diskTotalGB - slow.diskFreeGB - (storageHbotsGB ?? 0))}, free ${fmt(slow.diskFreeGB)}`}
+                >
+                  <i
+                    className="block h-full rounded-full bg-[var(--perf-hbots)]"
+                    style={{ width: `${((storageHbotsGB ?? 0) / slow.diskTotalGB) * 100}%` }}
+                  />
+                  <i
+                    className="block h-full rounded-full bg-[var(--perf-pc)]"
+                    style={{
+                      width: `${(Math.max(0, slow.diskTotalGB - slow.diskFreeGB - (storageHbotsGB ?? 0)) / slow.diskTotalGB) * 100}%`,
+                    }}
+                  />
+                </span>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] leading-4 text-[var(--personal-text-secondary)]">
+                  <span>
+                    <LegendSquare hbots /> hbots{" "}
+                    <b className="font-semibold text-[var(--personal-text)]">
+                      {fmt(storageHbotsGB)} GB
+                    </b>
+                  </span>
+                  <span>
+                    <LegendSquare /> Everything else{" "}
+                    <b className="font-semibold text-[var(--personal-text)]">
+                      {fmt(Math.max(0, slow.diskTotalGB - slow.diskFreeGB - (storageHbotsGB ?? 0)))}{" "}
+                      GB
+                    </b>
+                  </span>
+                  <span>
+                    <LegendSquare free /> Free{" "}
+                    <b className="font-semibold text-[var(--personal-text)]">
+                      {fmt(slow.diskFreeGB)} GB
+                    </b>
+                  </span>
+                </div>
+              </>
+            )}
+            {slow?.backupsGB == null ? null : (
+              <p className="mt-2 text-[13px] leading-4 text-[var(--personal-text-secondary)]">
+                <b className="font-semibold text-[var(--personal-text)]">
+                  {fmt(slow.backupsGB)} GB
+                </b>{" "}
+                of that is release backups
+                {slow.backupsCount === null ? "" : ` (${slow.backupsCount} kept)`}.
+              </p>
+            )}
+          </Card>
+        </div>
+      </Gate>
 
       {/* 10. Footer */}
       <p className="px-1 pb-4 text-[11px] leading-[15px] text-[var(--personal-text-tertiary)]">
