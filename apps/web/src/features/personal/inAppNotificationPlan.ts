@@ -18,6 +18,17 @@ export interface InAppPlan {
 }
 
 /**
+ * The screen a url opens, without its `?request=<id>` and hash: those name a
+ * card inside the screen, not a different screen, so a chat waiting on a
+ * request is still "the screen already open" while it is up.
+ */
+function screenOf(url: string | undefined): string | null {
+  if (url === undefined) return null;
+  const at = url.search(/[?#]/);
+  return at === -1 ? url : url.slice(0, at);
+}
+
+/**
  * What to do with the in-app feed after it changed. Every id is handled once
  * (`seen` is updated in place). A hidden page acknowledges nothing, so the
  * server falls back to web push for it. A visible page acknowledges each new
@@ -35,7 +46,8 @@ export function planInAppNotifications(
   if (!page.visible || fresh.length === 0) return { ack: [], show: null };
   const shown = fresh.filter(
     (notification) =>
-      notification.url !== page.currentPath && notification.quietPath !== page.currentPath,
+      screenOf(notification.url) !== page.currentPath &&
+      screenOf(notification.quietPath) !== page.currentPath,
   );
   return { ack: fresh.map((notification) => notification.id), show: shown.at(-1) ?? null };
 }
