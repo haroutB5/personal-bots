@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import {
   clampHomeWindow,
@@ -72,55 +73,76 @@ export function useHomeWindow(
   count: number,
   options: { readonly overscan?: number; readonly active?: boolean } = {},
 ): HomeWindow {
-  const overscan = options.overscan ?? HOME_ROW_OVERSCAN;
+  const [compact] = useState(() => perfOptimizationOn("home-window-compact"));
+  const [deferRestore] = useState(() => perfOptimizationOn("home-scroll-restore"));
+  const overscan = options.overscan ?? (compact ? 5 : HOME_ROW_OVERSCAN);
   const active = options.active ?? true;
   // Kill switch "home-window" (perfFlags.ts), read once per load like the
   // other switches: off, every row is drawn and nothing is measured.
   const [enabled] = useState(() => perfOptimizationOn("home-window"));
   const listRef = useRef<HTMLUListElement | null>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
-  const [range, setRange] = useState<HomeWindowRange>(() => firstHomeWindow(count, overscan));
+  const [range, setRange] = useState<HomeWindowRange>(() =>
+    // Twelve rows cover the phone's first visible band plus the four-row
+    // hysteresis cushion. A taller viewport is measured before paint.
+    firstHomeWindow(count, compact && options.overscan === undefined ? 4 : overscan),
+  );
   const rangeRef = useRef(range);
   const activeRef = useRef(active);
   const measuredCountRef = useRef<number | null>(null);
   const lastAboveRef = useRef<number | null>(null);
   const frameRef = useRef(0);
 
-  const measure = useCallback(() => {
-    if (!enabled) return;
-    const list = listRef.current;
-    if (list === null || typeof list.getBoundingClientRect !== "function") return;
-    const scroller = scrollerRef.current ?? findScrollParent(list);
-    if (scroller === null) return;
-    scrollerRef.current = scroller;
-    const listRect = list.getBoundingClientRect();
-    const scrollerRect = scroller.getBoundingClientRect();
-    // Not laid out (hidden under an open chat): keep the slice. A zero read
-    // here would draw the top of the list over the position Back restores.
-    if (listRect.width === 0 || scrollerRect.height === 0) return;
-    const hiddenAbove = scrollerRect.top - listRect.top;
-    const previousAbove = lastAboveRef.current;
-    lastAboveRef.current = hiddenAbove;
-    const next = homeWindowRange({
-      count,
-      pitch: measurePitch(list) ?? HOME_ROW_PITCH,
-      hiddenAbove,
-      viewport: scroller.clientHeight,
-      overscan,
-      // The slice already drawn: while the visible band stays inside it by
-      // the hysteresis margin, the same slice comes back and nothing re-renders.
-      previous: rangeRef.current,
-      direction:
-        previousAbove === null || hiddenAbove === previousAbove
-          ? null
-          : hiddenAbove > previousAbove
-            ? "down"
-            : "up",
-    });
-    if (sameHomeWindow(rangeRef.current, next)) return;
-    rangeRef.current = next;
-    setRange(next);
-  }, [count, enabled, overscan]);
+  const measure = useCallback(
+    (allowUrgent = false) => {
+      if (!enabled) return;
+      const list = listRef.current;
+      if (list === null || typeof list.getBoundingClientRect !== "function") return;
+      const scroller = scrollerRef.current ?? findScrollParent(list);
+      if (scroller === null) return;
+      scrollerRef.current = scroller;
+      const listRect = list.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      // Not laid out (hidden under an open chat): keep the slice. A zero read
+      // here would draw the top of the list over the position Back restores.
+      if (listRect.width === 0 || scrollerRect.height === 0) return;
+      const hiddenAbove = scrollerRect.top - listRect.top;
+      const previousAbove = lastAboveRef.current;
+      lastAboveRef.current = hiddenAbove;
+      const pitch = measurePitch(list) ?? HOME_ROW_PITCH;
+      const viewport = Math.max(0, scroller.clientHeight + Math.min(0, hiddenAbove));
+      const previousRange = rangeRef.current;
+      const next = homeWindowRange({
+        count,
+        pitch,
+        hiddenAbove,
+        // The header and rail take part of the scroller before the list starts.
+        // Count only the height available to rows while they are below its top.
+        viewport,
+        overscan,
+        // The slice already drawn: while the visible band stays inside it by
+        // the hysteresis margin, the same slice comes back and nothing re-renders.
+        previous: rangeRef.current,
+        direction:
+          previousAbove === null || hiddenAbove === previousAbove
+            ? null
+            : hiddenAbove > previousAbove
+              ? "down"
+              : "up",
+      });
+      if (sameHomeWindow(rangeRef.current, next)) return;
+      rangeRef.current = next;
+      const above = Math.max(0, hiddenAbove);
+      const escaped =
+        Math.floor(above / pitch) < previousRange.start ||
+        Math.min(count, Math.ceil((above + viewport) / pitch)) > previousRange.end;
+      // A jump can outrun overscan. Commit it inside the animation-frame
+      // callback, before paint; never flush from the mount/layout effect.
+      if (allowUrgent && escaped) flushSync(() => setRange(next));
+      else setRange(next);
+    },
+    [count, enabled, overscan],
+  );
 
   const scheduleMeasure = useCallback(() => {
     if (frameRef.current !== 0) return;
@@ -128,7 +150,7 @@ export function useHomeWindow(
     if (typeof window.cancelAnimationFrame !== "function") return;
     frameRef.current = window.requestAnimationFrame(() => {
       frameRef.current = 0;
-      measure();
+      measure(true);
     });
   }, [measure]);
 
@@ -146,6 +168,10 @@ export function useHomeWindow(
     }
     if (!active) {
       measuredCountRef.current = null;
+      if (frameRef.current !== 0) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = 0;
+      }
       return;
     }
     if (!wasActive) {
@@ -154,7 +180,20 @@ export function useHomeWindow(
       // runs after this one. Correct in the next frame instead of reading a
       // half-restored scroller.
       measuredCountRef.current = null;
-      scheduleMeasure();
+      if (
+        deferRestore &&
+        frameRef.current === 0 &&
+        typeof window !== "undefined" &&
+        typeof window.requestAnimationFrame === "function"
+      ) {
+        // The parent restores scroll in this frame, after our layout effect.
+        // Keep the saved slice through that paint and measure the restored
+        // geometry in the following frame, rather than the chat's offset.
+        frameRef.current = window.requestAnimationFrame(() => {
+          frameRef.current = 0;
+          if (activeRef.current) scheduleMeasure();
+        });
+      } else if (!deferRestore) scheduleMeasure();
       return;
     }
     if (measuredCountRef.current === count) return;

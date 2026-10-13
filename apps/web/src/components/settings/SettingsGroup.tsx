@@ -22,7 +22,7 @@ export function SettingsGroup({
           : "space-y-1",
         variant === "grouped" &&
           divided &&
-          "[&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none",
+          "[&>:where(:not(:first-child))]:border-t [&>:where(:not(:first-child))]:border-border/50 [&>[data-slot=settings-row]]:rounded-none",
         className,
       )}
     />

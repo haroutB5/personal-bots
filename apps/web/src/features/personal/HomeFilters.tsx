@@ -1,4 +1,5 @@
 import type { JSX } from "react";
+import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -10,7 +11,7 @@ import { HOME_FILTERS, type HomeFilter } from "./homeRows";
  * pill is the only thing that paints. The count is the needs-you model's own
  * number, the same one the tab badge shows.
  */
-export function HomeFilters({
+export const HomeFilters = memo(function HomeFilters({
   active,
   onSelect,
   needsCount,
@@ -60,4 +61,4 @@ export function HomeFilters({
       })}
     </div>
   );
-}
+});

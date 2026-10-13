@@ -369,14 +369,22 @@
   will-change: transform;
 }
 
-/* The box itself carries the body's bob, so it pauses along with its layers. */
+/* The box itself carries the body's bob, so it pauses along with its layers.
+ * `!important` because the pose rules in avatarMotion.generated.css set the
+ * `animation` shorthand on `.bot-avatar[data-motion="thinking"] .bot-avatar-body`
+ * and its like — three class-level selectors against this rule's two — so the
+ * shorthand's implicit `animation-play-state: running` won the cascade and an
+ * off-screen thinking or working avatar kept its 12 s and 21 s loops running
+ * (measured: 9 animations still running on rail tiles 2,000 px above the
+ * viewport; ruling them out is worth ~2.5 fps and 40% of the long-task time on
+ * a list-scroll journey at 4x CPU). */
 :root[data-hidden] .bot-avatar[data-motion="thinking"],
 :root[data-hidden] .bot-avatar[data-motion="thinking"] *,
 :root[data-hidden] .bot-avatar[data-motion="working"],
 :root[data-hidden] .bot-avatar[data-motion="working"] *,
 .bot-avatar[data-offscreen],
 .bot-avatar[data-offscreen] * {
-  animation-play-state: paused;
+  animation-play-state: paused !important;
 }
 
 /* The thinking pose's thought cloud (spec B · Cloud, `BotAvatar`'s
@@ -1517,7 +1525,7 @@ body:has(.personal-app) {
  * a scripted check both read. */
 
 /* A chat row's separator: 0.5 px, inset to where the text starts (16 + 48 + 12). */
-.home-rows > li + li .home-row::before {
+.home-rows > li:not(:first-child) .home-row::before {
   content: "";
   position: absolute;
   top: 0;

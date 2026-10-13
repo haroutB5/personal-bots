@@ -140,7 +140,7 @@ describe("homeWindowRange", () => {
 
 describe("firstHomeWindow", () => {
   it("draws a screenful when the layout cannot be measured (test renderer, no DOM)", () => {
-    expect(firstHomeWindow(60)).toEqual({ start: 0, end: 2 * HOME_ROW_OVERSCAN + 8 });
+    expect(firstHomeWindow(60)).toEqual({ start: 0, end: HOME_ROW_OVERSCAN + 8 });
     expect(firstHomeWindow(4)).toEqual({ start: 0, end: 4 });
     expect(firstHomeWindow(0)).toEqual({ start: 0, end: 0 });
   });

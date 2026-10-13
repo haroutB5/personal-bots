@@ -78,7 +78,43 @@ export type PerfOptimization =
   // The Bots home draws only the rows near the scroll position, standing in for
   // the rest with spacers (homeWindow.ts, 1.67.0); off: every row is drawn, as
   // the first 1.67.0 builds did.
-  | "home-window";
+  | "home-window"
+  // A smaller row buffer once structural style invalidation is cheap. Off:
+  // the original eight-row overscan and sixteen-row first slice.
+  | "home-window-compact"
+  // Home idle avatars omit three animation wrappers while keeping the same
+  // HTML eye pills. Off: all poses keep their full animation structure.
+  | "home-avatar-idle"
+  // Quiet home avatars without a theme-dependent halo use identical SVG
+  // artwork as one image. Off: inline SVG children, as in the original home.
+  | "home-avatar-image"
+  // Home edge-mask updates reuse avatars whose props have not changed.
+  // Off: render their artwork again with the parent, as before.
+  | "home-avatar-memo"
+  // Restore the kept list's scroll before paint, after route DOM writes.
+  // Off: restore synchronously inside the React layout effect.
+  | "home-scroll-restore"
+  // A tap on a filter chip or a key in the search box updates the chip or the
+  // field at once and the rows in time-sliced work (useDeferredValue).
+  // Off: the rows change inside the tap, as before.
+  | "home-filter-defer"
+  // The rail's scroll-edge state (the fade mask) is written to the scroller's
+  // attribute directly. Off: React state, a render of the whole rail each time
+  // an edge is crossed.
+  | "home-rail-edge-dom"
+  // On a first launch with nothing saved to show, the home's rail and rows
+  // mount in a few steps of a few dozen nodes instead of one 500-node commit
+  // (useStagedCount.ts). Off: all at once.
+  | "home-stage-mount"
+  // The rail and its cards render again only when an item's content changed.
+  // Off: every home render renders every card and tile.
+  | "home-rail-memo"
+  // A home chat row renders again only when a field it draws changed (the home
+  // rebuilds every row object on each store change). Off: shallow props.
+  | "home-row-memo"
+  // Preserve the hidden home's layout while Activity pauses all its effects.
+  // Off (or unsupported): the original display:none path.
+  | "home-back-layout";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {
