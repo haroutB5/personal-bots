@@ -1,22 +1,19 @@
 import type { JSX } from "react";
-import { memo } from "react";
+import { memo, useState } from "react";
 
-import { ChevronRight, CircleAlert, CircleCheck, Wrench } from "lucide-react";
+import { ChevronDown, CircleAlert, CircleCheck, Wrench } from "lucide-react";
 
 import { workEntryDisplayLabel } from "~/components/chat/MessagesTimeline.logic";
+import { cn } from "~/lib/utils";
 import type { WorkLogEntry } from "~/session-logic";
 
-function summaryLabel(entries: ReadonlyArray<WorkLogEntry>, live: boolean): string {
-  const failures = entries.filter((entry) => entry.tone === "error").length;
-  const count = `${entries.length} ${entries.length === 1 ? "step" : "steps"}`;
-  if (live) return `Working · ${count}`;
-  return failures > 0 ? `${count} · ${failures} failed` : count;
-}
-
 /**
- * Tool and work activity for one stretch of a turn, collapsed by default
- * (ui-spec: activity lives behind a "details" disclosure). Every row is a real
- * work-log entry; the live marker only shows while the turn is still running.
+ * Tool and work activity for one stretch of a turn: the steps button under a
+ * full-width reply (SPEC 2.8, 44 tall, radius 12, tool icon, **N steps** · the
+ * first step, chevron), opening the work log. The log's rows are mounted only
+ * while it is open, so a long tool-heavy turn costs one button until someone
+ * asks for the detail. Every row is a real work-log entry; the live marker
+ * only shows while the turn is still running.
  */
 interface ToolDetailsProps {
   entries: ReadonlyArray<WorkLogEntry>;
@@ -37,55 +34,94 @@ function sameToolDetails(previous: ToolDetailsProps, next: ToolDetailsProps): bo
   return true;
 }
 
+/**
+ * One short phrase for the steps button: the step's own words with any raw
+ * tool argument cut off, so the footer reads "9 steps · Read", never
+ * "9 steps · Read: {"file_path": "C:/repo/…"}".
+ */
+export function stepSummaryLabel(label: string): string | null {
+  const cut = label.search(/[{["]/u);
+  const head = (cut >= 0 ? label.slice(0, cut) : label).replace(/[\s:·,–—-]+$/u, "").trim();
+  if (head.length < 2) return null;
+  return head.length > 48 ? `${head.slice(0, 47)}…` : head;
+}
+
 export const ToolDetails = memo(function ToolDetails({
   entries,
   live,
   workspaceRoot,
 }: ToolDetailsProps): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const failures = entries.filter((entry) => entry.tone === "error").length;
+  const count = `${entries.length} ${entries.length === 1 ? "step" : "steps"}`;
+  const first = entries[0];
+  const summary =
+    first === undefined
+      ? null
+      : (stepSummaryLabel(workEntryDisplayLabel(first, workspaceRoot)) ??
+        stepSummaryLabel(`${first.toolTitle || first.label || ""}`));
   return (
-    <details className="group max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)]">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3.5 text-sm text-[var(--personal-text-secondary)] outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] [&::-webkit-details-marker]:hidden">
-        <ChevronRight
-          aria-hidden="true"
-          className="size-4 shrink-0 transition-transform group-open:rotate-90"
-          strokeWidth={1.75}
-        />
+    <details
+      data-testid="tool-details"
+      className="group max-w-full"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="flex h-11 max-w-full cursor-pointer list-none items-center gap-2 rounded-[var(--personal-radius-control)] bg-[var(--personal-surface)] px-3 text-[15px] leading-5 text-[var(--personal-text-secondary)] [box-shadow:inset_0_0_0_1px_var(--personal-border)] outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] [&::-webkit-details-marker]:hidden">
         {live ? (
           <span
             aria-hidden="true"
             className="size-2 shrink-0 rounded-full bg-[var(--personal-live)]"
           />
-        ) : null}
-        <span className="min-w-0 truncate">{summaryLabel(entries, live)}</span>
+        ) : (
+          <Wrench aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
+        )}
+        <span className="min-w-0 truncate">
+          <b className="font-semibold text-[var(--personal-text)]">
+            {live ? `Working · ${count}` : count}
+          </b>
+          {failures > 0 ? (
+            <span> · {failures} failed</span>
+          ) : summary === null ? null : (
+            <span> · {summary}</span>
+          )}
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className="size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+          strokeWidth={1.75}
+        />
       </summary>
-      <ol className="flex flex-col gap-2 px-3.5 pb-3">
-        {entries.map((entry) => {
-          const label = workEntryDisplayLabel(entry, workspaceRoot);
-          const Icon =
-            entry.tone === "error" ? CircleAlert : entry.tone === "tool" ? Wrench : CircleCheck;
-          return (
-            <li key={entry.id} className="flex min-w-0 items-start gap-2 text-sm">
-              <Icon
-                aria-hidden="true"
-                className={
-                  entry.tone === "error"
-                    ? "mt-0.5 size-4 shrink-0 text-[var(--personal-error)]"
-                    : "mt-0.5 size-4 shrink-0 text-[var(--personal-text-tertiary)]"
-                }
-                strokeWidth={1.75}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block break-words text-[var(--personal-text)]/80">{label}</span>
-                {entry.detail && entry.detail.trim() !== label.trim() ? (
-                  <span className="mt-0.5 block line-clamp-3 break-words text-[13px] text-[var(--personal-text-secondary)]">
-                    {entry.detail}
-                  </span>
-                ) : null}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
+      {open ? (
+        <ol className="mt-1 flex flex-col gap-2 rounded-[var(--personal-radius-control)] px-3 py-2.5 [box-shadow:inset_0_0_0_1px_var(--personal-border)]">
+          {entries.map((entry) => {
+            const label = workEntryDisplayLabel(entry, workspaceRoot);
+            const Icon =
+              entry.tone === "error" ? CircleAlert : entry.tone === "tool" ? Wrench : CircleCheck;
+            return (
+              <li key={entry.id} className="flex min-w-0 items-start gap-2 text-sm">
+                <Icon
+                  aria-hidden="true"
+                  className={cn(
+                    "mt-0.5 size-4 shrink-0",
+                    entry.tone === "error"
+                      ? "text-[var(--personal-error)]"
+                      : "text-[var(--personal-text-tertiary)]",
+                  )}
+                  strokeWidth={1.75}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block break-words text-[var(--personal-text)]/80">{label}</span>
+                  {entry.detail && entry.detail.trim() !== label.trim() ? (
+                    <span className="mt-0.5 block line-clamp-3 break-words text-[13px] text-[var(--personal-text-secondary)]">
+                      {entry.detail}
+                    </span>
+                  ) : null}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
     </details>
   );
 }, sameToolDetails);

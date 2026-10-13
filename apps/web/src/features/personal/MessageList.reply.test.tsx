@@ -124,19 +124,24 @@ const block = (...lines: string[]) => ["```choices", ...lines, "```"].join("\n")
 
 it("keeps mounted history bounded, pages back to the oldest row and forward again", async () => {
   vi.stubGlobal("window", {});
-  const items = Array.from({ length: 1010 }, (_, index) =>
+  // Three windows' worth of history (the window is 40 items per step): enough
+  // to page back to the very first message and forward again.
+  const items = Array.from({ length: 120 }, (_, index) =>
     message(`m-${index}`, "user", `Row ${index}`),
   );
-  const root = await render({ items });
+  const root = await render({ items, onReply: () => {} });
+  // The window bounds how many messages are mounted; the mounted messages
+  // group into runs, so the row ids follow the window's first and last item.
+  const mounted = () => root.findAll((node) => node.props["data-replyable"] === "");
   const rows = () => root.findAll((node) => typeof node.props["data-transcript-row"] === "string");
-  expect(rows()).toHaveLength(80);
-  expect(rows()[0]?.props["data-transcript-row"]).toBe("m-930");
-  for (let page = 0; page < 24; page++) {
+  expect(mounted()).toHaveLength(80);
+  expect(rows()[0]?.props["data-transcript-row"]).toBe("m-40");
+  for (let page = 0; page < 4; page++) {
     const earlier = root
       .findAllByType("button")
       .find((button) => button.children.includes("Load earlier messages"));
     if (earlier) await act(async () => earlier.props.onClick());
-    expect(rows().length).toBeLessThanOrEqual(80);
+    expect(mounted().length).toBeLessThanOrEqual(80);
   }
   expect(rows()[0]?.props["data-transcript-row"]).toBe("m-0");
   await act(async () =>
@@ -144,16 +149,17 @@ it("keeps mounted history bounded, pages back to the oldest row and forward agai
       <MessageList
         {...BASE_PROPS}
         items={[...items, message("new", "assistant", "Incoming", { streaming: true })]}
+        onReply={() => {}}
       />,
     ),
   );
   expect(rows()[0]?.props["data-transcript-row"]).toBe("m-0");
-  for (let page = 0; page < 24; page++) {
+  for (let page = 0; page < 4; page++) {
     const later = root
       .findAllByType("button")
       .find((button) => button.children.includes("Load later messages"));
     if (later) await act(async () => later.props.onClick());
-    expect(rows().length).toBeLessThanOrEqual(80);
+    expect(mounted().length).toBeLessThanOrEqual(80);
   }
   expect(rows().at(-1)?.props["data-transcript-row"]).toBe("new");
 });
@@ -164,11 +170,9 @@ it("materializes an old search target outside the initial window", async () => {
   );
   requestMessageJump("thread-1", "m-500");
   mocks.jump.mockReturnValue(true);
-  const root = await render({ items });
-  expect(root.findAll((node) => node.props["data-transcript-row"] === "m-500")).toHaveLength(1);
-  expect(
-    root.findAll((node) => typeof node.props["data-transcript-row"] === "string"),
-  ).toHaveLength(80);
+  const root = await render({ items, onReply: () => {} });
+  expect(root.findAll((node) => node.props["data-message-id"] === "m-500")).toHaveLength(1);
+  expect(root.findAll((node) => node.props["data-replyable"] === "")).toHaveLength(80);
 });
 
 describe("reply quote on a sent message", () => {

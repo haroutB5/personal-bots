@@ -94,11 +94,10 @@ import { NO_TOUCH_SELECT } from "./SelectMode";
 import { useHoldCue } from "./useHoldCue";
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
-import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
-import { ConversationSubtitle } from "./ConversationSubtitle";
+import { ConversationHeaderIdentity } from "./ConversationHeaderName";
 import { botMuteState } from "./botMuteModel";
-import { conversationHeaderStatus, resolveBotProvider, taskCardBotLine } from "./botSummaries";
-import { botActiveModelShortLabel, fallbackNoteLabel } from "./botModelLabel";
+import { resolveBotProvider, taskCardBotLine } from "./botSummaries";
+import { botActiveModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
 import { ConversationDesktopLine } from "./ConversationDesktopLine";
@@ -111,6 +110,7 @@ import { CONVERSATION_SIDE_PANEL_ID, ConversationSidePanel } from "./Conversatio
 import {
   buildConversationItems,
   contextBadgeLabel,
+  conversationHeaderCaption,
   conversationHeaderStateLabel,
   type ConversationState,
   deriveConversationState,
@@ -167,7 +167,11 @@ import {
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
-import { ProgressNoteLine } from "./ProgressNoteLine";
+import { DockedQuestion } from "./DockedQuestion";
+import { COMPOSER_INPUT_ATTRIBUTE } from "./composerRefocus";
+import { clearQuestionDrafts, useQuestionDock } from "./questionDock";
+import { findRequestItemId, openRequestLandingItemId } from "./requestLanding";
+import { WorkingProgressRow } from "./WorkingProgressRow";
 import { deriveLatestProgressNote } from "./latestProgress";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { offlineComposerNotice } from "./offlineBanner";
@@ -193,6 +197,22 @@ import { renameChatInitialTitle, useRenameChat } from "./renameChat";
 import { findRetryTarget, useRetryFailedTurn } from "./retryFailedTurn";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
+
+/**
+ * How long the dock's chip row outlives the field's focus: long enough for the
+ * tap that blurred it to land on the option it meant (SPEC 2.9, D9).
+ */
+const COMPOSER_FOCUS_COLLAPSE_MS = 180;
+
+/**
+ * How long a gesture stays open after its pointer lifts. A tap's focus events
+ * and its click all land after pointerup on touch (pointerdown, touchend,
+ * mousedown, focusout/in, mouseup, click), so the dock's layout has to hold
+ * still across them; the click itself ends the window sooner. Long enough to
+ * cover the compatibility events under load, short enough not to read as lag
+ * when a gesture produces no click at all (SPEC 2.9, D9).
+ */
+const GESTURE_SETTLE_MS = 250;
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -220,9 +240,12 @@ function useMinuteNow(): Date {
 export function ConversationScreen({
   botId,
   threadId: threadIdParam,
+  requestId = null,
 }: {
   botId: string;
   threadId: string;
+  /** `?request=<id>`: the card to open at (D13). Without it, a chat opened fresh lands on its own open request. */
+  requestId?: string | null;
 }): JSX.Element {
   const navigate = useNavigate();
   const backTarget = usePersonalBackTarget();
@@ -560,6 +583,131 @@ export function ConversationScreen({
     () => deriveLatestProgressNote({ working, messages, activities, latestTurn }),
     [working, messages, activities, latestTurn],
   );
+  // The progress row's clock (SPEC 2.9, D1): the running turn's own start, and
+  // nothing when the server has none. No fake numbers.
+  const progressStartedAtMs = useMemo(() => {
+    const startedAt = latestTurn?.startedAt ?? null;
+    const at = startedAt === null ? Number.NaN : Date.parse(startedAt);
+    return Number.isFinite(at) ? at : null;
+  }, [latestTurn]);
+  // The open question, docked above the composer (SPEC 2.9): the newest pending
+  // question, out of the thread until it settles.
+  const dockedCard = useMemo(() => {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item !== undefined && item.kind === "question" && item.card.kind === "pending") {
+        return item.card;
+      }
+    }
+    return null;
+  }, [items]);
+  // The composer has the field: on a phone that is the keyboard, so the dock
+  // gives the thread its room (SPEC 2.9, D9). The inset alone cannot tell a
+  // desktop browser it is "open"; focus is the state both share.
+  //
+  // Nothing about that state moves while a gesture is in flight. A tap on a
+  // docked option both blurs the field AND focuses the option button on its way
+  // in, and either one on its own swaps the chip row for the tall rows under the
+  // finger: the finger's own button moves, so the mouseup and the click land on
+  // whatever slid into that spot (measured at 4x CPU: the click target was
+  // SECTION.personal-dock) and the answer is never sent. That is why the guard
+  // cannot key on "the pointer is down": a tap's focus events come AFTER
+  // pointerup for touch (pointerdown, touchend, mousedown, focusout/in, mouseup,
+  // click), so the gesture is held open until its click lands, or for
+  // GESTURE_SETTLE_MS after the pointer lifts when no click follows.
+  //
+  // Once the gesture is over the truth applies: at once when the field still has
+  // the focus (the composer, an attach tap, a send), after the settle when not.
+  const [composerActive, setComposerActive] = useState(false);
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (shell === null) return;
+    let collapse: number | undefined;
+    let gesture: number | undefined;
+    let gestureOpen = false;
+    const clearCollapse = () => {
+      if (collapse !== undefined) {
+        window.clearTimeout(collapse);
+        collapse = undefined;
+      }
+    };
+    const scheduleCollapse = () => {
+      clearCollapse();
+      collapse = window.setTimeout(() => {
+        collapse = undefined;
+        setComposerActive(false);
+      }, COMPOSER_FOCUS_COLLAPSE_MS);
+    };
+    /** What the composer's room should be, now that nothing is in flight. */
+    const settle = () => {
+      const field = shell.querySelector(`[${COMPOSER_INPUT_ATTRIBUTE}]`);
+      if (field !== null && field === document.activeElement) {
+        clearCollapse();
+        setComposerActive(true);
+        return;
+      }
+      if (collapse !== undefined) return;
+      scheduleCollapse();
+    };
+    const endGesture = () => {
+      if (gesture !== undefined) {
+        window.clearTimeout(gesture);
+        gesture = undefined;
+      }
+      if (!gestureOpen) return;
+      gestureOpen = false;
+      settle();
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      clearCollapse();
+      if (gestureOpen) return;
+      const target = event.target as HTMLElement | null;
+      setComposerActive(target?.getAttribute?.(COMPOSER_INPUT_ATTRIBUTE) === "");
+    };
+    const onFocusOut = () => {
+      if (gestureOpen) return;
+      scheduleCollapse();
+    };
+    const onPointerDown = () => {
+      gestureOpen = true;
+      clearCollapse();
+      if (gesture !== undefined) {
+        window.clearTimeout(gesture);
+        gesture = undefined;
+      }
+    };
+    const onPointerUp = () => {
+      if (gesture !== undefined) window.clearTimeout(gesture);
+      gesture = window.setTimeout(endGesture, GESTURE_SETTLE_MS);
+    };
+    shell.addEventListener("focusin", onFocusIn);
+    shell.addEventListener("focusout", onFocusOut);
+    shell.addEventListener("pointerdown", onPointerDown, true);
+    shell.addEventListener("pointerup", onPointerUp, true);
+    shell.addEventListener("pointercancel", endGesture, true);
+    shell.addEventListener("click", endGesture, true);
+    return () => {
+      clearCollapse();
+      if (gesture !== undefined) window.clearTimeout(gesture);
+      shell.removeEventListener("focusin", onFocusIn);
+      shell.removeEventListener("focusout", onFocusOut);
+      shell.removeEventListener("pointerdown", onPointerDown, true);
+      shell.removeEventListener("pointerup", onPointerUp, true);
+      shell.removeEventListener("pointercancel", endGesture, true);
+      shell.removeEventListener("click", endGesture, true);
+    };
+  }, [shellRef]);
+  // D13: what the chat lands on. An explicit `?request=<id>` (the push, a deep
+  // link) names the card outright, an approval included; a chat opened fresh
+  // lands on its own newest open request card.
+  const landingItemId = useMemo(() => {
+    if (requestId === null) return openRequestLandingItemId(items);
+    const fromItems = findRequestItemId(items, requestId);
+    if (fromItems !== null) return fromItems;
+    return approvals.some((approval) => String(approval.requestId) === requestId)
+      ? `approval:${requestId}`
+      : null;
+  }, [approvals, items, requestId]);
   const latestMessageStatus = useMemo(
     () =>
       deriveLatestMessageReadStatus({ items: baseItems, activities, busy: turnBusy, latestTurn }),
@@ -574,9 +722,21 @@ export function ConversationScreen({
   });
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
-  const headerStatus = conversationHeaderStatus(conversationState, stateLabel, provider);
   const headerModelLabel = bot === null ? null : botActiveModelShortLabel(bot, providers);
-  const headerModelNote = bot === null ? null : fallbackNoteLabel(bot);
+  // The caption under the bot's name (SPEC 2.7): one state word in the state's
+  // colour, or the model when the chat is idle. "Update broke …" still wins
+  // (conversationHeaderStatus's rule), in red.
+  const headerCaption = useMemo(
+    () =>
+      conversationHeaderCaption({
+        state: conversationState,
+        thinking: turnThinking,
+        statusLabel: stateLabel,
+        modelLabel: headerModelLabel,
+        brokenLabel: provider?.broken === true ? `Update broke ${provider.label}` : null,
+      }),
+    [conversationState, turnThinking, stateLabel, headerModelLabel, provider],
+  );
   // A typed message, Retry and wrapup send what the bot runs on right now (its fallback while on it).
   const botTurnModel = bot === null ? null : botEffectiveModelSelection(bot);
 
@@ -652,6 +812,28 @@ export function ConversationScreen({
       return next;
     });
   };
+
+  // Questions this page answered: their spot in the thread keeps the settled
+  // card. A question answered by another device gets the receipt (SPEC 2.8).
+  const [answeredHere, setAnsweredHere] = useState<ReadonlySet<string>>(() => new Set());
+  // The docked question's own state (SPEC 2.9): shared by the dock and the
+  // composer's typed answer. An answer sent here marks the request as this
+  // page's, so the thread reads it as answered rather than answered elsewhere.
+  const dock = useQuestionDock(dockedCard, (requestId, answers) => {
+    setAnsweredHere((current) => new Set(current).add(requestId));
+    void onAnswerQuestion(requestId, answers);
+  });
+  // A settled question's drafts are done with.
+  const settledQuestionIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const item of items) {
+      if (item.kind === "question" && item.card.kind !== "pending") ids.push(item.card.requestId);
+    }
+    return ids;
+  }, [items]);
+  useEffect(() => {
+    for (const requestId of settledQuestionIds) clearQuestionDrafts(requestId);
+  }, [settledQuestionIds]);
 
   // Closes an async question without replying: the bot is not messaged.
   const onDismissQuestion = async (requestId: string) => {
@@ -1041,7 +1223,6 @@ export function ConversationScreen({
   // The three header blocks that open the open chat's settings when held.
   const avatarHold = useHoldCue(openOwnSettings);
   const lineHold = useHoldCue(openOwnSettings);
-  const singleHold = useHoldCue(openOwnSettings);
   const holdProps = (hold: ReturnType<typeof useHoldCue>) => ({
     ...hold.attributes,
     draggable: false as const,
@@ -1172,7 +1353,11 @@ export function ConversationScreen({
       ref={shellRef}
       // Pinned: nothing inside may overflow into the page column, which
       // would let the whole chat scroll away (see MessageList).
-      className="relative flex h-full min-h-0 flex-col overflow-clip"
+      className={cn(
+        "relative flex h-full min-h-0 flex-col overflow-clip",
+        // A deep link pushes the chat in (SPEC 3, M2); Back and a chip switch keep their own motion.
+        requestId !== null && "personal-chat-push",
+      )}
       style={{
         paddingBottom: keyboardInset > 0 ? keyboardInset : "max(env(safe-area-inset-bottom), 8px)",
       }}
@@ -1185,238 +1370,176 @@ export function ConversationScreen({
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
       </div>
-      <header
-        className={cn(
-          "personal-column flex shrink-0 items-center gap-3 px-2",
-          chipsShown ? "h-[72px]" : "h-16",
-        )}
-      >
-        {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
-        <Link
-          to={backTarget.to}
-          activeOptions={{ exact: true }}
-          aria-label={backTarget.label}
-          className={cn(ICON_BUTTON, "md:hidden")}
-        >
-          <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
-        </Link>
-        {bot !== null && chipsShown ? (
-          <>
-            {/* Chips on: the avatar and the first line are both Edit bot (the
-                avatar stays the full-size target), and the chips take line 2. */}
-            <Link
-              to="/bots/$botId/edit"
-              params={{ botId: bot.botId }}
-              aria-hidden="true"
-              tabIndex={-1}
-              {...holdProps(avatarHold)}
-              className={cn(
-                "personal-hold-target shrink-0 rounded-full outline-none active:opacity-70",
-                NO_TOUCH_SELECT,
-              )}
-            >
-              <BotAvatar
-                shape={bot.avatarShape}
-                color={bot.avatarColor}
-                size={48}
-                label={bot.name}
-                motion={motionForConversationState(conversationState, turnThinking)}
-                comet={perfOptimizationOn("anim-comet")}
-                thought="header"
-              />
-            </Link>
-            <div className="flex h-full min-w-0 flex-1 flex-col">
+      <header className="personal-column relative z-[2] flex shrink-0 flex-col border-b-[var(--personal-hairline)] border-[var(--personal-border)] bg-[var(--personal-bg)]">
+        {/* Row 1 (SPEC 2.7): back, the avatar button, the name over its state
+            caption, more. Row 2 (below) is the chip strip. */}
+        <div className="flex h-[52px] items-center gap-1 px-2">
+          {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
+          <Link
+            to={backTarget.to}
+            activeOptions={{ exact: true }}
+            aria-label={backTarget.label}
+            className={cn(ICON_BUTTON, "md:hidden")}
+          >
+            <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
+          </Link>
+          {bot !== null ? (
+            <>
+              {/* The avatar (36 inside its 44 target) is the way to Edit bot; the
+                name and caption are plain text. A hold on either opens the open
+                chat's settings. */}
               <Link
                 to="/bots/$botId/edit"
                 params={{ botId: bot.botId }}
                 aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
                 aria-describedby={holdHintId}
-                {...holdProps(lineHold)}
+                {...holdProps(avatarHold)}
                 className={cn(
-                  "personal-hold-target flex h-[31px] min-w-0 shrink-0 items-start rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                  "personal-hold-target grid size-11 shrink-0 place-items-center rounded-full outline-none active:opacity-70",
                   NO_TOUCH_SELECT,
                 )}
               >
-                <ConversationHeaderLine
+                <BotAvatar
+                  shape={bot.avatarShape}
+                  color={bot.avatarColor}
+                  size={36}
+                  label={bot.name}
+                  motion={motionForConversationState(conversationState, turnThinking)}
+                  comet={perfOptimizationOn("anim-comet")}
+                  thought="header"
+                />
+              </Link>
+              <div
+                {...holdProps(lineHold)}
+                className={cn(
+                  "personal-hold-target flex min-h-11 min-w-0 flex-1 items-center rounded-[var(--personal-radius-button)] px-1 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                  NO_TOUCH_SELECT,
+                )}
+              >
+                <ConversationHeaderIdentity
                   name={bot.name}
                   chatTitle={chatTitle}
                   muted={botMuted}
                   contextBadge={contextBadge}
-                >
-                  {provider !== null || conversationState !== "idle" ? (
-                    <ConversationSubtitle
-                      state={conversationState}
-                      modelLabel={headerModelLabel}
-                      modelNote={headerModelNote}
-                      status={headerStatus}
-                    />
-                  ) : null}
-                </ConversationHeaderLine>
-              </Link>
-              <ChatChips
-                botId={botId}
-                botName={bot.name}
-                chips={chipRow}
-                openCount={chipModel.openCount}
-                onNewChat={onChipNewChat}
-                onChipSettings={openSettings}
-                resortEpoch={frozenOwner.resortEpoch}
-              />
-            </div>
-          </>
-        ) : bot !== null ? (
-          <Link
-            to="/bots/$botId/edit"
-            params={{ botId: bot.botId }}
-            aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
-            aria-describedby={holdHintId}
-            {...holdProps(singleHold)}
-            className={cn(
-              "personal-hold-target flex min-h-11 min-w-0 flex-1 items-center gap-4 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
-              NO_TOUCH_SELECT,
-            )}
-          >
-            <BotAvatar
-              shape={bot.avatarShape}
-              color={bot.avatarColor}
-              size={48}
-              label={bot.name}
-              motion={motionForConversationState(conversationState, turnThinking)}
-              comet={perfOptimizationOn("anim-comet")}
-              thought="header"
-            />
-            <div className="min-w-0 flex-1">
-              <ConversationHeaderName
-                name={bot.name}
-                chatTitle={chatTitle}
-                muted={botMuted}
-                contextBadge={contextBadge}
-              />
-              {provider !== null || conversationState !== "idle" ? (
-                <ConversationSubtitle
-                  state={conversationState}
-                  modelLabel={headerModelLabel}
-                  modelNote={headerModelNote}
-                  status={headerStatus}
+                  caption={headerCaption}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              {headerName.status === "loading" ? (
+                <span
+                  aria-hidden="true"
+                  className="size-11 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
                 />
               ) : null}
-            </div>
-          </Link>
-        ) : (
-          <>
-            {headerName.status === "loading" ? (
-              <span
-                aria-hidden="true"
-                className="size-12 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
-              />
-            ) : null}
-            <div className="min-w-0 flex-1">
-              {headerName.status === "loading" ? (
+              <div className="min-w-0 flex-1 px-1">
+                {headerName.status === "loading" ? (
+                  <>
+                    <h1 className="sr-only">Loading chat</h1>
+                    <span
+                      aria-hidden="true"
+                      className="block h-5 w-32 max-w-full rounded-md bg-[var(--personal-fill-muted)]"
+                    />
+                  </>
+                ) : (
+                  <h1 className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
+                    {headerName.name}
+                  </h1>
+                )}
+              </div>
+            </>
+          )}
+          {sidePanelFits ? (
+            <button
+              type="button"
+              aria-label="Computer and routines panel"
+              aria-expanded={sidePanelOpen}
+              aria-controls={sidePanelOpen ? CONVERSATION_SIDE_PANEL_ID : undefined}
+              onClick={() => setPersonalPreference("showChatSidePanel", !sidePanelOpen)}
+              className={cn(ICON_BUTTON, "text-[var(--personal-text-secondary)]")}
+            >
+              {sidePanelOpen ? (
+                <PanelRightClose aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+              ) : (
+                <PanelRightOpen aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+              )}
+            </button>
+          ) : null}
+          <Menu>
+            <MenuTrigger
+              render={
+                <button
+                  ref={menuButtonRef}
+                  type="button"
+                  aria-label="Chat options"
+                  className={ICON_BUTTON}
+                />
+              }
+            >
+              <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
+            </MenuTrigger>
+            <MenuPopup align="end" className="personal-app personal-menu min-w-48">
+              {interruptInput !== null ? (
+                <MenuItem onClick={() => void onStopFromMenu()}>Stop</MenuItem>
+              ) : null}
+              {bot !== null && providerWait ? (
+                <MenuItem
+                  onClick={() =>
+                    void navigate({ to: "/bots/$botId/edit", params: { botId: bot.botId } })
+                  }
+                >
+                  Switch model…
+                </MenuItem>
+              ) : null}
+              {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
+              {/* The one door to the chat's own actions (pin, snooze, rename, archive...): the sheet
+                holds them, so the menu keeps no copies. */}
+              <MenuItem onClick={() => openSettings(threadIdParam, menuButtonRef.current)}>
+                Chat settings…
+                <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)]">
+                  {chatSettingsHint(chipsShown)}
+                </span>
+              </MenuItem>
+              <MenuSeparator />
+              {bot !== null ? (
+                <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
+                  New chat
+                </MenuItem>
+              ) : null}
+              <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
+                All chats
+                {environmentId !== null && list.data !== null ? (
+                  <AllChatsCount
+                    environmentId={environmentId}
+                    botId={botId}
+                    links={list.data.threads}
+                  />
+                ) : null}
+              </MenuItem>
+              {bot !== null ? (
                 <>
-                  <h1 className="sr-only">Loading chat</h1>
-                  <span
-                    aria-hidden="true"
-                    className="block h-5 w-32 max-w-full rounded-md bg-[var(--personal-fill-muted)]"
+                  <MenuSeparator />
+                  <BotMuteMenuItems
+                    bot={bot}
+                    now={now.getTime()}
+                    onChange={(mute) => void setBotMute(bot, mute)}
                   />
                 </>
-              ) : (
-                <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-                  {headerName.name}
-                </h1>
-              )}
-              {provider !== null || conversationState !== "idle" ? (
-                <ConversationSubtitle
-                  state={conversationState}
-                  modelLabel={null}
-                  status={headerStatus}
-                />
               ) : null}
-            </div>
-          </>
-        )}
-        {sidePanelFits ? (
-          <button
-            type="button"
-            aria-label="Computer and routines panel"
-            aria-expanded={sidePanelOpen}
-            aria-controls={sidePanelOpen ? CONVERSATION_SIDE_PANEL_ID : undefined}
-            onClick={() => setPersonalPreference("showChatSidePanel", !sidePanelOpen)}
-            className={cn(
-              ICON_BUTTON,
-              "text-[var(--personal-text-secondary)]",
-              chipsShown && "mt-0.5 self-start",
-            )}
-          >
-            {sidePanelOpen ? (
-              <PanelRightClose aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
-            ) : (
-              <PanelRightOpen aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
-            )}
-          </button>
+            </MenuPopup>
+          </Menu>
+        </div>
+        {chipsShown ? (
+          <ChatChips
+            botId={botId}
+            botName={bot?.name ?? "this bot"}
+            chips={chipRow}
+            onNewChat={onChipNewChat}
+            onChipSettings={openSettings}
+            resortEpoch={frozenOwner.resortEpoch}
+          />
         ) : null}
-        <Menu>
-          <MenuTrigger
-            render={
-              <button
-                ref={menuButtonRef}
-                type="button"
-                aria-label="Chat options"
-                className={cn(ICON_BUTTON, chipsShown && "mt-0.5 self-start")}
-              />
-            }
-          >
-            <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
-          </MenuTrigger>
-          <MenuPopup align="end" className="personal-app personal-menu min-w-48">
-            {interruptInput !== null ? (
-              <MenuItem onClick={() => void onStopFromMenu()}>Stop</MenuItem>
-            ) : null}
-            {bot !== null && providerWait ? (
-              <MenuItem
-                onClick={() =>
-                  void navigate({ to: "/bots/$botId/edit", params: { botId: bot.botId } })
-                }
-              >
-                Switch model…
-              </MenuItem>
-            ) : null}
-            {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
-            {/* The one door to the chat's own actions (pin, snooze, rename, archive...): the sheet
-                holds them, so the menu keeps no copies. */}
-            <MenuItem onClick={() => openSettings(threadIdParam, menuButtonRef.current)}>
-              Chat settings…
-              <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)]">
-                {chatSettingsHint(chipsShown)}
-              </span>
-            </MenuItem>
-            <MenuSeparator />
-            {bot !== null ? (
-              <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
-                New chat
-              </MenuItem>
-            ) : null}
-            <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
-              All chats
-              {environmentId !== null && list.data !== null ? (
-                <AllChatsCount
-                  environmentId={environmentId}
-                  botId={botId}
-                  links={list.data.threads}
-                />
-              ) : null}
-            </MenuItem>
-            {bot !== null ? (
-              <>
-                <MenuSeparator />
-                <BotMuteMenuItems
-                  bot={bot}
-                  now={now.getTime()}
-                  onChange={(mute) => void setBotMute(bot, mute)}
-                />
-              </>
-            ) : null}
-          </MenuPopup>
-        </Menu>
       </header>
       {newChat.dialog}
       {settingsTarget !== null && settingsRows !== null ? (
@@ -1448,8 +1571,6 @@ export function ConversationScreen({
         }}
       />
 
-      <ProgressNoteLine note={progressNote} />
-
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>
           <MessageList
@@ -1465,6 +1586,7 @@ export function ConversationScreen({
             latestMessageStatus={latestMessageStatus}
             working={working}
             botName={botName ?? "Bot"}
+            botFace={bot === null ? null : { shape: bot.avatarShape, color: bot.avatarColor }}
             workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
             approvals={approvals}
             respondingIds={respondingIds}
@@ -1510,6 +1632,9 @@ export function ConversationScreen({
             onReply={archived ? undefined : onReply}
             onChoose={archived ? undefined : onChoose}
             choicesBusy={turnBusy || sendBlockedReason !== null}
+            dockQuestions
+            answeredHere={answeredHere}
+            landingItemId={landingItemId}
           />
           <ConversationDesktopLine
             environmentId={environmentId}
@@ -1543,25 +1668,60 @@ export function ConversationScreen({
               onDelete={() => void onDeleteChat()}
             />
           ) : (
-            <PersonalComposer
-              // One composer per chat: its in-flight send, error and queued
-              // state belong to the chat it was sent from.
-              key={threadId}
-              environmentId={environmentId}
-              threadId={threadId}
-              thread={thread}
-              botName={botName}
-              botModelSelection={botTurnModel}
-              disabledReason={sendBlockedReason}
-              offlineNotice={offlineNotice}
-              working={turnBusy}
-              canInterrupt={interruptInput !== null}
-              onInterrupt={onInterrupt}
-              onPendingChange={(update) => setPending((current) => update(current))}
-              replyTo={replyTo}
-              onClearReply={onClearReply}
-              quickSendRef={quickSendRef}
-            />
+            <>
+              {/* The docked zone (SPEC 2.9): the progress row and the open
+                  question, stacked above the composer, question under the rule
+                  of the quote bar. */}
+              <div className="personal-column personal-dock-zone flex shrink-0 flex-col gap-2 px-3 pb-2">
+                <WorkingProgressRow
+                  botName={botName ?? "Bot"}
+                  face={bot === null ? null : { shape: bot.avatarShape, color: bot.avatarColor }}
+                  motion={motionForConversationState(conversationState, turnThinking)}
+                  comet={perfOptimizationOn("anim-comet")}
+                  step={progressNote}
+                  thinking={turnThinking}
+                  startedAtMs={progressStartedAtMs}
+                  working={working && dock === null}
+                />
+                {dockedCard !== null && dock !== null && botName !== null ? (
+                  <DockedQuestion
+                    card={dockedCard}
+                    botName={botName}
+                    responding={respondingIds.has(dockedCard.requestId)}
+                    keyboardOpen={keyboardInset > 0 || composerActive}
+                    progress={dock.progress}
+                    onChoose={dock.chooseOption}
+                    onSubmit={dock.submit}
+                    onDismiss={() => void onDismissQuestion(dockedCard.requestId)}
+                    highlight={requestId !== null && dockedCard.requestId === requestId}
+                  />
+                ) : null}
+              </div>
+              <PersonalComposer
+                // One composer per chat: its in-flight send, error and queued
+                // state belong to the chat it was sent from.
+                key={threadId}
+                environmentId={environmentId}
+                threadId={threadId}
+                thread={thread}
+                botName={botName}
+                botModelSelection={botTurnModel}
+                disabledReason={sendBlockedReason}
+                offlineNotice={offlineNotice}
+                working={turnBusy}
+                canInterrupt={interruptInput !== null}
+                onInterrupt={onInterrupt}
+                onPendingChange={(update) => setPending((current) => update(current))}
+                replyTo={replyTo}
+                onClearReply={onClearReply}
+                quickSendRef={quickSendRef}
+                answerOpen={dockedCard !== null}
+                onAnswerWithText={dock === null ? undefined : dock.answerWithText}
+                quoteNote={
+                  dock === null ? null : `answers question ${dock.progress.questionIndex + 1}`
+                }
+              />
+            </>
           )}
         </>
       ) : (

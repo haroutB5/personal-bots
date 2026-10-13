@@ -184,7 +184,7 @@ describe("Settings chat preferences", () => {
       (node) => node.type === "button" && node.props["aria-pressed"] !== undefined,
     );
 
-  it("starts with tool steps off and routines on, and persists both", async () => {
+  it("starts with tool steps and routines on, and persists both", async () => {
     const store = new Map<string, string>();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     stubWindow({ localStorage: storageStub(store) });
@@ -192,10 +192,11 @@ describe("Settings chat preferences", () => {
       renderer = create(<PersonalSettingsScreen />);
     });
 
-    // Chat > Show tool steps, Chat > Show routines, Chat > Auto-archive
-    // finished task chats (server side, on), Advanced > Diagnostics.
+    // Chat > Show tool steps (on since 1.67.1: the reply's own footer), Chat >
+    // Show routines, Chat > Auto-archive finished task chats (server side, on),
+    // Advanced > Diagnostics.
     expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([
-      false,
+      true,
       true,
       true,
       false,
@@ -205,10 +206,10 @@ describe("Settings chat preferences", () => {
     await act(async () => toggles()[1]!.props.onClick());
 
     // "Off" for a default-on flag has to be written, not just left absent.
-    expect(store.get("personal-show-tool-steps")).toBe("1");
+    expect(store.get("personal-show-tool-steps")).toBe("0");
     expect(store.get("personal-show-routines-strip")).toBe("0");
     expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([
-      true,
+      false,
       false,
       true,
       false,

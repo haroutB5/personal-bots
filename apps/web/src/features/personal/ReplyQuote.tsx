@@ -37,18 +37,24 @@ export function ReplyQuoteChip({
 export function ReplyBar({
   quote,
   onCancel,
+  note = null,
 }: {
   quote: PersonalReplyQuote;
   onCancel: () => void;
+  /** The quiet tail of the label, e.g. "answers question 1" (SPEC 2.9, D10). */
+  note?: string | null;
 }): JSX.Element {
   return (
     <div
       data-testid="reply-bar"
-      className="mb-2 flex min-h-11 items-center gap-1 rounded-xl border-l-2 border-[var(--personal-text-tertiary)] bg-[var(--personal-fill-muted)] pl-3"
+      className="mb-2 flex min-h-11 items-center gap-1 rounded-xl border-l-2 border-[var(--personal-primary)] bg-[var(--personal-fill-muted)] pl-3"
     >
       <p className="min-w-0 flex-1 text-[13px] leading-[18px]">
         <span className="block truncate font-semibold text-[var(--personal-text)]">
           Replying to {quote.name}
+          {note === null ? null : (
+            <span className="font-medium text-[var(--personal-text-secondary)]"> · {note}</span>
+          )}
         </span>
         <span className="block truncate text-[var(--personal-text-secondary)]">
           {quote.excerpt}

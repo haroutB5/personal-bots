@@ -4,6 +4,13 @@ import { PERSONAL_TIME_ZONE } from "./greeting";
 const SHORT_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const DAY_MS = 86_400_000;
 
+/**
+ * One visible time under each run of back-to-back messages (SPEC 2.8, decided
+ * 13 Oct). `false` puts a time under every message instead. The swipe time
+ * (`MessageSwipeTime`) shows every message's exact time either way.
+ */
+export const TIME_PER_RUN = true;
+
 /** A message's send time as the swipe shows it: the day (none for today) over the clock time. */
 export interface MessageTimeParts {
   readonly day: string | null;

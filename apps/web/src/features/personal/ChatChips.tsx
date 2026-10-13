@@ -114,22 +114,23 @@ function ChatChipLink({
         {chip.pinned ? (
           <Pin aria-hidden="true" data-chip-pin="" className="size-3 shrink-0" strokeWidth={2} />
         ) : null}
-        <span className="min-w-0 truncate">{chip.text}</span>
+        {/* A long title makes a wide chip the strip scrolls to, never a clipped one (acceptance 6). */}
+        <span className="whitespace-nowrap">{chip.text}</span>
       </span>
     </Link>
   );
 }
 
 /**
- * The chat chips: slim pills in the bot's chat header, one per chat the owner
- * started with the bot, then "+" (new chat) and "All N" (the full list). Each
- * pill is 24 px tall inside a 44 px tap band that overlaps nothing.
+ * The chat chips (SPEC 2.7): the strip under the bot's name, one 32 px pill per
+ * chat the owner started with the bot, then the outlined "+ New" (a new chat
+ * with this bot). Each chip rides in its own 44 px tap band. A tap switches to
+ * the chat; a hold opens that chat's settings.
  */
 export function ChatChips({
   botId,
   botName,
   chips,
-  openCount,
   onNewChat,
   onChipSettings,
   resortEpoch = 0,
@@ -137,7 +138,6 @@ export function ChatChips({
   readonly botId: string;
   readonly botName: string;
   readonly chips: ReadonlyArray<ChatChip>;
-  readonly openCount: number;
   readonly onNewChat: () => void;
   /** A hold, right-click or ContextMenu key on a chip: open that chat's settings. `opener` takes focus back. */
   readonly onChipSettings?: ((threadId: string, opener: HTMLElement | null) => void) | undefined;
@@ -293,9 +293,9 @@ export function ChatChips({
     <nav
       aria-label={`Chats with ${botName}`}
       data-testid="chat-chips"
-      // On a phone the strip runs on under the "..." button (which only fills the first row), so
-      // the 56 px of that column are chip room and "All" is not cut off at the end.
-      className="relative z-[1] -mr-14 -mb-[3px] h-11 min-w-0 shrink-0 md:mr-0"
+      // Row 2 of the chat header (SPEC 2.7): full width, its own strip under
+      // the name row, so it is never squeezed by the row-1 buttons.
+      className="relative z-[1] min-w-0 shrink-0"
     >
       {/* One hint for every chip (aria-describedby): hidden elements still describe. */}
       <span id={hintId} hidden>
@@ -334,24 +334,10 @@ export function ChatChips({
           className="personal-chip-hit"
         >
           <span className="personal-chip personal-chip-plus">
-            <Plus aria-hidden="true" className="size-3.5" strokeWidth={2} />
+            <Plus aria-hidden="true" className="size-4" strokeWidth={2} />
+            New
           </span>
         </button>
-        <Link
-          to="/bots/$botId"
-          params={{ botId }}
-          // The router marks a link active (data-status, aria-current="page") when its path
-          // is a prefix of the location, and /bots/<id> prefixes every chat of the bot. Exact
-          // keeps the row's one aria-current on the open chat's chip, which centring reads.
-          activeOptions={{ exact: true }}
-          data-chip-item=""
-          aria-label={`All chats with ${botName}, ${openCount} open`}
-          tabIndex={tabbableId === "all" ? 0 : -1}
-          onFocus={() => setFocusId("all")}
-          className="personal-chip-hit"
-        >
-          <span className="personal-chip personal-chip-all">All {openCount}</span>
-        </Link>
       </div>
     </nav>
   );

@@ -181,6 +181,58 @@ export function conversationHeaderStateLabel(input: {
   return conversationStateLabel(input.state, input.session, input.now);
 }
 
+/** The colour the header caption carries, one tone per state (the design's state colours). */
+export type ConversationCaptionTone = "working" | "thinking" | "needs" | "idle" | "error" | "info";
+
+export interface ConversationCaption {
+  readonly text: string;
+  readonly tone: ConversationCaptionTone;
+}
+
+/**
+ * The chat header's caption (SPEC 2.7): one short line under the bot's name,
+ * in the state's own colour. Idle chats show the model instead of a state
+ * word. "Needs you" is the one wording for needing the owner (a question, an
+ * approval, or a browser-help request), the same words the rail uses.
+ */
+export function conversationHeaderCaption(input: {
+  readonly state: ConversationState;
+  /** `isTurnThinking` for the open chat: working, nothing out of the turn yet. */
+  readonly thinking: boolean;
+  /** The header's own state line (`conversationHeaderStateLabel`), for the states whose words do not fit one of the short ones. */
+  readonly statusLabel: string;
+  readonly modelLabel: string | null;
+  /** "Update broke <provider>": a failed post-update test replaces the state words, except when the bot waits on the owner. */
+  readonly brokenLabel?: string | null | undefined;
+}): ConversationCaption {
+  if (
+    input.brokenLabel !== null &&
+    input.brokenLabel !== undefined &&
+    input.state !== "needs_help" &&
+    input.state !== "waiting"
+  ) {
+    return { text: input.brokenLabel, tone: "error" };
+  }
+  switch (input.state) {
+    case "working":
+      return input.thinking
+        ? { text: THINKING_LABEL, tone: "thinking" }
+        : { text: CONVERSATION_STATE_LABEL.working, tone: "working" };
+    case "needs_help":
+    case "waiting":
+      return { text: "Needs you", tone: "needs" };
+    case "rate_limited":
+    case "retrying":
+      return { text: input.statusLabel, tone: "needs" };
+    case "error":
+      return { text: CONVERSATION_STATE_LABEL.error, tone: "error" };
+    case "delegating":
+      return { text: input.statusLabel, tone: "info" };
+    case "idle":
+      return { text: input.modelLabel ?? CONVERSATION_STATE_LABEL.idle, tone: "idle" };
+  }
+}
+
 /**
  * Header state text. Provider waits say when the provider will try again, in
  * London time (weekday added when it is not today), or that it did not say:
@@ -538,13 +590,13 @@ export function formatDayDivider(
   );
   const thenDay = dayKey(then, timeZone);
   const nowDay = dayKey(now, timeZone);
-  if (thenDay === nowDay) return `Today, ${time}`;
-  if (thenDay === previousDayKey(nowDay)) return `Yesterday, ${time}`;
+  if (thenDay === nowDay) return `Today ${time}`;
+  if (thenDay === previousDayKey(nowDay)) return `Yesterday ${time}`;
   const [year, month, day] = thenDay.split("-").map(Number);
   const label = `${day} ${SHORT_MONTHS[month! - 1]}`;
   return thenDay.slice(0, 4) === nowDay.slice(0, 4)
-    ? `${label}, ${time}`
-    : `${label} ${year}, ${time}`;
+    ? `${label} ${time}`
+    : `${label} ${year} ${time}`;
 }
 
 /** A new divider starts each London day, and after an hour of silence. */

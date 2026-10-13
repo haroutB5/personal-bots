@@ -246,6 +246,9 @@ export function PersonalComposer({
   replyTo = null,
   onClearReply,
   quickSendRef,
+  answerOpen = false,
+  onAnswerWithText,
+  quoteNote = null,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -313,6 +316,16 @@ export function PersonalComposer({
    * field's own send, without touching the draft. Resolves true once sent.
    */
   quickSendRef?: MutableRefObject<((text: string) => Promise<boolean>) | null>;
+  /**
+   * A question is docked above the composer (SPEC 2.9, D4): the primary button
+   * stays Send (never Stop; Stop lives in the ... menu), the placeholder asks
+   * for the answer, and a send that lands answers the question too.
+   */
+  answerOpen?: boolean;
+  /** The typed text answers the docked question; called once a send lands. */
+  onAnswerWithText?: ((text: string) => void) | undefined;
+  /** The quote bar's quiet tail, e.g. "answers question 1" (D10). */
+  quoteNote?: string | null;
 }): JSX.Element {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -399,8 +412,10 @@ export function PersonalComposer({
   // in this tab would not.
   const canSend = hasContent && !sending && !preparing && disabledReason === null;
   // Stop stays one tap away in the chat menu; the composer's single button
-  // belongs to whichever action the draft implies.
-  const showStop = canInterrupt && !hasContent;
+  // belongs to whichever action the draft implies. With a question docked it
+  // is Send even while the field is empty, and Stop keeps to the menu
+  // (SPEC 2.9, D4).
+  const showStop = canInterrupt && !hasContent && !answerOpen;
   // Derived, not cleared in an effect: the turn ending retires the notice with
   // no extra render, and so does the bot replying. Waiting only on the turn
   // used to leave "Queued" on screen under an answer the bot had already given.
@@ -690,6 +705,10 @@ export function PersonalComposer({
           ? `${snapshot[0].type === "image" ? "Image" : "File"}: ${snapshot[0].name}`
           : "New chat"),
     );
+    // A question is docked and this send lands: the same text is its answer
+    // (SPEC 2.9, D10). Only typed sends answer; a tapped choice never carries.
+    const answerText =
+      !isQuick && answerOpen && disabledReason === null && text.length > 0 ? text : null;
     setSending(true);
     setError(null);
     setQueuedAtMs(null);
@@ -884,6 +903,9 @@ export function PersonalComposer({
       for (const attachment of snapshot) removeAttachment(attachment);
       releaseInFlight();
       if (quote !== null) onClearReply?.();
+      // The send landed: with a question docked, the same text is its answer
+      // (SPEC 2.9, D10). Only on this path: a queued send waits for the laptop.
+      if (answerText !== null) onAnswerWithText?.(answerText);
       return true;
     } catch {
       setRetrying(false);
@@ -1092,7 +1114,7 @@ export function PersonalComposer({
         />
       ) : null}
       {replyTo !== null && !sending ? (
-        <ReplyBar quote={replyTo} onCancel={() => onClearReply?.()} />
+        <ReplyBar quote={replyTo} note={quoteNote} onCancel={() => onClearReply?.()} />
       ) : null}
       <div className="flex items-end gap-2">
         {supportsUploads ? (
@@ -1141,7 +1163,13 @@ export function PersonalComposer({
             // The caret can move without the text changing (tap, arrow keys),
             // and a mention token is defined by where the caret is.
             onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? prompt.length)}
-            placeholder={botName === null ? "Message…" : `Message ${botName}…`}
+            placeholder={
+              answerOpen
+                ? "Or type your answer…"
+                : botName === null
+                  ? "Message…"
+                  : `Message ${botName}…`
+            }
             enterKeyHint={isCoarsePointer() ? "enter" : "send"}
             className="block w-full resize-none bg-transparent py-[11px] text-base leading-[22px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)]"
           />

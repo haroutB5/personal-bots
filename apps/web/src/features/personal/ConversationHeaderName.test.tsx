@@ -1,22 +1,31 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ConversationHeaderName, conversationChatTitle } from "./ConversationHeaderName";
+import { ConversationHeaderIdentity, conversationChatTitle } from "./ConversationHeaderName";
+import type { ConversationCaption } from "./conversationModel";
 
 const LONG_TITLE = "Improve Hbots Chat, Images and the swipe gestures on the phone";
 
-function titleSpan(renderer: ReactTestRenderer) {
-  return renderer.root.findAll((node) => node.props["data-chat-title"] !== undefined);
-}
-
-function className(
-  renderer: ReactTestRenderer,
-  predicate: (props: Record<string, unknown>) => boolean,
-) {
-  const node = renderer.root.find(
-    (candidate) => typeof candidate.type === "string" && predicate(candidate.props),
-  );
-  return String(node.props.className);
+function render(input: {
+  name: string;
+  chatTitle: string | null;
+  muted: boolean;
+  contextBadge: string | null;
+  caption?: ConversationCaption;
+}): ReactTestRenderer {
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(
+      <ConversationHeaderIdentity
+        name={input.name}
+        chatTitle={input.chatTitle}
+        muted={input.muted}
+        contextBadge={input.contextBadge}
+        caption={input.caption ?? { text: "Opus 5.5", tone: "idle" }}
+      />,
+    );
+  });
+  return renderer;
 }
 
 describe("conversationChatTitle", () => {
@@ -32,124 +41,76 @@ describe("conversationChatTitle", () => {
   });
 });
 
-describe("ConversationHeaderName", () => {
-  it("lets a long title truncate while the name and context badge keep their width", () => {
-    let renderer!: ReactTestRenderer;
-    act(() => {
-      renderer = create(
-        <ConversationHeaderName
-          name="CTO"
-          chatTitle={LONG_TITLE}
-          muted={false}
-          contextBadge="166k"
-        />,
-      );
+describe("ConversationHeaderIdentity", () => {
+  it("puts the name over its state caption, in the state's colour", () => {
+    const renderer = render({
+      name: "CTO",
+      chatTitle: "Hbots",
+      muted: false,
+      contextBadge: null,
+      caption: { text: "Working", tone: "working" },
     });
-    const [title] = titleSpan(renderer);
-    expect(title).toBeDefined();
-    expect(title!.props.title).toBe(LONG_TITLE);
-    expect(String(title!.props.className)).toContain("truncate");
-    expect(String(title!.props.className)).toContain("flex-1");
-    // Name and badge never shrink for the title, so the title is the only thing that gives.
-    const group = renderer.root.find((node) => node.props["data-name-group"] !== undefined);
-    expect(String(group.props.className).split(" ")).toContain("shrink-0");
-    expect(className(renderer, (props) => props.role === "img")).toContain("shrink-0");
-    // The heading still names the chat for screen readers.
+    const h1 = renderer.root.findByType("h1");
+    expect(h1.props.children).toEqual(["CTO", expect.anything()]);
+    const nameClass = String(h1.props.className).split(" ");
+    for (const token of ["truncate", "text-[17px]", "leading-[22px]", "font-semibold"]) {
+      expect(nameClass).toContain(token);
+    }
+    const caption = renderer.root.findByProps({ "data-testid": "chat-caption" });
+    expect(caption.props.children).toBe("Working");
+    expect(String(caption.props.className)).toContain("var(--personal-state-working)");
+  });
+
+  it("gives every tone its own colour, and needs-you the amber one", () => {
+    const toneClass = (tone: ConversationCaption["tone"]) =>
+      String(
+        render({
+          name: "CTO",
+          chatTitle: null,
+          muted: false,
+          contextBadge: null,
+          caption: { text: "x", tone },
+        }).root.findByProps({ "data-testid": "chat-caption" }).props.className,
+      );
+    expect(toneClass("needs")).toContain("var(--personal-state-needs)");
+    expect(toneClass("thinking")).toContain("var(--personal-state-thinking)");
+    expect(toneClass("idle")).toContain("var(--personal-state-idle)");
+    expect(toneClass("error")).toContain("var(--personal-error)");
+    expect(toneClass("info")).toContain("var(--personal-text-secondary)");
+  });
+
+  it("keeps the chat's title for screen readers and draws no title line", () => {
+    const renderer = render({
+      name: "CTO",
+      chatTitle: LONG_TITLE,
+      muted: false,
+      contextBadge: "166k",
+    });
     expect(renderer.root.findByProps({ className: "sr-only" }).props.children).toEqual([
       ", chat ",
       LONG_TITLE,
     ]);
+    expect(
+      renderer.root.findAll((node) => node.props["data-chat-title"] !== undefined),
+    ).toHaveLength(0);
+    // The name keeps its width; the context badge never shrinks.
+    const group = renderer.root.find((node) => node.props["data-name-group"] !== undefined);
+    expect(String(group.props.className)).toContain("min-w-0");
+    const badge = renderer.root.find((node) => node.props.role === "img");
+    expect(String(badge.props.className)).toContain("shrink-0");
   });
 
-  it("puts the title on the name line, right after the context badge", () => {
-    let renderer!: ReactTestRenderer;
-    act(() => {
-      renderer = create(
-        <ConversationHeaderName name="CTO" chatTitle="Hbots" muted contextBadge="133k" />,
-      );
+  it("hides the title for an untitled chat and shows the muted bell", () => {
+    const renderer = render({
+      name: "CTO",
+      chatTitle: "New chat",
+      muted: true,
+      contextBadge: null,
     });
-    const group = renderer.root.findByType("h1").parent!;
-    const line = group.parent!;
-    const kind = (child: (typeof line.children)[number]) =>
-      typeof child === "string"
-        ? "text"
-        : child.props["data-name-group"] !== undefined
-          ? "name-group"
-          : child.props["data-chat-title"] !== undefined
-            ? "title"
-            : "other";
-    expect(line.children.map(kind)).toEqual(["name-group", "title"]);
-    const kinds = group.children.map((child) =>
-      typeof child === "string"
-        ? "text"
-        : child.type === "h1"
-          ? "name"
-          : child.props.role === "img"
-            ? "badge"
-            : child.props["data-chat-title"] !== undefined
-              ? "title"
-              : "bell",
-    );
-    expect(kinds).toEqual(["name", "bell", "badge"]);
-    // One line: a title with under 40 px left wraps to a row the line clips.
-    const lineClass = String(line.props.className);
-    for (const token of ["flex", "flex-wrap", "h-6", "overflow-hidden"]) {
-      expect(lineClass.split(" ")).toContain(token);
-    }
-    const titleClass = String(titleSpan(renderer)[0]!.props.className).split(" ");
-    for (const token of ["min-w-10", "flex-1", "basis-0", "truncate"]) {
-      expect(titleClass).toContain(token);
-    }
-    // Nothing else is rendered below the name line.
-    expect(renderer.toJSON()).not.toBeInstanceOf(Array);
-  });
-
-  it("shows nothing extra for an untitled chat", () => {
-    let renderer!: ReactTestRenderer;
-    act(() => {
-      renderer = create(
-        <ConversationHeaderName
-          name="CTO"
-          chatTitle="New chat"
-          muted={false}
-          contextBadge={null}
-        />,
-      );
-    });
-    expect(titleSpan(renderer)).toHaveLength(0);
     expect(renderer.root.findByType("h1").props.children).toEqual(["CTO", null]);
-  });
-
-  it("follows the chat title live when it is auto-titled or renamed", () => {
-    let renderer!: ReactTestRenderer;
-    act(() => {
-      renderer = create(
-        <ConversationHeaderName name="CTO" chatTitle="New chat" muted={false} contextBadge="12k" />,
-      );
-    });
-    expect(titleSpan(renderer)).toHaveLength(0);
-    act(() => {
-      renderer.update(
-        <ConversationHeaderName
-          name="CTO"
-          chatTitle="Plan the week"
-          muted={false}
-          contextBadge="12k"
-        />,
-      );
-    });
-    expect(titleSpan(renderer)[0]!.props.title).toBe("Plan the week");
-    act(() => {
-      renderer.update(
-        <ConversationHeaderName
-          name="CTO"
-          chatTitle="Tennis booking"
-          muted={false}
-          contextBadge="12k"
-        />,
-      );
-    });
-    expect(titleSpan(renderer)[0]!.props.title).toBe("Tennis booking");
-    expect(titleSpan(renderer)).toHaveLength(1);
+    expect(
+      renderer.root.findAll((node) => node.props["data-chat-title"] !== undefined),
+    ).toHaveLength(0);
+    expect(renderer.root.findAll((node) => node.type === "svg").length).toBeGreaterThan(0);
   });
 });

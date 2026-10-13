@@ -672,6 +672,62 @@
   border-bottom-color: var(--personal-border);
 }
 
+/* Full-width replies, from 1.67.1 (SPEC 2.8): a rich or long bot reply is
+ * body text at 16/24 with its tables in a radius-12 frame (surface header row,
+ * footnote 600 section-label ink, 10/12 cells and hairline rows) and its code
+ * in a radius-12 surface block at 13/20. A short plain reply is a bubble
+ * instead (MessageList's bubble variant) and none of this shows there. */
+.personal-markdown .chat-markdown .chat-markdown-table-container {
+  border: 1px solid var(--personal-border);
+  border-radius: var(--personal-radius-control);
+  overflow: hidden;
+}
+
+.personal-markdown .chat-markdown table {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.personal-markdown .chat-markdown thead th {
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--personal-surface);
+  color: var(--personal-section-label);
+  font-size: 13px;
+  line-height: 16px;
+  font-weight: 600;
+  border-bottom: var(--personal-hairline) solid var(--personal-border-strong);
+}
+
+.personal-markdown .chat-markdown tbody td {
+  padding: 10px 12px;
+  vertical-align: top;
+  border-bottom: var(--personal-hairline) solid var(--personal-border);
+}
+
+.personal-markdown .chat-markdown pre,
+.personal-markdown .chat-markdown .chat-markdown-codeblock {
+  border: 1px solid var(--personal-border);
+  border-radius: var(--personal-radius-control);
+  background: var(--personal-surface);
+}
+
+.personal-markdown .chat-markdown pre {
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.personal-markdown .chat-markdown .chat-markdown-codeblock {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.personal-markdown .chat-markdown .chat-markdown-codeblock pre {
+  font-size: inherit;
+}
+
 /* Content that scrolls sideways inside a message the owner can swipe for its
  * send time: a table too wide for the phone (ScrollArea) or an unwrapped code
  * block (`.chat-markdown pre`). The swiping row is `touch-action: pan-y` so
@@ -960,15 +1016,18 @@
   }
 }
 
-/* Chat chips in a bot's chat header (ChatChips.tsx): 24 px pills inside a 44 px
- * tap band. Colours come from the tokens above; the dots are the one place
- * the light and dark values differ (--personal-chip-*). */
+/* Chat chips in a bot's chat header (ChatChips.tsx, SPEC 2.7): 32 px pills in a
+ * 44 px tap band, one strip under the name row. The strip's own fades are
+ * 40 px (the home rail's cue, stronger); the dots are the one place the light
+ * and dark values differ (--personal-chip-*). */
 .personal-chip-row {
   --chip-fade-left: 0px;
   --chip-fade-right: 0px;
   display: flex;
   align-items: center;
-  height: 44px;
+  gap: 8px;
+  height: 48px;
+  padding: 0 16px 4px;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -980,10 +1039,10 @@
   display: none;
 }
 .personal-chip-row[data-fade-left="true"] {
-  --chip-fade-left: 24px;
+  --chip-fade-left: 40px;
 }
 .personal-chip-row[data-fade-right="true"] {
-  --chip-fade-right: 24px;
+  --chip-fade-right: 40px;
 }
 .personal-chip-row[data-fade-left="true"],
 .personal-chip-row[data-fade-right="true"] {
@@ -1003,7 +1062,7 @@
   );
 }
 
-/* The tap target: 44 px tall, 3 px each side, so pills sit 6 px apart and no two tap areas overlap. */
+/* The tap target: 44 px tall, the pill's own width (its 12 px padding keeps it >= 44). */
 .personal-chip-hit {
   display: flex;
   flex-shrink: 0;
@@ -1011,7 +1070,7 @@
   height: 44px;
   min-width: 44px;
   justify-content: center;
-  padding: 0 3px;
+  padding: 0;
   background: none;
   border: 0;
   color: inherit;
@@ -1027,44 +1086,37 @@
 .personal-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  max-width: 140px;
-  height: 24px;
-  padding: 0 10px;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
   border-radius: 9999px;
   background-color: var(--personal-fill-muted);
-  color: var(--personal-text);
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 600;
+  color: var(--personal-text-secondary);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
   white-space: nowrap;
   transition:
     background-color 150ms ease,
+    color 150ms ease,
     transform 80ms ease-out,
     opacity 80ms ease-out;
 }
+/* Unread comes forward without a fill of its own: the dot already marks it. */
 .personal-chip[data-unread="true"] {
-  font-weight: 800;
+  color: var(--personal-text);
+  font-weight: 600;
 }
 .personal-chip[data-current="true"] {
   background-color: var(--personal-primary);
   color: var(--personal-primary-text);
-}
-.personal-chip[data-state="needs_you"] {
-  background-color: var(--personal-review-bg);
-  box-shadow: inset 0 0 0 1px var(--personal-review);
+  font-weight: 600;
 }
 .personal-chip-plus {
-  width: 24px;
-  padding: 0;
-  justify-content: center;
+  padding: 0 12px;
   background-color: transparent;
   box-shadow: inset 0 0 0 1px var(--personal-border-strong);
-}
-.personal-chip-all {
-  background-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--personal-border-strong);
-  color: var(--personal-text-secondary);
+  color: var(--personal-text);
 }
 .personal-chip-hit:active .personal-chip {
   transform: scale(0.96);
@@ -1118,9 +1170,147 @@
   .personal-chip-hit:hover .personal-chip:not([data-current="true"]):not([data-state="needs_you"]) {
     background-color: var(--personal-border);
   }
-  .personal-chip-hit:hover .personal-chip-plus,
-  .personal-chip-hit:hover .personal-chip-all {
+  .personal-chip-hit:hover .personal-chip-plus {
     background-color: var(--personal-fill-muted);
+  }
+}
+
+/* The thread fades as it scrolls under the chat header (SPEC 2.7): a 24 px top
+ * mask on the message list, the same trick as the strip's own edge fade. */
+.personal-thread-fade {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 24px);
+  mask-image: linear-gradient(180deg, transparent 0, #000 24px);
+}
+
+/* The docked zone above the composer (SPEC 2.9): the progress row and the
+ * docked question. Nothing in it, nothing to see. */
+.personal-dock-zone:empty {
+  display: none;
+}
+
+/* The progress row: 56 px raised card that folds away when the turn ends. */
+.personal-progress {
+  height: 56px;
+  border-radius: var(--personal-radius-card-lg);
+  border: 1px solid var(--personal-border);
+  background-color: var(--personal-surface-raised);
+  overflow: hidden;
+  transition:
+    height 220ms var(--personal-ease-out),
+    opacity 220ms var(--personal-ease-out);
+}
+.personal-progress[data-open="false"] {
+  height: 0;
+  opacity: 0;
+  border-width: 0;
+}
+/* A new step rises in from 6 px below (SPEC 2.9, D3). */
+.personal-progress-step {
+  animation: personal-progress-step 200ms var(--personal-ease-out);
+}
+@keyframes personal-progress-step {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* The docked question: radius 20, raised, 12 px padding (SPEC 2.9). It rises
+ * into place (motion section 3). */
+.personal-dock {
+  border-radius: var(--personal-radius-xl);
+  border: 1px solid var(--personal-border);
+  background-color: var(--personal-surface-raised);
+  padding: 12px;
+  animation: personal-dock-in 300ms var(--personal-ease-out);
+}
+@keyframes personal-dock-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* Keyboard open: the options become one sideways row of 44 px chips, with the
+ * design's 12 px left / 48 px right fades. */
+.personal-dock-chips {
+  display: flex;
+  gap: 8px;
+  margin: 0 -12px;
+  padding: 0 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 48px),
+    transparent
+  );
+  mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 48px), transparent);
+}
+.personal-dock-chips::-webkit-scrollbar {
+  display: none;
+}
+.personal-dock-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 9999px;
+  background-color: var(--personal-fill-muted);
+  color: var(--personal-text);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.personal-dock-chip-on {
+  background-color: var(--personal-primary);
+  color: var(--personal-primary-text);
+  font-weight: 600;
+}
+
+/* The request a deep link landed on (SPEC 2.9, M2): a --personal-review-bg
+ * wash, held 200 ms and faded over 1200 (14% of 1.4 s is the 200 ms hold). */
+[data-request-wash] {
+  border-radius: var(--personal-radius-card-lg);
+  animation: personal-request-wash 1.4s ease-out;
+}
+@keyframes personal-request-wash {
+  0%,
+  14% {
+    background-color: var(--personal-review-bg);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* A deep link pushes the chat in (SPEC 3): 340 ms, ease-push. */
+.personal-chat-push {
+  animation: personal-chat-push 340ms var(--personal-ease-push);
+}
+@keyframes personal-chat-push {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
   }
 }
 
@@ -1190,6 +1380,22 @@
     to {
       opacity: 1;
     }
+  }
+  /* The dock and the progress row: short fades, no movement, no height fold.
+     !important: the shell's own reduced-motion rule turns every animation and
+     transition off with it. */
+  .personal-dock {
+    animation: personal-chip-fade 160ms linear !important;
+  }
+  .personal-progress {
+    transition: opacity 160ms linear !important;
+  }
+  .personal-progress[data-open="false"] {
+    height: 56px;
+  }
+  /* The landing wash: the same shape, a short fade (M3). */
+  [data-request-wash] {
+    animation: personal-request-wash 200ms linear !important;
   }
 }
 

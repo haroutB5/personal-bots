@@ -110,7 +110,6 @@ async function renderChips(
         botId="b1"
         botName="Backend"
         chips={chips}
-        openCount={chips.length}
         onNewChat={options.onNewChat ?? (() => {})}
         onChipSettings={options.onChipSettings}
         resortEpoch={epoch}
@@ -169,10 +168,6 @@ const chipLink = (tree: ReactTestRenderer, id: string): ReactTestInstance =>
 const plusButton = (tree: ReactTestRenderer) =>
   tree.root.find(
     (node) => node.type === "button" && String(node.props["aria-label"]).startsWith("New chat"),
-  );
-const allLink = (tree: ReactTestRenderer) =>
-  tree.root.find(
-    (node) => node.type === "a" && String(node.props["aria-label"]).startsWith("All chats"),
   );
 
 describe("holding a chip", () => {
@@ -267,15 +262,14 @@ describe("holding a chip", () => {
     expect(onChipSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves + and All alone: no hold on them", async () => {
+  it("leaves the New chip alone: no hold on it", async () => {
     const onChipSettings = vi.fn();
     const onNewChat = vi.fn();
     const { tree } = await renderChips({ onChipSettings, onNewChat });
-    for (const control of [plusButton(tree), allLink(tree)]) {
-      expect(control.props.onPointerMove).toBeUndefined();
-      expect(control.props.onContextMenu).toBeUndefined();
-      expect(control.props["aria-describedby"]).toBeUndefined();
-    }
+    const control = plusButton(tree);
+    expect(control.props.onPointerMove).toBeUndefined();
+    expect(control.props.onContextMenu).toBeUndefined();
+    expect(control.props["aria-describedby"]).toBeUndefined();
     await act(async () => plusButton(tree).props.onPointerDown(pointer(10, 10)));
     await act(async () => {
       vi.advanceTimersByTime(LONG_PRESS_MS * 2);

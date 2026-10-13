@@ -33,15 +33,7 @@ afterEach(async () => {
 async function renderChips(chips: ChatChip[]) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const root = createRootRoute({
-    component: () => (
-      <ChatChips
-        botId="b1"
-        botName="Backend"
-        chips={chips}
-        openCount={chips.length}
-        onNewChat={() => {}}
-      />
-    ),
+    component: () => <ChatChips botId="b1" botName="Backend" chips={chips} onNewChat={() => {}} />,
   });
   const routes = ["/bots/$botId", "/bots/$botId/$threadId"].map((path) =>
     createRoute({ getParentRoute: () => root, path }),

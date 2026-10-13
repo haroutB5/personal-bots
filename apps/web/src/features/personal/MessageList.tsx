@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { readPersonalReplyQuote, type PersonalReplyQuote } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowDown, ChevronRight, FileText } from "lucide-react";
+import { ArrowDown, Check, ChevronRight, FileText } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -31,7 +31,6 @@ import { hasRecordedContext, turnStartByAssistantItem } from "./contextUsed";
 import { NoteNoticeRow } from "./NoteNoticeRow";
 import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
-import type { UserInputAnswers } from "./questionCards";
 import { SecretRequestCard, type ProvideSecret } from "./SecretRequestCard";
 import { LoginRequestCard, type ProvideLogin } from "./LoginRequestCard";
 import { ConnectionApprovalCard } from "./ConnectionApprovalCard";
@@ -43,12 +42,22 @@ import type { LatestMessageReadStatus, MessageReadStatus } from "./messageReadSt
 import { consumeChatSwitched } from "./chatChipHandoff";
 import { ChoiceButtons, type ChoicesState } from "./ChoiceButtons";
 import { mayHaveChoices, splitChoices } from "./choices";
+import { describeAnswer, type QuestionCardItem, type UserInputAnswers } from "./questionCards";
 import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
+import { REQUEST_WASH_ATTRIBUTE, REQUEST_WASH_MS } from "./requestLanding";
 import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
 import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
 import { SwipeTimeRow } from "./MessageSwipeTime";
-import { parseSentAt } from "./messageTime";
+import { messageTimeParts, parseSentAt, TIME_PER_RUN } from "./messageTime";
+import {
+  buildTranscriptRows,
+  type MessageItem,
+  type TranscriptBlockRow,
+  type TranscriptRunRow,
+  type TranscriptRow,
+  type WorkItem,
+} from "./messageRows";
 import type { OutboxEntry, OutboxRow } from "./outbox";
 import {
   transcriptRange,
@@ -75,6 +84,8 @@ export const JUMP_TO_LATEST_DELAY_MS = 150;
 export const VIEWPORT_SETTLE_MS = 400;
 /** Gives up on a smooth jump that never reached the bottom. */
 const JUMP_SETTLE_MS = 1_000;
+/** How long a fresh chat's own scroll to the newest settles before the landing decides (D13). */
+const LANDING_SETTLE_MS = 160;
 /** How long after a wheel, key or finger lift a scroll still counts as the reader's. */
 const READER_INPUT_MS = 400;
 /**
@@ -120,27 +131,81 @@ const READ_STATUS_LABEL: Record<MessageReadStatus, string> = {
 };
 
 const USER_BUBBLE_CLASS =
-  "rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]";
+  "rounded-[var(--personal-radius-xl)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[16px] leading-[22px] break-words whitespace-pre-wrap text-[var(--personal-text)]";
+
+/** The bubble tail: the run's last bubble squares one bottom corner to 6 px (SPEC 2.8). */
+const TAIL_USER = "rounded-br-[6px]";
+const TAIL_BOT = "rounded-bl-[6px]";
 
 /** The owner's text bubble, with the quote of the message it replies to above the text. */
 function UserBubble({
   text,
   quote,
   onJump,
+  tail = false,
   widthClass = "max-w-[78%]",
 }: {
   text: string;
   quote: PersonalReplyQuote | null;
   onJump?: ((messageId: string) => void) | undefined;
+  /** The run's last bubble: its bottom-right corner squares to 6 px. */
+  tail?: boolean;
   /** `max-w-full` when a wrapper already holds the 78%. */
   widthClass?: string;
 }) {
-  if (quote === null) return <p className={cn(widthClass, USER_BUBBLE_CLASS)}>{text}</p>;
+  const bubbleClass = cn(USER_BUBBLE_CLASS, tail && TAIL_USER);
+  if (quote === null) return <p className={cn(widthClass, bubbleClass)}>{text}</p>;
   return (
-    <div className={cn("flex min-w-0 flex-col gap-1.5", widthClass, USER_BUBBLE_CLASS)}>
+    <div className={cn("flex min-w-0 flex-col gap-1.5", widthClass, bubbleClass)}>
       <ReplyQuoteChip quote={quote} onJump={onJump} />
       <p>{text}</p>
     </div>
+  );
+}
+
+/** One message's exact time, under a run's last line (SPEC 2.8; hidden on swipe too). */
+function RunTime({ at, align, now }: { at: Date; align: "start" | "end"; now: Date }) {
+  const { time } = messageTimeParts(at, now);
+  return (
+    <span
+      data-run-time=""
+      className={cn(
+        "text-[13px] leading-4 font-medium text-[var(--personal-text-tertiary)] tabular-nums",
+        align === "end" && "text-right",
+      )}
+    >
+      {time}
+    </span>
+  );
+}
+
+/**
+ * A question answered somewhere else (the Mac or another context) while this
+ * page was open: a centred receipt where the question stood, never a second
+ * card to answer (SPEC 2.8).
+ */
+function AnsweredElsewhereReceipt({
+  card,
+}: {
+  card: Extract<QuestionCardItem, { readonly kind: "answered" }>;
+}) {
+  const answer = card.questions
+    .flatMap((question) => describeAnswer(question, card.answers[question.id]))
+    .join(", ");
+  return (
+    <p
+      role="status"
+      data-testid="answered-elsewhere"
+      className="mx-auto flex h-8 max-w-full items-center gap-2 rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-[13px] leading-4 text-[var(--personal-text-secondary)]"
+    >
+      <Check
+        aria-hidden="true"
+        className="size-4 shrink-0 text-[var(--personal-state-working)]"
+        strokeWidth={2.25}
+      />
+      <span className="shrink-0">Answered on your Mac ·</span>
+      <b className="min-w-0 truncate font-semibold text-[var(--personal-text)]">{answer}</b>
+    </p>
   );
 }
 
@@ -312,6 +377,7 @@ const UserMessage = memo(function UserMessage({
   readStatus = null,
   onReply,
   onJump,
+  tail = false,
 }: {
   environmentId: EnvironmentId;
   message: ChatMessage;
@@ -320,6 +386,8 @@ const UserMessage = memo(function UserMessage({
   /** Reply on this message; absent where nothing can be sent (an archived chat). */
   onReply?: ((quote: PersonalReplyQuote) => void) | undefined;
   onJump?: ((messageId: string) => void) | undefined;
+  /** The run's last message: the bubble takes the 6 px tail. */
+  tail?: boolean;
 }) {
   const quote = useMemo(() => readPersonalReplyQuote(message.context), [message.context]);
   const sentAt = useMemo(() => parseSentAt(message.createdAt), [message.createdAt]);
@@ -416,13 +484,14 @@ const UserMessage = memo(function UserMessage({
         onReply === undefined ? (
           // Nothing can be sent here (an archived chat), so no menu, but the time still shows.
           sentAt === null ? (
-            <UserBubble text={message.text} quote={quote} onJump={onJump} />
+            <UserBubble text={message.text} quote={quote} onJump={onJump} tail={tail} />
           ) : (
             <SwipeTimeRow sentAt={sentAt} align="end" className="max-w-[78%]">
               <UserBubble
                 text={message.text}
                 quote={quote}
                 onJump={onJump}
+                tail={tail}
                 widthClass="max-w-full min-w-0"
               />
             </SwipeTimeRow>
@@ -441,6 +510,7 @@ const UserMessage = memo(function UserMessage({
               text={message.text}
               quote={quote}
               onJump={onJump}
+              tail={tail}
               widthClass="max-w-full min-w-0"
             />
           </ReplyableMessage>
@@ -465,6 +535,8 @@ const AssistantMessage = memo(function AssistantMessage({
   onReply,
   choices,
   onChoose,
+  variant = "full",
+  tail = false,
 }: {
   message: ChatMessage;
   threadRef: ScopedThreadRef;
@@ -475,6 +547,10 @@ const AssistantMessage = memo(function AssistantMessage({
   /** Where the message's tap-to-answer block stands; null while it is not the kind that has one. */
   choices?: ChoicesState | null | undefined;
   onChoose?: ((text: string) => Promise<boolean>) | undefined;
+  /** `bubble` for a short plain reply in a run (SPEC 2.8); `full` is the full-width reply. */
+  variant?: "bubble" | "full";
+  /** The run's last bubble: its bottom-left corner squares to 6 px. */
+  tail?: boolean;
 }) {
   const split = useMemo(
     () => (mayHaveChoices(message.text) ? splitChoices(message.text, message.streaming) : null),
@@ -488,8 +564,19 @@ const AssistantMessage = memo(function AssistantMessage({
   const heldBack = split !== null && split.options === null && split.body !== message.text;
   const body = split !== null && (drawChoices || heldBack) ? split.body : message.text;
   const options = drawChoices ? split.options : null;
+  const bubble = variant === "bubble";
   const content = (
-    <div className="personal-markdown max-w-[90%] min-w-0 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">
+    <div
+      className={cn(
+        "personal-markdown min-w-0 text-[16px] text-[var(--personal-text)]",
+        bubble
+          ? cn(
+              "max-w-full leading-[22px] rounded-[var(--personal-radius-xl)] bg-[var(--personal-surface)] px-3.5 py-2.5 [box-shadow:inset_0_0_0_1px_var(--personal-border)]",
+              tail && TAIL_BOT,
+            )
+          : "w-full leading-[24px]",
+      )}
+    >
       <span className="sr-only">{botName} said:</span>
       {body.length > 0 ? (
         <ChatMarkdown
@@ -511,7 +598,7 @@ const AssistantMessage = memo(function AssistantMessage({
     return sentAt === null ? (
       content
     ) : (
-      <SwipeTimeRow sentAt={sentAt} align="start">
+      <SwipeTimeRow sentAt={sentAt} align="start" {...(bubble ? { className: "max-w-[82%]" } : {})}>
         {content}
       </SwipeTimeRow>
     );
@@ -527,6 +614,7 @@ const AssistantMessage = memo(function AssistantMessage({
       onReply={onReply}
       align="start"
       sentAt={sentAt}
+      {...(bubble ? { className: "max-w-[82%]" } : {})}
     >
       {content}
     </ReplyableMessage>
@@ -701,6 +789,7 @@ function ApprovalCard({
 
 const NO_PINNED_APPROVALS: ReadonlyArray<PendingApproval> = [];
 const NO_QUEUED: ReadonlyArray<OutboxRow> = [];
+const NO_ANSWERED_HERE: ReadonlySet<string> = new Set();
 
 /**
  * Where each reply's tap-to-answer block stands, by item id (only replies that
@@ -767,6 +856,7 @@ export function MessageList({
   latestMessageStatus = null,
   working,
   botName,
+  botFace = null,
   workspaceRoot,
   approvals,
   respondingIds,
@@ -799,6 +889,9 @@ export function MessageList({
   onReply,
   onChoose,
   choicesBusy = false,
+  dockQuestions = false,
+  answeredHere = NO_ANSWERED_HERE,
+  landingItemId = null,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -827,6 +920,11 @@ export function MessageList({
   latestMessageStatus?: LatestMessageReadStatus | null;
   working: boolean;
   botName: string;
+  /**
+   * The bot's face for the run avatars and the full-width replies' sender row
+   * (SPEC 2.8). Null draws a plain circle (a chat with no bot record yet).
+   */
+  botFace?: { readonly shape: BotAvatarShape; readonly color: string } | null;
   workspaceRoot: string | undefined;
   /**
    * Requests blocking the running turn. Unlike questions and secrets, an
@@ -891,6 +989,20 @@ export function MessageList({
   onChoose?: ((text: string) => Promise<boolean>) | undefined;
   /** The chat cannot take a message now (the bot is busy, offline, ...): open choices wait. */
   choicesBusy?: boolean;
+  /**
+   * The transcript row the chat opened at (D13): a request card from the
+   * `?request=` deep link or the chat's own open request. The list pages the
+   * row into its window if it has to, lands on it without an animated scroll
+   * and washes it.
+   */
+  landingItemId?: string | null;
+  /**
+   * The 1:1 chat passes true: an open question is drawn in the dock above the
+   * composer, not in the thread (SPEC 2.9). Groups keep the card inline.
+   */
+  dockQuestions?: boolean;
+  /** Request ids this page has answered: those show the settled card, not the receipt. */
+  answeredHere?: ReadonlySet<string>;
 }): JSX.Element {
   const choicesById = useMemo(() => choicesStates(items, choicesBusy), [items, choicesBusy]);
   const turnStarts = useMemo(
@@ -1377,6 +1489,61 @@ export function MessageList({
     // `items` is the trigger: a thread that loads in pages may bring the message later.
   }, [threadId, items]);
 
+  // D13: the chat opened at a request. The card is paged into the window if it
+  // has to be, then landed on at once - no long animated scroll - and washed.
+  // A question docked above the composer has no node here: it is already on
+  // screen, and the dock does its own wash.
+  const landingKey = landingItemId === null ? null : `${threadId}:${landingItemId}`;
+  const landedRef = useRef<string | null>(null);
+  const landingSettledRef = useRef<string | null>(null);
+  const [landingTick, setLandingTick] = useState(0);
+  useEffect(() => {
+    if (landingKey === null || landingItemId === null) {
+      landedRef.current = null;
+      landingSettledRef.current = null;
+      return;
+    }
+    if (landedRef.current === landingKey) return;
+    const index = items.findIndex((item) => item.id === landingItemId);
+    if (index >= 0 && (index < range.start || index >= range.end)) {
+      stickRef.current = false;
+      setPage({ threadId, firstId: items[Math.max(0, index - TRANSCRIPT_WINDOW_STEP)]!.id });
+      return;
+    }
+    const node = contentRef.current?.querySelector<HTMLElement>(
+      `[data-transcript-row="${landingItemId}"]`,
+    );
+    if (node === null || node === undefined) {
+      landedRef.current = landingKey;
+      return;
+    }
+    // A fresh mount is still scrolling the list to its bottom over the first
+    // frames: decide where the reader belongs once that has settled.
+    if (landingSettledRef.current !== landingKey) {
+      landingSettledRef.current = landingKey;
+      const timer = window.setTimeout(() => setLandingTick((tick) => tick + 1), LANDING_SETTLE_MS);
+      return () => window.clearTimeout(timer);
+    }
+    landedRef.current = landingKey;
+    // A card already on screen - the usual case, where the request is the
+    // newest thing said - leaves the chat where it opened: latest messages
+    // shown, as ever. Only a card the bottom would hide moves the reader, and
+    // then the reader stays there (no following) until they ask for latest.
+    const scroller = scrollerRef.current;
+    if (scroller !== null && typeof node.getBoundingClientRect === "function") {
+      const card = node.getBoundingClientRect();
+      const view = scroller.getBoundingClientRect();
+      if (card.top < view.top || card.bottom > view.bottom) {
+        stickRef.current = false;
+        // To the top, not the middle: a request card can be taller than the
+        // phone's thread, and its own first line is what the request says.
+        node.scrollIntoView({ block: "start", behavior: "instant" });
+      }
+    }
+    node.setAttribute(REQUEST_WASH_ATTRIBUTE, "");
+    window.setTimeout(() => node.removeAttribute(REQUEST_WASH_ATTRIBUTE), REQUEST_WASH_MS);
+  }, [landingKey, landingItemId, items, range.start, range.end, threadId, landingTick]);
+
   const jumpToLatest = () => {
     const scroller = scrollerRef.current;
     if (scroller === null) return;
@@ -1409,6 +1576,105 @@ export function MessageList({
   }, [items, working]);
 
   const empty = items.length === 0 && pending.length === 0 && queued.length === 0;
+
+  // The thread's rows (SPEC 2.8): runs of back-to-back bubbles and the
+  // full-width blocks, with the divider's minute rule already applied.
+  const rows = useMemo(
+    () => buildTranscriptRows(visibleItems, { hasChoices: (id) => choicesById.has(id) }),
+    [visibleItems, choicesById],
+  );
+
+  /** The spacing between two rows: 8 above a divider, 24 before a full-width reply (16 after the same bot's run), 16 otherwise. */
+  const rowTopClass = (row: TranscriptRow, previous: TranscriptRow | null): string => {
+    if (previous === null) return "";
+    if (row.kind === "block" && row.item.kind === "divider") return "mt-2";
+    if (row.kind === "block" && row.item.kind === "message") {
+      return previous.kind === "run" && previous.sender === "bot" ? "mt-4" : "mt-6";
+    }
+    return "mt-4";
+  };
+
+  /** The full-width reply's sender row: the bot's 28 px avatar and its name. */
+  const botSenderRow = (): ReactNode => (
+    <div className="mb-2 flex h-7 min-w-0 items-center gap-2">
+      {botFace === null ? (
+        <span
+          aria-hidden="true"
+          className="size-7 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
+        />
+      ) : (
+        <BotAvatar shape={botFace.shape} color={botFace.color} size={28} label={botName} />
+      )}
+      <span className="min-w-0 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+        {botName}
+      </span>
+    </div>
+  );
+
+  /** One run of bubbles: 4 px inside, one time under the last bubble, the bot's avatar at its bottom-left. */
+  const renderRun = (row: TranscriptRunRow): ReactNode => {
+    const last = row.items[row.items.length - 1];
+    const lastAt = last === undefined ? null : parseSentAt(last.message.createdAt);
+    const hasTime = !row.timeSuppressed && lastAt !== null;
+    const runTime = TIME_PER_RUN && hasTime ? lastAt : null;
+    return (
+      <>
+        {row.items.map((item, index) => {
+          const lastOfRun = index === row.items.length - 1;
+          const at = parseSentAt(item.message.createdAt);
+          const messageTime = !TIME_PER_RUN && !row.timeSuppressed && at !== null ? at : null;
+          return (
+            <Fragment key={item.id}>
+              {row.sender === "user" ? (
+                <UserMessage
+                  environmentId={environmentId}
+                  message={item.message}
+                  readStatus={
+                    latestMessageStatus?.messageId === String(item.message.id)
+                      ? latestMessageStatus.status
+                      : null
+                  }
+                  onReply={onReply}
+                  onJump={jumpToQuoted}
+                  tail={lastOfRun}
+                />
+              ) : (
+                <AssistantMessage
+                  message={item.message}
+                  threadRef={threadRef}
+                  workspaceRoot={workspaceRoot}
+                  botName={botName}
+                  onReply={onReply}
+                  choices={choicesById.get(item.id)}
+                  onChoose={onChoose}
+                  variant="bubble"
+                  tail={lastOfRun}
+                />
+              )}
+              {messageTime !== null ? (
+                <RunTime
+                  at={messageTime}
+                  align={row.sender === "user" ? "end" : "start"}
+                  now={now}
+                />
+              ) : null}
+            </Fragment>
+          );
+        })}
+        {runTime !== null ? (
+          <RunTime at={runTime} align={row.sender === "user" ? "end" : "start"} now={now} />
+        ) : null}
+        {row.sender === "bot" && botFace !== null ? (
+          <span
+            aria-hidden="true"
+            className={cn("absolute left-0", hasTime ? "bottom-5" : "bottom-0")}
+          >
+            <BotAvatar shape={botFace.shape} color={botFace.color} size={28} label={botName} />
+          </span>
+        ) : null}
+      </>
+    );
+  };
   // A chat chip switch eases the new transcript in (chatChipHandoff.ts).
   const [enterClass] = useState(() => (consumeChatSwitched() ? "personal-chat-enter" : undefined));
 
@@ -1423,7 +1689,7 @@ export function MessageList({
           above the chat scrollable, so the whole chat drags up off screen. */}
       <div
         ref={scrollerRef}
-        className="personal-column personal-scroll-quiet relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
+        className="personal-column personal-scroll-quiet personal-thread-fade relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
       >
         <div
           ref={contentRef}
@@ -1431,7 +1697,7 @@ export function MessageList({
           aria-live="polite"
           aria-relevant="additions"
           aria-label={`Chat with ${botName}`}
-          className="flex min-h-full flex-col justify-end gap-3 py-3"
+          className="flex min-h-full flex-col justify-end py-3"
         >
           {range.start > 0 || loadEarlier !== null ? (
             <button
@@ -1453,285 +1719,344 @@ export function MessageList({
             </p>
           ) : null}
 
-          {visibleItems.map((item) => (
-            <div key={item.id} data-transcript-row={item.id} className="flex flex-col gap-3">
-              {(() => {
-                switch (item.kind) {
-                  case "divider":
-                    return (
-                      <p
-                        key={item.id}
-                        className="my-3 text-center text-xs text-[var(--personal-text-tertiary)]"
-                      >
-                        <time dateTime={item.at.toISOString()}>
-                          {formatDayDivider(item.at, now)}
-                        </time>
-                      </p>
-                    );
-                  case "system-turn":
-                    return (
-                      <SystemTurnRow
-                        key={item.id}
-                        label={describeTurn(item.turn)}
-                        text={item.message.text}
-                      />
-                    );
-                  case "group-message":
-                    if (readGroupMarker(item.message)?.phase === "discussion") {
+          {rows.map((row, index) => {
+            const previous = index === 0 ? undefined : rows[index - 1];
+            if (row.kind === "run") {
+              return (
+                <div
+                  key={row.id}
+                  data-transcript-row={row.id}
+                  className={cn(
+                    "min-w-0",
+                    rowTopClass(row, previous ?? null),
+                    row.sender === "user"
+                      ? "flex flex-col items-end gap-1"
+                      : "relative flex flex-col items-start gap-1 pl-9",
+                  )}
+                >
+                  {renderRun(row)}
+                </div>
+              );
+            }
+            const item = row.item;
+            return (
+              <div
+                key={row.id}
+                data-transcript-row={row.id}
+                className={cn("flex min-w-0 flex-col", rowTopClass(row, previous ?? null))}
+              >
+                {(() => {
+                  switch (item.kind) {
+                    case "divider":
                       return (
-                        <details
+                        <p
                           key={item.id}
-                          className="rounded-xl border border-[var(--personal-border)] px-3 py-2"
+                          className="text-center text-[13px] leading-4 font-semibold text-[var(--personal-text-tertiary)]"
                         >
-                          <summary className="cursor-pointer text-sm text-[var(--personal-text-secondary)]">
-                            {item.speaker.name} ·{" "}
-                            {item.message.streaming ? "Researching…" : "View contribution"}
-                          </summary>
-                          <GroupMessage
+                          <time dateTime={item.at.toISOString()}>
+                            {formatDayDivider(item.at, now)}
+                          </time>
+                        </p>
+                      );
+                    case "system-turn":
+                      return (
+                        <SystemTurnRow
+                          key={item.id}
+                          label={describeTurn(item.turn)}
+                          text={item.message.text}
+                        />
+                      );
+                    case "group-message":
+                      if (readGroupMarker(item.message)?.phase === "discussion") {
+                        return (
+                          <details
+                            key={item.id}
+                            className="rounded-xl border border-[var(--personal-border)] px-3 py-2"
+                          >
+                            <summary className="cursor-pointer text-sm text-[var(--personal-text-secondary)]">
+                              {item.speaker.name} ·{" "}
+                              {item.message.streaming ? "Researching…" : "View contribution"}
+                            </summary>
+                            <GroupMessage
+                              message={item.message}
+                              threadRef={threadRef}
+                              workspaceRoot={workspaceRoot}
+                              speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                              botId={item.speaker.botId}
+                              showSpeaker={false}
+                              onReply={onReply}
+                              choices={choicesById.get(item.id)}
+                              onChoose={onChoose}
+                            />
+                          </details>
+                        );
+                      }
+                      {
+                        // The verdict speaks for the whole group, so it is headed as
+                        // the group's answer; its writer is only credited, not shown
+                        // as the speaker.
+                        const isVerdict = readGroupMarker(item.message)?.phase === "verdict";
+                        return (
+                          <div key={item.id}>
+                            {isVerdict && (
+                              <div className="mb-2">
+                                <p className="text-base font-semibold text-[var(--personal-text)]">
+                                  Group verdict
+                                </p>
+                                <p className="text-[13px] text-[var(--personal-text-secondary)]">
+                                  From the whole group · written up by {item.speaker.name}
+                                </p>
+                              </div>
+                            )}
+                            <GroupMessage
+                              key={item.id}
+                              message={item.message}
+                              threadRef={threadRef}
+                              workspaceRoot={workspaceRoot}
+                              speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                              botId={item.speaker.botId}
+                              showSpeaker={isVerdict ? false : item.showSpeaker}
+                              onReply={onReply}
+                              choices={choicesById.get(item.id)}
+                              onChoose={onChoose}
+                            />
+                          </div>
+                        );
+                      }
+                    case "notice": {
+                      // The continue shows the prompt the bot got when tapped, like
+                      // any server-written turn; the pause is a plain line; a note a
+                      // bot saved or forgot on its own offers Undo.
+                      const noteUndo = chatNoticeUndo(item.notice);
+                      if (noteUndo !== null) {
+                        return (
+                          <NoteNoticeRow
+                            key={item.id}
+                            environmentId={environmentId}
+                            label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                            memoryId={noteUndo.memoryId}
+                            undo={noteUndo.undo}
+                            {...(noteUndo.receipt === undefined
+                              ? {}
+                              : { receipt: noteUndo.receipt })}
+                            threadId={String(threadRef.threadId)}
+                            noticeMessageId={String(item.message.id)}
+                            noticeCreatedAt={String(item.message.createdAt)}
+                            readOnly={readOnly}
+                          />
+                        );
+                      }
+                      return isServerTurnNotice(item.notice) ? (
+                        <SystemTurnRow
+                          key={item.id}
+                          label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                          text={item.message.text}
+                        />
+                      ) : (
+                        <p
+                          key={item.id}
+                          data-testid="chat-notice"
+                          className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
+                        >
+                          {chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                        </p>
+                      );
+                    }
+                    case "group-system":
+                      return (
+                        <p
+                          key={item.id}
+                          className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
+                        >
+                          {groupSystemLabel(item.event, item.message.text)}
+                        </p>
+                      );
+                    case "delegation":
+                      return <div key={item.id}>{renderDelegation(item.task)}</div>;
+                    case "question": {
+                      // The open question lives in the dock above the composer
+                      // (SPEC 2.9); once it settles, its spot in the thread keeps
+                      // the record: a receipt when another device answered it, the
+                      // settled card when it was answered here.
+                      if (dockQuestions && item.card.kind === "pending") return null;
+                      if (item.card.kind === "answered" && !answeredHere.has(item.card.requestId)) {
+                        return <AnsweredElsewhereReceipt key={item.id} card={item.card} />;
+                      }
+                      return lockCard(
+                        item.id,
+                        readOnly,
+                        <QuestionCard
+                          key={item.id}
+                          card={item.card}
+                          botName={botName}
+                          responding={respondingIds.has(item.card.requestId)}
+                          onAnswer={onAnswerQuestion}
+                          onDismiss={onDismissQuestion}
+                        />,
+                      );
+                    }
+                    case "secret":
+                      return lockCard(
+                        item.id,
+                        readOnly,
+                        <SecretRequestCard
+                          key={item.id}
+                          card={item.card}
+                          botName={botName}
+                          responding={respondingIds.has(item.card.requestId)}
+                          onProvide={onProvideSecret}
+                          onDecline={onDeclineSecret}
+                        />,
+                      );
+                    case "login":
+                      return lockCard(
+                        item.id,
+                        readOnly,
+                        <LoginRequestCard
+                          key={item.id}
+                          request={item.request}
+                          botName={botName}
+                          onProvide={(...args) => onProvideLogin?.(...args)}
+                          onCancel={(requestId) => onCancelLogin?.(requestId)}
+                        />,
+                      );
+                    case "connection-approval":
+                      return lockCard(
+                        item.id,
+                        readOnly,
+                        <ConnectionApprovalCard
+                          key={item.id}
+                          card={item.card}
+                          botName={botName}
+                          expired={
+                            item.card.kind === "pending" &&
+                            approvalHasExpired(item.card.approval, approvalsNowMs)
+                          }
+                          responding={approvalRespondingIds.has(item.card.approvalId)}
+                          onApprove={(approvalId) =>
+                            onDecideConnectionApproval(approvalId, "approved")
+                          }
+                          onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
+                        />,
+                      );
+                    case "lead-bot-change":
+                      return lockCard(
+                        item.id,
+                        readOnly,
+                        <LeadBotChangeCard
+                          key={item.id}
+                          card={item.card}
+                          nowMs={approvalsNowMs}
+                          responding={leadBotChangeRespondingIds?.has(item.card.changeId) ?? false}
+                          onDecide={(changeId, changeHash, decision) =>
+                            onDecideLeadBotChange?.(changeId, changeHash, decision)
+                          }
+                        />,
+                      );
+                    case "memory-change":
+                      return lockCard(
+                        item.id,
+                        readOnly,
+                        <MemoryChangeCard
+                          key={item.id}
+                          item={item.card}
+                          botName={memoryBotName ?? (() => undefined)}
+                          responding={memoryChangeRespondingIds?.has(item.card.changeId) ?? false}
+                          onDecide={(changeId, changeHash, approve) =>
+                            onDecideMemoryChange?.(changeId, changeHash, approve)
+                          }
+                        />,
+                      );
+                    case "message": {
+                      if (item.message.role === "user") {
+                        return (
+                          <UserMessage
+                            key={item.id}
+                            environmentId={environmentId}
+                            message={item.message}
+                            readStatus={
+                              latestMessageStatus?.messageId === String(item.message.id)
+                                ? latestMessageStatus.status
+                                : null
+                            }
+                            onReply={onReply}
+                            onJump={jumpToQuoted}
+                          />
+                        );
+                      }
+                      // A full-width reply (SPEC 2.8): a sender row, the reply at
+                      // full width, the steps footer and the time under it.
+                      const replyAt = parseSentAt(item.message.createdAt);
+                      const replyTime = !row.timeSuppressed && replyAt !== null ? replyAt : null;
+                      return (
+                        <Fragment key={item.id}>
+                          {botSenderRow()}
+                          <AssistantMessage
                             message={item.message}
                             threadRef={threadRef}
                             workspaceRoot={workspaceRoot}
-                            speaker={groupSpeaker?.(item.speaker.botId) ?? null}
-                            botId={item.speaker.botId}
-                            showSpeaker={false}
+                            botName={botName}
                             onReply={onReply}
                             choices={choicesById.get(item.id)}
                             onChoose={onChoose}
                           />
-                        </details>
+                          {row.footerWork.length > 0 || replyTime !== null ? (
+                            <div className="mt-3 flex w-full flex-col items-start gap-1">
+                              {row.footerWork.length > 0 ? (
+                                <ToolDetails
+                                  entries={row.footerWork.flatMap((work) => work.entries)}
+                                  live={row.footerWork.some((work) => work.id === liveWorkId)}
+                                  workspaceRoot={workspaceRoot}
+                                />
+                              ) : null}
+                              {replyTime !== null ? (
+                                <RunTime at={replyTime} align="start" now={now} />
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {item.message.streaming ||
+                          !turnStarts.has(item.id) ||
+                          !hasRecordedContext(new Date(item.message.createdAt), now) ? null : (
+                            <ContextUsed
+                              environmentId={environmentId}
+                              threadId={String(threadRef.threadId)}
+                              messageId={turnStarts.get(item.id)!}
+                              readOnly={readOnly}
+                            />
+                          )}
+                        </Fragment>
                       );
                     }
-                    {
-                      // The verdict speaks for the whole group, so it is headed as
-                      // the group's answer; its writer is only credited, not shown
-                      // as the speaker.
-                      const isVerdict = readGroupMarker(item.message)?.phase === "verdict";
+                    case "plan":
                       return (
-                        <div key={item.id}>
-                          {isVerdict && (
-                            <div className="mb-2">
-                              <p className="text-base font-semibold text-[var(--personal-text)]">
-                                Group verdict
-                              </p>
-                              <p className="text-[13px] text-[var(--personal-text-secondary)]">
-                                From the whole group · written up by {item.speaker.name}
-                              </p>
-                            </div>
-                          )}
-                          <GroupMessage
-                            key={item.id}
-                            message={item.message}
+                        <div
+                          key={item.id}
+                          className="personal-markdown max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]"
+                        >
+                          <p className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+                            Plan
+                          </p>
+                          <ChatMarkdown
+                            text={item.plan.planMarkdown}
+                            cwd={workspaceRoot}
                             threadRef={threadRef}
-                            workspaceRoot={workspaceRoot}
-                            speaker={groupSpeaker?.(item.speaker.botId) ?? null}
-                            botId={item.speaker.botId}
-                            showSpeaker={isVerdict ? false : item.showSpeaker}
-                            onReply={onReply}
-                            choices={choicesById.get(item.id)}
-                            onChoose={onChoose}
                           />
                         </div>
                       );
-                    }
-                  case "notice": {
-                    // The continue shows the prompt the bot got when tapped, like
-                    // any server-written turn; the pause is a plain line; a note a
-                    // bot saved or forgot on its own offers Undo.
-                    const noteUndo = chatNoticeUndo(item.notice);
-                    if (noteUndo !== null) {
+                    case "work":
                       return (
-                        <NoteNoticeRow
+                        <ToolDetails
                           key={item.id}
-                          environmentId={environmentId}
-                          label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
-                          memoryId={noteUndo.memoryId}
-                          undo={noteUndo.undo}
-                          {...(noteUndo.receipt === undefined ? {} : { receipt: noteUndo.receipt })}
-                          threadId={String(threadRef.threadId)}
-                          noticeMessageId={String(item.message.id)}
-                          noticeCreatedAt={String(item.message.createdAt)}
-                          readOnly={readOnly}
+                          entries={item.entries}
+                          live={item.id === liveWorkId}
+                          workspaceRoot={workspaceRoot}
                         />
                       );
-                    }
-                    return isServerTurnNotice(item.notice) ? (
-                      <SystemTurnRow
-                        key={item.id}
-                        label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
-                        text={item.message.text}
-                      />
-                    ) : (
-                      <p
-                        key={item.id}
-                        data-testid="chat-notice"
-                        className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
-                      >
-                        {chatNoticeLabel(item.notice, item.message.text, now.getTime())}
-                      </p>
-                    );
                   }
-                  case "group-system":
-                    return (
-                      <p
-                        key={item.id}
-                        className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
-                      >
-                        {groupSystemLabel(item.event, item.message.text)}
-                      </p>
-                    );
-                  case "delegation":
-                    return <div key={item.id}>{renderDelegation(item.task)}</div>;
-                  case "question":
-                    return lockCard(
-                      item.id,
-                      readOnly,
-                      <QuestionCard
-                        key={item.id}
-                        card={item.card}
-                        botName={botName}
-                        responding={respondingIds.has(item.card.requestId)}
-                        onAnswer={onAnswerQuestion}
-                        onDismiss={onDismissQuestion}
-                      />,
-                    );
-                  case "secret":
-                    return lockCard(
-                      item.id,
-                      readOnly,
-                      <SecretRequestCard
-                        key={item.id}
-                        card={item.card}
-                        botName={botName}
-                        responding={respondingIds.has(item.card.requestId)}
-                        onProvide={onProvideSecret}
-                        onDecline={onDeclineSecret}
-                      />,
-                    );
-                  case "login":
-                    return lockCard(
-                      item.id,
-                      readOnly,
-                      <LoginRequestCard
-                        key={item.id}
-                        request={item.request}
-                        botName={botName}
-                        onProvide={(...args) => onProvideLogin?.(...args)}
-                        onCancel={(requestId) => onCancelLogin?.(requestId)}
-                      />,
-                    );
-                  case "connection-approval":
-                    return lockCard(
-                      item.id,
-                      readOnly,
-                      <ConnectionApprovalCard
-                        key={item.id}
-                        card={item.card}
-                        botName={botName}
-                        expired={
-                          item.card.kind === "pending" &&
-                          approvalHasExpired(item.card.approval, approvalsNowMs)
-                        }
-                        responding={approvalRespondingIds.has(item.card.approvalId)}
-                        onApprove={(approvalId) =>
-                          onDecideConnectionApproval(approvalId, "approved")
-                        }
-                        onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
-                      />,
-                    );
-                  case "lead-bot-change":
-                    return lockCard(
-                      item.id,
-                      readOnly,
-                      <LeadBotChangeCard
-                        key={item.id}
-                        card={item.card}
-                        nowMs={approvalsNowMs}
-                        responding={leadBotChangeRespondingIds?.has(item.card.changeId) ?? false}
-                        onDecide={(changeId, changeHash, decision) =>
-                          onDecideLeadBotChange?.(changeId, changeHash, decision)
-                        }
-                      />,
-                    );
-                  case "memory-change":
-                    return lockCard(
-                      item.id,
-                      readOnly,
-                      <MemoryChangeCard
-                        key={item.id}
-                        item={item.card}
-                        botName={memoryBotName ?? (() => undefined)}
-                        responding={memoryChangeRespondingIds?.has(item.card.changeId) ?? false}
-                        onDecide={(changeId, changeHash, approve) =>
-                          onDecideMemoryChange?.(changeId, changeHash, approve)
-                        }
-                      />,
-                    );
-                  case "message":
-                    return item.message.role === "user" ? (
-                      <UserMessage
-                        key={item.id}
-                        environmentId={environmentId}
-                        message={item.message}
-                        readStatus={
-                          latestMessageStatus?.messageId === String(item.message.id)
-                            ? latestMessageStatus.status
-                            : null
-                        }
-                        onReply={onReply}
-                        onJump={jumpToQuoted}
-                      />
-                    ) : (
-                      <Fragment key={item.id}>
-                        <AssistantMessage
-                          message={item.message}
-                          threadRef={threadRef}
-                          workspaceRoot={workspaceRoot}
-                          botName={botName}
-                          onReply={onReply}
-                          choices={choicesById.get(item.id)}
-                          onChoose={onChoose}
-                        />
-                        {item.message.streaming ||
-                        !turnStarts.has(item.id) ||
-                        !hasRecordedContext(new Date(item.message.createdAt), now) ? null : (
-                          <ContextUsed
-                            environmentId={environmentId}
-                            threadId={String(threadRef.threadId)}
-                            messageId={turnStarts.get(item.id)!}
-                            readOnly={readOnly}
-                          />
-                        )}
-                      </Fragment>
-                    );
-                  case "plan":
-                    return (
-                      <div
-                        key={item.id}
-                        className="personal-markdown max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]"
-                      >
-                        <p className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
-                          Plan
-                        </p>
-                        <ChatMarkdown
-                          text={item.plan.planMarkdown}
-                          cwd={workspaceRoot}
-                          threadRef={threadRef}
-                        />
-                      </div>
-                    );
-                  case "work":
-                    return (
-                      <ToolDetails
-                        key={item.id}
-                        entries={item.entries}
-                        live={item.id === liveWorkId}
-                        workspaceRoot={workspaceRoot}
-                      />
-                    );
-                }
-              })()}
-            </div>
-          ))}
+                })()}
+              </div>
+            );
+          })}
           {range.end < items.length ? (
             // The accessibility fallback for a frozen window (the reader
             // reaches the end of what is loaded and the next step is taken by
@@ -1748,7 +2073,7 @@ export function MessageList({
           ) : null}
 
           {pending.map((message) => (
-            <div key={message.id} className="flex flex-col items-end gap-1 opacity-70">
+            <div key={message.id} className="mt-4 flex flex-col items-end gap-1 opacity-70">
               {message.attachments.map((attachment) => (
                 <span
                   key={attachment.id}
@@ -1766,32 +2091,42 @@ export function MessageList({
           ))}
 
           {(readOnly ? NO_PINNED_APPROVALS : approvals).map((approval) => (
-            <ApprovalCard
+            // A pinned approval is a landing target too (D13), under the id a
+            // `?request=` carries.
+            <div
               key={approval.requestId}
-              approval={approval}
-              botName={botName}
-              responding={respondingIds.has(approval.requestId)}
-              onRespond={onRespondToApproval}
-            />
+              data-transcript-row={`approval:${approval.requestId}`}
+              className="mt-4"
+            >
+              <ApprovalCard
+                approval={approval}
+                botName={botName}
+                responding={respondingIds.has(approval.requestId)}
+                onRespond={onRespondToApproval}
+              />
+            </div>
           ))}
 
           {queued.map((row) => (
-            <QueuedMessage
-              key={row.entry.id}
-              row={row}
-              onCancel={onCancelQueued}
-              onEdit={onEditQueued}
-              onRetry={onRetryQueued}
-            />
+            <div key={row.entry.id} className="mt-4">
+              <QueuedMessage
+                row={row}
+                onCancel={onCancelQueued}
+                onEdit={onEditQueued}
+                onRetry={onRetryQueued}
+              />
+            </div>
           ))}
 
           {errorText !== null ? (
-            <ErrorNotice
-              text={errorText}
-              detail={errorDetail}
-              tone={errorTone}
-              retry={errorRetry}
-            />
+            <div className="mt-4">
+              <ErrorNotice
+                text={errorText}
+                detail={errorDetail}
+                tone={errorTone}
+                retry={errorRetry}
+              />
+            </div>
           ) : null}
         </div>
       </div>
