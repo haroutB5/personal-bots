@@ -39,6 +39,8 @@ import {
   RotateCw,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -89,7 +91,6 @@ import {
 } from "./computerState";
 import { DesktopPane } from "./DesktopPane";
 import { useDesktopStatus } from "./desktopState";
-import { PerformancePane } from "./PerformancePane";
 import { createTimedNotice } from "./timedNotice";
 import { connectViewport, type RemoteField, type ViewportClient } from "./viewportClient";
 
@@ -110,6 +111,15 @@ export interface ComputerScreenProps {
 }
 
 const ICON_STROKE = 1.75;
+
+/**
+ * The Performance pane is its own chunk: its charts, model and feed together
+ * are ~60 KB of JS that the chat journeys (which include the Computer route's
+ * chunk) must not pay for. It loads the moment the segment opens.
+ */
+const PerformancePane = lazy(() =>
+  import("./PerformancePane").then((module) => ({ default: module.PerformancePane })),
+);
 
 type ComputerSegment = "browser" | "desktop" | "files" | "performance";
 const SEGMENT_LABELS: Record<ComputerSegment, string> = {
@@ -403,7 +413,15 @@ export function ComputerScreen({
           onExitFullScreen={() => setFullScreen(false)}
         />
       ) : shownSegment === "performance" ? (
-        <PerformancePane botsBusy={botsBusy} tasksRunning={tasksRunning} />
+        <Suspense
+          fallback={
+            <p className="mt-6 text-center text-[14px] text-[var(--personal-text-secondary)]">
+              Loading the dashboard.
+            </p>
+          }
+        >
+          <PerformancePane botsBusy={botsBusy} tasksRunning={tasksRunning} />
+        </Suspense>
       ) : (
         <FilesPane environmentId={environmentId} />
       )}
