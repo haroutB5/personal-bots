@@ -24,15 +24,7 @@ import {
   type UsageCard,
   type UsageWindowRow,
 } from "./usagePresentation";
-import {
-  formatStripPercent,
-  selectUsageStripCells,
-  stripBindingWindow,
-  stripCellBarPercent,
-  stripShortWindow,
-  usageStripAriaLabel,
-  type UsageStripCell,
-} from "./usageStrip";
+import { formatStripPercent, selectUsageStripCells, type UsageStripCell } from "./usageStrip";
 
 // Upstream's reset-credit module brings the whole Limits tab with it; load it
 // only once a sheet shows a banked credit.
@@ -62,44 +54,35 @@ function barColor(usedPercent: number): string {
   return usedPercent >= 80 ? "var(--personal-review)" : "var(--personal-text-tertiary)";
 }
 
-/**
- * The bar fills to the worse window, so it says how little headroom is left but
- * not which limit is doing it - and a spent 5-hour window clears in hours where
- * a spent week may not clear for days. Ink the binding one to name it.
- */
-function bindingInk(cell: UsageStripCell, window: "session" | "weekly"): string {
-  return stripBindingWindow(cell) === window ? "text-[var(--personal-review-text)]" : "";
-}
-
-/** A narrow desktop cell's figure: just the window its bar is filled to. */
-function ShortWindowFigure({ cell }: { readonly cell: UsageStripCell }): JSX.Element {
-  const window = stripShortWindow(cell);
-  const nothing = cell.sessionPercent === null && cell.weeklyPercent === null;
-  return (
-    <span className={cn("hidden md:inline md:@min-[196px]:hidden", bindingInk(cell, window))}>
-      {nothing
-        ? "Not reported"
-        : `${window === "session" ? "Session" : "Weekly"} ${formatStripPercent(
-            window === "session" ? cell.sessionPercent : cell.weeklyPercent,
-          )} used`}
-    </span>
-  );
-}
-
-function StripCellBar({ percent }: { readonly percent: number | null }): JSX.Element {
+/** A window's 20x4 bar; nothing painted when the window was never reported. */
+function WindowBar({ percent }: { readonly percent: number | null }): JSX.Element {
   return (
     <span
       aria-hidden="true"
-      className="block h-[3px] overflow-hidden rounded-full bg-[var(--personal-track)]"
+      className="h-1 w-5 shrink-0 overflow-hidden rounded-[2px] bg-[var(--personal-track)]"
     >
       {percent !== null && percent > 0 ? (
         <span
-          className="block h-full rounded-full"
+          className="block h-full rounded-[2px]"
           style={{ width: `${percent}%`, backgroundColor: barColor(percent) }}
         />
       ) : null}
     </span>
   );
+}
+
+/**
+ * The line's accessible name (design 2.1): the bars are decorative, so every
+ * number a sighted person reads lives here.
+ */
+function usageLineAriaLabel(cell: UsageStripCell): string {
+  const session =
+    cell.sessionPercent === null
+      ? "session not reported"
+      : `session ${cell.sessionPercent} percent`;
+  const weekly =
+    cell.weeklyPercent === null ? "week not reported" : `week ${cell.weeklyPercent} percent`;
+  return `${cell.title} usage: ${session}, ${weekly}`;
 }
 
 function WindowRow({ card, row }: { readonly card: UsageCard; readonly row: UsageWindowRow }) {
@@ -396,15 +379,18 @@ function UsageSheetBody({
 }
 
 /**
- * Slim two-up usage strip for the Chats screen: Claude left, Codex right,
- * each showing the 5-hour session and weekly figures over one hairline bar
- * filled to whichever of the two is further spent (see `stripCellBarPercent`).
- * Renders nothing until the config stream publishes a provider, so a
- * cold start never reserves space it cannot fill. Tapping opens the full
- * per-window detail sheet.
+ * The home's Claude usage line: one 20 px row under the title, "Claude" then a
+ * 20x4 bar with "Session 10%" and another with "Week 34%" (design section
+ * 2.1). Tapping it opens the full per-window sheet, the two-up Codex and
+ * Claude detail the strip used to draw inline: one line is the design's
+ * default, and the sheet is where the numbers behind it live.
  *
- * `now` comes from the screen's minute clock rather than a second interval
- * of its own: reset countdowns only need minute resolution.
+ * Renders nothing until the config stream publishes a provider, so a cold
+ * start never reserves space it cannot fill. The Claude card leads; a setup
+ * with no Claude card shows whichever provider it has.
+ *
+ * `now` comes from the screen's minute clock rather than a second interval of
+ * its own: reset countdowns only need minute resolution.
  */
 export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Element | null {
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -436,50 +422,37 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
   const cards = selectUsageCards(providers, now);
   const cells = selectUsageStripCells(cards);
   if (cells.length === 0) return null;
+  const cell = cells.find((candidate) => candidate.driver === "claudeAgent") ?? cells[0]!;
+  // Nothing reported at all: one plain phrase, not "Session – Week –" (the
+  // strip always said this much, and it is the honest reading).
+  const nothingReported = cell.sessionPercent === null && cell.weeklyPercent === null;
 
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label={usageStripAriaLabel(cells)}
+        aria-label={usageLineAriaLabel(cell)}
         aria-haspopup="dialog"
-        className="mt-0.5 grid min-h-11 w-full grid-cols-2 items-center gap-3 rounded-[var(--personal-radius-button)] text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        className="mx-4 mb-1 flex h-5 min-w-0 items-center gap-2 text-left text-[13px] leading-4 text-[var(--personal-text-tertiary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       >
-        {cells.map((cell) => (
-          // A container so the figures can fit the cell they are given: the
-          // desktop list is as narrow as 280px, where both windows at a
-          // readable size ran into the next cell ("59% used Session 2%").
-          <span key={cell.driver} className="@container flex min-w-0 flex-col gap-0.5">
-            <span className="truncate text-[12px] leading-4 font-semibold text-[var(--personal-text-secondary)] md:text-[13px]">
-              {cell.title}
+        <span className="shrink-0 font-semibold text-[var(--personal-text-secondary)]">
+          {cell.title}
+        </span>
+        {nothingReported ? (
+          <span>Not reported</span>
+        ) : (
+          <>
+            <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap tabular-nums">
+              <WindowBar percent={cell.sessionPercent} />
+              Session {formatStripPercent(cell.sessionPercent)}
             </span>
-            {/* Phone: both windows at 11px, as before. md+: 12px, both windows
-                where the cell is wide enough, else only the one the bar is
-                filled to (the sheet and the label carry the other). */}
-            <span className="truncate text-[11px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums md:text-[12px]">
-              <span className="md:hidden md:@min-[196px]:inline">
-                {cell.sessionPercent === null && cell.weeklyPercent === null ? (
-                  // Nothing reported yet: "Session – · Weekly – used" read as a
-                  // broken line of dashes.
-                  "Not reported"
-                ) : (
-                  <>
-                    <span className={bindingInk(cell, "session")}>
-                      Session {formatStripPercent(cell.sessionPercent)}
-                    </span>{" "}
-                    ·{" "}
-                    <span className={bindingInk(cell, "weekly")}>
-                      Weekly {formatStripPercent(cell.weeklyPercent)} used
-                    </span>
-                  </>
-                )}
-              </span>
-              <ShortWindowFigure cell={cell} />
+            <span className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap tabular-nums">
+              <WindowBar percent={cell.weeklyPercent} />
+              Week {formatStripPercent(cell.weeklyPercent)}
             </span>
-            <StripCellBar percent={stripCellBarPercent(cell)} />
-          </span>
-        ))}
+          </>
+        )}
       </button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetPopup

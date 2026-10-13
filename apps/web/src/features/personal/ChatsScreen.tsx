@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -8,14 +8,12 @@ import {
   type EnvironmentId,
   type PersonalBot,
   type PersonalBotId,
-  type PersonalBotNotificationMute,
   type PersonalGroup,
   type ThreadId,
 } from "@t3tools/contracts";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { BellOff, ChevronRight, Network, Plus, Search, Settings } from "lucide-react";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { Network, Plus, Search, Settings, X } from "lucide-react";
 
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
@@ -27,36 +25,17 @@ import {
   type AvatarMotion,
 } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
-import {
-  BotRow,
-  ROW_CLASS,
-  SELECTED_ROW_CLASS,
-  selectedChatProps,
-  snapshotPreviewLabel,
-} from "./BotRow";
-import {
-  buildBotSummaries,
-  collectAttentionThreads,
-  filterBotSummaries,
-  partitionPinnedSummaries,
-  previewKeyAdvanced,
-  previewRefreshKey,
-  type BotSummary,
-} from "./botSummaries";
-import { useTogglePinBot } from "./usePinBot";
+import { selectedChatProps } from "./BotRow";
+import { buildBotSummaries } from "./botSummaries";
+import { BotPickerSheet } from "./BotPickerSheet";
 import { buildChatSections, plainGroups, sectionRowMatches } from "./chatSections";
-import { SnoozedChatList, type ChatSectionActions } from "./ChatSectionRows";
 import type { ChatSectionRow } from "./chatSections";
-import { isChatPinned, pinnedFirst } from "./chatState";
-import { MessageSearchResults } from "./MessageSearchResults";
-import { useBulkChatActions } from "./useBulkChatActions";
-import { useGroupChatState } from "./useGroupChatState";
-import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
-import { useComputerFeed } from "./computer/computerState";
-import { useDesktopStatus, useDesktopSummaryInput } from "./computer/desktopState";
+import { SnoozedChatList, type ChatSectionActions } from "./ChatSectionRows";
+import { isChatPinned, isChatSnoozed, pinnedFirst } from "./chatState";
+import { isTurnThinking } from "./conversationModel";
+import { isThreadErrored } from "./botSummaries";
 import {
   buildChatsSnapshot,
-  partitionPinnedSnapshotRows,
   readChatsSnapshot,
   readChatsSnapshotBeforeEnvironment,
   writeChatsSnapshot,
@@ -66,10 +45,10 @@ import {
 } from "./chatsSnapshot";
 import {
   resolveTurnChildren,
-  type ServerTurn,
   serverTurnLabel,
   threadIdsWithEndedTasks,
   waitingLabelsByThread,
+  type ServerTurn,
 } from "./delegationModel";
 import {
   activeGroupMembers,
@@ -79,9 +58,39 @@ import {
   roundForGroup,
   shownInChats,
 } from "./groupModel";
-import { GroupRow } from "./GroupRow";
-import { PinnedBotTile, PinnedSnapshotTile, PinnedStrip } from "./PinnedStrip";
-import { unreadChatsByBot, useChatSeenState } from "./unreadChats";
+import { HomeChatRowView, HomeGroupRowView } from "./HomeChatRow";
+import { HomeFilters } from "./HomeFilters";
+import { HomeRail, type RailBotItem, type RailChatItem, type RailGroupItem } from "./HomeRail";
+import {
+  buildHomeRows,
+  cardCaption,
+  chatRowPreview,
+  filterHomeRows,
+  homeChatBases,
+  isChatRowLive,
+  railBots,
+  railCaption,
+  railCards,
+  visibleHomeRows,
+  type HomeChatBase,
+  type HomeChatRow,
+  type HomeFilter,
+  type HomeRow,
+  type RowPreviewTone,
+} from "./homeRows";
+import { HOME_ROW_PITCH, homeWindowSpacers } from "./homeWindow";
+import { MessageSearchResults } from "./MessageSearchResults";
+import { deriveNeedsYou, type NeedsYouModel } from "./needsYou";
+import { publishNeedsYouCount } from "./needsYouStore";
+import { useChatSeenState } from "./unreadChats";
+import { useBulkChatActions } from "./useBulkChatActions";
+import { useGroupChatState } from "./useGroupChatState";
+import { findScrollParent, useHomeWindow } from "./useHomeWindow";
+import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
+import { useComputerFeed } from "./computer/computerState";
+import { useDesktopStatus, useDesktopSummaryInput } from "./computer/desktopState";
+import { threadIdsAwaitingApproval } from "./connectionApprovalCards";
+import { usePendingConnectionApprovals } from "./useConnectionApprovals";
 import {
   mergePersonalGroups,
   usePersonalGroupsFeed,
@@ -89,12 +98,8 @@ import {
 } from "./usePersonalGroups";
 import { reloadLatestApp, useAppVersion } from "./appVersion";
 import { UpdateStatusLine } from "./UpdateStatusLine";
-import { SwipeToDelete } from "./SwipeToDelete";
-import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
-import { botMuteState } from "./botMuteModel";
-import { useDeleteBot } from "./useDeleteBot";
-import { threadIdsAwaitingSecret } from "./secretRequestCards";
 import { usePendingSecretRequests } from "./useSecretRequests";
+import { useNeedsYouLoginRequests } from "./useNeedsYouLoginRequests";
 import { usePersonalRoutines, usePersonalTasks } from "./usePersonalAutomation";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
@@ -108,9 +113,9 @@ import {
 import { usePreloadChatRoute } from "./usePreloadChatRoute";
 import { reportChatsListPainted } from "./perfRum";
 import { perfOptimizationOn } from "./perfFlags";
-import { formatRelativeTime } from "./relativeTime";
 import { botSelectionKey, groupSelectionKey, type SidebarSelectionKey } from "./personalMode";
-import { revealInSidebar } from "./sidebarReveal";
+import { formatRelativeTime } from "./relativeTime";
+import { revealDelta, revealInSidebar } from "./sidebarReveal";
 
 const MINUTE_MS = 60_000;
 /** Coalesces preview-key moves that land together (message sent + turn start). */
@@ -135,17 +140,39 @@ export function useMinuteClock(): number {
   return now;
 }
 
-// `md:-mx-3` pairs with the rows' `md:px-3` (see ROW_CLASS in BotRow).
-const UNPINNED_LIST_CLASS =
-  "personal-row-list mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)] md:-mx-3";
-
-// The pinned strip carries 16 px of headroom inside its scroller for the
-// thinking cloud (PinnedStrip); the list after it gives 4 px back, so the page
-// below the strip sits where it did.
-const AFTER_PINNED_LIST_CLASS = "mt-2";
-
+/** 44 px round header icons; the "+" is the one filled control up here. */
 const ICON_BUTTON =
-  "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
+  "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+const ICON_BUTTON_FILLED = cn(
+  ICON_BUTTON,
+  "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]",
+);
+
+/**
+ * Whether the preview key moved at a message boundary worth one list refetch:
+ * a chat already in the key changed its own fields. A chat appearing or
+ * leaving comes from the list itself (a new chat, an archive), so those never
+ * count — that was the second and third list request per app open.
+ */
+function previewKeyAdvancedForChats(previous: string, next: string): boolean {
+  if (previous === next) return false;
+  const parse = (key: string) => {
+    const out = new Map<string, string>();
+    for (const segment of key.split("|")) {
+      const separator = segment.indexOf("=");
+      if (separator <= 0) continue;
+      out.set(segment.slice(0, separator), segment.slice(separator + 1));
+    }
+    return out;
+  };
+  const before = parse(previous);
+  for (const [threadId, fields] of parse(next)) {
+    const old = before.get(threadId);
+    if (old === undefined) continue;
+    if (old !== fields) return true;
+  }
+  return false;
+}
 
 /**
  * The list's load error, in the owner's words. Never the transport's own:
@@ -175,13 +202,13 @@ function ChatsSkeletonRows(): JSX.Element {
         <div
           key={index}
           aria-hidden="true"
-          className="flex min-w-0 items-center gap-[18px] border-b border-[var(--personal-border)] py-4 last:border-b-0"
+          className="flex min-w-0 items-center gap-3 border-b border-[var(--personal-border)] px-4 last:border-b-0"
+          style={{ height: 72 }}
         >
-          <div className="size-14 shrink-0 rounded-full bg-[var(--personal-fill-muted)]" />
+          <div className="size-12 shrink-0 rounded-full bg-[var(--personal-fill-muted)]" />
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             <div className="h-[17px] w-2/5 rounded-full bg-[var(--personal-fill-muted)]" />
-            <div className="h-3 w-1/3 rounded-full bg-[var(--personal-fill-muted)]" />
-            <div className="h-3 w-4/5 rounded-full bg-[var(--personal-fill-muted)]" />
+            <div className="h-3 w-3/5 rounded-full bg-[var(--personal-fill-muted)]" />
           </div>
         </div>
       ))}
@@ -191,12 +218,12 @@ function ChatsSkeletonRows(): JSX.Element {
 }
 
 /**
- * Instant cold-start paint from the persisted snapshot. Every live-state
- * indicator stays neutral — no working dots, no rate-limit or waiting labels,
- * no review row — because those need live data. The live list replaces this
- * seamlessly the moment it arrives.
+ * The instant cold-start paint, from the persisted snapshot: the same chat
+ * rows the live list draws, with every live indicator neutral (the snapshot
+ * holds no live state, and this is replaced in place the moment
+ * `personalBots.list` lands).
  */
-function SnapshotBotRows({
+function SnapshotRows({
   snapshot,
   now,
   selectedChat,
@@ -205,82 +232,83 @@ function SnapshotBotRows({
   now: number;
   selectedChat: SidebarSelectionKey | null;
 }): JSX.Element {
-  // Rows were stored in render order, so the two sections come straight off
-  // the `pinned` flag and the live list lands on the same layout.
-  const { pinned, rest } = partitionPinnedSnapshotRows(snapshot.rows);
+  const { listRef, range } = useHomeWindow(snapshot.rows.length);
+  if (snapshot.rows.length === 0) return <ChatsSkeletonRows />;
+  const spacers = homeWindowSpacers(range, snapshot.rows.length);
+  const all = snapshot.rows;
+  const drawn =
+    range.start === 0 && range.end === all.length ? all : all.slice(range.start, range.end);
   return (
-    <>
-      {/* The strip paints from the snapshot too. Without this a cold start
-          showed no favourites and popped them in when the list landed — the
-          bug the `pinned` flag was added to the snapshot to kill. */}
-      {pinned.length > 0 ? (
-        <PinnedStrip>
-          {pinned.map((row) => (
-            <PinnedSnapshotTile
-              key={row.botId}
-              row={row}
-              selected={selectedChat === botSelectionKey(row.botId)}
-            />
-          ))}
-        </PinnedStrip>
+    <ul
+      ref={listRef}
+      aria-label="Your chats"
+      data-testid="snapshot-rows"
+      className="home-rows mt-1"
+    >
+      {spacers.above > 0 ? (
+        <li aria-hidden="true" data-home-window-pad="" style={{ height: spacers.above }} />
       ) : null}
-      {rest.length > 0 ? (
-        <ul
-          aria-label="Your bots"
-          className={cn(UNPINNED_LIST_CLASS, pinned.length > 0 && AFTER_PINNED_LIST_CLASS)}
-        >
-          {rest.map((row) => (
-            <SnapshotBotRow
-              key={row.botId}
-              row={row}
-              now={now}
-              selected={selectedChat === botSelectionKey(row.botId)}
-            />
-          ))}
-        </ul>
+      {drawn.map((row, index) => (
+        <SnapshotRow
+          key={`${row.botId}:${row.threadId ?? row.name}`}
+          row={row}
+          now={now}
+          selected={selectedChat === botSelectionKey(row.botId)}
+          posInSet={range.start + index + 1}
+          setSize={all.length}
+        />
+      ))}
+      {spacers.below > 0 ? (
+        <li aria-hidden="true" data-home-window-pad="" style={{ height: spacers.below }} />
       ) : null}
-    </>
+    </ul>
   );
 }
 
-function SnapshotBotRow({
+function SnapshotRow({
   row,
   now,
   selected,
+  posInSet,
+  setSize,
 }: {
   row: ChatsSnapshotRow;
   now: number;
   selected: boolean;
+  posInSet: number;
+  setSize: number;
 }): JSX.Element {
-  const rowClass = cn(ROW_CLASS, selected && SELECTED_ROW_CLASS);
+  const rowClass = cn(
+    "home-row relative flex h-[72px] w-full min-w-0 items-center gap-3 px-4 text-left",
+    selected && "md:bg-[var(--personal-fill-muted)] md:[--personal-bg:var(--personal-fill-muted)]",
+  );
   const content = (
     <>
-      <BotAvatar shape={row.avatarShape} color={row.avatarColor} size={56} label={row.name} />
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex min-w-0 items-center">
+      <BotAvatar shape={row.avatarShape} color={row.avatarColor} size={48} label={row.name} />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex h-[22px] min-w-0 items-baseline gap-2">
           <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
-            {row.name}
+            {row.threadTitle ?? row.name}
           </span>
           {row.previewAtMs !== null ? (
             <time
               dateTime={new Date(row.previewAtMs).toISOString()}
-              className="ml-auto shrink-0 pl-3 text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
+              className="ml-auto shrink-0 text-[13px] leading-[22px] text-[var(--personal-text-tertiary)] tabular-nums"
             >
               {formatRelativeTime(row.previewAtMs, now)}
             </time>
           ) : null}
         </span>
-        <span className="truncate text-sm leading-5 text-[var(--personal-text-secondary)]">
-          {row.subtitle}
-        </span>
-        <span className="truncate text-sm leading-5 text-[var(--personal-text-preview)]">
-          {row.preview}
+        <span className="flex h-6 min-w-0 items-center gap-2 text-[15px] leading-5">
+          <span className="min-w-0 flex-1 truncate text-[var(--personal-text-preview)]">
+            <span className="text-[var(--personal-text-secondary)]">{row.name}:</span> {row.preview}
+          </span>
         </span>
       </span>
     </>
   );
   return (
-    <li>
+    <li aria-posinset={posInSet} aria-setsize={setSize}>
       {row.threadId !== null ? (
         <Link
           to="/bots/$botId/$threadId"
@@ -303,11 +331,13 @@ function SnapshotBotRow({
 }
 
 /**
- * ui-spec Screen 1: header, greeting, search, bot rows, review row.
+ * The Bots home: the rail (pinned chats, then bots), the filters, and one
+ * 72 px row per chat across every bot, with groups among them. The needs-you
+ * count on the chip and on the tab badge comes from one derivation
+ * (`needsYou.ts`) over a fixed set of sources, so the two can never disagree.
  *
  * `selectedChat` is the chat open in the desktop pane, from the route params
- * (`sidebarSelectionKey`); only the md+ shell passes it. On the phone the list
- * is its own screen and nothing is ever selected.
+ * (`sidebarSelectionKey`); only the md+ shell passes it.
  */
 export function ChatsScreen({
   selectedChat = null,
@@ -323,16 +353,42 @@ export function ChatsScreen({
   const desktopSummary = useDesktopSummaryInput(useDesktopStatus(environmentId));
   const routinesQuery = usePersonalRoutines(environmentId);
   const now = useMinuteClock();
-  const deleteBot = useDeleteBot(environmentId);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Swipe-Delete has no screen of its own to report back to — the row just
-  // slides shut on a refusal — so the list hosts the message.
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const onDeleteBot = async (bot: Parameters<typeof deleteBot>[0]) => {
-    const outcome = await deleteBot(bot);
-    if (outcome.status === "cancelled") return;
-    setDeleteError(outcome.status === "failed" ? outcome.message : null);
-  };
+  const [filter, setFilter] = useState<HomeFilter>("all");
+  // The chat (or group) open in the desktop pane, straight off the route
+  // params: one row per chat now, so the mark is the exact chat, not its bot.
+  const openThreadId = useParams({
+    strict: false,
+    select: (params: { threadId?: string }) => params.threadId ?? null,
+  });
+  const openGroupId = useParams({
+    strict: false,
+    select: (params: { groupId?: string }) => params.groupId ?? null,
+  });
+  const [sectionError, setSectionError] = useState<string | null>(null);
+  const [sectionBusy, setSectionBusy] = useState(false);
+  /**
+   * Whether the list is the thing on screen. On the phone the shell keeps it
+   * mounted under an open chat (`keep-list`), hidden with `display: none`:
+   * while that is the case the home stops the work only the rows need - the
+   * cold-start snapshot write, the per-chat progress reads and the
+   * list-refetch timer - so an open chat owns the main thread. Everything
+   * resumes on the first paint after Back, and the queries that feed the
+   * badge stay mounted so the count never flickers.
+   */
+  const [onScreen, setOnScreen] = useState(true);
+  useEffect(() => {
+    const node = rootRef.current;
+    if (node === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries.at(-1);
+      setOnScreen(entry?.isIntersecting ?? true);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const shells = useMemo(
     () => allShells.filter((shell) => shell.environmentId === environmentId),
@@ -342,9 +398,6 @@ export function ChatsScreen({
   // Cold-start snapshot: read synchronously on first mount so the list paints
   // before auth + websocket + `personalBots.list` complete. Re-read when the
   // environment changes (a miss then clears the other environment's entry).
-  // Before the environment id is known the saved snapshot paints anyway
-  // (kill switch "snapshot-early"); the effect below checks it the moment the
-  // id arrives.
   const [snapshot, setSnapshot] = useState<ChatsSnapshot | null>(() =>
     environmentId === null && perfOptimizationOn("snapshot-early")
       ? readChatsSnapshotBeforeEnvironment()
@@ -357,20 +410,11 @@ export function ChatsScreen({
     setSnapshot(readChatsSnapshot(environmentId));
   }, [environmentId]);
 
-  // The tasks feed replays every task over the same socket the first list
-  // fetch needs, with O(n) map copies per 50ms batch. Arm it a frame after the
-  // first paint (snapshot, skeleton or live list) so it cannot contend with
-  // that paint; the timeout covers background tabs where rAF never fires.
-  // Live rows paint with the bots list alone: its `groupRelay` flags hide the
-  // relays (H7) without waiting for the groups, which cost the first tap (H8).
   const loaded = list.data !== null;
   const showingSnapshot = !loaded && snapshot !== null && snapshot.rows.length > 0;
   const firstPaintReady = loaded || showingSnapshot || list.error !== null;
-  // From the first paint, snapshot rows included: they are tappable too, and
-  // with a long list the live rows can land after the owner's first tap, which
-  // then paid for ~50 chat chunks (H8). Only the relay-hiding waits for groups.
   usePreloadChatRoute(firstPaintReady);
-  const rowsPainted = showingSnapshot || (list.data !== null && list.data.bots.length > 0);
+  const rowsPainted = showingSnapshot || (list.data !== null && list.data.threads.length > 0);
   useEffect(() => {
     if (rowsPainted) reportChatsListPainted(!loaded);
   }, [rowsPainted, loaded]);
@@ -397,26 +441,17 @@ export function ChatsScreen({
     };
   }, [tasksArmed, firstPaintReady]);
   const { tasks: taskFeed } = usePersonalTasks(tasksArmed ? environmentId : null);
-  // Groups ride the same gate as the tasks feed: the list query is cheap and
-  // lands with the bots, the subscription replays every group and round and so
-  // must not contend with the first paint.
   const groupsQuery = usePersonalGroupsList(environmentId);
   const { feed: groupsFeed } = usePersonalGroupsFeed(tasksArmed ? environmentId : null);
   const { groups, archivedGroups, rounds } = useMemo(
     () => mergePersonalGroups(groupsQuery.data ?? null, groupsFeed ?? null),
     [groupsQuery.data, groupsFeed],
   );
-  // One timer for the nearest wake time among every snoozed chat and group: it moves the clock
-  // past it (the chat counts as awake at once) and refetches the list, which brings the woken
-  // chat back unread at the top.
   const snoozeItems = useMemo(
     () => [...(list.data?.threads ?? []), ...groups],
     [groups, list.data?.threads],
   );
   const wakeClock = useSnoozeWakeClock(snoozeItems, list.refresh);
-  // A member thread is the bot's private relay of a group, not a chat the owner
-  // started: it must not show up as one of that bot's chats (§8.8 — hidden
-  // client-side in v1).
   const memberThreadIds = useMemo(
     () => groupRelayThreadIds({ groups, archivedGroups }),
     [archivedGroups, groups],
@@ -440,13 +475,175 @@ export function ChatsScreen({
     (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
     [tasks, nameOf],
   );
-  // A bot parked on `request_secret` looks idle everywhere else: its chat has
-  // no pending approval and no pending user input, only a request row.
+  const chatSeen = useChatSeenState();
+
+  // --- Open requests: one derivation for the chip, the badge and the rows ------------
   const pendingSecretsQuery = usePendingSecretRequests(tasksArmed ? environmentId : null);
-  const secretRequestThreadIds = useMemo(
-    () => threadIdsAwaitingSecret(pendingSecretsQuery.data?.requests ?? []),
-    [pendingSecretsQuery.data],
+  const pendingApprovalsQuery = usePendingConnectionApprovals(tasksArmed ? environmentId : null);
+  const approvalThreadIds = useMemo(
+    () => threadIdsAwaitingApproval(pendingApprovalsQuery.data?.approvals ?? []),
+    [pendingApprovalsQuery.data],
   );
+  const browserHelpThreadId = computerFeed.status?.helpRequest?.threadId ?? null;
+  // A chat parked on the owner may hold a sign-in request: those chats are the
+  // ones the home asks about (the login-request RPC is per chat). Both waiting
+  // statuses are candidates and `waiting_for_browser` is the usual one; the
+  // query answers nothing for a chat parked on something else.
+  const browserWaitingThreadIds = useMemo(
+    () =>
+      tasks.flatMap((task) =>
+        (task.status === "waiting_for_browser" || task.status === "waiting_for_user") &&
+        task.threadId !== null
+          ? [String(task.threadId)]
+          : [],
+      ),
+    [tasks],
+  );
+  const openLoginRequests = useNeedsYouLoginRequests(
+    tasksArmed ? environmentId : null,
+    browserWaitingThreadIds,
+  );
+  const chatBases = useMemo(
+    () =>
+      homeChatBases({
+        bots: list.data?.bots ?? [],
+        links: list.data?.threads ?? [],
+        shells,
+        relayThreadIds: memberThreadIds,
+        nowMs: wakeClock,
+        seen: chatSeen,
+      }),
+    [chatSeen, list.data, memberThreadIds, shells, wakeClock],
+  );
+  const openGroupIds = useMemo(
+    () => new Set(plainGroups(groups, wakeClock).map((group) => group.groupId)),
+    [groups, wakeClock],
+  );
+  const needsYou: NeedsYouModel = useMemo(
+    () =>
+      deriveNeedsYou({
+        threads: chatBases.map((base) => ({
+          threadId: base.key,
+          botId: base.bot.botId,
+          shell: base.shell,
+        })),
+        secretRequests: pendingSecretsQuery.data?.requests ?? [],
+        // The chats parked on the browser, asked about one by one (see
+        // useNeedsYouLoginRequests for why, and what the server should add).
+        loginRequests: openLoginRequests,
+        browserHelpThreadId,
+        approvalThreadIds,
+        groupIds: openGroupIds,
+        rounds,
+      }),
+    [
+      approvalThreadIds,
+      browserHelpThreadId,
+      chatBases,
+      openGroupIds,
+      openLoginRequests,
+      pendingSecretsQuery.data,
+      rounds,
+    ],
+  );
+  useEffect(() => {
+    publishNeedsYouCount(needsYou.count);
+  }, [needsYou]);
+  const rows = useMemo(
+    () => buildHomeRows({ chatBases, groups, rounds, needsYou, nowMs: wakeClock }),
+    [chatBases, groups, needsYou, rounds, wakeClock],
+  );
+
+  // Every live chat asks for its own progress note (the working line a row
+  // shows). One thread per live chat, never a subscription per row.
+  const progressTargets = useMemo(
+    () =>
+      onScreen
+        ? chatBases.flatMap((base) =>
+            isChatRowLive(base) && !hidesBotPreviews(base.bot)
+              ? [{ threadId: base.key, updatedAt: base.shell.updatedAt }]
+              : [],
+          )
+        : [],
+    [chatBases, onScreen],
+  );
+  const progressNotes = useWorkingProgressNotes(environmentId, progressTargets);
+
+  /** The preview and tone of each chat row: the one place they are computed. */
+  const previewByKey = useMemo(() => {
+    const previews = new Map<string, { text: string; tone: RowPreviewTone }>();
+    for (const row of rows) {
+      if (row.kind !== "chat") continue;
+      const entry = progressNotes.get(row.key);
+      const live = isChatRowLive(row);
+      const note = currentProgressNote(entry, row.shell);
+      const thinking =
+        live && isTurnThinking(row.shell) && !currentTurnHasToolStep(entry, row.shell);
+      // A chat whose last reply failed says so - unless it is also waiting on
+      // the owner, where the request is the thing to act on.
+      if (!live && row.request === null && isThreadErrored(row.shell)) {
+        previews.set(row.key, { text: "Couldn't reply", tone: "plain" });
+        continue;
+      }
+      previews.set(row.key, chatRowPreview({ row, progressNote: note, thinking }));
+    }
+    return previews;
+  }, [progressNotes, rows]);
+
+  const shownRows = useMemo(
+    () => visibleHomeRows({ rows, filter, query, nameOf }),
+    [filter, nameOf, query, rows],
+  );
+  // What the list last drew while it was on screen. Under an open chat the
+  // shell hides it, and these stay as they were: the rows do not re-render
+  // until Back (see HomeRowsList). Nothing else reads them.
+  const lastShownRef = useRef<{
+    readonly rows: ReadonlyArray<HomeRow>;
+    readonly now: number;
+  } | null>(null);
+  if (onScreen || lastShownRef.current === null) {
+    lastShownRef.current = { rows: shownRows, now };
+  }
+  const drawnRows = onScreen ? shownRows : lastShownRef.current.rows;
+
+  // Avatar poses for the rows on screen. A row with nothing to say gets no
+  // pose at all: the plain SVG avatar, no pose machinery, no observer. The
+  // home draws one row per chat (the old home drew one per bot), so a quiet
+  // row has to cost as little as a plain list row does. Live rows carry
+  // working or thinking, a row waiting on the owner carries the waiting pose,
+  // a failed reply blocked. Transform and opacity only, paused while off
+  // screen (BotAvatar, avatarOffscreen.ts) and dropped under reduced motion;
+  // the kill switches are the ones the bot rows used.
+  const motionByKey = useMemo(() => {
+    const wanted: Array<AvatarMotion | undefined> = shownRows.map((row) => {
+      if (row.kind !== "chat") return undefined;
+      if (isChatRowLive(row)) {
+        return previewByKey.get(row.key)?.tone === "thinking" ? "thinking" : "working";
+      }
+      if (row.request !== null) return "waiting";
+      if (isThreadErrored(row.shell)) return "blocked";
+      return undefined;
+    });
+    const motions: AvatarMotion[] = wanted.map((motion) => motion ?? "idle");
+    const shown = perfOptimizationOn("all-busy-motion")
+      ? motions
+      : firstContinuousMotionOnly(motions);
+    return new Map(
+      shownRows.map(
+        (row, index) => [row.key, wanted[index] === undefined ? undefined : shown[index]] as const,
+      ),
+    );
+  }, [previewByKey, shownRows]);
+  const cometKeys = useMemo(() => {
+    if (!perfOptimizationOn("anim-comet")) return new Set<string>();
+    const indexes = cometRowIndexes(
+      shownRows.map((row) => motionByKey.get(row.key)),
+      !perfOptimizationOn("anim-all"),
+    );
+    return new Set(indexes.map((index) => shownRows[index]!.key));
+  }, [motionByKey, shownRows]);
+
+  // --- The rail ----------------------------------------------------------------------
   const summaries = useMemo(
     () =>
       list.data === null
@@ -458,142 +655,153 @@ export function ChatsScreen({
             providers,
             waitingByThread,
             endedTaskThreadIds,
-            browserHelpThreadId: computerFeed.status?.helpRequest?.threadId ?? null,
-            secretRequestThreadIds,
+            browserHelpThreadId,
+            secretRequestThreadIds: threadIdsWithKind(needsYou, "secret"),
             routines: routinesQuery.data?.routines ?? [],
             desktop: desktopSummary,
             nowMs: wakeClock,
           }),
     [
-      wakeClock,
-      computerFeed.status?.helpRequest?.threadId,
+      browserHelpThreadId,
       desktopSummary,
+      endedTaskThreadIds,
       list.data,
       memberThreadIds,
+      needsYou,
       providers,
       routinesQuery.data,
-      endedTaskThreadIds,
-      secretRequestThreadIds,
       shells,
       waitingByThread,
+      wakeClock,
     ],
   );
-  // Previews ride on `personalBots.list`; a message boundary on a bot's newest
-  // thread (see `previewRefreshKey`) refetches the list once instead of every
-  // row holding a full thread subscription. Not per streamed chunk: the shell's
-  // updatedAt moves on every delta and used to refetch the whole list each time.
-  const previewKey = previewRefreshKey(summaries);
-  const previewKeyRef = useRef<string | null>(null);
-  const previewRefreshTimerRef = useRef<number | null>(null);
-  const previewRefreshRef = useRef(list.refresh);
-  // `newestThread` comes from the thread shells and the rows from the list, so
-  // until both have landed the key is a placeholder of empty segments.
-  // Adopting that placeholder as the baseline made the initial population read
-  // as a message arriving and refetched the list a second time on every cold
-  // start (measured: two byte-identical 12,035 B responses, 28 ms apart).
-  const previewKeyReady = list.data !== null && shells.length > 0;
-  useEffect(() => {
-    previewRefreshRef.current = list.refresh;
-    if (!previewKeyReady) return;
-    if (previewKeyRef.current === null) {
-      previewKeyRef.current = previewKey;
-      return;
-    }
-    if (previewKeyRef.current === previewKey) return;
-    const advanced = previewKeyAdvanced(previewKeyRef.current, previewKey);
-    previewKeyRef.current = previewKey;
-    if (!advanced) return;
-    // Trailing, so the owner's message and the turn it starts (two key moves
-    // tens of ms apart) cost one refetch, not two. The pending timer lives in a
-    // ref, not in this effect's cleanup: `list` can change identity before it
-    // fires, and a cleanup would drop the refetch the key change asked for.
-    if (previewRefreshTimerRef.current !== null) return;
-    previewRefreshTimerRef.current = window.setTimeout(() => {
-      previewRefreshTimerRef.current = null;
-      previewRefreshRef.current();
-    }, PREVIEW_REFRESH_DEBOUNCE_MS);
-  }, [list, previewKey, previewKeyReady]);
-  useEffect(
-    () => () => {
-      if (previewRefreshTimerRef.current !== null) {
-        window.clearTimeout(previewRefreshTimerRef.current);
-        previewRefreshTimerRef.current = null;
-      }
-    },
-    [],
-  );
-  // Group-only bots live inside their groups (their settings reach them), so
-  // the list, its search, the pinned strip and the cold-start snapshot all
-  // leave them out. The preview key and the review row above still see every
-  // bot: a hidden bot's first private message must still refetch the list
-  // (that is what brings it back), and a question it asks must still surface.
-  const progressTargets = useMemo(
+  const modelLabels = useMemo(
     () =>
-      summaries.flatMap((summary) =>
-        // A hidden bot's progress notes are never even requested for the list.
-        summary.live && summary.liveThread != null && !hidesBotPreviews(summary.bot)
-          ? [{ threadId: summary.liveThread.id as string, updatedAt: summary.liveThread.updatedAt }]
-          : [],
-      ),
+      new Map(summaries.map((summary) => [summary.bot.botId as string, summary.modelShortLabel])),
     [summaries],
   );
-  const progressNotes = useWorkingProgressNotes(environmentId, progressTargets);
-  const listed = useMemo(
+  const botsNeeding = useMemo(() => {
+    const out = new Set<string>();
+    for (const base of chatBases) {
+      if (needsYou.byRow.has(base.key)) out.add(base.bot.botId);
+    }
+    return out;
+  }, [chatBases, needsYou]);
+  const cardMotions = useMemo(() => {
+    const cards = railCards(rows);
+    const wanted: Array<AvatarMotion | undefined> = cards.map((row) => {
+      if (row.kind !== "chat") return undefined;
+      if (isChatRowLive(row)) {
+        return previewByKey.get(row.key)?.tone === "thinking" ? "thinking" : "working";
+      }
+      if (row.request !== null) return "waiting";
+      return undefined;
+    });
+    const motions: AvatarMotion[] = wanted.map((motion) => motion ?? "idle");
+    const drawn = perfOptimizationOn("all-busy-motion")
+      ? motions
+      : firstContinuousMotionOnly(motions);
+    const comets = new Set(
+      cometRowIndexes(drawn, !perfOptimizationOn("anim-all")).map((index) => cards[index]!.key),
+    );
+    return new Map(
+      cards.map(
+        (row, index) =>
+          [
+            row.key,
+            {
+              motion: wanted[index] === undefined ? undefined : drawn[index],
+              comet: comets.has(row.key),
+            },
+          ] as const,
+      ),
+    );
+  }, [previewByKey, rows]);
+  const railChatItems = useMemo<ReadonlyArray<RailChatItem>>(
     () =>
-      shownInChats(summaries).map((summary) => {
-        if (!summary.live || summary.liveThread == null) return summary;
-        const entry = progressNotes.get(summary.liveThread.id);
-        const note = currentProgressNote(entry, summary.liveThread);
-        // A tool step in the live turn makes the bot working (the comet), the
-        // way the open chat's header already reads it from its activities.
-        const thinking = summary.thinking && !currentTurnHasToolStep(entry, summary.liveThread);
-        if (note === undefined && thinking === summary.thinking) return summary;
-        return { ...summary, ...(note === undefined ? {} : { progressNote: note }), thinking };
-      }),
-    [progressNotes, summaries],
-  );
-  // Unread chats of the bots that show them (team leads), off the same list:
-  // no request per row. The chat open on this device never counts.
-  const chatSeen = useChatSeenState();
-  const unreadByBot = useMemo(
-    () =>
-      list.data === null
-        ? new Map<string, ReadonlySet<string>>()
-        : unreadChatsByBot({
-            bots: list.data.bots,
-            links: list.data.threads,
-            shells,
-            relayThreadIds: memberThreadIds,
-            seen: chatSeen,
+      railCards(rows)
+        .filter((row): row is HomeChatRow => row.kind === "chat")
+        .map((row) => ({
+          threadId: row.key,
+          selected: openThreadId === row.key,
+          botId: row.bot.botId,
+          botName: row.bot.name,
+          title: row.title,
+          avatarShape: row.bot.avatarShape,
+          avatarColor: row.bot.avatarColor,
+          caption: cardCaption({
+            row,
+            tone: previewByKey.get(row.key)?.tone ?? "plain",
+            live: isChatRowLive(row),
+            round: null,
+            modelLabel: modelLabels.get(row.bot.botId) ?? null,
           }),
-    [chatSeen, list.data, memberThreadIds, shells],
+          motion: cardMotions.get(row.key)?.motion,
+          comet: cardMotions.get(row.key)?.comet ?? false,
+          ring: row.request !== null,
+          unread: row.unread,
+        })),
+    [cardMotions, modelLabels, openThreadId, previewByKey, rows],
   );
-  const listedWithUnread = useMemo(
+  const railGroupItems = useMemo<ReadonlyArray<RailGroupItem>>(
     () =>
-      unreadByBot.size === 0
-        ? listed
-        : listed.map((summary) => {
-            const count = unreadByBot.get(summary.bot.botId)?.size ?? 0;
-            return count === 0 ? summary : { ...summary, unreadChats: count };
+      railCards(rows)
+        .filter((row) => row.kind === "group")
+        .map((row) => ({
+          groupId: row.key,
+          selected: openGroupId === row.key,
+          name: row.group.name,
+          members: activeGroupMembers(row.group).flatMap((member) => {
+            const bot = (list.data?.bots ?? []).find(
+              (candidate) => candidate.botId === member.botId,
+            );
+            return bot === undefined ? [] : [bot];
           }),
-    [listed, unreadByBot],
+          caption: cardCaption({
+            row,
+            tone: "plain",
+            live: false,
+            round: row.round,
+            modelLabel: null,
+          }),
+        })),
+    [list.data, openGroupId, rows],
   );
-  const visible = useMemo(
-    () => filterBotSummaries(listedWithUnread, query),
-    [query, listedWithUnread],
-  );
-  // A snoozed group is in the Snoozed section, not among the rows. A pinned group has no bot
-  // chat list to be pinned in, so it stays among the rows, first, with its pin.
-  const visibleGroups = useMemo(
-    () => pinnedFirst(filterGroups(plainGroups(groups, wakeClock), query, nameOf), isChatPinned),
-    [groups, nameOf, query, wakeClock],
-  );
-  // Archived groups stay out of the list, but a search reaches them (tagged
-  // "Archived"), as does the collapsed section at the bottom.
-  const searchedArchivedGroups = useMemo(
-    () => (query.trim().length === 0 ? [] : filterGroups(archivedGroups, query, nameOf)),
-    [archivedGroups, nameOf, query],
-  );
+  const railBotItems = useMemo<ReadonlyArray<RailBotItem>>(() => {
+    const shown = railBots(shownInChats(summaries));
+    const motions = shown.map(motionForSummary);
+    const drawn = perfOptimizationOn("all-busy-motion")
+      ? motions
+      : firstContinuousMotionOnly(motions);
+    const comets = new Set(
+      cometRowIndexes(drawn, !perfOptimizationOn("anim-all")).map(
+        (index) => shown[index]!.bot.botId,
+      ),
+    );
+    return shown.map((summary, index) => {
+      const liveThread = summary.liveThread ?? null;
+      const entry = liveThread === null ? undefined : progressNotes.get(liveThread.id as string);
+      const caption = railCaption({
+        summary,
+        now,
+        needsYou: botsNeeding.has(summary.bot.botId),
+        thinking:
+          summary.thinking && !currentTurnHasToolStep(entry, liveThread === null ? {} : liveThread),
+      });
+      return {
+        botId: summary.bot.botId,
+        name: summary.bot.name,
+        avatarShape: summary.bot.avatarShape,
+        avatarColor: summary.bot.avatarColor,
+        caption,
+        // An idle tile keeps the plain avatar (see the rows above).
+        motion: caption.tone === "idle" ? undefined : drawn[index],
+        comet: comets.has(summary.bot.botId),
+      };
+    });
+  }, [botsNeeding, now, progressNotes, summaries]);
+
+  // --- Snoozed chats and groups, below the rows ---------------------------------------
   const botsById = useMemo(
     () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
     [list.data],
@@ -606,8 +814,6 @@ export function ChatsScreen({
       }),
     [botsById],
   );
-  // Snoozed chats and groups across every bot: the Snoozed section below the bot rows. The search
-  // narrows it. A pinned chat is pinned in its own bot's chat list, not here (Harout, 1.65.1).
   const sections = useMemo(
     () =>
       list.data === null
@@ -632,8 +838,6 @@ export function ChatsScreen({
   );
   const runBulk = useBulkChatActions(environmentId);
   const groupChatState = useGroupChatState(environmentId);
-  const [sectionError, setSectionError] = useState<string | null>(null);
-  const [sectionBusy, setSectionBusy] = useState(false);
   const runSectionAction = async (task: () => Promise<string | null>) => {
     setSectionBusy(true);
     setSectionError(null);
@@ -654,132 +858,64 @@ export function ChatsScreen({
         row.kind === "chat" ? runChatAction("wake", row) : groupChatState.snooze(row.key, null),
       ),
   };
-  // Avatar poses for the visible rows, pinned box included: every thinking or
-  // working bot moves (Harout, 1.49.0; it used to be the first one only).
-  // Transform and opacity loops, paused while a row is scrolled out of view
-  // (BotAvatar, avatarOffscreen.ts) and dropped under reduced motion. The
-  // kill switch bots:perf-off=all-busy-motion brings back the one-row rule.
-  const motionByBotId = useMemo(() => {
-    const motions = visible.map(motionForSummary);
-    const shown = perfOptimizationOn("all-busy-motion")
-      ? motions
-      : firstContinuousMotionOnly(motions);
-    return new Map(
-      visible.map((summary, index) => [summary.bot.botId as string, shown[index]] as const),
-    );
-  }, [visible]);
-  const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
-  // Every working bot draws the comet (compositor-only since 1.57.3). The
-  // kill switch bots:perf-off=anim-all keeps it on the first working row on
-  // screen (pinned box first, then the list), anim-comet draws none.
-  const cometBotIds = useMemo(() => {
-    if (!perfOptimizationOn("anim-comet")) return new Set<string>();
-    const onScreen = [...pinned, ...rest];
-    const rows = cometRowIndexes(
-      onScreen.map((summary) => motionByBotId.get(summary.bot.botId)),
-      !perfOptimizationOn("anim-all"),
-    );
-    return new Set(rows.map((index) => onScreen[index]!.bot.botId as string));
-  }, [motionByBotId, pinned, rest]);
-  // Groups stay together immediately after the pinned strip. Within that
-  // block and the bot block, the existing activity order is preserved.
-  const restRows = useMemo(
-    () => [
-      ...visibleGroups.map(
-        (group) =>
-          ({
-            kind: "group",
-            key: group.groupId,
-            group,
-            archived: false,
-            pinned: isChatPinned(group),
-          }) as const,
-      ),
-      ...rest.map((summary) => ({ kind: "bot", key: summary.bot.botId, summary }) as const),
-      ...searchedArchivedGroups.map(
-        (group) =>
-          ({ kind: "group", key: group.groupId, group, archived: true, pinned: false }) as const,
-      ),
-    ],
-    [rest, searchedArchivedGroups, visibleGroups],
-  );
-  const togglePin = useTogglePinBot(environmentId);
-  const setMute = useSetBotMute(environmentId);
-  const renderRow = (summary: BotSummary) => (
-    <ChatsBotListRow
-      key={summary.bot.botId}
-      environmentId={environmentId!}
-      summary={summary}
-      now={now}
-      describeTurn={describeTurn}
-      motion={motionByBotId.get(summary.bot.botId)}
-      comet={cometBotIds.has(summary.bot.botId)}
-      selected={selectedChat === botSelectionKey(summary.bot.botId)}
-      onDelete={onDeleteBot}
-      onTogglePin={togglePin}
-      onSetMute={setMute}
-    />
-  );
-  const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
-  const helpRequest = computerFeed.status?.helpRequest ?? null;
-  const helpSummary =
-    helpRequest === null
-      ? null
-      : (summaries.find(
-          (summary) => summary.bot.botId === helpRequest.botId && summary.needsBrowserHelp,
-        ) ?? null);
-  const helpAlreadyCounted =
-    helpRequest !== null && attention.some((thread) => thread.id === helpRequest.threadId);
-  const reviewCount = attention.length + (helpSummary !== null && !helpAlreadyCounted ? 1 : 0);
-  const firstAttention = attention[0] ?? null;
-  const { label: versionLabel, updateAvailable } = useAppVersion();
-  const [updatingApp, setUpdatingApp] = useState(false);
-  const updateApp = useCallback(() => {
-    if (updatingApp) return;
-    setUpdatingApp(true);
-    void reloadLatestApp();
-  }, [updatingApp]);
-  const firstAttentionBot =
-    firstAttention === null
-      ? null
-      : (summaries.find((summary) => summary.attentionThreads.includes(firstAttention))?.bot ??
-        null);
-  const firstReviewTarget =
-    helpRequest !== null && helpSummary !== null
-      ? { botId: helpSummary.bot.botId, threadId: helpRequest.threadId }
-      : firstAttention !== null && firstAttentionBot !== null
-        ? { botId: firstAttentionBot.botId, threadId: firstAttention.id }
-        : null;
+  // A rail card's Unpin: the same thread update the bot page's select mode sends.
+  const onUnpinChat = (chat: RailChatItem) =>
+    void runSectionAction(async () => {
+      const outcome = await runBulk("unpin", [chat.threadId], 0);
+      return outcome.status === "settled" && outcome.anyFailed ? outcome.notice : null;
+    });
+  const onUnpinGroup = (item: RailGroupItem) =>
+    void runSectionAction(() => groupChatState.setPinned(item.groupId, false));
 
-  // Persist the render snapshot after each successful list fetch. The effect
-  // only writes when the row content actually changed, so task-feed updates
-  // that leave the rows alone cost nothing.
+  const visibleGroups = useMemo(
+    () => pinnedFirst(filterGroups(plainGroups(groups, wakeClock), query, nameOf), isChatPinned),
+    [groups, nameOf, query, wakeClock],
+  );
+  const searchedArchivedGroups = useMemo(
+    () => (query.trim().length === 0 ? [] : filterGroups(archivedGroups, query, nameOf)),
+    [archivedGroups, nameOf, query],
+  );
+
+  // --- Snapshot persistence -----------------------------------------------------------
+  // Only what the cold paint draws: the rail's cards, then the All list as the
+  // live screen orders it. Previews are never message text (see chatsSnapshot).
   const snapshotRows = useMemo<ChatsSnapshotRowInput[] | null>(() => {
     if (environmentId === null || list.data === null) return null;
-    // Stored in render order — the pinned box first, then the list under it —
-    // so a cold paint can rebuild both sections without knowing team or lead
-    // rank, and the rows do not reshuffle when the live list replaces them.
-    const split = partitionPinnedSummaries(listed);
-    return [...split.pinned, ...split.rest].map((summary) => ({
-      botId: summary.bot.botId,
-      name: summary.bot.name,
-      avatarShape: summary.bot.avatarShape,
-      avatarColor: summary.bot.avatarColor,
-      subtitle: summary.bot.title,
-      previewLabel: snapshotPreviewLabel(summary, describeTurn),
-      previewAtMs: summary.lastActivityMs,
-      threadId: summary.newestThread === null ? null : (summary.newestThread.id as string),
-      // A thread title can be made from message words: not stored for a hidden bot.
-      threadTitle:
-        summary.newestThread === null || hidesBotPreviews(summary.bot)
-          ? null
-          : summary.newestThread.title,
-      pinned: isBotPinned(summary.bot),
-    }));
-  }, [environmentId, list.data, listed, describeTurn]);
+    const ordered = [...railCards(rows), ...filterHomeRows(rows, "all")];
+    return ordered.map((row) => {
+      if (row.kind === "group") {
+        const member = memberBotsOf(row.group)[0];
+        return {
+          botId: (member?.botId ?? "group") as string,
+          name: row.group.name,
+          avatarShape: member?.avatarShape ?? "blob",
+          avatarColor: member?.avatarColor ?? "#64748B",
+          subtitle: "",
+          previewLabel: null,
+          previewAtMs: row.activityMs,
+          threadId: null,
+          threadTitle: row.group.name,
+          pinned: true,
+        };
+      }
+      return {
+        botId: row.bot.botId,
+        name: row.bot.name,
+        avatarShape: row.bot.avatarShape,
+        avatarColor: row.bot.avatarColor,
+        subtitle: row.bot.title,
+        previewLabel: null,
+        previewAtMs: row.activityMs,
+        threadId: row.link.threadId as string,
+        threadTitle: hidesBotPreviews(row.bot) ? null : row.title,
+        pinned: row.pinned,
+      };
+    });
+  }, [environmentId, list.data, memberBotsOf, rows]);
   const snapshotKey = snapshotRows === null ? null : JSON.stringify(snapshotRows);
   const lastPersistedKey = useRef<string | null>(null);
   useEffect(() => {
+    if (!onScreen) return;
     if (environmentId === null || snapshotRows === null || snapshotKey === null) return;
     if (lastPersistedKey.current === snapshotKey) return;
     lastPersistedKey.current = snapshotKey;
@@ -787,16 +923,57 @@ export function ChatsScreen({
       environmentId,
       buildChatsSnapshot({ environmentId, savedAtMs: Date.now(), rows: snapshotRows }),
     );
-  }, [environmentId, snapshotRows, snapshotKey]);
+  }, [environmentId, onScreen, snapshotRows, snapshotKey]);
 
-  // Keep the open chat's row on screen when the chat changes from outside the
-  // list (a notification, a delegation card, the Team chart, a deep link).
-  // Per selection, not per render: a row re-sorting under a streaming reply
-  // must not drag the list along. The one exception is the settle window just
-  // after a chat opens, when the live list replaces the snapshot and the
-  // activity order lands with the thread shells, which can carry the row off
-  // screen again. A row the owner just clicked is already in view, and a fully
-  // visible row is never nudged.
+  // --- One list refetch per message boundary ------------------------------------------
+  const previewKey = useMemo(
+    () =>
+      chatBases
+        .map((base: HomeChatBase) => {
+          const turn = base.shell.latestTurn;
+          return `${base.key}=${[
+            base.shell.latestUserMessageAt ?? "",
+            turn?.turnId ?? "",
+            turn?.state ?? "",
+            turn?.assistantMessageId ?? "",
+            turn?.completedAt ?? "",
+          ].join(",")}`;
+        })
+        .join("|"),
+    [chatBases],
+  );
+  const previewKeyRef = useRef<string | null>(null);
+  const previewRefreshTimerRef = useRef<number | null>(null);
+  const previewRefreshRef = useRef(list.refresh);
+  const previewKeyReady = list.data !== null && shells.length > 0;
+  useEffect(() => {
+    previewRefreshRef.current = list.refresh;
+    if (!previewKeyReady || !onScreen) return;
+    if (previewKeyRef.current === null) {
+      previewKeyRef.current = previewKey;
+      return;
+    }
+    if (previewKeyRef.current === previewKey) return;
+    const advanced = previewKeyAdvancedForChats(previewKeyRef.current, previewKey);
+    previewKeyRef.current = previewKey;
+    if (!advanced) return;
+    if (previewRefreshTimerRef.current !== null) return;
+    previewRefreshTimerRef.current = window.setTimeout(() => {
+      previewRefreshTimerRef.current = null;
+      previewRefreshRef.current();
+    }, PREVIEW_REFRESH_DEBOUNCE_MS);
+  }, [list, onScreen, previewKey, previewKeyReady]);
+  useEffect(
+    () => () => {
+      if (previewRefreshTimerRef.current !== null) {
+        window.clearTimeout(previewRefreshTimerRef.current);
+        previewRefreshTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  // --- Keep the open chat's row on screen (desktop pane) ------------------------------
   const rootRef = useRef<HTMLDivElement | null>(null);
   const clickedRef = useRef<Element | null>(null);
   const revealedRef = useRef<{
@@ -809,30 +986,90 @@ export function ChatsScreen({
       revealedRef.current = null;
       return;
     }
-    // The live rows are deps on purpose: a re-sort re-runs this within the
-    // settle window below. Before they land (skeleton or cold-start snapshot)
-    // there is nothing to reveal yet.
-    if (pinned.length === 0 && restRows.length === 0) return;
+    if (shownRows.length === 0) return;
     const root = rootRef.current;
-    const row = root?.querySelector<HTMLElement>("[data-sidebar-selected]") ?? null;
-    // Not painted yet (list still loading) or filtered out by the search:
-    // this runs again when the rows change.
-    if (root == null || row === null) return;
+    if (root === null) return;
     const boundary = root.closest("aside");
-    const prior = revealedRef.current;
-    if (prior !== null && prior.key === selectedChat) {
-      if (!prior.fromList && performance.now() - prior.at < REVEAL_SETTLE_MS) {
-        revealInSidebar(row, boundary);
+    const reveal = (row: HTMLElement) => {
+      const prior = revealedRef.current;
+      if (prior !== null && prior.key === selectedChat) {
+        if (!prior.fromList && performance.now() - prior.at < REVEAL_SETTLE_MS) {
+          revealInSidebar(row, boundary);
+        }
+        return;
       }
+      const clicked = clickedRef.current;
+      clickedRef.current = null;
+      const fromList =
+        clicked !== null && (clicked === row || clicked.contains(row) || row.contains(clicked));
+      revealedRef.current = { key: selectedChat, at: performance.now(), fromList };
+      if (!fromList) revealInSidebar(row, boundary);
+    };
+    const found = root.querySelector<HTMLElement>("[data-sidebar-selected]");
+    if (found !== null) {
+      reveal(found);
       return;
     }
-    const clicked = clickedRef.current;
-    clickedRef.current = null;
-    const fromList =
-      clicked !== null && (clicked === row || clicked.contains(row) || row.contains(clicked));
-    revealedRef.current = { key: selectedChat, at: performance.now(), fromList };
-    if (!fromList) revealInSidebar(row, boundary);
-  }, [selectedChat, pinned, restRows]);
+    // The open chat's row is outside the drawn slice (the list is windowed):
+    // scroll the list to it, then reveal it once a frame has drawn it.
+    const list = root.querySelector<HTMLElement>('[data-testid="home-rows"]');
+    if (list === null) return;
+    const scroller = findScrollParent(list);
+    if (scroller === null) return;
+    const index = shownRows.findIndex((candidate) =>
+      candidate.kind === "chat" ? candidate.key === openThreadId : candidate.key === openGroupId,
+    );
+    if (index < 0) return;
+    const hiddenAbove = scroller.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    const delta = revealDelta(
+      index * HOME_ROW_PITCH,
+      (index + 1) * HOME_ROW_PITCH,
+      hiddenAbove,
+      hiddenAbove + scroller.clientHeight,
+    );
+    if (delta !== 0) scroller.scrollTop += delta;
+    let frame = 0;
+    let attempts = 0;
+    const settle = () => {
+      const row = root.querySelector<HTMLElement>("[data-sidebar-selected]");
+      if (row !== null) {
+        reveal(row);
+        return;
+      }
+      if (attempts < 8) {
+        attempts += 1;
+        frame = requestAnimationFrame(settle);
+      }
+    };
+    frame = requestAnimationFrame(settle);
+    return () => cancelAnimationFrame(frame);
+  }, [openGroupId, openThreadId, selectedChat, shownRows]);
+
+  // --- Header, update line, usage -----------------------------------------------------
+  const { label: versionLabel, updateAvailable } = useAppVersion();
+  const [updatingApp, setUpdatingApp] = useState(false);
+  const updateApp = useCallback(() => {
+    if (updatingApp) return;
+    setUpdatingApp(true);
+    void reloadLatestApp();
+  }, [updatingApp]);
+
+  // Nothing at all to show: no bots, no groups, nothing snoozed (a bot whose
+  // only chats are snoozed still has an empty list and a Snoozed section).
+  const emptyAll =
+    loaded &&
+    (list.data?.bots.length ?? 0) === 0 &&
+    groups.length === 0 &&
+    archivedGroups.length === 0 &&
+    sections.snoozed.length === 0;
+  const filterLabel =
+    filter === "needs"
+      ? "Nothing needs you."
+      : filter === "unread"
+        ? "No unread chats."
+        : filter === "groups"
+          ? "No groups yet."
+          : null;
 
   return (
     <div
@@ -840,56 +1077,45 @@ export function ChatsScreen({
       onClickCapture={(event) => {
         clickedRef.current = (event.target as Element).closest("a, button");
       }}
-      // md+: 6px less on the right, where the list's scrollbar lane sits
-      // (`personal-scroll-quiet` reserves it), so both edges read as 20px.
-      className="flex min-h-full min-w-0 flex-col px-5 pb-6 md:pr-3.5"
+      className="flex min-h-full min-w-0 flex-col pb-6"
     >
-      <header className="flex h-14 items-center justify-between">
-        <div className="flex min-w-0 items-baseline gap-1.5">
-          <h1 className="text-[28px] leading-none font-bold text-[var(--personal-text)]">Bots</h1>
-          {versionLabel !== null ? (
-            <span className="text-[12px] leading-none font-medium text-[var(--personal-text-secondary)] tabular-nums">
-              {versionLabel}
-            </span>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-4">
+      <header className="flex h-[52px] items-center pr-2 pl-4">
+        <h1 className="text-[30px] leading-9 font-extrabold tracking-[-0.01em] text-[var(--personal-text)]">
+          Bots
+        </h1>
+        <div className="ml-auto flex items-center">
+          <button
+            type="button"
+            aria-label={searchOpen ? "Close search" : "Search chats"}
+            aria-expanded={searchOpen}
+            onClick={() => {
+              setSearchOpen((open) => {
+                if (open) setQuery("");
+                return !open;
+              });
+            }}
+            className={ICON_BUTTON}
+          >
+            {searchOpen ? (
+              <X aria-hidden="true" className="size-6" strokeWidth={1.75} />
+            ) : (
+              <Search aria-hidden="true" className="size-6" strokeWidth={1.75} />
+            )}
+          </button>
           <Link to="/bots/team" aria-label="Team" className={ICON_BUTTON}>
-            <Network
-              aria-hidden="true"
-              className="size-[22px] text-[var(--personal-text)]"
-              strokeWidth={1.75}
-            />
+            <Network aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </Link>
           <Link to="/bots/settings" aria-label="Settings" className={ICON_BUTTON}>
-            <Settings
-              aria-hidden="true"
-              className="size-[22px] text-[var(--personal-text)]"
-              strokeWidth={1.75}
-            />
+            <Settings aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </Link>
-          {/* One "+" for both kinds of chat: a group is a chat, not a second
-              object with a surface of its own [Grok: subtraction]. */}
-          <Menu>
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label="New"
-                  className={`${ICON_BUTTON} bg-[var(--personal-primary)] text-[var(--personal-primary-text)]`}
-                />
-              }
-            >
-              <Plus aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
-            </MenuTrigger>
-            <MenuPopup align="end" className="personal-app personal-menu min-w-44">
-              <MenuItem onClick={() => void navigate({ to: "/bots/new" })}>New bot</MenuItem>
-              <MenuItem onClick={() => void navigate({ to: "/bots/groups/new" })}>
-                New group
-              </MenuItem>
-              <MenuItem onClick={() => void navigate({ to: "/bots/teams/new" })}>New team</MenuItem>
-            </MenuPopup>
-          </Menu>
+          <button
+            type="button"
+            aria-label="New chat, pick a bot"
+            onClick={() => setPickerOpen(true)}
+            className={ICON_BUTTON_FILLED}
+          >
+            <Plus aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+          </button>
         </div>
       </header>
 
@@ -900,8 +1126,29 @@ export function ChatsScreen({
 
       <PersonalUsageStrip now={now} />
 
+      {searchOpen ? (
+        <div className="px-4 pb-1">
+          <div className="relative flex h-11 items-center">
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3.5 size-[18px] text-[var(--personal-text-secondary)]"
+              strokeWidth={1.75}
+            />
+            <input
+              type="search"
+              value={query}
+              autoFocus
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search bots and chats"
+              aria-label="Search bots and chats"
+              className="h-11 w-full rounded-full border-0 bg-[var(--personal-fill-muted)] pr-4 pl-10 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            />
+          </div>
+        </div>
+      ) : null}
+
       {environmentId === null ? (
-        <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">
+        <p className="mt-6 px-4 text-[15px] text-[var(--personal-text-secondary)]">
           Not connected to your computer yet.{" "}
           <Link
             to="/settings/connections"
@@ -913,7 +1160,7 @@ export function ChatsScreen({
       ) : null}
 
       {list.error !== null ? (
-        <div className="mt-6 flex items-center justify-between gap-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4">
+        <div className="mx-4 mt-6 flex items-center justify-between gap-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4">
           <ListErrorText />
           <button
             type="button"
@@ -925,26 +1172,17 @@ export function ChatsScreen({
         </div>
       ) : null}
 
-      {deleteError !== null ? (
-        <p
-          role="alert"
-          className="mt-4 rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
-        >
-          {deleteError}
-        </p>
-      ) : null}
-
       {sectionError !== null ? (
         <p
           role="alert"
-          className="mt-4 rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
+          className="mx-4 mt-4 rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
         >
           {sectionError}
         </p>
       ) : null}
 
-      {loaded && listed.length === 0 && groups.length === 0 && archivedGroups.length === 0 ? (
-        <div className="mt-10 flex flex-col items-center gap-3 text-center">
+      {emptyAll ? (
+        <div className="mt-10 flex flex-col items-center gap-3 px-4 text-center">
           <p className="text-lg font-semibold text-[var(--personal-text)]">No bots yet</p>
           <p className="max-w-[280px] text-[15px] leading-snug text-[var(--personal-text-secondary)]">
             Give a bot a name, a look and a provider, then chat with it from anywhere.
@@ -958,70 +1196,46 @@ export function ChatsScreen({
         </div>
       ) : null}
 
-      {loaded && (listed.length > 0 || groups.length > 0 || archivedGroups.length > 0) ? (
+      {loaded && !emptyAll ? (
         <>
-          <div className="relative mt-2.5">
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-3.5 size-[18px] -translate-y-1/2 text-[var(--personal-text-secondary)]"
-              strokeWidth={1.75}
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search bots and chats"
-              aria-label="Search bots and chats"
-              className="h-11 w-full rounded-full border-0 bg-[var(--personal-fill-muted)] pr-4 pl-10 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-            />
+          <HomeRail
+            chats={railChatItems}
+            groups={railGroupItems}
+            bots={railBotItems}
+            onUnpinChat={onUnpinChat}
+            onUnpinGroup={onUnpinGroup}
+          />
+          <div className="px-4">
+            <HomeFilters active={filter} onSelect={setFilter} needsCount={needsYou.count} />
           </div>
 
-          {visible.length > 0 || visibleGroups.length > 0 || searchedArchivedGroups.length > 0 ? (
-            <>
-              {pinned.length > 0 ? (
-                <PinnedStrip>
-                  {pinned.map((summary) => (
-                    <PinnedBotTile
-                      key={summary.bot.botId}
-                      environmentId={environmentId!}
-                      summary={summary}
-                      now={now}
-                      motion={motionByBotId.get(summary.bot.botId)}
-                      comet={cometBotIds.has(summary.bot.botId)}
-                      onUnpin={() => void togglePin(summary.bot)}
-                      selected={selectedChat === botSelectionKey(summary.bot.botId)}
-                    />
-                  ))}
-                </PinnedStrip>
-              ) : null}
-              {restRows.length > 0 ? (
-                <ul
-                  aria-label="Your chats"
-                  className={cn(UNPINNED_LIST_CLASS, pinned.length > 0 && AFTER_PINNED_LIST_CLASS)}
-                >
-                  {restRows.map((row) =>
-                    row.kind === "bot" ? (
-                      renderRow(row.summary)
-                    ) : (
-                      <li key={row.key}>
-                        <GroupRow
-                          group={row.group}
-                          round={roundForGroup(rounds, row.group.groupId)}
-                          bots={memberBotsOf(row.group)}
-                          now={now}
-                          selected={selectedChat === groupSelectionKey(row.group.groupId)}
-                          archived={row.archived}
-                          pinned={row.pinned}
-                        />
-                      </li>
-                    ),
-                  )}
-                </ul>
-              ) : null}
-            </>
+          {drawnRows.length > 0 ? (
+            <HomeRowsList
+              rows={drawnRows}
+              previewByKey={previewByKey}
+              motionByKey={motionByKey}
+              cometKeys={cometKeys}
+              now={lastShownRef.current?.now ?? now}
+              openThreadId={openThreadId}
+              openGroupId={openGroupId}
+              memberBotsOf={memberBotsOf}
+              nameOf={nameOf}
+              onScreen={onScreen}
+            />
           ) : query.trim().length > 0 && snoozedRows.length === 0 ? (
-            <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
+            <p className="mt-6 px-4 text-center text-[15px] text-[var(--personal-text-secondary)]">
               No bots or chats match "{query.trim()}".
+            </p>
+          ) : filterLabel !== null ? (
+            <p className="mt-6 px-4 text-center text-[15px] text-[var(--personal-text-secondary)]">
+              {filterLabel}
+            </p>
+          ) : null}
+
+          {/* The design's own note under the Needs you filter. */}
+          {filter === "needs" && query.trim().length === 0 ? (
+            <p className="px-4 py-4 text-center text-[13px] leading-4 text-[var(--personal-text-secondary)]">
+              Answered requests leave this list.
             </p>
           ) : null}
 
@@ -1046,54 +1260,44 @@ export function ChatsScreen({
 
           {query.trim().length === 0 && archivedGroups.length > 0 ? (
             /* Like a bot's Archived chats: collapsed, at the bottom, one tap away. */
-            <details className="mt-6">
+            <details className="mx-4 mt-6">
               <summary className="flex min-h-11 cursor-pointer items-center text-[15px] font-medium text-[var(--personal-text-secondary)]">
                 Archived groups ({archivedGroups.length})
               </summary>
-              <ul aria-label="Archived groups" className={UNPINNED_LIST_CLASS}>
+              <ul aria-label="Archived groups" className="home-rows">
                 {archivedGroups.map((group) => (
                   <li key={group.groupId}>
-                    <GroupRow
-                      group={group}
-                      round={roundForGroup(rounds, group.groupId)}
-                      bots={memberBotsOf(group)}
-                      now={now}
-                      selected={selectedChat === groupSelectionKey(group.groupId)}
-                      archived
-                    />
+                    <Link
+                      to="/bots/groups/$groupId"
+                      params={{ groupId: group.groupId }}
+                      aria-label={`${group.name}, archived group chat`}
+                      className="home-row flex h-[72px] items-center gap-3 px-4"
+                    >
+                      {memberBotsOf(group)[0] !== undefined ? (
+                        <BotAvatar
+                          shape={memberBotsOf(group)[0]!.avatarShape}
+                          color={memberBotsOf(group)[0]!.avatarColor}
+                          size={48}
+                          label={group.name}
+                        />
+                      ) : null}
+                      <span className="min-w-0 flex-1 truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
+                        {group.name}
+                      </span>
+                      <span className="shrink-0 rounded-full bg-[var(--personal-fill-muted)] px-2 text-[12px] leading-5 font-medium text-[var(--personal-text-secondary)]">
+                        Archived
+                      </span>
+                    </Link>
                   </li>
                 ))}
               </ul>
             </details>
           ) : null}
-
-          {firstReviewTarget !== null ? (
-            <Link
-              to="/bots/$botId/$threadId"
-              params={firstReviewTarget}
-              className="mt-3 flex h-[50px] items-center gap-3 rounded-xl border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] px-4 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-            >
-              <span
-                aria-hidden="true"
-                className="size-2 shrink-0 rounded-full bg-[var(--personal-review)]"
-              />
-              <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-[var(--personal-text)]">
-                {reviewCount === 1
-                  ? "1 item needs your review"
-                  : `${reviewCount} items need your review`}
-              </span>
-              <ChevronRight
-                aria-hidden="true"
-                className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
-                strokeWidth={1.75}
-              />
-            </Link>
-          ) : null}
         </>
       ) : null}
 
       {loaded ? null : showingSnapshot && snapshot !== null ? (
-        <SnapshotBotRows snapshot={snapshot} now={now} selectedChat={selectedChat} />
+        <SnapshotRows snapshot={snapshot} now={now} selectedChat={selectedChat} />
       ) : list.error === null ? (
         <ChatsSkeletonRows />
       ) : null}
@@ -1110,91 +1314,105 @@ export function ChatsScreen({
           </button>
         </div>
       ) : null}
+
+      <BotPickerSheet
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        environmentId={environmentId}
+        bots={railBots(shownInChats(summaries))}
+        now={now}
+      />
     </div>
   );
 }
 
-/** The pinned strip's "Options" button, reused: out of sight until keyboard focus lands on it. */
-const ROW_MENU_TRIGGER_CLASS = cn(
-  "sr-only outline-none",
-  "focus-visible:not-sr-only focus-visible:absolute focus-visible:top-1 focus-visible:right-1 focus-visible:z-10",
-  "focus-visible:flex focus-visible:size-7 focus-visible:items-center focus-visible:justify-center focus-visible:rounded-full",
-  "focus-visible:bg-[var(--personal-surface)] focus-visible:text-[var(--personal-text)] focus-visible:shadow-[var(--personal-shadow-card)]",
-  "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
-);
-
 /**
- * One bot in the Chats list. Swipe left for Delete; swipe right for Pin and
- * Mute side by side, as in Messages. Mute opens the mute lengths in a menu
- * anchored on the row, the same kind of menu a pinned face opens on a long
- * press; Unmute acts at once. The menu is also behind a quiet "Notifications
- * for <bot>" button in the tab order, like the strip's "Options" button, so the
- * keyboard and VoiceOver reach it without the gesture.
+ * The rows, in their own component so they can be frozen: on the phone the
+ * shell keeps this list mounted under an open chat (hidden), and a store
+ * change while it is hidden would otherwise reconcile every row (59 of them)
+ * for a screen nobody can see. The home hands this component the last props it
+ * had while it was visible, so React skips the whole subtree until Back.
+ *
+ * The list is windowed (`homeWindow.ts`): of the 60 chats the fixture holds,
+ * only the ones near the scroll position are drawn, with two spacer `<li>`s
+ * keeping the list's height - and so the kept scroll position - exactly what
+ * the full list's would be. Scroll position lives here, in this memo, so a
+ * window shift on scroll re-renders these rows and nothing above them.
  */
-function ChatsBotListRow({
-  environmentId,
-  summary,
+const HomeRowsList = memo(function HomeRowsList({
+  rows,
+  previewByKey,
+  motionByKey,
+  cometKeys,
   now,
-  describeTurn,
-  motion,
-  comet,
-  selected,
-  onDelete,
-  onTogglePin,
-  onSetMute,
+  openThreadId,
+  openGroupId,
+  memberBotsOf,
+  nameOf,
+  onScreen,
 }: {
-  readonly environmentId: EnvironmentId;
-  readonly summary: BotSummary;
+  readonly rows: ReadonlyArray<HomeRow>;
+  readonly previewByKey: ReadonlyMap<string, { text: string; tone: RowPreviewTone }>;
+  readonly motionByKey: ReadonlyMap<string, AvatarMotion | undefined>;
+  readonly cometKeys: ReadonlySet<string>;
   readonly now: number;
-  readonly describeTurn: (turn: ServerTurn) => string;
-  readonly motion: AvatarMotion | undefined;
-  readonly comet: boolean;
-  readonly selected: boolean;
-  readonly onDelete: (bot: PersonalBot) => Promise<unknown>;
-  readonly onTogglePin: (bot: PersonalBot) => Promise<void>;
-  readonly onSetMute: (bot: PersonalBot, mute: PersonalBotNotificationMute) => Promise<boolean>;
+  readonly openThreadId: string | null;
+  readonly openGroupId: string | null;
+  readonly memberBotsOf: (group: PersonalGroup) => ReadonlyArray<PersonalBot>;
+  readonly nameOf: (botId: string) => string | null;
+  readonly onScreen: boolean;
 }): JSX.Element {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const anchor = useRef<HTMLLIElement | null>(null);
-  const { bot } = summary;
-  const willPin = !isBotPinned(bot);
-  const muted = botMuteState(bot, now).muted;
+  const { listRef, range } = useHomeWindow(rows.length, { active: onScreen });
+  const spacers = homeWindowSpacers(range, rows.length);
+  const drawn =
+    range.start === 0 && range.end === rows.length ? rows : rows.slice(range.start, range.end);
   return (
-    <li ref={anchor} className="relative">
-      <SwipeToDelete
-        label={`Delete ${bot.name}`}
-        onDelete={() => onDelete(bot)}
-        secondaryActions={[
-          {
-            label: `${willPin ? "Pin" : "Unpin"} ${bot.name}`,
-            text: willPin ? "Pin" : "Unpin",
-            run: () => onTogglePin(bot),
-          },
-          muted
-            ? { label: `Unmute ${bot.name}`, text: "Unmute", run: () => onSetMute(bot, "on") }
-            : { label: `Mute ${bot.name}`, text: "Mute", run: () => setMenuOpen(true) },
-        ]}
-      >
-        <BotRow
-          environmentId={environmentId}
-          summary={summary}
-          now={now}
-          describeTurn={describeTurn}
-          motion={motion}
-          comet={comet}
-          selected={selected}
-        />
-      </SwipeToDelete>
-      <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-        <MenuTrigger render={<button type="button" className={ROW_MENU_TRIGGER_CLASS} />}>
-          <span className="sr-only">Notifications for {bot.name}</span>
-          <BellOff aria-hidden="true" className="size-4" strokeWidth={2} />
-        </MenuTrigger>
-        {/* Anchored on the row, not on the hidden trigger, so it opens where the owner swiped. */}
-        <MenuPopup align="center" anchor={anchor} className="personal-app personal-menu min-w-52">
-          <BotMuteMenuItems bot={bot} now={now} onChange={(mute) => void onSetMute(bot, mute)} />
-        </MenuPopup>
-      </Menu>
-    </li>
+    <ul ref={listRef} aria-label="Your chats" data-testid="home-rows" className="home-rows">
+      {spacers.above > 0 ? (
+        <li aria-hidden="true" data-home-window-pad="" style={{ height: spacers.above }} />
+      ) : null}
+      {drawn.map((row, index) => {
+        // The row's real place in the whole list, for a screen reader (the
+        // drawn slice is not the list).
+        const posInSet = range.start + index + 1;
+        return row.kind === "chat" ? (
+          <HomeChatRowView
+            key={row.key}
+            row={row}
+            preview={previewByKey.get(row.key)?.text ?? ""}
+            tone={previewByKey.get(row.key)?.tone ?? "plain"}
+            now={now}
+            selected={openThreadId === row.key}
+            motion={motionByKey.get(row.key)}
+            comet={cometKeys.has(row.key)}
+            posInSet={posInSet}
+            setSize={rows.length}
+          />
+        ) : (
+          <HomeGroupRowView
+            key={row.key}
+            row={row}
+            bots={memberBotsOf(row.group)}
+            nameOf={nameOf}
+            now={now}
+            selected={openGroupId === row.group.groupId}
+            posInSet={posInSet}
+            setSize={rows.length}
+          />
+        );
+      })}
+      {spacers.below > 0 ? (
+        <li aria-hidden="true" data-home-window-pad="" style={{ height: spacers.below }} />
+      ) : null}
+    </ul>
   );
+});
+
+/** The chat threads with an open request of one kind (the summary join). */
+function threadIdsWithKind(model: NeedsYouModel, kind: "secret"): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const [key, requests] of model.byRow) {
+    if (requests.some((request) => request.kind === kind)) out.add(key);
+  }
+  return out;
 }
