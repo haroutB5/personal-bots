@@ -212,3 +212,20 @@ E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `cha
 
 Tree: HEAD at start `2c4c91ccf8317a01581cfb9ac320038907333433`, at end `2c4c91ccf8317a01581cfb9ac320038907333433`; tracked files modified: none. Staged release: version 1.66.37, sha 2c4c91ccf831, dirty False, externals copied; `dist/bin.mjs` sha256 `d7816c0741ce56087c84c8c194da8dda36b3cfef815e6d45c8d0016ab5883b31`.
 <!-- gate-evidence:end -->
+
+### QA (13 Oct, round 2): SHIP for `2c4c91ccf831`
+
+QA re-tested the staged release `2c4c91ccf831` (notes `dabb9e2e1e`) on throwaway servers only (390x844 dark,
+headless Chrome, isolated profiles). Evidence: `C:\Users\Ht\.personal-bots\qa\hbots-1670\qa16637\results\` (`r2*`)
+and `...\qa\results\compare-r2b1-vs-*`.
+
+| check | result |
+| --- | --- |
+| The gap after leaving the tab (QA NO-SHIP 1) | Fixed. 20 s watched, 70 s away: the CPU line sits at 86-92% of the axis, then a 22 px (about 68 s) break, then the newest point at Now; nothing stretched (`r2real-real.json`). 40 s watched, 200 s away: "Tab closed" under each gap of 56 px or more, on CPU and Memory, at 390 and 1280 px (`r2real-label-gap.json`, `-phone.png`, `-desktop.png`). After 20 min away the old samples have left the 15-minute window. |
+| Fans while the sensors app is down (QA NO-SHIP 2) | Fixed. `T3CODE_PERF_LHM_URL` on a closed port: "Sensors app not running" with live Fan 1 2,082 rpm and Fan 2 1,970 rpm under it, CPU temp KPI "–", battery line "need the sensors app" (`r2nolhm-dump.txt`, `r2nolhm-dump-*.png`). Fan reader down (`T3CODE_PERF_FAN_URL`): temps live, "Fan reading not available right now" (`r2nofan-dump.txt`). |
+| Auth | No cookie and a forged cookie: 401 `auth_invalid`, nothing streamed, no helper started. |
+| Zero cost when closed | /bots 8 s + /computer (Browser) 12 s: 0 helpers, 0 `[performance]` lines, 0 stream requests. Open: 1 helper, first numbers 3.3 s at 4x CPU; a second viewer shares it; it ends 10.6 s after the last viewer; 70 s with nobody watching: 0 helpers, 0 new lines. 0 long tasks over 50 ms in 20 s of live updates. |
+| Request parity with 1.66.36 | Cold /bots 189 = 189, chat deep link 192 = 192, /computer 136 = 136, identical request lists (hashes normalised), no Performance chunk or stream unless the tab opens (`request-parity-r2b1-vs-r2c.json`). |
+| e2e smoke and page errors | 12/12 journeys pass, no leftovers (`e2e-smoke-16637-r2.log`); 0 page errors in every QA script. |
+| Speed vs 1.66.36 (under the measurement lock) | A/A control 1.66.36 vs 1.66.36, 10 pairs: flagged back wall +26% and type long tasks +159% while other work left 4-16 MB free and 98% CPU in pairs 2-6 (`compare-r2b1-vs-r2b2-*.md`). 1.66.37 vs 1.66.36, 10 pairs, all clean (>= 4,000 MB free, <= 29% CPU): 0 WORSE, 0 beyond the A/A; back 56.6 vs 57.4 ms, longChat 7,636 vs 7,533 ms, type key p95 337 vs 337 ms, openChat 814 vs 848 ms; remount 0/10; same chat on both (`compare-r2b1-vs-r2c-*.md`, `-vs-aa.md`). Round 1's WORSE (back, longChat, type, openChat) came from contention, not the build. |
+| Known, not blocking | Scrubbing over a gap shows the last reading before it with its own time ("at 10:17:22"), where the spec's state table says "Not measured". |
