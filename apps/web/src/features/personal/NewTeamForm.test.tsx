@@ -135,8 +135,9 @@ describe("NewTeamForm", () => {
     const tree = await render();
     const rows = tree.root.findAllByType("label").map(text);
     expect(rows.some((row) => row.includes("No leader for now"))).toBe(true);
-    // The model as the Bots list names it (the id here, as no provider is listed).
-    expect(rows.some((row) => row.includes("CTO") && row.includes("claude-opus-5-5"))).toBe(true);
+    // The model as the Bots list names it: the family name from the
+    // catalogue here, as no provider list is loaded (never the raw id).
+    expect(rows.some((row) => row.includes("CTO") && row.includes("Opus 5.5"))).toBe(true);
     expect(radios(tree).filter((node) => node.props.checked)).toHaveLength(1);
     expect(radios(tree)[0]!.props.checked).toBe(true);
   });

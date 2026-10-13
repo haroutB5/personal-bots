@@ -126,8 +126,24 @@ describe("botModelLabel", () => {
     expect(
       botModelLabel(selection("claudeAgent", "claude-mystery-9", [["effort", "low"]]), providers),
     ).toBe("claude-mystery-9 low");
-    expect(botModelLabel(selection("codex", "gpt-6-luna"), [])).toBe("gpt-6-luna");
+    // A known id reads its family name even with no provider list at all.
+    expect(botModelLabel(selection("codex", "gpt-6-luna"), [])).toBe("GPT-6 Luna");
     expect(botModelLabel(selection("codex", ""), providers)).toBeNull();
+  });
+
+  it("names a known id the provider did not list, and keeps an unknown id", () => {
+    // The provider list here has no Haiku 5.5: the caption reads the family
+    // name from the catalogue, never the raw id.
+    expect(
+      botModelLabel(selection("claudeAgent", "claude-haiku-5-5", [["effort", "low"]]), providers),
+    ).toBe("Haiku 5.5 low");
+    expect(
+      botModelLabel(selection("codex", "gpt-6.1-sol", [["reasoningEffort", "medium"]]), providers),
+    ).toBe("GPT-6.1 Sol medium");
+    // An id nobody knows still falls back to the id itself.
+    expect(
+      botModelLabel(selection("claudeAgent", "claude-mystery-9", [["effort", "low"]]), providers),
+    ).toBe("claude-mystery-9 low");
   });
 
   it("never repeats an effort the model's own name already ends with", () => {
@@ -175,6 +191,14 @@ describe("botModelShortLabel", () => {
     ).toBe("Muse Spark 1.3");
   });
 
+  it("names a known id the provider did not list, and keeps an unknown id", () => {
+    expect(short("claudeAgent", "claude-haiku-5-5", [["effort", "low"]])).toBe("Haiku 5.5 · L");
+    expect(short("codex", "gpt-6.1-sol", [["reasoningEffort", "medium"]])).toBe("GPT-6.1 Sol · M");
+    expect(short("claudeAgent", "claude-mystery-9", [["effort", "high"]])).toBe(
+      "claude-mystery-9 · H",
+    );
+  });
+
   it("never repeats an effort the model's own name already ends with", () => {
     // A provider that writes the effort into the name ("Haiku 5.5 · M" - the
     // shape that doubled on the Team card) and one that spells it out.
@@ -188,7 +212,7 @@ describe("botModelShortLabel", () => {
     expect(short("claudeAgent", "claude-mystery-9", [["effort", "high"]])).toBe(
       "claude-mystery-9 · H",
     );
-    expect(botModelShortLabel(selection("codex", "gpt-6-luna"), [])).toBe("gpt-6-luna");
+    expect(botModelShortLabel(selection("codex", "gpt-6-luna"), [])).toBe("GPT-6 Luna");
     expect(botModelShortLabel(selection("codex", ""), providers)).toBeNull();
   });
 });

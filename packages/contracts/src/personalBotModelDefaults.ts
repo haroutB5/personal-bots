@@ -63,3 +63,41 @@ export function firstSafeBotModelSlug(
   const safe = safeDefaultBotModelSlug(instance);
   return safe === "" ? (firstAffordable(instance)?.slug ?? "") : safe;
 }
+
+/**
+ * The family name for a model id the provider's own list did not name:
+ * "claude-haiku-5-5" reads "Haiku 5.5", "gpt-6.1-sol" reads "GPT-6.1 Sol".
+ * A caption showing a raw id ("claude-haiku-5-5 · L") looks like a bug, and
+ * the id is the only thing left when the provider's catalogue is missing the
+ * model (a hidden model is honest - see the Team captions). Taken from the
+ * model catalogue's own names (dev root manifest, 13 Oct 2026); the picker's
+ * listed name, when there is one, always wins over this.
+ */
+const MODEL_FAMILY_NAMES: Readonly<Record<string, string>> = {
+  "claude-opus-5-5": "Opus 5.5",
+  "claude-sonnet-5-5": "Sonnet 5.5",
+  "claude-opus-5": "Opus 5",
+  "claude-sonnet-5": "Sonnet 5",
+  "claude-opus-4-8": "Opus 4.8",
+  "claude-opus-4-7": "Opus 4.7",
+  "claude-opus-4-6": "Opus 4.6",
+  "claude-opus-4-5": "Opus 4.5",
+  "claude-sonnet-4-6": "Sonnet 4.6",
+  "claude-haiku-5-5": "Haiku 5.5",
+  "claude-haiku-4-5": "Haiku 4.5",
+  "claude-fable-5-1": "Fable 5.1",
+  "claude-fable-5": "Fable 5",
+  "gpt-6.1-sol": "GPT-6.1 Sol",
+  "gpt-6-sol": "GPT-6 Sol",
+  "gpt-6-astra": "GPT-6 Astra",
+  "gpt-6-luna": "GPT-6 Luna",
+  "gpt-5.6-sol": "GPT-5.6 Sol",
+  "gpt-5.6-terra": "GPT-5.6 Terra",
+  "gpt-5.6-luna": "GPT-5.6 Luna",
+  "gpt-5.5": "GPT-5.5",
+};
+
+/** The family name for a known model id, or null when the id is unknown. */
+export function modelFamilyName(slug: string): string | null {
+  return MODEL_FAMILY_NAMES[slug.trim().toLowerCase()] ?? null;
+}

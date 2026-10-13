@@ -1,6 +1,7 @@
 import {
   botEffectiveModelSelection,
   botFallbackActive,
+  modelFamilyName,
   type ModelSelection,
   type PersonalBot,
   type SelectProviderOptionDescriptor,
@@ -48,7 +49,9 @@ export function botModelLabel(
   const resolved = resolveSelection(selection, providers);
   if (resolved === null) return null;
   const { slug, provider, listedName, effortId, effort } = resolved;
-  const name = (listedName ?? slug).replace(/^Claude\s+/, "");
+  // A known id the provider did not name reads as its family name, never as
+  // the raw id; an unknown one keeps the id.
+  const name = (listedName ?? modelFamilyName(slug) ?? slug).replace(/^Claude\s+/, "");
   if (effort === undefined) return name;
   // A provider may write the effort into the model's own name ("Haiku 5.5 · M"):
   // the label then must not say it twice.
@@ -126,7 +129,7 @@ export function botModelShortLabel(
   if (resolved === null) return null;
   const name =
     resolved.listedName === undefined
-      ? resolved.slug
+      ? (modelFamilyName(resolved.slug) ?? resolved.slug)
       : shortModelName(resolved.listedName) || resolved.slug;
   const effort = resolved.effort;
   if (effort === undefined) return name;
