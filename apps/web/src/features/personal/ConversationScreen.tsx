@@ -167,7 +167,9 @@ import {
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
-import { ProgressNoteLine } from "./ProgressNoteLine";
+import { DockedQuestion } from "./DockedQuestion";
+import { clearQuestionDrafts, useQuestionDock } from "./questionDock";
+import { WorkingProgressRow } from "./WorkingProgressRow";
 import { deriveLatestProgressNote } from "./latestProgress";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { offlineComposerNotice } from "./offlineBanner";
@@ -560,6 +562,24 @@ export function ConversationScreen({
     () => deriveLatestProgressNote({ working, messages, activities, latestTurn }),
     [working, messages, activities, latestTurn],
   );
+  // The progress row's clock (SPEC 2.9, D1): the running turn's own start, and
+  // nothing when the server has none. No fake numbers.
+  const progressStartedAtMs = useMemo(() => {
+    const startedAt = latestTurn?.startedAt ?? null;
+    const at = startedAt === null ? Number.NaN : Date.parse(startedAt);
+    return Number.isFinite(at) ? at : null;
+  }, [latestTurn]);
+  // The open question, docked above the composer (SPEC 2.9): the newest pending
+  // question, out of the thread until it settles.
+  const dockedCard = useMemo(() => {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item !== undefined && item.kind === "question" && item.card.kind === "pending") {
+        return item.card;
+      }
+    }
+    return null;
+  }, [items]);
   const latestMessageStatus = useMemo(
     () =>
       deriveLatestMessageReadStatus({ items: baseItems, activities, busy: turnBusy, latestTurn }),
@@ -664,6 +684,28 @@ export function ConversationScreen({
       return next;
     });
   };
+
+  // Questions this page answered: their spot in the thread keeps the settled
+  // card. A question answered by another device gets the receipt (SPEC 2.8).
+  const [answeredHere, setAnsweredHere] = useState<ReadonlySet<string>>(() => new Set());
+  // The docked question's own state (SPEC 2.9): shared by the dock and the
+  // composer's typed answer. An answer sent here marks the request as this
+  // page's, so the thread reads it as answered rather than answered elsewhere.
+  const dock = useQuestionDock(dockedCard, (requestId, answers) => {
+    setAnsweredHere((current) => new Set(current).add(requestId));
+    void onAnswerQuestion(requestId, answers);
+  });
+  // A settled question's drafts are done with.
+  const settledQuestionIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const item of items) {
+      if (item.kind === "question" && item.card.kind !== "pending") ids.push(item.card.requestId);
+    }
+    return ids;
+  }, [items]);
+  useEffect(() => {
+    for (const requestId of settledQuestionIds) clearQuestionDrafts(requestId);
+  }, [settledQuestionIds]);
 
   // Closes an async question without replying: the bot is not messaged.
   const onDismissQuestion = async (requestId: string) => {
@@ -1397,8 +1439,6 @@ export function ConversationScreen({
         }}
       />
 
-      <ProgressNoteLine note={progressNote} />
-
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>
           <MessageList
@@ -1460,6 +1500,8 @@ export function ConversationScreen({
             onReply={archived ? undefined : onReply}
             onChoose={archived ? undefined : onChoose}
             choicesBusy={turnBusy || sendBlockedReason !== null}
+            dockQuestions
+            answeredHere={answeredHere}
           />
           <ConversationDesktopLine
             environmentId={environmentId}
@@ -1493,25 +1535,59 @@ export function ConversationScreen({
               onDelete={() => void onDeleteChat()}
             />
           ) : (
-            <PersonalComposer
-              // One composer per chat: its in-flight send, error and queued
-              // state belong to the chat it was sent from.
-              key={threadId}
-              environmentId={environmentId}
-              threadId={threadId}
-              thread={thread}
-              botName={botName}
-              botModelSelection={botTurnModel}
-              disabledReason={sendBlockedReason}
-              offlineNotice={offlineNotice}
-              working={turnBusy}
-              canInterrupt={interruptInput !== null}
-              onInterrupt={onInterrupt}
-              onPendingChange={(update) => setPending((current) => update(current))}
-              replyTo={replyTo}
-              onClearReply={onClearReply}
-              quickSendRef={quickSendRef}
-            />
+            <>
+              {/* The docked zone (SPEC 2.9): the progress row and the open
+                  question, stacked above the composer, question under the rule
+                  of the quote bar. */}
+              <div className="personal-column personal-dock-zone flex shrink-0 flex-col gap-2 px-3 pb-2">
+                <WorkingProgressRow
+                  botName={botName ?? "Bot"}
+                  face={bot === null ? null : { shape: bot.avatarShape, color: bot.avatarColor }}
+                  motion={motionForConversationState(conversationState, turnThinking)}
+                  comet={perfOptimizationOn("anim-comet")}
+                  step={progressNote}
+                  thinking={turnThinking}
+                  startedAtMs={progressStartedAtMs}
+                  working={working && dock === null}
+                />
+                {dockedCard !== null && dock !== null && botName !== null ? (
+                  <DockedQuestion
+                    card={dockedCard}
+                    botName={botName}
+                    responding={respondingIds.has(dockedCard.requestId)}
+                    keyboardOpen={keyboardInset > 0}
+                    progress={dock.progress}
+                    onChoose={dock.chooseOption}
+                    onSubmit={dock.submit}
+                    onDismiss={() => void onDismissQuestion(dockedCard.requestId)}
+                  />
+                ) : null}
+              </div>
+              <PersonalComposer
+                // One composer per chat: its in-flight send, error and queued
+                // state belong to the chat it was sent from.
+                key={threadId}
+                environmentId={environmentId}
+                threadId={threadId}
+                thread={thread}
+                botName={botName}
+                botModelSelection={botTurnModel}
+                disabledReason={sendBlockedReason}
+                offlineNotice={offlineNotice}
+                working={turnBusy}
+                canInterrupt={interruptInput !== null}
+                onInterrupt={onInterrupt}
+                onPendingChange={(update) => setPending((current) => update(current))}
+                replyTo={replyTo}
+                onClearReply={onClearReply}
+                quickSendRef={quickSendRef}
+                answerOpen={dockedCard !== null}
+                onAnswerWithText={dock === null ? undefined : dock.answerWithText}
+                quoteNote={
+                  dock === null ? null : `answers question ${dock.progress.questionIndex + 1}`
+                }
+              />
+            </>
           )}
         </>
       ) : (

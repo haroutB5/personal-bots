@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { readPersonalReplyQuote, type PersonalReplyQuote } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowDown, ChevronRight, FileText } from "lucide-react";
+import { ArrowDown, Check, ChevronRight, FileText } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -31,7 +31,6 @@ import { hasRecordedContext, turnStartByAssistantItem } from "./contextUsed";
 import { NoteNoticeRow } from "./NoteNoticeRow";
 import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
-import type { UserInputAnswers } from "./questionCards";
 import { SecretRequestCard, type ProvideSecret } from "./SecretRequestCard";
 import { LoginRequestCard, type ProvideLogin } from "./LoginRequestCard";
 import { ConnectionApprovalCard } from "./ConnectionApprovalCard";
@@ -43,6 +42,7 @@ import type { LatestMessageReadStatus, MessageReadStatus } from "./messageReadSt
 import { consumeChatSwitched } from "./chatChipHandoff";
 import { ChoiceButtons, type ChoicesState } from "./ChoiceButtons";
 import { mayHaveChoices, splitChoices } from "./choices";
+import { describeAnswer, type QuestionCardItem, type UserInputAnswers } from "./questionCards";
 import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
 import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
 import { ReplyQuoteChip } from "./ReplyQuote";
@@ -173,6 +173,36 @@ function RunTime({ at, align, now }: { at: Date; align: "start" | "end"; now: Da
     >
       {time}
     </span>
+  );
+}
+
+/**
+ * A question answered somewhere else (the Mac or another context) while this
+ * page was open: a centred receipt where the question stood, never a second
+ * card to answer (SPEC 2.8).
+ */
+function AnsweredElsewhereReceipt({
+  card,
+}: {
+  card: Extract<QuestionCardItem, { readonly kind: "answered" }>;
+}) {
+  const answer = card.questions
+    .flatMap((question) => describeAnswer(question, card.answers[question.id]))
+    .join(", ");
+  return (
+    <p
+      role="status"
+      data-testid="answered-elsewhere"
+      className="mx-auto flex h-8 max-w-full items-center gap-2 rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-[13px] leading-4 text-[var(--personal-text-secondary)]"
+    >
+      <Check
+        aria-hidden="true"
+        className="size-4 shrink-0 text-[var(--personal-state-working)]"
+        strokeWidth={2.25}
+      />
+      <span className="shrink-0">Answered on your Mac ·</span>
+      <b className="min-w-0 truncate font-semibold text-[var(--personal-text)]">{answer}</b>
+    </p>
   );
 }
 
@@ -756,6 +786,7 @@ function ApprovalCard({
 
 const NO_PINNED_APPROVALS: ReadonlyArray<PendingApproval> = [];
 const NO_QUEUED: ReadonlyArray<OutboxRow> = [];
+const NO_ANSWERED_HERE: ReadonlySet<string> = new Set();
 
 /**
  * Where each reply's tap-to-answer block stands, by item id (only replies that
@@ -855,6 +886,8 @@ export function MessageList({
   onReply,
   onChoose,
   choicesBusy = false,
+  dockQuestions = false,
+  answeredHere = NO_ANSWERED_HERE,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -952,6 +985,13 @@ export function MessageList({
   onChoose?: ((text: string) => Promise<boolean>) | undefined;
   /** The chat cannot take a message now (the bot is busy, offline, ...): open choices wait. */
   choicesBusy?: boolean;
+  /**
+   * The 1:1 chat passes true: an open question is drawn in the dock above the
+   * composer, not in the thread (SPEC 2.9). Groups keep the card inline.
+   */
+  dockQuestions?: boolean;
+  /** Request ids this page has answered: those show the settled card, not the receipt. */
+  answeredHere?: ReadonlySet<string>;
 }): JSX.Element {
   const choicesById = useMemo(() => choicesStates(items, choicesBusy), [items, choicesBusy]);
   const turnStarts = useMemo(
@@ -1767,7 +1807,15 @@ export function MessageList({
                       );
                     case "delegation":
                       return <div key={item.id}>{renderDelegation(item.task)}</div>;
-                    case "question":
+                    case "question": {
+                      // The open question lives in the dock above the composer
+                      // (SPEC 2.9); once it settles, its spot in the thread keeps
+                      // the record: a receipt when another device answered it, the
+                      // settled card when it was answered here.
+                      if (dockQuestions && item.card.kind === "pending") return null;
+                      if (item.card.kind === "answered" && !answeredHere.has(item.card.requestId)) {
+                        return <AnsweredElsewhereReceipt key={item.id} card={item.card} />;
+                      }
                       return lockCard(
                         item.id,
                         readOnly,
@@ -1780,6 +1828,7 @@ export function MessageList({
                           onDismiss={onDismissQuestion}
                         />,
                       );
+                    }
                     case "secret":
                       return lockCard(
                         item.id,

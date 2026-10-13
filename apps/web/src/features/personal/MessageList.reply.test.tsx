@@ -124,7 +124,9 @@ const block = (...lines: string[]) => ["```choices", ...lines, "```"].join("\n")
 
 it("keeps mounted history bounded, pages back to the oldest row and forward again", async () => {
   vi.stubGlobal("window", {});
-  const items = Array.from({ length: 1010 }, (_, index) =>
+  // Three windows' worth of history (the window is 40 items per step): enough
+  // to page back to the very first message and forward again.
+  const items = Array.from({ length: 120 }, (_, index) =>
     message(`m-${index}`, "user", `Row ${index}`),
   );
   const root = await render({ items, onReply: () => {} });
@@ -133,8 +135,8 @@ it("keeps mounted history bounded, pages back to the oldest row and forward agai
   const mounted = () => root.findAll((node) => node.props["data-replyable"] === "");
   const rows = () => root.findAll((node) => typeof node.props["data-transcript-row"] === "string");
   expect(mounted()).toHaveLength(80);
-  expect(rows()[0]?.props["data-transcript-row"]).toBe("m-930");
-  for (let page = 0; page < 24; page++) {
+  expect(rows()[0]?.props["data-transcript-row"]).toBe("m-40");
+  for (let page = 0; page < 4; page++) {
     const earlier = root
       .findAllByType("button")
       .find((button) => button.children.includes("Load earlier messages"));
@@ -152,7 +154,7 @@ it("keeps mounted history bounded, pages back to the oldest row and forward agai
     ),
   );
   expect(rows()[0]?.props["data-transcript-row"]).toBe("m-0");
-  for (let page = 0; page < 24; page++) {
+  for (let page = 0; page < 4; page++) {
     const later = root
       .findAllByType("button")
       .find((button) => button.children.includes("Load later messages"));

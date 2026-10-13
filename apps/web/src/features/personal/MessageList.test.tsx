@@ -389,14 +389,65 @@ it("keeps the answer on screen once the question resolves", async () => {
             answers: { scope: "tests" },
           }),
         ]}
+        answeredHere={new Set(["req-1"])}
       />,
     );
   });
 
+  // Answered here: the settled card, with the answer, and nothing to press.
+  expect(renderer!.root.findAll((node) => node.children.includes("You answered: "))).toHaveLength(
+    1,
+  );
   expect(
     renderer!.root.findAll((node) => node.children.includes("Fix the failing tests")),
   ).not.toEqual([]);
   expect(renderer!.root.findAllByType("button")).toEqual([]);
+});
+
+it("turns a question another device answered into a receipt (D7/T7)", async () => {
+  stubEnvironment();
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        items={[
+          questionItem({
+            kind: "answered",
+            requestId: "req-1",
+            createdAt: "2026-09-14T10:00:00.000Z",
+            questions: [SCOPE_QUESTION],
+            answers: { scope: "tests" },
+          }),
+        ]}
+      />,
+    );
+  });
+
+  const receipt = renderer!.root.findByProps({ "data-testid": "answered-elsewhere" });
+  expect(receipt.props.role).toBe("status");
+  expect(
+    renderer!.root.findAll((node) => node.children.includes("Answered on your Mac ·")),
+  ).toHaveLength(1);
+  // The answer it carries is the option's own label, and a button would invite a second answer.
+  expect(
+    renderer!.root.findAll((node) => node.children.includes("Fix the failing tests")),
+  ).not.toEqual([]);
+  expect(renderer!.root.findAllByType("button")).toEqual([]);
+});
+
+it("docks the open question out of the thread when the chat owns the dock", async () => {
+  stubEnvironment();
+  await act(async () => {
+    renderer = create(
+      <MessageList {...BASE_PROPS} items={[questionItem(pendingCard())]} dockQuestions />,
+    );
+  });
+
+  expect(renderer!.root.findAllByProps({ "data-testid": "docked-question" })).toEqual([]);
+  expect(renderer!.root.findAll((node) => node.children.includes("Not now"))).toEqual([]);
+  expect(renderer!.root.findAll((node) => node.children.includes("Fix the failing tests"))).toEqual(
+    [],
+  );
 });
 
 it("says so when a question is closed elsewhere", async () => {

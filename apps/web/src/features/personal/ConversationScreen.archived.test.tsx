@@ -252,6 +252,7 @@ vi.mock("./conversationModel", () => ({
     text: modelLabel ?? "Idle",
     tone: "idle",
   }),
+  THINKING_LABEL: "Thinking",
   deriveConversationState: () => "idle",
   friendlyTurnError: (message: string) => ({ message }),
   isTurnThinking: () => false,
@@ -346,7 +347,8 @@ vi.mock("./PersonalComposer", () => ({
     return <div data-composer="" />;
   },
 }));
-vi.mock("./ProgressNoteLine", () => ({ ProgressNoteLine: () => null }));
+vi.mock("./WorkingProgressRow", () => ({ WorkingProgressRow: () => null, PROGRESS_FOLD_MS: 220 }));
+vi.mock("./DockedQuestion", () => ({ DockedQuestion: () => null }));
 vi.mock("./latestProgress", () => ({ deriveLatestProgressNote: () => null }));
 vi.mock("./PersonalOfflineBanner", () => ({
   useLaptopOffline: () => false,

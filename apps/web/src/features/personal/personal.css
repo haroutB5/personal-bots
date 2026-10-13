@@ -1151,6 +1151,95 @@
   mask-image: linear-gradient(180deg, transparent 0, #000 24px);
 }
 
+/* The docked zone above the composer (SPEC 2.9): the progress row and the
+ * docked question. Nothing in it, nothing to see. */
+.personal-dock-zone:empty {
+  display: none;
+}
+
+/* The progress row: 56 px raised card that folds away when the turn ends. */
+.personal-progress {
+  height: 56px;
+  border-radius: var(--personal-radius-card-lg);
+  border: 1px solid var(--personal-border);
+  background-color: var(--personal-surface-raised);
+  overflow: hidden;
+  transition:
+    height 220ms var(--personal-ease-out),
+    opacity 220ms var(--personal-ease-out);
+}
+.personal-progress[data-open="false"] {
+  height: 0;
+  opacity: 0;
+  border-width: 0;
+}
+
+/* The docked question: radius 20, raised, 12 px padding (SPEC 2.9). It rises
+ * into place (motion section 3). */
+.personal-dock {
+  border-radius: var(--personal-radius-xl);
+  border: 1px solid var(--personal-border);
+  background-color: var(--personal-surface-raised);
+  padding: 12px;
+  animation: personal-dock-in 300ms var(--personal-ease-out);
+}
+@keyframes personal-dock-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* Keyboard open: the options become one sideways row of 44 px chips, with the
+ * design's 12 px left / 48 px right fades. */
+.personal-dock-chips {
+  display: flex;
+  gap: 8px;
+  margin: 0 -12px;
+  padding: 0 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 48px),
+    transparent
+  );
+  mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 48px), transparent);
+}
+.personal-dock-chips::-webkit-scrollbar {
+  display: none;
+}
+.personal-dock-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 9999px;
+  background-color: var(--personal-fill-muted);
+  color: var(--personal-text);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.personal-dock-chip-on {
+  background-color: var(--personal-primary);
+  color: var(--personal-primary-text);
+  font-weight: 600;
+}
+
 /* One dot per chip, the strongest state wins (chatChipRows.ts). */
 .personal-chip-dot {
   flex-shrink: 0;
@@ -1217,6 +1306,18 @@
     to {
       opacity: 1;
     }
+  }
+  /* The dock and the progress row: short fades, no movement, no height fold.
+     !important: the shell's own reduced-motion rule turns every animation and
+     transition off with it. */
+  .personal-dock {
+    animation: personal-chip-fade 160ms linear !important;
+  }
+  .personal-progress {
+    transition: opacity 160ms linear !important;
+  }
+  .personal-progress[data-open="false"] {
+    height: 56px;
   }
 }
 
