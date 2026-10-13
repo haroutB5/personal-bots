@@ -314,24 +314,6 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
     });
   };
 
-  if (loading) {
-    return (
-      <div className="mt-3">
-        <Card label="How the PC is doing">
-          <div className="flex items-center gap-3">
-            <PcAvatar pose="calm" size={48} />
-            <div className="min-w-0 flex-1">
-              <h2 className="text-[20px] leading-6 font-bold">Measuring…</h2>
-              <p className="text-[13px] leading-4 text-[var(--personal-text-secondary)]">
-                First numbers in a moment.
-              </p>
-            </div>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
   const cpuTempWarn = threshold.active.includes("cpuTemp");
   const memoryWarn = threshold.active.includes("memory");
   const cpuWarn = threshold.active.includes("cpu");
@@ -373,6 +355,27 @@ export function PerformancePane({ botsBusy, tasksRunning }: PerformancePaneProps
     slow === null || (slow.dataGB === null && slow.backupsGB === null && slow.releasesGB === null)
       ? null
       : (slow.dataGB ?? 0) + (slow.backupsGB ?? 0) + (slow.releasesGB ?? 0);
+
+  // The loading branch sits AFTER every hook on purpose: an early return above
+  // the hooks crashed the app with React #310 the moment the first sample
+  // arrived (13 Oct, caught by the tab probe before the screenshots).
+  if (loading) {
+    return (
+      <div className="mt-3">
+        <Card label="How the PC is doing">
+          <div className="flex items-center gap-3">
+            <PcAvatar pose="calm" size={48} />
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[20px] leading-6 font-bold">Measuring…</h2>
+              <p className="text-[13px] leading-4 text-[var(--personal-text-secondary)]">
+                First numbers in a moment.
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-3">
