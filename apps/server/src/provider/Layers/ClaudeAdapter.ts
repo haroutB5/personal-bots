@@ -5352,27 +5352,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const queryOptions: ClaudeQueryOptions = {
         ...(processHandle !== undefined
           ? {
-              spawnClaudeCodeProcess: makeRecordingClaudeSpawner(processHandle, (detail) => {
-                const missing = missingProviderConversationLine(detail.stderrTail);
-                const exitedContext = sessions.get(threadId);
-                if (missing !== undefined && exitedContext?.process === processHandle) {
-                  exitedContext.missingConversation ??= missing;
-                }
-                runFork(
-                  detail.requested
-                    ? Effect.logInfo("claude.process.stopped", {
-                        threadId,
-                        code: detail.code,
-                        signal: detail.signal,
-                      })
-                    : Effect.logWarning("claude.process.exited-abnormally", {
-                        threadId,
-                        code: detail.code,
-                        signal: detail.signal,
-                        stderrTail: detail.stderrTail.slice(-2_000),
-                      }),
-                );
-              }),
+              spawnClaudeCodeProcess: makeRecordingClaudeSpawner(
+                processHandle,
+                (detail) => {
+                  const missing = missingProviderConversationLine(detail.stderrTail);
+                  const exitedContext = sessions.get(threadId);
+                  if (missing !== undefined && exitedContext?.process === processHandle) {
+                    exitedContext.missingConversation ??= missing;
+                  }
+                  runFork(
+                    detail.requested
+                      ? Effect.logInfo("claude.process.stopped", {
+                          threadId,
+                          code: detail.code,
+                          signal: detail.signal,
+                        })
+                      : Effect.logWarning("claude.process.exited-abnormally", {
+                          threadId,
+                          code: detail.code,
+                          signal: detail.signal,
+                          stderrTail: detail.stderrTail.slice(-2_000),
+                        }),
+                  );
+                },
+                undefined,
+                { threadId, provider: "claudeAgent" },
+              ),
             }
           : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),

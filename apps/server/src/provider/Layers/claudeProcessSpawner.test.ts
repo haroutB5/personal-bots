@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import { assert, describe, it } from "@effect/vitest";
 
 import { BOT_PROCESS_PRIORITY_ENV } from "../botProcessPriority.ts";
+import { listBotProviderProcesses, resetBotProviderProcesses } from "../botProviderProcesses.ts";
 
 import { makeClaudeProcessHandle, makeRecordingClaudeSpawner } from "./claudeProcessSpawner.ts";
 
@@ -27,6 +28,21 @@ describe("makeRecordingClaudeSpawner priority", () => {
     await waitForExit(spawned);
     assert.isDefined(handle.child?.pid);
     assert.deepEqual(lowered, [handle.child?.pid]);
+  });
+
+  it("records the CLI's PID for its chat while it runs, and drops it when it exits", async () => {
+    resetBotProviderProcesses();
+    const handle = makeClaudeProcessHandle();
+    const spawned = makeRecordingClaudeSpawner(handle, undefined, () => undefined, {
+      threadId: "thread-chat",
+      provider: "claudeAgent",
+    })(spawnOptions(new AbortController().signal));
+    assert.isDefined(handle.child?.pid);
+    assert.deepEqual(listBotProviderProcesses(), [
+      { threadId: "thread-chat", provider: "claudeAgent", pid: handle.child!.pid! },
+    ]);
+    await waitForExit(spawned);
+    assert.deepEqual(listBotProviderProcesses(), []);
   });
 
   it("lowers it for every spawn of a session that resumes", async () => {
