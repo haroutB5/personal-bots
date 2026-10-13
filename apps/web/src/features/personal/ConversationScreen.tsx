@@ -168,6 +168,7 @@ import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRu
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
 import { DockedQuestion } from "./DockedQuestion";
+import { COMPOSER_INPUT_ATTRIBUTE } from "./composerRefocus";
 import { clearQuestionDrafts, useQuestionDock } from "./questionDock";
 import { findRequestItemId, openRequestLandingItemId } from "./requestLanding";
 import { WorkingProgressRow } from "./WorkingProgressRow";
@@ -584,6 +585,25 @@ export function ConversationScreen({
     }
     return null;
   }, [items]);
+  // The composer has the field: on a phone that is the keyboard, so the dock
+  // gives the thread its room (SPEC 2.9, D9). The inset alone cannot tell a
+  // desktop browser it is "open"; focus is the state both share.
+  const [composerActive, setComposerActive] = useState(false);
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (shell === null) return;
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target as HTMLElement | null;
+      setComposerActive(target?.getAttribute?.(COMPOSER_INPUT_ATTRIBUTE) === "");
+    };
+    const onFocusOut = () => setComposerActive(false);
+    shell.addEventListener("focusin", onFocusIn);
+    shell.addEventListener("focusout", onFocusOut);
+    return () => {
+      shell.removeEventListener("focusin", onFocusIn);
+      shell.removeEventListener("focusout", onFocusOut);
+    };
+  }, [shellRef]);
   // D13: what the chat lands on. An explicit `?request=<id>` (the push, a deep
   // link) names the card outright, an approval included; a chat opened fresh
   // lands on its own newest open request card.
@@ -1575,7 +1595,7 @@ export function ConversationScreen({
                     card={dockedCard}
                     botName={botName}
                     responding={respondingIds.has(dockedCard.requestId)}
-                    keyboardOpen={keyboardInset > 0}
+                    keyboardOpen={keyboardInset > 0 || composerActive}
                     progress={dock.progress}
                     onChoose={dock.chooseOption}
                     onSubmit={dock.submit}
