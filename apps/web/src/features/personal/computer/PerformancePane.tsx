@@ -10,11 +10,14 @@ import { cn } from "~/lib/utils";
 import { PerfChart, type PerfChartSeries } from "./PerfChart";
 import { PcAvatar, type PcPose } from "./PcAvatar";
 import {
+  axisSeries,
+  axisSlotMap,
   evaluateThresholds,
   fmt,
   fmtClock,
   meanOver,
   NO_WARNINGS,
+  PERF_AXIS_SLOTS,
   PERF_STALE_AFTER_MS,
   summaryFor,
   WINDOW_MS,
@@ -233,11 +236,6 @@ function Row({
   );
 }
 
-const series = (
-  samples: ReadonlyArray<PerformanceSample>,
-  pick: (sample: PerformanceSample) => number | null,
-): ReadonlyArray<number | null> => samples.map(pick);
-
 const gpuEngineLabel = (engine: string | null): string => {
   if (engine === null) return "GPU";
   if (engine === "3D") return "3D engine";
@@ -357,8 +355,11 @@ export function PerformancePane({
 
   const live = feed.status === "live" && !stale;
   const [scrub, setScrub] = useState<number | null>(null);
-  const scrubIndex = scrub === null ? null : Math.min(scrub, Math.max(0, samples.length - 1));
-  const shown = scrubIndex === null ? newest : (samples[scrubIndex] ?? newest);
+  const scrubIndex = scrub === null ? null : Math.min(scrub, PERF_AXIS_SLOTS - 1);
+  // The scrub crosses the chart's slot axis; every slot reads a real sample
+  // (the newest at or before it), never a point inside a stretch nobody saw.
+  const slotSamples = useMemo(() => axisSlotMap(samples, now), [samples, now]);
+  const shown = scrubIndex === null ? newest : (slotSamples[scrubIndex] ?? newest);
 
   const scrollTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({
@@ -374,34 +375,71 @@ export function PerformancePane({
   const charging = slow?.batteryState === "charging" || slow?.batteryState === "full";
   const threads = shown?.threadPct ?? null;
   const threadMax = threads === null ? 0 : Math.max(...threads);
-  const fansFastest = (() => {
-    let top = 0;
-    for (const sample of samples) {
-      top = Math.max(top, sample.fan1Rpm ?? 0, sample.fan2Rpm ?? 0);
-    }
-    return top;
-  })();
 
   // One array per charted field, built once per sample (not per render): a
   // scrub or a stale flip reuses these identities, so the memoized chart and
-  // spark components below skip redrawing.
-  const gpuSeries = useMemo(() => series(samples, (sample) => sample.gpuPct), [samples]);
-  const diskSeries = useMemo(() => series(samples, (sample) => sample.diskActivePct), [samples]);
-  const downSeries = useMemo(() => series(samples, (sample) => sample.netDownMbps), [samples]);
-  const upSeries = useMemo(() => series(samples, (sample) => sample.netUpMbps), [samples]);
-  const cpuPowerSeries = useMemo(() => series(samples, (sample) => sample.powerCpuW), [samples]);
-  const gpuPowerSeries = useMemo(() => series(samples, (sample) => sample.powerGpuW), [samples]);
-  const platformPowerSeries = useMemo(
-    () => series(samples, (sample) => sample.powerPlatformW),
-    [samples],
+  // spark components below skip redrawing. Every array sits on the fixed
+  // 15-minute slot axis (axisSeries), so charts and sparks all share one time
+  // scale and a stretch nobody watched is left empty instead of squeezed.
+  const gpuSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.gpuPct),
+    [samples, now],
   );
-  const cpuSeries = useMemo(() => series(samples, (sample) => sample.cpuPct), [samples]);
-  const hbotsSeries = useMemo(() => series(samples, (sample) => sample.hbotsPct), [samples]);
-  const memSeries = useMemo(() => series(samples, (sample) => sample.memUsedGB), [samples]);
-  const hbotsMemSeries = useMemo(() => series(samples, (sample) => sample.hbotsGB), [samples]);
-  const tempSeries = useMemo(() => series(samples, (sample) => sample.cpuTempC), [samples]);
-  const fan1Series = useMemo(() => series(samples, (sample) => sample.fan1Rpm), [samples]);
-  const fan2Series = useMemo(() => series(samples, (sample) => sample.fan2Rpm), [samples]);
+  const diskSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.diskActivePct),
+    [samples, now],
+  );
+  const downSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.netDownMbps),
+    [samples, now],
+  );
+  const upSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.netUpMbps),
+    [samples, now],
+  );
+  const cpuPowerSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.powerCpuW),
+    [samples, now],
+  );
+  const gpuPowerSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.powerGpuW),
+    [samples, now],
+  );
+  const platformPowerSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.powerPlatformW),
+    [samples, now],
+  );
+  const cpuSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.cpuPct),
+    [samples, now],
+  );
+  const hbotsSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.hbotsPct),
+    [samples, now],
+  );
+  const memSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.memUsedGB),
+    [samples, now],
+  );
+  const hbotsMemSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.hbotsGB),
+    [samples, now],
+  );
+  const tempSeries = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.cpuTempC),
+    [samples, now],
+  );
+  const fan1Series = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.fan1Rpm),
+    [samples, now],
+  );
+  const fan2Series = useMemo(
+    () => axisSeries(samples, now, (sample) => sample.fan2Rpm),
+    [samples, now],
+  );
+  // Both fan sparks share one 0-to-fastest scale, taken over the window the
+  // charts draw (the rows' copy promises the last 15 minutes).
+  const fansFastest = Math.max(highest(fan1Series) ?? 0, highest(fan2Series) ?? 0);
   // The chart components are memoized, so their series prop must keep its
   // identity across renders that do not carry a new sample.
   const cpuChart = useMemo(
@@ -683,6 +721,7 @@ export function PerformancePane({
       <Gate id="perf-temps">
         <TempsCard
           samples={samples}
+          shown={shown}
           stale={stale}
           scrubIndex={scrubIndex}
           onScrub={setScrub}
@@ -1018,6 +1057,7 @@ function HbotsRow({
 
 function TempsCard({
   samples,
+  shown,
   stale,
   scrubIndex,
   onScrub,
@@ -1029,6 +1069,8 @@ function TempsCard({
   fan2Series,
 }: {
   readonly samples: ReadonlyArray<PerformanceSample>;
+  /** The sample the pane is showing (newest, or the scrub's slot). */
+  readonly shown: PerformanceSample | null;
   readonly stale: boolean;
   readonly scrubIndex: number | null;
   readonly onScrub: (index: number | null) => void;
@@ -1040,7 +1082,11 @@ function TempsCard({
   readonly fan2Series: ReadonlyArray<number | null>;
 }): JSX.Element {
   const newest = samples.at(-1) ?? null;
-  const shown = scrubIndex === null ? newest : (samples[scrubIndex] ?? newest);
+  // Temperatures and power come from the sensors app (LHM); fan speeds come
+  // from the laptop's own fan reader, a second source. QA caught the first
+  // build forcing the fans row to "not available" whenever LHM was down,
+  // though the fan reader was answering (NO-SHIP, 13 Oct): the two states
+  // are independent, so neither may gate the other.
   const sensorsDown = newest?.lhm === "down";
   const fansUnavailable =
     newest === null || newest.fanStatus === "unavailable" || newest.fans === "down";
@@ -1060,7 +1106,7 @@ function TempsCard({
             <p className="text-[15px] leading-5 font-semibold">Sensors app not running</p>
             <p className="mt-0.5 text-[13px] leading-4 text-[var(--personal-text-secondary)]">
               Temperatures and power use come from the sensors app on the laptop. It starts when you
-              sign in to Windows. Everything else on this page still works.
+              sign in to Windows. Fan speeds come from the laptop's own reader, so they still work.
             </p>
           </div>
         </div>
@@ -1069,8 +1115,8 @@ function TempsCard({
             newest={newest}
             fan1Series={fan1Series}
             fan2Series={fan2Series}
-            fansUnavailable={true}
-            fastest={0}
+            fansUnavailable={fansUnavailable}
+            fastest={fansFastest}
           />
         </div>
       </Card>
