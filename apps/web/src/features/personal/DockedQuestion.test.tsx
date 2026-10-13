@@ -117,17 +117,36 @@ describe("DockedQuestion", () => {
     });
     const chips = tree.root.findByProps({ "data-testid": "docked-question-chips" });
     expect(String(chips.props.className)).toContain("personal-dock-chips");
+    expect(String(chips.props.className)).not.toContain("hidden");
+    // Both layouts stay mounted (a tap must never lose the button under it);
+    // the keyboard picks which one shows.
+    expect(
+      String(tree.root.findByProps({ "data-testid": "docked-question-rows" }).props.className),
+    ).toContain("hidden");
     const labels = chips
       .findAll((node) => node.type === "button")
       .map((node) =>
         node.findAll((child) => typeof child.children[0] === "string")[0]?.children.join(""),
       );
     expect(labels).toEqual(["19:30 · Taberna da Rua", "21:00 · Prado"]);
+  });
+
+  it("shows the tall rows while the keyboard is down", () => {
+    const { tree } = render({
+      questions: [question("q1", ["19:30 · Taberna", "21:00 · Prado"])],
+      keyboardOpen: false,
+    });
+    const rows = tree.root.findByProps({ "data-testid": "docked-question-rows" });
+    expect(String(rows.props.className)).toContain("flex-col");
+    expect(String(rows.props.className)).not.toContain("hidden");
     expect(
-      tree.root.findAll(
+      rows.findAll(
         (node) => node.type === "button" && String(node.props.className).includes("h-12"),
       ),
-    ).toHaveLength(0);
+    ).toHaveLength(2);
+    expect(
+      String(tree.root.findByProps({ "data-testid": "docked-question-chips" }).props.className),
+    ).toContain("hidden");
   });
 
   it("counts one tap per answer: a fast double tap chooses once", () => {

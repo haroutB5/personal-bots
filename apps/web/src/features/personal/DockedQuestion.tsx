@@ -112,66 +112,71 @@ export function DockedQuestion({
         </p>
       ) : null}
 
-      {keyboardOpen ? (
-        <div
-          role="group"
-          aria-label={question.question}
-          data-testid="docked-question-chips"
-          className="personal-dock-chips"
-        >
-          {options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              disabled={responding}
-              aria-pressed={question.multiSelect ? option.selected : undefined}
-              onClick={() => choose(option.value)}
-              className={cn(
-                "personal-dock-chip",
-                option.selected && "personal-dock-chip-on",
-                "disabled:opacity-40",
-              )}
-            >
-              {option.selected ? (
-                <Check aria-hidden="true" className="size-4 shrink-0" strokeWidth={2.25} />
-              ) : null}
-              {option.label}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div role="group" aria-label={question.question} className="flex flex-col gap-2">
-          {options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              disabled={responding}
-              aria-pressed={question.multiSelect ? option.selected : undefined}
-              onClick={() => choose(option.value)}
-              className={cn(
-                "flex h-12 w-full items-center gap-2 rounded-[var(--personal-radius-control)] px-4 text-left text-[16px] leading-[22px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40",
-                option.selected
-                  ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
-                  : "bg-[var(--personal-fill-muted)] text-[var(--personal-text)]",
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              {option.detail !== null && option.detail !== option.label ? (
-                <span
-                  className={cn(
-                    "shrink-0 text-[15px] leading-5 tabular-nums",
-                    option.selected
-                      ? "text-[var(--personal-primary-text)] opacity-80"
-                      : "text-[var(--personal-text-secondary)]",
-                  )}
-                >
-                  {option.detail}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Both layouts stay mounted; the keyboard only picks which one shows.
+          Mounting one in place of the other swapped the buttons under a finger
+          that was already on its way down, and the answer was lost. */}
+      <div
+        role="group"
+        aria-label={question.question}
+        data-testid="docked-question-chips"
+        className={cn("personal-dock-chips", !keyboardOpen && "hidden")}
+      >
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            disabled={responding}
+            aria-pressed={question.multiSelect ? option.selected : undefined}
+            onClick={() => choose(option.value)}
+            className={cn(
+              "personal-dock-chip",
+              option.selected && "personal-dock-chip-on",
+              "disabled:opacity-40",
+            )}
+          >
+            {option.selected ? (
+              <Check aria-hidden="true" className="size-4 shrink-0" strokeWidth={2.25} />
+            ) : null}
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <div
+        role="group"
+        aria-label={question.question}
+        data-testid="docked-question-rows"
+        className={cn("flex flex-col gap-2", keyboardOpen && "hidden")}
+      >
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            disabled={responding}
+            aria-pressed={question.multiSelect ? option.selected : undefined}
+            onClick={() => choose(option.value)}
+            className={cn(
+              "flex h-12 w-full items-center gap-2 rounded-[var(--personal-radius-control)] px-4 text-left text-[16px] leading-[22px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40",
+              option.selected
+                ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
+                : "bg-[var(--personal-fill-muted)] text-[var(--personal-text)]",
+            )}
+          >
+            <span className="min-w-0 flex-1 truncate">{option.label}</span>
+            {option.detail !== null && option.detail !== option.label ? (
+              <span
+                className={cn(
+                  "shrink-0 text-[15px] leading-5 tabular-nums",
+                  option.selected
+                    ? "text-[var(--personal-primary-text)] opacity-80"
+                    : "text-[var(--personal-text-secondary)]",
+                )}
+              >
+                {option.detail}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
 
       {question.multiSelect || card.request.dismissible ? (
         <div className="mt-3 flex items-center gap-2 px-1">
