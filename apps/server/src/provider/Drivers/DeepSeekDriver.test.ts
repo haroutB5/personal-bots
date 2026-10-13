@@ -31,6 +31,7 @@ import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/Provid
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   ProviderVersionCache,
+  type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { DSH_PINNED_VERSION } from "./DeepSeekEngine.ts";
 import { DeepSeekDriver } from "./DeepSeekDriver.ts";
@@ -108,6 +109,23 @@ const runningSnapshot = (snapshot: ServerProvider, version: string): ServerProvi
   version,
 });
 
+/**
+ * Everything a consumer reads to decide "can a bot run on this provider": the
+ * bot form, the bot rows, Team and the task cards all go through
+ * `isProviderAvailable` / `snapshot.enabled` / `snapshot.installed` (plus the
+ * model slugs they offer). None of them reads the version advisory, so the two
+ * engines must agree here field for field.
+ */
+const availabilityShape = (snapshot: ServerProvider) => ({
+  enabled: snapshot.enabled,
+  installed: snapshot.installed,
+  status: snapshot.status,
+  availability: snapshot.availability,
+  unavailableReason: snapshot.unavailableReason,
+  auth: snapshot.auth,
+  modelSlugs: snapshot.models.map((entry) => entry.slug).sort(),
+});
+
 it.layer(testLayer)("DeepSeekDriver version advisory", (it) => {
   it.effect("dsh: no update lookup, and no advisory to show", () =>
     Effect.gen(function* () {
@@ -165,6 +183,56 @@ it.layer(testLayer)("DeepSeekDriver version advisory", (it) => {
         latestVersion: CLAUDE_CLI_LATEST,
       });
       expect(enriched.versionAdvisory?.message).not.toBeNull();
+    }).pipe(Effect.scoped),
+  );
+
+  // The bug this guards: reading "no package to look up" as "not installed".
+  // The provider is reported as available or not from `enabled`/`installed`/
+  // `status`/`availability`, and the dsh engine must be exactly as ready as the
+  // Claude engine. A regression here is invisible in the advisory tests above
+  // and takes DeepSeek out of the new-bot form.
+  it.effect("dsh: the same availability as the claude-code engine, advisory aside", () =>
+    Effect.gen(function* () {
+      const { client } = yield* makeRegistryStub();
+      const dsh = yield* createInstance("dsh");
+      const claude = yield* createInstance("claude-code");
+      const [dshSnapshot, claudeSnapshot] = yield* Effect.all([
+        dsh.snapshot.getSnapshot,
+        claude.snapshot.getSnapshot,
+      ]);
+      expect(availabilityShape(dshSnapshot)).toEqual(availabilityShape(claudeSnapshot));
+
+      const dshReady = runningSnapshot(dshSnapshot, DSH_PINNED_VERSION);
+      const claudeReady = runningSnapshot(claudeSnapshot, CLAUDE_CLI_RUNNING);
+      const enrich = (
+        snapshot: ServerProvider,
+        resolveMaintenance: () => Effect.Effect<ProviderMaintenanceCapabilities>,
+      ) =>
+        resolveMaintenance().pipe(
+          Effect.flatMap((capabilities) =>
+            enrichProviderSnapshotWithVersionAdvisory(snapshot, capabilities, {
+              enableProviderUpdateChecks: true,
+            }),
+          ),
+        );
+      const [dshEnriched, claudeEnriched] = yield* Effect.all([
+        enrich(dshReady, dsh.snapshot.resolveMaintenance),
+        enrich(claudeReady, claude.snapshot.resolveMaintenance),
+      ]).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(ProviderVersionCache, new Map()),
+      );
+
+      // The harness snapshot stays available, installed, ready and
+      // authenticated: only the advisory differs.
+      expect(availabilityShape(dshEnriched)).toEqual(availabilityShape(claudeEnriched));
+      expect(availabilityShape(dshEnriched)).toEqual(availabilityShape(dshReady));
+      expect(dshEnriched.enabled).toBe(true);
+      expect(dshEnriched.availability).toBeUndefined();
+      expect(dshEnriched.unavailableReason).toBeUndefined();
+      expect(dshEnriched.versionAdvisory?.status).toBe("unknown");
+      expect(dshEnriched.versionAdvisory?.canUpdate).toBe(false);
+      expect(claudeEnriched.versionAdvisory?.status).toBe("behind_latest");
     }).pipe(Effect.scoped),
   );
 });

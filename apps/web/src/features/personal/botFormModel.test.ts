@@ -31,6 +31,7 @@ import {
   searchModels,
   usesModelSearch,
 } from "./botFormModel";
+import { resolveBotProvider } from "./botSummaries";
 
 const select = (id: string, values: ReadonlyArray<string>) => ({
   id,
@@ -292,6 +293,53 @@ describe("bot provider instruction support", () => {
   it("still excludes a provider that carries instructions but cannot run", () => {
     const disabled = { ...readyProvider("codex"), enabled: false } as ServerProvider;
     expect(isBotProviderSelectable(disabled)).toBe(false);
+  });
+
+  // The shape the server really sends for DeepSeek on the harness engine: the
+  // DeepSeek driver never sets `availability`, and the pinned harness has no
+  // package to look an update up for, so its advisory is `unknown` and carries
+  // no update command. A 13 Oct NO-SHIP blamed that advisory for DeepSeek
+  // disappearing from the new-bot form; it did not (see the release notes), and
+  // this pins the shape so a future change to either cannot take it out
+  // silently.
+  const dshDeepSeek = (overrides: Partial<ServerProvider>): ServerProvider => {
+    const { availability: _unset, ...base } = readyProvider("deepseek", "deepseek");
+    return {
+      ...base,
+      version: "0.2.0-rc.2",
+      models: [model({ slug: "deepseek-flash" })],
+      versionAdvisory: {
+        status: "unknown",
+        currentVersion: "0.2.0-rc.2",
+        latestVersion: null,
+        updateCommand: null,
+        canUpdate: false,
+        canInstallVersion: false,
+        checkedAt: "2026-10-13T23:00:00.000Z",
+        message: null,
+      },
+      smokeCheck: { status: "passed", version: "0.2.0-rc.2" },
+      ...overrides,
+    } as unknown as ServerProvider;
+  };
+
+  it("offers the dsh DeepSeek snapshot, whose advisory is unknown and availability unset", () => {
+    const snapshot = dshDeepSeek({});
+    expect(snapshot.availability).toBeUndefined();
+    expect(isBotProviderSelectable(snapshot)).toBe(true);
+    expect(resolveBotProvider("deepseek", [snapshot])).toMatchObject({
+      available: true,
+      broken: false,
+    });
+  });
+
+  it("still refuses that snapshot when the server reports it off or unavailable", () => {
+    expect(isBotProviderSelectable(dshDeepSeek({ enabled: false }))).toBe(false);
+    expect(
+      isBotProviderSelectable(
+        dshDeepSeek({ availability: "unavailable", unavailableReason: "Driver not registered" }),
+      ),
+    ).toBe(false);
   });
 
   it("warns in the editor for a bot already saved on a mute provider", () => {

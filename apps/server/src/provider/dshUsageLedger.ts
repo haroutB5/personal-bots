@@ -20,7 +20,7 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as Zlib from "node:zlib";
+import * as NodeZlib from "node:zlib";
 
 import { DEEPSEEK_FLASH_MODEL } from "@t3tools/contracts";
 
@@ -129,7 +129,7 @@ export function decodeDshSessionFrames(buffer: Buffer, fromOffset: number): DshF
     if (start === -1) break;
     const length = zstdFrameLength(buffer, start);
     if (length === undefined) break;
-    const decoded = Zlib.zstdDecompressSync(buffer.subarray(start, start + length)).toString(
+    const decoded = NodeZlib.zstdDecompressSync(buffer.subarray(start, start + length)).toString(
       "utf8",
     );
     lines.push(...decoded.split("\n").filter((line) => line.trim().length > 0));
