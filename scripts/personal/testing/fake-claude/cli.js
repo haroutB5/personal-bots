@@ -12,7 +12,8 @@
 //   LONGMSG  a long multi-paragraph reply.   SLOW<n>  works for n seconds, then answers.
 //   A message that arrives while a SLOW job runs is folded into it ("Folded in: ...", no result
 //   of its own) like the real CLI's steer, and every prompt reports command_lifecycle frames
-//   (started/completed) - the delivery signal the server's steer-row fix reads.
+//   (started/completed) - the delivery signal the server's steer-row fix reads. Every assistant
+//   text is streamed first (message_start, content_block_*), as the real CLI sends it.
 //   TABLEMSG  a markdown table wider than a 390 px phone.   TABLEFIT  a table that fits the screen.
 //   WIDECODE  an unwrapped code block wider than a phone (the sideways-scroll checks drag them).
 //   DELEGATE:<botId>  calls the delegate_task MCP tool.   TASKDONE  answers a delegated task.
@@ -147,14 +148,57 @@ const init = () => {
     output_style: "default",
   });
 };
-const assistant = (text, stop = "end_turn") =>
+// Every assistant text goes out the way the real CLI sends it: the stream
+// frames first (message_start, one text content block, ...), then the
+// assembled message with the same id. The server needs them: a snapshot with
+// no streamed block of its own is taken as a backfill for the block before it,
+// so a turn whose second and later texts skipped the frames kept only its
+// first line (QA 1.66.45: a steer's "Folded in" reply never reached the chat;
+// the server is started with --include-partial-messages, so the real CLI
+// always streams).
+const streamEvent = (event) =>
+  out({
+    type: "stream_event",
+    event,
+    parent_tool_use_id: null,
+    uuid: NodeCrypto.randomUUID(),
+    session_id: sessionId,
+  });
+const startAssistantMessage = (id) =>
+  streamEvent({
+    type: "message_start",
+    message: {
+      id,
+      type: "message",
+      role: "assistant",
+      content: [],
+      model: "claude-sonnet-5-5",
+      stop_reason: null,
+      usage: { input_tokens: 10, output_tokens: 1 },
+    },
+  });
+const streamAssistantText = (id, text) => {
+  startAssistantMessage(id);
+  streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  for (let at = 0; at < text.length; at += 24) {
+    streamEvent({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: text.slice(at, at + 24) },
+    });
+  }
+  streamEvent({ type: "content_block_stop", index: 0 });
+};
+const assistant = (text, stop = "end_turn") => {
+  const id = `msg_${NodeCrypto.randomUUID()}`;
+  streamAssistantText(id, text);
   out({
     type: "assistant",
     session_id: sessionId,
     uuid: NodeCrypto.randomUUID(),
     parent_tool_use_id: null,
     message: {
-      id: `msg_${NodeCrypto.randomUUID()}`,
+      id,
       type: "message",
       role: "assistant",
       model: "claude-sonnet-5-5",
@@ -163,6 +207,7 @@ const assistant = (text, stop = "end_turn") =>
       usage: { input_tokens: 10, output_tokens: 5 },
     },
   });
+};
 const finish = (text, isError) => {
   // The oldest prompt that started and has not completed is this result's
   // command (FIFO keeps overlapping SLOW jobs paired correctly enough; the
