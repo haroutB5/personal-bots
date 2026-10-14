@@ -5,8 +5,10 @@ import {
   type ProviderRuntimeEvent,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { DeepSeekBalanceRead } from "../../provider/Drivers/DeepSeekBalance.ts";
@@ -14,8 +16,8 @@ import {
   DEEPSEEK_BALANCE_CHECK_DEBOUNCE_MS,
   DEEPSEEK_BALANCE_CHECK_INTERVAL_MS,
   deepSeekBalanceAlertMetaKey,
-  deepSeekBalanceWarnedValue,
-  parseDeepSeekBalanceWarned,
+  deepSeekBalanceLastKindValue,
+  parseDeepSeekBalanceLastKind,
 } from "./deepSeekBalanceAlert.ts";
 import { makeWith, watchableDeepSeekProviders } from "./DeepSeekBalanceWatcher.ts";
 
@@ -69,6 +71,14 @@ function harness(input: {
   readonly now?: () => number;
   /** Survives a "restart": a second harness can share the same rows. */
   readonly meta?: Map<string, string>;
+  /** Registry snapshots, when the test drives the instance list itself. */
+  readonly providerChanges?: Stream.Stream<ReadonlyArray<ServerProvider>>;
+  /**
+   * Runs after the check has written its flag (or cleared it). The notice is
+   * sent before that, so this is "the whole check is done" for a test that
+   * wants to look at the state it left behind.
+   */
+  readonly onMetaWrite?: () => Effect.Effect<void>;
 }) {
   const meta = input.meta ?? new Map<string, string>();
   const notifications: Array<{
@@ -83,6 +93,7 @@ function harness(input: {
   const make = makeWith({
     getProviders: Effect.succeed(input.providers),
     runtimeEvents: Stream.empty,
+    providerChanges: input.providerChanges ?? Stream.empty,
     readBalance: () => {
       readCalls += 1;
       const read = input.reads();
@@ -92,7 +103,7 @@ function harness(input: {
     setMeta: (key, value) =>
       Effect.sync(() => {
         meta.set(key, value);
-      }),
+      }).pipe(Effect.andThen(input.onMetaWrite?.() ?? Effect.void)),
     notify: (notification) =>
       Effect.sync(() => {
         notifications.push(notification);
@@ -105,7 +116,7 @@ function harness(input: {
     meta,
     notifications,
     readCalls: () => readCalls,
-    warned: () => parseDeepSeekBalanceWarned(meta.get(deepSeekBalanceAlertMetaKey(instanceId))),
+    lastKind: () => parseDeepSeekBalanceLastKind(meta.get(deepSeekBalanceAlertMetaKey(instanceId))),
   };
 }
 
@@ -142,7 +153,7 @@ describe("DeepSeekBalanceWatcher", () => {
           at: expect.any(String),
         },
       ]);
-      expect(first.warned()).toBe(true);
+      expect(first.lastKind()).toBe("low");
 
       // A second reading in the same spell stays quiet even when it drops.
       yield* watcher.check({ instanceId, force: true });
@@ -165,13 +176,13 @@ describe("DeepSeekBalanceWatcher", () => {
 
       yield* watcher.check({ instanceId });
       expect(test.notifications).toHaveLength(1);
-      expect(test.warned()).toBe(true);
+      expect(test.lastKind()).toBe("low");
 
       // A top-up ends the spell; nothing is announced for the recovery.
       balance = 7;
       yield* watcher.check({ instanceId, force: true });
       expect(test.notifications).toHaveLength(1);
-      expect(test.warned()).toBe(false);
+      expect(test.lastKind()).toBeNull();
 
       // The next drop is a new spell and is reported.
       balance = 0.5;
@@ -189,7 +200,7 @@ describe("DeepSeekBalanceWatcher", () => {
       expect(test.notifications).toHaveLength(1);
       expect(test.notifications[0]?.empty).toBe(true);
       expect(test.notifications[0]?.balance).toBe("$0.00");
-      expect(test.warned()).toBe(true);
+      expect(test.lastKind()).toBe("empty");
     }),
   );
 
@@ -201,16 +212,16 @@ describe("DeepSeekBalanceWatcher", () => {
 
       yield* watcher.check({ instanceId });
       expect(test.notifications).toHaveLength(0);
-      expect(test.warned()).toBe(false);
+      expect(test.lastKind()).toBeNull();
 
       // Already warned, then an outage: still warned, so the recovery back to
       // low does not warn a second time for the same spell.
       test.meta.set(
         deepSeekBalanceAlertMetaKey(instanceId),
-        deepSeekBalanceWarnedValue({ warned: true, at: "2026-10-14T10:00:00Z" }),
+        deepSeekBalanceLastKindValue({ kind: "low", at: "2026-10-14T10:00:00Z" }),
       );
       yield* watcher.check({ instanceId, force: true });
-      expect(test.warned()).toBe(true);
+      expect(test.lastKind()).toBe("low");
     }),
   );
 
@@ -274,10 +285,10 @@ describe("DeepSeekBalanceWatcher", () => {
     }),
   );
 
-  it.effect("walks 5.00, 0.90, 0.00, 7.00 and sends exactly the expected notices", () =>
+  it.effect("walks 5.00, 0.90, 0.00, 7.00, 0.00: low, empty, re-arm, empty", () =>
     Effect.gen(function* () {
       const meta = new Map<string, string>();
-      const sequence = [5, 0.9, 0, 7];
+      const sequence = [5, 0.9, 0, 7, 0];
       let step = 0;
       const test = harness({
         providers: [provider()],
@@ -291,16 +302,62 @@ describe("DeepSeekBalanceWatcher", () => {
       const watcher = yield* test.make;
 
       yield* watcher.check({ instanceId, force: true }); // 5.00: above the line
-      yield* watcher.check({ instanceId, force: true }); // 0.90: the drop
-      yield* watcher.check({ instanceId, force: true }); // 0.00: same spell
+      yield* watcher.check({ instanceId, force: true }); // 0.90: the low drop
+      yield* watcher.check({ instanceId, force: true }); // 0.00: the account runs out
       yield* watcher.check({ instanceId, force: true }); // 7.00: the top-up
+      yield* watcher.check({ instanceId, force: true }); // 0.00: a fresh spell
 
-      // One notice for the spell, none for the recovery - and the flag is
-      // cleared, so a later drop is a new spell and reports again.
+      // The low notice, then the one escalation to empty. The top-up re-arms,
+      // so the next drop is a new spell and reports the empty notice straight
+      // away. None of it repeats inside a spell.
       expect(test.notifications.map((notice) => [notice.balance, notice.empty])).toEqual([
         ["$0.90", false],
+        ["$0.00", true],
+        ["$0.00", true],
       ]);
-      expect(test.warned()).toBe(false);
+      expect(test.lastKind()).toBe("empty");
+    }),
+  );
+
+  it.effect("checks the moment a slow probe makes a DeepSeek instance authenticated", () =>
+    Effect.gen(function* () {
+      const changes = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
+      const checked = yield* Deferred.make<void>();
+      // The boot sweep sees an instance whose probe has not finished. That
+      // probe reads the balance itself, so it can land minutes later, and the
+      // old watcher would wait for the next half-hour tick (QA: 1,794 s).
+      const test = harness({
+        providers: [provider({ auth: { status: "unauthenticated" } })],
+        reads: () => ready(0.4),
+        providerChanges: Stream.fromQueue(changes),
+        onMetaWrite: () => Deferred.succeed(checked, undefined),
+      });
+      const watcher = yield* test.make;
+
+      yield* watcher.sweep;
+      expect(test.readCalls()).toBe(0);
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* watcher.start();
+          // The probe finished; the registry publishes the authenticated
+          // instance, which is the check the startup sweep could not make.
+          yield* Queue.offer(changes, [provider()]);
+          yield* Deferred.await(checked);
+        }),
+      );
+
+      expect(test.readCalls()).toBe(1);
+      expect(test.notifications).toEqual([
+        {
+          instanceId: "deepseek",
+          label: "DeepSeek",
+          balance: "$0.40",
+          empty: false,
+          at: expect.any(String),
+        },
+      ]);
+      expect(test.lastKind()).toBe("low");
     }),
   );
 

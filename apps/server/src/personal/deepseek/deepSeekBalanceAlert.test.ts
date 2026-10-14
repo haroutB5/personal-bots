@@ -6,9 +6,9 @@ import {
   DEEPSEEK_LOW_BALANCE_REARM_USD,
   decideDeepSeekBalanceAlert,
   deepSeekBalanceAlertMetaKey,
-  deepSeekBalanceWarnedValue,
+  deepSeekBalanceLastKindValue,
   formatDeepSeekBalance,
-  parseDeepSeekBalanceWarned,
+  parseDeepSeekBalanceLastKind,
 } from "./deepSeekBalanceAlert.ts";
 
 function ready(input: {
@@ -35,8 +35,10 @@ const failed: DeepSeekBalanceRead = {
   lastGood: null,
 };
 
-const decide = (read: DeepSeekBalanceRead, warned = false) =>
-  decideDeepSeekBalanceAlert({ read, warned });
+type LastKind = "low" | "empty" | null;
+
+const decide = (read: DeepSeekBalanceRead, lastKind: LastKind = null) =>
+  decideDeepSeekBalanceAlert({ read, lastKind });
 
 describe("decideDeepSeekBalanceAlert", () => {
   it("warns at exactly a dollar and not a cent above it", () => {
@@ -55,16 +57,39 @@ describe("decideDeepSeekBalanceAlert", () => {
   it("re-arms above 1.50 only, so a balance near a dollar cannot flap", () => {
     expect(DEEPSEEK_LOW_BALANCE_REARM_USD).toBe(1.5);
     // Still inside the band: the spell is neither ended nor reported again.
-    expect(decide(ready({ totalBalance: 1.2 }), true)).toEqual({ action: "none" });
-    expect(decide(ready({ totalBalance: 1.5 }), true)).toEqual({ action: "none" });
-    expect(decide(ready({ totalBalance: 1.51 }), true)).toEqual({ action: "clear" });
+    expect(decide(ready({ totalBalance: 1.2 }), "low")).toEqual({ action: "none" });
+    expect(decide(ready({ totalBalance: 1.5 }), "low")).toEqual({ action: "none" });
+    expect(decide(ready({ totalBalance: 1.51 }), "low")).toEqual({ action: "clear" });
+    expect(decide(ready({ totalBalance: 1.51 }), "empty")).toEqual({ action: "clear" });
     // Nothing to clear when the balance was never in a low spell.
-    expect(decide(ready({ totalBalance: 1.51 }), false)).toEqual({ action: "none" });
+    expect(decide(ready({ totalBalance: 1.51 }))).toEqual({ action: "none" });
   });
 
-  it("warns once per spell", () => {
-    expect(decide(ready({ totalBalance: 0.94 }), true)).toEqual({ action: "none" });
-    expect(decide(ready({ totalBalance: 0 }), true)).toEqual({ action: "none" });
+  it("repeats neither notice inside one spell", () => {
+    expect(decide(ready({ totalBalance: 0.94 }), "low")).toEqual({ action: "none" });
+    expect(decide(ready({ totalBalance: 0 }), "empty")).toEqual({ action: "none" });
+    expect(decide(ready({ totalBalance: 0, isAvailable: false }), "empty")).toEqual({
+      action: "none",
+    });
+  });
+
+  it("escalates a low spell to the empty notice exactly once, and never back down", () => {
+    // Low first, then the account runs out.
+    expect(decide(ready({ totalBalance: 0.9 }))).toEqual({
+      action: "alert",
+      alert: { kind: "low", balance: "$0.90" },
+    });
+    expect(decide(ready({ totalBalance: 0 }), "low")).toEqual({
+      action: "alert",
+      alert: { kind: "empty", balance: "$0.00" },
+    });
+    // Services that stop answering are empty too, even with money left.
+    expect(decide(ready({ totalBalance: 0.4, isAvailable: false }), "low")).toEqual({
+      action: "alert",
+      alert: { kind: "empty", balance: "$0.40" },
+    });
+    // Once empty, a reading back inside the low band is never announced again.
+    expect(decide(ready({ totalBalance: 0.5 }), "empty")).toEqual({ action: "none" });
   });
 
   it("says empty at zero or when the account cannot make calls", () => {
@@ -82,12 +107,15 @@ describe("decideDeepSeekBalanceAlert", () => {
     expect(decide(failed)).toEqual({ action: "none" });
     // The important half: an outage must not re-arm, or the next good reading
     // would report the same drop a second time.
-    expect(decide(failed, true)).toEqual({ action: "none" });
+    expect(decide(failed, "low")).toEqual({ action: "none" });
+    expect(decide(failed, "empty")).toEqual({ action: "none" });
   });
 
   it("leaves a non-USD account alone rather than measuring it against a dollar", () => {
     expect(decide(ready({ totalBalance: 6, currency: "CNY" }))).toEqual({ action: "none" });
-    expect(decide(ready({ totalBalance: 0.2, currency: "CNY" }), true)).toEqual({ action: "none" });
+    expect(decide(ready({ totalBalance: 0.2, currency: "CNY" }), "low")).toEqual({
+      action: "none",
+    });
   });
 });
 
@@ -100,24 +128,34 @@ describe("the balance wording and the persisted flag", () => {
     expect(formatDeepSeekBalance({ currency: "USD", totalBalance: 0.999 })).toBe("$1.00");
   });
 
-  it("reads an unreadable flag as not warned, and round-trips its own value", () => {
-    expect(parseDeepSeekBalanceWarned(undefined)).toBe(false);
-    expect(parseDeepSeekBalanceWarned("")).toBe(false);
-    expect(parseDeepSeekBalanceWarned("not json")).toBe(false);
-    expect(parseDeepSeekBalanceWarned("null")).toBe(false);
-    expect(parseDeepSeekBalanceWarned("[]")).toBe(false);
-    expect(parseDeepSeekBalanceWarned('{"warned":false}')).toBe(false);
-    expect(parseDeepSeekBalanceWarned('{"warned":true}')).toBe(true);
+  it("reads an unreadable flag as nothing announced, and round-trips its own value", () => {
+    expect(parseDeepSeekBalanceLastKind(undefined)).toBeNull();
+    expect(parseDeepSeekBalanceLastKind("")).toBeNull();
+    expect(parseDeepSeekBalanceLastKind("not json")).toBeNull();
+    expect(parseDeepSeekBalanceLastKind("null")).toBeNull();
+    expect(parseDeepSeekBalanceLastKind("[]")).toBeNull();
+    expect(parseDeepSeekBalanceLastKind('{"kind":null}')).toBeNull();
+    expect(parseDeepSeekBalanceLastKind('{"kind":"nonsense"}')).toBeNull();
+    expect(parseDeepSeekBalanceLastKind('{"kind":"low"}')).toBe("low");
+    expect(parseDeepSeekBalanceLastKind('{"kind":"empty"}')).toBe("empty");
+    // 1.66.43 wrote a bare boolean, only ever for the first notice of a spell,
+    // which is the low one. A row written by it must not re-announce the drop.
+    expect(parseDeepSeekBalanceLastKind('{"warned":true}')).toBe("low");
+    expect(parseDeepSeekBalanceLastKind('{"warned":false}')).toBeNull();
     expect(
-      parseDeepSeekBalanceWarned(
-        deepSeekBalanceWarnedValue({ warned: true, at: "2026-10-14T10:00:00Z", balance: "$0.94" }),
+      parseDeepSeekBalanceLastKind(
+        deepSeekBalanceLastKindValue({
+          kind: "empty",
+          at: "2026-10-14T10:00:00Z",
+          balance: "$0.00",
+        }),
       ),
-    ).toBe(true);
+    ).toBe("empty");
     expect(
-      parseDeepSeekBalanceWarned(
-        deepSeekBalanceWarnedValue({ warned: false, at: "2026-10-14T10:00:00Z" }),
+      parseDeepSeekBalanceLastKind(
+        deepSeekBalanceLastKindValue({ kind: null, at: "2026-10-14T10:00:00Z" }),
       ),
-    ).toBe(false);
+    ).toBeNull();
   });
 
   it("namespaces the flag by instance, like the smoke check", () => {

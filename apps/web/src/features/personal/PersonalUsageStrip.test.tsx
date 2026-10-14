@@ -428,6 +428,13 @@ describe("PersonalUsageStrip", () => {
     const cny = await openWith(balanceEntry(6, "CNY"));
     expect(cny.text).not.toContain("Top up to keep DeepSeek bots running.");
 
+    // A zero balance on a working account is called empty, exactly as the push
+    // names it, rather than read out as "$0.00".
+    const dry = await openWith(balanceEntry(0));
+    expect(dry.text).toContain("DeepSeek balance is empty.");
+    expect(dry.text).toContain("Top up to keep DeepSeek bots running.");
+    expect(dry.text).not.toContain("DeepSeek balance is $0.00.");
+
     // An account that cannot make calls keeps its stronger existing sentence.
     const empty = await openWith(balanceEntry(0, "USD", false));
     expect(empty.text).toContain("This account cannot make API calls right now.");

@@ -6,6 +6,12 @@
  * notification every time the balance crossed a dollar; the gap means one
  * notice per low spell, cleared by a top-up.
  *
+ * Inside one spell the notice escalates exactly once: the low notice, then the
+ * stronger empty notice when the account actually runs out (zero balance, or
+ * `is_available: false`). It never falls back to low and never repeats, so an
+ * account parked at zero is announced at most once per spell and then stays
+ * quiet. The kind already announced is what the flag remembers.
+ *
  * A failed read never warns and never re-arms. An outage must not present
  * itself as a balance problem (Harout's rule: nothing that makes it look like
  * something is wrong when it is not), and it must not end a low spell either,
@@ -34,13 +40,19 @@ export const DEEPSEEK_BALANCE_CHECK_DEBOUNCE_MS = 5 * 60_000;
 export const DEEPSEEK_BALANCE_CHECK_INTERVAL_MS = 30 * 60_000;
 
 /**
- * Where the warned flag lives: one `personal_meta` row per instance, like
+ * Where the announced kind lives: one `personal_meta` row per instance, like
  * `provider-smoke-check:<instanceId>`.
  */
 export const deepSeekBalanceAlertMetaKey = (instanceId: string) =>
   `deepseek-balance-low:${instanceId}`;
 
 export type DeepSeekBalanceAlertKind = "low" | "empty";
+
+/**
+ * The notice already sent in the spell that is open, or null when no spell is
+ * open. This is what the persisted flag holds.
+ */
+export type DeepSeekBalanceAlertLastKind = DeepSeekBalanceAlertKind | null;
 
 export interface DeepSeekBalanceAlert {
   readonly kind: DeepSeekBalanceAlertKind;
@@ -65,24 +77,27 @@ export function formatDeepSeekBalance(amounts: {
 }
 
 /**
- * What to do about one reading, given whether this instance is already inside a
- * reported low spell.
+ * What to do about one reading, given what this instance has already announced
+ * in its open low spell (null when no spell is open).
  */
 export function decideDeepSeekBalanceAlert(input: {
   readonly read: DeepSeekBalanceRead;
-  readonly warned: boolean;
+  readonly lastKind: DeepSeekBalanceAlertLastKind;
 }): DeepSeekBalanceAlertDecision {
   if (input.read.status !== "ready") return { action: "none" };
   const { amounts } = input.read;
   if (amounts.currency.toUpperCase() !== "USD") return { action: "none" };
   if (amounts.totalBalance > DEEPSEEK_LOW_BALANCE_REARM_USD) {
-    return input.warned ? { action: "clear" } : { action: "none" };
+    return input.lastKind !== null ? { action: "clear" } : { action: "none" };
   }
   // The band between the warn line and the re-arm line keeps the spell as it
   // is: still warned stays quiet, not yet warned stays quiet too.
   if (amounts.totalBalance > DEEPSEEK_LOW_BALANCE_USD) return { action: "none" };
-  if (input.warned) return { action: "none" };
   const empty = !amounts.isAvailable || amounts.totalBalance <= 0;
+  // One notice per spell, and the escalation runs one way only: a low notice
+  // may be followed by the empty one, and nothing may follow the empty one.
+  const allowed = input.lastKind === null || (input.lastKind === "low" && empty);
+  if (!allowed) return { action: "none" };
   return {
     action: "alert",
     alert: { kind: empty ? "empty" : "low", balance: formatDeepSeekBalance(amounts) },
@@ -90,29 +105,36 @@ export function decideDeepSeekBalanceAlert(input: {
 }
 
 /**
- * The persisted warned flag. Anything absent or unreadable counts as "not
- * warned": one notice too many is a smaller harm than never telling the owner
- * the account is running dry.
+ * The persisted flag: the kind already announced in the open spell, or null.
+ * Anything absent or unreadable counts as "nothing announced": one notice too
+ * many is a smaller harm than never telling the owner the account is running
+ * dry.
  */
-export function parseDeepSeekBalanceWarned(value: string | undefined): boolean {
-  if (value === undefined) return false;
+export function parseDeepSeekBalanceLastKind(
+  value: string | undefined,
+): DeepSeekBalanceAlertLastKind {
+  if (value === undefined) return null;
   try {
     const parsed: unknown = JSON.parse(value);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
-    return (parsed as { readonly warned?: unknown }).warned === true;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const kind = (parsed as { readonly kind?: unknown }).kind;
+    if (kind === "low" || kind === "empty") return kind;
+    // 1.66.43 stored a bare boolean, and it wrote it only for the first notice
+    // of a spell, which is always the low one.
+    return (parsed as { readonly warned?: unknown }).warned === true ? "low" : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
 /** The value stored under {@link deepSeekBalanceAlertMetaKey}. */
-export function deepSeekBalanceWarnedValue(input: {
-  readonly warned: boolean;
+export function deepSeekBalanceLastKindValue(input: {
+  readonly kind: DeepSeekBalanceAlertLastKind;
   readonly at: string;
   readonly balance?: string;
 }): string {
   return JSON.stringify({
-    warned: input.warned,
+    kind: input.kind,
     at: input.at,
     ...(input.balance !== undefined ? { balance: input.balance } : {}),
   });

@@ -11,10 +11,17 @@
  * - **A light timer.** Every thirty minutes it sweeps the instances that are
  *   enabled *and* have a key. With nothing to watch it makes no request at all,
  *   so a disabled or keyless DeepSeek costs nothing.
- * - **One notice per spell.** At or below $1.00 the owner is told once (a
- *   different, stronger notice when the account is actually empty). The warned
- *   flag lives in `personal_meta`, so a server restart does not warn again, and
- *   it is cleared only once the balance is back above $1.50 - a top-up.
+ * - **The moment a key shows up.** A DeepSeek instance is only watchable once
+ *   its probe has called it authenticated, and that probe reads the balance
+ *   itself, so a slow one can finish long after boot. The registry's change
+ *   stream is watched for an instance reaching that state, and the check it
+ *   missed runs then rather than at the next half-hour tick. Debounced like any
+ *   other check.
+ * - **One notice per spell.** At or below $1.00 the owner is told once, and the
+ *   spell may escalate once to the stronger empty notice if the account then
+ *   runs out. The announced kind lives in `personal_meta`, so a server restart
+ *   does not warn again, and it is cleared only once the balance is back above
+ *   $1.50 - a top-up.
  *
  * The reading itself is the DeepSeek provider's existing one
  * (`deepSeekBalanceReader`, cached for ten minutes), so the key still only ever
@@ -53,8 +60,8 @@ import {
   DEEPSEEK_BALANCE_CHECK_INTERVAL_MS,
   decideDeepSeekBalanceAlert,
   deepSeekBalanceAlertMetaKey,
-  deepSeekBalanceWarnedValue,
-  parseDeepSeekBalanceWarned,
+  deepSeekBalanceLastKindValue,
+  parseDeepSeekBalanceLastKind,
 } from "./deepSeekBalanceAlert.ts";
 
 /** Any tagged service error; the watcher logs and moves on rather than branching on them. */
@@ -81,6 +88,8 @@ export function watchableDeepSeekProviders(
 export interface DeepSeekBalanceWatcherDeps {
   readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
   readonly runtimeEvents: Stream.Stream<ProviderRuntimeEvent>;
+  /** Every provider snapshot the registry publishes, newest state each time. */
+  readonly providerChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
   /** The instance's key, then one reading with it; none when it has no key. */
   readonly readBalance: (
     instanceId: ProviderInstanceId,
@@ -115,7 +124,7 @@ export const makeWith = (
 ): Effect.Effect<DeepSeekBalanceWatcherShape> => {
   const now = deps.now ?? Date.now;
   // In memory only: the debounce is about not asking twice within a few
-  // minutes, and a restart may as well ask once. The warned flag, which must
+  // minutes, and a restart may as well ask once. The announced kind, which must
   // survive a restart, is in `personal_meta` instead.
   const lastCheckMs = new Map<string, number>();
 
@@ -133,14 +142,14 @@ export const makeWith = (
       const persisted = yield* deps
         .getMeta(key)
         .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-      const warned = parseDeepSeekBalanceWarned(Option.getOrUndefined(persisted));
-      const decision = decideDeepSeekBalanceAlert({ read: read.value, warned });
+      const lastKind = parseDeepSeekBalanceLastKind(Option.getOrUndefined(persisted));
+      const decision = decideDeepSeekBalanceAlert({ read: read.value, lastKind });
       if (decision.action === "none") return;
 
       const at = DateTime.formatIso(DateTime.makeUnsafe(now()));
       if (decision.action === "clear") {
         yield* deps
-          .setMeta(key, deepSeekBalanceWarnedValue({ warned: false, at }))
+          .setMeta(key, deepSeekBalanceLastKindValue({ kind: null, at }))
           .pipe(Effect.ignore);
         return;
       }
@@ -160,27 +169,37 @@ export const makeWith = (
       yield* deps
         .setMeta(
           key,
-          deepSeekBalanceWarnedValue({ warned: true, at, balance: decision.alert.balance }),
+          deepSeekBalanceLastKindValue({
+            kind: decision.alert.kind,
+            at,
+            balance: decision.alert.balance,
+          }),
         )
         .pipe(Effect.ignore);
     });
 
-  const check: DeepSeekBalanceWatcherShape["check"] = (input) =>
+  /** The debounced read for a provider already known to be watchable. */
+  const checkProvider = (provider: ServerProvider, force: boolean): Effect.Effect<void> =>
     Effect.gen(function* () {
       const at = now();
-      const key = String(input.instanceId);
-      if (input.force !== true) {
+      const key = String(provider.instanceId);
+      if (!force) {
         const last = lastCheckMs.get(key);
         if (last !== undefined && at - last < DEEPSEEK_BALANCE_CHECK_DEBOUNCE_MS) return;
       }
       // Recorded before the read, so two turns finishing together ask once.
       lastCheckMs.set(key, at);
+      yield* evaluate(provider.instanceId, provider);
+    });
+
+  const check: DeepSeekBalanceWatcherShape["check"] = (input) =>
+    Effect.gen(function* () {
       const providers = yield* deps.getProviders.pipe(Effect.orElseSucceed(() => []));
       const provider = watchableDeepSeekProviders(providers).find(
         (candidate) => candidate.instanceId === input.instanceId,
       );
       if (provider === undefined) return;
-      yield* evaluate(provider.instanceId, provider);
+      yield* checkProvider(provider, input.force === true);
     });
 
   const sweep: DeepSeekBalanceWatcherShape["sweep"] = Effect.gen(function* () {
@@ -198,6 +217,31 @@ export const makeWith = (
       yield* check({ instanceId });
     });
 
+  /**
+   * The instances already seen watchable since boot. A DeepSeek probe reads the
+   * balance itself, so it can call an instance authenticated well after the
+   * startup sweep went past; that arrival is when the missed check is taken.
+   * Later snapshots for the same instance are the stream's routine noise and
+   * stay debounced.
+   */
+  const watchableSinceBoot = new Set<string>();
+
+  const handleProviderChange = (providers: ReadonlyArray<ServerProvider>): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const watchable = watchableDeepSeekProviders(providers);
+      const current = new Set(watchable.map((provider) => String(provider.instanceId)));
+      for (const provider of watchable) {
+        const key = String(provider.instanceId);
+        if (watchableSinceBoot.has(key)) continue;
+        watchableSinceBoot.add(key);
+        yield* checkProvider(provider, false);
+      }
+      // A key taken away and saved again is a new arrival, not a stale one.
+      for (const key of watchableSinceBoot) {
+        if (!current.has(key)) watchableSinceBoot.delete(key);
+      }
+    });
+
   const start: DeepSeekBalanceWatcherShape["start"] = () =>
     Effect.gen(function* () {
       yield* forkParked(
@@ -210,6 +254,7 @@ export const makeWith = (
         ),
       );
       yield* forkParked(Stream.runForEach(deps.runtimeEvents, handleRuntimeEvent));
+      yield* forkParked(Stream.runForEach(deps.providerChanges, handleProviderChange));
     });
 
   return Effect.succeed({ start, check, sweep });
@@ -249,6 +294,7 @@ export const make = Effect.gen(function* () {
   return yield* makeWith({
     getProviders: providers.getProviders,
     runtimeEvents: providerService.streamEvents,
+    providerChanges: providers.streamChanges,
     readBalance,
     getMeta: (key) => bots.getMeta({ key }),
     setMeta: (key, value) => bots.setMeta({ key, value }),
