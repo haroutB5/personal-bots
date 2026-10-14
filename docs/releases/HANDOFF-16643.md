@@ -36,6 +36,29 @@ store and both engines (`dsh` and `claude-code`) are untouched.
   `timeout`, `invalid_response`, `missing_key`) beside its message, so the field tells a rejected key from a
   network problem without matching our own wording.
 
+## Rebuilt on top of 1.66.42
+
+This build merges `origin/fix/hbots-16642-perf-labels` at `1404bacf00` (its code commit is `33355d5d67`, live
+as 1.66.42) into `feat/hbots-deepseek-key-setup`. 1.66.42 touched only the Performance pane, its sampler and
+its contracts, its own notes and `scripts/personal/app-version.txt`; the only conflict was `app-version.txt`,
+which stays `1.66.43`. Nothing else overlapped, so no 1.66.42 behaviour was dropped or re-decided here.
+
+That matters for the proof below. The screenshots were taken on the pre-merge staging `8c44ae312739`, so the
+proof section says so instead of implying a second capture. The DeepSeek work is byte-identical between the two
+builds: the command below prints nothing, and only Performance code plus
+`packages/contracts/src/personalPerformance.ts`, the 16642 notes and `app-version.txt` differ between them.
+
+```
+git diff --stat 8c44ae312739 2388233b8bfb -- apps/web/src/components/settings \
+  apps/web/src/features/personal/providerApiKeySetup.ts \
+  apps/web/src/features/personal/providerApiKeySetup.test.ts \
+  apps/server/src/provider apps/server/src/serverSettings.ts \
+  packages/contracts/src/providerUsageLimits.ts
+```
+
+`PERSONAL_TASKS_CONCURRENCY` is still 5 in `apps/server/src/personal/tasks/PersonalTaskService.ts`; it was never
+in the merge set, and the Performance files 1.66.42 changed are the only Performance files that moved.
+
 ## Provider coverage (the consistency check)
 
 | Provider      | How its key works today                                                                                                                                | What 1.66.43 does                                                                                                                        |
@@ -49,10 +72,14 @@ store and both engines (`dsh` and `claude-code`) are untouched.
 
 ## Tests
 
-Run at commit `8c44ae312739` on a clean tree; logs in `~/.personal-bots/qa/hbots-16643/`.
+Run at commit `2388233b8bfb` on a clean tree; logs in `~/.personal-bots/qa/hbots-16643/16643b/` (the pre-build
+check) and in the gate logs recorded in the Gate evidence section below.
 
 - Fork gate (see the Gate evidence section below): server tests, server typecheck, web tests, web typecheck,
   PowerShell script tests, phone e2e smoke.
+- `provider-tests.log` — `vp test run src/provider`: 108 files, 1731 tests passed, 58 skipped, exit 0. The whole
+  provider tree at the new commit, so the change is shown not to have leaked into another provider's status
+  text, probing or adapter behaviour.
 - `extra-server-tests.log` — `vp test run src/provider/Layers/DeepSeekProvider.test.ts
 src/provider/Layers/DeepSeekAdapter.test.ts src/provider/Layers/DeepSeekDshAdapter.test.ts
 src/serverSettings.test.ts`: 4 files, 83 tests passed, exit 0. Covers the status texts on both engines, the
@@ -60,14 +87,17 @@ src/serverSettings.test.ts`: 4 files, 83 tests passed, exit 0. Covers the status
   entry is written to the secret store and never to `settings.json` in plain text (save, replace, remove).
 - `extra-web-tests.log` — `vp test run --project unit src/features/personal
 src/components/settings/providerStatus.test.ts src/components/settings/ProviderInstanceCard.test.ts`:
-  237 files, 2577 tests passed, exit 0. The new field's own tests are
+  238 files, 2583 tests passed, exit 0. The last two files sit outside the fork gate's web path
+  (`src/features/personal`), which is why they are run here as well. The new field's own tests are
   `apps/web/src/features/personal/providerApiKeySetup.test.ts` (15 tests: the entry helpers, the check-line
   wording, the card's "Add your DeepSeek API key" status, the first-time field opening focused as a password
   input, the saved state showing no value, and Grok's optional field staying closed).
 
 ## Proof on a throwaway root (390 px, dark)
 
-Release `8c44ae312739`, throwaway root `hbots-tw-16643key2`, stub balance endpoint
+Captured on the pre-merge staging `8c44ae312739`, throwaway root `hbots-tw-16643key2`, and not re-shot after
+the 1.66.42 merge: that merge is proven above to leave every DeepSeek file byte-identical, so this build
+renders the same pixels. Stub balance endpoint
 (`deepseek-balance-stub.mjs` with `T3CODE_PROVIDER_DEEPSEEK_BALANCE_URL`, the documented test override), so
 nothing was sent to `api.deepseek.com`. Screenshots in `~/.personal-bots/qa/hbots-16643/`:
 
@@ -87,21 +117,33 @@ On that root, `userdata/settings.json` holds the entry as `{"name":"ANTHROPIC_AU
 "sensitive":true,"valueRedacted":true}` and contains neither test key; the stub log shows the 401 for the
 made-up key and the 200 for the accepted one, so the saved value really reached the balance read.
 
-## Open question for the CTO (not shipped)
+## Open items (not shipped in 1.66.43)
 
-A provider environment secret is **not sealed at rest**: `ServerSecretStore` encrypts only names beginning
-`personal-login-`, `personal-connection-` or `personal-secret-` (1.66.0's bot API keys), and a provider entry
-is named `provider-env-<instance>-<name>`. On the throwaway root the DeepSeek key is therefore readable in
-`userdata/secrets/provider-env-*.bin` (only its own file; `settings.json` stays redacted and nothing logs
-it). This is pre-existing, not something 1.66.43 introduces, but this release makes that path the DeepSeek
-credential and Security will look at it.
+**1. Provider environment secrets are not sealed at rest.** A provider environment secret is not sealed at
+rest: `ServerSecretStore` encrypts only names beginning `personal-login-`, `personal-connection-` or
+`personal-secret-` (1.66.0's bot API keys), and a provider entry is named `provider-env-<instance>-<name>`
+(`providerSecretName` in `serverSettings.ts`). On the throwaway root the DeepSeek key is therefore readable in
+`userdata/secrets/provider-env-*.bin` (only its own file; `settings.json` stays redacted to
+`valueRedacted: true` and nothing logs it). This is pre-existing, not something 1.66.43 introduces, but this
+release makes that path the DeepSeek credential and Security will look at it.
 
-The fix is one line — add `provider-env-` to `SEALED_NAME_PREFIXES` — and the existing boot migration
-(`migratePlaintextSecrets`, which seals plaintext files with read-back verification and puts the original
-back if anything fails) would seal the current keys on the next boot. I did not ship it because it rewrites
-credential data in place: a rollback to 1.66.41 or 1.66.42 would then read a sealed envelope as the key and
-DeepSeek (or any provider with a sensitive variable) would stop authenticating until the key is re-saved.
-That is a non-additive data change, and the brief said to ask before a migration.
+Proposed fix, deliberately left out of 1.66.43 as the CTO asked: add `provider-env-` to
+`SEALED_NAME_PREFIXES` in `apps/server/src/auth/ServerSecretStore.ts` — one line — and the existing boot
+migration `migratePlaintextSecrets`, which seals a plaintext file with read-back verification and puts the
+original back if anything fails, would seal the current keys on the next boot.
+
+Rollback caveat, which is why this needs an explicit decision rather than a builder's judgement: that rewrites
+credential data in place. A rollback from the next release to 1.66.41 or 1.66.42 would read a sealed envelope
+as if it were the key, and the affected provider would stop authenticating until the key is saved again. It is
+a non-additive data change.
+
+**2. Antigravity's API key is plain text in `settings.json` (for Security).** `AntigravitySettings.apiKey` in
+`packages/contracts/src/settings.ts` is a `TrimmedString` on the provider settings object, not a secret store
+entry, and its own description reads "Stored in plain text". A key typed there lands in
+`userdata/settings.json` as written. 1.66.43 does not change it; it is listed because this release makes the
+neighbouring DeepSeek field store its key properly, so the contrast is worth a Security decision. Moving it
+needs a schema change plus the same kind of one-way data migration as item 1, with the same rollback caveat,
+so it is not a rider on this release.
 
 ## Gate evidence
 
