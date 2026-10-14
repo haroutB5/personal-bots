@@ -164,6 +164,14 @@ export const FALLBACK_LABEL_MARKER = "fallback";
 /** "DeepSeek peak until 11:00": why the DeepSeek peak switch moved the bot. */
 export const DEEPSEEK_PEAK_LABEL = "DeepSeek peak";
 
+/**
+ * The peak note's form for a line with no room: "Sonnet 5.5 · H · peak" on the
+ * Bots rows, the chat header, task cards, pinned tiles and Team. The full
+ * wording ("DeepSeek peak until 11:00") is what the accessible label carries at
+ * those widths, and it stays visible wherever there is room.
+ */
+export const DEEPSEEK_PEAK_SHORT_LABEL = "peak";
+
 /** The bot is on the DeepSeek peak switch (1.66.44), not a usage-limit fallback. */
 function onDeepSeekPeak(bot: Pick<PersonalBot, "fallbackActive">): boolean {
   return botFallbackActive(bot)?.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK;
@@ -242,20 +250,19 @@ export function botActiveModelLabel(
 /**
  * The short model label for a bot: what it runs on right now, ending
  * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback"), or
- * "· DeepSeek peak until 11:00" while the DeepSeek peak switch has it
- * ("Sonnet 5.5 · H · DeepSeek peak until 11:00").
+ * "· peak" while the DeepSeek peak switch has it ("Sonnet 5.5 · H · peak").
+ *
+ * The peak note is the short form on purpose: this label sits on the Bots rows,
+ * the chat header, task cards and 72px pinned tiles, where "· DeepSeek peak
+ * until 11:00" was cut at 390 px (1.66.44 QA). The full wording stays on
+ * {@link fallbackNoteLabel}, which those places read out to assistive tech.
  */
 export function botActiveModelShortLabel(
   bot: BotWithFallback,
   providers: ReadonlyArray<ServerProvider>,
-  nowMs: number = Date.now(),
-  timeZone?: string,
 ): string | null {
   const label = botModelShortLabel(botEffectiveModelSelection(bot), providers);
   if (label === null) return null;
-  if (onDeepSeekPeak(bot)) {
-    const note = fallbackNoteLabel(bot, nowMs, timeZone);
-    return note === null ? label : `${label} · ${note}`;
-  }
+  if (onDeepSeekPeak(bot)) return `${label} · ${DEEPSEEK_PEAK_SHORT_LABEL}`;
   return botFallbackActive(bot) === null ? label : `${label} · ${FALLBACK_LABEL_MARKER}`;
 }

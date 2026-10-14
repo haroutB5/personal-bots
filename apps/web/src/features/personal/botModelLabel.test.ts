@@ -335,14 +335,28 @@ describe("a bot on the DeepSeek peak switch", () => {
         "Europe/London",
       ),
     ).toBe("DeepSeek peak until 10:00");
-    expect(
-      botActiveModelShortLabel(onPeak("2026-10-14T10:00:00.000Z"), providers, NOW, "Europe/London"),
-    ).toBe("Sonnet 5.5 · H · DeepSeek peak until 11:00");
+    expect(botActiveModelShortLabel(onPeak("2026-10-14T10:00:00.000Z"), providers)).toBe(
+      "Sonnet 5.5 · H · peak",
+    );
     expect(
       botActiveModelLabel(onPeak("2026-10-14T10:00:00.000Z"), providers, NOW, "Europe/London"),
     ).toBe("Sonnet 5.5 high, DeepSeek peak until 11:00");
-    expect(taskCardBotLine(onPeak("2026-10-14T10:00:00.000Z"), providers)).toContain(
-      "DeepSeek peak until",
+    expect(taskCardBotLine(onPeak("2026-10-14T10:00:00.000Z"), providers)).toBe(
+      "Sonnet 5.5 · H · peak",
+    );
+  });
+
+  it("keeps the window time out of the tight labels and in the long accessible one", () => {
+    // The four tight places read this form: rows, the chat header, task cards
+    // and the 72px pinned tiles. "· DeepSeek peak until 11:00" was cut there at
+    // 390 px, so the visible note is "peak" and the time lives in the long
+    // label the same places hand to assistive tech (1.66.44 QA).
+    const bot = onPeak("2026-10-14T10:00:00.000Z");
+    expect(botActiveModelShortLabel(bot, providers)).toBe("Sonnet 5.5 · H · peak");
+    expect(botActiveModelShortLabel(bot, providers)).not.toContain("until");
+    expect(fallbackNoteLabel(bot, NOW, "Europe/London")).toBe("DeepSeek peak until 11:00");
+    expect(botActiveModelLabel(bot, providers, NOW, "Europe/London")).toContain(
+      "DeepSeek peak until 11:00",
     );
   });
 

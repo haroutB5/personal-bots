@@ -18,12 +18,13 @@ const STATE_DOT: Record<ConversationState, string> = {
 
 /**
  * Header subtitle: the state dot and what the bot is doing, then the bot's
- * model and effort ("Opus 5.5 · H"). The status comes first and keeps the
- * room it needs; the model label is the optional part. Both sit on one line
- * that is exactly one row tall, so when they do not fit together the model
- * label wraps to a second row that the line clips: it goes whole, never cut
- * to "Sonnet 5.…" at 390 px. A status too long for the line alone ends in an
- * ellipsis. The provider name is not shown: the model label names the runtime.
+ * model and effort ("Opus 5.5 · H"). The status comes first and keeps the room
+ * it needs: it is the primary line, so the model label is the part that gives
+ * way. A long model label used to squeeze the status down to "Id…" at 390 px
+ * (1.66.44 QA), so the status never shrinks for it — the model label shrinks
+ * first and ends in an ellipsis, and a status too wide for the line on its own
+ * is the only thing that gets cut. Both sit on one 18px row. The provider name
+ * is not shown: the model label names the runtime.
  */
 export function ConversationSubtitle({
   state,
@@ -42,11 +43,14 @@ export function ConversationSubtitle({
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
       <span
         data-testid="chat-status-line"
-        className="flex h-[18px] min-w-0 flex-1 flex-wrap items-center gap-x-1.5 overflow-hidden"
+        className="flex h-[18px] min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
       >
-        <span className="max-w-full min-w-0 truncate whitespace-nowrap">{status}</span>
+        <span className="max-w-full shrink-0 truncate whitespace-nowrap">{status}</span>
         {modelLabel !== null ? (
-          <span data-testid="chat-model-label" className="shrink-0 whitespace-nowrap">
+          <span
+            data-testid="chat-model-label"
+            className="min-w-0 shrink-[100] truncate whitespace-nowrap"
+          >
             <span aria-hidden="true">· </span>
             {modelLabel}
             {modelNote !== null ? <span className="sr-only"> ({modelNote})</span> : null}

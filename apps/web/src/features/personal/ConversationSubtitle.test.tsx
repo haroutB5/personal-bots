@@ -31,26 +31,28 @@ describe("ConversationSubtitle", () => {
     expect(text.indexOf("Working")).toBeLessThan(text.indexOf("Opus 5.5 · H"));
   });
 
-  it("clips the model label whole instead of cutting it, and ellipsises a status that is too long (1.60.45)", () => {
+  it("keeps the status whole and makes the model label give way at 390 px (1.66.44)", () => {
     const renderer = render({
       state: "delegating",
       status: "Waiting on Planner",
-      modelLabel: "Sonnet 5.5 · H",
+      modelLabel: "Sonnet 5.5 · H · peak",
     });
-    // One row tall, wrapping: a model label that does not fit beside the status drops to a
-    // second row and is clipped away, so no "Sonnet 5.…" is ever drawn.
+    // One row tall, no wrapping: the model label is the part that shrinks and
+    // ends in an ellipsis, so a long label can never cut the status to "Id…".
     const line = renderer.root.find((node) => node.props["data-testid"] === "chat-status-line");
     const lineClass = String(line.props.className);
-    expect(lineClass).toContain("flex-wrap");
     expect(lineClass).toContain("overflow-hidden");
     expect(lineClass).toContain("h-[18px]");
+    expect(lineClass).not.toContain("flex-wrap");
     const label = renderer.root.find((node) => node.props["data-testid"] === "chat-model-label");
-    expect(String(label.props.className)).toContain("shrink-0");
-    expect(String(label.props.className)).toContain("whitespace-nowrap");
-    expect(String(label.props.className)).not.toContain("truncate");
-    // A status wider than the line ends in an ellipsis rather than being cut off.
+    const labelClass = String(label.props.className);
+    expect(labelClass).toContain("truncate");
+    expect(labelClass).toContain("shrink-[100]");
+    // The status never gives way to the model; it only ellipsises when it alone
+    // is wider than the line.
     expect(classOf(renderer, "Waiting on Planner")).toContain("truncate");
     expect(classOf(renderer, "Waiting on Planner")).toContain("max-w-full");
+    expect(classOf(renderer, "Waiting on Planner")).toContain("shrink-0");
   });
 
   it("keeps a working bot reading as working, however long it has been quiet", () => {
