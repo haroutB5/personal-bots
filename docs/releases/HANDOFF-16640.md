@@ -15,7 +15,7 @@ rebuild fix `88d431bc8c`. Version **1.66.40**, deliberately not 1.67.x, so it ca
 Staged first as `88d431bc8cf2`, then again as `203c928ff8fe` after QA's two scripts, with three more commits
 (`4d935446de`, `203c928ff8`). QA then returned **NO-SHIP on `203c928ff8fe`**, blaming the Q11 fix for DeepSeek
 disappearing from the new-bot form; that turned out to be QA's own script tapping a destructive button, not the
-product (section below), and the build that ships is **`<<FINAL_SHA12>>`**, which adds only tests and one import
+product (section below), and the build that ships is **`6cd5afc31af8`**, which adds only tests and one import
 naming fix to `203c928ff8`. **`88d431bc8cf2`, `203c928ff8fe` and `3da1e51f0d39` are superseded and must not be
 activated.** Migration max **106 -> 106** (no new migration; the dsh commits add none).
 `PERSONAL_TASKS_CONCURRENCY = 5` unchanged.
@@ -318,9 +318,11 @@ the gate does not run the dsh adapter tests. The builder ran the whole provider 
 **104 files passed, 2 skipped, 1716 tests passed, 58 skipped, 0 failed** (178 s), and the DeepSeek provider file on
 its own: 15 passed. After the three QA fixes the same tree ran again on `203c928ff8`: **105 files passed, 2
 skipped, 1722 tests passed, 58 skipped, 0 failed** (195 s; the new file and the four new cases are in it), with the
-server typecheck at exit 0.
+server typecheck at exit 0. On the shipped commit `6cd5afc31af8` the tree ran a third time, after the two
+availability tests were added: **105 files passed, 2 skipped, 1723 tests passed, 58 skipped, 0 failed** (180 s),
+again with the server typecheck at exit 0. The gate's own counts for this build are in the table at the end.
 
-Web (`vp test run --project unit src/features/personal` plus tsc, 2539 passed in 233 files): the agent-mode
+Web (`vp test run --project unit src/features/personal` plus tsc, 2541 passed in 233 files): the agent-mode
 descriptor is offered only where the model has it, the chosen mode round-trips through the form, an unknown one is
 dropped, and the label carries " · Code"/" · Minimal" but never writes Standard out.
 
@@ -375,8 +377,8 @@ Q9 additions (no `dsh_session_log` or `dsh_plugin_packages` in the request body,
 `dsh-otel-collector.deepseeksvc.com` connection, no `.credentials.yaml` under `DSH_HOME`, and no credential-shaped
 variable inside the `pwsh` tool).
 
-Re-run on this build: `run-a.ps1 -Release <<FINAL_SHA12>> -Only Q5,Q11` (fake key, cheap) for the DeepSeek card
-and the bot form, and `run-b.ps1 -Release <<FINAL_SHA12>> -Only Q1,Q3,Q6,Q7,Q9` (real key) for the model replies.
+Re-run on this build: `run-a.ps1 -Release 6cd5afc31af8 -Only Q5,Q11` (fake key, cheap) for the DeepSeek card
+and the bot form, and `run-b.ps1 -Release 6cd5afc31af8 -Only Q1,Q3,Q6,Q7,Q9` (real key) for the model replies.
 **One script fix first, or Q11 takes the run down with it:** the Q11 check's "view details" step taps the first
 `button[aria-label]` in the DeepSeek detail header, which is now the Reset button (section 4 above). It must target
 the advisory itself, e.g. `page.locator('button[aria-label^="Update available"]')`, and only tap when that exists;
@@ -413,29 +415,31 @@ Binary only: `restart.ps1 -Release <1.66.39 sha> -NoPrune` (live release `b03c41
 to restore. Setting the DeepSeek instance's engine back to `claude-code`, or `PERSONAL_DEEPSEEK_ENGINE=claude-code`,
 also returns every bot to the old engine without touching the release.
 
-Three 1.66.40 folders are staged and only the newest one may be activated: `<<FINAL_SHA12>>` is this build;
+Three clean 1.66.40 folders are staged and only the newest one may be activated: `6cd5afc31af8` is this build;
 `203c928ff8fe` (the one QA returned a NO-SHIP on, section 4) and `88d431bc8cf2` (the first, which both QA scripts
-ran on) are superseded by it. `3da1e51f0d39` is the abandoned 1.67.0-era stage and must never be activated either.
+ran on) are superseded by it. `3da1e51f0d39` is the abandoned 1.67.0-era stage and must never be activated either. A
+fourth 1.66.40 folder, `016605781dcf-dirty-20261014004558`, is the builder's own `-dirty` stage (VERSION says
+`dirty=True`) and is safe to prune.
 This version keeps 1.66.40 in `app-version.txt` deliberately: it is the same feature, corrected.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=203c928ff8fe8eb5965896dad08b42e21d26e9fe release=203c928ff8fe json-sha256=de416506ee9c900a9835e6e87eda377ce46fb0f76f432de6ba28d1bc037b355d result=PASS -->
+<!-- gate-evidence:begin sha=6cd5afc31af8057920f56044839913480f4abeda release=6cd5afc31af8 json-sha256=96836e0f8675dde01adb2bd1325e4dbecad1ca90a4e2a8e17c14d06c748f3df6 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T23:20:36Z. Version 1.66.40, release `203c928ff8fe`, commit `203c928ff8fe8eb5965896dad08b42e21d26e9fe` on `release/hbots-16640`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-13T23:57:41Z. Version 1.66.40, release `6cd5afc31af8`, commit `6cd5afc31af8057920f56044839913480f4abeda` on `release/hbots-16640`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\203c928ff8fe\gate-evidence.json` (sha256 `de416506ee9c900a9835e6e87eda377ce46fb0f76f432de6ba28d1bc037b355d`) and the full gate logs in `releases\203c928ff8fe\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\6cd5afc31af8\gate-evidence.json` (sha256 `96836e0f8675dde01adb2bd1325e4dbecad1ca90a4e2a8e17c14d06c748f3df6`) and the full gate logs in `releases\6cd5afc31af8\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2563 tests passed, 0 failed, 3 skipped, in 186 files | 199.2   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 18      |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2539 tests passed, 0 failed, 0 skipped, in 233 files | 29.2    |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2563 tests passed, 0 failed, 3 skipped, in 186 files | 197.9   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 18.4    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2541 tests passed, 0 failed, 0 skipped, in 233 files | 28      |
 | web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.1     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 62.6    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1671-dsh\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\203c928ff8fe" -Json` (in `.`)                                                                                                                  | 0    | pass: 12/12 journeys passed                                | 259.8   |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 56.7    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-1671-dsh\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\6cd5afc31af8" -Json` (in `.`)                                                                                                                  | 0    | pass: 12/12 journeys passed                                | 244.7   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `203c928ff8fe8eb5965896dad08b42e21d26e9fe`, at end `203c928ff8fe8eb5965896dad08b42e21d26e9fe`; tracked files modified: none. Staged release: version 1.66.40, sha 203c928ff8fe, dirty False, externals copied; `dist/bin.mjs` sha256 `3af6e0293d87d8ba72755fff4528c772afddfcb54618844385e384d763c1f3ed`.
+Tree: HEAD at start `6cd5afc31af8057920f56044839913480f4abeda`, at end `6cd5afc31af8057920f56044839913480f4abeda`; tracked files modified: none. Staged release: version 1.66.40, sha 6cd5afc31af8, dirty False, externals copied; `dist/bin.mjs` sha256 `3af6e0293d87d8ba72755fff4528c772afddfcb54618844385e384d763c1f3ed`.
 <!-- gate-evidence:end -->
