@@ -156,6 +156,20 @@ describe("the balance wording and the persisted flag", () => {
         deepSeekBalanceLastKindValue({ kind: null, at: "2026-10-14T10:00:00Z" }),
       ),
     ).toBeNull();
+    // The written value still reads the old way, so a probe written before the
+    // kind existed (QA's balance walk, the sweep diagnostic) keeps working.
+    expect(
+      JSON.parse(
+        deepSeekBalanceLastKindValue({
+          kind: "low",
+          at: "2026-10-14T10:00:00Z",
+          balance: "$0.94",
+        }),
+      ).warned,
+    ).toBe(true);
+    expect(
+      JSON.parse(deepSeekBalanceLastKindValue({ kind: null, at: "2026-10-14T10:00:00Z" })).warned,
+    ).toBe(false);
   });
 
   it("namespaces the flag by instance, like the smoke check", () => {

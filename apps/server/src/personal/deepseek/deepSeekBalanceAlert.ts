@@ -134,7 +134,10 @@ export function deepSeekBalanceLastKindValue(input: {
   readonly balance?: string;
 }): string {
   return JSON.stringify({
+    // `kind` is the truth; `warned` carries the same fact in the shape readers
+    // written before it (the QA and diagnostic probes) still look for.
     kind: input.kind,
+    warned: input.kind !== null,
     at: input.at,
     ...(input.balance !== undefined ? { balance: input.balance } : {}),
   });
