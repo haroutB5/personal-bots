@@ -822,9 +822,18 @@ export const DeepSeekSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    peakSwitch: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Use Claude Sonnet 5.5 High during DeepSeek peak hours",
+        description:
+          "DeepSeek bills double from 01:00 to 04:00 and 06:00 to 10:00 UTC, Monday to Friday. While this is on, every bot on this instance runs its next turns on Claude Sonnet 5.5 High during those hours and moves back when they end. A running turn is never interrupted. PERSONAL_DEEPSEEK_PEAK_SWITCH=off turns it off server-wide.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["engine", "dshRuntimePath", "binaryPath", "homePath"],
+    order: ["engine", "peakSwitch", "dshRuntimePath", "binaryPath", "homePath"],
   },
 );
 export type DeepSeekSettings = typeof DeepSeekSettings.Type;

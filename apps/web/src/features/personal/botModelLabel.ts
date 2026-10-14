@@ -3,6 +3,7 @@ import {
   botFallbackActive,
   DEEPSEEK_AGENT_MODE_OPTION_ID,
   type ModelSelection,
+  PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
   type PersonalBot,
   type SelectProviderOptionDescriptor,
   type ServerProvider,
@@ -160,6 +161,14 @@ export function botModelShortLabel(
 /** The word the short label ends with while a bot runs on its fallback model. */
 export const FALLBACK_LABEL_MARKER = "fallback";
 
+/** "DeepSeek peak until 11:00": why the DeepSeek peak switch moved the bot. */
+export const DEEPSEEK_PEAK_LABEL = "DeepSeek peak";
+
+/** The bot is on the DeepSeek peak switch (1.66.44), not a usage-limit fallback. */
+function onDeepSeekPeak(bot: Pick<PersonalBot, "fallbackActive">): boolean {
+  return botFallbackActive(bot)?.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK;
+}
+
 type BotWithFallback = Pick<PersonalBot, "modelSelection" | "fallbackActive">;
 
 function formatLocalTime(atMs: number, nowMs: number, timeZone: string | undefined): string {
@@ -186,9 +195,10 @@ function formatLocalTime(atMs: number, nowMs: number, timeZone: string | undefin
 
 /**
  * Why a bot is on its fallback model, for a title or an accessible name:
- * "on fallback until about 14:30 (Codex usage limit)". The time is in the
- * device's own zone and is left out when the provider gave no reset time.
- * Null while the bot is on its own model.
+ * "on fallback until about 14:30 (Codex usage limit)", or "DeepSeek peak until
+ * 11:00" while the DeepSeek peak switch has it. The time is in the device's own
+ * zone and is left out when the provider gave no reset time. Null while the bot
+ * is on its own model.
  */
 export function fallbackNoteLabel(
   bot: Pick<PersonalBot, "fallbackActive">,
@@ -202,6 +212,12 @@ export function fallbackNoteLabel(
   const until = Number.isFinite(resetMs)
     ? ` until about ${formatLocalTime(resetMs, nowMs, timeZone)}`
     : "";
+  if (active.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK) {
+    const peakUntil = Number.isFinite(resetMs)
+      ? ` until ${formatLocalTime(resetMs, nowMs, timeZone)}`
+      : "";
+    return `${DEEPSEEK_PEAK_LABEL}${peakUntil}`;
+  }
   const provider = active.fromProvider.trim();
   return `on fallback${until}${provider === "" ? "" : ` (${provider} usage limit)`}`;
 }
@@ -225,13 +241,21 @@ export function botActiveModelLabel(
 
 /**
  * The short model label for a bot: what it runs on right now, ending
- * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback").
+ * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback"), or
+ * "· DeepSeek peak until 11:00" while the DeepSeek peak switch has it
+ * ("Sonnet 5.5 · H · DeepSeek peak until 11:00").
  */
 export function botActiveModelShortLabel(
   bot: BotWithFallback,
   providers: ReadonlyArray<ServerProvider>,
+  nowMs: number = Date.now(),
+  timeZone?: string,
 ): string | null {
   const label = botModelShortLabel(botEffectiveModelSelection(bot), providers);
   if (label === null) return null;
+  if (onDeepSeekPeak(bot)) {
+    const note = fallbackNoteLabel(bot, nowMs, timeZone);
+    return note === null ? label : `${label} · ${note}`;
+  }
   return botFallbackActive(bot) === null ? label : `${label} · ${FALLBACK_LABEL_MARKER}`;
 }

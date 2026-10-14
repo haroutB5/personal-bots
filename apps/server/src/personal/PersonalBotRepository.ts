@@ -193,6 +193,7 @@ function withFallbackActive(
       since: DateTime.makeUnsafe(state.startedAt),
       ...(state.resetAt === null ? {} : { resetAt: DateTime.makeUnsafe(state.resetAt) }),
       fromProvider: state.fromProvider,
+      ...(state.reason === null ? {} : { reason: state.reason }),
     },
   };
 }
@@ -303,6 +304,14 @@ export class PersonalBotRepository extends Context.Service<
     >;
     /** Switches a bot onto its fallback; false when it already is on one. */
     readonly startFallback: (
+      state: PersonalBotFallbackState,
+    ) => Effect.Effect<boolean, PersonalBotRepositoryError>;
+    /**
+     * Replaces the fallback state the bot is already on with this one: the
+     * DeepSeek peak switch (1.66.44) giving way to a real usage-limit fallback
+     * while its window is still open. False when the bot was not on one.
+     */
+    readonly switchFallback: (
       state: PersonalBotFallbackState,
     ) => Effect.Effect<boolean, PersonalBotRepositoryError>;
     /** The reset time moved (a later window, a re-check); null means not known. */
@@ -1805,6 +1814,23 @@ export const make = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.startFallback:query")),
     );
 
+  const switchFallback: PersonalBotRepository["Service"]["switchFallback"] = (state) =>
+    sql<{ readonly botId: string }>`
+      UPDATE personal_bot_fallbacks
+      SET fallback_model_json = ${JSON.stringify(state.fallbackModel)},
+          from_instance_id = ${state.fromInstanceId},
+          from_provider = ${state.fromProvider},
+          reason = ${state.reason},
+          started_at = ${state.startedAt},
+          reset_at = ${state.resetAt},
+          notice_thread_id = ${state.noticeThreadId}
+      WHERE bot_id = ${state.botId}
+      RETURNING bot_id AS "botId"
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.switchFallback:query")),
+    );
+
   const updateFallbackReset: PersonalBotRepository["Service"]["updateFallbackReset"] = (input) =>
     sql`
       UPDATE personal_bot_fallbacks SET reset_at = ${input.resetAt} WHERE bot_id = ${input.botId}
@@ -2012,6 +2038,7 @@ export const make = Effect.gen(function* () {
     recordThreadViewed,
     listFallbackStates,
     startFallback,
+    switchFallback,
     updateFallbackReset,
     endFallback,
     updateThreadState,

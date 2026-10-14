@@ -299,3 +299,59 @@ describe("a bot on its fallback model", () => {
     expect(fallbackNoteLabel(onFallback(), NOW, "UTC")).toBe("on fallback (Codex usage limit)");
   });
 });
+
+describe("a bot on the DeepSeek peak switch", () => {
+  const home = selection("deepseek", "deepseek-flash");
+  const peakModel = selection("claudeAgent", "claude-sonnet-5-5", [
+    ["effort", "high"],
+    ["contextWindow", "1m"],
+  ]);
+  const NOW = Date.parse("2026-10-14T09:00:00.000Z");
+  const onPeak = (resetAt?: string) =>
+    ({
+      modelSelection: home,
+      fallbackActive: {
+        modelSelection: peakModel,
+        since: DateTime.makeUnsafe("2026-10-14T08:00:00.000Z"),
+        ...(resetAt === undefined ? {} : { resetAt: DateTime.makeUnsafe(resetAt) }),
+        fromProvider: "DeepSeek",
+        reason: "deepseek_peak",
+      },
+    }) as never;
+
+  it("says why and until when, in the device's own zone", () => {
+    // 10:00 UTC on 14 October is 11:00 in London (BST).
+    expect(fallbackNoteLabel(onPeak("2026-10-14T10:00:00.000Z"), NOW, "Europe/London")).toBe(
+      "DeepSeek peak until 11:00",
+    );
+    expect(fallbackNoteLabel(onPeak("2026-10-14T10:00:00.000Z"), NOW, "UTC")).toBe(
+      "DeepSeek peak until 10:00",
+    );
+    // After the 25 October clock change the same UTC window reads an hour earlier.
+    expect(
+      fallbackNoteLabel(
+        onPeak("2026-10-27T10:00:00.000Z"),
+        Date.parse("2026-10-27T09:00:00.000Z"),
+        "Europe/London",
+      ),
+    ).toBe("DeepSeek peak until 10:00");
+    expect(
+      botActiveModelShortLabel(onPeak("2026-10-14T10:00:00.000Z"), providers, NOW, "Europe/London"),
+    ).toBe("Sonnet 5.5 · H · DeepSeek peak until 11:00");
+    expect(
+      botActiveModelLabel(onPeak("2026-10-14T10:00:00.000Z"), providers, NOW, "Europe/London"),
+    ).toBe("Sonnet 5.5 high, DeepSeek peak until 11:00");
+    expect(taskCardBotLine(onPeak("2026-10-14T10:00:00.000Z"), providers)).toContain(
+      "DeepSeek peak until",
+    );
+  });
+
+  it("never reads as a usage-limit fallback", () => {
+    const note = fallbackNoteLabel(onPeak("2026-10-14T10:00:00.000Z"), NOW, "UTC");
+    expect(note).not.toContain("fallback");
+    expect(note).not.toContain("usage limit");
+    expect(botActiveModelShortLabel(onPeak("2026-10-14T10:00:00.000Z"), providers)).not.toContain(
+      "fallback",
+    );
+  });
+});

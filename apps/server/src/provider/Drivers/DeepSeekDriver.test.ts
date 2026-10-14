@@ -48,6 +48,7 @@ const makeConfig = (overrides: Partial<DeepSeekSettings>): DeepSeekSettings => (
   customModels: [],
   engine: "dsh",
   dshRuntimePath: "",
+  peakSwitch: true,
   ...overrides,
 });
 

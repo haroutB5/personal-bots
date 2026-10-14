@@ -143,6 +143,7 @@ const makeDeepSeekConfig = (overrides: Partial<DeepSeekSettings>): DeepSeekSetti
   customModels: [],
   engine: "dsh",
   dshRuntimePath: "",
+  peakSwitch: true,
   ...overrides,
 });
 
