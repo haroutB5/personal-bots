@@ -92,3 +92,21 @@ export function isTransientTurnFailureKind(kind: TurnFailureKind): boolean {
 export function isTransientTurnFailure(raw: string): boolean {
   return isTransientTurnFailureKind(classifyTurnFailure(raw));
 }
+
+/**
+ * Failures where sending the very same message again cannot work: the
+ * provider's own engine refused this turn's own input. The DeepSeek Harness
+ * cannot validate an inline image past its cap, and it refuses every copy of
+ * that message the same way, so the chat offers no Retry and leaves the
+ * provider's sentence, which says what to do instead.
+ *
+ * Deliberately separate from {@link classifyTurnFailure}: the kind says what
+ * failed, and the server already treats an unrecognised failure as not worth
+ * re-running. This says the owner's own message is what the provider refused.
+ */
+const REFUSED_TURN_INPUT_PATTERNS: ReadonlyArray<RegExp> = [/can't read this image/i];
+
+/** True when the provider refused this message's own input, so a Retry cannot help. */
+export function isRefusedTurnInput(raw: string): boolean {
+  return REFUSED_TURN_INPUT_PATTERNS.some((pattern) => pattern.test(raw));
+}

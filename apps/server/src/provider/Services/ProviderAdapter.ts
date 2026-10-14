@@ -77,12 +77,32 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+/**
+ * The part of a turn a preflight reads, before the session it would run on
+ * exists: whatever the adapter's own engine decides about an input on its own
+ * (an inline image past its validator), not the message's text.
+ */
+export type ProviderTurnPreflightInput = Pick<
+  ProviderSendTurnInput,
+  "modelSelection" | "input" | "attachments" | "interactionMode"
+>;
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
    */
   readonly provider: ProviderDriverKind;
   readonly capabilities: ProviderAdapterCapabilities;
+
+  /**
+   * Refuse a turn this engine cannot take, before its session is started or
+   * reused. A refusal made after the session start races that session's own
+   * start events, which arrive a moment later and can leave the chat showing
+   * nothing (dsh: an inline image past its validator in the first message of a
+   * fresh chat, QA C5F/C5R of 1.66.45). Omitted when the adapter has nothing
+   * to check before a session exists.
+   */
+  readonly validateTurn?: (input: ProviderTurnPreflightInput) => Effect.Effect<void, TError>;
 
   /**
    * Start a provider-backed session.

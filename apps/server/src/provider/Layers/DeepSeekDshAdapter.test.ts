@@ -41,7 +41,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resetBotProviderProcesses } from "../botProviderProcesses.ts";
 import { isMissingProviderConversationText } from "../missingProviderConversation.ts";
 import { DSH_PINNED_VERSION, makeDshAcpRuntime } from "../acp/DshAcpSupport.ts";
-import { makeDeepSeekDshAdapter, translateDshFailure } from "./DeepSeekDshAdapter.ts";
+import { makeDeepSeekDshAdapter, dshImageTooLargeText, translateDshFailure } from "./DeepSeekDshAdapter.ts";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -578,6 +578,55 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       );
       yield* harness.adapter.stopSession(threadId);
       resetBotProviderProcesses();
+    }),
+  );
+
+  it.effect("refuses an oversized image before any session exists, so nothing overwrites it", () =>
+    Effect.gen(function* () {
+      // QA 1.66.45, C5F/C5R: the refusal used to be made while the turn started,
+      // after `startSession` had already emitted "starting" and "ready", so those
+      // two events landed ~1 ms later and left the session ready with no error
+      // and the chat with nothing on it. The server now asks this first, before
+      // it starts or reuses the session, so no such event is in flight.
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { attachmentsDir } = yield* ServerConfig;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      const harness = yield* makeHarness(cwd);
+      const bytes = DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES + 1;
+      const oversized = writeImageAttachment({
+        attachmentsDir,
+        id: "dsh-preflight-12345678-1234-1234-1234-123456789abc",
+        name: "carrier.png",
+        bytes: Buffer.alloc(bytes, 3),
+      });
+
+      const failure = yield* Effect.flip(
+        harness.adapter.validateTurn({
+          modelSelection: { instanceId, model: "deepseek-flash" },
+          input: "How much is this?",
+          attachments: [oversized],
+        }),
+      );
+      expect(failure).toMatchObject({
+        _tag: "ProviderAdapterRequestError",
+        detail: dshImageTooLargeText({ name: "carrier.png", bytes }),
+      });
+      // Nothing was started: there is no session whose start events could land
+      // after this refusal, which is the whole point of asking first.
+      expect(yield* harness.adapter.listSessions()).toEqual([]);
+
+      const small = writeImageAttachment({
+        attachmentsDir,
+        id: "dsh-preflight-small-12345678-1234-1234-1234-123456789abc",
+        name: "small.png",
+        bytes: Uint8Array.from([1, 2, 3, 4]),
+      });
+      yield* harness.adapter.validateTurn({
+        modelSelection: { instanceId, model: "deepseek-flash" },
+        input: "How much is this?",
+        attachments: [small],
+      });
+      expect(yield* harness.adapter.listSessions()).toEqual([]);
     }),
   );
 

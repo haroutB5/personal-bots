@@ -11,7 +11,7 @@ import type {
   PersonalTask,
   PersonalLoginRequest,
 } from "@t3tools/contracts";
-import { classifyTurnFailure } from "@t3tools/shared/turnFailure";
+import { classifyTurnFailure, isRefusedTurnInput } from "@t3tools/shared/turnFailure";
 
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 
@@ -416,7 +416,13 @@ export function turnErrorNotice(input: {
     message: notice ?? info.message,
     detail: info.detail,
     tone: "danger",
-    canRetry: state === "error" && input.lastMessageTurnStarted !== null,
+    // Retry re-sends the same message, so a failure the provider made about the
+    // message's own input (an image its engine cannot read) would only be
+    // refused again: no Retry, and the sentence says what to do instead.
+    canRetry:
+      state === "error" &&
+      input.lastMessageTurnStarted !== null &&
+      !isRefusedTurnInput(raw),
   };
 }
 

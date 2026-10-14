@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { classifyTurnFailure, isTransientTurnFailure } from "./turnFailure.ts";
+import { classifyTurnFailure, isRefusedTurnInput, isTransientTurnFailure } from "./turnFailure.ts";
 
 describe("classifyTurnFailure", () => {
   it("reads the failure that ended the owner's audit run as an upstream fault", () => {
@@ -51,5 +51,27 @@ describe("classifyTurnFailure", () => {
 
   it("does not read a millisecond figure as an HTTP status", () => {
     expect(classifyTurnFailure("gave up after 500ms")).not.toBe("upstream");
+  });
+});
+
+describe("isRefusedTurnInput", () => {
+  it("reads the DeepSeek image refusal as one sending the same message again cannot fix", () => {
+    const raw =
+      'DeepSeek can\'t read this image "carrier.png" (8.1 MB): the DeepSeek engine takes ' +
+      "images up to 2.0 MB. Send a smaller photo, or send it to a Claude bot.";
+    expect(isRefusedTurnInput(raw)).toBe(true);
+    // Retrying it is still not a transient fault, so the server agrees.
+    expect(isTransientTurnFailure(raw)).toBe(false);
+  });
+
+  it("leaves every failure a Retry can still fix alone", () => {
+    for (const raw of [
+      "spawn claude ENOENT",
+      "The reply took too long and was stopped. Try again.",
+      "Error: Not logged in · Please run /login",
+      "DeepSeek could not take this message: the harness ran out of stack on it.",
+    ]) {
+      expect(isRefusedTurnInput(raw)).toBe(false);
+    }
   });
 });

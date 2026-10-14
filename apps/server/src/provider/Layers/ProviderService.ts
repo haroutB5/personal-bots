@@ -2399,6 +2399,43 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
+  /**
+   * The provider's own preflight on a turn, asked before any session exists.
+   *
+   * A refusal made once the session has started is not safe: the session's own
+   * start events ("starting", then "ready") are already in flight and land a
+   * moment later, so they can leave the thread ready with no error and the chat
+   * with nothing on it. That is exactly what QA saw on 1.66.45 C5F/C5R, where a
+   * fresh chat's first message was an oversized photo.
+   */
+  const validateTurn: ProviderServiceMethod<"validateTurn"> = (rawInput) =>
+    Effect.gen(function* () {
+      // Best effort on purpose: an instance this build cannot resolve is left to
+      // the session start, which reports it with its own precise message.
+      const adapter = yield* registry
+        .getByInstance(rawInput.instanceId)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      const validate = adapter?.validateTurn;
+      if (adapter === undefined || validate === undefined) {
+        return;
+      }
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "validate-turn",
+        "provider.kind": adapter.provider,
+        "provider.thread_id": rawInput.threadId,
+      });
+      yield* validate({
+        ...(rawInput.modelSelection !== undefined
+          ? { modelSelection: rawInput.modelSelection }
+          : {}),
+        ...(rawInput.input !== undefined ? { input: rawInput.input } : {}),
+        ...(rawInput.attachments !== undefined ? { attachments: rawInput.attachments } : {}),
+        ...(rawInput.interactionMode !== undefined
+          ? { interactionMode: rawInput.interactionMode }
+          : {}),
+      });
+    });
+
   const assertConversationRollbackSupported: ProviderServiceMethod<"assertConversationRollbackSupported"> =
     Effect.fn("assertConversationRollbackSupported")(function* (threadId) {
       const routed = yield* resolveRoutableSession({
@@ -2619,6 +2656,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   return {
     startSession,
     sendTurn,
+    validateTurn,
     compactThread,
     interruptTurn,
     respondToRequest,

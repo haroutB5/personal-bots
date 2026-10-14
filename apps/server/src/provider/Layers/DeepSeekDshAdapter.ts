@@ -345,6 +345,46 @@ export function readForeignCursorId(cursor: unknown): string | undefined {
 }
 
 /**
+ * The first inline image past what the harness can validate, or undefined.
+ *
+ * Shared by {@link validateTurn} — asked before the session is started, so the
+ * refusal cannot be overwritten by that session's own start events — and by
+ * `buildDshPrompt`, which keeps the same guard as the per-turn backstop. The
+ * sentence and the limit therefore come from one place.
+ */
+const findDshImageOverCap = (input: {
+  readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
+  readonly attachmentsDir: string;
+}): Effect.Effect<
+  { readonly name: string; readonly bytes: number } | undefined,
+  never,
+  FileSystem.FileSystem | Path.Path
+> =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    for (const attachment of input.attachments ?? []) {
+      if (attachment.type !== "image") continue;
+      const mimeType = attachment.mimeType.toLowerCase().split(";", 1)[0] ?? "";
+      if (!IMAGE_MIME_TYPES.has(mimeType)) continue;
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: input.attachmentsDir,
+        attachment,
+      });
+      if (!attachmentPath) continue;
+      const info = yield* fileSystem
+        .stat(attachmentPath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (info === undefined || info.type !== "File") continue;
+      const size = Number(info.size);
+      // Past the wire cap the prompt leaves the image out, as it always has;
+      // between the two caps is the payload the harness overflows on.
+      if (size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) continue;
+      if (size > DSH_MAX_INLINE_IMAGE_BYTES) return { name: attachment.name, bytes: size };
+    }
+    return undefined;
+  });
+
+/**
  * The ACP prompt for a turn: the message, any image inline, and the plan
  * instruction when the owner asked for a plan (ACP has no mode for it). Every
  * other attachment is reached by the path the server already put in the text.
@@ -369,6 +409,19 @@ export const buildDshPrompt = Effect.fn("buildDshPrompt")(function* (input: {
   }
   const text = input.input?.trim();
   if (text) blocks.push({ type: "text", text });
+  // Refused before the prompt is built, so the runtime never sees a payload its
+  // own validator overflows on (see DSH_MAX_INLINE_IMAGE_BYTES).
+  const overCap = yield* findDshImageOverCap({
+    attachments: input.attachments,
+    attachmentsDir: input.attachmentsDir,
+  });
+  if (overCap !== undefined) {
+    return yield* new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method: "session/prompt",
+      detail: dshImageTooLargeText(overCap),
+    });
+  }
   let totalBytes = 0;
   for (const attachment of input.attachments ?? []) {
     if (attachment.type !== "image") continue;
@@ -383,15 +436,6 @@ export const buildDshPrompt = Effect.fn("buildDshPrompt")(function* (input: {
     if (info === undefined || info.type !== "File") continue;
     const size = Number(info.size);
     if (size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) continue;
-    // Refused here, before the prompt is built, so the runtime never sees a
-    // payload its own validator overflows on (see DSH_MAX_INLINE_IMAGE_BYTES).
-    if (size > DSH_MAX_INLINE_IMAGE_BYTES) {
-      return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
-        method: "session/prompt",
-        detail: dshImageTooLargeText({ name: attachment.name, bytes: size }),
-      });
-    }
     totalBytes += size;
     if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) break;
     const bytes = yield* fileSystem
@@ -909,6 +953,30 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         payload: providerThreadId === undefined ? {} : { providerThreadId },
       });
     });
+
+  /**
+   * Refuses an oversized inline image before the session is started or reused.
+   *
+   * `buildDshPrompt` makes the same refusal per turn, but by then the session
+   * start this turn caused has already emitted `session.started` and a `ready`
+   * state change: those land a moment later and would leave the thread ready
+   * with no error, so the owner's chat showed nothing at all. That is what QA
+   * hit on 1.66.45 (C5F/C5R): the first message of a fresh chat, or the first
+   * after a restart, carrying the 8.4 MB photo.
+   */
+  const validateTurn: NonNullable<Adapter["validateTurn"]> = (input) =>
+    Effect.gen(function* () {
+      const overCap = yield* findDshImageOverCap({
+        attachments: input.attachments,
+        attachmentsDir: serverConfig.attachmentsDir,
+      });
+      if (overCap === undefined) return;
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "session/prompt",
+        detail: dshImageTooLargeText(overCap),
+      });
+    }).pipe(provideFs);
 
   const startSession: Adapter["startSession"] = (input: StartInput) =>
     withThreadLock(
@@ -1442,6 +1510,7 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
       userMessageDelivery: "turn-started",
     },
     startSession,
+    validateTurn,
     sendTurn,
     interruptTurn,
     respondToRequest,
