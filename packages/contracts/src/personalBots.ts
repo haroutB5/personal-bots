@@ -355,6 +355,15 @@ export const PersonalBotThread = Schema.Struct({
    */
   lastActivityAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   /**
+   * Only on `personalBots.list`: when the owner himself last wrote in the chat
+   * (`role = 'user'` and not an app-written `personal-...` turn: a task brief,
+   * a steer, an auto-continue, a release notice). Null when he never has. It is
+   * the server's own rule for "the owner took this chat over"
+   * (taskChatAutoArchivePolicy.ts `lastOwnerMessageAt`), sent on the link so
+   * the chat-chip row never has to guess from the thread's newest user message.
+   */
+  lastOwnerMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  /**
    * Only on `personalBots.list`, and only when true: the thread is a group
    * member's relay (the bot's private thread a group talks through), which
    * no bot chat list shows. Sent with the list so clients can hide relays

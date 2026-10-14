@@ -110,28 +110,22 @@ export function taskChatThreadIds(
 }
 
 /**
- * Whether a chat made for a task or a routine run has had a turn since the
- * task's own first one: the owner wrote in it himself, so it is his chat now.
- * (A pin makes it his too, and the caller reads that off the link.)
- *
- * The server's exact rule is `role = 'user' AND message_id NOT LIKE 'personal-%'`
- * (taskChatAutoArchivePolicy.ts `lastOwnerMessageAt`): every turn the app
- * writes (a task brief, a steer, an auto-continue, a release notice) uses a
- * `personal-...` message id. A chip model holds the thread's newest message and
- * the shell's `latestUserMessageAt`, not the newest *owner* message, so this
- * reads the timestamp. An app-written turn therefore counts as the owner's
- * until the client can tell them apart; a chat that gets one is an ordinary
- * chip until it auto-archives, which is the safe direction (a chat the owner
- * uses never loses its chip).
+ * Whether a chat made for a task or a routine run is one the owner took over
+ * himself. It reads the server's own rule off the link, `lastOwnerMessageAt`
+ * (`role = 'user'` and not an app-written `personal-...` turn, so a task brief,
+ * a steer, an auto-continue and a release notice never count; see
+ * taskChatAutoArchivePolicy.ts). It must also land after the chat was made: a
+ * task chat is created with its task, so anything at or before that is the
+ * task's own start, not the owner writing in it. (A pin makes it his too, and
+ * the caller reads that off the link.) An older server that sends no
+ * `lastOwnerMessageAt` simply never promotes on this rule.
  */
-export function taskChatHasLaterTurn(
-  link: Pick<PersonalBotThread, "createdAt">,
-  shell: Pick<EnvironmentThreadShell, "latestUserMessageAt">,
+export function taskChatTakenOver(
+  link: Pick<PersonalBotThread, "createdAt" | "lastOwnerMessageAt">,
 ): boolean {
-  const latest = shell.latestUserMessageAt;
-  if (latest === null || latest === undefined) return false;
-  const latestMs = Date.parse(latest);
-  return Number.isFinite(latestMs) && latestMs > epochMs(link.createdAt) + TASK_CHAT_SLACK_MS;
+  const at = link.lastOwnerMessageAt;
+  if (at === null || at === undefined) return false;
+  return DateTime.toEpochMillis(at) > epochMs(link.createdAt) + TASK_CHAT_SLACK_MS;
 }
 
 /** The one dot a chip draws: needs you > rate limited > working > waiting on a bot > unread. */
@@ -201,13 +195,13 @@ export function buildChatChips(input: {
   );
   // `active` is pinned first, then newest activity first (the All chats list's order): the
   // chips use it as it is. A task or routine chat the owner made his own (he pinned it, or
-  // wrote in it after the task's own first turn) is an ordinary chip: same order, plain
-  // title, no temporary chip while it is open. Every other task chat stays temporary.
+  // wrote in it himself after the task's own first turn) is an ordinary chip: same order,
+  // plain title, no temporary chip while it is open. Every other task chat stays temporary.
   const owner = active.filter(
     (row) =>
       !taskChats.has(row.link.threadId as string) ||
       isChatPinned(row.link) ||
-      taskChatHasLaterTurn(row.link, row.shell),
+      taskChatTakenOver(row.link),
   );
 
   const toChip = (row: BotThreadRow, kind: ChatChipKind): ChatChip => {

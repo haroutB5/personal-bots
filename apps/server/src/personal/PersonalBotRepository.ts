@@ -503,6 +503,7 @@ const PersonalBotThreadRawDbRow = Schema.Struct({
 const PersonalBotThreadListDbRow = Schema.Struct({
   ...PersonalBotThreadDbRow.fields,
   lastActivityAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  lastOwnerMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   newestMessageId: Schema.NullOr(MessageId),
   newestRole: Schema.NullOr(OrchestrationMessageRole),
   newestText: Schema.NullOr(Schema.String),
@@ -521,6 +522,7 @@ const PersonalBotThreadListDbRow = Schema.Struct({
 const PersonalBotThreadListRawDbRow = Schema.Struct({
   ...PersonalBotThreadRawDbRow.fields,
   lastActivityAt: Schema.Unknown,
+  lastOwnerMessageAt: Schema.Unknown,
   newestMessageId: Schema.Unknown,
   newestRole: Schema.Unknown,
   newestText: Schema.Unknown,
@@ -654,6 +656,7 @@ function toPersonalBotThreadWithPreview(
   return {
     ...toPersonalBotThread(row),
     lastActivityAt: row.lastActivityAt,
+    lastOwnerMessageAt: row.lastOwnerMessageAt,
     newestMessage,
     // Only when true, so the list stays the same size for every other chat.
     ...(row.groupRelay === 1 ? { groupRelay: true } : {}),
@@ -1098,6 +1101,20 @@ export const make = Effect.gen(function* () {
           r.created_at AS "createdAt",
           r.archived_at AS "archivedAt",
           r.activity_at AS "lastActivityAt",
+          -- The owner's own newest message: the archive sweep's exact rule
+          -- (role = 'user', message_id NOT LIKE 'personal-%', so no task brief,
+          -- steer, auto-continue or release notice counts). The chat-chip row
+          -- promotes a task chat the owner took over with it. One correlated
+          -- seek per link, served index-only by
+          -- idx_projection_thread_messages_thread_role_created_id
+          -- (thread_id, role, created_at, message_id).
+          (
+            SELECT max(o.created_at)
+            FROM projection_thread_messages o
+            WHERE o.thread_id = r.thread_id
+              AND o.role = 'user'
+              AND o.message_id NOT LIKE 'personal-%'
+          ) AS "lastOwnerMessageAt",
           m.message_id AS "newestMessageId",
           m.role AS "newestRole",
           -- A bot whose owner hid its previews (migration 099) sends no message

@@ -7,7 +7,7 @@ import { botThreadRows } from "./botThreadRows";
 import {
   buildChatChips,
   chatChipState,
-  taskChatHasLaterTurn,
+  taskChatTakenOver,
   taskChatThreadIds,
   type ChatChipModel,
 } from "./chatChipRows";
@@ -54,6 +54,14 @@ const shell = (
 
 const task = (taskId: string, threadId: string | null, createdMinute: number): PersonalTask =>
   ({ taskId, threadId, createdAt: at(createdMinute) }) as unknown as PersonalTask;
+
+/**
+ * A link whose chat the owner wrote in himself at this minute: the server's
+ * `lastOwnerMessageAt` (`role = 'user'`, never an app-written `personal-...`
+ * turn). Without it a task chat is nobody's, however many app turns it gets.
+ */
+const ownedAt = (threadId: string, createdMinute: number, ownerMinute: number) =>
+  link(threadId, createdMinute, { lastOwnerMessageAt: at(ownerMinute) });
 
 /** A shell whose last message was at this minute of the test hour. */
 const activeAt = (id: string, minute: number) =>
@@ -200,7 +208,7 @@ describe("chat chip list: which chats get a chip", () => {
     const shells = [
       activeAt("a", 12),
       activeAt("b", 40),
-      // The task's own first turn, at the chat's creation: not the owner writing in it.
+      // The task's own first turn: not the owner writing in it (lastOwnerMessageAt is null).
       activeAt("task-chat", 25),
       activeAt("c", 20),
     ];
@@ -215,11 +223,10 @@ describe("chat chip list: which chats get a chip", () => {
   });
 
   it("is the order of the All chats list, task chats the owner used included", () => {
-    const links = [link("a", 10), link("b", 20), link("task-chat", 25), link("c", 30)];
+    const links = [link("a", 10), link("b", 20), ownedAt("task-chat", 25, 45), link("c", 30)];
     const shells = [
       activeAt("a", 12),
       activeAt("b", 40),
-      // Written in well after the task's own first turn: the owner's chat now.
       activeAt("task-chat", 45),
       activeAt("c", 20),
     ];
@@ -319,15 +326,11 @@ describe("chat chip list: the temporary chip", () => {
 
 describe("chat chip list: a task chat the owner made his own", () => {
   const ownTask = [task("t1", "task-chat", 19)];
-  /** The task's own first turn lands in the chat as it is made: inside the 5 s slack. */
-  const taskOwnTurn = shell(
-    "task-chat",
-    { latestUserMessageAt: "2026-10-01T10:20:04.000Z" },
-    "Weight chart fix",
-  );
+  /** The task's own first turn lands in the chat as it is made. */
+  const taskOwnTurn = shell("task-chat", {}, "Weight chart fix");
 
   it("keeps a task chat the owner wrote in as an ordinary chip, without the Task prefix", () => {
-    const links = [link("owner", 10), link("task-chat", 20), link("owner-2", 30)];
+    const links = [link("owner", 10), ownedAt("task-chat", 20, 31), link("owner-2", 30)];
     const model = build({
       links,
       shells: [
@@ -344,13 +347,15 @@ describe("chat chip list: a task chat the owner made his own", () => {
       ["task-chat", "chat"],
       ["owner", "chat"],
     ]);
-    expect(model.chips.find((chip) => chip.threadId === "task-chat")?.text).toBe("Weight chart fix");
+    expect(model.chips.find((chip) => chip.threadId === "task-chat")?.text).toBe(
+      "Weight chart fix",
+    );
     expect(model.temporary).toBeNull();
   });
 
   it("keeps it as an ordinary current chip when the owner switches back to it", () => {
     const model = build({
-      links: [link("owner", 10), link("task-chat", 20)],
+      links: [link("owner", 10), ownedAt("task-chat", 20, 31)],
       shells: [
         activeAt("owner", 15),
         shell("task-chat", { latestUserMessageAt: "2026-10-01T10:31:00.000Z" }, "Weight chart fix"),
@@ -403,6 +408,29 @@ describe("chat chip list: a task chat the owner made his own", () => {
     expect(open.ownerChips.map((chip) => chip.threadId)).toEqual(["owner"]);
   });
 
+  // The bug this rule replaced: every delegation result, steer, auto-continue
+  // and release notice is a user turn, so a chat that reads only the thread's
+  // newest user message made CTO and QA task chats permanent chips. The server
+  // sends the owner's own newest message instead, null while only the app wrote.
+  it("never promotes a task chat that only got app-written turns", () => {
+    const links = [link("owner", 10), link("task-chat", 20), link("owner-2", 30)];
+    const shells = [
+      activeAt("owner", 15),
+      // A "[Task continuation]" turn just landed: the newest user message is newer than everything.
+      activeAt("task-chat", 55),
+      activeAt("owner-2", 40),
+    ];
+    const away = build({ links, shells, tasks: ownTask, current: "owner" });
+    expect(away.chips.map((chip) => chip.threadId)).toEqual(["owner-2", "owner"]);
+    const open = build({ links, shells, tasks: ownTask, current: "task-chat" });
+    expect(open.temporary).toMatchObject({
+      threadId: "task-chat",
+      kind: "task",
+      text: "Task · Chat task-chat",
+    });
+    expect(open.ownerChips.map((chip) => chip.threadId)).toEqual(["owner-2", "owner"]);
+  });
+
   it("still shows an archived task chat as a temporary chip", () => {
     const model = build({
       links: [link("owner", 10), link("gone", 5, { archivedAt: at(50) })],
@@ -422,14 +450,14 @@ describe("chat chip list: a task chat the owner made his own", () => {
     expect(model.ownerChips.map((chip) => chip.threadId)).toEqual(["owner"]);
   });
 
-  it("reads the task's own first turn off the chat's creation, tolerating the 5 s slack", () => {
-    const row = { threadId: "task-chat", createdAt: at(20) } as PersonalBotThread;
-    const userAt = (seconds: number) =>
-      new Date(Date.UTC(2026, 9, 1, 10, 20, seconds)).toISOString();
-    expect(taskChatHasLaterTurn(row, { latestUserMessageAt: null })).toBe(false);
-    expect(taskChatHasLaterTurn(row, { latestUserMessageAt: userAt(4) })).toBe(false);
-    expect(taskChatHasLaterTurn(row, { latestUserMessageAt: userAt(6) })).toBe(true);
-    expect(taskChatHasLaterTurn(row, { latestUserMessageAt: "not a time" })).toBe(false);
+  it("reads the owner's own message off the link, tolerating the 5 s slack", () => {
+    const userAt = (seconds: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, 1, 10, 20, seconds));
+    expect(taskChatTakenOver(link("task-chat", 20))).toBe(false);
+    expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: null }))).toBe(false);
+    // The task's own first turn lands with the chat: inside the slack, not the owner's.
+    expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: userAt(4) }))).toBe(false);
+    expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: userAt(6) }))).toBe(true);
+    expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: at(31) }))).toBe(true);
   });
 });
 
