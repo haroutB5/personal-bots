@@ -1,7 +1,13 @@
 import type { ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES,
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 
 import type { AttachmentUploadState } from "~/lib/attachmentUploadState";
@@ -53,6 +59,8 @@ const state = vi.hoisted(() => ({
     images: [],
     files: [{ type: "file", id: "file-1", name: "notes.txt" }],
   },
+  /** Empty unless a test needs the server to report attachment uploads. */
+  serverConfigs: new Map<string, unknown>(),
   start: vi.fn(),
   groupSend: vi.fn(),
   metadata: vi.fn(),
@@ -72,6 +80,9 @@ vi.mock("~/composerDraftStore", () => {
     removeFile: (_ref: unknown, id: string) => {
       state.draft.files = state.draft.files.filter((file) => file.id !== id);
     },
+    addImages: (_ref: unknown, images: ReadonlyArray<{ id: string }>) =>
+      images.map((image) => image.id),
+    addFiles: (_ref: unknown, files: ReadonlyArray<{ id: string }>) => files.map((file) => file.id),
   };
   return {
     useComposerThreadDraft: () => state.draft,
@@ -83,7 +94,7 @@ vi.mock("~/composerDraftStore", () => {
     ),
   };
 });
-vi.mock("~/state/entities", () => ({ useServerConfigs: () => new Map() }));
+vi.mock("~/state/entities", () => ({ useServerConfigs: () => state.serverConfigs }));
 vi.mock("~/state/threads", () => ({
   threadEnvironment: { startTurn: "start", updateMetadata: "metadata" },
 }));
@@ -101,7 +112,12 @@ vi.mock("~/lib/attachmentUploadQueue", () => ({
     select: (store: { uploadsByImageId: Record<string, AttachmentUploadState> }) => unknown,
   ) => select({ uploadsByImageId: state.uploads }),
 }));
-vi.mock("~/lib/imageCompression", () => ({ prepareImageForAttachment: vi.fn() }));
+vi.mock("~/lib/imageCompression", async (importOriginal) => ({
+  // Keep the module's other exports real: the file classifier reads
+  // `isHeicImageFile` from it, and only the compressor is under test here.
+  ...(await importOriginal<typeof import("~/lib/imageCompression")>()),
+  prepareImageForAttachment: vi.fn(),
+}));
 
 let renderer: ReactTestRenderer;
 const props = {
@@ -148,6 +164,7 @@ beforeEach(async () => {
   state.release.mockClear();
   state.retry.mockClear();
   state.uploads = {};
+  state.serverConfigs = new Map();
   await act(async () => {
     renderer = create(<PersonalComposer {...props} />);
   });
@@ -1116,5 +1133,49 @@ describe("personal composer offline send queue", () => {
     const id = getOutboxSnapshot().entries[0]!.id;
     retryOutboxEntry(id);
     expect(getOutboxSnapshot().entries[0]?.status).toBe("waiting");
+  });
+
+  it("downscales a picked image to the DeepSeek harness cap, and to the wire cap otherwise", async () => {
+    const { prepareImageForAttachment } = await import("~/lib/imageCompression");
+    const prepare = vi.mocked(prepareImageForAttachment);
+    const image = new File([new Uint8Array(8)], "seiko.png", { type: "image/png" });
+    prepare.mockReset().mockResolvedValue({ ok: true, file: image, recompressed: false });
+    // The picker only exists when the server reports attachment uploads.
+    state.serverConfigs = new Map([
+      [
+        props.environmentId,
+        {
+          environment: {
+            capabilities: { attachmentUploads: true, fileAttachments: { maxUploadBytes: 1024 } },
+          },
+        },
+      ],
+    ]);
+    await act(async () => renderer.update(<PersonalComposer {...props} />));
+    const pick = () =>
+      act(async () => {
+        await renderer.root
+          .findByProps({ type: "file" })
+          .props.onChange({ target: { files: [image], value: "" } });
+      });
+
+    // The default composer's chat is on a Claude model.
+    await pick();
+    expect(prepare.mock.calls[0]?.[1]).toBe(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+
+    prepare.mockClear();
+    await act(async () =>
+      renderer.update(
+        <PersonalComposer
+          {...props}
+          botModelSelection={{
+            instanceId: ProviderInstanceId.make("deepseek"),
+            model: "deepseek-flash",
+          }}
+        />,
+      ),
+    );
+    await pick();
+    expect(prepare.mock.calls[0]?.[1]).toBe(DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES);
   });
 });
