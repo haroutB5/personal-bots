@@ -26,6 +26,7 @@
  */
 import {
   ApprovalRequestId,
+  DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES,
   DEEPSEEK_FLASH_MODEL,
   DEEPSEEK_AGENT_MODE_OPTION_ID,
   EventId,
@@ -280,24 +281,13 @@ const IMAGE_MIME_TYPES = new Set(["image/bmp", "image/jpeg", "image/png", "image
 const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 /**
- * The largest image, in bytes, one inline ACP prompt may carry.
- *
- * dsh 0.2.0-rc.2 validates an inline image with a single regex over the whole
- * base64 payload (`CANONICAL_BASE64.test(block.data)` in `@deepseek-ai/dsh-acp`'s
- * `decodeImage`). V8's regexp engine carries its own stack and walks that
- * pattern four characters at a time, so a payload past about 4.47 M characters
- * throws "RangeError: Maximum call stack size exceeded" (measured on Node
- * 24.18.1: 4,472,820 characters pass, 4,472,824 throw). dsh reports that as
- * "Internal error: prompt was not queued: Maximum call stack size exceeded" and
- * the turn dies before the model is asked: on 14 Oct the owner's 8,449,624-byte
- * phone photo (11,266,168 base64 characters) failed that way.
- *
- * 2 MiB is 2,796,204 characters, a 37% margin under the cliff, so a V8 or Node
- * update that moves the cliff cannot bring the crash back. A bigger image is
- * refused with {@link dshImageTooLargeText} instead of being sent to a runtime
- * that cannot validate it.
+ * The inline-image limit is the shared `DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES`
+ * from `@t3tools/contracts`, which the web composers downscale to as well (the
+ * harness's `decodeImage` regex needs it small; see the constant's own note). A
+ * bigger image is refused below with {@link dshImageTooLargeText} instead of
+ * being sent to a runtime that cannot validate it.
  */
-export const DSH_MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
+const DSH_MAX_INLINE_IMAGE_BYTES = DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES;
 
 /** "8.1 MB": one decimal, for a sentence the owner reads in the chat. */
 function formatMegabytes(bytes: number): string {

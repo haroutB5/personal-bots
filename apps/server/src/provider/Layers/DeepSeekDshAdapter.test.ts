@@ -16,6 +16,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   DEEPSEEK_AGENT_MODE_OPTION_ID,
+  DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES,
   ProviderInstanceId,
   ProviderSessionStartInput,
   ThreadId,
@@ -40,11 +41,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resetBotProviderProcesses } from "../botProviderProcesses.ts";
 import { isMissingProviderConversationText } from "../missingProviderConversation.ts";
 import { DSH_PINNED_VERSION, makeDshAcpRuntime } from "../acp/DshAcpSupport.ts";
-import {
-  DSH_MAX_INLINE_IMAGE_BYTES,
-  makeDeepSeekDshAdapter,
-  translateDshFailure,
-} from "./DeepSeekDshAdapter.ts";
+import { makeDeepSeekDshAdapter, translateDshFailure } from "./DeepSeekDshAdapter.ts";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -541,9 +538,9 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       RangeError,
     );
     // The limit this adapter holds an inline image to passes the same check.
-    expect(canonicalBase64.test(Buffer.alloc(DSH_MAX_INLINE_IMAGE_BYTES).toString("base64"))).toBe(
-      true,
-    );
+    expect(
+      canonicalBase64.test(Buffer.alloc(DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES).toString("base64")),
+    ).toBe(true);
   });
 
   it.effect("refuses an image the harness cannot validate, instead of a stack-overflow turn", () =>
@@ -557,7 +554,7 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
         attachmentsDir,
         id: "dsh-oversized-12345678-1234-1234-1234-123456789abc",
         name: "seiko.png",
-        bytes: Buffer.alloc(DSH_MAX_INLINE_IMAGE_BYTES + 1, 7),
+        bytes: Buffer.alloc(DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES + 1, 7),
       });
 
       const failure = yield* Effect.flip(

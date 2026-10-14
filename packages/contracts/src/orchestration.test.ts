@@ -8,6 +8,7 @@ import {
   ProjectIconOverride,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES,
   type ChatImageAttachment,
   ClientOrchestrationCommand,
   ModelSelection,
@@ -35,7 +36,9 @@ import {
   ThreadTurnStartRequestedPayload,
   SnapShotAccessibility,
   isProviderSendTurnSupportedImageMimeType,
+  imageByteLimitForModel,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -83,6 +86,36 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", () 
     assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
   }),
 );
+
+it("caps an attachment image by the model the turn runs on", () => {
+  // The DeepSeek Harness validates an inline image with one regex over the
+  // whole base64 payload and overflows V8's regexp stack above ~4.47 M
+  // characters, so a DeepSeek model gets a payload far under the wire cap
+  // (HANDOFF-16645). Everything else keeps the wire cap.
+  for (const deepseek of [
+    "deepseek-flash",
+    "deepseek-v4-flash",
+    "vision-exp",
+    "DeepSeek-Flash",
+    "deepseek-flash[1m]",
+    " deepseek-flash ",
+  ]) {
+    assert.strictEqual(imageByteLimitForModel(deepseek), DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES);
+  }
+  for (const other of [
+    "claude-sonnet-5-5",
+    "gpt-6.1-sol",
+    "deepseek-v4-pro",
+    "deepseek",
+    "",
+    "  ",
+    null,
+    undefined,
+  ]) {
+    assert.strictEqual(imageByteLimitForModel(other), PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+  }
+  assert.isBelow(DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+});
 
 it.effect("decodes a dispatch error before its bootstrap thread was created", () =>
   Effect.gen(function* () {

@@ -5,6 +5,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ProviderOptionSelections } from "./model.ts";
+import { DEEPSEEK_FLASH_ALIASES, DEEPSEEK_FLASH_MODEL } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
   ApprovalRequestId,
@@ -165,6 +166,47 @@ export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 100;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/**
+ * The most image, in bytes, an inline prompt may carry on the DeepSeek Harness
+ * (dsh) engine.
+ *
+ * dsh 0.2.0-rc.2 admits an inline image by validating the whole base64 payload
+ * with one regex (`CANONICAL_BASE64` in `@deepseek-ai/dsh-acp`'s `decodeImage`),
+ * and V8's regexp engine keeps its own stack and walks that pattern four
+ * characters at a time: the match throws `RangeError: Maximum call stack size
+ * exceeded` above roughly 4.47 M characters (measured on Node 24.18.1: 4,472,820
+ * characters pass and 4,472,824 throw; the photo that failed on 14 Oct was
+ * 8,449,624 bytes, 11,266,168 characters). dsh answers that `session/prompt`
+ * with "Internal error: prompt was not queued: Maximum call stack size exceeded"
+ * and the turn dies before the model is asked.
+ *
+ * 2 MiB is 2,796,204 characters, a 37% margin under that cliff. The wire cap
+ * above is far too big for this engine, so a composer sending to a DeepSeek
+ * model downscales to this instead (see {@link imageByteLimitForModel}).
+ */
+export const DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
+const DEEPSEEK_MODEL_ID_SET = new Set<string>(
+  [DEEPSEEK_FLASH_MODEL, ...DEEPSEEK_FLASH_ALIASES].map((id) => id.toLowerCase()),
+);
+/**
+ * Whether a model id is one the DeepSeek Harness runs, ignoring case and the
+ * `[1m]`-style context suffix the runtimes append to their own renderings.
+ */
+export function isDeepSeekModelId(model: string | null | undefined): boolean {
+  const normalized = model?.trim().toLowerCase();
+  if (!normalized) return false;
+  return DEEPSEEK_MODEL_ID_SET.has(normalized.replace(/\[[^\]]*\]$/, ""));
+}
+/**
+ * The image cap one attachment may use for a turn on `model`: the DeepSeek
+ * Harness needs the small payload above, every other provider gets the wire
+ * cap. A missing or unknown model keeps the wire cap.
+ */
+export function imageByteLimitForModel(model: string | null | undefined): number {
+  return isDeepSeekModelId(model)
+    ? DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES
+    : PROVIDER_SEND_TURN_MAX_IMAGE_BYTES;
+}
 const PROVIDER_SEND_TURN_MAX_TOTAL_IMAGE_BYTES = 80 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
