@@ -179,6 +179,9 @@ export function translateDshFailure(message: string): {
       rateLimited: false,
     };
   }
+  if (lower.includes("maximum call stack size exceeded")) {
+    return { text: DSH_STACK_OVERFLOW_TEXT, rateLimited: false };
+  }
   const turnFailed = message.split("Internal error: turn failed: ")[1];
   if (turnFailed !== undefined) {
     return { text: `DeepSeek turn failed: ${turnFailed.trim()}`, rateLimited: false };
@@ -276,6 +279,55 @@ const hashPersona = (value: string): string => {
 const IMAGE_MIME_TYPES = new Set(["image/bmp", "image/jpeg", "image/png", "image/webp"]);
 const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
+/**
+ * The largest image, in bytes, one inline ACP prompt may carry.
+ *
+ * dsh 0.2.0-rc.2 validates an inline image with a single regex over the whole
+ * base64 payload (`CANONICAL_BASE64.test(block.data)` in `@deepseek-ai/dsh-acp`'s
+ * `decodeImage`). V8's regexp engine carries its own stack and walks that
+ * pattern four characters at a time, so a payload past about 4.47 M characters
+ * throws "RangeError: Maximum call stack size exceeded" (measured on Node
+ * 24.18.1: 4,472,820 characters pass, 4,472,824 throw). dsh reports that as
+ * "Internal error: prompt was not queued: Maximum call stack size exceeded" and
+ * the turn dies before the model is asked: on 14 Oct the owner's 8,449,624-byte
+ * phone photo (11,266,168 base64 characters) failed that way.
+ *
+ * 2 MiB is 2,796,204 characters, a 37% margin under the cliff, so a V8 or Node
+ * update that moves the cliff cannot bring the crash back. A bigger image is
+ * refused with {@link dshImageTooLargeText} instead of being sent to a runtime
+ * that cannot validate it.
+ */
+export const DSH_MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
+
+/** "8.1 MB": one decimal, for a sentence the owner reads in the chat. */
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** What the owner reads when an image is past what the harness can validate. */
+export function dshImageTooLargeText(input: {
+  readonly name: string;
+  readonly bytes: number;
+}): string {
+  const name = input.name.trim();
+  const label = name.length > 0 ? ` "${name}"` : "";
+  return (
+    `DeepSeek can't read this image${label} (${formatMegabytes(input.bytes)}): the DeepSeek engine ` +
+    `takes images up to ${formatMegabytes(DSH_MAX_INLINE_IMAGE_BYTES)}. Send a smaller photo, ` +
+    "or send it to a Claude bot."
+  );
+}
+
+/**
+ * dsh reports a stack overflow of its own as "prompt was not queued: Maximum
+ * call stack size exceeded" with our decoder's frames under it. That sentence
+ * names the harness's internals and no fix the owner can make, so the chat gets
+ * a plain one instead; the raw text stays in the logs.
+ */
+const DSH_STACK_OVERFLOW_TEXT =
+  "DeepSeek could not take this message: the harness ran out of stack on it. " +
+  "Send it again with a smaller image or shorter text.";
+
 const assertFlashModel = (
   modelSelection: ModelSelection | undefined,
   operation: string,
@@ -341,6 +393,15 @@ export const buildDshPrompt = Effect.fn("buildDshPrompt")(function* (input: {
     if (info === undefined || info.type !== "File") continue;
     const size = Number(info.size);
     if (size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) continue;
+    // Refused here, before the prompt is built, so the runtime never sees a
+    // payload its own validator overflows on (see DSH_MAX_INLINE_IMAGE_BYTES).
+    if (size > DSH_MAX_INLINE_IMAGE_BYTES) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "session/prompt",
+        detail: dshImageTooLargeText({ name: attachment.name, bytes: size }),
+      });
+    }
     totalBytes += size;
     if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) break;
     const bytes = yield* fileSystem
