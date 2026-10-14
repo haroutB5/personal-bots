@@ -54,9 +54,10 @@ export interface ChatChipModel {
   /**
    * Temporary chip first (if any), then the pinned chats, then the owner's
    * other chats, each newest activity first: the order of the bot's chat list
-   * (botThreadRows), minus task and routine chats. Snoozed chats are not here
-   * (unless one is the open chat, as a temporary chip). The screen keeps the
-   * order still while the owner stays in the bot's chats (chatChipOrder.ts).
+   * (botThreadRows), minus task and routine chats the owner never used (a task
+   * chat he pinned or wrote in himself is one of his). Snoozed chats are not
+   * here (unless one is the open chat, as a temporary chip). The screen keeps
+   * the order still while the owner stays in the bot's chats (chatChipOrder.ts).
    */
   readonly chips: ReadonlyArray<ChatChip>;
   /** The open chat's temporary chip (task, archived or snoozed chat), or null. It is `chips[0]`. */
@@ -106,6 +107,31 @@ export function taskChatThreadIds(
     }
   }
   return out;
+}
+
+/**
+ * Whether a chat made for a task or a routine run has had a turn since the
+ * task's own first one: the owner wrote in it himself, so it is his chat now.
+ * (A pin makes it his too, and the caller reads that off the link.)
+ *
+ * The server's exact rule is `role = 'user' AND message_id NOT LIKE 'personal-%'`
+ * (taskChatAutoArchivePolicy.ts `lastOwnerMessageAt`): every turn the app
+ * writes (a task brief, a steer, an auto-continue, a release notice) uses a
+ * `personal-...` message id. A chip model holds the thread's newest message and
+ * the shell's `latestUserMessageAt`, not the newest *owner* message, so this
+ * reads the timestamp. An app-written turn therefore counts as the owner's
+ * until the client can tell them apart; a chat that gets one is an ordinary
+ * chip until it auto-archives, which is the safe direction (a chat the owner
+ * uses never loses its chip).
+ */
+export function taskChatHasLaterTurn(
+  link: Pick<PersonalBotThread, "createdAt">,
+  shell: Pick<EnvironmentThreadShell, "latestUserMessageAt">,
+): boolean {
+  const latest = shell.latestUserMessageAt;
+  if (latest === null || latest === undefined) return false;
+  const latestMs = Date.parse(latest);
+  return Number.isFinite(latestMs) && latestMs > epochMs(link.createdAt) + TASK_CHAT_SLACK_MS;
 }
 
 /** The one dot a chip draws: needs you > rate limited > working > waiting on a bot > unread. */
@@ -174,8 +200,15 @@ export function buildChatChips(input: {
     input.tasks,
   );
   // `active` is pinned first, then newest activity first (the All chats list's order): the
-  // chips use it as it is.
-  const owner = active.filter((row) => !taskChats.has(row.link.threadId));
+  // chips use it as it is. A task or routine chat the owner made his own (he pinned it, or
+  // wrote in it after the task's own first turn) is an ordinary chip: same order, plain
+  // title, no temporary chip while it is open. Every other task chat stays temporary.
+  const owner = active.filter(
+    (row) =>
+      !taskChats.has(row.link.threadId as string) ||
+      isChatPinned(row.link) ||
+      taskChatHasLaterTurn(row.link, row.shell),
+  );
 
   const toChip = (row: BotThreadRow, kind: ChatChipKind): ChatChip => {
     const threadId = row.link.threadId as string;
@@ -207,9 +240,10 @@ export function buildChatChips(input: {
 
   const ownerChips = owner.map((row) => toChip(row, "chat"));
   let temporary: ChatChip | null = null;
-  // The open chat is a task, routine or archived chat (opened from Team, a
-  // notification or the task page): a temporary chip, first in the row, gone
-  // once the owner switches away. Nothing stores it.
+  // The open chat is a task or routine chat the owner has not used, or an
+  // archived chat (opened from Team, a notification or the task page): a
+  // temporary chip, first in the row, gone once the owner switches away.
+  // Nothing stores it.
   if (!owner.some((row) => row.link.threadId === input.currentThreadId)) {
     const taskRow = active.find((row) => row.link.threadId === input.currentThreadId);
     const archivedRow = archived.find((row) => row.link.threadId === input.currentThreadId);

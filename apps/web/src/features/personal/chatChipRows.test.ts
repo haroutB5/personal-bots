@@ -7,6 +7,7 @@ import { botThreadRows } from "./botThreadRows";
 import {
   buildChatChips,
   chatChipState,
+  taskChatHasLaterTurn,
   taskChatThreadIds,
   type ChatChipModel,
 } from "./chatChipRows";
@@ -194,12 +195,32 @@ describe("chat chip list: which chats get a chip", () => {
     expect(busy.chips.map((chip) => chip.threadId)).toEqual(["a", "b", "c"]);
   });
 
-  it("is the order of the All chats list, minus task chats", () => {
+  it("is the order of the All chats list, minus the task chats nobody wrote in", () => {
     const links = [link("a", 10), link("b", 20), link("task-chat", 25), link("c", 30)];
     const shells = [
       activeAt("a", 12),
       activeAt("b", 40),
-      activeAt("task-chat", 55),
+      // The task's own first turn, at the chat's creation: not the owner writing in it.
+      activeAt("task-chat", 25),
+      activeAt("c", 20),
+    ];
+    const model = build({ links, shells, tasks: [task("t1", "task-chat", 24)], current: "a" });
+    const list = botThreadRows(BOT, links, shells, new Set()).active.map(
+      (row) => row.link.threadId,
+    );
+    expect(list).toEqual(["b", "task-chat", "c", "a"]);
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(
+      list.filter((id) => id !== "task-chat"),
+    );
+  });
+
+  it("is the order of the All chats list, task chats the owner used included", () => {
+    const links = [link("a", 10), link("b", 20), link("task-chat", 25), link("c", 30)];
+    const shells = [
+      activeAt("a", 12),
+      activeAt("b", 40),
+      // Written in well after the task's own first turn: the owner's chat now.
+      activeAt("task-chat", 45),
       activeAt("c", 20),
     ];
     const model = build({ links, shells, tasks: [task("t1", "task-chat", 24)], current: "a" });
@@ -207,9 +228,7 @@ describe("chat chip list: which chats get a chip", () => {
       (row) => row.link.threadId,
     );
     expect(list).toEqual(["task-chat", "b", "c", "a"]);
-    expect(model.chips.map((chip) => chip.threadId)).toEqual(
-      list.filter((id) => id !== "task-chat"),
-    );
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(list);
   });
 
   it("puts the chat with the newest message first, then pinned ahead of it", () => {
@@ -295,6 +314,122 @@ describe("chat chip list: the temporary chip", () => {
   it("adds no temporary chip when the open chat is an owner chat", () => {
     const model = build({ links, tasks, current: "a" });
     expect(model.chips.filter((chip) => chip.kind !== "chat")).toEqual([]);
+  });
+});
+
+describe("chat chip list: a task chat the owner made his own", () => {
+  const ownTask = [task("t1", "task-chat", 19)];
+  /** The task's own first turn lands in the chat as it is made: inside the 5 s slack. */
+  const taskOwnTurn = shell(
+    "task-chat",
+    { latestUserMessageAt: "2026-10-01T10:20:04.000Z" },
+    "Weight chart fix",
+  );
+
+  it("keeps a task chat the owner wrote in as an ordinary chip, without the Task prefix", () => {
+    const links = [link("owner", 10), link("task-chat", 20), link("owner-2", 30)];
+    const model = build({
+      links,
+      shells: [
+        activeAt("owner", 15),
+        shell("task-chat", { latestUserMessageAt: "2026-10-01T10:31:00.000Z" }, "Weight chart fix"),
+        activeAt("owner-2", 40),
+      ],
+      tasks: ownTask,
+      current: "owner",
+    });
+    // An ordinary chip: sorted with the owner's chats by activity, plain title, no prefix.
+    expect(model.chips.map((chip) => [chip.threadId, chip.kind])).toEqual([
+      ["owner-2", "chat"],
+      ["task-chat", "chat"],
+      ["owner", "chat"],
+    ]);
+    expect(model.chips.find((chip) => chip.threadId === "task-chat")?.text).toBe("Weight chart fix");
+    expect(model.temporary).toBeNull();
+  });
+
+  it("keeps it as an ordinary current chip when the owner switches back to it", () => {
+    const model = build({
+      links: [link("owner", 10), link("task-chat", 20)],
+      shells: [
+        activeAt("owner", 15),
+        shell("task-chat", { latestUserMessageAt: "2026-10-01T10:31:00.000Z" }, "Weight chart fix"),
+      ],
+      tasks: ownTask,
+      current: "task-chat",
+    });
+    expect(model.temporary).toBeNull();
+    expect(model.chips[0]).toMatchObject({
+      threadId: "task-chat",
+      kind: "chat",
+      current: true,
+      text: "Weight chart fix",
+    });
+  });
+
+  it("keeps a pinned task chat nobody wrote in, ahead of the rest", () => {
+    const links = [
+      link("owner", 10),
+      link("task-chat", 20, { pinnedAt: at(21) }),
+      link("owner-2", 30),
+    ];
+    const model = build({
+      links,
+      shells: [activeAt("owner", 15), taskOwnTurn, activeAt("owner-2", 40)],
+      tasks: ownTask,
+      current: "owner",
+    });
+    expect(model.chips.map((chip) => [chip.threadId, chip.pinned])).toEqual([
+      ["task-chat", true],
+      ["owner-2", false],
+      ["owner", false],
+    ]);
+    expect(model.chips[0]).toMatchObject({ kind: "chat", text: "Weight chart fix" });
+  });
+
+  it("leaves an untouched task chat out of the chips and temporary while it is open", () => {
+    const links = [link("owner", 10), link("task-chat", 20)];
+    const shells = [activeAt("owner", 15), taskOwnTurn];
+    const away = build({ links, shells, tasks: ownTask, current: "owner" });
+    expect(away.chips.map((chip) => chip.threadId)).toEqual(["owner"]);
+    expect(away.openCount).toBe(2);
+    const open = build({ links, shells, tasks: ownTask, current: "task-chat" });
+    expect(open.temporary?.threadId).toBe("task-chat");
+    expect(open.chips[0]).toMatchObject({
+      threadId: "task-chat",
+      kind: "task",
+      text: "Task · Weight chart fix",
+    });
+    expect(open.ownerChips.map((chip) => chip.threadId)).toEqual(["owner"]);
+  });
+
+  it("still shows an archived task chat as a temporary chip", () => {
+    const model = build({
+      links: [link("owner", 10), link("gone", 5, { archivedAt: at(50) })],
+      shells: [
+        activeAt("owner", 15),
+        shell("gone", { latestUserMessageAt: "2026-10-01T10:10:00.000Z" }, "Weight chart fix"),
+      ],
+      tasks: [task("t1", "gone", 4)],
+      current: "gone",
+    });
+    expect(model.chips[0]).toMatchObject({
+      threadId: "gone",
+      kind: "archived",
+      text: "Archived · Weight chart fix",
+    });
+    expect(model.temporary?.threadId).toBe("gone");
+    expect(model.ownerChips.map((chip) => chip.threadId)).toEqual(["owner"]);
+  });
+
+  it("reads the task's own first turn off the chat's creation, tolerating the 5 s slack", () => {
+    const row = { threadId: "task-chat", createdAt: at(20) } as PersonalBotThread;
+    const userAt = (seconds: number) =>
+      new Date(Date.UTC(2026, 9, 1, 10, 20, seconds)).toISOString();
+    expect(taskChatHasLaterTurn(row, { latestUserMessageAt: null })).toBe(false);
+    expect(taskChatHasLaterTurn(row, { latestUserMessageAt: userAt(4) })).toBe(false);
+    expect(taskChatHasLaterTurn(row, { latestUserMessageAt: userAt(6) })).toBe(true);
+    expect(taskChatHasLaterTurn(row, { latestUserMessageAt: "not a time" })).toBe(false);
   });
 });
 
