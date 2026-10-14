@@ -48,6 +48,10 @@ describe("ConversationSubtitle", () => {
     const labelClass = String(label.props.className);
     expect(labelClass).toContain("truncate");
     expect(labelClass).toContain("shrink-[100]");
+    // A floor, so the model's own name stays readable instead of collapsing to
+    // "So…" when the bot name shares the row (1.66.44 QA, P1).
+    expect(labelClass).toContain("min-w-[4.5rem]");
+    expect(labelClass).not.toContain("min-w-0");
     // The status never gives way to the model; it only ellipsises when it alone
     // is wider than the line.
     expect(classOf(renderer, "Waiting on Planner")).toContain("truncate");

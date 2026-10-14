@@ -23,8 +23,10 @@ const STATE_DOT: Record<ConversationState, string> = {
  * way. A long model label used to squeeze the status down to "Id…" at 390 px
  * (1.66.44 QA), so the status never shrinks for it — the model label shrinks
  * first and ends in an ellipsis, and a status too wide for the line on its own
- * is the only thing that gets cut. Both sit on one 18px row. The provider name
- * is not shown: the model label names the runtime.
+ * is the only thing that gets cut. The model label keeps a 4.5rem floor so the
+ * model's own name stays readable; in the header variant where the bot name
+ * shares the row, the name gives way for that floor. Both sit on one 18px row.
+ * The provider name is not shown: the model label names the runtime.
  */
 export function ConversationSubtitle({
   state,
@@ -49,7 +51,11 @@ export function ConversationSubtitle({
         {modelLabel !== null ? (
           <span
             data-testid="chat-model-label"
-            className="min-w-0 shrink-[100] truncate whitespace-nowrap"
+            // The floor keeps the model's own name readable ("Sonnet 5.5") in the
+            // header variant where the bot name shares the row; without it the
+            // label collapses to "So…" at 390 px (1.66.44 QA, P1). The name group
+            // yields first for that floor (ConversationHeaderLine).
+            className="min-w-[4.5rem] shrink-[100] truncate whitespace-nowrap"
           >
             <span aria-hidden="true">· </span>
             {modelLabel}

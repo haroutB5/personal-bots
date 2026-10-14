@@ -81,8 +81,10 @@ export function ConversationHeaderName({
  * second line, and the chat's own title becomes the highlighted chip): the
  * bot name with its bell and context badge, then the state and model line
  * (`children`, a ConversationSubtitle) on the same row. The status never
- * truncates; the model label runs out first. The h1 keeps the chat's title
- * for screen readers.
+ * truncates and the model label keeps a floor, so the name gives way for them
+ * when the row is tight (at 390 px it used to squeeze the status to "Id…" and
+ * push the model label out altogether). The h1 keeps the chat's title for
+ * screen readers.
  */
 export function ConversationHeaderLine({
   name,
@@ -100,7 +102,9 @@ export function ConversationHeaderLine({
   const title = conversationChatTitle(chatTitle);
   return (
     <span className="flex h-6 min-w-0 flex-1 items-center gap-2 overflow-hidden">
-      <span data-name-group="" className="flex max-w-full min-w-0 shrink-0 items-center gap-2">
+      {/* min-w-16: the name ellipsises for the status and model line, never to
+          nothing. Its bell and badge keep their width (they are shrink-0). */}
+      <span data-name-group="" className="flex max-w-full min-w-16 items-center gap-2">
         <h1 className="min-w-0 truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
           {name}
           {title !== null ? <span className="sr-only">, chat {title}</span> : null}
