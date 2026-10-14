@@ -120,6 +120,7 @@ import {
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import * as DeepSeekBalanceWatcher from "./personal/deepseek/DeepSeekBalanceWatcher.ts";
 import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
 import { personalPushSentRouteLayer } from "./personal/push/sentPushesRoute.ts";
 import { personalUpdateStatusRouteLayer } from "./personal/updateStatus/updateStatusRoute.ts";
@@ -608,6 +609,10 @@ const PersonalReactorsLive = Layer.effectDiscard(
     // One-off: names old task/routine chats still on "New chat" after their
     // task, once the server is up. Marker in personal_meta; never blocks start.
     yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
+    // Tells the owner before a DeepSeek account runs dry: after each finished
+    // DeepSeek turn (debounced) and on a light half-hour sweep. Silent while no
+    // enabled DeepSeek instance has a key.
+    yield* (yield* DeepSeekBalanceWatcher.DeepSeekBalanceWatcher).start();
   }),
 );
 
@@ -616,7 +621,10 @@ const PersonalReactorsLive = Layer.effectDiscard(
 // the runtime layers the whole group is merged above.
 const PersonalLayerLive = PersonalReactorsLive.pipe(
   // Consumes the push service below and the provider/orchestration runtime.
-  Layer.provideMerge(PersonalProviderUpdates.layer),
+  // The balance watcher rides the same step: it needs the instance key from
+  // settings, the provider's own balance reader, and the warned flag in
+  // personal_meta, all of which the rest of this chain provides.
+  Layer.provideMerge(Layer.merge(PersonalProviderUpdates.layer, DeepSeekBalanceWatcher.layer)),
   // Consumes the routine service and the bot service/repository below.
   Layer.provideMerge(PersonalClaudeCodeReview.layer),
   Layer.provideMerge(PersonalTurnRetry.layer),

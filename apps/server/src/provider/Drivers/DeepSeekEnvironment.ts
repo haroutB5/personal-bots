@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+import { dedupeEnvironmentNames } from "../environmentNames.ts";
 import { resolveDeepSeekEngine } from "./DeepSeekEngine.ts";
 
 export const DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
@@ -71,6 +72,23 @@ const DROPPED_MODEL_ENV_NAMES: ReadonlySet<string> = new Set([
   "ANTHROPIC_SMALL_FAST_MODEL",
   "ANTHROPIC_DEFAULT_MODEL",
 ]);
+
+/**
+ * The pinned and the dropped names, lower-cased.
+ *
+ * Windows resolves environment names case-insensitively, so `anthropic_base_url`
+ * is the same variable as `ANTHROPIC_BASE_URL` to the child process. Comparing
+ * names exactly would let a mixed-case ambient spelling survive the loop and
+ * then sit beside the pinned value, leaving which one wins to the OS. The
+ * harness engine already de-duplicates this way; the two must not drift apart.
+ */
+const DEEPSEEK_PINNED_ENV_NAMES_LOWER: ReadonlySet<string> = new Set(
+  Object.keys(DEEPSEEK_PINNED_ENVIRONMENT).map((name) => name.toLowerCase()),
+);
+
+const DROPPED_MODEL_ENV_NAMES_LOWER: ReadonlySet<string> = new Set(
+  [...DROPPED_MODEL_ENV_NAMES].map((name) => name.toLowerCase()),
+);
 
 /**
  * Claude engine only: the CLI's own background traffic.
@@ -140,6 +158,10 @@ export const resolveDeepSeekHomePath = Effect.fn("resolveDeepSeekHomePath")(func
  *
  * On the Claude engine it also quiets the CLI's own background traffic (see
  * `CLAUDE_ENGINE_QUIET_ENVIRONMENT`).
+ *
+ * Names are matched and de-duplicated case-insensitively
+ * (`dedupeEnvironmentNames`), the same as the harness engine's own child
+ * environment, so a mixed-case ambient spelling cannot shadow a pinned value.
  */
 export const makeDeepSeekEnvironment = Effect.fn("makeDeepSeekEnvironment")(function* (
   config: Pick<DeepSeekSettings, "homePath" | "engine">,
@@ -154,10 +176,13 @@ export const makeDeepSeekEnvironment = Effect.fn("makeDeepSeekEnvironment")(func
     // ambient overrides so a machine-level `ANTHROPIC_BASE_URL`,
     // `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`,
     // `CLAUDE_CODE_SUBAGENT_MODEL` or `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
-    // cannot reroute the session or its alias-mapped internal calls.
-    if (name === "ANTHROPIC_BASE_URL") continue;
-    if (Object.hasOwn(DEEPSEEK_PINNED_ENVIRONMENT, name)) continue;
-    if (DROPPED_MODEL_ENV_NAMES.has(name)) continue;
+    // cannot reroute the session or its alias-mapped internal calls. The
+    // comparison is case-insensitive: on Windows a mixed-case spelling is the
+    // same variable.
+    const lowerName = name.toLowerCase();
+    if (lowerName === "anthropic_base_url") continue;
+    if (DEEPSEEK_PINNED_ENV_NAMES_LOWER.has(lowerName)) continue;
+    if (DROPPED_MODEL_ENV_NAMES_LOWER.has(lowerName)) continue;
     next[name] = value;
   }
   const token = baseEnv[DEEPSEEK_AUTH_TOKEN_ENV]?.trim() ?? "";
@@ -174,7 +199,10 @@ export const makeDeepSeekEnvironment = Effect.fn("makeDeepSeekEnvironment")(func
       next[name] = value;
     }
   }
-  return next;
+  // One entry per name, case-insensitively: an ambient `Path`/`PATH` pair would
+  // otherwise reach the child as two spellings of one variable, and the pinned
+  // values set above must be the ones that win.
+  return dedupeEnvironmentNames(next);
 });
 
 export const makeDeepSeekContinuationGroupKey = Effect.fn("makeDeepSeekContinuationGroupKey")(

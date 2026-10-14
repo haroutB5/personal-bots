@@ -122,6 +122,38 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
       }),
     );
 
+    it.effect("treats a mixed-case spelling as the same name, for the pins and for PATH", () =>
+      Effect.gen(function* () {
+        // Windows resolves environment names case-insensitively, so these are
+        // the same variables as the pinned ones whatever the block holds. A
+        // surviving mixed-case spelling would sit beside the pinned value and
+        // leave which one wins to the OS.
+        const env = yield* makeDeepSeekEnvironment(
+          { engine: "claude-code", homePath: "" },
+          {
+            ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key",
+            anthropic_base_url: "https://evil.example.com",
+            anthropic_model: "claude-opus-5-5",
+            anthropic_default_model: "claude-opus-5-5",
+            Path: "C:\\first",
+            PATH: "C:\\last",
+          },
+        );
+        const spellingsOf = (name: string) =>
+          Object.keys(env).filter((key) => key.toLowerCase() === name);
+
+        expect(spellingsOf("anthropic_base_url")).toEqual(["ANTHROPIC_BASE_URL"]);
+        expect(env.ANTHROPIC_BASE_URL).toBe(DEEPSEEK_ANTHROPIC_BASE_URL);
+        expect(spellingsOf("anthropic_model")).toEqual(["ANTHROPIC_MODEL"]);
+        expect(env.ANTHROPIC_MODEL).toBe(DEEPSEEK_FLASH_1M_MODEL);
+        expect(spellingsOf("anthropic_default_model")).toEqual([]);
+        // One entry per name, keeping the first spelling and the last value,
+        // exactly as the harness engine builds its own child environment.
+        expect(spellingsOf("path")).toEqual(["Path"]);
+        expect(env.Path).toBe("C:\\last");
+      }),
+    );
+
     it.effect("strips secret placeholders and unrelated provider tokens", () =>
       Effect.gen(function* () {
         const env = yield* makeDeepSeekEnvironment(

@@ -41,12 +41,19 @@ import { BOT_PROTECTED_DB_SIDECAR_SUFFIXES } from "../../personal/secrets/botPro
 import { DEEPSEEK_AUTH_TOKEN_ENV, isLeakedSecretName } from "../Drivers/DeepSeekEnvironment.ts";
 import { DSH_PINNED_VERSION, DSH_RUNTIME_DIR_NAME } from "../Drivers/DeepSeekEngine.ts";
 import { PERSONAL_BOT_PLUGINS_DIR, PERSONAL_BOT_SHARED_PLUGIN } from "../Layers/ClaudeAdapter.ts";
+import { dedupeEnvironmentNames } from "../environmentNames.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 export const DSH_AGENT_MODES = DEEPSEEK_DSH_AGENT_MODES;
 export type DshAgentMode = DeepSeekDshAgentMode;
 export const DSH_DEFAULT_AGENT_MODE: DshAgentMode = DEEPSEEK_DEFAULT_AGENT_MODE;
 export { DEEPSEEK_AGENT_MODE_OPTION_ID, DSH_PINNED_VERSION };
+/**
+ * Re-exported from `provider/environmentNames`: the Claude-engine DeepSeek
+ * environment builder needs the same de-duplication, and the two engines must
+ * not drift apart. The implementation and its rationale live there.
+ */
+export { dedupeEnvironmentNames };
 
 /** The key dsh reads, and the only credential its child environment carries. */
 export const DEEPSEEK_DSH_API_KEY_ENV = "DEEPSEEK_API_KEY";
@@ -124,35 +131,6 @@ function isClaudeEngineEnvName(name: string): boolean {
     // variable here would be one more credential-shaped name for nothing.
     name === MCP_TOKEN_ENV_NAME
   );
-}
-
-/**
- * Case-insensitive de-duplication of environment names: one entry per name,
- * carrying the LAST value seen under the FIRST spelling seen.
- *
- * PowerShell 5.1 inside a dsh tool fails on `Get-ChildItem Env:` when the
- * process environment holds `Path` and `PATH` at once ("An item with the same
- * key has already been added"), and a spawned tool inherits exactly that.
- * Windows has one variable per name whatever it is spelled, so the last value
- * wins — that is what makes an instance's own `PATH` (or `TEMP`, `ComSpec`)
- * override stick even though it arrives spelled differently from the inherited
- * one — while the first spelling is kept, so the name the OS already uses is
- * the name the child gets.
- */
-export function dedupeEnvironmentNames(
-  environment: Readonly<Record<string, string | undefined>>,
-): NodeJS.ProcessEnv {
-  const seen = new Map<string, string>();
-  const spelled = new Map<string, string>();
-  for (const [name, value] of Object.entries(environment)) {
-    if (value === undefined) continue;
-    const key = name.toLowerCase();
-    if (!seen.has(key)) spelled.set(key, name);
-    seen.set(key, value);
-  }
-  const next: NodeJS.ProcessEnv = {};
-  for (const [key, value] of seen) next[spelled.get(key) ?? key] = value;
-  return next;
 }
 
 /**

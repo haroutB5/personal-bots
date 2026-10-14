@@ -436,6 +436,32 @@ export function providerBrokenPushPayload(input: {
   };
 }
 
+/**
+ * "DeepSeek balance is $0.94", linking to the Settings provider row.
+ *
+ * The tap lands on Settings rather than the top-up page: the worker and the
+ * in-app banner only ever open a same-origin route, and an outside URL is
+ * silently replaced with `/bots` (see `sw.js`), so a provider-settings landing
+ * is the honest target. The Top up link lives on the card itself.
+ */
+export function deepSeekBalancePushPayload(input: {
+  readonly instanceId: string;
+  readonly label: string;
+  readonly balance: string;
+  readonly empty: boolean;
+}): PersonalPushPayload {
+  return {
+    title: input.empty
+      ? `${input.label} balance is empty`
+      : `${input.label} balance is ${input.balance}`,
+    body: input.empty
+      ? `${input.label} bots switch to their fallback model until you top up.`
+      : `Top up to keep ${input.label} bots running.`,
+    url: "/bots/settings",
+    tag: `deepseek-balance-${input.instanceId}`,
+  };
+}
+
 const SubscriptionRow = Schema.Struct({
   subscriptionId: PersonalPushSubscriptionId,
   endpoint: Schema.String,
@@ -583,6 +609,20 @@ export class PersonalPushService extends Context.Service<
       readonly instanceId: string;
       readonly label: string;
       readonly version: string;
+    }) => Effect.Effect<void>;
+    /**
+     * Queues one "the prepaid balance is low" or "is empty" alert. The caller
+     * owns the once-per-low-spell rule and persists the warned flag, so `at`
+     * is what makes each spell its own outbox event: a later drop after a
+     * top-up must notify again, and an event id is deduped for days.
+     */
+    readonly notifyDeepSeekBalanceLow: (input: {
+      readonly instanceId: string;
+      readonly label: string;
+      readonly balance: string;
+      readonly empty: boolean;
+      /** When this reading was made, ISO; identifies the spell. */
+      readonly at: string;
     }) => Effect.Effect<void>;
     /** Queues one pass: send due messages, expire and prune old rows. */
     /**
@@ -1710,6 +1750,29 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // A low prepaid balance stops the bots on that account, so it rides the same
+  // "hit a problem" preference. The once-per-spell rule is the caller's (it
+  // persists the warned flag), so the event id is per decision: a second drop
+  // after a top-up is a new spell and must notify again.
+  const notifyDeepSeekBalanceLow: PersonalPushService["Service"]["notifyDeepSeekBalanceLow"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      const preferences = yield* readPreferences;
+      if (!preferences.taskFailed) return;
+      const eventId = `deepseek-balance-low:${input.instanceId}:${input.at}`;
+      yield* deliver(eventId, deepSeekBalancePushPayload(input));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not queue a balance alert", {
+              instanceId: input.instanceId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
   const notifyTeamBotChange: PersonalPushService["Service"]["notifyTeamBotChange"] = (input) =>
     Effect.gen(function* () {
       const lead = yield* botRepository.getBotById({
@@ -1798,6 +1861,7 @@ export const make = Effect.gen(function* () {
     inApp,
     ackInApp,
     notifyProviderBroken,
+    notifyDeepSeekBalanceLow,
     notifyTeamBotChange,
     sentSince,
     sweep: kick,

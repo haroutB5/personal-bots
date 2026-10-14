@@ -20,6 +20,9 @@ import type {
   ServerProviderUsageBalance,
 } from "@t3tools/contracts";
 
+/** Where a DeepSeek account is topped up. One literal, used by every surface. */
+export const DEEPSEEK_TOP_UP_URL = "https://platform.deepseek.com/top_up";
+
 export interface ProviderApiKeyField {
   /** The environment entry the key is stored in. Unchanged from the hand-typed setup. */
   readonly name: string;
@@ -31,6 +34,11 @@ export interface ProviderApiKeyField {
   readonly keysUrl: string;
   /** The link text for {@link keysUrl}. */
   readonly keysUrlLabel: string;
+  /**
+   * Where the owner tops the account up, for a provider whose balance can run
+   * out. Absent when the provider has no prepaid credit to add.
+   */
+  readonly topUpUrl?: string;
   /** One line under the row while no key is saved. */
   readonly emptyDescription: string;
   /**
@@ -61,6 +69,7 @@ export const PROVIDER_API_KEY_FIELDS: Readonly<Record<string, ProviderApiKeyFiel
     displayName: "DeepSeek",
     keysUrl: "https://platform.deepseek.com/api_keys",
     keysUrlLabel: "platform.deepseek.com",
+    topUpUrl: DEEPSEEK_TOP_UP_URL,
     emptyDescription: "Add your DeepSeek API key.",
     required: true,
     checkedWithBalance: true,
@@ -124,11 +133,17 @@ export function withoutProviderApiKey(
   return environment.filter((variable) => variable.name !== field.name);
 }
 
-export type ProviderApiKeyCheckTone = "pending" | "ok" | "rejected" | "quiet";
+export type ProviderApiKeyCheckTone = "pending" | "ok" | "rejected" | "empty" | "quiet";
 
 export interface ProviderApiKeyCheck {
   readonly tone: ProviderApiKeyCheckTone;
   readonly text: string;
+  /**
+   * Where to top up, when the check found a working key on an empty account.
+   * The row renders it beside the sentence rather than inside it, so the link
+   * is tappable on a phone.
+   */
+  readonly topUpUrl?: string;
 }
 
 /** Money in the currency DeepSeek reported; never converted, never rounded up. */
@@ -146,8 +161,10 @@ function formatBalance(amounts: { currency: string; totalBalance: number } | und
  * previous key's answer; a same-second save and read is accepted, because the
  * probe timestamp is taken after the read that used the new key.
  *
- * A rejected key is named as such; a network problem is not, so a flaky
- * connection never reads as "your key is wrong".
+ * A rejected key is named as such; an empty account is named as a working key
+ * with nothing left to spend; and every other failure — a rate limit, a server
+ * fault, a flaky connection — is not, so nothing ever reads as "your key is
+ * wrong" when the key is fine.
  */
 export function providerApiKeyCheckLine(input: {
   readonly field: ProviderApiKeyField;
@@ -169,8 +186,15 @@ export function providerApiKeyCheckLine(input: {
     const money = formatBalance(balance.balance);
     return { tone: "ok", text: money.length > 0 ? `Key works · balance ${money}` : "Key works" };
   }
-  if (balance.failureReason === "http_error") {
+  if (balance.failureReason === "auth_error") {
     return { tone: "rejected", text: `${field.displayName} didn't accept this key` };
+  }
+  if (balance.failureReason === "insufficient_balance") {
+    return {
+      tone: "empty",
+      text: `Key works, but your ${field.displayName} balance is empty`,
+      ...(field.topUpUrl !== undefined ? { topUpUrl: field.topUpUrl } : {}),
+    };
   }
   return { tone: "quiet", text: "Could not check the key right now" };
 }

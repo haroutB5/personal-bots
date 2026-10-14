@@ -116,29 +116,56 @@ describe("providerApiKeyCheckLine", () => {
     ).toEqual({ tone: "ok", text: "Key works · balance $12.34" });
   });
 
-  it("names a rejected key only when the endpoint actually refused it", () => {
+  it("names a rejected key only for 401/403, never for a rate limit or an outage", () => {
     expect(
       providerApiKeyCheckLine({
         field: deepSeekField,
         balance: balance({
           status: "failed",
-          failureReason: "http_error",
-          message: "DeepSeek would not return the balance for this key.",
+          failureReason: "auth_error",
+          message: "DeepSeek did not accept this key, so it would not return the balance.",
         }),
         savedAtMs,
         enabled: true,
       }),
     ).toEqual({ tone: "rejected", text: "DeepSeek didn't accept this key" });
 
-    // A network problem is not the key's fault, and must not read as if it were.
+    // A rate limit, a server fault or a flaky network is not the key's fault,
+    // and must not read as if it were.
+    for (const failureReason of [
+      "http_error",
+      "network_error",
+      "timeout",
+      "invalid_response",
+    ] as const) {
+      expect(
+        providerApiKeyCheckLine({
+          field: deepSeekField,
+          balance: balance({ status: "failed", failureReason, message: "…" }),
+          savedAtMs,
+          enabled: true,
+        }),
+      ).toEqual({ tone: "quiet", text: "Could not check the key right now" });
+    }
+  });
+
+  it("calls a working key on an empty account a balance problem, with a way to top up", () => {
     expect(
       providerApiKeyCheckLine({
         field: deepSeekField,
-        balance: balance({ status: "failed", failureReason: "network_error", message: "…" }),
+        balance: balance({
+          status: "failed",
+          failureReason: "insufficient_balance",
+          message: "This key works; the DeepSeek account has no credit left.",
+        }),
         savedAtMs,
         enabled: true,
       }),
-    ).toEqual({ tone: "quiet", text: "Could not check the key right now" });
+    ).toEqual({
+      tone: "empty",
+      text: "Key works, but your DeepSeek balance is empty",
+      topUpUrl: "https://platform.deepseek.com/top_up",
+    });
   });
 
   it("checks nothing for a provider with no balance endpoint", () => {
@@ -208,6 +235,11 @@ describe("ProviderApiKeyRow", () => {
     const markup = render({ environment: otherVariables });
     expect(markup).toContain('type="password"');
     expect(markup).toContain("autofocus");
+    // Chromium may still offer to save a pasted key; `new-password` is the
+    // spelling it honours, so the browser's password manager stays out of it.
+    // Compared case-insensitively: the field renders the prop verbatim and HTML
+    // attribute names are case-insensitive.
+    expect(markup.toLowerCase()).toContain('autocomplete="new-password"');
     expect(markup).toContain("Add your DeepSeek API key.");
     expect(markup).toContain("https://platform.deepseek.com/api_keys");
     // Show is off by default, so the field offers Show and not Hide.

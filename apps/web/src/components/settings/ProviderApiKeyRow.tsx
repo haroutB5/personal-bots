@@ -133,7 +133,9 @@ function ProviderApiKeyRowInner(
       ? "text-success"
       : check?.tone === "rejected"
         ? "text-destructive"
-        : undefined;
+        : check?.tone === "empty"
+          ? "text-warning"
+          : undefined;
 
   const control = editing ? (
     <div className="flex w-full min-w-0 flex-col gap-2 @min-[32rem]/settings-row:w-72">
@@ -141,7 +143,7 @@ function ProviderApiKeyRowInner(
         <Input
           id={inputId}
           aria-label={field.label}
-          autoComplete="off"
+          autoComplete="new-password"
           autoFocus={field.required}
           className="min-w-0 flex-1 font-mono"
           onChange={(event) => setDraft(event.target.value)}
@@ -234,6 +236,19 @@ function ProviderApiKeyRowInner(
         check ? (
           <span role="status" className={checkClassName} data-tone={check.tone}>
             {check.text}
+            {check.topUpUrl !== undefined ? (
+              <>
+                {" "}
+                <a
+                  className="underline underline-offset-2 hover:text-foreground"
+                  href={check.topUpUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  Top up
+                </a>
+              </>
+            ) : null}
           </span>
         ) : undefined
       }

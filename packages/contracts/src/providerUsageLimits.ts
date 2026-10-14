@@ -114,6 +114,28 @@ export const ServerProviderSpend = Schema.Struct({
 export type ServerProviderSpend = typeof ServerProviderSpend.Type;
 
 /**
+ * At or below this (USD) a prepaid balance is called low: the card shows its
+ * warning line, and the server sends one notice per low spell.
+ */
+export const PROVIDER_LOW_BALANCE_USD = 1;
+
+/** A low spell ends, and can be reported again, above this (USD): a top-up. */
+export const PROVIDER_LOW_BALANCE_REARM_USD = 1.5;
+
+/**
+ * True when a reading is low enough to warn about.
+ *
+ * USD only, deliberately: DeepSeek reports the account's own currency and the
+ * app never converts or invents a rate, so a CNY-only account is left alone
+ * rather than measured against a dollar line.
+ */
+export const isLowProviderBalance = (amounts: {
+  readonly currency: string;
+  readonly totalBalance: number;
+}): boolean =>
+  amounts.currency.toUpperCase() === "USD" && amounts.totalBalance <= PROVIDER_LOW_BALANCE_USD;
+
+/**
  * What a provider knows about its prepaid balance (DeepSeek today).
  *
  * `status` says how the newest read attempt went; `balance` is what to show,
@@ -134,11 +156,21 @@ export const ServerProviderUsageBalance = Schema.Struct({
   /**
    * Why a failed read failed, as a short slug beside the sentence above.
    * Callers that have to react differently use it: the DeepSeek key field
-   * reads `http_error` as "this key was rejected" and stays quiet about a
-   * network problem, instead of guessing from the message wording.
+   * reads `auth_error` as "this key was rejected" and `insufficient_balance`
+   * as a working key with an empty account, while a network problem or any
+   * other HTTP status stays quiet, instead of guessing from the message
+   * wording. A 429 or a 5xx is `http_error`, never a rejected key.
    */
   failureReason: Schema.optional(
-    Schema.Literals(["missing_key", "http_error", "network_error", "timeout", "invalid_response"]),
+    Schema.Literals([
+      "missing_key",
+      "auth_error",
+      "insufficient_balance",
+      "http_error",
+      "network_error",
+      "timeout",
+      "invalid_response",
+    ]),
   ),
 });
 export type ServerProviderUsageBalance = typeof ServerProviderUsageBalance.Type;

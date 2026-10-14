@@ -144,16 +144,31 @@ describe("makeDeepSeekBalanceReader", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("reports an HTTP error quietly, without reading or echoing the body", async () => {
-    const fetchImpl = vi.fn<typeof fetch>(
-      async () => new Response("unauthorized: bad key sk-live-xyz", { status: 401 }),
-    );
-    const { reader } = harness({ fetchImpl });
+  it("blames the key for 401 and 403 only, never for a rate limit or a server fault", async () => {
+    // DeepSeek's status is the whole story: the body is never read or echoed,
+    // and a 429 or a 5xx must not be presented as a rejected key.
+    const cases = [
+      { status: 401, reason: "auth_error" },
+      { status: 403, reason: "auth_error" },
+      { status: 402, reason: "insufficient_balance" },
+      { status: 429, reason: "http_error" },
+      { status: 500, reason: "http_error" },
+      { status: 503, reason: "http_error" },
+    ] as const;
 
-    const read = await reader.read("secret-key");
+    for (const entry of cases) {
+      const fetchImpl = vi.fn<typeof fetch>(
+        async () => new Response("unauthorized: bad key sk-live-xyz", { status: entry.status }),
+      );
+      const { reader } = harness({ fetchImpl });
 
-    expect(read).toEqual({ status: "failed", reason: "http_error", lastGood: null });
-    expect(JSON.stringify(read)).not.toContain("sk-live-xyz");
+      const read = await reader.read("secret-key");
+
+      expect(read.status).toBe("failed");
+      if (read.status !== "failed") continue;
+      expect(read.reason).toBe(entry.reason);
+      expect(JSON.stringify(read)).not.toContain("sk-live-xyz");
+    }
   });
 
   it("tells a timeout from a network failure and from an unreadable body", async () => {

@@ -62,6 +62,8 @@ const VERSION_PROBE_TIMEOUT_MS = 4_000;
 /** How a failed balance read reads on the usage card: short, ours, never DeepSeek's body. */
 const BALANCE_FAILURE_NOTES: Record<DeepSeekBalanceFailureReason, string> = {
   missing_key: "Add your DeepSeek API key to read the balance.",
+  auth_error: "DeepSeek did not accept this key, so it would not return the balance.",
+  insufficient_balance: "This key works; the DeepSeek account has no credit left.",
   http_error: "DeepSeek would not return the balance for this key.",
   network_error: "DeepSeek could not be reached for the balance.",
   timeout: "DeepSeek did not answer the balance request in time.",

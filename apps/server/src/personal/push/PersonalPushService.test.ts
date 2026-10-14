@@ -2084,3 +2084,36 @@ it.effect("a sign-in and a secret in a plain chat notify the chat, not the task 
     expect(third.url).toBe("/tasks/task-owns-2");
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+// The tap must land inside the app: the service worker and the in-app banner
+// only open a same-origin route, and rewrite anything else to /bots. So the
+// top-up page is linked from the card, not from the notice.
+it("names the low-balance notice and lands the tap on Settings", () => {
+  expect(
+    PersonalPushService.deepSeekBalancePushPayload({
+      instanceId: "deepseek",
+      label: "DeepSeek",
+      balance: "$0.94",
+      empty: false,
+    }),
+  ).toEqual({
+    title: "DeepSeek balance is $0.94",
+    body: "Top up to keep DeepSeek bots running.",
+    url: "/bots/settings",
+    tag: "deepseek-balance-deepseek",
+  });
+
+  expect(
+    PersonalPushService.deepSeekBalancePushPayload({
+      instanceId: "deepseek",
+      label: "DeepSeek",
+      balance: "$0.00",
+      empty: true,
+    }),
+  ).toEqual({
+    title: "DeepSeek balance is empty",
+    body: "DeepSeek bots switch to their fallback model until you top up.",
+    url: "/bots/settings",
+    tag: "deepseek-balance-deepseek",
+  });
+});
