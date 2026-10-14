@@ -102,3 +102,25 @@ back if anything fails) would seal the current keys on the next boot. I did not 
 credential data in place: a rollback to 1.66.41 or 1.66.42 would then read a sealed envelope as the key and
 DeepSeek (or any provider with a sensitive variable) would stop authenticating until the key is re-saved.
 That is a non-additive data change, and the brief said to ask before a migration.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=8c44ae312739ca27e95f507a261cc00d895a5fbe release=8c44ae312739 json-sha256=62e57a1b69002bd227d73f259ad4d5832311c1853e108429a96830e89f058acd result=PASS -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T09:36:55Z. Version 1.66.43, release `8c44ae312739`, commit `8c44ae312739ca27e95f507a261cc00d895a5fbe` on `feat/hbots-deepseek-key-setup`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\8c44ae312739\gate-evidence.json` (sha256 `62e57a1b69002bd227d73f259ad4d5832311c1853e108429a96830e89f058acd`) and the full gate logs in `releases\8c44ae312739\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2582 tests passed, 0 failed, 3 skipped, in 188 files | 254.8   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 39.9    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2566 tests passed, 0 failed, 0 skipped, in 235 files | 28.3    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 48.5    |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 107.5   |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-deepseek-key-setup\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\8c44ae312739" -Json` (in `.`)                                                                                                        | 0    | pass: 12/12 journeys passed                                | 280     |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `1de248976ab6c8244fe20f4ae8af51cf862932af`, at end `1de248976ab6c8244fe20f4ae8af51cf862932af`; tracked files modified: none. Staged release: version 1.66.43, sha 8c44ae312739, dirty False, externals copied; `dist/bin.mjs` sha256 `56d71558696cf0b9c455396ccc20792c12043ea9b9bc312f75d038e6c80fafc1`.
+<!-- gate-evidence:end -->
