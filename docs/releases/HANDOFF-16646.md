@@ -1,6 +1,6 @@
 # HANDOFF 1.66.46
 
-PROOF_PLACEHOLDER: DRAFT. QA tests this release (migration = risky tier); the builder writes the final proof after QA passes.
+Branch `perf/hbots-freeze-indexes`, staged release `cbd6cd5b656c`, version **1.66.46**, migration max **106 -> 107** (additive indexes only), `PERSONAL_TASKS_CONCURRENCY = 5` unchanged (`PersonalTaskService.ts:50`). The migration puts it in the risky tier: QA tested the staged release and passed it 7/7 (see "Proof on the staged release").
 
 ## What ships
 
@@ -60,6 +60,20 @@ The new `lastOwnerMessageAt` seek ran for every link, archived ones too; the chi
 - Raising the live server's own I/O and memory priority to Normal: built, then taken out before release because its gain was not measured on its own and it touches the restart path. Next round: a measured A/B, with bot provider processes held below the server.
 
 Gate run priorities (every process in the gate-evidence tree, sampled every 10 s): tests, tsc, e2e runner, throwaway server and Chrome all at I/O 0 / memory 1; CPU BelowNormal except Chrome, which sets its own per-process class.
+
+## Proof on the staged release
+
+QA, 2026-10-14, staged release `cbd6cd5b656c` on throwaway servers and DB copies only (dark, 390x844, fake Claude CLI): **7/7 PASS, SHIP**. Evidence `C:\Users\Ht\.personal-bots\qa\hbots-16646\SUMMARY.md`.
+
+- **Migration 107** on a copy of backup 20261014-205352: `restore-test.ps1` exit 0 (77 s including the 3 GB copy), max migration 107, both indexes present with the expected columns, `integrity_check` ok. First start of 1.66.46 to the first 200: 7.9 s (warm copy, background priority), "Migrations ran" 1.6 s after the first log line; restore-test boot: migration done +4.9 s, listening +10.8 s. `mig.log`, `mig-result.json`, `restore-test.out.log`, `mig-server.log`, `dbcheck.json`.
+- **Same rows, 1.66.45 SQL vs 1.66.46 SQL** (built from each commit's source): bots list 1004 = 1004 rows, same hash without the new column; with `PB_PERF_OFF=owner-message-active-links` the same rows and the same `lastOwnerMessageAt` on every unarchived link (37 non-null), archived links null by default (98 non-null with the switch). Task replay limit 20 and 200: identical hashes; `task-replay-index` switch gives the 1.66.45 form. On the migrated copy: task replay 128 -> 1.7 ms, bots list 123 -> 28 ms. `sql\compare.json`.
+- **Task-chat chips**: an untouched task chat shows the "Task ·" chip and drops it after switching; one the owner wrote in becomes an ordinary chip in 48 ms and stays after switching and after reload; a pinned untouched task chat stays; a chat with only `[Task continuation]` turns stays temporary; 6 other untouched task chats show no chip. `ui-result-qa46a-chips.json`, `qa46a-2*.png`.
+- **Steering label**: a plain mid-turn send reads Read -> Steering -> Read, never Queued; a held steer shows Steering after reload; "Queue after this turn" reads Queued, still Queued after reload, then Read with its own turn. `ui-result-qa46a-steer.json`, `qa46a-1*.png`.
+- **Tool refusal**: a bad `update_work_record` gives exactly one `WARN tool call refused: ...` line and no runner ERROR line; a bad `delegate_task` also one WARN line; the whole run had 0 runner-ERROR lines. `ui-result-qa46a-warn.json`.
+- **Quick regression** at 390 px dark: bots list 2.1 s with all 4 bots, a new chat replied in 1.1 s, an 86-message chat reopens on the newest message with no tap needed, chip row visible, 0 page errors. `ui-result-qa46b.json`, `qa46b-0*.png`.
+- **Live server untouched** during QA (still 1.66.45 `37bd7c85d4a2`, AboveNormal, I/O 1 / memory 2, no 1.66.46 waiter files). QA's throwaway server ran at BelowNormal / I/O 0 / memory 1, the new background priority.
+
+QA observations, not blockers and not new in 1.66.46: a prod-backup copy queues due routines at boot (also in `restore-test.ps1`); the fake Claude CLI (test tool only) over-matches quoted tool calls from injected task summaries.
 
 ## Gate evidence
 
