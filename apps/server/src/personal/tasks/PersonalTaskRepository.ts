@@ -27,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 
 import { PersistenceDecodeError, PersistenceSqlError } from "../../persistence/Errors.ts";
+import { serverPerfOptimizationOn } from "../perfFlags.ts";
 
 export type PersonalTaskRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
@@ -101,6 +102,14 @@ const isSqlError = Schema.is(SqlError.SqlError);
 const decodeTaskRow = Schema.decodeUnknownEffect(TaskDbRow);
 const decodeAttemptRow = Schema.decodeUnknownEffect(AttemptDbRow);
 const decodeHandoffRow = Schema.decodeUnknownEffect(HandoffDbRow);
+
+/**
+ * Every status that is not terminal. `status IN (these)` seeks the status
+ * index; `NOT (status IN terminal)` cannot, and read the whole table.
+ */
+const PERSONAL_TASK_LIVE_STATUSES = PersonalTaskStatus.literals.filter(
+  (status) => !PERSONAL_TASK_TERMINAL_STATUSES.includes(status),
+);
 
 const iso = (value: DateTime.Utc) => DateTime.formatIso(value);
 const isoOrNull = (value: DateTime.Utc | null) => (value === null ? null : iso(value));
@@ -439,13 +448,20 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.flatMap((rows) => decodeTasks("listTasks", rows)));
   };
 
+  // The open tasks come from the status index (PB_PERF_OFF=task-replay-index
+  // goes back to the table scan): every phone reconnect replays this, and the
+  // scan read all of personal_tasks (6 MB on the 14 Oct backup) each time.
   const listForReplay: PersonalTaskRepository["Service"]["listForReplay"] = (terminalLimit) =>
     query(
       "listForReplay",
       sql`
         SELECT ${sql.literal(TASK_COLUMNS)} FROM (
           SELECT *, rowid AS row_order FROM personal_tasks
-          WHERE NOT (${sql.in("status", PERSONAL_TASK_TERMINAL_STATUSES)})
+          WHERE ${
+            serverPerfOptimizationOn("task-replay-index")
+              ? sql.in("status", PERSONAL_TASK_LIVE_STATUSES)
+              : sql`NOT (${sql.in("status", PERSONAL_TASK_TERMINAL_STATUSES)})`
+          }
           UNION ALL
           SELECT * FROM (
             SELECT *, rowid AS row_order FROM personal_tasks

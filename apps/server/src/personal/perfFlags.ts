@@ -14,7 +14,9 @@ export type ServerPerfOptimization =
   /** Start a personal bot chat's provider session when the chat is opened. */
   | "session-prewarm"
   /** Send task summaries, not full bodies, on `personalTasks.subscribe`. */
-  | "task-summaries";
+  | "task-summaries"
+  /** Read the open tasks of the `personalTasks.subscribe` replay through the status index. */
+  | "task-replay-index";
 
 export function serverPerfOptimizationOn(
   name: ServerPerfOptimization,

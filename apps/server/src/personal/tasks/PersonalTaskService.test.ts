@@ -7,9 +7,11 @@ import {
   MessageId,
   OrchestrationMessageContext,
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
+  PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalBotId,
   PersonalTaskId,
   PersonalTaskResult,
+  PersonalTaskStatus,
   ProviderInstanceId,
   TurnId,
   type OrchestrationCommand,
@@ -1504,6 +1506,26 @@ it.effect("the replay keeps every unfinished task and only the newest finished o
     expect(replay.map((task) => task.taskId)).toEqual([newer.taskId, running.taskId]);
     const all = yield* repository.listTasks({});
     expect(all.length).toBe(3);
+    // Every open status is replayed through the index, and the kill switch
+    // (PB_PERF_OFF=task-replay-index, the old NOT IN scan) gives the same rows.
+    for (const status of PersonalTaskStatus.literals.filter(
+      (value) => !PERSONAL_TASK_TERMINAL_STATUSES.includes(value),
+    )) {
+      yield* sql`UPDATE personal_tasks SET status = ${status} WHERE task_id = ${running.taskId}`;
+      const indexed = yield* repository.listForReplay(1);
+      const previous = process.env.PB_PERF_OFF;
+      process.env.PB_PERF_OFF = "task-replay-index";
+      const scanned = yield* repository.listForReplay(1).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) Reflect.deleteProperty(process.env, "PB_PERF_OFF");
+            else process.env.PB_PERF_OFF = previous;
+          }),
+        ),
+      );
+      expect(indexed.map((task) => task.taskId)).toEqual([newer.taskId, running.taskId]);
+      expect(scanned.map((task) => task.taskId)).toEqual([newer.taskId, running.taskId]);
+    }
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
