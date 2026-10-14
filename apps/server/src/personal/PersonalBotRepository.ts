@@ -32,6 +32,7 @@ import {
   toPersistenceSqlError,
 } from "../persistence/Errors.ts";
 import type { PersonalBotPersona } from "./personalBotInstructions.ts";
+import { serverPerfOptimizationOn } from "./perfFlags.ts";
 
 export const CreatePersonalBotInput = Schema.Struct({
   botId: PersonalBotId,
@@ -1107,14 +1108,19 @@ export const make = Effect.gen(function* () {
           -- promotes a task chat the owner took over with it. One correlated
           -- seek per link, served index-only by
           -- idx_projection_thread_messages_thread_role_created_id
-          -- (thread_id, role, created_at, message_id).
-          (
+          -- (thread_id, role, created_at, message_id). Archived links skip it
+          -- (null): the chips only read active chats, and on the 14 Oct backup
+          -- the 831 archived links made this list read 14.3 MB instead of 9.2
+          -- (PB_PERF_OFF=owner-message-active-links reads it for every link).
+          CASE WHEN ${sql.literal(
+            serverPerfOptimizationOn("owner-message-active-links") ? "r.archived_at IS NULL" : "1",
+          )} THEN (
             SELECT max(o.created_at)
             FROM projection_thread_messages o
             WHERE o.thread_id = r.thread_id
               AND o.role = 'user'
               AND o.message_id NOT LIKE 'personal-%'
-          ) AS "lastOwnerMessageAt",
+          ) END AS "lastOwnerMessageAt",
           m.message_id AS "newestMessageId",
           m.role AS "newestRole",
           -- A bot whose owner hid its previews (migration 099) sends no message

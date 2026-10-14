@@ -16,7 +16,9 @@ export type ServerPerfOptimization =
   /** Send task summaries, not full bodies, on `personalTasks.subscribe`. */
   | "task-summaries"
   /** Read the open tasks of the `personalTasks.subscribe` replay through the status index. */
-  | "task-replay-index";
+  | "task-replay-index"
+  /** The bots list reads the owner's newest message (`lastOwnerMessageAt`) for unarchived chats only. */
+  | "owner-message-active-links";
 
 export function serverPerfOptimizationOn(
   name: ServerPerfOptimization,

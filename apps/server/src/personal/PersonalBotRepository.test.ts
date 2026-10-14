@@ -383,6 +383,79 @@ it.effect("reports the owner's own newest message, never an app-written turn", (
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect(
+  "skips the owner's newest message on an archived link, unless the kill switch is set",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const repository = yield* PersonalBotRepository.PersonalBotRepository;
+      const botId = PersonalBotId.make("bot-owner-archived");
+      yield* repository.createBot(
+        decodeCreateBot({
+          botId,
+          name: "CTO",
+          title: "Chief",
+          description: "Runs the team.",
+          instructions: "Be helpful.",
+          avatarShape: "blob",
+          avatarColor: "#1A73E8",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" },
+          team: "assistant",
+          lead: false,
+          pinned: false,
+          sortOrder: 0,
+          createdAt: "2026-09-25T19:00:00.000Z",
+          updatedAt: "2026-09-25T19:00:00.000Z",
+        }),
+      );
+      for (const id of ["t-open", "t-archived"] as const) {
+        yield* repository.insertThreadLink(
+          decodeInsertThreadLink({
+            botId,
+            threadId: ThreadId.make(id),
+            createdAt: "2026-09-25T19:56:00.000Z",
+          }),
+        );
+        yield* sql`
+        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+        VALUES (${id}, 'project-1', ${id}, '2026-09-25T19:56:00.000Z', '2026-09-25T19:56:00.000Z')
+      `;
+        yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, role, text, is_streaming, created_at, updated_at
+        ) VALUES (${`owner-${id}`}, ${id}, 'user', 'text', 0, '2026-09-25T20:00:00.000Z', '2026-09-25T20:00:00.000Z')
+      `;
+      }
+      yield* sql`UPDATE personal_bot_threads SET archived_at = '2026-09-26T00:00:00.000Z' WHERE thread_id = 't-archived'`;
+
+      const ownerAt = (
+        links: ReadonlyArray<{
+          readonly threadId: string;
+          readonly lastOwnerMessageAt?: DateTime.Utc | null | undefined;
+        }>,
+        id: string,
+      ) => {
+        const at = links.find((link) => link.threadId === id)?.lastOwnerMessageAt;
+        return at == null ? null : DateTime.formatIso(at);
+      };
+      const guarded = yield* repository.listThreadLinks();
+      const previous = process.env.PB_PERF_OFF;
+      process.env.PB_PERF_OFF = "owner-message-active-links";
+      const unguarded = yield* repository.listThreadLinks().pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) Reflect.deleteProperty(process.env, "PB_PERF_OFF");
+            else process.env.PB_PERF_OFF = previous;
+          }),
+        ),
+      );
+      expect(ownerAt(guarded, "t-open")).toBe("2026-09-25T20:00:00.000Z");
+      expect(ownerAt(guarded, "t-archived")).toBeNull();
+      expect(ownerAt(unguarded, "t-open")).toBe("2026-09-25T20:00:00.000Z");
+      expect(ownerAt(unguarded, "t-archived")).toBe("2026-09-25T20:00:00.000Z");
+    }).pipe(Effect.provide(testLayer)),
+);
+
 // The Performance tab's sampler: a running provider CLI carries its session
 // id on the command line, and this is the map back to the bot's name.
 it.effect("lists each bot chat's provider session for process attribution", () =>
