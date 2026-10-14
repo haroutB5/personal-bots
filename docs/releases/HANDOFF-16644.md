@@ -32,7 +32,8 @@ continuation) and every label picks it up with no new plumbing.
   repository method `switchFallback`) with the limit's own reason and reset. A bot whose own fallback is
   that same Sonnet model is left to wait for the reset, as before 1.65.0.
 - **Visibility.** The tight labels (Bots rows, chat header, task cards, 72px pinned tiles, Team)
-  read "Sonnet 5.5 · H · peak"; the long accessible label (`botActiveModelLabel` /
+  read "Sonnet 5.5 · H · peak" (in the chips header the row only has room for part of it at 390 px —
+  open item 5); the long accessible label (`botActiveModelLabel` /
   `fallbackNoteLabel`) still carries "Sonnet 5.5 high, DeepSeek peak until 11:00" (local time), which
   the chat header and the bot's own screen read out beside the short one. A peak switch is never
   labelled "fallback" or "(usage limit)". The MCP `list_bots` entry gains `reason: deepseek_peak` and
@@ -65,6 +66,8 @@ continuation) and every label picks it up with no new plumbing.
   long/accessible full wording.
 - `apps/web/src/features/personal/ConversationSubtitle.tsx`: the chat header's status keeps its room;
   the model label shrinks and ellipsises first (the 390 px "Id…" fault).
+- `apps/web/src/features/personal/ConversationHeaderName.tsx`: **unchanged from live 1.66.42**. The one
+  follow-up header change (`861c825bd0`) is reverted in this build after QA; see "QA on the peak suite".
 - `apps/server/src/provider/ProviderDriver.ts`: `rebuildIrrelevantConfigKeys`.
 - `apps/server/src/provider/Layers/ProviderInstanceRegistryLive.ts`: `reconcile` drops those keys from
   the rebuild comparison, so a change to one never closes the instance's scope.
@@ -119,7 +122,7 @@ balance fixes below were added; not one line of the peak code changed in the reb
 ### How QA drives it
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\throwaway-server.ps1 -Name qa16644 -Release 20c6df9b9bf1 -Json
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\throwaway-server.ps1 -Name qa16644 -Release 5e36df91a647 -Json
 powershell ... -File scripts\personal\throwaway-server.ps1 -Down qa16644
 node C:/Users/Ht/.personal-bots/qa/hbots-16644/peak-probe.mjs %TEMP%\hbots-tw-qa16644 set-deepseek
 $env:PERSONAL_DEEPSEEK_PEAK_NOW='2026-10-15T02:00:00.000Z'
@@ -132,7 +135,7 @@ $env:PERSONAL_DEEPSEEK_PEAK_SWITCH='off'                     # with a peak overr
 QA's own peak script re-runs on this build as one command (it needs the UI setup step):
 
 ```
-node C:/Users/Ht/.personal-bots/qa/hbots-16643-qa/scripts/qa-16644-peak.mjs --release 20c6df9b9bf1 --repo C:/Claude/AI/_wt/hbots-16644-offpeak --name qa16644p
+node C:/Users/Ht/.personal-bots/qa/hbots-16643-qa/scripts/qa-16644-peak.mjs --release 5e36df91a647 --repo C:/Claude/AI/_wt/hbots-16644-offpeak --name qa16644p
 ```
 
 For just the two fixed faults, `--only SETUP,P2K,P2N,P1,P1T` runs the setting toggle that used to cut a
@@ -170,6 +173,16 @@ changed.
    shrinks first and ellipsises), so "Idle" can no longer become "Id…". The pinned tile uses the same
    short form as the rows and is ellipsised by its existing font-shrink logic, exactly like the
    existing "· fallback" marker; its full label stays in the accessible name.
+3. **The follow-up header change is reverted** (QA on `20c6df9b9bf1`). A later pass at the same fault
+   (`861c825bd0`) also gave the model label a 4.5rem floor and took `shrink-0` off the name group, so the
+   name would give way for it. QA then measured the chips header at 390 px on `20c6df9b9bf1`: **every**
+   bot's name was cut (`Fro…`, `Desi…`, `Ass…`) and the model label was hard-clipped mid-letter
+   ("· Sonne"), where live 1.66.42 shows names whole. `git revert 861c825bd0` (a new commit,
+   `5e36df91a6`; no history rewrite) restores the live layout exactly: the name group keeps `shrink-0`,
+   and the model label — which keeps `min-w-0` and is the item that yields — is the part that gives way.
+   The name and the status are whole; the label ellipsises when the row is tight. Nothing else from
+   `5876c8b984` changed, and the peak code is untouched. Getting the model label into the chips header in
+   full is left as a design-pass open item (item 5 below), not attempted in this release.
 
 ## 1.66.43 in the same restart
 
@@ -229,11 +242,47 @@ DeepSeek bots running. Top up"`. At 0.90 it is still "DeepSeek balance is $0.90.
   (`clerk.t3.codes` did not load on the test profile) and the Security C1 open item (a secret-store file
   name, not a value). Neither is a regression and neither is in this change.
 
-### Builder proof on this release (`20c6df9b9bf1`), the two peak-suite fixes
+### Builder proof on this release (`5e36df91a647`), the header reverted
 
-Throwaway roots throughout, fake key and the balance stub, no real account. QA's own peak script, copied
-to `C:/Users/Ht/.personal-bots/qa/hbots-16644/scripts/qa-16644-peak.mjs` (only the evidence folder, the
-short-label regex, and a chips-header / Team-members / task-card capture changed), run as
+Throwaway roots throughout, fake key and the balance stub, no real account. The only change between
+`20c6df9b9bf1` and this build is the revert of `861c825bd0` — the two header files and their tests — so
+the peak code is byte-identical and the peak-suite proof below still stands. What the revert needs is the
+header proof, on the staged artifact.
+
+- **The chips header matches live, measured on screen.** QA's own
+  `C:/Users/Ht/.personal-bots/qa/hbots-16643-qa/scripts/header-compare.mjs` was run twice on fresh
+  throwaway roots (Assistant, Frontend and Designer on Claude Sonnet 5.5, two chats each, measured idle
+  and during a running turn, 390 px dark), once against this release and once against live
+  `33355d5d67a1`. QA's per-character painted-text measurement (not the DOM text) reads the same in both
+  runs, for every bot and both phases: name `Assistant` / status `Idle`, `Assistant` / `Working`,
+  `Frontend` / `Idle`, `Frontend` / `Working`, `Designer` / `Idle`, `Designer` / `Working`. On
+  `20c6df9b9bf1` the same script read `Assi…`, `Fron…`/`Fro…`, `Desi…`/`Des…` — exactly the blocker QA
+  reported. Evidence: `C:/Users/Ht/.personal-bots/qa/hbots-16643-qa/hdr-5e36df91a647-2026-10-14T15-21-04/`
+  and `C:/Users/Ht/.personal-bots/qa/hbots-16643-qa/hdr-33355d5d67a1-2026-10-14T15-24-17/` (`header.json`,
+  `summary.md`, six screenshots each).
+- **The one measured difference is the model label, and it is the intended one.** Live gives the label
+  `shrink-0`, so it wraps onto the clipped second row and reads "· Sonnet 5.…". This build keeps
+  `5876c8b984`, where the status never yields and the label is the item that shrinks: with a 15-token
+  context badge and an 8-letter name it reads "· Son…" idle and "·…" while working. The name and the
+  status — what QA's blocker was about — match live exactly, and the full wording still reaches the
+  accessible name. Getting the label into the chips header in full stays open item 5.
+- **The single-chat header during peak** (the name on its own line, CTO item 2). A new check,
+  `C:/Users/Ht/.personal-bots/qa/hbots-16644/scripts/hdr-16644-single.mjs`, on this release: three
+  **DeepSeek** bots named `Frontend`, `Backend` and `Security`, one open chat each (so the chips strip is
+  not shown — `chipsShown: false` in the capture),
+  `PERSONAL_DEEPSEEK_PEAK_NOW=2026-10-15T07:30:00.000Z`, so the label is the tight short form. Measured
+  painted, idle and during a turn, all three bots: name whole (`Frontend`, `Backend`, `Security`), status
+  whole (`Idle`, then `Working`), label **`· Sonnet 5.5 · H · peak` in full** — not clipped and not
+  ellipsised (box `123.9 px`, `labelFits: true`), with the sr-only `DeepSeek peak until Thu 11:00` beside
+  it. **SETUP and HDR1 PASS, page errors 0.** Evidence:
+  `C:/Users/Ht/.personal-bots/qa/hbots-16644/hdr-single-5e36df91a647-2026-10-14T15-28-22/`
+  (`single-header.json`, `summary.md`, six 390 px dark screenshots).
+
+### The peak-suite proof on `20c6df9b9bf1` (code unchanged by the revert)
+
+QA's own peak script, copied to `C:/Users/Ht/.personal-bots/qa/hbots-16644/scripts/qa-16644-peak.mjs`
+(only the evidence folder, the short-label regex, and a chips-header / Team-members / task-card capture
+changed), run as
 `node qa-16644-peak.mjs --release 20c6df9b9bf1 --repo C:/Claude/AI/_wt/hbots-16644-offpeak --name p16644c
 --only SETUP,P2K,P2N,P1,P1T`. Evidence: `C:/Users/Ht/.personal-bots/qa/hbots-16644/peak-2026-10-14T14-31-55/`
 (`summary.md`, `p2k.json`, `p1-chat-header.png`, `p1-bots-row.png`, `p1-team-members.png`,
@@ -245,17 +294,12 @@ short-label regex, and a chips-header / Team-members / task-card capture changed
   or instance-rebuild line (`kill/stop log lines: []`). On `312481fd3b81` the same check ended after 7 s
   with "Session stopped." and failed. P2N passed too: the peak row appeared 24 s into a running turn, that
   turn still finished on DeepSeek, and the next turn ran on Claude.
-- **P1: the labels at 390 px.** Bots row `"… Sonnet 5.5 · H · peak 2m Ready …"`. The chat header was
-  captured in the chips variant (a second chat was created first, the tightest width): the status line is
-  **"Idle · Sonnet 5.5 · H · peak (DeepSeek peak until Thu 11:00)"** — the status is whole, never "Id…",
-  and the model label box is **73.4 px** (the 4.5rem floor) rather than collapsing. The full wording is
-  the accessible note. The Team members sheet shows `"Sonnet 5.5 · H · peak"` for all three DeepSeek bots.
+- **P1: the labels at 390 px.** Bots row `"… Sonnet 5.5 · H · peak 2m Ready …"`. The Team members sheet
+  shows `"Sonnet 5.5 · H · peak"` for all three DeepSeek bots. That run's chat-header capture was taken
+  with `861c825bd0` in the build (the status kept whole by giving the model label a 4.5rem floor); that
+  commit is reverted here, and the header is measured above instead.
 - **P1T: the task card.** A delegated turn produced the delegation card with the bot line
   `"Sonnet 5.5 · H · peak"` (390 px dark screenshot), never "Sonnet 5.5 · H · Dee…".
-- **A note on the chips header.** `"Idle · Sonnet 5.5 · H · peak"` in full needs about 186 px beside the
-  bot name; at 390 px the chips header has about 225 px for name + status + model together, so with a long
-  bot name the label is ellipsised (the name yields for the 4.5rem floor). Rows, task cards, the Team
-  sheet and the pinned tile's accessible name carry the whole label; see the open item below.
 
 ## What QA should check
 
@@ -271,8 +315,10 @@ short-label regex, and a chips-header / Team-members / task-card capture changed
 4. A Claude bot is unaffected in every case.
 5. Quick regression on the usage-limit fallback: force a limit on a Codex bot and check the existing
    "on fallback until about ..." line is unchanged.
-6. Re-run the peak suite's P2K (the toggle during a 70 s turn) and the label captures on this release:
-   `qa-16644-peak.mjs --release 20c6df9b9bf1 --only SETUP,P2K,P2N,P1,P1T`, per "How QA drives it" above.
+6. Re-run only the header comparison on this release: `header-compare.mjs --release 5e36df91a647` against
+   live `33355d5d67a1`, as in "Builder proof on this release" above — the names and the status must match
+   live in the chips header, measured on screen. The peak suite itself (P2K, P2N, P1, P1T) was re-run on
+   `20c6df9b9bf1` and its code is identical here.
 7. Re-run the balance walk (QA's L1, 5.00 → 0.90 → 0.00 → 7.00 → 0.00) and the slow-read diagnostic
    against this release; both are described in "Builder proof on `312481fd3b81`" above, with the commands
    and the evidence folders.
@@ -291,32 +337,33 @@ short-label regex, and a chips-header / Team-members / task-card capture changed
    used to print the raw instance id "deepseek"). No test depended on the old text.
 4. **No notice row for the peak switch.** Nothing was interrupted, so the sweep writes no chat line (the
    row label, chat header and task card carry it). Say so if you want a one-line notice when a window opens.
-5. **The chips header is the one tight place left.** At 390 px, with the chat chips on the second line,
-   `name + "Idle" + "Sonnet 5.5 · H · peak"` needs about 310 px and the row has about 225 px. The status
-   is now whole and the model keeps a 4.5rem floor (the model name stays readable), so with a long bot
-   name the label's tail — and, for names over ~100 px, a few characters of the name — is ellipsised. The
-   whole label is on the rows, the task card, the Team sheet and the pinned tile's accessible name. Two
-   ways to get it in full in the header, both a change of shape: let the chips row carry the model label
-   (it has the width), or give the header line a second row. One word and I do either.
+5. **"peak" in the chips header is left for a design pass.** At 390 px, with the chat chips on the second
+   line, `name + "Idle" + "Sonnet 5.5 · H · peak"` does not fit; this build now matches live 1.66.42
+   instead — the name whole, the status whole, and the model label ellipsised to whatever is left
+   ("· Son…", measured). Nothing in this release tries to fit the label in that row. The whole
+   `Sonnet 5.5 · H · peak` is on the rows, the task cards, the Team sheet, the bot's own screen and the
+   pinned tile's accessible name, and the full "DeepSeek peak until 11:00" is the accessible label. Two
+   ways to get it into the header in full, both a change of shape: let the chips row carry the model label
+   (it has the width), or give the header line a second row. Parked as a design pass.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=20c6df9b9bf1c831168b43da155beae6d1ce8845 release=20c6df9b9bf1 json-sha256=62e7ca83a74111824b8ccf76d74ce0b839268e09188f54dc363049a6abf833fd result=PASS -->
+<!-- gate-evidence:begin sha=5e36df91a64767b882f1a6437a4e136fdac2eea0 release=5e36df91a647 json-sha256=8138626017a87eac20c309bf17032c357c2efa4a92f814ca5e15613ed98a8255 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T14:31:49Z. Version 1.66.44, release `20c6df9b9bf1`, commit `20c6df9b9bf1c831168b43da155beae6d1ce8845` on `feat/hbots-16644-offpeak`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T15:20:57Z. Version 1.66.44, release `5e36df91a647`, commit `5e36df91a64767b882f1a6437a4e136fdac2eea0` on `feat/hbots-16644-offpeak`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\20c6df9b9bf1\gate-evidence.json` (sha256 `62e7ca83a74111824b8ccf76d74ce0b839268e09188f54dc363049a6abf833fd`) and the full gate logs in `releases\20c6df9b9bf1\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\5e36df91a647\gate-evidence.json` (sha256 `8138626017a87eac20c309bf17032c357c2efa4a92f814ca5e15613ed98a8255`) and the full gate logs in `releases\5e36df91a647\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2630 tests passed, 0 failed, 3 skipped, in 191 files | 257.5   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 40.3    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2578 tests passed, 0 failed, 0 skipped, in 236 files | 31.6    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 6.2     |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2630 tests passed, 0 failed, 3 skipped, in 191 files | 258.7   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 45.5    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2577 tests passed, 0 failed, 0 skipped, in 236 files | 31.5    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 5.1     |
 | ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 104.2   |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16644-offpeak\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\20c6df9b9bf1" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 283.3   |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16644-offpeak\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\5e36df91a647" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 280.5   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `20c6df9b9bf1c831168b43da155beae6d1ce8845`, at end `20c6df9b9bf1c831168b43da155beae6d1ce8845`; tracked files modified: none. Staged release: version 1.66.44, sha 20c6df9b9bf1, dirty False, externals copied; `dist/bin.mjs` sha256 `249224da9f1322df2ed75c7daf57f5e7069f3179fde906b8d50e104c84582c3f`.
+Tree: HEAD at start `5e36df91a64767b882f1a6437a4e136fdac2eea0`, at end `5e36df91a64767b882f1a6437a4e136fdac2eea0`; tracked files modified: none. Staged release: version 1.66.44, sha 5e36df91a647, dirty False, externals copied; `dist/bin.mjs` sha256 `249224da9f1322df2ed75c7daf57f5e7069f3179fde906b8d50e104c84582c3f`.
 <!-- gate-evidence:end -->
