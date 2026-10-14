@@ -27,7 +27,7 @@ param(
     [string]$Release,
     [string]$BinPath,
     [string]$Node,
-    [int]$Seconds = 30,
+    [int]$Seconds = 120,
     [int]$ExpectMigration = 0,
     [string[]]$ExpectColumn = @()
 )

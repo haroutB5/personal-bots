@@ -403,8 +403,9 @@ function Test-ToolsFixtureBackup {
         $snap = Join-Path $made[0].FullName 'state.sqlite'
         if (-not (Test-Path -LiteralPath $snap)) { throw 'fixture backup has no state.sqlite.' }
         if (-not (Test-Path -LiteralPath (Join-Path $made[0].FullName 'backup.json'))) { throw 'fixture backup has no backup.json.' }
-        $chk = Invoke-Node @((Join-Path $pbHelpers 'release-db-check.cjs'), $snap)
-        if ($chk.Code -ne 0) { throw "release-db-check failed on the fixture backup: $($chk.Err)" }
+        # The same proof check the waiter runs on the production backup, so tools that publish no proof fail here.
+        $chk = Invoke-Node @((Join-Path $pbHelpers 'release-db-check.cjs'), $snap, '--verified-backup')
+        if ($chk.Code -ne 0) { throw "release-db-check --verified-backup failed on the fixture backup: $($chk.Err)" }
         $j = $chk.Out | ConvertFrom-Json
         if ($j.ic -ne 'ok' -or [int]$j.mig -ne [int]$MigrationBefore) { throw "fixture backup check unexpected: $($chk.Out)" }
     } finally {

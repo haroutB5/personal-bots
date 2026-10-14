@@ -378,7 +378,7 @@ function Invoke-Pipeline {
 # The DryRun half of steps 5-6: boot both releases on backup copies, and
 # revert for real in the worktree. The live server is never touched.
 function Invoke-Rehearsal {
-    $rehearsal = Invoke-PbScript -Name 'restore-test.ps1' -ScriptArgs @('-Release', $script:release, '-Seconds', '20') -TimeoutSeconds 600
+    $rehearsal = Invoke-PbScript -Name 'restore-test.ps1' -ScriptArgs @('-Release', $script:release, '-Seconds', '120') -TimeoutSeconds 600
     $clientVersion = Join-Path (Join-Path $paths.ReleasesDir $script:release) 'dist\client\version.txt'
     $staged = $null
     if (Test-Path -LiteralPath $clientVersion) { $staged = ConvertFrom-UpdatesKeyValue ((Get-Content -LiteralPath $clientVersion) -join "`n") }
@@ -397,7 +397,7 @@ function Invoke-Rehearsal {
     [void](Invoke-Ledger @('run-shipped', '--version', $script:version))
 
     # The rollback path, for real except the restart.
-    $back = Invoke-PbScript -Name 'restore-test.ps1' -ScriptArgs @('-Release', $script:previous, '-Seconds', '20') -TimeoutSeconds 600
+    $back = Invoke-PbScript -Name 'restore-test.ps1' -ScriptArgs @('-Release', $script:previous, '-Seconds', '120') -TimeoutSeconds 600
     $rollbackOk = ($back.Code -eq 0)
     if ($rollbackOk) {
         Add-Step "rollback rehearsal: target $($script:previous) (the live release) boots on a backup copy"

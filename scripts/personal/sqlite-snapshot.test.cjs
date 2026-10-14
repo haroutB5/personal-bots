@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
-const { snapshot } = require('./sqlite-snapshot.cjs');
+const { snapshot, timeLimitMs, limitForBytes } = require('./sqlite-snapshot.cjs');
 const { fileHash } = require('./sqlite-check.cjs');
 
 function fixture() {
@@ -121,13 +121,13 @@ test('interrupted process leaves no published backup or proof', async () => {
   cleanup(f);
  }
 });
-test('external writer can restart copy; completed snapshot remains consistent', async () => {
+test('external writer process never restarts the copy; completed snapshot remains consistent', async () => {
  const f=fixture(); let child;
  try {
   child=await startWriter(f.source);
-  const proof=await snapshot(f.source,f.target,{rate:16,maxMs:5000,maxRestarts:10000});
+  const proof=await snapshot(f.source,f.target,{rate:16,maxMs:5000});
   console.log(`concurrent writer: ${proof.restarts} observed backup restarts`);
-  assert.ok(proof.restarts>0);
+  assert.equal(proof.restarts,0);
   assert.equal(proof.ic,'ok'); assert.equal(proof.mig,106);
   const copy=new DatabaseSync(f.target,{readOnly:true});
   try { assert.equal(copy.prepare('SELECT count(*) n FROM data').get().n,4096); } finally {copy.close();}
@@ -137,13 +137,37 @@ test('external writer can restart copy; completed snapshot remains consistent', 
   cleanup(f);
  }
 });
-test('repeated external writes exceed restart bound without publishing', async () => {
- const f=fixture();let child;
+test('commits between every copy step cause no restart; the copy is one point-in-time snapshot', async () => {
+ const f=fixture(); const writer=new DatabaseSync(f.source,{timeout:1000});
+ writer.exec('PRAGMA synchronous=OFF');
+ // Each commit changes the first and the last row together; a copy that mixed
+ // pages from before and after any commit would show two different values.
+ const write=writer.prepare('UPDATE data SET value=? WHERE id IN (1,4096)');
+ let commits=0; const tick=()=>{write.run(Buffer.alloc(4096,++commits%251));};
+ tick();
+ const timer=setInterval(tick,0);
  try {
-  child=await startWriter(f.source);
-  await assert.rejects(snapshot(f.source,f.target,{rate:1,maxMs:5000,maxRestarts:0}),/limit exceeded/);
-  assert.equal(fs.existsSync(f.target),false);assert.equal(fs.existsSync(f.target+'.integrity.json'),false);
- } finally {await stopWriter(child);cleanup(f);}
+  const before=commits;
+  const proof=await snapshot(f.source,f.target,{rate:4});
+  clearInterval(timer);
+  const during=commits-before;
+  console.log(`commits during the copy: ${during}, restarts ${proof.restarts}`);
+  assert.ok(during>=20,`only ${during} commits landed during the copy`);
+  assert.equal(proof.restarts,0);
+  const copy=new DatabaseSync(f.target,{readOnly:true});
+  try {
+   const fill=(id)=>copy.prepare('SELECT value FROM data WHERE id=?').get(id).value[0];
+   assert.equal(fill(1),fill(4096));
+   assert.equal(fill(1),before%251);
+  } finally {copy.close();}
+ } finally {clearInterval(timer);writer.close();cleanup(f);}
+});
+test('copy time limit is max(900 s, bytes / 4 MB/s)', () => {
+ assert.equal(limitForBytes(0),900000);
+ assert.equal(limitForBytes(3067301888),900000);
+ assert.equal(limitForBytes(8e9),2000000);
+ const f=fixture();
+ try { assert.equal(timeLimitMs(f.source),900000); } finally {cleanup(f);}
 });
 test('verified runner rejects a changed backup byte and a missing proof', async () => {
  const { spawnSync }=require('node:child_process');

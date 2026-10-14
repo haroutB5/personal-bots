@@ -508,6 +508,28 @@ if ($paths.StateDir -eq 'STATE_PLACEHOLDER') {
     } finally { Remove-World $w }
 }
 
+function Scenario-PrepareProof {
+    Write-Host '== s12 -Prepare refuses tools whose backup publishes no full-integrity proof'
+    $w = New-World 'proof'
+    try {
+        $backup = Join-Path $w.Repo 'scripts\personal\backup.ps1'
+        $extra = @'
+
+$noProof = Get-Content -LiteralPath (Join-Path $target 'backup.json') -Raw | ConvertFrom-Json
+$noProof.PSObject.Properties.Remove('validation')
+Set-Content -LiteralPath (Join-Path $target 'backup.json') -Value ($noProof | ConvertTo-Json -Depth 6) -Encoding ASCII
+'@
+        Write-File $backup ([IO.File]::ReadAllText($backup) + $extra)
+        $null = Invoke-TestGit $w.Repo @('add', '-A')
+        $null = Invoke-TestGit $w.Repo @('commit', '-q', '-m', 'old-style backup without a proof')
+        $w.Main = (Invoke-TestGit $w.Repo @('rev-parse', 'HEAD') | Select-Object -First 1).ToString().Trim()
+        $r = Invoke-Runner $w @('-Prepare')
+        Assert ($r.Exit -ne 0) 'prepare fails before arming' $r.Out
+        Assert ($r.Out -match 'verified-backup failed on the fixture backup') 'prepare names the missing proof' $r.Out
+        Assert ((Backups-Count $w) -eq 0) 'no production backup'
+    } finally { Remove-World $w }
+}
+
 if (Should-Run 's1') { Scenario-Happy }
 if ($Only.Count -eq 0 -or ($Only | Where-Object { $_ -like 's2*' })) { Scenario-Rollbacks }
 if (Should-Run 's3') { Scenario-Refusals }
@@ -519,6 +541,7 @@ if (Should-Run 's8') { Scenario-Concurrency }
 if (Should-Run 's9') { Scenario-DryRun }
 if (Should-Run 's10') { Scenario-BackupRetention }
 if (Should-Run 's11') { Scenario-DigestTamper }
+if (Should-Run 's12') { Scenario-PrepareProof }
 
 Write-Host ''
 Write-Host ("RESULT: {0} checks passed, {1} failed" -f $script:Passed, $script:Failures.Count)

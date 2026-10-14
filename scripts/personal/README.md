@@ -302,13 +302,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\backup.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restore-test.ps1
 ```
 
-`backup.ps1` snapshots `state.sqlite` with `VACUUM INTO` (safe while the
-server runs), checks the copy, and copies attachments, browser artifacts,
-themes, settings and the environment id. Credentials (`secrets\`) are never
-copied. `restore-test.ps1` restores the newest backup into a temp folder,
-serves it on a random loopback port, expects a 200 from
-`/.well-known/t3/environment`, then stops that server by PID and deletes the
-temp folder.
+`backup.ps1` snapshots `state.sqlite` with SQLite's online backup API inside
+one read transaction (the same point-in-time copy as `VACUUM INTO`; the
+server's commits never restart it; time limit max(900 s, size / 4 MB/s)), runs
+one full `integrity_check` on the copy and records its SHA-256 proof, then
+copies attachments, browser artifacts, themes, settings and the environment
+id. A failed or killed run removes its own partial folder. Credentials
+(`secrets\`) are never copied. `restore-test.ps1` restores the newest backup
+into a temp folder, serves it on a random loopback port, expects a 200 from
+`/.well-known/t3/environment` within `-Seconds` (default 120; the 3 GB
+database needs about 31 s to boot), then stops that server by PID and deletes
+the temp folder.
 
 Restore for real (server stopped): copy the backup's files into
 `%USERPROFILE%\.personal-bots\<root>\userdata\`, replacing `state.sqlite`, and
