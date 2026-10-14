@@ -3,7 +3,7 @@
 Backs up a Personal Bots data root to %USERPROFILE%\.personal-bots\backups\<timestamp>.
 
 .DESCRIPTION
-state.sqlite is snapshotted with VACUUM INTO (consistent even while the server
+state.sqlite is snapshotted with SQLite's online backup API (consistent even while the server
 runs) and integrity-checked. attachments\, browser-artifacts\, themes\,
 settings.json, keybindings.json and environment-id are copied beside it, plus
 any userdata\personal* directories. secrets\ is deliberately NOT copied: a
@@ -16,7 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\backup.ps1
 [CmdletBinding()]
 param(
     [ValidateSet('dev', 'prod')][string]$Root = 'dev',
-    [int]$Keep = 14,
+    [ValidateRange(3, 2147483647)][int]$Keep = 14,
     [string]$Node
 )
 
@@ -69,14 +69,20 @@ $manifest = [ordered]@{
     source    = $paths.StateDir
     createdAt = (Get-Date).ToUniversalTime().ToString('o')
     items     = $copied
+    validation = Get-Content -LiteralPath (Join-Path $target 'state.sqlite.integrity.json') -Raw | ConvertFrom-Json
 }
-Set-Content -LiteralPath (Join-Path $target 'backup.json') -Value ($manifest | ConvertTo-Json) -Encoding ASCII
+$manifestCandidate = Join-Path $target 'backup.json.pending'
+Set-Content -LiteralPath $manifestCandidate -Value ($manifest | ConvertTo-Json -Depth 6) -Encoding ASCII
+# An interrupted manifest write must never count as a verified retention slot.
+[System.IO.File]::Move($manifestCandidate, (Join-Path $target 'backup.json'))
 
 # Prune: only timestamp-named directories directly under backups\.
 $pruneWatch = [System.Diagnostics.Stopwatch]::StartNew()
 $backupsRoot = (Resolve-Path -LiteralPath $paths.BackupsDir).Path
 Get-ChildItem -LiteralPath $backupsRoot -Directory |
-    Where-Object { $_.Name -match '^\d{8}-\d{6}$' } |
+    Where-Object { $_.Name -match '^\d{8}-\d{6}$' -and
+        -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -and
+        (Test-Path -LiteralPath (Join-Path $_.FullName 'backup.json') -PathType Leaf) } |
     Sort-Object Name -Descending |
     Select-Object -Skip $Keep |
     ForEach-Object {
