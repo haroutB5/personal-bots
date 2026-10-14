@@ -71,8 +71,8 @@ const rewriteAdapterError = (error: ProviderAdapterError): ProviderAdapterError 
 const deepSeekFailureText = (message: string): string => {
   if (message.includes("claude auth login")) {
     return (
-      "DeepSeek could not authenticate. Check this DeepSeek instance's ANTHROPIC_AUTH_TOKEN " +
-      "sensitive environment variable, then start a new thread."
+      "DeepSeek could not authenticate. Check the API key saved in this DeepSeek instance's " +
+      "settings, then start a new thread."
     );
   }
   if (message.includes("Claude usage limit reached")) {

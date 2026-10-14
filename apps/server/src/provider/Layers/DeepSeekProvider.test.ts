@@ -9,11 +9,14 @@ import * as Schema from "effect/Schema";
 
 import { DeepSeekSettings } from "@t3tools/contracts";
 import { writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { DSH_PINNED_VERSION } from "../Drivers/DeepSeekEngine.ts";
+import { resolveDshRuntime } from "../acp/DshAcpSupport.ts";
 import { resolveDeepSeekModelCatalog } from "../DeepSeekModelCatalog.ts";
 import { BUNDLED_MODEL_MANIFEST } from "../ModelManifest.ts";
 import {
   buildInitialDeepSeekProviderSnapshot,
   checkDeepSeekProviderStatus,
+  DEEPSEEK_KEY_MISSING_MESSAGE,
   dshPrintedVersion,
   versionMatchesPin,
 } from "./DeepSeekProvider.ts";
@@ -246,6 +249,9 @@ describe("DeepSeekProvider", () => {
       expect(snapshot.usageBalance?.message).toBe(
         "DeepSeek would not return the balance for this key.",
       );
+      // The slug travels beside the sentence: a caller can tell a rejected key
+      // from a network problem without reading our wording.
+      expect(snapshot.usageBalance?.failureReason).toBe("http_error");
       expect(snapshot.status).toBe("ready");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -276,6 +282,7 @@ describe("DeepSeekProvider", () => {
       expect(snapshot.usageBalance?.status).toBe("failed");
       expect(snapshot.usageBalance?.balance).toBeUndefined();
       expect(snapshot.usageBalance?.message).toBe("DeepSeek could not be reached for the balance.");
+      expect(snapshot.usageBalance?.failureReason).toBe("network_error");
       // A money figure never takes the provider's own health down with it.
       expect(snapshot.status).toBe("ready");
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -308,7 +315,7 @@ describe("DeepSeekProvider", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("asks for ANTHROPIC_AUTH_TOKEN when the binary is fine but no key is set", () =>
+  it.effect("asks for the API key field when the binary is fine but no key is set", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -324,9 +331,46 @@ describe("DeepSeekProvider", () => {
           );
         }),
       );
-      expect(snapshot.status).toBe("error");
+      // A setup step, not a failure: the card asks for the key in plain words,
+      // and never sends the owner hunting for an environment variable name.
+      expect(snapshot.status).toBe("warning");
       expect(snapshot.auth.status).toBe("unauthenticated");
-      expect(snapshot.message).toMatch(/ANTHROPIC_AUTH_TOKEN/);
+      expect(snapshot.message).toBe(
+        "Add your DeepSeek API key in this instance's settings. Keys come from platform.deepseek.com.",
+      );
+      expect(snapshot.message).not.toMatch(/ANTHROPIC_AUTH_TOKEN/);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("names the key field, not a variable, when the dsh key is missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-deepseek-dsh-" });
+      const binJs = path.join(dir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+      yield* fs.makeDirectory(path.dirname(binJs), { recursive: true });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const fakeRuntime = `process.stdout.write(${JSON.stringify(DSH_PINNED_VERSION)});`;
+      yield* fs.writeFileString(binJs, fakeRuntime);
+      // NodeServices' own win32 Path: the generic Path.layer resolves a
+      // `C:\...` path as relative, which hid this fake runtime.
+      const snapshot = yield* checkDeepSeekProviderStatus(
+        decodeDeepSeekSettings({ enabled: true, engine: "dsh", dshRuntimePath: dir }),
+        {},
+        catalog,
+      );
+      expect({
+        auth: snapshot.auth.status,
+        installed: snapshot.installed,
+        status: snapshot.status,
+        message: snapshot.message,
+      }).toEqual({
+        auth: "unauthenticated",
+        installed: true,
+        status: "warning",
+        message: DEEPSEEK_KEY_MISSING_MESSAGE,
+      });
+      expect(snapshot.message).not.toMatch(/ANTHROPIC_AUTH_TOKEN/);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

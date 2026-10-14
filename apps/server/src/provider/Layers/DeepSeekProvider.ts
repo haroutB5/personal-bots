@@ -61,12 +61,20 @@ const VERSION_PROBE_TIMEOUT_MS = 4_000;
 
 /** How a failed balance read reads on the usage card: short, ours, never DeepSeek's body. */
 const BALANCE_FAILURE_NOTES: Record<DeepSeekBalanceFailureReason, string> = {
-  missing_key: "DeepSeek API key is missing.",
+  missing_key: "Add your DeepSeek API key to read the balance.",
   http_error: "DeepSeek would not return the balance for this key.",
   network_error: "DeepSeek could not be reached for the balance.",
   timeout: "DeepSeek did not answer the balance request in time.",
   invalid_response: "DeepSeek returned a balance that could not be read.",
 };
+
+/**
+ * What the DeepSeek card says when the key is not set yet. A setup step, not
+ * a failure: plain words pointing at the key field in this provider's
+ * settings, never the environment-variable name the field hides.
+ */
+export const DEEPSEEK_KEY_MISSING_MESSAGE =
+  "Add your DeepSeek API key in this instance's settings. Keys come from platform.deepseek.com.";
 
 /**
  * One balance read as the published contract shape. A failed read keeps the
@@ -102,7 +110,9 @@ function toUsageBalance(
         }
       : {}),
     ...(spent !== null ? { spent } : {}),
-    ...(read.status === "failed" ? { message: BALANCE_FAILURE_NOTES[read.reason] } : {}),
+    ...(read.status === "failed"
+      ? { message: BALANCE_FAILURE_NOTES[read.reason], failureReason: read.reason }
+      : {}),
   };
 }
 
@@ -336,10 +346,9 @@ const checkDeepSeekDshStatus = Effect.fn("checkDeepSeekDshStatus")(function* (
       probe: {
         installed: true,
         version: printed,
-        status: "error",
+        status: "warning",
         auth,
-        message:
-          "DeepSeek API key is missing. Add ANTHROPIC_AUTH_TOKEN as a sensitive environment variable on this DeepSeek instance.",
+        message: DEEPSEEK_KEY_MISSING_MESSAGE,
         ...(usageBalance ? { usageBalance } : {}),
       },
     });
@@ -474,10 +483,9 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
       probe: {
         installed: true,
         version,
-        status: "error",
+        status: "warning",
         auth,
-        message:
-          "DeepSeek API key is missing. Add ANTHROPIC_AUTH_TOKEN as a sensitive environment variable on this DeepSeek instance.",
+        message: DEEPSEEK_KEY_MISSING_MESSAGE,
         ...(usageBalance ? { usageBalance } : {}),
       },
     });

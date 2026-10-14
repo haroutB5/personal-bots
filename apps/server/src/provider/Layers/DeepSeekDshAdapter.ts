@@ -174,8 +174,8 @@ export function translateDshFailure(message: string): {
   ) {
     return {
       text:
-        "DeepSeek could not authenticate. Check this DeepSeek instance's ANTHROPIC_AUTH_TOKEN " +
-        "sensitive environment variable, then start a new thread.",
+        "DeepSeek could not authenticate. Check the API key saved in this DeepSeek instance's " +
+        "settings, then start a new thread.",
       rateLimited: false,
     };
   }

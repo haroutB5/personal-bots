@@ -4,6 +4,8 @@ import type {
   ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
 
+import { providerApiKeyField } from "./providerApiKeys";
+
 /**
  * Visual treatment for each server-reported provider status. Centralized so
  * the default-driver card and per-instance cards share the same language.
@@ -54,6 +56,15 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     };
   }
   if (provider.auth.status === "unauthenticated") {
+    // A provider whose only way in is an API key is not "not authenticated":
+    // it is waiting for one paste. Say the step, not a failure.
+    const apiKeyField = providerApiKeyField(provider.driver);
+    if (apiKeyField?.required === true) {
+      return {
+        headline: `Add your ${apiKeyField.label}`,
+        detail: provider.message ?? null,
+      };
+    }
     return {
       headline: "Not authenticated",
       detail: provider.message ?? null,

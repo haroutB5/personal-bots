@@ -51,6 +51,7 @@ import {
 import {
   buildInitialDeepSeekProviderSnapshot,
   checkDeepSeekProviderStatus,
+  DEEPSEEK_KEY_MISSING_MESSAGE,
 } from "../Layers/DeepSeekProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -354,8 +355,7 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
             return yield* new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail:
-                "DeepSeek API key is missing. Add ANTHROPIC_AUTH_TOKEN as a sensitive environment variable on this DeepSeek instance.",
+              detail: DEEPSEEK_KEY_MISSING_MESSAGE,
             });
           }
           if (engine === "dsh") {

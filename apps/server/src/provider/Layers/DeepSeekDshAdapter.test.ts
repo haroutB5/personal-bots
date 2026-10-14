@@ -494,7 +494,10 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       expect(translateDshFailure("Turn failed: Too Many Requests").rateLimited).toBe(true);
       expect(
         translateDshFailure("Authentication Fails, Your api key: ****-key is invalid").text,
-      ).toContain("ANTHROPIC_AUTH_TOKEN");
+      ).toContain("API key saved in this DeepSeek");
+      expect(
+        translateDshFailure("Authentication Fails, Your api key: ****-key is invalid").text,
+      ).not.toContain("ANTHROPIC_AUTH_TOKEN");
       expect(translateDshFailure("Internal error: turn failed: boom").text).toBe(
         "DeepSeek turn failed: boom",
       );

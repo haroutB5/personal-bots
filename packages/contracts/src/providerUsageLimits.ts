@@ -131,6 +131,15 @@ export const ServerProviderUsageBalance = Schema.Struct({
   balance: Schema.optional(ServerProviderBalance),
   spent: Schema.optional(ServerProviderSpend),
   message: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Why a failed read failed, as a short slug beside the sentence above.
+   * Callers that have to react differently use it: the DeepSeek key field
+   * reads `http_error` as "this key was rejected" and stays quiet about a
+   * network problem, instead of guessing from the message wording.
+   */
+  failureReason: Schema.optional(
+    Schema.Literals(["missing_key", "http_error", "network_error", "timeout", "invalid_response"]),
+  ),
 });
 export type ServerProviderUsageBalance = typeof ServerProviderUsageBalance.Type;
 

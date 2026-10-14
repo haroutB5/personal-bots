@@ -43,6 +43,8 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
+import { ProviderApiKeyRow } from "./ProviderApiKeyRow";
+import { hasSavedProviderApiKey, providerApiKeyField } from "./providerApiKeys";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
@@ -187,11 +189,19 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
   );
 }
 
+/**
+ * The generic Variables editor. It keeps every entry it is not allowed to
+ * render — the ones a dedicated field owns (a provider's API key) — so editing
+ * a neighbouring variable can never drop the key from the instance.
+ */
 function ProviderEnvironmentSection(props: {
   readonly driver: ProviderDriverKind;
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+  /** Names a dedicated settings field owns; kept in the draft, never rendered. */
+  readonly hiddenNames?: ReadonlyArray<string> | undefined;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
 }) {
+  const hiddenNames = new Set(props.hiddenNames ?? []);
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
     props.environment.map(makeEnvironmentDraftRow),
   );
@@ -268,13 +278,14 @@ function ProviderEnvironmentSection(props: {
         sensitive: true,
       },
     ]);
+  const visibleRows = rows.filter((row) => !hiddenNames.has(row.name));
 
   return (
     <SettingsRow
       title="Variables"
       description={
         props.driver === "deepseek"
-          ? "Add your DeepSeek API key as ANTHROPIC_AUTH_TOKEN and keep it sensitive. The API endpoint is fixed."
+          ? "Extra CLI variables for this DeepSeek instance. The API endpoint is fixed."
           : "API keys, base URLs, and other per-instance CLI settings."
       }
       control={
@@ -284,9 +295,9 @@ function ProviderEnvironmentSection(props: {
         </Button>
       }
     >
-      {rows.length > 0 ? (
+      {visibleRows.length > 0 ? (
         <div className="mt-3 min-w-0 space-y-2 pb-2">
-          {rows.map((variable, index) => (
+          {visibleRows.map((variable, index) => (
             <div key={variable.id} className="flex min-w-0 flex-wrap items-center gap-1.5">
               <DraftInput
                 size="sm"
@@ -514,6 +525,13 @@ export function ProviderInstanceCard({
     liveModels: liveProvider?.models,
     customModels,
   });
+  const apiKeyField = providerApiKeyField(instance.driver);
+  const apiKeySaved =
+    apiKeyField !== undefined && hasSavedProviderApiKey(instance.environment ?? [], apiKeyField);
+  // A required key that is not saved yet gets a way straight to the field, so
+  // a first-time setup reads as one step rather than a hunt through Variables.
+  const showAddApiKey =
+    mode === "list" && enabled && !readOnly && apiKeyField?.required === true && !apiKeySaved;
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
     const { displayName: _omit, ...rest } = instance;
@@ -729,7 +747,12 @@ export function ProviderInstanceCard({
             </span>
           </span>
         </div>
-        <span className="flex h-5 shrink-0 items-center">
+        <span className="flex h-5 shrink-0 items-center gap-2">
+          {showAddApiKey && onSelect ? (
+            <Button size="xs" variant="outline" className="shrink-0" onClick={onSelect}>
+              Add key
+            </Button>
+          ) : null}
           <Switch
             checked={enabled}
             disabled={readOnly}
@@ -946,9 +969,19 @@ export function ProviderInstanceCard({
         aria-disabled={readOnly || undefined}
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
+        <ProviderApiKeyRow
+          driver={instance.driver}
+          instanceId={String(instanceId)}
+          enabled={enabled}
+          environment={instance.environment ?? []}
+          balance={liveProvider?.usageBalance}
+          readOnly={readOnly}
+          onChange={updateEnvironment}
+        />
         <ProviderEnvironmentSection
           driver={instance.driver}
           environment={instance.environment ?? []}
+          {...(apiKeyField ? { hiddenNames: [apiKeyField.name] } : {})}
           onChange={updateEnvironment}
         />
       </SettingsSection>
