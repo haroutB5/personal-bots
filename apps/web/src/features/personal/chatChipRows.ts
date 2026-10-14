@@ -54,9 +54,10 @@ export interface ChatChipModel {
   /**
    * Temporary chip first (if any), then the pinned chats, then the owner's
    * other chats, each newest activity first: the order of the bot's chat list
-   * (botThreadRows), minus task and routine chats. Snoozed chats are not here
-   * (unless one is the open chat, as a temporary chip). The screen keeps the
-   * order still while the owner stays in the bot's chats (chatChipOrder.ts).
+   * (botThreadRows), minus task and routine chats the owner never used (a task
+   * chat he pinned or wrote in himself is one of his). Snoozed chats are not
+   * here (unless one is the open chat, as a temporary chip). The screen keeps
+   * the order still while the owner stays in the bot's chats (chatChipOrder.ts).
    */
   readonly chips: ReadonlyArray<ChatChip>;
   /** The open chat's temporary chip (task, archived or snoozed chat), or null. It is `chips[0]`. */
@@ -106,6 +107,67 @@ export function taskChatThreadIds(
     }
   }
   return out;
+}
+
+/**
+ * Whether a chat made for a task or a routine run is one the owner took over
+ * himself. It reads the server's own rule off the link, `lastOwnerMessageAt`
+ * (`role = 'user'` and not an app-written `personal-...` turn, so a task brief,
+ * a steer, an auto-continue and a release notice never count; see
+ * taskChatAutoArchivePolicy.ts). It must also land after the chat was made: a
+ * task chat is created with its task, so anything at or before that is the
+ * task's own start, not the owner writing in it. (A pin makes it his too, and
+ * the caller reads that off the link.) An older server that sends no
+ * `lastOwnerMessageAt` simply never promotes on this rule.
+ */
+export function taskChatTakenOver(
+  link: Pick<PersonalBotThread, "createdAt" | "lastOwnerMessageAt">,
+): boolean {
+  const at = link.lastOwnerMessageAt;
+  if (at === null || at === undefined) return false;
+  return DateTime.toEpochMillis(at) > epochMs(link.createdAt) + TASK_CHAT_SLACK_MS;
+}
+
+/** How long to wait before reading the list again, in case the write and the read crossed. */
+export const OWNER_WRITE_REFRESH_RETRY_MS = 3_000;
+
+/**
+ * The owner's own newest message in the chat he has open, when the bots list
+ * has not caught up with it yet. `lastOwnerMessageAt` comes over the list
+ * (`taskChatTakenOver` is what promotes the chip) and nothing refetches the
+ * list when the owner writes, so the chat screen asks once on this key and the
+ * refreshed link then carries his message. Non-null means "read the list
+ * again"; the same key never asks twice, and a link that has caught up (or a
+ * pin, which promotes on its own) makes it null, so it cannot loop.
+ *
+ * The message ids are the server's own rule: an app-written `personal-...`
+ * turn (a task brief, a steer, a continuation) is never the owner's.
+ */
+export function ownerWriteRefreshKey(input: {
+  readonly link: Pick<
+    PersonalBotThread,
+    "threadId" | "createdAt" | "lastOwnerMessageAt" | "pinnedAt"
+  > | null;
+  /** The chats a task or routine run made (see `taskChatThreadIds`). */
+  readonly taskChatIds: ReadonlySet<string>;
+  readonly messages: ReadonlyArray<{
+    readonly id: string;
+    readonly role: string;
+    readonly createdAt: string;
+  }>;
+}): string | null {
+  const { link } = input;
+  if (link === null || !input.taskChatIds.has(link.threadId)) return null;
+  if (isChatPinned(link) || link.lastOwnerMessageAt != null) return null;
+  const createdMs = epochMs(link.createdAt) + TASK_CHAT_SLACK_MS;
+  let newest: { readonly id: string; readonly at: number } | null = null;
+  for (const message of input.messages) {
+    if (message.role !== "user" || message.id.startsWith("personal-")) continue;
+    const at = Date.parse(message.createdAt);
+    if (!Number.isFinite(at) || at <= createdMs) continue;
+    if (newest === null || at > newest.at) newest = { id: message.id, at };
+  }
+  return newest === null ? null : `${link.threadId}@${newest.id}`;
 }
 
 /** The one dot a chip draws: needs you > rate limited > working > waiting on a bot > unread. */
@@ -174,8 +236,15 @@ export function buildChatChips(input: {
     input.tasks,
   );
   // `active` is pinned first, then newest activity first (the All chats list's order): the
-  // chips use it as it is.
-  const owner = active.filter((row) => !taskChats.has(row.link.threadId));
+  // chips use it as it is. A task or routine chat the owner made his own (he pinned it, or
+  // wrote in it himself after the task's own first turn) is an ordinary chip: same order,
+  // plain title, no temporary chip while it is open. Every other task chat stays temporary.
+  const owner = active.filter(
+    (row) =>
+      !taskChats.has(row.link.threadId as string) ||
+      isChatPinned(row.link) ||
+      taskChatTakenOver(row.link),
+  );
 
   const toChip = (row: BotThreadRow, kind: ChatChipKind): ChatChip => {
     const threadId = row.link.threadId as string;
@@ -207,9 +276,10 @@ export function buildChatChips(input: {
 
   const ownerChips = owner.map((row) => toChip(row, "chat"));
   let temporary: ChatChip | null = null;
-  // The open chat is a task, routine or archived chat (opened from Team, a
-  // notification or the task page): a temporary chip, first in the row, gone
-  // once the owner switches away. Nothing stores it.
+  // The open chat is a task or routine chat the owner has not used, or an
+  // archived chat (opened from Team, a notification or the task page): a
+  // temporary chip, first in the row, gone once the owner switches away.
+  // Nothing stores it.
   if (!owner.some((row) => row.link.threadId === input.currentThreadId)) {
     const taskRow = active.find((row) => row.link.threadId === input.currentThreadId);
     const archivedRow = archived.find((row) => row.link.threadId === input.currentThreadId);

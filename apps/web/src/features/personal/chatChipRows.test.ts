@@ -7,6 +7,8 @@ import { botThreadRows } from "./botThreadRows";
 import {
   buildChatChips,
   chatChipState,
+  ownerWriteRefreshKey,
+  taskChatTakenOver,
   taskChatThreadIds,
   type ChatChipModel,
 } from "./chatChipRows";
@@ -53,6 +55,14 @@ const shell = (
 
 const task = (taskId: string, threadId: string | null, createdMinute: number): PersonalTask =>
   ({ taskId, threadId, createdAt: at(createdMinute) }) as unknown as PersonalTask;
+
+/**
+ * A link whose chat the owner wrote in himself at this minute: the server's
+ * `lastOwnerMessageAt` (`role = 'user'`, never an app-written `personal-...`
+ * turn). Without it a task chat is nobody's, however many app turns it gets.
+ */
+const ownedAt = (threadId: string, createdMinute: number, ownerMinute: number) =>
+  link(threadId, createdMinute, { lastOwnerMessageAt: at(ownerMinute) });
 
 /** A shell whose last message was at this minute of the test hour. */
 const activeAt = (id: string, minute: number) =>
@@ -194,12 +204,31 @@ describe("chat chip list: which chats get a chip", () => {
     expect(busy.chips.map((chip) => chip.threadId)).toEqual(["a", "b", "c"]);
   });
 
-  it("is the order of the All chats list, minus task chats", () => {
+  it("is the order of the All chats list, minus the task chats nobody wrote in", () => {
     const links = [link("a", 10), link("b", 20), link("task-chat", 25), link("c", 30)];
     const shells = [
       activeAt("a", 12),
       activeAt("b", 40),
-      activeAt("task-chat", 55),
+      // The task's own first turn: not the owner writing in it (lastOwnerMessageAt is null).
+      activeAt("task-chat", 25),
+      activeAt("c", 20),
+    ];
+    const model = build({ links, shells, tasks: [task("t1", "task-chat", 24)], current: "a" });
+    const list = botThreadRows(BOT, links, shells, new Set()).active.map(
+      (row) => row.link.threadId,
+    );
+    expect(list).toEqual(["b", "task-chat", "c", "a"]);
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(
+      list.filter((id) => id !== "task-chat"),
+    );
+  });
+
+  it("is the order of the All chats list, task chats the owner used included", () => {
+    const links = [link("a", 10), link("b", 20), ownedAt("task-chat", 25, 45), link("c", 30)];
+    const shells = [
+      activeAt("a", 12),
+      activeAt("b", 40),
+      activeAt("task-chat", 45),
       activeAt("c", 20),
     ];
     const model = build({ links, shells, tasks: [task("t1", "task-chat", 24)], current: "a" });
@@ -207,9 +236,7 @@ describe("chat chip list: which chats get a chip", () => {
       (row) => row.link.threadId,
     );
     expect(list).toEqual(["task-chat", "b", "c", "a"]);
-    expect(model.chips.map((chip) => chip.threadId)).toEqual(
-      list.filter((id) => id !== "task-chat"),
-    );
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(list);
   });
 
   it("puts the chat with the newest message first, then pinned ahead of it", () => {
@@ -295,6 +322,200 @@ describe("chat chip list: the temporary chip", () => {
   it("adds no temporary chip when the open chat is an owner chat", () => {
     const model = build({ links, tasks, current: "a" });
     expect(model.chips.filter((chip) => chip.kind !== "chat")).toEqual([]);
+  });
+});
+
+describe("chat chip list: a task chat the owner made his own", () => {
+  const ownTask = [task("t1", "task-chat", 19)];
+  /** The task's own first turn lands in the chat as it is made. */
+  const taskOwnTurn = shell("task-chat", {}, "Weight chart fix");
+
+  it("keeps a task chat the owner wrote in as an ordinary chip, without the Task prefix", () => {
+    const links = [link("owner", 10), ownedAt("task-chat", 20, 31), link("owner-2", 30)];
+    const model = build({
+      links,
+      shells: [
+        activeAt("owner", 15),
+        shell("task-chat", { latestUserMessageAt: "2026-10-01T10:31:00.000Z" }, "Weight chart fix"),
+        activeAt("owner-2", 40),
+      ],
+      tasks: ownTask,
+      current: "owner",
+    });
+    // An ordinary chip: sorted with the owner's chats by activity, plain title, no prefix.
+    expect(model.chips.map((chip) => [chip.threadId, chip.kind])).toEqual([
+      ["owner-2", "chat"],
+      ["task-chat", "chat"],
+      ["owner", "chat"],
+    ]);
+    expect(model.chips.find((chip) => chip.threadId === "task-chat")?.text).toBe(
+      "Weight chart fix",
+    );
+    expect(model.temporary).toBeNull();
+  });
+
+  it("keeps it as an ordinary current chip when the owner switches back to it", () => {
+    const model = build({
+      links: [link("owner", 10), ownedAt("task-chat", 20, 31)],
+      shells: [
+        activeAt("owner", 15),
+        shell("task-chat", { latestUserMessageAt: "2026-10-01T10:31:00.000Z" }, "Weight chart fix"),
+      ],
+      tasks: ownTask,
+      current: "task-chat",
+    });
+    expect(model.temporary).toBeNull();
+    expect(model.chips[0]).toMatchObject({
+      threadId: "task-chat",
+      kind: "chat",
+      current: true,
+      text: "Weight chart fix",
+    });
+  });
+
+  it("keeps a pinned task chat nobody wrote in, ahead of the rest", () => {
+    const links = [
+      link("owner", 10),
+      link("task-chat", 20, { pinnedAt: at(21) }),
+      link("owner-2", 30),
+    ];
+    const model = build({
+      links,
+      shells: [activeAt("owner", 15), taskOwnTurn, activeAt("owner-2", 40)],
+      tasks: ownTask,
+      current: "owner",
+    });
+    expect(model.chips.map((chip) => [chip.threadId, chip.pinned])).toEqual([
+      ["task-chat", true],
+      ["owner-2", false],
+      ["owner", false],
+    ]);
+    expect(model.chips[0]).toMatchObject({ kind: "chat", text: "Weight chart fix" });
+  });
+
+  it("leaves an untouched task chat out of the chips and temporary while it is open", () => {
+    const links = [link("owner", 10), link("task-chat", 20)];
+    const shells = [activeAt("owner", 15), taskOwnTurn];
+    const away = build({ links, shells, tasks: ownTask, current: "owner" });
+    expect(away.chips.map((chip) => chip.threadId)).toEqual(["owner"]);
+    expect(away.openCount).toBe(2);
+    const open = build({ links, shells, tasks: ownTask, current: "task-chat" });
+    expect(open.temporary?.threadId).toBe("task-chat");
+    expect(open.chips[0]).toMatchObject({
+      threadId: "task-chat",
+      kind: "task",
+      text: "Task · Weight chart fix",
+    });
+    expect(open.ownerChips.map((chip) => chip.threadId)).toEqual(["owner"]);
+  });
+
+  // The bug this rule replaced: every delegation result, steer, auto-continue
+  // and release notice is a user turn, so a chat that reads only the thread's
+  // newest user message made CTO and QA task chats permanent chips. The server
+  // sends the owner's own newest message instead, null while only the app wrote.
+  it("never promotes a task chat that only got app-written turns", () => {
+    const links = [link("owner", 10), link("task-chat", 20), link("owner-2", 30)];
+    const shells = [
+      activeAt("owner", 15),
+      // A "[Task continuation]" turn just landed: the newest user message is newer than everything.
+      activeAt("task-chat", 55),
+      activeAt("owner-2", 40),
+    ];
+    const away = build({ links, shells, tasks: ownTask, current: "owner" });
+    expect(away.chips.map((chip) => chip.threadId)).toEqual(["owner-2", "owner"]);
+    const open = build({ links, shells, tasks: ownTask, current: "task-chat" });
+    expect(open.temporary).toMatchObject({
+      threadId: "task-chat",
+      kind: "task",
+      text: "Task · Chat task-chat",
+    });
+    expect(open.ownerChips.map((chip) => chip.threadId)).toEqual(["owner-2", "owner"]);
+  });
+
+  it("still shows an archived task chat as a temporary chip", () => {
+    const model = build({
+      links: [link("owner", 10), link("gone", 5, { archivedAt: at(50) })],
+      shells: [
+        activeAt("owner", 15),
+        shell("gone", { latestUserMessageAt: "2026-10-01T10:10:00.000Z" }, "Weight chart fix"),
+      ],
+      tasks: [task("t1", "gone", 4)],
+      current: "gone",
+    });
+    expect(model.chips[0]).toMatchObject({
+      threadId: "gone",
+      kind: "archived",
+      text: "Archived · Weight chart fix",
+    });
+    expect(model.temporary?.threadId).toBe("gone");
+    expect(model.ownerChips.map((chip) => chip.threadId)).toEqual(["owner"]);
+  });
+
+  it("reads the owner's own message off the link, tolerating the 5 s slack", () => {
+    const userAt = (seconds: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, 1, 10, 20, seconds));
+    expect(taskChatTakenOver(link("task-chat", 20))).toBe(false);
+    expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: null }))).toBe(false);
+    // The task's own first turn lands with the chat: inside the slack, not the owner's.
+    expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: userAt(4) }))).toBe(false);
+    expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: userAt(6) }))).toBe(true);
+    expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: at(31) }))).toBe(true);
+  });
+});
+
+// The promotion reads `lastOwnerMessageAt` off the bots list, and nothing
+// refetches that list when the owner writes: without this the chip would only
+// come back on the next natural refetch (a reload, a turn elsewhere), so the
+// chat could still lose its chip right after he writes and switches away.
+describe("chat chip list: asking the list again after the owner writes", () => {
+  const taskChat = link("task-chat", 20);
+  const taskChatIds = taskChatThreadIds([taskChat], [task("t1", "task-chat", 19)]);
+  const msg = (id: string, role: string, minute: number) => ({
+    id,
+    role,
+    createdAt: new Date(Date.UTC(2026, 9, 1, 10, minute, 0)).toISOString(),
+  });
+  const write = (
+    entry: PersonalBotThread,
+    messages: ReadonlyArray<{
+      readonly id: string;
+      readonly role: string;
+      readonly createdAt: string;
+    }>,
+  ) => ownerWriteRefreshKey({ link: entry, taskChatIds, messages });
+
+  it("asks once for a task chat the owner just wrote in, and stops once the list has it", () => {
+    const messages = [msg("personal-task-t1-1", "user", 20), msg("owner-1", "user", 31)];
+    expect(write(taskChat, messages)).toBe("task-chat@owner-1");
+    // The refetched list carries his message: nothing more to ask.
+    expect(write(link("task-chat", 20, { lastOwnerMessageAt: at(31) }), messages)).toBeNull();
+  });
+
+  it("never asks for app-written turns alone", () => {
+    expect(
+      write(taskChat, [
+        msg("personal-task-t1-1", "user", 20),
+        // A "[Task continuation]" turn lands long after the chat was made.
+        msg("personal-task-t1-2", "user", 45),
+        msg("personal-resume-1", "user", 46),
+      ]),
+    ).toBeNull();
+  });
+
+  it("asks nothing for an owner chat, a pinned chat or the task's own first turn", () => {
+    const messages = [msg("owner-1", "user", 31)];
+    expect(ownerWriteRefreshKey({ link: link("owner", 10), taskChatIds, messages })).toBeNull();
+    // A pin promotes on its own, so the list has nothing new to say.
+    expect(write(link("task-chat", 20, { pinnedAt: at(21) }), messages)).toBeNull();
+    // The first turn lands with the chat itself: inside the 5 s slack.
+    expect(write(taskChat, [msg("owner-1", "user", 20)])).toBeNull();
+  });
+
+  it("asks again only when a newer owner message arrives", () => {
+    const first = write(taskChat, [msg("owner-1", "user", 31)]);
+    expect(first).not.toBeNull();
+    expect(write(taskChat, [msg("owner-1", "user", 31)])).toBe(first);
+    const second = write(taskChat, [msg("owner-1", "user", 31), msg("owner-2", "user", 40)]);
+    expect(second).not.toBe(first);
   });
 });
 

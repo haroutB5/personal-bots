@@ -314,6 +314,75 @@ it.effect("ranks previews and reports lastActivityAt by the last message, not up
   }).pipe(Effect.provide(testLayer)),
 );
 
+// The chat-chip row promotes a task chat the owner took over, and the server's
+// rule for that is `lastOwnerMessageAt`, the same one the 48 h archive sweep
+// uses: the owner's own newest message, never an app-written `personal-...`
+// turn (a task brief, a steer, an auto-continue, a release notice). Task and
+// routine chats get those constantly, so reading the thread's newest user
+// message instead would make every one of them a permanent chip.
+it.effect("reports the owner's own newest message, never an app-written turn", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const botId = PersonalBotId.make("bot-owner-message");
+    yield* repository.createBot(
+      decodeCreateBot({
+        botId,
+        name: "CTO",
+        title: "Chief",
+        description: "Runs the team.",
+        instructions: "Be helpful.",
+        avatarShape: "blob",
+        avatarColor: "#1A73E8",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" },
+        team: "assistant",
+        lead: false,
+        pinned: false,
+        sortOrder: 0,
+        createdAt: "2026-09-25T19:00:00.000Z",
+        updatedAt: "2026-09-25T19:00:00.000Z",
+      }),
+    );
+    for (const id of ["t-owner", "t-app-only", "t-none"] as const) {
+      yield* repository.insertThreadLink(
+        decodeInsertThreadLink({
+          botId,
+          threadId: ThreadId.make(id),
+          createdAt: "2026-09-25T19:56:00.000Z",
+        }),
+      );
+      yield* sql`
+        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+        VALUES (${id}, 'project-1', ${id}, '2026-09-25T19:56:00.000Z', '2026-09-25T19:56:00.000Z')
+      `;
+    }
+    const message = (id: string, messageId: string, role: string, createdAt: string) => sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, role, text, is_streaming, created_at, updated_at
+      ) VALUES (${messageId}, ${id}, ${role}, 'text', 0, ${createdAt}, ${createdAt})
+    `;
+    // The owner wrote twice; the newest one wins. An app-written turn in
+    // between must not: its message id starts with `personal-`.
+    yield* message("t-owner", "owner-1", "user", "2026-09-25T20:00:00.000Z");
+    yield* message("t-owner", "personal-task-brief-owner", "user", "2026-09-25T20:05:00.000Z");
+    yield* message("t-owner", "owner-2", "user", "2026-09-25T20:10:00.000Z");
+    // Only app-written turns landed here: the owner never wrote in it.
+    yield* message("t-app-only", "personal-task-brief", "user", "2026-09-25T20:20:00.000Z");
+    yield* message("t-app-only", "personal-relay-1", "assistant", "2026-09-25T20:21:00.000Z");
+
+    const byId = new Map(
+      (yield* repository.listThreadLinks()).map((link) => [link.threadId as string, link]),
+    );
+    const ownerAt = (id: string) => {
+      const at = byId.get(id)?.lastOwnerMessageAt;
+      return at == null ? null : DateTime.formatIso(at);
+    };
+    expect(ownerAt("t-owner")).toBe("2026-09-25T20:10:00.000Z");
+    expect(ownerAt("t-app-only")).toBeNull();
+    expect(ownerAt("t-none")).toBeNull();
+  }).pipe(Effect.provide(testLayer)),
+);
+
 // The Performance tab's sampler: a running provider CLI carries its session
 // id on the command line, and this is the map back to the bot's name.
 it.effect("lists each bot chat's provider session for process attribution", () =>

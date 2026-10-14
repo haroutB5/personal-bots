@@ -77,7 +77,13 @@ import {
 } from "./chatChipHandoff";
 import { chatSwitchNavigation, nextOpenChatAfterRemoval } from "./chatChipNavigation";
 import { useFrozenChipOrder } from "./chatChipOrder";
-import { buildChatChips, type ChatChip } from "./chatChipRows";
+import {
+  buildChatChips,
+  OWNER_WRITE_REFRESH_RETRY_MS,
+  ownerWriteRefreshKey,
+  taskChatThreadIds,
+  type ChatChip,
+} from "./chatChipRows";
 import {
   buildChatSettingsTarget,
   CHAT_SETTINGS_HINT,
@@ -356,6 +362,27 @@ export function ConversationScreen({
   useEffect(() => {
     observeChatMessages(threadId, messages);
   }, [threadId, messages]);
+  // A task chat the owner wrote in himself becomes an ordinary chip, and the
+  // list is what says so (`lastOwnerMessageAt`, see chatChipRows): nothing
+  // refetches it when he writes. Ask once on this key, and once more shortly
+  // after in case his write and the first read crossed; the refreshed link
+  // promotes the chat and the key goes null, so it cannot loop.
+  const taskChatIds = useMemo(
+    () => taskChatThreadIds(list.data?.threads ?? [], tasks),
+    [list.data, tasks],
+  );
+  const ownerWriteKey = useMemo(
+    () => ownerWriteRefreshKey({ link, taskChatIds, messages }),
+    [link, taskChatIds, messages],
+  );
+  const lastOwnerWriteKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (ownerWriteKey === null || lastOwnerWriteKey.current === ownerWriteKey) return;
+    lastOwnerWriteKey.current = ownerWriteKey;
+    refreshBotsList();
+    const retry = window.setTimeout(refreshBotsList, OWNER_WRITE_REFRESH_RETRY_MS);
+    return () => window.clearTimeout(retry);
+  }, [ownerWriteKey, refreshBotsList]);
   const pendingCount = useRef(0);
   useEffect(() => {
     if (pending.length > pendingCount.current) {
