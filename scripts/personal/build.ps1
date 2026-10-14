@@ -52,6 +52,9 @@ param(
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
+# The build and everything it starts run in the background: the live server's SQLite shares this disk
+# (background-priority.ps1; HBOTS_LOW_PRIORITY=off to disable).
+Enter-PbBackgroundPriority -Label 'build.ps1'
 
 $activateRelease = Resolve-PbBuildActivation -Activate:$Activate -NoActivate:$NoActivate
 $paths = Get-PbPaths -Root dev

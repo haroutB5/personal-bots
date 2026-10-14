@@ -1,8 +1,10 @@
 // Shared helpers for the hbots perf bench (see README.md in this folder).
+import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 
 const require = NodeModule.createRequire(
   new URL("../../../apps/desktop/package.json", import.meta.url),
@@ -16,6 +18,46 @@ export const ORIGINS = {
   local: "http://localhost:38472",
   relay: "https://prod-3b13e30646369ab7.t3coderelay.com",
 };
+
+/**
+ * Perf runs share the disk and CPU with the live server, whose SQLite runs on
+ * its main thread. This lowers the current process to CPU BelowNormal, I/O
+ * and memory Very Low (scripts/personal/background-priority.ps1); Chrome and
+ * every other child inherit it. HBOTS_LOW_PRIORITY=off skips it. A child of a
+ * process that already did this inherited it and skips the second call.
+ */
+export function enterBackgroundPriority(label) {
+  const setting = (process.env.HBOTS_LOW_PRIORITY ?? "").trim().toLowerCase();
+  if (["off", "0", "false", "no", "disabled"].includes(setting)) {
+    console.log(
+      `Background priority off (HBOTS_LOW_PRIORITY=${setting}); ${label} runs at normal priority.`,
+    );
+    return;
+  }
+  if (process.env.HBOTS_BACKGROUND_PRIORITY_PID) return;
+  const helper = NodeURL.fileURLToPath(new URL("../background-priority.ps1", import.meta.url));
+  const result = NodeChildProcess.spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      `. '${helper}'; Set-PbBackgroundPriority -ProcessId ${process.pid} -Label '${label}'`,
+    ],
+    { encoding: "utf8" },
+  );
+  const text = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  if (result.status === 0) {
+    process.env.HBOTS_BACKGROUND_PRIORITY_PID = String(process.pid);
+    if (text) console.log(text);
+  } else {
+    console.warn(
+      `Could not lower ${label} to background priority (exit ${result.status}): ${text}`,
+    );
+  }
+}
 
 export function resolveOrigin(value) {
   return ORIGINS[value] ?? value;

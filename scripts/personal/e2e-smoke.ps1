@@ -51,6 +51,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+# The journeys, Chrome and the throwaway server run in the background (background-priority.ps1).
+Enter-PbBackgroundPriority -Label 'e2e-smoke.ps1' -Quiet:$Json
 
 $twScript = Join-Path $PSScriptRoot 'throwaway-server.ps1'
 # The default gate runs the five smoke journeys (fit 180 s), the offline send queue (stops and restarts the server) and the

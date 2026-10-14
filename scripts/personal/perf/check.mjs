@@ -17,7 +17,9 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { PERF_HOME, round } from "./lib.mjs";
+import { PERF_HOME, enterBackgroundPriority, round } from "./lib.mjs";
+
+enterBackgroundPriority("perf:check");
 
 const budgetFile = new URL("./budget.json", import.meta.url);
 const budget = JSON.parse(NodeFS.readFileSync(budgetFile, "utf8"));

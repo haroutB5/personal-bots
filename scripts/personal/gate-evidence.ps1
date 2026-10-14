@@ -73,6 +73,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+# Fork gate, e2e and their throwaway servers run in the background (background-priority.ps1; HBOTS_LOW_PRIORITY=off).
+Enter-PbBackgroundPriority -Label 'gate-evidence.ps1'
 
 function Stop-Evidence([string]$Message) {
     Write-Host "FAIL: $Message"

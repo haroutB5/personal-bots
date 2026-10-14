@@ -30,6 +30,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import {
   chromium,
+  enterBackgroundPriority,
   resolveOrigin,
   authStatePath,
   median,
@@ -39,6 +40,7 @@ import {
 } from "./lib.mjs";
 import * as NodePath from "node:path";
 
+enterBackgroundPriority("perf bench");
 const args = parseArgs(process.argv.slice(2));
 const originList =
   typeof args.origins === "string"

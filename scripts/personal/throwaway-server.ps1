@@ -58,6 +58,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+# A throwaway server shares the disk with the live one, so it starts in the background (background-priority.ps1;
+# HBOTS_LOW_PRIORITY=off to disable). Quiet with -Json: callers parse stdout.
+if (@('Start', 'Up') -contains $PSCmdlet.ParameterSetName) {
+    Enter-PbBackgroundPriority -Label 'throwaway server' -Quiet:$Json
+}
 
 $RootPrefix = 'hbots-tw-'
 $RecordName = 'throwaway.json'
