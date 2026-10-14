@@ -82,8 +82,10 @@ continuation) and every label picks it up with no new plumbing.
 
 ### Live throwaway check (the staged artifact, `4c69163463f7`)
 
-`throwaway-server.ps1 -Name 16644 -Release 4c69163463f7` made a fresh root; the probe pointed one seeded
-bot at `deepseek-flash` (the other three stayed on Claude Sonnet 5.5).
+The peak switch itself was proven on the first build of this version, `4c69163463f7`, before the two
+balance fixes below were added; not one line of the peak code changed in the rebuild. `throwaway-server.ps1
+-Name 16644 -Release 4c69163463f7` made a fresh root; the probe pointed one seeded bot at
+`deepseek-flash` (the other three stayed on Claude Sonnet 5.5).
 
 1. **Peak override then `-Up`** (`PERSONAL_DEEPSEEK_PEAK_NOW=2026-10-15T02:00:00.000Z`):
    `reason=deepseek_peak`, `resetAt=2026-10-15T04:00:00.000Z`,
@@ -102,7 +104,7 @@ bot at `deepseek-flash` (the other three stayed on Claude Sonnet 5.5).
 ### How QA drives it
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\throwaway-server.ps1 -Name qa16644 -Release 4c69163463f7 -Json
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\throwaway-server.ps1 -Name qa16644 -Release 312481fd3b81 -Json
 powershell ... -File scripts\personal\throwaway-server.ps1 -Down qa16644
 node C:/Users/Ht/.personal-bots/qa/hbots-16644/peak-probe.mjs %TEMP%\hbots-tw-qa16644 set-deepseek
 $env:PERSONAL_DEEPSEEK_PEAK_NOW='2026-10-15T02:00:00.000Z'
@@ -121,13 +123,58 @@ restart. The peak reason never reads as a usage-limit fallback.
 The DeepSeek instance's Settings card gained a real **DeepSeek API key** field (masked input, Show off by
 default, Save key, Replace, Remove), writing the same sensitive `ANTHROPIC_AUTH_TOKEN` entry through the
 same secure path, checked once on save through the provider's own probe; a plain-text key in the old
-Variables row is moved into the secret store once. The server warns once per low spell at or below $1.00
-(push plus in-app banner), and the money card gains the matching calm line; the flag lives in
+Variables row is moved into the secret store once. The server warns at or below a dollar and escalates once to the empty notice if the account runs out
+(push plus in-app banner). The money card gains the matching calm line; the flag lives in
 `personal_meta` so a restart does not warn twice. Security reviewed it (SHIP-OK WITH CONDITIONS) and all
 three conditions are in this build: a good key is never called bad (401/403 vs 402 vs 429/5xx), the
 environment-name dedupe is shared and case-insensitive, and the masked inputs carry
 `autoComplete="new-password"`. Full detail, proof and the open Security follow-ups:
 `docs/releases/HANDOFF-16643.md`.
+
+## QA on the 1.66.43 part, and the two fixes in this build
+
+QA ran the 1.66.43 part on the staged `ae1e12ceb413` (evidence `C:/Users/Ht/.personal-bots/qa/hbots-16643-qa/`).
+The key field and every key check passed (401/403 refused, 402 called an empty balance, 429/5xx quiet), and
+so did the money card. Two faults it found in the low-balance warning are fixed here; nothing else in
+1.66.43 changed.
+
+1. **The empty notice never followed the low one** (QA L1). The flag remembered only that _something_ had
+   been said, so 5.00 → 0.90 → 0.00 sent the low notice and stopped; the brief's stronger "balance is
+   empty" notice was lost. The flag now stores the kind it announced (`low` or `empty`), which lets exactly
+   one `empty` notice follow a `low` one inside the same spell. It never goes the other way (a reading back
+   inside the low band after an empty one is quiet) and never repeats, so a balance parked at zero is
+   announced once. The money card also names a zero balance the way the push already did:
+   **"DeepSeek balance is empty"**, not "$0.00".
+2. **The startup check could be missed entirely** (QA diag, 1,794 s with a 6 s stub). A DeepSeek instance is
+   only watchable once its probe has called it authenticated, and that probe reads the balance itself, so a
+   slow one can still be unauthenticated when the boot sweep goes past; the warning then waited for the
+   30-minute tick. `DeepSeekBalanceWatcher` now also watches `ProviderRegistry.streamChanges` and checks an
+   instance the moment it becomes authenticated with a key, still debounced to once per five minutes.
+
+The persisted row keeps `warned` beside the new `kind`, so QA's own balance walk and the sweep diagnostic,
+which read `warned:true`, keep working unchanged.
+
+### Builder proof on this release (`312481fd3b81`)
+
+Throwaway roots throughout, a fake key and the documented balance stub, no real account.
+
+- **The key checks and the whole balance walk, re-run with QA's own script** (copied to
+  `C:/Users/Ht/.personal-bots/qa/hbots-16644/scripts/qa-16643.mjs`, only its evidence folder changed):
+  `node scripts\qa-16643.mjs --release 312481fd3b81 --repo C:/Claude/AI/_wt/hbots-16644-offpeak --name
+q16644l --only K2,L1,L2`. **L1 PASS**, notices per step `0, 1, 0, 1, 0, 1` for
+  5.00 → 0.90 → restart at 0.90 → 0.00 → 7.00 → 0.00; K2 PASS; L2 PASS. On `ae1e12ceb413` the same script
+  read `0, 1, 0, 0, 0, 1` and failed. Evidence:
+  `C:/Users/Ht/.personal-bots/qa/hbots-16644/run-2026-10-14T13-04-03/summary.md`.
+- **The card at zero**, from that run's card capture: `0.00: "… DeepSeek balance is empty. Top up to keep
+DeepSeek bots running. Top up"`. At 0.90 it is still "DeepSeek balance is $0.90.".
+- **The slow probe** (`node scripts\diag-sweep.mjs --name q16644l --total 0.9 --delay 6000 --minutes 4`,
+  evidence `C:/Users/Ht/.personal-bots/qa/hbots-16644/diag-2026-10-14T13-08-20/`): the stub held the
+  balance read for 6 s, the server restarted at 13:08:27.8, the probe's read answered at 13:08:32.0 and the
+  low-balance flag was written at 13:08:32.1, **4.4 s after the restart** against QA's 1,794 s. One stub
+  request only, so the check did not add a second read.
+- **QA's S1 still fails**, for the two reasons it already did on 1.66.43: one Clerk page error
+  (`clerk.t3.codes` did not load on the test profile) and the Security C1 open item (a secret-store file
+  name, not a value). Neither is a regression and neither is in this change.
 
 ## What QA should check
 
@@ -140,6 +187,9 @@ environment-name dedupe is shared and case-insensitive, and the masked inputs ca
 4. A Claude bot is unaffected in every case.
 5. Quick regression on the usage-limit fallback: force a limit on a Codex bot and check the existing
    "on fallback until about ..." line is unchanged.
+6. Re-run the balance walk (QA's L1, 5.00 → 0.90 → 0.00 → 7.00 → 0.00) and the slow-read diagnostic
+   against this release; both are described in "Builder proof on this release" above, with the commands and
+   the evidence folders.
 
 ## Open items for the CTO
 
@@ -158,22 +208,22 @@ environment-name dedupe is shared and case-insensitive, and the masked inputs ca
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=4c69163463f761328cf2a00d5842e7e3ed981bbb release=4c69163463f7 json-sha256=9230830c6b273376db440c19079d65b0f57ff437dffb02c40fa0644045248f34 result=PASS -->
+<!-- gate-evidence:begin sha=312481fd3b811b43e7ee08dd388d82e86b1cbb16 release=312481fd3b81 json-sha256=fc9b73e348aaaee87d563b5ed87202256c79ba0b79c3a89b43d258c96e6c3e5c result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T12:25:23Z. Version 1.66.44, release `4c69163463f7`, commit `4c69163463f761328cf2a00d5842e7e3ed981bbb` on `feat/hbots-16644-offpeak`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T13:03:42Z. Version 1.66.44, release `312481fd3b81`, commit `312481fd3b811b43e7ee08dd388d82e86b1cbb16` on `feat/hbots-16644-offpeak`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\4c69163463f7\gate-evidence.json` (sha256 `9230830c6b273376db440c19079d65b0f57ff437dffb02c40fa0644045248f34`) and the full gate logs in `releases\4c69163463f7\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\312481fd3b81\gate-evidence.json` (sha256 `fc9b73e348aaaee87d563b5ed87202256c79ba0b79c3a89b43d258c96e6c3e5c`) and the full gate logs in `releases\312481fd3b81\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2628 tests passed, 0 failed, 3 skipped, in 191 files | 261     |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 39.4    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2576 tests passed, 0 failed, 0 skipped, in 236 files | 30.5    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 31.7    |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 104.3   |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16644-offpeak\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\4c69163463f7" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 283.2   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2630 tests passed, 0 failed, 3 skipped, in 191 files | 280.3   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 43.2    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2576 tests passed, 0 failed, 0 skipped, in 236 files | 34.2    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 6.2     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 106.5   |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16644-offpeak\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\312481fd3b81" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 296.9   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `4c69163463f761328cf2a00d5842e7e3ed981bbb`, at end `4c69163463f761328cf2a00d5842e7e3ed981bbb`; tracked files modified: none. Staged release: version 1.66.44, sha 4c69163463f7, dirty False, externals copied; `dist/bin.mjs` sha256 `095d327cf8cc3b834fde3239d3fd5d1a422f6e188d8e160870dab143c7212464`.
+Tree: HEAD at start `312481fd3b811b43e7ee08dd388d82e86b1cbb16`, at end `312481fd3b811b43e7ee08dd388d82e86b1cbb16`; tracked files modified: none. Staged release: version 1.66.44, sha 312481fd3b81, dirty False, externals copied; `dist/bin.mjs` sha256 `353105dfa972761bef9bb15bf3804d948c26f6e0d9f57fa530958b9cc5ad6b4e`.
 <!-- gate-evidence:end -->
