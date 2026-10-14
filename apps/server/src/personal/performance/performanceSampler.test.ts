@@ -266,6 +266,64 @@ describe("PerformanceSampler lifecycle", () => {
     }
   });
 
+  it("waits for a fresh attribution again after the sampler restarted", async () => {
+    // A tab closed past the grace stops everything; opening it again starts a
+    // new sampling session, whose first groups frame must come from a fresh
+    // read, not the previous session's map.
+    vi.useFakeTimers();
+    try {
+      const helper = fakeHelper();
+      const atlas = new Map([[10, { botId: "bot-atlas", name: "Atlas", provider: "claudeAgent" }]]);
+      const forge = new Map([[10, { botId: "bot-forge", name: "Forge", provider: "deepseek" }]]);
+      let answer = atlas;
+      const attribute = vi.fn(async () => answer);
+      const { sampler, advance } = make({ startHelper: () => helper.handle, attribute }, helper);
+      const events: PerformanceStreamEvent[] = [];
+      const snapshot = {
+        proc: '[["claude",40,500,10]]',
+        kids: '[{"pid":10,"name":"claude.exe","cpu100ns":0,"wsBytes":0,"cmd":"--session-id=aaa"}]',
+      };
+
+      let subscription = sampler.subscribe((event) => events.push(event));
+      helper.push(tickLine(1_000_000, true, snapshot));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+      helper.push(tickLine(1_002_000, true, snapshot));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+      expect(events.filter((event) => event.kind === "groups").length).toBe(1);
+
+      subscription.unsubscribe();
+      // Past the grace the sampler stops; the clock moves well on.
+      await vi.advanceTimersByTimeAsync(16_000);
+      advance(16_000);
+
+      answer = forge;
+      subscription = sampler.subscribe((event) => events.push(event));
+      // A fresh group tick before each of two ticks: one of the two is the
+      // sampler's every-other-tick refresh whatever the parity, so the reopen
+      // adds exactly one groups frame.
+      helper.push(tickLine(1_100_000, true, snapshot));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+      helper.push(tickLine(1_102_000, true, snapshot));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+
+      const groups = events.filter((event) => event.kind === "groups");
+      expect(groups.length).toBe(2);
+      if (groups[1]?.kind === "groups") {
+        expect(groups[1].groups.cpu.some((group) => group.name === "Forge")).toBe(true);
+        // Not the previous session's bot, which the first frame would show if
+        // the sampler reused its stale map.
+        expect(groups[1].groups.cpu.some((group) => group.name === "Atlas")).toBe(false);
+      }
+      subscription.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not start a helper on a platform without one, and falls back to os numbers", async () => {
     vi.useFakeTimers();
     try {

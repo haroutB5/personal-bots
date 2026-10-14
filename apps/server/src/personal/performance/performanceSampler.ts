@@ -260,6 +260,10 @@ export class PerformanceSampler {
   /** Start sampling now: helper first, then the tick. Idempotent. */
   private start(): void {
     if (this.timer !== null) return;
+    // Every sampling session's first grouping waits for its own attribution:
+    // a tab reopened after the grace must name the bots in its first frame
+    // too, not carry the previous session's (now stale) map.
+    this.attributionReady = false;
     this.ensureHelper();
     this.timer = setInterval(() => {
       void this.tick();
