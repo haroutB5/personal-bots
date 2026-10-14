@@ -119,7 +119,7 @@ balance fixes below were added; not one line of the peak code changed in the reb
 ### How QA drives it
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\throwaway-server.ps1 -Name qa16644 -Release 5876c8b98490 -Json
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\throwaway-server.ps1 -Name qa16644 -Release 20c6df9b9bf1 -Json
 powershell ... -File scripts\personal\throwaway-server.ps1 -Down qa16644
 node C:/Users/Ht/.personal-bots/qa/hbots-16644/peak-probe.mjs %TEMP%\hbots-tw-qa16644 set-deepseek
 $env:PERSONAL_DEEPSEEK_PEAK_NOW='2026-10-15T02:00:00.000Z'
@@ -132,14 +132,15 @@ $env:PERSONAL_DEEPSEEK_PEAK_SWITCH='off'                     # with a peak overr
 QA's own peak script re-runs on this build as one command (it needs the UI setup step):
 
 ```
-node C:/Users/Ht/.personal-bots/qa/hbots-16643-qa/scripts/qa-16644-peak.mjs --release 5876c8b98490 --repo C:/Claude/AI/_wt/hbots-16644-offpeak --name qa16644p
+node C:/Users/Ht/.personal-bots/qa/hbots-16643-qa/scripts/qa-16644-peak.mjs --release 20c6df9b9bf1 --repo C:/Claude/AI/_wt/hbots-16644-offpeak --name qa16644p
 ```
 
 For just the two fixed faults, `--only SETUP,P2K,P2N,P1,P1T` runs the setting toggle that used to cut a
-turn (P2K) and the label captures (P1 row / header / Team, P1T the task card).
+turn (P2K) and the label captures (P1 row / header / Team members sheet, P1T the task card). P1 also
+creates a second chat first, so the header is captured in the chips variant, where the width is tightest.
 
-On the phone, the bot's row, chat header, task card and Team tile must read "Sonnet 5.5 · H · peak" for
-the 02:00Z override, the chat header must still say "Idle" in full, and the bot must be back on DeepSeek
+On the phone, the bot's row, chat header, task card and Team must read "Sonnet 5.5 · H · peak" for the
+02:00Z override, the chat header must still say "Idle" in full, and the bot must be back on DeepSeek
 after the off-peak restart. The peak reason never reads as a usage-limit fallback.
 
 ## QA on the peak suite (`312481fd3b81`), and the two fixes in this build
@@ -228,6 +229,34 @@ DeepSeek bots running. Top up"`. At 0.90 it is still "DeepSeek balance is $0.90.
   (`clerk.t3.codes` did not load on the test profile) and the Security C1 open item (a secret-store file
   name, not a value). Neither is a regression and neither is in this change.
 
+### Builder proof on this release (`20c6df9b9bf1`), the two peak-suite fixes
+
+Throwaway roots throughout, fake key and the balance stub, no real account. QA's own peak script, copied
+to `C:/Users/Ht/.personal-bots/qa/hbots-16644/scripts/qa-16644-peak.mjs` (only the evidence folder, the
+short-label regex, and a chips-header / Team-members / task-card capture changed), run as
+`node qa-16644-peak.mjs --release 20c6df9b9bf1 --repo C:/Claude/AI/_wt/hbots-16644-offpeak --name p16644c
+--only SETUP,P2K,P2N,P1,P1T`. Evidence: `C:/Users/Ht/.personal-bots/qa/hbots-16644/peak-2026-10-14T14-31-55/`
+(`summary.md`, `p2k.json`, `p1-chat-header.png`, `p1-bots-row.png`, `p1-team-members.png`,
+`p1t-task-card.png`). **SETUP, P2K, P2N, P1 and P1T all PASS.**
+
+- **P2K: the toggle no longer cuts a turn.** Off-peak, a 70 s quiet DeepSeek turn was left running while
+  the DeepSeek card's peak switch was flipped on. It settled **completed after 96 s** with the full answer
+  ("Starting a long step. Back again. The long step is done."), and the log had **no** kill, session-stop
+  or instance-rebuild line (`kill/stop log lines: []`). On `312481fd3b81` the same check ended after 7 s
+  with "Session stopped." and failed. P2N passed too: the peak row appeared 24 s into a running turn, that
+  turn still finished on DeepSeek, and the next turn ran on Claude.
+- **P1: the labels at 390 px.** Bots row `"… Sonnet 5.5 · H · peak 2m Ready …"`. The chat header was
+  captured in the chips variant (a second chat was created first, the tightest width): the status line is
+  **"Idle · Sonnet 5.5 · H · peak (DeepSeek peak until Thu 11:00)"** — the status is whole, never "Id…",
+  and the model label box is **73.4 px** (the 4.5rem floor) rather than collapsing. The full wording is
+  the accessible note. The Team members sheet shows `"Sonnet 5.5 · H · peak"` for all three DeepSeek bots.
+- **P1T: the task card.** A delegated turn produced the delegation card with the bot line
+  `"Sonnet 5.5 · H · peak"` (390 px dark screenshot), never "Sonnet 5.5 · H · Dee…".
+- **A note on the chips header.** `"Idle · Sonnet 5.5 · H · peak"` in full needs about 186 px beside the
+  bot name; at 390 px the chips header has about 225 px for name + status + model together, so with a long
+  bot name the label is ellipsised (the name yields for the 4.5rem floor). Rows, task cards, the Team
+  sheet and the pinned tile's accessible name carry the whole label; see the open item below.
+
 ## What QA should check
 
 1. The labels at 390 px on a DeepSeek bot during a window: the Bots row, the chat header (status still
@@ -243,7 +272,7 @@ DeepSeek bots running. Top up"`. At 0.90 it is still "DeepSeek balance is $0.90.
 5. Quick regression on the usage-limit fallback: force a limit on a Codex bot and check the existing
    "on fallback until about ..." line is unchanged.
 6. Re-run the peak suite's P2K (the toggle during a 70 s turn) and the label captures on this release:
-   `qa-16644-peak.mjs --release 5876c8b98490 --only SETUP,P2K,P2N,P1,P1T`, per "How QA drives it" above.
+   `qa-16644-peak.mjs --release 20c6df9b9bf1 --only SETUP,P2K,P2N,P1,P1T`, per "How QA drives it" above.
 7. Re-run the balance walk (QA's L1, 5.00 → 0.90 → 0.00 → 7.00 → 0.00) and the slow-read diagnostic
    against this release; both are described in "Builder proof on `312481fd3b81`" above, with the commands
    and the evidence folders.
@@ -262,25 +291,32 @@ DeepSeek bots running. Top up"`. At 0.90 it is still "DeepSeek balance is $0.90.
    used to print the raw instance id "deepseek"). No test depended on the old text.
 4. **No notice row for the peak switch.** Nothing was interrupted, so the sweep writes no chat line (the
    row label, chat header and task card carry it). Say so if you want a one-line notice when a window opens.
+5. **The chips header is the one tight place left.** At 390 px, with the chat chips on the second line,
+   `name + "Idle" + "Sonnet 5.5 · H · peak"` needs about 310 px and the row has about 225 px. The status
+   is now whole and the model keeps a 4.5rem floor (the model name stays readable), so with a long bot
+   name the label's tail — and, for names over ~100 px, a few characters of the name — is ellipsised. The
+   whole label is on the rows, the task card, the Team sheet and the pinned tile's accessible name. Two
+   ways to get it in full in the header, both a change of shape: let the chips row carry the model label
+   (it has the width), or give the header line a second row. One word and I do either.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=5876c8b98490d92e4389a7557d978416d1b92777 release=5876c8b98490 json-sha256=d34daeb1f24872a9ca5117edd151e8292f20ceee58d22361f4a078b46402aa7f result=PASS -->
+<!-- gate-evidence:begin sha=20c6df9b9bf1c831168b43da155beae6d1ce8845 release=20c6df9b9bf1 json-sha256=62e7ca83a74111824b8ccf76d74ce0b839268e09188f54dc363049a6abf833fd result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T14:05:23Z. Version 1.66.44, release `5876c8b98490`, commit `5876c8b98490d92e4389a7557d978416d1b92777` on `feat/hbots-16644-offpeak`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T14:31:49Z. Version 1.66.44, release `20c6df9b9bf1`, commit `20c6df9b9bf1c831168b43da155beae6d1ce8845` on `feat/hbots-16644-offpeak`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\5876c8b98490\gate-evidence.json` (sha256 `d34daeb1f24872a9ca5117edd151e8292f20ceee58d22361f4a078b46402aa7f`) and the full gate logs in `releases\5876c8b98490\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\20c6df9b9bf1\gate-evidence.json` (sha256 `62e7ca83a74111824b8ccf76d74ce0b839268e09188f54dc363049a6abf833fd`) and the full gate logs in `releases\20c6df9b9bf1\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2630 tests passed, 0 failed, 3 skipped, in 191 files | 258.8   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 40      |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2577 tests passed, 0 failed, 0 skipped, in 236 files | 31.9    |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2630 tests passed, 0 failed, 3 skipped, in 191 files | 257.5   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 40.3    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2578 tests passed, 0 failed, 0 skipped, in 236 files | 31.6    |
 | web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 6.2     |
 | ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 104.2   |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16644-offpeak\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\5876c8b98490" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 280.8   |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16644-offpeak\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\20c6df9b9bf1" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 283.3   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `5876c8b98490d92e4389a7557d978416d1b92777`, at end `5876c8b98490d92e4389a7557d978416d1b92777`; tracked files modified: none. Staged release: version 1.66.44, sha 5876c8b98490, dirty False, externals copied; `dist/bin.mjs` sha256 `249224da9f1322df2ed75c7daf57f5e7069f3179fde906b8d50e104c84582c3f`.
+Tree: HEAD at start `20c6df9b9bf1c831168b43da155beae6d1ce8845`, at end `20c6df9b9bf1c831168b43da155beae6d1ce8845`; tracked files modified: none. Staged release: version 1.66.44, sha 20c6df9b9bf1, dirty False, externals copied; `dist/bin.mjs` sha256 `249224da9f1322df2ed75c7daf57f5e7069f3179fde906b8d50e104c84582c3f`.
 <!-- gate-evidence:end -->
