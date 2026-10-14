@@ -7,6 +7,7 @@ import { botThreadRows } from "./botThreadRows";
 import {
   buildChatChips,
   chatChipState,
+  ownerWriteRefreshKey,
   taskChatTakenOver,
   taskChatThreadIds,
   type ChatChipModel,
@@ -458,6 +459,63 @@ describe("chat chip list: a task chat the owner made his own", () => {
     expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: userAt(4) }))).toBe(false);
     expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: userAt(6) }))).toBe(true);
     expect(taskChatTakenOver(link("task-chat", 20, { lastOwnerMessageAt: at(31) }))).toBe(true);
+  });
+});
+
+// The promotion reads `lastOwnerMessageAt` off the bots list, and nothing
+// refetches that list when the owner writes: without this the chip would only
+// come back on the next natural refetch (a reload, a turn elsewhere), so the
+// chat could still lose its chip right after he writes and switches away.
+describe("chat chip list: asking the list again after the owner writes", () => {
+  const taskChat = link("task-chat", 20);
+  const taskChatIds = taskChatThreadIds([taskChat], [task("t1", "task-chat", 19)]);
+  const msg = (id: string, role: string, minute: number) => ({
+    id,
+    role,
+    createdAt: new Date(Date.UTC(2026, 9, 1, 10, minute, 0)).toISOString(),
+  });
+  const write = (
+    entry: PersonalBotThread,
+    messages: ReadonlyArray<{
+      readonly id: string;
+      readonly role: string;
+      readonly createdAt: string;
+    }>,
+  ) => ownerWriteRefreshKey({ link: entry, taskChatIds, messages });
+
+  it("asks once for a task chat the owner just wrote in, and stops once the list has it", () => {
+    const messages = [msg("personal-task-t1-1", "user", 20), msg("owner-1", "user", 31)];
+    expect(write(taskChat, messages)).toBe("task-chat@owner-1");
+    // The refetched list carries his message: nothing more to ask.
+    expect(write(link("task-chat", 20, { lastOwnerMessageAt: at(31) }), messages)).toBeNull();
+  });
+
+  it("never asks for app-written turns alone", () => {
+    expect(
+      write(taskChat, [
+        msg("personal-task-t1-1", "user", 20),
+        // A "[Task continuation]" turn lands long after the chat was made.
+        msg("personal-task-t1-2", "user", 45),
+        msg("personal-resume-1", "user", 46),
+      ]),
+    ).toBeNull();
+  });
+
+  it("asks nothing for an owner chat, a pinned chat or the task's own first turn", () => {
+    const messages = [msg("owner-1", "user", 31)];
+    expect(ownerWriteRefreshKey({ link: link("owner", 10), taskChatIds, messages })).toBeNull();
+    // A pin promotes on its own, so the list has nothing new to say.
+    expect(write(link("task-chat", 20, { pinnedAt: at(21) }), messages)).toBeNull();
+    // The first turn lands with the chat itself: inside the 5 s slack.
+    expect(write(taskChat, [msg("owner-1", "user", 20)])).toBeNull();
+  });
+
+  it("asks again only when a newer owner message arrives", () => {
+    const first = write(taskChat, [msg("owner-1", "user", 31)]);
+    expect(first).not.toBeNull();
+    expect(write(taskChat, [msg("owner-1", "user", 31)])).toBe(first);
+    const second = write(taskChat, [msg("owner-1", "user", 31), msg("owner-2", "user", 40)]);
+    expect(second).not.toBe(first);
   });
 });
 

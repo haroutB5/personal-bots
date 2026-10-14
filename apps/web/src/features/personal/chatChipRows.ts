@@ -128,6 +128,48 @@ export function taskChatTakenOver(
   return DateTime.toEpochMillis(at) > epochMs(link.createdAt) + TASK_CHAT_SLACK_MS;
 }
 
+/** How long to wait before reading the list again, in case the write and the read crossed. */
+export const OWNER_WRITE_REFRESH_RETRY_MS = 3_000;
+
+/**
+ * The owner's own newest message in the chat he has open, when the bots list
+ * has not caught up with it yet. `lastOwnerMessageAt` comes over the list
+ * (`taskChatTakenOver` is what promotes the chip) and nothing refetches the
+ * list when the owner writes, so the chat screen asks once on this key and the
+ * refreshed link then carries his message. Non-null means "read the list
+ * again"; the same key never asks twice, and a link that has caught up (or a
+ * pin, which promotes on its own) makes it null, so it cannot loop.
+ *
+ * The message ids are the server's own rule: an app-written `personal-...`
+ * turn (a task brief, a steer, a continuation) is never the owner's.
+ */
+export function ownerWriteRefreshKey(input: {
+  readonly link: Pick<
+    PersonalBotThread,
+    "threadId" | "createdAt" | "lastOwnerMessageAt" | "pinnedAt"
+  > | null;
+  /** The chats a task or routine run made (see `taskChatThreadIds`). */
+  readonly taskChatIds: ReadonlySet<string>;
+  readonly messages: ReadonlyArray<{
+    readonly id: string;
+    readonly role: string;
+    readonly createdAt: string;
+  }>;
+}): string | null {
+  const { link } = input;
+  if (link === null || !input.taskChatIds.has(link.threadId)) return null;
+  if (isChatPinned(link) || link.lastOwnerMessageAt != null) return null;
+  const createdMs = epochMs(link.createdAt) + TASK_CHAT_SLACK_MS;
+  let newest: { readonly id: string; readonly at: number } | null = null;
+  for (const message of input.messages) {
+    if (message.role !== "user" || message.id.startsWith("personal-")) continue;
+    const at = Date.parse(message.createdAt);
+    if (!Number.isFinite(at) || at <= createdMs) continue;
+    if (newest === null || at > newest.at) newest = { id: message.id, at };
+  }
+  return newest === null ? null : `${link.threadId}@${newest.id}`;
+}
+
 /** The one dot a chip draws: needs you > rate limited > working > waiting on a bot > unread. */
 export function chatChipState(input: {
   readonly shell: EnvironmentThreadShell;
