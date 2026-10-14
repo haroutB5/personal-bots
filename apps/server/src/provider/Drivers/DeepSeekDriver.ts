@@ -160,6 +160,20 @@ export type DeepSeekDriverEnv =
   // The probe prices DeepSeek's own transcripts through the usage scan.
   | UsageService.UsageService;
 
+/**
+ * Config keys the live DeepSeek instance never reads, so a change to one must
+ * not rebuild the instance — a rebuild closes its scope and stops every session
+ * under it, which cut a running turn (1.66.44 QA, P2K).
+ *
+ * `peakSwitch` is read by the peak-hours sweep straight from persisted
+ * settings, and it only ever changes which model a bot's *next* turn runs on.
+ * Everything else in the config (`engine`, `binaryPath`, `homePath`,
+ * `dshRuntimePath`, the custom models) feeds `create` and must keep rebuilding.
+ * Replacing the API key is not in this list either: it lives in the instance
+ * environment, which is compared in full, and a new key may restart sessions.
+ */
+const DEEPSEEK_REBUILD_IRRELEVANT_CONFIG_KEYS = ["peakSwitch"] as const;
+
 export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
@@ -168,6 +182,7 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
   },
   configSchema: DeepSeekSettings,
   defaultConfig: (): DeepSeekSettings => decodeDeepSeekSettings({}),
+  rebuildIrrelevantConfigKeys: DEEPSEEK_REBUILD_IRRELEVANT_CONFIG_KEYS,
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

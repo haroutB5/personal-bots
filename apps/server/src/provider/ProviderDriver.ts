@@ -175,6 +175,19 @@ export interface ProviderDriver<Config, R = never> {
    */
   readonly defaultConfig: () => Config;
   /**
+   * Config keys this driver's live instance never reads. `reconcile` ignores
+   * them when it decides whether an entry changed, so editing one does not
+   * rebuild the instance — and a rebuild closes the entry's scope, which stops
+   * every session under it.
+   *
+   * Only a key whose value reaches the instance some way other than `create`
+   * belongs here (1.66.44: DeepSeek's `peakSwitch` is read by the peak-hours
+   * sweep straight from persisted settings, and flipping it used to cut a
+   * running turn). A key `create` reads must stay compared, or the instance
+   * keeps a stale value.
+   */
+  readonly rebuildIrrelevantConfigKeys?: ReadonlyArray<string>;
+  /**
    * Materialize one instance. The returned effect runs in a scope owned
    * by the registry; closing that scope releases every resource the
    * driver opened. Failures become unavailable shadow snapshots — the
