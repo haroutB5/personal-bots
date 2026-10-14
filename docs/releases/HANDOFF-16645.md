@@ -3,8 +3,9 @@
 A phone photo sent to a DeepSeek bot killed the turn before it started, with `Couldn't send: Error:
 Internal error: prompt was not queued: Maximum call stack size exceeded`. The DeepSeek Harness cannot
 validate a base64 image payload much above 4.5 M characters, and the adapter handed it an 8.4 MB
-photo's 11.3 M characters. 1.66.45 refuses an image the harness cannot take, with a sentence the
-owner can read, and never lets that overflow reach the chat.
+photo's 11.3 M characters. 1.66.45 downsizes an image bound for a DeepSeek chat to a payload the
+harness can take, so the photo is answered; anything that still arrives too big is refused with a
+sentence the owner can read, and that overflow can never reach the chat again.
 
 Branch `fix/hbots-dsh-image` off the staged 1.66.44 tip (`14517c7b00`), so this release also contains
 1.66.43 and 1.66.44. Version **1.66.45**, migration max **106 -> 106** (nothing here adds a
@@ -45,18 +46,28 @@ exceeded`; the live photo's own payload is first rejected at 4,473,916. QA can r
 
 ## What ships
 
-1. **`buildDshPrompt` refuses an image over 2 MiB** (`DSH_MAX_INLINE_IMAGE_BYTES`), before a turn
-   starts, so the harness never sees a payload it overflows on. 2 MiB is 2,796,204 base64 characters,
-   37% under the measured cliff. The chat reads: `DeepSeek can't read this image "photo.png" (8.1 MB):
-the DeepSeek engine takes images up to 2.0 MB. Send a smaller photo, or send it to a Claude bot.`
-   The send fails with a `ProviderAdapterRequestError`, so no prompt goes out and the session keeps
-   working. Images over the 10 MB wire cap were already skipped silently; between 2 MB and 10 MB they
-   were sent and crashed the turn, so being told is the improvement.
+1. **`buildDshPrompt` refuses an image over 2 MiB**, before a turn starts, so the harness never sees a
+   payload it overflows on. 2 MiB is 2,796,204 base64 characters, 37% under the measured cliff: this
+   is the backstop, and it is what a message over the cap gets. The chat reads: `DeepSeek can't read
+this image "photo.png" (8.1 MB): the DeepSeek engine takes images up to 2.0 MB. Send a smaller
+photo, or send it to a Claude bot.` The send fails with a `ProviderAdapterRequestError`, so no
+   prompt goes out and the session keeps working. Images over the 10 MB wire cap were already skipped
+   silently; between 2 MB and 10 MB they were sent and crashed the turn, so being told is the
+   improvement.
 2. **`translateDshFailure` never repeats a stack overflow.** A `Maximum call stack size exceeded`
    that reaches it from any other payload becomes `DeepSeek could not take this message: the harness
 ran out of stack on it. Send it again with a smaller image or shorter text.` The raw text stays in
    the logs.
-3. **Test only:** the dsh steer test read the event list as soon as the second prompt went out, a race
+3. **The composers downscale to the harness cap, so the photo is answered.**
+   `DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES` and `imageByteLimitForModel(model)` now live in
+   `@t3tools/contracts` beside the wire cap, and the dsh adapter imports the same constant. A DeepSeek
+   model gets 2 MiB; every other provider keeps the 10 MiB wire cap. `PersonalComposer` (a bot chat)
+   reads the turn's own selection, `chatTurnModelSelection(botModelSelection, thread.modelSelection)`,
+   which is the bot's effective model, so a chat on the usage-limit fallback (including a DeepSeek
+   peak window, when the turn really runs on Claude) keeps the wire cap; `ChatComposer` reads the
+   model it dispatches with. An 8.4 MB iPhone photo now arrives as a re-encoded image just under
+   2 MiB and the bot answers it.
+4. **Test only:** the dsh steer test read the event list as soon as the second prompt went out, a race
    it loses on a loaded machine. It now waits for the two settled turns it asserts. It is red the same
    way on live 1.66.42 when the whole file runs, so this is not a 1.66.43/44 regression.
 
@@ -76,47 +87,67 @@ passed (the whole file, not only the new ones). New:
 - "translates the failure wordings dsh reports" now also feeds it the live 14 Oct text with our frames
   under it, and asserts the plain sentence comes back and `Maximum call stack` does not.
 
-Red before the fix, with the same tests: raising `DSH_MAX_INLINE_IMAGE_BYTES` to the 50 MB total
-attachment cap (a stand-in for the old code) made "refuses an image..." fail with `AssertionError:
-expected 'Success' to be 'Failure'`, the oversized image going to the runtime.
+Red before the fix, with the same tests: raising the guard's limit to the 50 MB total attachment cap
+(a stand-in for the old code) made "refuses an image..." fail with `AssertionError: expected
+'Success' to be 'Failure'`, the oversized image going to the runtime.
 
-`apps/server` `tsc --noEmit` exits 0. The table below is the full fork gate and the phone e2e on the
-staged release.
+`cd packages/contracts && vp test run src/orchestration.test.ts`: 64 -> 65 tests, 65 passed. The new
+one pins the cap per model: `deepseek-flash`, its aliases, `DeepSeek-Flash`, `deepseek-flash[1m]` and
+a padded one get 2 MiB; `claude-sonnet-5-5`, `gpt-6.1-sol`, `deepseek-v4-pro`, `deepseek`, an empty
+and a whitespace id, `null` and `undefined` keep the wire cap, which is also asserted to be the
+larger of the two.
 
-## Left out, for the CTO to decide
+`cd apps/web && vp test run --project unit src/features/personal/PersonalComposer.test.tsx`: 55 -> 56
+tests, 56 passed. The new one picks a real image through the composer's own file input and asserts
+the cap handed to `prepareImageForAttachment`: the wire cap for the default Claude chat, and the
+harness cap once the bot's selection is a DeepSeek model. (Its `~/lib/imageCompression` mock now
+keeps the module's real exports, because the attachment classifier reads `isHeicImageFile` from it;
+that mock had never been exercised through the picker before.)
 
-Photos between 2 MB and 10 MB are refused now, so the owner has to send a smaller one. The web
-composer already downscales images over `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` (10 MB)
-(`apps/web/src/lib/imageCompression.ts`), so a DeepSeek-aware budget there (2 MiB for `dsh` chats)
-would make those photos arrive resized instead of refused. It needs the model or engine in the
-composer, which is a web change and its own brief.
+`apps/server`, `apps/web` and `packages/contracts` `tsc --noEmit` all exit 0. The table below is the
+full fork gate and the phone e2e on the staged release.
+
+## Left out, and why
+
+- **Desktop window captures** (`apps/web/src/components/desktop/SnapShotCoordinator.tsx`) still
+  compress to the 10 MiB wire cap. A capture targets a project draft or thread, and choosing the cap
+  there needs the bot's model resolved from that target, which is state plumbing this release did not
+  take on. A capture that still lands over 2 MiB in a DeepSeek thread is refused by the guard with the
+  same plain sentence instead of crashing the turn: safe, just not automatic. Worth a small follow-up
+  if he captures windows into DeepSeek chats.
+- Nothing else builds an inline image for a provider turn. `compressImageForStash` (the local prompt
+  stash) already holds images under about 975 KB, under the harness cap.
 
 ## What QA should check live
 
-- A DeepSeek bot with the `dsh` engine, a photo over 2 MB: a plain red line naming the size and the
-  2.0 MB limit, no `Maximum call stack`, no stack frames, and the next text turn answers normally.
-- The same chat with a photo under 2 MB (or a screenshot): the bot sees it and answers about it.
+- **The fix itself:** a DeepSeek bot with the `dsh` engine, an iPhone photo of 5 MB or more attached
+  from the phone's picker. The composer downscales it on the device (the attachment lands under
+  2 MB), the turn runs, and the bot answers about the picture.
+- A photo under 2 MB (or a screenshot) to the same bot: unchanged, answered.
+- The same big photo to a Claude bot: unchanged, and the attachment is still the full-size one.
 - Text-only turns on the same bot, and a steer into a running turn: unchanged.
-- A Claude bot with the same big photo: unchanged, still takes it.
+- **The backstop:** a message carrying an oversized image that skips the composer (one left in the
+  phone's outbox before this update, or a desktop window capture into a DeepSeek thread) shows the
+  plain red sentence, with no `Maximum call stack` and no stack frames, and the chat keeps working.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=43ad213533b38ecf4f2053d424a719ee7dddcbf8 release=43ad213533b3 json-sha256=73e397bfd691e4e4dec8f4d74ef276e36ac82d0be0a4439552c902e3452a359b result=PASS -->
+<!-- gate-evidence:begin sha=d0add6bcdb9b646393dba3b364882c776a84892d release=d0add6bcdb9b json-sha256=ec55e9c6daf61bc6acfacca77ea1419395ee92e1cb7cf94fefbd533516867f35 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T17:54:02Z. Version 1.66.45, release `43ad213533b3`, commit `43ad213533b38ecf4f2053d424a719ee7dddcbf8` on `fix/hbots-dsh-image`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-14T18:17:35Z. Version 1.66.45, release `d0add6bcdb9b`, commit `d0add6bcdb9b646393dba3b364882c776a84892d` on `fix/hbots-dsh-image`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\43ad213533b3\gate-evidence.json` (sha256 `73e397bfd691e4e4dec8f4d74ef276e36ac82d0be0a4439552c902e3452a359b`) and the full gate logs in `releases\43ad213533b3\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\d0add6bcdb9b\gate-evidence.json` (sha256 `ec55e9c6daf61bc6acfacca77ea1419395ee92e1cb7cf94fefbd533516867f35`) and the full gate logs in `releases\d0add6bcdb9b\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2630 tests passed, 0 failed, 3 skipped, in 191 files | 262.9   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 40.6    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2577 tests passed, 0 failed, 0 skipped, in 236 files | 29.8    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 32.7    |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 64      |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-dsh-image\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\43ad213533b3" -Json` (in `.`)                                                                                                                 | 0    | pass: 12/12 journeys passed                                | 289.6   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2630 tests passed, 0 failed, 3 skipped, in 191 files | 284.7   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 43.6    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2578 tests passed, 0 failed, 0 skipped, in 236 files | 36.2    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 5.6     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 65.9    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-dsh-image\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\d0add6bcdb9b" -Json` (in `.`)                                                                                                                 | 0    | pass: 12/12 journeys passed                                | 270.2   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `43ad213533b38ecf4f2053d424a719ee7dddcbf8`, at end `43ad213533b38ecf4f2053d424a719ee7dddcbf8`; tracked files modified: none. Staged release: version 1.66.45, sha 43ad213533b3, dirty False, externals copied; `dist/bin.mjs` sha256 `38599d56dd897501144b6884902da2377915c1057b02c5b7f7981ad23a5ab211`.
+Tree: HEAD at start `d0add6bcdb9b646393dba3b364882c776a84892d`, at end `d0add6bcdb9b646393dba3b364882c776a84892d`; tracked files modified: none. Staged release: version 1.66.45, sha d0add6bcdb9b, dirty False, externals copied; `dist/bin.mjs` sha256 `f9a0142d4e4b7c6bd0e14d4b9e625662bfdc39042fd49ae8a9070622910c3e35`.
 <!-- gate-evidence:end -->
