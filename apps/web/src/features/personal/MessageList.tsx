@@ -115,6 +115,7 @@ function attachmentName(attachment: unknown): string {
 }
 
 const READ_STATUS_LABEL: Record<MessageReadStatus, string> = {
+  steering: "Steering",
   queued: "Queued",
   read: "Read",
 };
@@ -447,8 +448,8 @@ const UserMessage = memo(function UserMessage({
         )
       ) : null}
       {readStatus !== null ? (
-        // role="status" is a polite live region: "Queued" turning into "Read"
-        // is announced without interrupting.
+        // role="status" is a polite live region: "Steering" (or "Queued")
+        // turning into "Read" is announced without interrupting.
         <span role="status" className="text-xs text-[var(--personal-text-tertiary)]">
           {READ_STATUS_LABEL[readStatus]}
         </span>
@@ -823,7 +824,7 @@ export function MessageList({
   onCancelQueued?: ((id: string) => void) | undefined;
   onEditQueued?: ((entry: OutboxEntry) => void) | undefined;
   onRetryQueued?: ((id: string) => void) | undefined;
-  /** "Queued"/"Read" under the owner's latest message; a bot chat passes it, a group does not. */
+  /** "Steering"/"Queued"/"Read" under the owner's latest message; a bot chat passes it, a group does not. */
   latestMessageStatus?: LatestMessageReadStatus | null;
   working: boolean;
   botName: string;

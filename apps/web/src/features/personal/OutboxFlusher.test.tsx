@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { readPersonalFollowUp } from "@t3tools/contracts";
 
 import {
   enqueueOutboxEntry,
@@ -151,8 +152,12 @@ describe("sending the queue", () => {
     expect(mocks.startTurn).toHaveBeenCalledTimes(2);
     const inputs = mocks.startTurn.mock.calls.map((call) => call[0].input);
     expect(inputs[0]?.followUp).toBe("queue");
+    // The message carries the same choice, so the label under the bubble can
+    // read "Queued" back on this device and on the owner's others.
+    expect(readPersonalFollowUp(inputs[0]?.message.context)).toBe("queue");
     // A plain steer keeps the field off the command entirely.
     expect(inputs[1]).not.toHaveProperty("followUp");
+    expect(inputs[1]?.message).not.toHaveProperty("context");
   });
 
   it("waits while the laptop is away, and sends when it comes back", async () => {

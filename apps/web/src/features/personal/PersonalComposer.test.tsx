@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProviderInstanceId,
+  readPersonalFollowUp,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -632,6 +633,8 @@ describe("personal composer steers by default and queues from the send menu", ()
 
     expect(state.start).toHaveBeenCalledOnce();
     expect(state.start.mock.calls[0]?.[0].input).not.toHaveProperty("followUp");
+    // A plain tap carries no follow-up record either: the label reads it as a steer.
+    expect(state.start.mock.calls[0]?.[0].input.message.context).toBeUndefined();
     expect(state.draft.prompt).toBe("");
     expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
   });
@@ -656,6 +659,11 @@ describe("personal composer steers by default and queues from the send menu", ()
 
     expect(state.start).toHaveBeenCalledOnce();
     expect(state.start.mock.calls[0]?.[0].input.followUp).toBe("queue");
+    // The message itself says it asked to wait, so the label under the bubble
+    // still reads Queued after a reload and on the owner's other devices.
+    expect(readPersonalFollowUp(state.start.mock.calls[0]?.[0].input.message.context)).toBe(
+      "queue",
+    );
     const status = renderer.root.findAllByProps({ role: "status" });
     expect(status.some((node) => node.children.join("").includes("Queued"))).toBe(true);
     expect(sendMenuOpen()).toBe("false");
