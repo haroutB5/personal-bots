@@ -34,6 +34,8 @@ if (Test-Path -LiteralPath $target) { throw "$target already exists." }
 New-Item -ItemType Directory -Force -Path $target | Out-Null
 
 $nodeExe = Resolve-NodeExe -Node $Node
+$timings = [ordered]@{}
+$snapshotWatch = [System.Diagnostics.Stopwatch]::StartNew()
 $env:PB_SNAPSHOT_SOURCE = $database
 $env:PB_SNAPSHOT_TARGET = Join-Path $target 'state.sqlite'
 $previous = $ErrorActionPreference
@@ -41,11 +43,14 @@ $ErrorActionPreference = 'Continue'
 & $nodeExe --disable-warning=ExperimentalWarning (Join-Path $PSScriptRoot 'sqlite-snapshot.cjs')
 $code = $LASTEXITCODE
 $ErrorActionPreference = $previous
+$timings['snapshotAndValidationSeconds'] = [math]::Round($snapshotWatch.Elapsed.TotalSeconds, 3)
+Write-Host "Backup timing snapshot and validation: $($timings['snapshotAndValidationSeconds']) s"
 if ($code -ne 0) {
     throw "SQLite snapshot failed (exit $code). Partial backup left at $target for inspection."
 }
 
 $copied = @('state.sqlite')
+$copyWatch = [System.Diagnostics.Stopwatch]::StartNew()
 $items = @('attachments', 'browser-artifacts', 'themes', 'settings.json', 'keybindings.json', 'environment-id')
 $items += @(Get-ChildItem -LiteralPath $paths.StateDir -Directory -Filter 'personal*' -ErrorAction SilentlyContinue |
         ForEach-Object { $_.Name })
@@ -57,6 +62,8 @@ foreach ($item in $items) {
     }
 }
 
+$timings['fileCopySeconds'] = [math]::Round($copyWatch.Elapsed.TotalSeconds, 3)
+Write-Host "Backup timing file copy: $($timings['fileCopySeconds']) s"
 $manifest = [ordered]@{
     root      = $Root
     source    = $paths.StateDir
@@ -66,6 +73,7 @@ $manifest = [ordered]@{
 Set-Content -LiteralPath (Join-Path $target 'backup.json') -Value ($manifest | ConvertTo-Json) -Encoding ASCII
 
 # Prune: only timestamp-named directories directly under backups\.
+$pruneWatch = [System.Diagnostics.Stopwatch]::StartNew()
 $backupsRoot = (Resolve-Path -LiteralPath $paths.BackupsDir).Path
 Get-ChildItem -LiteralPath $backupsRoot -Directory |
     Where-Object { $_.Name -match '^\d{8}-\d{6}$' } |
@@ -78,5 +86,10 @@ Get-ChildItem -LiteralPath $backupsRoot -Directory |
         }
     }
 
+$timings['pruningSeconds'] = [math]::Round($pruneWatch.Elapsed.TotalSeconds, 3)
+Write-Host "Backup timing pruning: $($timings['pruningSeconds']) s"
+$sizeWatch = [System.Diagnostics.Stopwatch]::StartNew()
 $sizeMb = [math]::Round(((Get-ChildItem -LiteralPath $target -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
+$timings['sizeScanSeconds'] = [math]::Round($sizeWatch.Elapsed.TotalSeconds, 3)
+Set-Content -LiteralPath (Join-Path $target 'backup-timings.json') -Value ($timings | ConvertTo-Json) -Encoding ASCII
 Write-Host "Backup written: $target ($sizeMb MB; $($copied -join ', '))"

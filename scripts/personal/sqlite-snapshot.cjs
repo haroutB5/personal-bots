@@ -3,6 +3,10 @@
 // the copy. Paths come from the environment so PowerShell never has to quote
 // JavaScript. Usage: PB_SNAPSHOT_SOURCE=... PB_SNAPSHOT_TARGET=... node sqlite-snapshot.cjs
 const { DatabaseSync } = require("node:sqlite");
+const { performance } = require("node:perf_hooks");
+function timing(step, started) {
+  console.log(`backup timing ${step}: ${((performance.now() - started) / 1000).toFixed(3)} s`);
+}
 
 const source = process.env.PB_SNAPSHOT_SOURCE;
 const target = process.env.PB_SNAPSHOT_TARGET;
@@ -12,13 +16,16 @@ if (!source || !target) {
 }
 
 const db = new DatabaseSync(source, { readOnly: true });
+const snapshotStarted = performance.now();
 try {
   db.exec(`VACUUM INTO '${target.replaceAll("'", "''")}'`);
 } finally {
   db.close();
+  timing("snapshot", snapshotStarted);
 }
 
 const copy = new DatabaseSync(target, { readOnly: true });
+const validationStarted = performance.now();
 try {
   const verdict = Object.values(copy.prepare("PRAGMA quick_check").get() ?? {})[0];
   if (verdict !== "ok") {
@@ -29,4 +36,5 @@ try {
   console.log(`snapshot ok (${String(tables?.n ?? 0)} tables)`);
 } finally {
   copy.close();
+  timing("validation.quick_check", validationStarted);
 }
