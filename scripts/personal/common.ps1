@@ -238,10 +238,6 @@ function Remove-PbOldFiles {
 # cmd.exe) and its cloudflared to AboveNormal. The relay starts a few seconds
 # after the server, so it is waited for up to -WaitSeconds. Best-effort: this
 # never throws, and a restart is never failed by it.
-# From 1.66.46 the same two processes also get Normal I/O and memory priority:
-# the logon task left them at I/O Low and memory Low, below every Normal
-# process on the PC (background-priority.ps1; HBOTS_LOW_PRIORITY=off leaves
-# them as they are). Bot sessions they start afterwards inherit Normal too.
 function Set-PbServerPriority {
     param(
         [Parameter(Mandatory = $true)][int]$RootProcessId,
@@ -277,11 +273,7 @@ function Set-PbServerPriority {
                             $proc = Get-Process -Id $childId -ErrorAction Stop
                             if ([string]$proc.PriorityClass -ne $Priority) { $proc.PriorityClass = $Priority }
                             $raised[$childId] = $name
-                            $ioText = ''
-                            if (Test-PbLowPriorityOn) {
-                                $ioText = ' ' + ((Set-PbProcessPriority -ProcessId $childId -Io 2 -Memory 5) -replace '^pid \d+: ', '')
-                            }
-                            Write-Host ("Priority {0}: {1} (pid {2}).{3}" -f $Priority, $name, $childId, $ioText)
+                            Write-Host ("Priority {0}: {1} (pid {2})." -f $Priority, $name, $childId)
                         } catch {
                             Write-Warning ("Could not raise {0} (pid {1}): {2}" -f $name, $childId, $_.Exception.Message)
                             $raised[$childId] = $name

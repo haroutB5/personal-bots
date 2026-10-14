@@ -1,17 +1,17 @@
-# Process priority for our own heavy work and for the live server (1.66.46). Dot-source only
+# Background process priority for our own heavy work (1.66.46). Dot-source only
 # (common.ps1 does); defines functions, sets nothing at load. Windows PowerShell 5.1.
 #
 # The live server runs SQLite synchronously on its main thread, so a disk busy with our builds, gates, e2e
 # runs, throwaway servers or perf runs froze it for seconds (stall reports and "sql NNN ms" lines, 10-14 Oct;
-# a 16-row routines read took 12.6 s with 31 ms of CPU). Two halves:
+# a 16-row routines read took 12.6 s with 31 ms of CPU).
 # - Enter-PbBackgroundPriority lowers the calling script's own process to CPU BelowNormal, I/O Very Low and
 #   memory Very Low. Windows hands all three to every process it starts (checked 14 Oct: cmd.exe and its
 #   node.exe grandchild came up BelowNormal, I/O 0, memory 1), so the whole tree runs in the background.
 #   Called by build.ps1, gate-evidence.ps1, e2e-smoke.ps1, throwaway-server.ps1 and perf/check.mjs + bench.mjs;
 #   never by start.ps1 or restart.ps1.
-# - Set-PbServerPriority (common.ps1) puts the live server and its relay at Normal I/O and memory priority.
-#   The logon task starts them at I/O Low and memory Low (seen 14 Oct on 1.66.45), which only lifted CPU.
-# Kill switch: HBOTS_LOW_PRIORITY=off (or 0, false, no, disabled) in the environment turns both halves off.
+# - The live server keeps the I/O Low / memory Low it gets from the logon task (seen 14 Oct on 1.66.45);
+#   Set-PbServerPriority (common.ps1) only lifts its CPU. Raising its I/O is left for a measured A/B later.
+# Kill switch: HBOTS_LOW_PRIORITY=off (or 0, false, no, disabled) in the environment.
 # The release runner's own backup priority (run/hbots-release/proc-priority.ps1) is separate and unchanged.
 
 $PbLowPriorityEnvName = 'HBOTS_LOW_PRIORITY'
