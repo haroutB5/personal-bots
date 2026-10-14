@@ -113,6 +113,7 @@ describe("attributeBotProcesses", () => {
       providerProcesses: [],
     });
     expect(owners.get(12_296)?.name).toBe("CTO");
+    expect(owners.get(12_296)?.provider).toBe("claudeAgent");
     expect(owners.get(19_344)?.name).toBe("CTO");
     expect(owners.has(31_828)).toBe(false);
   });
@@ -125,6 +126,7 @@ describe("attributeBotProcesses", () => {
       providerProcesses: [],
     });
     expect(owners.get(18_148)?.botId).toBe("bot-backend");
+    expect(owners.get(18_148)?.provider).toBe("deepseek");
   });
 
   it("names nothing for a Codex app-server on its command line, so its PID decides", () => {
@@ -138,6 +140,7 @@ describe("attributeBotProcesses", () => {
       providerProcesses: registered,
     });
     expect(withPid.get(25_184)?.name).toBe("IT");
+    expect(withPid.get(25_184)?.provider).toBe("codex");
     expect(withPid.get(12_296)?.name).toBe("CTO");
 
     // Without the record (a build where the spawn site did not register it)

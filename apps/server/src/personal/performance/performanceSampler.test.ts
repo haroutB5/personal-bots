@@ -18,14 +18,19 @@ const STATICS: PerformanceStatics = {
   hbotsStartedAt: 1_000,
 };
 
-const tickLine = (t: number, withGroups: boolean) =>
+const tickLine = (
+  t: number,
+  withGroups: boolean,
+  overrides: { readonly proc?: string; readonly kids?: string } = {},
+) =>
   '{"t":' +
   t +
   ',"ms":9,"c":{"cpuUtility":12.5,"cpuPerformance":100,"memAvailableMB":8000,' +
   '"diskIdlePct":90,"diskReadBps":0,"diskWriteBps":0,"threads":[' +
   Array.from({ length: 20 }, (_, i) => `["0,${i}",1]`).join(",") +
-  '],"gpu":[],"netRx":[["Wi-Fi",100]],"netTx":[["Wi-Fi",50]],"proc":[["node",1,1,10]]},' +
-  '"k":[]' +
+  '],"gpu":[],"netRx":[["Wi-Fi",100]],"netTx":[["Wi-Fi",50]],' +
+  `"proc":${overrides.proc ?? '[["node",1,1,10]]'}},` +
+  `"k":${overrides.kids ?? "[]"}` +
   (withGroups
     ? ',"pp":[[10,999,1]]' +
       ',"s":{"batteryPct":90,"batteryState":"discharging","batteryMinutesLeft":120,"diskTotalGB":512,"diskFreeGB":100}'
@@ -213,6 +218,47 @@ describe("PerformanceSampler lifecycle", () => {
       if (samples[0]?.kind === "sample") {
         expect(samples[0].sample.cpuPct).toBe(12.5);
         expect(samples[0].sample.memFreeGB).toBeCloseTo(7.8, 1);
+      }
+      subscription.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("names bots in the very first groups frame, before any sample is grouped", async () => {
+    // QA's live check on 1.66.41 (14 Oct): the first "Heaviest right now"
+    // lumped every bot CLI into "hbots server" and only named bots from the
+    // second snapshot, because the attribution read finished a refresh late.
+    vi.useFakeTimers();
+    try {
+      const helper = fakeHelper();
+      const attribute = vi.fn(
+        async () => new Map([[10, { botId: "bot-atlas", name: "Atlas", provider: "codex" }]]),
+      );
+      const { sampler, advance } = make({ startHelper: () => helper.handle, attribute }, helper);
+      const events: PerformanceStreamEvent[] = [];
+      const subscription = sampler.subscribe((event) => events.push(event));
+      const snapshot = {
+        proc: '[["claude",40,500,10]]',
+        kids: '[{"pid":10,"name":"claude.exe","cpu100ns":0,"wsBytes":0,"cmd":"--session-id=aaa"}]',
+      };
+      helper.push(tickLine(1_000_000, true, snapshot));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+      helper.push(tickLine(1_002_000, true, snapshot));
+      await vi.advanceTimersByTimeAsync(2_000);
+      advance(2_000);
+
+      const groups = events.filter((event) => event.kind === "groups");
+      expect(groups.length).toBe(1);
+      if (groups[0]?.kind === "groups") {
+        const atlas = groups[0].groups.cpu.find((group) => group.name === "Atlas");
+        expect(atlas?.processCount).toBe(1);
+        expect(atlas?.provider).toBe("codex");
+        // The bot's CLI is never counted under the server in that frame.
+        expect(
+          groups[0].groups.cpu.find((group) => group.name === "hbots server")?.processCount,
+        ).toBe(0);
       }
       subscription.unsubscribe();
     } finally {

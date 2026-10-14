@@ -9,6 +9,7 @@ import { cn } from "~/lib/utils";
 
 import { PerfChart, type PerfChartSeries } from "./PerfChart";
 import { PcAvatar, type PcPose } from "./PcAvatar";
+import { performanceGroupDetail, processCountLabel } from "./performanceGroupLabel";
 import {
   axisSeries,
   evaluateThresholds,
@@ -1049,7 +1050,7 @@ function HbotsRow({
         {row.name === "hbots server" ? "Server" : row.name === "Bots" ? "Bots" : "Browser"}
         {count === null ? null : (
           <small className="ml-1 text-[12px] text-[var(--personal-text-tertiary)]">
-            {count} processes
+            {processCountLabel(count)}
           </small>
         )}
       </td>
@@ -1355,9 +1356,7 @@ function HeaviestCard({
                   {group.name}
                 </span>
                 <span className="block text-[12px] leading-4 text-[var(--personal-text-secondary)]">
-                  {group.kind === "bot"
-                    ? `Claude Code · ${group.processCount} processes`
-                    : `${group.processCount} processes`}
+                  {performanceGroupDetail(group)}
                 </span>
               </span>
               <span className="w-[86px] shrink-0 text-right">
@@ -1401,7 +1400,7 @@ function HeaviestCard({
                   to="/bots/$botId"
                   params={{ botId: group.botId }}
                   className="flex min-h-[60px] items-center gap-3 py-1.5"
-                  aria-label={`${group.name}, ${group.processCount} processes, ${by === "cpu" ? `${group.cpuPct.toFixed(1)} percent` : `${group.memGB.toFixed(1)} gigabytes`}. Open ${group.name}`}
+                  aria-label={`${group.name}, ${processCountLabel(group.processCount)}, ${by === "cpu" ? `${group.cpuPct.toFixed(1)} percent` : `${group.memGB.toFixed(1)} gigabytes`}. Open ${group.name}`}
                 >
                   {row}
                 </Link>
