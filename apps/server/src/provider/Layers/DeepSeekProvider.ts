@@ -10,14 +10,21 @@
  * @module provider/Layers/DeepSeekProvider
  */
 import {
+  DEEPSEEK_AGENT_MODE_OPTION_ID,
+  DEEPSEEK_DEFAULT_AGENT_MODE,
+  DEEPSEEK_DSH_AGENT_MODES,
+  type DeepSeekEngine,
   type DeepSeekSettings,
   type ServerProviderAuth,
+  type ServerProviderModel,
   type ServerProviderSpend,
   type ServerProviderUsageBalance,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -41,6 +48,8 @@ import {
   type DeepSeekBalanceRead,
 } from "../Drivers/DeepSeekBalance.ts";
 import { DEEPSEEK_AUTH_TOKEN_ENV } from "../Drivers/DeepSeekEnvironment.ts";
+import { resolveDeepSeekEngine } from "../Drivers/DeepSeekEngine.ts";
+import { resolveDshRuntime, DSH_RUNTIME_MISSING_MESSAGE } from "../acp/DshAcpSupport.ts";
 
 const DEEPSEEK_PRESENTATION = {
   displayName: "DeepSeek",
@@ -52,12 +61,23 @@ const VERSION_PROBE_TIMEOUT_MS = 4_000;
 
 /** How a failed balance read reads on the usage card: short, ours, never DeepSeek's body. */
 const BALANCE_FAILURE_NOTES: Record<DeepSeekBalanceFailureReason, string> = {
-  missing_key: "DeepSeek API key is missing.",
+  missing_key: "Add your DeepSeek API key to read the balance.",
+  auth_error: "DeepSeek did not accept this key, so it would not return the balance.",
+  insufficient_balance: "This key works; the DeepSeek account has no credit left.",
   http_error: "DeepSeek would not return the balance for this key.",
   network_error: "DeepSeek could not be reached for the balance.",
   timeout: "DeepSeek did not answer the balance request in time.",
   invalid_response: "DeepSeek returned a balance that could not be read.",
 };
+
+/**
+ * What the DeepSeek card says when the key is not set yet. A setup step, not
+ * a failure, and it never repeats the card's own "Add your DeepSeek API key"
+ * headline: plain words pointing at the key field, never the variable name the
+ * field hides.
+ */
+export const DEEPSEEK_KEY_MISSING_MESSAGE =
+  "Set it in this instance's settings. Keys come from platform.deepseek.com.";
 
 /**
  * One balance read as the published contract shape. A failed read keeps the
@@ -93,7 +113,9 @@ function toUsageBalance(
         }
       : {}),
     ...(spent !== null ? { spent } : {}),
-    ...(read.status === "failed" ? { message: BALANCE_FAILURE_NOTES[read.reason] } : {}),
+    ...(read.status === "failed"
+      ? { message: BALANCE_FAILURE_NOTES[read.reason], failureReason: read.reason }
+      : {}),
   };
 }
 
@@ -109,8 +131,34 @@ export interface DeepSeekProviderProbeDependencies {
   readonly readSpent?: () => Effect.Effect<ServerProviderSpend | null>;
 }
 
-function deepSeekModelsFromCatalog(catalog: DeepSeekModelCatalog) {
-  return catalog.models.map((entry) => entry.model);
+/**
+ * The models as the picker sees them. On the dsh engine the Flash model gains
+ * one extra control, its agent mode (Standard by default), because the mode is
+ * a per-chat launch decision rather than an ACP session mode. On the Claude
+ * Code engine the descriptor is absent and a saved value is simply ignored.
+ */
+function deepSeekModelsFromCatalog(
+  catalog: DeepSeekModelCatalog,
+  engine: DeepSeekEngine,
+): ReadonlyArray<ServerProviderModel> {
+  if (engine !== "dsh") return catalog.models.map((entry) => entry.model);
+  const agentMode = {
+    id: DEEPSEEK_AGENT_MODE_OPTION_ID,
+    label: "Agent mode",
+    type: "select" as const,
+    options: DEEPSEEK_DSH_AGENT_MODES.map((mode) => ({
+      id: mode.value,
+      label: mode.label,
+      ...(mode.value === DEEPSEEK_DEFAULT_AGENT_MODE ? { isDefault: true } : {}),
+    })),
+  };
+  return catalog.models.map((entry) => ({
+    ...entry.model,
+    capabilities: {
+      ...entry.model.capabilities,
+      optionDescriptors: [...(entry.model.capabilities?.optionDescriptors ?? []), agentMode],
+    },
+  }));
 }
 
 export function buildInitialDeepSeekProviderSnapshot(
@@ -121,6 +169,7 @@ export function buildInitialDeepSeekProviderSnapshot(
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = deepSeekModelsFromCatalog(
       scopeDeepSeekModelCatalog(catalog, settings.customModels),
+      resolveDeepSeekEngine(settings),
     );
     if (!settings.enabled) {
       return buildServerProvider({
@@ -153,15 +202,189 @@ export function buildInitialDeepSeekProviderSnapshot(
   });
 }
 
+/**
+ * The balance card's numbers: DeepSeek's own prepaid balance, and our own
+ * spend from the usage scan beside it. Read before any binary probe and
+ * carried on every outcome, so a probe that fails for another reason never
+ * blanks a balance the card already shows.
+ */
+const readUsageBalance = Effect.fn("readUsageBalance")(function* (
+  token: string,
+  dependencies: DeepSeekProviderProbeDependencies | undefined,
+): Effect.fn.Return<ServerProviderUsageBalance | undefined> {
+  if (token.length === 0) return undefined;
+  const readBalance = dependencies?.readBalance ?? deepSeekBalanceReader.read;
+  const read = yield* Effect.tryPromise({
+    try: () => readBalance(token),
+    catch: () =>
+      ({
+        status: "failed",
+        reason: "network_error",
+        lastGood: null,
+      }) as DeepSeekBalanceRead,
+  }).pipe(
+    Effect.orElseSucceed((): DeepSeekBalanceRead => ({
+      status: "failed",
+      reason: "network_error",
+      lastGood: null,
+    })),
+  );
+  // Our own spend figure is independent of the balance read: a failed balance
+  // still shows it, and a failed scan shows the balance alone rather than a
+  // number we cannot stand behind.
+  const readSpent = dependencies?.readSpent;
+  const spent =
+    readSpent === undefined
+      ? null
+      : yield* readSpent().pipe(Effect.catchCause(() => Effect.succeed(null)));
+  return toUsageBalance(read, DateTime.formatIso(yield* DateTime.now), spent);
+});
+
+/**
+ * The probe for the DeepSeek Harness engine: whether the pinned runtime is
+ * installed where the instance expects it and answers its own `--version`
+ * with the pin. The key check is the same as the Claude engine's, because the
+ * key is the same entry.
+ */
+const checkDeepSeekDshStatus = Effect.fn("checkDeepSeekDshStatus")(function* (
+  settings: DeepSeekSettings,
+  environment: NodeJS.ProcessEnv,
+  checkedAt: string,
+  models: ReadonlyArray<ServerProviderModel>,
+  dependencies?: DeepSeekProviderProbeDependencies,
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Path.Path | FileSystem.FileSystem
+> {
+  if (!settings.enabled) {
+    return buildServerProvider({
+      presentation: DEEPSEEK_PRESENTATION,
+      enabled: false,
+      checkedAt,
+      models,
+      probe: {
+        installed: false,
+        version: null,
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "DeepSeek is disabled in T3 Code settings.",
+      },
+    });
+  }
+  const token = environment[DEEPSEEK_AUTH_TOKEN_ENV]?.trim() ?? "";
+  const auth: ServerProviderAuth = token
+    ? { status: "authenticated", type: "api_key", label: "DeepSeek API key" }
+    : { status: "unauthenticated" };
+  const usageBalance = yield* readUsageBalance(token, dependencies);
+  const runtime = yield* resolveDshRuntime(settings);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const installed = yield* fileSystem.exists(runtime.binJs).pipe(Effect.orElseSucceed(() => false));
+  if (!installed) {
+    return buildServerProvider({
+      presentation: DEEPSEEK_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      probe: {
+        installed: false,
+        version: null,
+        status: "error",
+        auth,
+        message: DSH_RUNTIME_MISSING_MESSAGE,
+        ...(usageBalance ? { usageBalance } : {}),
+      },
+    });
+  }
+  const versionResult = yield* Effect.gen(function* () {
+    const command = process.execPath;
+    const spawnCommand = yield* resolveSpawnCommand(command, [runtime.binJs, "--version"], {
+      env: environment,
+    });
+    return yield* spawnAndCollect(
+      command,
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        env: environment,
+        shell: spawnCommand.shell,
+      }),
+    );
+  }).pipe(Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS), Effect.result);
+  const output = Result.isSuccess(versionResult) ? versionResult.success : Option.none();
+  // The pin carries a pre-release suffix (`0.2.0-rc.2`), which a generic semver
+  // read drops, so the runtime's own line is compared as it prints it. The
+  // live smoke on 13 Oct caught exactly that mismatch on a real install.
+  const printed = Option.isSome(output)
+    ? dshPrintedVersion(output.value.stdout, output.value.stderr)
+    : null;
+  const answered =
+    Option.isSome(output) &&
+    output.value.code === 0 &&
+    printed !== null &&
+    versionMatchesPin(printed, runtime.version);
+  const base = {
+    presentation: DEEPSEEK_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+  } as const;
+  if (!answered) {
+    return buildServerProvider({
+      ...base,
+      probe: {
+        installed: true,
+        version: printed,
+        status: "error",
+        auth,
+        message:
+          printed === null
+            ? "The DeepSeek Harness runtime did not answer its version check. Reinstall it with scripts/personal/install-dsh.ps1."
+            : `The DeepSeek Harness runtime at ${runtime.runtimeDir} answers ${printed}, not the pinned ${runtime.version}. Run scripts/personal/install-dsh.ps1.`,
+        ...(usageBalance ? { usageBalance } : {}),
+      },
+    });
+  }
+  if (auth.status === "unauthenticated") {
+    return buildServerProvider({
+      ...base,
+      probe: {
+        installed: true,
+        version: printed,
+        status: "warning",
+        auth,
+        message: DEEPSEEK_KEY_MISSING_MESSAGE,
+        ...(usageBalance ? { usageBalance } : {}),
+      },
+    });
+  }
+  return buildServerProvider({
+    ...base,
+    probe: {
+      installed: true,
+      version: printed,
+      status: "ready",
+      auth,
+      ...(usageBalance ? { usageBalance } : {}),
+    },
+  });
+});
+
 export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatus")(function* (
   settings: DeepSeekSettings,
   environment: NodeJS.ProcessEnv = process.env,
   catalog: DeepSeekModelCatalog = BUNDLED_DEEPSEEK_MODEL_CATALOG,
   dependencies?: DeepSeekProviderProbeDependencies,
-): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Path.Path | FileSystem.FileSystem
+> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const scoped = scopeDeepSeekModelCatalog(catalog, settings.customModels);
-  const models = deepSeekModelsFromCatalog(scoped);
+  const engine = resolveDeepSeekEngine(settings, environment);
+  const models = deepSeekModelsFromCatalog(scoped, engine);
+  if (engine === "dsh") {
+    return yield* checkDeepSeekDshStatus(settings, environment, checkedAt, models, dependencies);
+  }
 
   if (!settings.enabled) {
     return buildServerProvider({
@@ -184,41 +407,7 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
     ? { status: "authenticated", type: "api_key", label: "DeepSeek API key" }
     : { status: "unauthenticated" };
 
-  // Read before the binary probe, and carried on every outcome below, so a
-  // probe that fails for a CLI reason never blanks a balance the card shows.
-  // The reader never rejects by contract; a stub that does still must not take
-  // the whole probe down.
-  const readBalance = dependencies?.readBalance ?? deepSeekBalanceReader.read;
-  const usageBalance =
-    token.length === 0
-      ? undefined
-      : yield* Effect.gen(function* () {
-          const read = yield* Effect.tryPromise({
-            try: () => readBalance(token),
-            catch: () =>
-              ({
-                status: "failed",
-                reason: "network_error",
-                lastGood: null,
-              }) as DeepSeekBalanceRead,
-          }).pipe(
-            Effect.orElseSucceed((): DeepSeekBalanceRead => ({
-              status: "failed",
-              reason: "network_error",
-              lastGood: null,
-            })),
-          );
-          // Our own spend figure, independent of the balance read: a failed
-          // balance still shows it, and a failed scan (or none wired) shows
-          // the balance alone rather than a number we cannot stand behind.
-          const readSpent = dependencies?.readSpent;
-          const spent =
-            readSpent === undefined
-              ? null
-              : yield* readSpent().pipe(Effect.catchCause(() => Effect.succeed(null)));
-          const checkedAt = DateTime.formatIso(yield* DateTime.now);
-          return toUsageBalance(read, checkedAt, spent);
-        });
+  const usageBalance = yield* readUsageBalance(token, dependencies);
 
   const binaryPath = settings.binaryPath.trim() || "claude";
   const versionResult = yield* Effect.gen(function* () {
@@ -297,10 +486,9 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
       probe: {
         installed: true,
         version,
-        status: "error",
+        status: "warning",
         auth,
-        message:
-          "DeepSeek API key is missing. Add ANTHROPIC_AUTH_TOKEN as a sensitive environment variable on this DeepSeek instance.",
+        message: DEEPSEEK_KEY_MISSING_MESSAGE,
         ...(usageBalance ? { usageBalance } : {}),
       },
     });
@@ -320,6 +508,34 @@ export const checkDeepSeekProviderStatus = Effect.fn("checkDeepSeekProviderStatu
     },
   });
 });
+
+const VERSION_LINE_SPLIT = /\r?\n/;
+const VERSION_TOKEN_SPLIT = /\s+/;
+
+/** The first line a `--version` run printed, trimmed: dsh answers `0.2.0-rc.2`. */
+export function dshPrintedVersion(stdout: string, stderr: string): string | null {
+  for (const line of `${stdout}\n${stderr}`.split(VERSION_LINE_SPLIT)) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return null;
+}
+
+/**
+ * Whether a printed version is the pinned one. The runtime answers with the
+ * bare pin, but a future build may prefix its name, and a general semver read
+ * ignores a pre-release suffix this pin has, so all three are accepted.
+ */
+export function versionMatchesPin(printed: string, pin: string): boolean {
+  const normalized = printed.trim();
+  const lastToken = normalized.split(VERSION_TOKEN_SPLIT).at(-1) ?? normalized;
+  return (
+    normalized === pin ||
+    lastToken === pin ||
+    parseGenericCliVersion(normalized) === pin ||
+    normalized.endsWith(` ${pin}`)
+  );
+}
 
 export function resolveDeepSeekCatalogForManifest(
   manifest: Parameters<typeof resolveDeepSeekModelCatalog>[0],

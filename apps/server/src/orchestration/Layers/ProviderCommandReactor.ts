@@ -1359,6 +1359,26 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
+    const normalizedInput = toNonEmptyProviderInput(input.messageText);
+    const normalizedAttachments = input.attachments ?? [];
+    // A turn the target engine itself cannot take is refused before its session
+    // is started or reused. Refusing it later is not safe: the session start
+    // this turn caused has already emitted "starting" and "ready", which land a
+    // moment later and leave the thread ready with no error, so the chat shows
+    // nothing at all. That is what QA hit on 1.66.45 (C5F/C5R): the first
+    // message of a fresh DeepSeek chat, or the first send after a restart,
+    // carrying an oversized photo, which is exactly what an outbox photo from
+    // before an update does.
+    const preflightModelSelection =
+      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+    yield* providerService.validateTurn({
+      threadId: input.threadId,
+      instanceId: preflightModelSelection.instanceId,
+      modelSelection: preflightModelSelection,
+      ...(normalizedInput ? { input: normalizedInput } : {}),
+      ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+    });
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
@@ -1369,8 +1389,6 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
-    const normalizedAttachments = input.attachments ?? [];
     const systemInstructions = yield* personalBotInstructions(input.threadId);
     const memory = normalizedInput
       ? yield* personalMemoryForTurn(

@@ -6,6 +6,7 @@ import {
   MessageId,
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
+  PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
   PersonalBotId,
   ProviderInstanceId,
   ThreadId,
@@ -38,6 +39,7 @@ import {
   resolveUsageLimitsAfterProbe,
 } from "../provider/providerUsageLimits.ts";
 import { codexRateLimitsToUpdate } from "../provider/Layers/codexUsageLimits.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
@@ -491,10 +493,16 @@ const makeHarness = (): Harness => ({
   sequence: 0,
 });
 
-const makeLayer = (harness: Harness, env: Record<string, string> = {}) =>
+const makeLayer = (
+  harness: Harness,
+  env: Record<string, string> = {},
+  /** DeepSeek peak switch tests: the instance's own "during peak hours" setting. */
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   PersonalModelFallback.layer.pipe(
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(ServerSettings.layerTest(settings)),
     Layer.provideMerge(
       Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
         dispatch: (command: OrchestrationCommand) =>
@@ -1244,3 +1252,335 @@ it.effect(
     }).pipe(Effect.provide(makeChatLayer(harness)));
   },
 );
+
+// --- the DeepSeek peak-hours switch (1.66.44) ------------------------------------
+
+const DEEPSEEK = ProviderInstanceId.make("deepseek");
+const CODEX_DS_FALLBACK: ModelSelection = {
+  instanceId: CODEX,
+  model: "gpt-6.1-sol",
+  options: [{ id: "reasoningEffort", value: "high" }],
+} as ModelSelection;
+const DS_HOME: ModelSelection = {
+  instanceId: DEEPSEEK,
+  model: "deepseek-flash",
+} as ModelSelection;
+
+/** Thursday 15 October 2026: 02:00 UTC is inside the 01:00-04:00 window. */
+const PEAK_AT = Date.parse("2026-10-15T02:00:00.000Z");
+const PEAK_ENDS = Date.parse("2026-10-15T04:00:00.000Z");
+/** The second window of the same day, 06:00-10:00 UTC. */
+const LATER_PEAK_AT = Date.parse("2026-10-15T07:15:00.000Z");
+const LATER_PEAK_ENDS = Date.parse("2026-10-15T10:00:00.000Z");
+const OFF_PEAK_AT = Date.parse("2026-10-15T11:30:00.000Z");
+const SATURDAY_AT = Date.parse("2026-10-17T02:00:00.000Z");
+
+const READY_CLAUDE = () =>
+  snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }]));
+
+/** A DeepSeek bot, optionally with a fallback of its own, on the shared chat. */
+const seedDeepSeekBot = (
+  patch: {
+    readonly botId?: PersonalBotId;
+    readonly threadId?: ThreadId;
+    readonly fallbackModelSelection?: ModelSelection;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const botId = patch.botId ?? BOT;
+    const threadId = patch.threadId ?? CHAT;
+    yield* bots.createBot({
+      botId,
+      name: "DS",
+      title: "",
+      description: "",
+      instructions: "",
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
+      modelSelection: DS_HOME,
+      team: "assistant",
+      lead: false,
+      pinned: false,
+      sortOrder: 0,
+      createdAt: DateTime.makeUnsafe(NOW),
+      updatedAt: DateTime.makeUnsafe(NOW),
+      ...(patch.fallbackModelSelection === undefined
+        ? {}
+        : { fallbackModelSelection: patch.fallbackModelSelection }),
+    });
+    yield* bots.insertThreadLink({
+      botId,
+      threadId,
+      createdAt: DateTime.makeUnsafe(NOW),
+    });
+    yield* sql`
+      INSERT INTO projection_thread_sessions (thread_id, status, runtime_mode, updated_at)
+      VALUES (${threadId}, 'ready', 'full-access', ${isoAt(NOW)})
+    `.pipe(Effect.ignore);
+  });
+
+const peakState = (states: ReadonlyArray<PersonalBotRepository.PersonalBotFallbackState>) =>
+  states.find((state) => state.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK);
+
+it.effect(
+  "moves a DeepSeek bot to Sonnet 5.5 High in a peak window and back when it closes",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(PEAK_AT);
+      yield* seedDeepSeekBot();
+      harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+
+      yield* service.sweep;
+      const state = peakState(yield* bots.listFallbackStates());
+      expect(state).toBeDefined();
+      expect(state!.fallbackModel).toEqual(FALLBACK);
+      expect(state!.fromInstanceId).toBe(DEEPSEEK);
+      expect(DateTime.toEpochMillis(DateTime.makeUnsafe(state!.resetAt!))).toBe(PEAK_ENDS);
+      // Every turn the server starts reads it, so a new chat, task or routine
+      // turn runs on the peak model too.
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+      // The bot's own model is untouched.
+      const bot = Option.getOrThrow(yield* bots.getBotById({ botId: BOT }));
+      expect(bot.modelSelection).toEqual(DS_HOME);
+
+      // The second window of the day moves the end time, without a second row.
+      yield* TestClock.setTime(LATER_PEAK_AT);
+      yield* service.sweep;
+      const updated = peakState(yield* bots.listFallbackStates());
+      expect(yield* bots.listFallbackStates()).toHaveLength(1);
+      expect(DateTime.toEpochMillis(DateTime.makeUnsafe(updated!.resetAt!))).toBe(LATER_PEAK_ENDS);
+
+      // Off-peak and idle: back to DeepSeek.
+      yield* TestClock.setTime(OFF_PEAK_AT);
+      yield* service.sweep;
+      expect(yield* bots.listFallbackStates()).toHaveLength(0);
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(DS_HOME);
+      expect(lines(harness)).toHaveLength(0);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("never cuts a running turn: the switch back waits for the bot to be idle", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(PEAK_AT);
+    yield* seedDeepSeekBot();
+    harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    expect(peakState(yield* bots.listFallbackStates())).toBeDefined();
+
+    // The window closes while a turn is still running: the row stays, so that
+    // turn finishes where it is.
+    yield* setBusy(true);
+    yield* TestClock.setTime(OFF_PEAK_AT);
+    yield* service.sweep;
+    expect(peakState(yield* bots.listFallbackStates())).toBeDefined();
+
+    // Once it is idle the bot moves back.
+    yield* setBusy(false);
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a restart inside a window keeps bots on the peak model, and off-peak clears them",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(PEAK_AT);
+      yield* seedDeepSeekBot();
+      harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+
+      // The row a previous run left behind is the whole state: nothing is kept in
+      // memory, so the first sweep after a restart decides from the clock alone.
+      yield* bots.startFallback({
+        botId: BOT,
+        fallbackModel: FALLBACK,
+        fromInstanceId: DEEPSEEK,
+        fromProvider: "DeepSeek",
+        reason: PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+        startedAt: isoAt(PEAK_AT - 60_000),
+        resetAt: isoAt(PEAK_AT + 60_000),
+        noticeThreadId: null,
+      });
+      yield* service.sweep;
+      const kept = peakState(yield* bots.listFallbackStates());
+      expect(kept).toBeDefined();
+      expect(DateTime.toEpochMillis(DateTime.makeUnsafe(kept!.resetAt!))).toBe(PEAK_ENDS);
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+
+      // A restart that lands after the window: the same row is cleared, so the
+      // bot does not stay on Sonnet for the rest of the day.
+      yield* TestClock.setTime(OFF_PEAK_AT);
+      yield* service.sweep;
+      expect(yield* bots.listFallbackStates()).toHaveLength(0);
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(DS_HOME);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect(
+  "leaves a bot on a usage-limit fallback alone, and lets a peak bot fall through to its own",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(PEAK_AT);
+      // This bot's own fallback is Codex, which has room.
+      yield* seedDeepSeekBot({ fallbackModelSelection: CODEX_DS_FALLBACK });
+      harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+
+      yield* service.sweep;
+      expect(peakState(yield* bots.listFallbackStates())).toBeDefined();
+
+      // Sonnet hits its limit while the bot is on the peak model: the normal
+      // chain applies from the model that is actually running, so the row changes
+      // to the bot's own fallback with the limit's own reason and reset.
+      const resetsAt = PEAK_AT + 3_600_000;
+      harness.providers = [
+        snapshot("deepseek", "deepseek"),
+        snapshot(
+          "claudeAgent",
+          "claudeAgent",
+          usage([{ id: "five_hour", used: 100, resetsAt: isoAt(resetsAt) }]),
+        ),
+        snapshot("codex", "codex", usage([{ id: "primary", used: 10 }])),
+      ];
+      const result = yield* hit({
+        instanceId: "claudeAgent",
+        providerName: "claudeAgent",
+        reason: "five_hour",
+        retryAt: isoAt(resetsAt),
+      });
+      expect(result).toEqual({ switched: true, modelLabel: "gpt-6.1-sol · H" });
+      const states = yield* bots.listFallbackStates();
+      expect(states).toHaveLength(1);
+      expect(states[0]!.reason).toBe("five_hour");
+      expect(states[0]!.fallbackModel).toEqual(CODEX_DS_FALLBACK);
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(CODEX_DS_FALLBACK);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("does not touch a bot that is already on a usage-limit fallback", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedDeepSeekBot();
+    harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+
+    // A limit row made a moment ago, still waiting for its reset.
+    const until = PEAK_AT + 3_600_000;
+    yield* bots.startFallback({
+      botId: BOT,
+      fallbackModel: FALLBACK,
+      fromInstanceId: "deepseek",
+      fromProvider: "DeepSeek",
+      reason: "usage_limit",
+      startedAt: isoAt(NOW),
+      resetAt: isoAt(until),
+      noticeThreadId: null,
+    });
+
+    yield* TestClock.setTime(PEAK_AT);
+    yield* service.sweep;
+    const states = yield* bots.listFallbackStates();
+    expect(states).toHaveLength(1);
+    expect(states[0]!.reason).toBe("usage_limit");
+    expect(states[0]!.fallbackModel).toEqual(FALLBACK);
+    expect(DateTime.toEpochMillis(DateTime.makeUnsafe(states[0]!.resetAt!))).toBe(until);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("the kill switch holds the peak switch back", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(PEAK_AT);
+    yield* seedDeepSeekBot();
+    harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+  }).pipe(Effect.provide(makeLayer(harness, { PERSONAL_DEEPSEEK_PEAK_SWITCH: "off" })));
+});
+
+it.effect("the DeepSeek instance's own setting holds the peak switch back", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(PEAK_AT);
+    yield* seedDeepSeekBot();
+    harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+  }).pipe(
+    Effect.provide(
+      makeLayer(harness, {}, {
+        providerInstances: {
+          [DEEPSEEK]: { driver: "deepseek", config: { peakSwitch: false } },
+        },
+      } as Parameters<typeof ServerSettings.layerTest>[0]),
+    ),
+  );
+});
+
+it.effect("the clock override drives the switch-over without waiting for a window", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    // The real clock is well off-peak; the override says peak.
+    yield* TestClock.setTime(OFF_PEAK_AT);
+    yield* seedDeepSeekBot();
+    harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    expect(peakState(yield* bots.listFallbackStates())).toBeDefined();
+  }).pipe(
+    Effect.provide(makeLayer(harness, { PERSONAL_DEEPSEEK_PEAK_NOW: "2026-10-15T02:00:00.000Z" })),
+  );
+});
+
+it.effect("the clock override can hold the switch back while the real clock is in a window", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(PEAK_AT);
+    yield* seedDeepSeekBot();
+    harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+  }).pipe(
+    Effect.provide(makeLayer(harness, { PERSONAL_DEEPSEEK_PEAK_NOW: "2026-10-17T02:00:00.000Z" })),
+  );
+});
+
+it.effect("a bot created during a peak window is switched on the next pass", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(PEAK_AT);
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+    // Nothing to switch yet: no bot, no row, and the sweep must not fail.
+    yield* service.sweep;
+    yield* seedDeepSeekBot();
+    yield* service.sweep;
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    expect(peakState(yield* bots.listFallbackStates())).toBeDefined();
+  }).pipe(Effect.provide(makeLayer(harness)));
+});

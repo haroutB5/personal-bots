@@ -214,6 +214,8 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
+    /** Refuses the turn before its session is started (an image the engine cannot take). */
+    readonly validateTurnEffect?: () => Effect.Effect<void, ProviderServiceError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
@@ -306,6 +308,9 @@ describe("ProviderCommandReactor", () => {
       );
     });
     const compactThread = vi.fn((_: ThreadId) => input?.compactThreadEffect?.() ?? Effect.void);
+    const validateTurn = vi.fn<ProviderServiceShape["validateTurn"]>(() =>
+      input?.validateTurnEffect?.() ?? Effect.void,
+    );
     const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
@@ -392,6 +397,7 @@ describe("ProviderCommandReactor", () => {
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
+      validateTurn,
       compactThread,
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
@@ -674,6 +680,7 @@ describe("ProviderCommandReactor", () => {
       tryHandlePromptCommand,
       startSession,
       sendTurn,
+      validateTurn,
       compactThread,
       interruptTurn,
       respondToRequest,
@@ -1771,6 +1778,90 @@ describe("ProviderCommandReactor", () => {
       thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       expect(thread?.session?.status).toBe("starting");
       expect(thread?.session?.lastError).toBeNull();
+    }),
+  );
+
+  effectIt.effect("refuses a turn the engine cannot take before its session is started", () =>
+    Effect.gen(function* () {
+      // QA 1.66.45, C5F/C5R: the first message of a fresh DeepSeek chat (or the
+      // first send after a restart) carrying an 8.4 MB photo. The adapter
+      // refused it correctly, but the session start that turn had already caused
+      // emitted its own "starting" and "ready" ~1 ms later and wiped the
+      // refusal, so the session ended ready with no error and the chat showed
+      // nothing. The refusal therefore has to happen before any session exists.
+      const refusal =
+        'DeepSeek can\'t read this image "carrier.png" (8.1 MB): the DeepSeek engine takes ' +
+        "images up to 2.0 MB. Send a smaller photo, or send it to a Claude bot.";
+      const deepseek = {
+        instanceId: ProviderInstanceId.make("deepseek"),
+        model: "deepseek-flash",
+      };
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          threadModelSelection: deepseek,
+          validateTurnEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "deepseek",
+                method: "session/prompt",
+                detail: refusal,
+              }),
+            ),
+        }),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-refused-image"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-refused-image"),
+          role: "user",
+          text: "How much is this?",
+          attachments: [
+            {
+              type: "image",
+              id: "refused-image",
+              name: "carrier.png",
+              mimeType: "image/png",
+              sizeBytes: 8_449_624,
+            },
+          ],
+        },
+        modelSelection: createModelSelection(ProviderInstanceId.make("deepseek"), "deepseek-flash"),
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return readModel.threads
+            .find((entry) => entry.id === ThreadId.make("thread-1"))
+            ?.activities.some((activity) => activity.kind === "provider.turn.start.failed") === true;
+        }),
+      );
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      // The refusal is the session's last word: no later session event exists.
+      expect(thread?.session?.lastError).toBe(refusal);
+      expect(thread?.session?.status).toBe("error");
+      expect(harness.startSession).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      expect(harness.runtimeSessions).toEqual([]);
+      expect(harness.validateTurn.mock.calls[0]?.[0]).toMatchObject({
+        threadId: ThreadId.make("thread-1"),
+        instanceId: ProviderInstanceId.make("deepseek"),
+        modelSelection: deepseek,
+        attachments: [{ id: "refused-image", type: "image" }],
+      });
+      expect(
+        thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed")
+          ?.payload,
+      ).toMatchObject({ detail: refusal });
+      // Nothing is left behind for the next message to trip over.
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
     }),
   );
 

@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { isLowProviderBalance } from "@t3tools/contracts";
 import { lazy, Suspense, useEffect, useRef, useState, type JSX } from "react";
 import { RefreshCw, X } from "lucide-react";
 
+import { DEEPSEEK_TOP_UP_URL } from "~/components/settings/providerApiKeys";
 import { Sheet, SheetClose, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui/sheet";
 import { ChunkLoadBoundary } from "~/lib/ChunkLoadBoundary";
 import { cn } from "~/lib/utils";
@@ -186,6 +188,30 @@ function BalanceRows({
         Granted {formatBalanceAmount(balance.granted, balance.currency)} · Topped up{" "}
         {formatBalanceAmount(balance.toppedUp, balance.currency)}
       </span>
+      {/*
+        The low-balance line. Only a working account gets it: an unavailable one
+        already has the stronger line below, and a quiet figure we could not read
+        is never a warning (a failed read keeps the last good numbers, which is
+        what this reads). A balance of zero is called empty here, the words the
+        push uses, rather than being read out as "$0.00".
+      */}
+      {balance.isAvailable &&
+      isLowProviderBalance({ currency: balance.currency, totalBalance: balance.total }) ? (
+        <span className="text-[13px] text-warning">
+          {balance.total > 0
+            ? `DeepSeek balance is ${formatBalanceAmount(balance.total, balance.currency)}.`
+            : "DeepSeek balance is empty."}{" "}
+          Top up to keep DeepSeek bots running.{" "}
+          <a
+            className="underline underline-offset-2"
+            href={DEEPSEEK_TOP_UP_URL}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Top up
+          </a>
+        </span>
+      ) : null}
       {balance.isAvailable ? null : (
         <span className="text-[13px] text-[var(--personal-review-text)]">
           This account cannot make API calls right now.

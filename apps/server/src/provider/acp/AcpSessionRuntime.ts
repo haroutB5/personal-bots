@@ -100,6 +100,12 @@ export interface AcpSessionRuntimeOptions {
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
+  /**
+   * Called once the provider process is up, with its PID. Adapters whose
+   * provider names nothing on its command line record the PID so the
+   * Performance tab can attribute the process (and its children) to the chat.
+   */
+  readonly onProcessStarted?: (pid: number) => Effect.Effect<void>;
   /** Transforms provider stdout before protocol parsing and protocol logging. */
   readonly transformStdout?: EffectAcpClient.AcpClientOptions["transformStdout"];
   /** Normalizes provider-specific fields before notification queues or runtime state retain them. */
@@ -485,6 +491,9 @@ export const make = (
         ),
       );
     yield* lowerBotProcessPriorityEffect(Number(child.pid), "acp");
+    if (options.onProcessStarted !== undefined) {
+      yield* options.onProcessStarted(Number(child.pid));
+    }
 
     yield* child.stderr.pipe(
       Stream.decodeText(),

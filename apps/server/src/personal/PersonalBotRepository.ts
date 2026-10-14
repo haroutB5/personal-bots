@@ -193,6 +193,7 @@ function withFallbackActive(
       since: DateTime.makeUnsafe(state.startedAt),
       ...(state.resetAt === null ? {} : { resetAt: DateTime.makeUnsafe(state.resetAt) }),
       fromProvider: state.fromProvider,
+      ...(state.reason === null ? {} : { reason: state.reason }),
     },
   };
 }
@@ -208,6 +209,22 @@ export interface PersonalMessageSearchRow {
   /** About 200 characters of the message from `snippetStart` on (1-based). */
   readonly snippet: string;
   readonly snippetStart: number;
+}
+
+/** A bot chat with a live provider session, as the Performance sampler reads it. */
+export interface PersonalBotProviderSession {
+  readonly threadId: string;
+  readonly botId: PersonalBotId;
+  readonly botName: string;
+  /** The provider that owns the session (`claudeAgent`, `codex`, `opencode`, ...). */
+  readonly providerName: string;
+  /**
+   * `provider_session_runtime.resume_cursor_json`, as stored. The session id a
+   * Claude CLI carries on its command line lives in here (`$.resume`), not in
+   * `projection_thread_sessions.provider_session_id`, which is empty on a real
+   * data root; `sessionIdFromResumeCursor` reads it for the provider at hand.
+   */
+  readonly resumeCursorJson: string | null;
 }
 
 export class PersonalBotRepository extends Context.Service<
@@ -289,6 +306,14 @@ export class PersonalBotRepository extends Context.Service<
     readonly startFallback: (
       state: PersonalBotFallbackState,
     ) => Effect.Effect<boolean, PersonalBotRepositoryError>;
+    /**
+     * Replaces the fallback state the bot is already on with this one: the
+     * DeepSeek peak switch (1.66.44) giving way to a real usage-limit fallback
+     * while its window is still open. False when the bot was not on one.
+     */
+    readonly switchFallback: (
+      state: PersonalBotFallbackState,
+    ) => Effect.Effect<boolean, PersonalBotRepositoryError>;
     /** The reset time moved (a later window, a re-check); null means not known. */
     readonly updateFallbackReset: (input: {
       readonly botId: PersonalBotId;
@@ -304,6 +329,16 @@ export class PersonalBotRepository extends Context.Service<
     ) => Effect.Effect<void, PersonalBotRepositoryError>;
     readonly listThreadLinks: () => Effect.Effect<
       ReadonlyArray<PersonalBotThread>,
+      PersonalBotRepositoryError
+    >;
+    /**
+     * Every unarchived bot chat with a provider session row, for the
+     * Performance tab: a running Claude CLI carries its session id on the
+     * command line (`--session-id=` or `--resume=`), and the chat's resume
+     * cursor names that same id, so this maps the process back to the bot.
+     */
+    readonly listBotProviderSessions: () => Effect.Effect<
+      ReadonlyArray<PersonalBotProviderSession>,
       PersonalBotRepositoryError
     >;
     /**
@@ -1779,6 +1814,23 @@ export const make = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.startFallback:query")),
     );
 
+  const switchFallback: PersonalBotRepository["Service"]["switchFallback"] = (state) =>
+    sql<{ readonly botId: string }>`
+      UPDATE personal_bot_fallbacks
+      SET fallback_model_json = ${JSON.stringify(state.fallbackModel)},
+          from_instance_id = ${state.fromInstanceId},
+          from_provider = ${state.fromProvider},
+          reason = ${state.reason},
+          started_at = ${state.startedAt},
+          reset_at = ${state.resetAt},
+          notice_thread_id = ${state.noticeThreadId}
+      WHERE bot_id = ${state.botId}
+      RETURNING bot_id AS "botId"
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.switchFallback:query")),
+    );
+
   const updateFallbackReset: PersonalBotRepository["Service"]["updateFallbackReset"] = (input) =>
     sql`
       UPDATE personal_bot_fallbacks SET reset_at = ${input.resetAt} WHERE bot_id = ${input.botId}
@@ -1849,6 +1901,37 @@ export const make = Effect.gen(function* () {
     ensureUnreadSince.pipe(
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listThreadLinks:unreadSince")),
       Effect.andThen(listThreadLinkPreviews),
+    );
+
+  const listBotProviderSessions: PersonalBotRepository["Service"]["listBotProviderSessions"] = () =>
+    sql<{
+      readonly threadId: string;
+      readonly botId: string;
+      readonly botName: string;
+      readonly providerName: string;
+      readonly resumeCursorJson: string | null;
+    }>`
+        SELECT s.thread_id AS "threadId",
+               t.bot_id AS "botId",
+               b.name AS "botName",
+               s.provider_name AS "providerName",
+               s.resume_cursor_json AS "resumeCursorJson"
+        FROM provider_session_runtime s
+        JOIN personal_bot_threads t ON t.thread_id = s.thread_id
+        JOIN personal_bots b ON b.bot_id = t.bot_id
+        WHERE t.archived_at IS NULL
+          AND b.deleted_at IS NULL
+      `.pipe(
+      Effect.map((rows) =>
+        rows.map((row): PersonalBotProviderSession => ({
+          threadId: row.threadId,
+          botId: PersonalBotId.make(row.botId),
+          botName: row.botName,
+          providerName: row.providerName,
+          resumeCursorJson: row.resumeCursorJson,
+        })),
+      ),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listBotProviderSessions:query")),
     );
 
   const listGroupPresence: PersonalBotRepository["Service"]["listGroupPresence"] = () =>
@@ -1955,12 +2038,14 @@ export const make = Effect.gen(function* () {
     recordThreadViewed,
     listFallbackStates,
     startFallback,
+    switchFallback,
     updateFallbackReset,
     endFallback,
     updateThreadState,
     searchMessages,
     deleteThreadLink,
     listThreadLinks,
+    listBotProviderSessions,
     listOpenChatTitles,
     listOpenChats,
     getChatFacts,

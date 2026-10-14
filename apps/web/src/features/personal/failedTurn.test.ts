@@ -127,6 +127,33 @@ describe("failed turn state", () => {
     ).toBe(false);
   });
 
+  it("offers no Retry when the provider refused the message's own image", () => {
+    // QA 1.66.45: an oversized photo in a chat that skipped the composer. Retry
+    // re-sends the same message, so it can only be refused again; the sentence
+    // says what to do instead.
+    const failed = session({
+      status: "error",
+      lastError:
+        'DeepSeek can\'t read this image "carrier.png" (8.1 MB): the DeepSeek engine takes ' +
+        "images up to 2.0 MB. Send a smaller photo, or send it to a Claude bot.",
+    });
+    const notice = turnErrorNotice({
+      state: "error",
+      session: failed,
+      lastMessageTurnStarted: false,
+    });
+    expect(notice?.message).toBe(`Couldn't send: ${failed.lastError}`);
+    expect(notice?.canRetry).toBe(false);
+    // A failure a Retry can still fix keeps its Retry.
+    expect(
+      turnErrorNotice({
+        state: "error",
+        session: session({ status: "error", lastError: "spawn claude ENOENT" }),
+        lastMessageTurnStarted: false,
+      })?.canRetry,
+    ).toBe(true);
+  });
+
   it("never shows secrets from the provider's line", () => {
     const friendly = friendlyTurnError(
       "Error: 401 invalid x-api-key sk-ant-api03-abcdefghijklmnop Authorization: Bearer abcdefghijklmnopqrstuvwxyz",

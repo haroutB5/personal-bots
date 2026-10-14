@@ -384,6 +384,63 @@ describe("PersonalUsageStrip", () => {
     expect(text).toContain("Spent $0.97 since 8 Sep");
   });
 
+  it("warns at or below a dollar, and stays quiet above it", async () => {
+    const balanceEntry = (totalBalance: number, currency = "USD", isAvailable = true) =>
+      provider("deepseek", undefined, {
+        status: "ready",
+        checkedAt: "2026-09-13T11:59:00Z",
+        balance: {
+          currency,
+          totalBalance,
+          grantedBalance: 0,
+          toppedUpBalance: totalBalance,
+          isAvailable,
+          fetchedAt: "2026-09-13T11:50:00Z",
+        },
+      });
+
+    const openWith = async (entry: ReturnType<typeof balanceEntry>) => {
+      state.providers = [CLAUDE, CODEX, entry];
+      await act(async () => {
+        renderer = create(<PersonalUsageStrip now={NOW} />);
+      });
+      await act(async () => {
+        renderer!.root.findAllByType("button")[0]!.props.onClick();
+      });
+      return {
+        text: textOf(renderer!.toJSON()),
+        json: JSON.stringify(renderer!.toJSON()),
+      };
+    };
+
+    const low = await openWith(balanceEntry(0.94));
+    expect(low.text).toContain("DeepSeek balance is $0.94.");
+    expect(low.text).toContain("Top up to keep DeepSeek bots running.");
+    expect(low.json).toContain("https://platform.deepseek.com/top_up");
+
+    // Exactly a dollar is low; a cent above it is not.
+    const exact = await openWith(balanceEntry(1));
+    expect(exact.text).toContain("DeepSeek balance is $1.00.");
+    const above = await openWith(balanceEntry(1.01));
+    expect(above.text).not.toContain("Top up to keep DeepSeek bots running.");
+
+    // Only a USD reading is judged: a CNY account is never called low.
+    const cny = await openWith(balanceEntry(6, "CNY"));
+    expect(cny.text).not.toContain("Top up to keep DeepSeek bots running.");
+
+    // A zero balance on a working account is called empty, exactly as the push
+    // names it, rather than read out as "$0.00".
+    const dry = await openWith(balanceEntry(0));
+    expect(dry.text).toContain("DeepSeek balance is empty.");
+    expect(dry.text).toContain("Top up to keep DeepSeek bots running.");
+    expect(dry.text).not.toContain("DeepSeek balance is $0.00.");
+
+    // An account that cannot make calls keeps its stronger existing sentence.
+    const empty = await openWith(balanceEntry(0, "USD", false));
+    expect(empty.text).toContain("This account cannot make API calls right now.");
+    expect(empty.text).not.toContain("Top up to keep DeepSeek bots running.");
+  });
+
   it("says a failed balance read failed, keeping the last good numbers", async () => {
     state.providers = [
       CLAUDE,

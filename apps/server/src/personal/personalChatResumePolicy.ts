@@ -82,6 +82,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   cursor: "Cursor",
   grok: "Grok",
   antigravity: "Antigravity",
+  deepseek: "DeepSeek",
 };
 
 /** "Claude", "Codex": the provider as the owner knows it. */

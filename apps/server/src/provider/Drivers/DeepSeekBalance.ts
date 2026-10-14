@@ -53,7 +53,16 @@ export interface DeepSeekBalanceAmounts {
 
 export type DeepSeekBalanceFailureReason =
   /** No key was available to ask with. */
-  "missing_key" | "http_error" | "network_error" | "timeout" | "invalid_response";
+  | "missing_key"
+  /** DeepSeek refused the credential itself (401, 403). */
+  | "auth_error"
+  /** The key is fine and the account is out of credit (402). */
+  | "insufficient_balance"
+  /** Any other non-2xx: a rate limit, a server fault, a gateway. */
+  | "http_error"
+  | "network_error"
+  | "timeout"
+  | "invalid_response";
 
 export type DeepSeekBalanceRead =
   | {
@@ -172,6 +181,12 @@ export function makeDeepSeekBalanceReader(
     }
     if (!response.ok) {
       // The status is the whole story; the body is never read, logged or shown.
+      // 401/403 are about the key and 402 is about the credit, so those two get
+      // their own slug; every other non-2xx (429, 5xx, a gateway) stays a plain
+      // HTTP problem, because blaming the key for an outage is the one reading
+      // that must never happen.
+      if (response.status === 401 || response.status === 403) return failed("auth_error");
+      if (response.status === 402) return failed("insufficient_balance");
       return failed("http_error");
     }
     let document: unknown;

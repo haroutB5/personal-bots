@@ -155,6 +155,44 @@ export const DEEPSEEK_FLASH_MODEL = "deepseek-flash";
 /** Documented legacy Flash aliases that route to V4.1-Flash at Flash price. */
 export const DEEPSEEK_FLASH_ALIASES: ReadonlyArray<string> = ["deepseek-v4-flash", "vision-exp"];
 
+/**
+ * Agent modes a DeepSeek bot may run in on the DeepSeek Harness (dsh) engine.
+ *
+ * dsh's own presets (`standard`, `ptc`, `minimal`, `cordis`) live only in its
+ * web profile, so the ACP launch patch reproduces the three that make sense
+ * for a chat bot as extra rows. `cordis` (dsh's "Creator") is deliberately
+ * absent: it authors and installs dsh plugin bundles, a self-modifying
+ * harness. "both" is absent too (twice the base prompt, no benefit).
+ *
+ * The mode is pinned to a chat's session: resuming a Standard session under
+ * the Code overlay fails at DeepSeek's API (deferred tools), so a mode change
+ * applies to new chats and fresh sessions only.
+ */
+export const DEEPSEEK_DSH_AGENT_MODES = [
+  { value: "standard", label: "Standard" },
+  { value: "code", label: "Code" },
+  { value: "minimal", label: "Minimal" },
+] as const;
+
+export type DeepSeekDshAgentMode = (typeof DEEPSEEK_DSH_AGENT_MODES)[number]["value"];
+
+/** The agent mode a session runs when nothing else is chosen. */
+export const DEEPSEEK_DEFAULT_AGENT_MODE: DeepSeekDshAgentMode = "standard";
+
+/**
+ * Model-selection option id carrying a DeepSeek bot's agent mode, alongside
+ * `effort` and `contextWindow`. Only the dsh engine offers the descriptor.
+ */
+export const DEEPSEEK_AGENT_MODE_OPTION_ID = "agentMode";
+
+/** Engines a DeepSeek instance can run its bots on. */
+export const DEEPSEEK_ENGINES = [
+  { value: "dsh", label: "DeepSeek Harness (dsh)" },
+  { value: "claude-code", label: "Claude Code" },
+] as const;
+
+export type DeepSeekEngine = (typeof DEEPSEEK_ENGINES)[number]["value"];
+
 export const DEFAULT_MODEL = "gpt-6-astra";
 
 /**

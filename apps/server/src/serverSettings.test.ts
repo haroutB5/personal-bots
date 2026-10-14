@@ -1290,6 +1290,60 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     );
   }
 
+  it.effect(
+    "stores the DeepSeek key field's entry in the secret store, replaces it, and removes it",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const instanceId = ProviderInstanceId.make("deepseek_personal");
+        const withKey = (value: string) => ({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("deepseek"),
+              environment: [{ name: "ANTHROPIC_AUTH_TOKEN", value, sensitive: true }],
+              config: {},
+            },
+          },
+        });
+
+        // Exactly what the DeepSeek API key field saves.
+        const saved = yield* serverSettings.updateSettings(withKey("sk-first-key"));
+        assert.deepEqual(saved.providerInstances[instanceId]?.environment, [
+          {
+            name: "ANTHROPIC_AUTH_TOKEN",
+            value: "sk-first-key",
+            sensitive: true,
+            valueRedacted: true,
+          },
+        ]);
+        // The file keeps the marker; the value comes back only from the store.
+        assert.notInclude(
+          yield* fileSystem.readFileString(serverConfig.settingsPath),
+          "sk-first-key",
+        );
+
+        // Replace: the new value replaces the old one everywhere.
+        const replaced = yield* serverSettings.updateSettings(withKey("sk-second-key"));
+        assert.equal(
+          replaced.providerInstances[instanceId]?.environment?.[0]?.value,
+          "sk-second-key",
+        );
+        const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(persisted, "sk-second-key");
+        assert.notInclude(persisted, "sk-first-key");
+
+        // Remove: no entry, and nothing of either key left in the file.
+        const removed = yield* serverSettings.updateSettings({ providerInstances: {} });
+        assert.equal(removed.providerInstances[instanceId], undefined);
+        assert.notInclude(
+          yield* fileSystem.readFileString(serverConfig.settingsPath),
+          "sk-second-key",
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("materializes provider secrets for terminal environment resolution", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

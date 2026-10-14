@@ -12,6 +12,7 @@ import {
   type PersonalGroupRound,
   type PersonalPushInAppNotification,
   type PersonalTask,
+  type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -23,6 +24,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import { runtimeEventToActivities } from "../../orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { UPDATES_BOT_ID } from "../claudeCodeReview/reviewPrompts.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -1687,4 +1689,431 @@ it.effect("a bot_decides run that said notify still obeys the bot's mute", () =>
     yield* push.drain;
     expect(yield* outbox).toEqual([]);
   }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+/* ── chat_needs_input ──────────────────────────────────────────────────────
+ *
+ * A plain bot chat - the owner's own chat with a bot - parked on the user.
+ * The events here are the real ones: `runtimeEventToActivities` is the
+ * provider→activity mapping the server actually runs, and the activity is
+ * wrapped in the `thread.activity-appended` event the decider's
+ * `thread.activity.append` command publishes, so the test crosses the same
+ * provider/orchestration boundary production does, in the same order.
+ */
+
+/** The chat's own row: what a bot thread always has in production. */
+const chatRow = (threadId: ThreadId, title: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+      VALUES (${threadId}, 'project-1', ${title}, '2026-09-18T08:00:00.000Z',
+              '2026-09-18T08:00:00.000Z')
+    `;
+  });
+
+/** One runtime event as its adapter emits it, turned into the pushed event. */
+const activityAppended = (
+  threadId: ThreadId,
+  runtime: Record<string, unknown>,
+): OrchestrationEvent => {
+  const activity = runtimeEventToActivities({
+    provider: "claudeAgent",
+    threadId,
+    ...runtime,
+  } as unknown as ProviderRuntimeEvent)[0];
+  if (activity === undefined) throw new Error("the runtime event produced no activity");
+  return {
+    type: "thread.activity-appended",
+    payload: { threadId, activity },
+  } as unknown as OrchestrationEvent;
+};
+
+const questionAsked = (threadId: ThreadId, requestId: string, question: string) =>
+  activityAppended(threadId, {
+    eventId: `evt-${requestId}`,
+    createdAt: "2026-09-18T09:00:00.000Z",
+    turnId: "turn-1",
+    requestId,
+    type: "user-input.requested",
+    payload: {
+      questions: [{ id: "q1", header: "Dinner", question, options: [] }],
+    },
+  });
+
+const approvalAsked = (threadId: ThreadId, requestId: string, detail: string) =>
+  activityAppended(threadId, {
+    eventId: `evt-${requestId}`,
+    createdAt: "2026-09-18T09:01:00.000Z",
+    turnId: "turn-1",
+    requestId,
+    type: "request.opened",
+    payload: { requestType: "command_execution_approval", detail },
+  });
+
+it.effect("a question in a plain chat notifies once, and the tap opens the chat", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    yield* chatRow(CHAT, "Weekend in Lisbon");
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    yield* push.ingestDomainEvent(
+      questionAsked(CHAT, "req-1", "Which table should I book for Saturday?"),
+    );
+    yield* push.drain;
+
+    const rows = yield* outbox;
+    expect(rows.length).toBe(1);
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      title: "Assistant · Weekend in Lisbon",
+      body: "Needs your answer: Which table should I book for Saturday?",
+      // The tap opens the chat at the question's own card: the route reads
+      // `?request=<provider id>` and lands on it (D13).
+      url: `/bots/${BOT}/${CHAT}?request=req-1`,
+      tag: `chat-${CHAT}`,
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
+    });
+
+    // A re-emitted request (same request id) is the same notification.
+    yield* push.ingestDomainEvent(
+      questionAsked(CHAT, "req-1", "Which table should I book for Saturday?"),
+    );
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(1);
+
+    // A permission prompt in the same chat: its own push, same chat slot.
+    yield* push.ingestDomainEvent(approvalAsked(CHAT, "req-2", "rm -rf build"));
+    yield* push.drain;
+    const second = JSON.parse((yield* outbox)[1]!.payload);
+    expect(second.body).toBe("Needs approval: rm -rf build");
+    expect(second.url).toBe(`/bots/${BOT}/${CHAT}?request=req-2`);
+    expect(second.tag).toBe(`chat-${CHAT}`);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("the in-app notice for a question carries the same deep link as the push", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    yield* chatRow(CHAT, "Weekend in Lisbon");
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    // The app is open on another screen: the notice comes over the socket,
+    // not as a push, which is the path the tap is taken on.
+    const received = yield* listenInApp("phone");
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+
+    yield* push.ingestDomainEvent(questionAsked(CHAT, "req-app", "Which table?"));
+    yield* TestClock.adjust("1 millis");
+
+    expect(received.length).toBe(1);
+    expect(received[0]!.url).toBe(`/bots/${BOT}/${CHAT}?request=req-app`);
+    // The quiet path stays the bare chat: it decides "the owner is looking at
+    // this screen", and `?request=` names a card inside it.
+    expect(received[0]!.quietPath).toBe(`/bots/${BOT}/${CHAT}`);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a request the provider gave no id for opens the chat, not a card that is not there",
+  () => {
+    const harness: Harness = { sent: [], status: 201 };
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+      yield* seedBot;
+      yield* linkThread(CHAT);
+      yield* chatRow(CHAT, "Weekend in Lisbon");
+      const push = yield* PersonalPushService.PersonalPushService;
+      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+      const activity = runtimeEventToActivities({
+        provider: "claudeAgent",
+        threadId: CHAT,
+        eventId: "evt-no-id",
+        createdAt: "2026-09-18T09:00:00.000Z",
+        turnId: "turn-1",
+        type: "user-input.requested",
+        payload: { questions: [{ id: "q1", header: "Dinner", question: "Which table?" }] },
+      } as unknown as ProviderRuntimeEvent)[0];
+      if (activity === undefined) throw new Error("the runtime event produced no activity");
+      yield* push.ingestDomainEvent({
+        type: "thread.activity-appended",
+        payload: { threadId: CHAT, activity },
+      } as unknown as OrchestrationEvent);
+      yield* push.drain;
+
+      const rows = yield* outbox;
+      expect(rows.length).toBe(1);
+      const payload = JSON.parse(rows[0]!.payload);
+      expect(payload.url).toBe(`/bots/${BOT}/${CHAT}`);
+      // One notification per request either way: the activity id is the key.
+      expect(rows[0]!.eventId).toBe("chat-needs:evt-no-id");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a task chat, a routine chat and a group thread never notify the chat", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    const sql = yield* SqlClient.SqlClient;
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    // A task's own chat: the task that made it came first (the rule the
+    // 48 h auto-archive and the lead's chat picker use).
+    const taskChat = ThreadId.make("thread-task-owned");
+    yield* linkThread(taskChat);
+    yield* chatRow(taskChat, "Release 2.4");
+    yield* sql`
+      INSERT INTO personal_tasks (
+        task_id, root_task_id, parent_task_id, bot_id, thread_id, title, objective,
+        acceptance_criteria, expected_output, status, source, idempotency_key, depth,
+        max_depth, max_children, result_json, error_category, error_message, available_at,
+        created_at, updated_at, started_at, completed_at
+      ) VALUES (
+        'task-owns-chat', 'task-owns-chat', NULL, ${BOT}, ${taskChat}, 'Ship 2.4', '',
+        '', '', 'running', 'delegation', 'delegated-1', 0, 2, 4, NULL, NULL, NULL, NULL,
+        '2026-09-18T07:00:00.000Z', '2026-09-18T07:00:00.000Z', '2026-09-18T07:00:00.000Z', NULL
+      )
+    `;
+    yield* push.ingestDomainEvent(questionAsked(taskChat, "req-task", "Deploy now?"));
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+
+    // A routine's chat: `personal_routines.thread_id` marks it.
+    const routineChat = ThreadId.make("thread-routine");
+    yield* linkThread(routineChat);
+    yield* chatRow(routineChat, "Morning brief");
+    yield* sql`
+      INSERT INTO personal_routines (
+        routine_id, bot_id, title, prompt, trigger_kind, schedule_json, time_zone, enabled,
+        missed_policy, delivery, notify_mode, thread_id, new_chat_each_run, next_due_utc,
+        last_occurrence_local, created_at, updated_at
+      ) VALUES (
+        'routine-1', ${BOT}, 'Morning brief', 'Brief me', 'schedule', '{"frequency":"daily"}',
+        'Europe/London', 1, 'coalesce', 'model', 'always', ${routineChat}, 0, NULL, NULL,
+        '2026-09-18T07:00:00.000Z', '2026-09-18T07:00:00.000Z'
+      )
+    `;
+    yield* push.ingestDomainEvent(questionAsked(routineChat, "req-routine", "Anything to add?"));
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+
+    // A group member's relay thread: the group buzzes once, when its round ends.
+    const groupThread = ThreadId.make("thread-group-member");
+    yield* linkThread(groupThread);
+    yield* chatRow(groupThread, "Launch crew relay");
+    yield* sql`
+      INSERT INTO personal_groups (
+        group_id, name, description, thread_id, max_bot_turns,
+        created_at, updated_at, archived_at, deleted_at
+      ) VALUES (
+        'group-2', 'Launch crew', '', ${ThreadId.make("thread-group-2")}, 6,
+        '2026-09-18T07:00:00.000Z', '2026-09-18T07:00:00.000Z', NULL, NULL
+      )
+    `;
+    yield* sql`
+      INSERT INTO personal_group_members (
+        group_id, bot_id, thread_id, role, sort_order, delivered_seq, joined_at, left_at
+      ) VALUES (
+        'group-2', ${BOT}, ${groupThread}, 'member', 0, 0, '2026-09-18T07:00:00.000Z', NULL
+      )
+    `;
+    yield* push.ingestDomainEvent(questionAsked(groupThread, "req-group", "Which plan?"));
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a question the user is reading is confirmed quietly, and the switch can turn it off",
+  () => {
+    const harness: Harness = { sent: [], status: 201 };
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+      yield* seedBot;
+      yield* linkThread(CHAT);
+      yield* chatRow(CHAT, "Weekend in Lisbon");
+      const push = yield* PersonalPushService.PersonalPushService;
+      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+      yield* visiblePage("phone");
+      yield* push.reportViewing({ connectionId: "phone", threadId: CHAT });
+
+      yield* push.ingestDomainEvent(questionAsked(CHAT, "req-read", "Which table?"));
+      yield* settle;
+      expect(yield* outbox).toEqual([]);
+
+      // The phone left the chat: the same request now reaches it.
+      yield* push.reportViewing({ connectionId: "phone", threadId: null });
+      yield* push.ingestDomainEvent(questionAsked(CHAT, "req-away", "Which table?"));
+      yield* push.drain;
+      expect((yield* outbox).length).toBe(1);
+
+      // "Needs input" switched off: nothing more, at all.
+      yield* push.setPreferences({
+        taskCompleted: true,
+        taskNeedsInput: false,
+        taskFailed: true,
+        routineResult: true,
+        chatReply: true,
+      });
+      yield* push.ingestDomainEvent(questionAsked(CHAT, "req-off", "Which table?"));
+      yield* push.drain;
+      expect((yield* outbox).length).toBe(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a sign-in and a secret in a plain chat notify the chat, not the task page", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    yield* chatRow(CHAT, "Weekend in Lisbon");
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    // The real order: the bot's request_login inserts the pending row and then
+    // parks the turn's caller task, which is the transition that notifies.
+    yield* sql`
+      INSERT INTO personal_login_requests (
+        request_id, task_id, thread_id, bot_id, origin, label, reason, tab_id, status,
+        saved, created_at, expires_at
+      ) VALUES (
+        'login-1', 'task-1', ${CHAT}, ${BOT}, 'https://skyfare.example', 'skyfare.example',
+        '', 'tab-1', 'pending', 0, '2026-09-18T09:00:00.000Z', '2026-09-18T09:10:00.000Z'
+      )
+    `;
+    yield* push.notifyTask(
+      yield* makeTask({
+        status: "waiting_for_user",
+        threadId: CHAT,
+        title: "Needs a password",
+        idempotencyKey: "thread-turn:thread-chat:turn-1",
+      }),
+    );
+    yield* push.drain;
+
+    const first = JSON.parse((yield* outbox)[0]!.payload);
+    expect(first).toEqual({
+      title: "Assistant · Weekend in Lisbon",
+      body: "Needs a sign-in: skyfare.example",
+      // The request row's own id: the transcript keys its sign-in card by it.
+      url: `/bots/${BOT}/${CHAT}?request=login-1`,
+      tag: `chat-${CHAT}`,
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
+    });
+
+    // The owner signs in, and the next turn asks for a key the same way.
+    yield* sql`UPDATE personal_login_requests SET status = 'filled' WHERE request_id = 'login-1'`;
+    yield* sql`
+      INSERT INTO personal_secret_requests (
+        request_id, root_task_id, task_id, thread_id, bot_id, name, label, purpose,
+        status, shared, mode, origins_json, placement_json, created_at, fulfilled_at
+      ) VALUES (
+        'secret-1', 'task-1', 'task-1', ${CHAT}, ${BOT}, 'SKYFARE_API_KEY', 'Skyfare API key',
+        'book flights', 'pending', 0, 'brokered', '["https://api.skyfare.example"]', '{}',
+        '2026-09-18T09:20:00.000Z', NULL
+      )
+    `;
+    yield* push.notifyTask(
+      yield* makeTask({
+        status: "waiting_for_user",
+        threadId: CHAT,
+        title: "Needs a key",
+        taskId: PersonalTaskId.make("task-2"),
+        idempotencyKey: "thread-turn:thread-chat:turn-2",
+      }),
+    );
+    yield* push.drain;
+
+    const second = JSON.parse((yield* outbox)[1]!.payload);
+    expect(second.body).toBe("Needs a secret: Skyfare API key");
+    expect(second.url).toBe(`/bots/${BOT}/${CHAT}?request=secret-1`);
+
+    // A delegation task's own chat keeps the task notification it always had.
+    const taskChat = ThreadId.make("thread-task-secret");
+    yield* linkThread(taskChat);
+    yield* chatRow(taskChat, "Ship 2.4");
+    yield* sql`
+      INSERT INTO personal_tasks (
+        task_id, root_task_id, parent_task_id, bot_id, thread_id, title, objective,
+        acceptance_criteria, expected_output, status, source, idempotency_key, depth,
+        max_depth, max_children, result_json, error_category, error_message, available_at,
+        created_at, updated_at, started_at, completed_at
+      ) VALUES (
+        'task-owns-2', 'task-owns-2', NULL, ${BOT}, ${taskChat}, 'Ship 2.4', '',
+        '', '', 'waiting_for_user', 'delegation', 'delegated-2', 0, 2, 4, NULL, NULL, NULL,
+        NULL, '2026-09-18T07:00:00.000Z', '2026-09-18T07:00:00.000Z',
+        '2026-09-18T07:00:00.000Z', NULL
+      )
+    `;
+    yield* sql`
+      INSERT INTO personal_login_requests (
+        request_id, task_id, thread_id, bot_id, origin, label, reason, tab_id, status,
+        saved, created_at, expires_at
+      ) VALUES (
+        'login-2', 'task-owns-2', ${taskChat}, ${BOT}, 'https://github.com', 'github.com',
+        '', 'tab-2', 'pending', 0, '2026-09-18T09:30:00.000Z', '2026-09-18T09:40:00.000Z'
+      )
+    `;
+    yield* push.notifyTask(
+      yield* makeTask({
+        status: "waiting_for_user",
+        threadId: taskChat,
+        title: "Sign in to GitHub",
+        taskId: PersonalTaskId.make("task-owns-2"),
+        source: "delegation",
+      }),
+    );
+    yield* push.drain;
+    const third = JSON.parse((yield* outbox)[2]!.payload);
+    expect(third.title).toBe("Assistant needs you");
+    expect(third.url).toBe("/tasks/task-owns-2");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// The tap must land inside the app: the service worker and the in-app banner
+// only open a same-origin route, and rewrite anything else to /bots. So the
+// top-up page is linked from the card, not from the notice.
+it("names the low-balance notice and lands the tap on Settings", () => {
+  expect(
+    PersonalPushService.deepSeekBalancePushPayload({
+      instanceId: "deepseek",
+      label: "DeepSeek",
+      balance: "$0.94",
+      empty: false,
+    }),
+  ).toEqual({
+    title: "DeepSeek balance is $0.94",
+    body: "Top up to keep DeepSeek bots running.",
+    url: "/bots/settings",
+    tag: "deepseek-balance-deepseek",
+  });
+
+  expect(
+    PersonalPushService.deepSeekBalancePushPayload({
+      instanceId: "deepseek",
+      label: "DeepSeek",
+      balance: "$0.00",
+      empty: true,
+    }),
+  ).toEqual({
+    title: "DeepSeek balance is empty",
+    body: "DeepSeek bots switch to their fallback model until you top up.",
+    url: "/bots/settings",
+    tag: "deepseek-balance-deepseek",
+  });
 });

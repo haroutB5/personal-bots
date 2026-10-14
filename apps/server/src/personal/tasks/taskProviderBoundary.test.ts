@@ -45,6 +45,7 @@ import {
   type ProjectionThreadMessageRepositoryShape,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
@@ -86,6 +87,7 @@ const makeLayer = (
   PersonalTaskService.layer.pipe(
     Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
     Layer.provideMerge(fallbackProviders === undefined ? Layer.empty : PersonalModelFallback.layer),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(PersonalTaskRepository.layer),
     Layer.provideMerge(PersonalBotService.layer),
     Layer.provideMerge(PersonalBotRepository.layer),

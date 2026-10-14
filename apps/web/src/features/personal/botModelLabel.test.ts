@@ -51,6 +51,20 @@ const provider = (
 ): ServerProvider =>
   ({ instanceId, driver: ProviderDriverKind.make(driver), models }) as unknown as ServerProvider;
 
+/** The agent mode control a DeepSeek instance gets on the harness engine. */
+const AGENT_MODES = [
+  { id: "standard", label: "Standard", isDefault: true },
+  { id: "code", label: "Code" },
+  { id: "minimal", label: "Minimal" },
+];
+
+const deepseek = provider("deepseek", "deepseek", [
+  model("deepseek-flash", "DeepSeek V4.1 Flash", [
+    select("effort", EFFORTS),
+    { id: "agentMode", label: "Agent mode", type: "select" as const, options: AGENT_MODES },
+  ]),
+]);
+
 const providers = [
   provider("claudeAgent", "claudeAgent", [
     model("claude-opus-5-5", "Claude Opus 5.5", [select("effort", EFFORTS)]),
@@ -89,6 +103,64 @@ const selection = (
   }) as unknown as ModelSelection;
 
 describe("botModelLabel", () => {
+  it("marks the agent mode on a DeepSeek Harness bot, and nothing for Standard", () => {
+    const withDeepSeek = [...providers, deepseek];
+    expect(
+      botModelLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "code"],
+        ]),
+        withDeepSeek,
+      ),
+    ).toBe("DeepSeek V4.1 Flash high · Code");
+    expect(
+      botModelShortLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "minimal"],
+        ]),
+        withDeepSeek,
+      ),
+    ).toBe("DeepSeek V4.1 Flash · H · Minimal");
+    // Standard is the default, so it is never written out.
+    expect(
+      botModelLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "standard"],
+        ]),
+        withDeepSeek,
+      ),
+    ).toBe("DeepSeek V4.1 Flash high");
+    expect(
+      botModelLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "standard"],
+        ]),
+        withDeepSeek,
+      ),
+    ).not.toContain("·");
+    // On the Claude Code engine the option is absent and a stray value is
+    // simply not shown.
+    expect(
+      botModelLabel(
+        selection("deepseek", "deepseek-flash", [
+          ["effort", "high"],
+          ["agentMode", "code"],
+        ]),
+        providers,
+      ),
+    ).toBe("deepseek-flash high");
+    // A provider with no model list at all says nothing either.
+    expect(
+      botModelLabel(selection("deepseek", "deepseek-flash", [["agentMode", "code"]]), [
+        provider("deepseek", "deepseek", []),
+      ]),
+    ).toBe("deepseek-flash");
+  });
+
   it("names the model as the picker does, without Claude, plus the effort", () => {
     expect(
       botModelLabel(selection("claudeAgent", "claude-opus-5-5", [["effort", "medium"]]), providers),
@@ -225,5 +297,75 @@ describe("a bot on its fallback model", () => {
 
   it("leaves the time out when the provider gave no reset", () => {
     expect(fallbackNoteLabel(onFallback(), NOW, "UTC")).toBe("on fallback (Codex usage limit)");
+  });
+});
+
+describe("a bot on the DeepSeek peak switch", () => {
+  const home = selection("deepseek", "deepseek-flash");
+  const peakModel = selection("claudeAgent", "claude-sonnet-5-5", [
+    ["effort", "high"],
+    ["contextWindow", "1m"],
+  ]);
+  const NOW = Date.parse("2026-10-14T09:00:00.000Z");
+  const onPeak = (resetAt?: string) =>
+    ({
+      modelSelection: home,
+      fallbackActive: {
+        modelSelection: peakModel,
+        since: DateTime.makeUnsafe("2026-10-14T08:00:00.000Z"),
+        ...(resetAt === undefined ? {} : { resetAt: DateTime.makeUnsafe(resetAt) }),
+        fromProvider: "DeepSeek",
+        reason: "deepseek_peak",
+      },
+    }) as never;
+
+  it("says why and until when, in the device's own zone", () => {
+    // 10:00 UTC on 14 October is 11:00 in London (BST).
+    expect(fallbackNoteLabel(onPeak("2026-10-14T10:00:00.000Z"), NOW, "Europe/London")).toBe(
+      "DeepSeek peak until 11:00",
+    );
+    expect(fallbackNoteLabel(onPeak("2026-10-14T10:00:00.000Z"), NOW, "UTC")).toBe(
+      "DeepSeek peak until 10:00",
+    );
+    // After the 25 October clock change the same UTC window reads an hour earlier.
+    expect(
+      fallbackNoteLabel(
+        onPeak("2026-10-27T10:00:00.000Z"),
+        Date.parse("2026-10-27T09:00:00.000Z"),
+        "Europe/London",
+      ),
+    ).toBe("DeepSeek peak until 10:00");
+    expect(botActiveModelShortLabel(onPeak("2026-10-14T10:00:00.000Z"), providers)).toBe(
+      "Sonnet 5.5 · H · peak",
+    );
+    expect(
+      botActiveModelLabel(onPeak("2026-10-14T10:00:00.000Z"), providers, NOW, "Europe/London"),
+    ).toBe("Sonnet 5.5 high, DeepSeek peak until 11:00");
+    expect(taskCardBotLine(onPeak("2026-10-14T10:00:00.000Z"), providers)).toBe(
+      "Sonnet 5.5 · H · peak",
+    );
+  });
+
+  it("keeps the window time out of the tight labels and in the long accessible one", () => {
+    // The four tight places read this form: rows, the chat header, task cards
+    // and the 72px pinned tiles. "· DeepSeek peak until 11:00" was cut there at
+    // 390 px, so the visible note is "peak" and the time lives in the long
+    // label the same places hand to assistive tech (1.66.44 QA).
+    const bot = onPeak("2026-10-14T10:00:00.000Z");
+    expect(botActiveModelShortLabel(bot, providers)).toBe("Sonnet 5.5 · H · peak");
+    expect(botActiveModelShortLabel(bot, providers)).not.toContain("until");
+    expect(fallbackNoteLabel(bot, NOW, "Europe/London")).toBe("DeepSeek peak until 11:00");
+    expect(botActiveModelLabel(bot, providers, NOW, "Europe/London")).toContain(
+      "DeepSeek peak until 11:00",
+    );
+  });
+
+  it("never reads as a usage-limit fallback", () => {
+    const note = fallbackNoteLabel(onPeak("2026-10-14T10:00:00.000Z"), NOW, "UTC");
+    expect(note).not.toContain("fallback");
+    expect(note).not.toContain("usage limit");
+    expect(botActiveModelShortLabel(onPeak("2026-10-14T10:00:00.000Z"), providers)).not.toContain(
+      "fallback",
+    );
   });
 });

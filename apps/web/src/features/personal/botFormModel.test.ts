@@ -17,10 +17,13 @@ import {
   defaultModelFor,
   fallbackDraftFromBot,
   fallbackInput,
+  agentModeOfSelection,
+  botAgentModeDescriptor,
   isBotProviderSelectable,
   isFallbackDraftValid,
   modelDraftFromSelection,
   modelOptionLabel,
+  type ModelDraft,
   modelSelectionsEqual,
   noBotProviderMessage,
   SAME_FAMILY_FALLBACK_HINT,
@@ -28,6 +31,7 @@ import {
   searchModels,
   usesModelSearch,
 } from "./botFormModel";
+import { resolveBotProvider } from "./botSummaries";
 
 const select = (id: string, values: ReadonlyArray<string>) => ({
   id,
@@ -131,6 +135,49 @@ describe("defaultModelFor", () => {
     ).toBe("");
     expect(defaultModelFor(undefined)).toBe("");
   });
+
+  it("never auto-picks Fable, Mythos or Astra: Opus 5.5 first", () => {
+    expect(
+      defaultModelFor(
+        provider("claudeAgent", [
+          model({ slug: "claude-fable-5-1", isDefault: true }),
+          model({ slug: "claude-mythos-1" }),
+          model({ slug: "claude-opus-5-5" }),
+          model({ slug: "claude-sonnet-5-5" }),
+        ]),
+      ),
+    ).toBe("claude-opus-5-5");
+  });
+
+  it("takes the first model after Codex's Astra default", () => {
+    expect(
+      defaultModelFor(
+        provider("codex", [
+          model({ slug: "gpt-6-astra", isDefault: true }),
+          model({ slug: "gpt-6.1-sol" }),
+          model({ slug: "gpt-6-luna" }),
+        ]),
+      ),
+    ).toBe("gpt-6.1-sol");
+  });
+
+  it("skips a legacy model when the provider's default is Astra", () => {
+    expect(
+      defaultModelFor(
+        provider("codex", [
+          model({ slug: "gpt-6-astra", isDefault: true }),
+          model({ slug: "gpt-5.4", isLegacy: true }),
+          model({ slug: "gpt-6.1-sol" }),
+        ]),
+      ),
+    ).toBe("gpt-6.1-sol");
+  });
+
+  it("returns nothing when the only models are the ones it never auto-picks", () => {
+    expect(
+      defaultModelFor(provider("codex", [model({ slug: "gpt-6-astra", isDefault: true })])),
+    ).toBe("");
+  });
 });
 
 describe("searchModels", () => {
@@ -186,6 +233,69 @@ describe("searchModels", () => {
   });
 });
 
+describe("agent mode on the DeepSeek Harness engine", () => {
+  const deepseek = provider("deepseek", [
+    model({
+      slug: "deepseek-flash",
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          select("effort", ["low", "high", "max"]),
+          {
+            id: "agentMode",
+            label: "Agent mode",
+            type: "select" as const,
+            options: [
+              { id: "standard", label: "Standard", isDefault: true },
+              { id: "code", label: "Code" },
+              { id: "minimal", label: "Minimal" },
+            ],
+          },
+        ],
+      }),
+    }),
+  ]);
+
+  it("offers the picker only where the model has the option", () => {
+    expect(botAgentModeDescriptor(deepseek, "deepseek-flash")?.options.map((o) => o.id)).toEqual([
+      "standard",
+      "code",
+      "minimal",
+    ]);
+    // The Claude Code engine hands the same model no such option.
+    const claudeEngine = provider("deepseek", [
+      model({
+        slug: "deepseek-flash",
+        capabilities: createModelCapabilities({
+          optionDescriptors: [select("effort", ["low", "high", "max"])],
+        }),
+      }),
+    ]);
+    expect(botAgentModeDescriptor(claudeEngine, "deepseek-flash")).toBeNull();
+  });
+
+  it("saves the chosen mode, and drops one the model does not offer", () => {
+    const draft: ModelDraft = {
+      instanceId: "deepseek",
+      model: "deepseek-flash",
+      effort: "high",
+      contextWindow: "",
+      agentMode: "code",
+    };
+    expect(buildModelSelection(draft, deepseek, null).options).toEqual([
+      { id: "effort", value: "high" },
+      { id: "agentMode", value: "code" },
+    ]);
+    const unknown: ModelDraft = { ...draft, agentMode: "creator" };
+    expect(buildModelSelection(unknown, deepseek, null).options).toEqual([
+      { id: "effort", value: "high" },
+    ]);
+    // A saved mode round-trips through the draft.
+    const saved = buildModelSelection(draft, deepseek, null);
+    expect(modelDraftFromSelection(saved).agentMode).toBe("code");
+    expect(agentModeOfSelection(saved)).toBe("code");
+  });
+});
+
 describe("modelOptionLabel", () => {
   it("adds the sub-provider so same-named models can be told apart", () => {
     expect(modelOptionLabel({ name: "Muse Spark 1.3", subProvider: "OpenCode Zen" })).toBe(
@@ -226,6 +336,53 @@ describe("bot provider instruction support", () => {
   it("still excludes a provider that carries instructions but cannot run", () => {
     const disabled = { ...readyProvider("codex"), enabled: false } as ServerProvider;
     expect(isBotProviderSelectable(disabled)).toBe(false);
+  });
+
+  // The shape the server really sends for DeepSeek on the harness engine: the
+  // DeepSeek driver never sets `availability`, and the pinned harness has no
+  // package to look an update up for, so its advisory is `unknown` and carries
+  // no update command. A 13 Oct NO-SHIP blamed that advisory for DeepSeek
+  // disappearing from the new-bot form; it did not (see the release notes), and
+  // this pins the shape so a future change to either cannot take it out
+  // silently.
+  const dshDeepSeek = (overrides: Partial<ServerProvider>): ServerProvider => {
+    const { availability: _unset, ...base } = readyProvider("deepseek", "deepseek");
+    return {
+      ...base,
+      version: "0.2.0-rc.2",
+      models: [model({ slug: "deepseek-flash" })],
+      versionAdvisory: {
+        status: "unknown",
+        currentVersion: "0.2.0-rc.2",
+        latestVersion: null,
+        updateCommand: null,
+        canUpdate: false,
+        canInstallVersion: false,
+        checkedAt: "2026-10-13T23:00:00.000Z",
+        message: null,
+      },
+      smokeCheck: { status: "passed", version: "0.2.0-rc.2" },
+      ...overrides,
+    } as unknown as ServerProvider;
+  };
+
+  it("offers the dsh DeepSeek snapshot, whose advisory is unknown and availability unset", () => {
+    const snapshot = dshDeepSeek({});
+    expect(snapshot.availability).toBeUndefined();
+    expect(isBotProviderSelectable(snapshot)).toBe(true);
+    expect(resolveBotProvider("deepseek", [snapshot])).toMatchObject({
+      available: true,
+      broken: false,
+    });
+  });
+
+  it("still refuses that snapshot when the server reports it off or unavailable", () => {
+    expect(isBotProviderSelectable(dshDeepSeek({ enabled: false }))).toBe(false);
+    expect(
+      isBotProviderSelectable(
+        dshDeepSeek({ availability: "unavailable", unavailableReason: "Driver not registered" }),
+      ),
+    ).toBe(false);
   });
 
   it("warns in the editor for a bot already saved on a mute provider", () => {
@@ -274,6 +431,8 @@ describe("usage-limit fallback in the bot form", () => {
       model: "claude-sonnet-5-5",
       effort: "high",
       contextWindow: "1m",
+      // The agent mode belongs to the bot's own model, never to its fallback.
+      agentMode: "",
     });
     expect(
       buildModelSelection(
@@ -307,6 +466,7 @@ describe("usage-limit fallback in the bot form", () => {
       model: "claude-opus-5-5",
       effort: "low",
       contextWindow: "",
+      agentMode: "",
     });
     expect(fallbackInput(saved, draft, providers)).toBeUndefined();
     // An older server sends no fallback: the default, and still nothing to send.

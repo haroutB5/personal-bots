@@ -9,7 +9,7 @@ import { primaryServerProvidersAtom } from "~/state/server";
 
 import { BotAvatar } from "./BotAvatar";
 import { chipsShownFor } from "./chatChipHandoff";
-import { botActiveModelShortLabel } from "./botModelLabel";
+import { botActiveModelShortLabel, fallbackNoteLabel } from "./botModelLabel";
 import { ConversationHeaderName } from "./ConversationHeaderName";
 import { ConversationSubtitle } from "./ConversationSubtitle";
 import { perfOptimizationOn } from "./perfFlags";
@@ -81,6 +81,7 @@ export function ConversationShellHeader({ botId }: { readonly botId: string }): 
           <ConversationSubtitle
             state="idle"
             modelLabel={botActiveModelShortLabel(bot, providers)}
+            modelNote={fallbackNoteLabel(bot)}
             status=""
           />
         </div>

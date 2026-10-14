@@ -54,6 +54,13 @@ import {
   type WebPushRequest,
 } from "./webPushCrypto.ts";
 import { TASK_CHAT_VIEWED_WRITE_INTERVAL_MS } from "../taskChatAutoArchivePolicy.ts";
+import {
+  approvalDetail,
+  chatNeedsInputBody,
+  type ChatNeedsInputKind,
+  chatNeedsInputTitle,
+  firstQuestionText,
+} from "./chatNeedsInput.ts";
 import { taskNotifyVerdict, type TaskNotifyState } from "./notifyDecision.ts";
 import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -143,7 +150,8 @@ export type PersonalPushEventKind =
   | "task_needs_input"
   | "task_failed"
   | "routine_result"
-  | "chat_reply";
+  | "chat_reply"
+  | "chat_needs_input";
 
 const PREFERENCE_FOR: Record<PersonalPushEventKind, keyof PersonalPushPreferences> = {
   task_completed: "taskCompleted",
@@ -151,6 +159,9 @@ const PREFERENCE_FOR: Record<PersonalPushEventKind, keyof PersonalPushPreference
   task_failed: "taskFailed",
   routine_result: "routineResult",
   chat_reply: "chatReply",
+  // A plain chat waiting on the user rides the same switch as a task waiting on
+  // the user: it is the same decision ("tell me when a bot needs me").
+  chat_needs_input: "taskNeedsInput",
 };
 
 /**
@@ -262,6 +273,27 @@ export function pushPayloadForTask(
 export const chatPath = (botId: string, threadId: string): string =>
   `/bots/${encodeURIComponent(botId)}/${encodeURIComponent(threadId)}`;
 
+/**
+ * The deep link of a chat opened at one of its request cards: the chat route
+ * reads `?request=<id>` and lands the transcript on that card (D13). A chat
+ * opened without it lands on its own newest open request instead, so every
+ * caller that knows the request's id - the in-app notice and the push built
+ * from the same payload - names it. `approval.requested` ids are the
+ * provider's; a sign-in and a secret use their own row's `request_id`. Both
+ * are the ids the transcript's card is keyed by, so an unknown one is simply
+ * a landing the chat cannot find and falls back from.
+ */
+export const chatRequestPath = (
+  botId: string,
+  threadId: string,
+  requestId: string | null | undefined,
+): string => {
+  const base = chatPath(botId, threadId);
+  return requestId === null || requestId === undefined || requestId.length === 0
+    ? base
+    : `${base}?request=${encodeURIComponent(requestId)}`;
+};
+
 export function chatReplyPushPayload(input: {
   readonly botId: string;
   readonly bot: PushBotIdentity;
@@ -271,6 +303,32 @@ export function chatReplyPushPayload(input: {
     title: `${input.bot.name} replied`,
     body: "Open the chat to read it.",
     url: `/bots/${encodeURIComponent(input.botId)}/${encodeURIComponent(input.threadId)}`,
+    tag: `chat-${input.threadId}`,
+    ...avatarFields(input.bot),
+  };
+}
+
+/**
+ * A plain bot chat parked on the user: a question, a tool approval, a sign-in
+ * or a secret. The title names the bot and the chat ("Juno · Weekend in
+ * Lisbon"), the body says what is needed, and the tap opens the chat - the
+ * request card is in it. One tag per chat, like a reply, so a newer
+ * notification replaces the older instead of stacking.
+ */
+export function chatNeedsInputPushPayload(input: {
+  readonly kind: ChatNeedsInputKind;
+  readonly botId: string;
+  readonly bot: PushBotIdentity;
+  readonly threadId: string;
+  readonly chatTitle: string;
+  readonly detail: string;
+  /** The request the chat is parked on, so the tap lands on its own card. */
+  readonly requestId?: string | null;
+}): PersonalPushPayload {
+  return {
+    title: chatNeedsInputTitle(input.bot.name, input.chatTitle),
+    body: chatNeedsInputBody(input.kind, input.detail),
+    url: chatRequestPath(input.botId, input.threadId, input.requestId),
     tag: `chat-${input.threadId}`,
     ...avatarFields(input.bot),
   };
@@ -375,6 +433,32 @@ export function providerBrokenPushPayload(input: {
     body: "A test message after the update failed. Open Settings to update or check again.",
     url: "/bots/settings",
     tag: `provider-${input.instanceId}`,
+  };
+}
+
+/**
+ * "DeepSeek balance is $0.94", linking to the Settings provider row.
+ *
+ * The tap lands on Settings rather than the top-up page: the worker and the
+ * in-app banner only ever open a same-origin route, and an outside URL is
+ * silently replaced with `/bots` (see `sw.js`), so a provider-settings landing
+ * is the honest target. The Top up link lives on the card itself.
+ */
+export function deepSeekBalancePushPayload(input: {
+  readonly instanceId: string;
+  readonly label: string;
+  readonly balance: string;
+  readonly empty: boolean;
+}): PersonalPushPayload {
+  return {
+    title: input.empty
+      ? `${input.label} balance is empty`
+      : `${input.label} balance is ${input.balance}`,
+    body: input.empty
+      ? `${input.label} bots switch to their fallback model until you top up.`
+      : `Top up to keep ${input.label} bots running.`,
+    url: "/bots/settings",
+    tag: `deepseek-balance-${input.instanceId}`,
   };
 }
 
@@ -525,6 +609,20 @@ export class PersonalPushService extends Context.Service<
       readonly instanceId: string;
       readonly label: string;
       readonly version: string;
+    }) => Effect.Effect<void>;
+    /**
+     * Queues one "the prepaid balance is low" or "is empty" alert. The caller
+     * owns the once-per-low-spell rule and persists the warned flag, so `at`
+     * is what makes each spell its own outbox event: a later drop after a
+     * top-up must notify again, and an event id is deduped for days.
+     */
+    readonly notifyDeepSeekBalanceLow: (input: {
+      readonly instanceId: string;
+      readonly label: string;
+      readonly balance: string;
+      readonly empty: boolean;
+      /** When this reading was made, ISO; identifies the spell. */
+      readonly at: string;
     }) => Effect.Effect<void>;
     /** Queues one pass: send due messages, expire and prune old rows. */
     /**
@@ -1155,10 +1253,136 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed((): TaskNotifyState => ({ mode: null, decision: null, message: null })),
     );
 
+  /**
+   * The chat a plain bot chat's pending sign-in or secret request is on, for
+   * the body of its notification: the request's own label (the host a sign-in
+   * opens, the name a secret was asked for). Null when the chat has neither.
+   *
+   * Index lookups only: pending rows are a handful at a time, and the login
+   * table is indexed by thread; the secret table's status index keeps its own
+   * scan to the pending rows.
+   */
+  const pendingChatRequest = (
+    threadId: string,
+  ): Effect.Effect<{
+    readonly kind: ChatNeedsInputKind;
+    readonly detail: string;
+    readonly requestId: string;
+  } | null> =>
+    Effect.gen(function* () {
+      const logins = yield* sql<{ readonly label: string; readonly requestId: string }>`
+        SELECT label, request_id AS "requestId" FROM personal_login_requests
+        WHERE thread_id = ${threadId} AND status = 'pending'
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      if (logins[0] !== undefined) {
+        return {
+          kind: "sign-in" as const,
+          detail: logins[0].label,
+          requestId: logins[0].requestId,
+        };
+      }
+      const secrets = yield* sql<{ readonly label: string; readonly requestId: string }>`
+        SELECT label, request_id AS "requestId" FROM personal_secret_requests
+        WHERE status = 'pending' AND thread_id = ${threadId}
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      if (secrets[0] !== undefined) {
+        return {
+          kind: "secret" as const,
+          detail: secrets[0].label,
+          requestId: secrets[0].requestId,
+        };
+      }
+      return null;
+    }).pipe(Effect.orElseSucceed(() => null));
+
+  /**
+   * A plain bot chat - the owner's own chat with a bot, not a task's, a
+   * routine's or a group member's chat - with its bot. Null for every other
+   * chat: task and routine chats already have `task_needs_input`, and a group
+   * member's thread buzzes once with its round. `expectedBotId` re-checks the
+   * link when the caller already knows which bot the chat belongs to.
+   */
+  const plainChat = (
+    threadId: ThreadId,
+    expectedBotId: string | null,
+  ): Effect.Effect<{ readonly botId: string; readonly chatTitle: string } | null> =>
+    botRepository.getChatFacts({ threadId }).pipe(
+      Effect.map((facts) =>
+        Option.isSome(facts) &&
+        !facts.value.groupRelay &&
+        !facts.value.taskChat &&
+        !facts.value.routineChat &&
+        (expectedBotId === null || facts.value.botId === expectedBotId)
+          ? { botId: facts.value.botId, chatTitle: facts.value.title }
+          : null,
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+
+  /**
+   * One notification for a request in a plain bot chat: an approval or a
+   * question arriving on the event stream, or (via notifyTask) a sign-in or
+   * secret request parking the chat's task. Deduped per request by the outbox
+   * key, suppressed while the chat is open and visible, and dropped for a
+   * muted bot, exactly as a reply is.
+   */
+  const notifyChatNeedsInput = (input: {
+    readonly eventId: string;
+    readonly kind: ChatNeedsInputKind;
+    readonly botId: string | null;
+    readonly threadId: ThreadId;
+    readonly detail: string;
+    /** The request the tap should land on, or null when it has no id of its own. */
+    readonly requestId: string | null;
+  }) =>
+    Effect.gen(function* () {
+      const preferences = yield* readPreferences;
+      if (!preferences[PREFERENCE_FOR.chat_needs_input]) return;
+      const chat = yield* plainChat(input.threadId, input.botId);
+      if (chat === null) return;
+      const bot = yield* botRepository.getBotById({
+        botId: chat.botId as PersonalBot["botId"],
+      });
+      yield* deliver(
+        input.eventId,
+        chatNeedsInputPushPayload({
+          kind: input.kind,
+          botId: chat.botId,
+          bot: botIdentity(bot),
+          threadId: input.threadId,
+          chatTitle: chat.chatTitle,
+          detail: input.detail,
+          requestId: input.requestId,
+        }),
+        {
+          bot,
+          viewing: {
+            threadId: input.threadId,
+            quietPath: chatPath(chat.botId, input.threadId),
+          },
+        },
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not queue a chat request", {
+              eventId: input.eventId,
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
   const notifyTask: PersonalPushService["Service"]["notifyTask"] = (task) =>
     Effect.gen(function* () {
       const kind = pushEventForTask(task);
       if (kind === null) return;
+      // pushEventForTask only ever returns the four task kinds; chat_needs_input
+      // is built by notifyChatNeedsInput and never rides this path.
+      if (kind === "chat_needs_input") return;
       const preferences = yield* readPreferences;
       if (!preferences[PREFERENCE_FOR[kind]]) return;
       // One event per transition: a replayed or re-published upsert dedupes.
@@ -1172,6 +1396,40 @@ export const make = Effect.gen(function* () {
         return;
       }
       const bot = yield* botRepository.getBotById({ botId: task.botId });
+      // A sign-in or secret request in the owner's own chat with the bot parks
+      // the turn's caller task, and the chat's own notification names the
+      // request and opens the chat - better than the task's title and page.
+      // The task's own chats keep the task notification unchanged.
+      if (
+        kind === "task_needs_input" &&
+        task.status === "waiting_for_user" &&
+        task.threadId !== null
+      ) {
+        const chat = yield* plainChat(task.threadId, task.botId);
+        const request = chat === null ? null : yield* pendingChatRequest(task.threadId);
+        if (chat !== null && request !== null) {
+          yield* deliver(
+            eventId,
+            chatNeedsInputPushPayload({
+              kind: request.kind,
+              botId: task.botId,
+              bot: botIdentity(bot),
+              threadId: task.threadId,
+              chatTitle: chat.chatTitle,
+              detail: request.detail,
+              requestId: request.requestId,
+            }),
+            {
+              bot,
+              viewing: {
+                threadId: task.threadId,
+                quietPath: chatPath(task.botId, task.threadId),
+              },
+            },
+          );
+          return;
+        }
+      }
       const quiet = updatesQuietHoursVerdict(
         task,
         kind === "chat_reply" ? "task_completed" : kind,
@@ -1404,6 +1662,37 @@ export const make = Effect.gen(function* () {
   const pendingFailures = new Map<string, string>();
 
   const ingestDomainEvent: PersonalPushService["Service"]["ingestDomainEvent"] = (event) => {
+    if (event.type === "thread.activity-appended") {
+      // The filter runs before anything reads: most events here are tool
+      // steps and reasoning notes, and they must not cost a lookup.
+      const activity = event.payload.activity;
+      if (activity.kind !== "approval.requested" && activity.kind !== "user-input.requested") {
+        return Effect.void;
+      }
+      const payload = (
+        typeof activity.payload === "object" && activity.payload !== null ? activity.payload : {}
+      ) as Record<string, unknown>;
+      // The provider's request id dedupes a re-emitted request; the activity
+      // id is unique on its own when a provider gives none. Only the
+      // provider's own id names a card in the transcript, so it alone goes
+      // into the deep link: the transcript drops a request with no id, and
+      // `?request=` for a card that is not there would land nowhere.
+      const providerRequestId =
+        typeof payload.requestId === "string" && payload.requestId.length > 0
+          ? payload.requestId
+          : null;
+      return notifyChatNeedsInput({
+        eventId: `chat-needs:${providerRequestId ?? activity.id}`,
+        kind: activity.kind === "approval.requested" ? "approval" : "question",
+        botId: null,
+        threadId: event.payload.threadId,
+        detail:
+          activity.kind === "approval.requested"
+            ? approvalDetail(payload)
+            : firstQuestionText(payload.questions),
+        requestId: providerRequestId,
+      });
+    }
     if (event.type !== "thread.session-set") return Effect.void;
     const { threadId, session } = event.payload;
     pendingFailures.delete(threadId);
@@ -1455,6 +1744,29 @@ export const make = Effect.gen(function* () {
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
           : Effect.logWarning("personal notifications could not queue a provider alert", {
+              instanceId: input.instanceId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
+  // A low prepaid balance stops the bots on that account, so it rides the same
+  // "hit a problem" preference. The once-per-spell rule is the caller's (it
+  // persists the warned flag), so the event id is per decision: a second drop
+  // after a top-up is a new spell and must notify again.
+  const notifyDeepSeekBalanceLow: PersonalPushService["Service"]["notifyDeepSeekBalanceLow"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      const preferences = yield* readPreferences;
+      if (!preferences.taskFailed) return;
+      const eventId = `deepseek-balance-low:${input.instanceId}:${input.at}`;
+      yield* deliver(eventId, deepSeekBalancePushPayload(input));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not queue a balance alert", {
               instanceId: input.instanceId,
               cause: Cause.pretty(cause),
             }),
@@ -1549,6 +1861,7 @@ export const make = Effect.gen(function* () {
     inApp,
     ackInApp,
     notifyProviderBroken,
+    notifyDeepSeekBalanceLow,
     notifyTeamBotChange,
     sentSince,
     sweep: kick,

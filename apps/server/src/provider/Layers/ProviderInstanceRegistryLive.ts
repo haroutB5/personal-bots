@@ -89,9 +89,49 @@ interface RegistryState {
  * payloads are opaque `unknown` at the envelope layer; `Equal.equals`
  * falls back to structural equality for plain records, which matches how
  * the schema decode output is constructed.
+ *
+ * A driver may name config keys its live instance never reads
+ * (`ProviderDriver.rebuildIrrelevantConfigKeys`). Those are dropped before
+ * the fallback comparison, so editing one cannot rebuild the instance: a
+ * rebuild closes the entry's scope, which stops every session under it
+ * (1.66.44 — flipping DeepSeek's peak-hours switch cut a running turn).
+ * Everything `create` reads stays compared, so a real config change still
+ * rebuilds.
  */
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
+const entryEqual = <R>(
+  a: ProviderInstanceConfig,
+  b: ProviderInstanceConfig,
+  driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
+): boolean => {
+  if (Equal.equals(a, b)) return true;
+  const aKeys = driversById.get(a.driver)?.rebuildIrrelevantConfigKeys ?? [];
+  const bKeys = driversById.get(b.driver)?.rebuildIrrelevantConfigKeys ?? [];
+  if (aKeys.length === 0 && bKeys.length === 0) return false;
+  return Equal.equals(withoutConfigKeys(a, aKeys), withoutConfigKeys(b, bKeys));
+};
+
+/**
+ * A copy of `entry` with `keys` removed from its config blob, for the rebuild
+ * comparison only: the entry the registry stores and hands back stays exactly
+ * as it arrived. Both sides of the comparison go through this, so the copies
+ * are compared against copies.
+ */
+const withoutConfigKeys = (
+  entry: ProviderInstanceConfig,
+  keys: ReadonlyArray<string>,
+): ProviderInstanceConfig => {
+  const config = entry.config;
+  if (config === null || typeof config !== "object" || Array.isArray(config)) return entry;
+  const stripped: Record<string, unknown> = { ...(config as Record<string, unknown>) };
+  let dropped = false;
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(stripped, key)) {
+      delete stripped[key];
+      dropped = true;
+    }
+  }
+  return dropped ? { ...entry, config: stripped } : entry;
+};
 
 /**
  * Resolve an entry's enabled state. An explicit false on either the
@@ -242,7 +282,7 @@ const makeReconcile = <R>(input: {
           continue;
         }
         const nextEntry = configMap[instanceId];
-        if (nextEntry !== undefined && !entryEqual(live.entry, nextEntry)) {
+        if (nextEntry !== undefined && !entryEqual(live.entry, nextEntry, driversById)) {
           replacedIds.add(instanceId);
         }
       }

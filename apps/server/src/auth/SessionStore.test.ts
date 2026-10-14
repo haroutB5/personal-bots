@@ -100,6 +100,7 @@ const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessi
   revokeAllExcept: () => Effect.fail(repositoryFailure),
   setLastConnectedAt: () => Effect.void,
   setClientConnection: () => Effect.void,
+  extendExpiry: () => Effect.fail(repositoryFailure),
 });
 
 const failingSessionLookupCredentialLayer = Layer.effect(
@@ -341,6 +342,56 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         "review:write",
         "relay:read",
       ]);
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("slides a browser session's expiry forward while it is in use", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ subject: "phone" });
+
+      expect(yield* sessions.renew(issued.token)).toEqual(Option.none());
+
+      yield* TestClock.adjust(Duration.days(29));
+      const renewed = yield* sessions.renew(issued.token);
+      expect(Option.isSome(renewed)).toBe(true);
+      if (Option.isNone(renewed)) return;
+      expect(renewed.value.expiresAt.epochMilliseconds).toBe(
+        issued.expiresAt.epochMilliseconds + Duration.toMillis(Duration.days(29)),
+      );
+      // Renewal is at most once a day per token.
+      expect(yield* sessions.renew(renewed.value.token)).toEqual(Option.none());
+
+      // Past the original 30 days, only the renewed credential still works.
+      yield* TestClock.adjust(Duration.days(2));
+      expect(yield* Effect.flip(sessions.verify(issued.token))).toMatchObject({
+        _tag: "SessionTokenExpiredError",
+      });
+      const verified = yield* sessions.verify(renewed.value.token);
+      expect(verified.sessionId).toBe(issued.sessionId);
+      expect(verified.subject).toBe("phone");
+      const websocket = yield* sessions.issueWebSocketToken(issued.sessionId);
+      yield* sessions.verifyWebSocketToken(websocket.token);
+      expect((yield* sessions.listActive()).map((session) => session.sessionId)).toEqual([
+        issued.sessionId,
+      ]);
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("does not renew bearer, revoked or expired sessions", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const bearer = yield* sessions.issue({ method: "bearer-access-token", subject: "cli" });
+      const revoked = yield* sessions.issue({ subject: "revoked" });
+      const expired = yield* sessions.issue({ subject: "expired", ttl: Duration.days(2) });
+      yield* sessions.revoke(revoked.sessionId);
+
+      yield* TestClock.adjust(Duration.days(3));
+
+      expect(yield* sessions.renew(bearer.token)).toEqual(Option.none());
+      expect(yield* sessions.renew(revoked.token)).toEqual(Option.none());
+      expect(yield* sessions.renew(expired.token)).toEqual(Option.none());
+      expect(yield* sessions.renew("not-a-session-token")).toEqual(Option.none());
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 

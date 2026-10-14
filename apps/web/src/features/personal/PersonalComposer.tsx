@@ -12,9 +12,9 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   CommandId,
   type EnvironmentId,
+  imageByteLimitForModel,
   type ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   personalReplyContext,
   type PersonalReplyQuote,
   type ThreadId,
@@ -499,6 +499,14 @@ export function PersonalComposer({
     let slots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - attachments.length;
     const images: ComposerImageAttachment[] = [];
     const files: ComposerFileAttachment[] = [];
+    // The turn's own model decides how big an image may be: a DeepSeek chat
+    // runs on the DeepSeek Harness, whose inline-image validator cannot take
+    // the wire cap (see imageByteLimitForModel in @t3tools/contracts). Read
+    // here, at pick time, so a bot switched to another provider uses that
+    // provider's cap.
+    const imageByteLimit = imageByteLimitForModel(
+      chatTurnModelSelection(botModelSelection, thread.modelSelection).model,
+    );
     try {
       let problem: string | null = null;
       for (const file of picked) {
@@ -514,7 +522,7 @@ export function PersonalComposer({
         if (kind === "image") {
           const prepared = await prepareImageForAttachment(
             normalizeComposerImageFileMimeType(file),
-            PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+            imageByteLimit,
           );
           if (!prepared.ok) {
             problem = `'${file.name}' could not be attached.`;

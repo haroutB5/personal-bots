@@ -32,7 +32,7 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type { ProviderAdapterCapabilities, ProviderTurnPreflightInput } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -53,6 +53,17 @@ export interface ProviderServiceShape {
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
+
+  /**
+   * Refuse a turn the target provider's own engine cannot take, before its
+   * session is started or reused: what the provider will decide on the input
+   * alone, with no session in play (see `ProviderAdapterShape.validateTurn`).
+   * A no-op for an adapter without its own preflight.
+   */
+  readonly validateTurn: (input: {
+    readonly threadId: ThreadId;
+    readonly instanceId: ProviderInstanceId;
+  } & ProviderTurnPreflightInput) => Effect.Effect<void, ProviderServiceError>;
 
   readonly compactThread: (
     threadId: ThreadId,

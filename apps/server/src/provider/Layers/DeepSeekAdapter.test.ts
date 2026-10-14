@@ -568,7 +568,8 @@ describe("DeepSeekAdapter", () => {
       if (completed?.type === "turn.completed") {
         assert.equal(completed.provider, "deepseek");
         assert.equal(completed.payload.state, "failed");
-        assert.match(completed.payload.errorMessage ?? "", /ANTHROPIC_AUTH_TOKEN/);
+        assert.match(completed.payload.errorMessage ?? "", /API key saved in this DeepSeek/);
+        assert.notMatch(completed.payload.errorMessage ?? "", /ANTHROPIC_AUTH_TOKEN/);
         assert.notMatch(completed.payload.errorMessage ?? "", /claude auth login/);
       }
     }).pipe(

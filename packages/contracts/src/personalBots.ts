@@ -114,9 +114,17 @@ export const PersonalBotFallback = Schema.Struct({
 export type PersonalBotFallback = typeof PersonalBotFallback.Type;
 
 /**
+ * The reason `PersonalBotFallbackActive` carries while the bot is on the
+ * DeepSeek peak-hours switch (1.66.44) rather than a usage-limit fallback.
+ * Anything else (or no reason at all) is a usage-limit fallback.
+ */
+export const PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK = "deepseek_peak";
+
+/**
  * Present only while the bot runs on its fallback model because its home
- * provider hit a usage limit. `PersonalBot.modelSelection` stays the home
- * model (what the owner saved); this is what the bot's turns use right now.
+ * provider hit a usage limit, or because DeepSeek is in its peak hours.
+ * `PersonalBot.modelSelection` stays the home model (what the owner saved);
+ * this is what the bot's turns use right now.
  */
 export const PersonalBotFallbackActive = Schema.Struct({
   modelSelection: ModelSelection,
@@ -125,6 +133,12 @@ export const PersonalBotFallbackActive = Schema.Struct({
   resetAt: Schema.optional(Schema.DateTimeUtcFromString),
   /** The provider that hit its limit, as the owner knows it: "Codex", "Claude". */
   fromProvider: Schema.String,
+  /**
+   * Why the bot is on this model. Absent (or any other value) is the 1.65.0
+   * usage-limit fallback; `PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK` is the
+   * DeepSeek peak-hours switch, whose `resetAt` is the window's own end.
+   */
+  reason: Schema.optional(Schema.String),
 });
 export type PersonalBotFallbackActive = typeof PersonalBotFallbackActive.Type;
 

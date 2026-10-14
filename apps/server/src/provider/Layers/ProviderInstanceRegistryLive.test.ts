@@ -38,9 +38,12 @@ import {
 import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -141,6 +144,9 @@ const makeDeepSeekConfig = (overrides: Partial<DeepSeekSettings>): DeepSeekSetti
   binaryPath: "claude",
   homePath: "",
   customModels: [],
+  engine: "dsh",
+  dshRuntimePath: "",
+  peakSwitch: true,
   ...overrides,
 });
 
@@ -902,5 +908,62 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         `deepseek:home:${(yield* Path.Path).resolve("/home/julius/.claude-t3-deepseek")}`,
       );
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "leaves a DeepSeek instance (and its sessions) alone when only the peak setting changes",
+    () =>
+      Effect.gen(function* () {
+        // The peak-hours sweep reads `peakSwitch` from persisted settings, never
+        // from the instance, so editing it must not rebuild the instance: a
+        // rebuild closes the entry's scope and stops every session under it, and
+        // that cut a running turn (1.66.44 QA, P2K).
+        const deepSeekId = ProviderInstanceId.make("deepseek_default");
+        const deepSeekDriverKind = ProviderDriverKind.make("deepseek");
+        const mapFor = (config: DeepSeekSettings): ProviderInstanceConfigMap => ({
+          [deepSeekId]: {
+            driver: deepSeekDriverKind,
+            displayName: "DeepSeek",
+            enabled: false,
+            config,
+          },
+        });
+        const home = "/home/julius/.claude-t3-deepseek";
+
+        const { registry, mutator } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
+          drivers: [DeepSeekDriver],
+          configMap: mapFor(makeDeepSeekConfig({ homePath: home })),
+        });
+        const before = yield* registry.getInstance(deepSeekId);
+        expect(before).toBeDefined();
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            // Subscribed before the reconcile: the publish cannot land in a gap.
+            const subscription = yield* registry.subscribeChanges;
+            const took = yield* Effect.forkChild(
+              PubSub.take(subscription).pipe(Effect.timeoutOption("300 millis")),
+            );
+
+            yield* mutator.reconcile(
+              mapFor(makeDeepSeekConfig({ homePath: home, peakSwitch: false })),
+            );
+
+            // Same object: the scope was never closed, so no session stopped.
+            const after = yield* registry.getInstance(deepSeekId);
+            expect(after).toBe(before);
+            expect(after?.adapter).toBe(before?.adapter);
+            expect(Option.isNone(yield* Fiber.join(took))).toBe(true);
+
+            // A key the instance really reads still rebuilds it.
+            yield* mutator.reconcile(
+              mapFor(makeDeepSeekConfig({ homePath: "/home/julius/.claude-other" })),
+            );
+            const rebuilt = yield* registry.getInstance(deepSeekId);
+            expect(rebuilt).toBeDefined();
+            expect(rebuilt).not.toBe(before);
+          }),
+        );
+      }).pipe(Effect.provide(testLayer)),
   );
 });

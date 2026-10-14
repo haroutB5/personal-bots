@@ -5,6 +5,7 @@ import {
   botTeam,
   DEFAULT_PERSONAL_BOT_TEAM,
   isBotOnTeam,
+  PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalTaskStatus,
   personalBotTeamLabel,
@@ -501,14 +502,17 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * What a bot runs on while its usage limit has it on the fallback model: the web UI shows the
-   * same fact as "on fallback until about 14:30"; a lead needs it to know which model does the work.
+   * What a bot runs on while it is off its own model: the web UI shows the same
+   * fact as "on fallback until about 14:30" or "DeepSeek peak until 11:00"; a
+   * lead needs it to know which model does the work.
    */
   const fallbackEntry = (bot: PersonalBot) => {
     const active = botFallbackActive(bot);
     if (active === null) return {};
     const resetAt = active.resetAt === undefined ? undefined : DateTime.formatIso(active.resetAt);
     const provider = active.fromProvider.trim();
+    const peak = active.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK;
+    const reason = peak || provider === "" ? "" : ` (${provider} usage limit)`;
     return {
       fallback: {
         provider: active.modelSelection.instanceId as string,
@@ -516,9 +520,10 @@ const make = Effect.gen(function* () {
         fromProvider: active.fromProvider,
         since: DateTime.formatIso(active.since),
         ...(resetAt === undefined ? {} : { resetAt }),
-        label: `fallback: ${active.modelSelection.model}${
+        ...(peak ? { reason: PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK } : {}),
+        label: `${peak ? "DeepSeek peak" : "fallback"}: ${active.modelSelection.model}${
           resetAt === undefined ? "" : ` until ${resetAt}`
-        }${provider === "" ? "" : ` (${provider} usage limit)`}`,
+        }${reason}`,
       },
     };
   };

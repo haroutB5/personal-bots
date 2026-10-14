@@ -73,6 +73,8 @@ interface Shown {
 function phone(options: { readonly stalePage?: boolean } = {}) {
   const caches = memoryCaches();
   const center: Shown[] = [];
+  /** Every href the worker opened itself (no window was listening). */
+  const opened: string[] = [];
   const handlers = new Map<string, (event: unknown) => void>();
   NodeVM.runInNewContext(source, {
     URL,
@@ -88,7 +90,13 @@ function phone(options: { readonly stalePage?: boolean } = {}) {
           center.push({ title, ...options });
         },
       },
-      clients: { matchAll: async () => [], openWindow: async () => null },
+      clients: {
+        matchAll: async () => [],
+        openWindow: async (href: string) => {
+          opened.push(href);
+          return null;
+        },
+      },
     },
     fetch: async () => new Response("{}"),
     // The faked page clock, so worker and page agree on "now".
@@ -140,7 +148,7 @@ function phone(options: { readonly stalePage?: boolean } = {}) {
     });
     return Promise.all(pending);
   };
-  return { center, registration, push, take, run, start, worker, caches };
+  return { center, registration, push, take, run, start, worker, caches, opened };
 }
 
 const ASSISTANT_TASK = "/tasks/50cd83dc-e90e-440c-9876-a9d9a8865dd6";
@@ -373,5 +381,37 @@ describe("worker and page find a tap iOS dropped", () => {
     await vi.advanceTimersByTimeAsync(RECENT_TAP_WINDOW_MS + 1_000);
     const look = await findLostTap(app.registration);
     expect(look).toEqual(expect.objectContaining({ url: null, reason: "none-recent", listed: 1 }));
+  });
+});
+
+describe("a chat_needs_input tap (a plain chat waiting on the owner)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the payload and opens the chat itself, on the chat's own lock-screen slot", async () => {
+    const app = phone();
+    await app.push({
+      title: "Assistant · Weekend in Lisbon",
+      body: "Needs your answer: Which table should I book for Saturday?",
+      url: ASSISTANT_CHAT,
+      tag: `chat-${ASSISTANT_CHAT.split("/")[3]!}`,
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
+    });
+    const shown = app.take(ASSISTANT_CHAT);
+    expect(shown.title).toBe("Assistant · Weekend in Lisbon");
+    // Its tag is the chat's one slot: a reply and a question never stack.
+    expect(shown.tag).toBe(`chat-${ASSISTANT_CHAT.split("/")[3]!}`);
+
+    // With no window listening, the worker opens the deep link itself.
+    const clicked = app.start("notificationclick", shown);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await clicked;
+    expect(app.opened).toEqual([new URL(ASSISTANT_CHAT, "https://bots.example").href]);
   });
 });
