@@ -202,6 +202,30 @@ On that root, `userdata/settings.json` holds the entry as `{"name":"ANTHROPIC_AU
 "sensitive":true,"valueRedacted":true}` and contains neither test key; the stub log shows the 401 for the
 made-up key and the 200 for the accepted one, so the saved value really reached the balance read.
 
+## Low-balance proof on a throwaway root (390 px, dark)
+
+A second throwaway run for the warning, at release `ae1e12ceb413`: root `hbots-tw-b16643`, a DeepSeek
+instance seeded with the stub key, and the balance endpoint pointed at `deepseek-balance-stub2.mjs` — the same
+documented `T3CODE_PROVIDER_DEEPSEEK_BALANCE_URL` override, with a state file so the balance can be moved
+between runs. Nothing was sent to `api.deepseek.com`. Screenshots in `~/.personal-bots/qa/hbots-16643/`:
+
+- `16643b-01-above-7usd.png` — the usage sheet with the balance at $7.00: "Balance left $7.00" and no warning
+  line, which is the "above the line nothing changes" half.
+- `16643b-02-low-094usd.png` — the same card at $0.94: the amber line "DeepSeek balance is $0.94. Top up to
+  keep DeepSeek bots running." with a **Top up** link to `platform.deepseek.com/top_up`.
+
+The watcher's own run, on that same server: the stub log records the server's balance read (HTTP 200 with the
+state's number, carrying the seeded key), and the throwaway's `userdata/state.sqlite-wal` holds the
+`personal_meta` row `deepseek-balance-low:deepseek` with
+`{"warned":true,"at":"2026-10-14T11:33:35.836Z","balance":"$0.00"}` — written by a real sweep right after a
+real read, which is the once-per-spell flag that survives a restart. The sweep runs a couple of minutes after
+the server is up, once ServerActivation opens, and then every thirty minutes.
+
+The exact sequence Harout asked to see (`5.00 → 0.90 → 0.00 → 7.00`) is asserted directly in
+`apps/server/src/personal/deepseek/DeepSeekBalanceWatcher.test.ts`: one notice for the $0.90 drop, silence at
+$0.00 because it is the same spell, and a cleared flag after the $7.00 top-up — with the next drop reported
+again.
+
 ## Open items — all "fix soon", none shipped in 1.66.43
 
 Security's verdict is SHIP-OK and its two at-rest items are deliberately not riders on this release, per the
