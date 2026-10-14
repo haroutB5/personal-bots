@@ -65,6 +65,13 @@ export const PerformanceGroup = Schema.Struct({
   name: Schema.String,
   kind: PerformanceGroupKind,
   botId: Schema.NullOr(Schema.String),
+  /**
+   * The provider a bot group runs on (`claudeAgent`, `codex`, `deepseek`,
+   * `opencode`, ...), or null for everything that is not a bot and for a bot
+   * whose provider is not known. The client turns it into a display name; a
+   * provider it has no name for shows no provider at all, never a wrong one.
+   */
+  provider: Schema.NullOr(Schema.String),
   processCount: Schema.Number,
   /** Percent of the whole machine, like every cpu figure here. */
   cpuPct: Schema.Number,

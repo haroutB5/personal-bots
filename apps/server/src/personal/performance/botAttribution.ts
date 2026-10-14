@@ -42,7 +42,13 @@ export function attributeBotProcesses(input: AttributionInput): Map<number, BotO
   const byThread = new Map<string, BotOwner>();
   const bySessionId = new Map<string, BotOwner>();
   for (const session of input.sessions) {
-    const owner: BotOwner = { botId: String(session.botId), name: session.botName };
+    // The provider is the row's own, so a Codex or DeepSeek bot's process is
+    // never labelled with another provider's name on the Performance tab.
+    const owner: BotOwner = {
+      botId: String(session.botId),
+      name: session.botName,
+      provider: session.providerName,
+    };
     byThread.set(session.threadId, owner);
     const provider = usageProviderOf(session.providerName);
     const sessionId =

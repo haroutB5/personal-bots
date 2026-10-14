@@ -185,6 +185,10 @@ export class PerformanceSampler {
   private diskInFlight = false;
   private attribution: ReadonlyMap<number, BotOwner> = new Map();
   private attributionInFlight = false;
+  /** True once the first attribution read has answered, so later ones are background. */
+  private attributionReady = false;
+  /** One grouping at a time: the first one waits for attribution, later ones do not. */
+  private groupInFlight = false;
   private restartBlockedUntil = 0;
 
   constructor(deps: PerformanceSamplerDeps = {}) {
@@ -256,6 +260,10 @@ export class PerformanceSampler {
   /** Start sampling now: helper first, then the tick. Idempotent. */
   private start(): void {
     if (this.timer !== null) return;
+    // Every sampling session's first grouping waits for its own attribution:
+    // a tab reopened after the grace must name the bots in its first frame
+    // too, not carry the previous session's (now stale) map.
+    this.attributionReady = false;
     this.ensureHelper();
     this.timer = setInterval(() => {
       void this.tick();
@@ -350,37 +358,45 @@ export class PerformanceSampler {
       now - this.latestGroupTick.t <= this.deps.tickMs * 3
         ? this.latestGroupTick
         : null;
-    if (groupTick !== null && this.tickCount % PERFORMANCE_GROUP_EVERY === 0) {
-      // Attribution is a database read; it runs at most once per group
-      // refresh and never blocks a tick.
-      if (!this.attributionInFlight && this.deps.attribute !== undefined) {
-        this.attributionInFlight = true;
-        void this.deps
-          .attribute(groupTick.children)
-          .then((map) => {
-            this.attribution = map;
-          })
-          .catch(() => undefined)
-          .finally(() => {
-            this.attributionInFlight = false;
-          });
+    if (
+      groupTick !== null &&
+      this.tickCount % PERFORMANCE_GROUP_EVERY === 0 &&
+      !this.groupInFlight
+    ) {
+      this.groupInFlight = true;
+      try {
+        this.lastGroupedTick = groupTick;
+        // The first grouping waits for attribution (a database read that runs
+        // only while someone watches), so the very first "Heaviest right now"
+        // already names the bots instead of lumping their CLIs into the server
+        // for the first seconds (QA's live check, 14 Oct). Later refreshes ask
+        // in the background and never delay a tick.
+        if (this.deps.attribute !== undefined) {
+          if (!this.attributionReady) {
+            await this.loadAttribution(groupTick.children);
+            this.attributionReady = true;
+          } else if (!this.attributionInFlight) {
+            void this.loadAttribution(groupTick.children);
+          }
+        }
+        this.latestGroups = groupProcesses({
+          processes: groupTick.processes,
+          parents: groupTick.parents ?? [],
+          children: groupTick.children,
+          attributed: this.attribution,
+          serverPid: this.deps.serverPid ?? process.pid,
+          logicalProcessors: logical,
+        });
+        const top = topGroups(this.latestGroups.groups, 15);
+        const event: PerformanceStreamEvent = {
+          kind: "groups",
+          groups: { t: now, cpu: top.cpu, mem: top.mem, hbots: this.latestGroups.hbots },
+        };
+        this.lastGroupsEvent = event.groups;
+        this.broadcast(event);
+      } finally {
+        this.groupInFlight = false;
       }
-      this.lastGroupedTick = groupTick;
-      this.latestGroups = groupProcesses({
-        processes: groupTick.processes,
-        parents: groupTick.parents ?? [],
-        children: groupTick.children,
-        attributed: this.attribution,
-        serverPid: this.deps.serverPid ?? process.pid,
-        logicalProcessors: logical,
-      });
-      const top = topGroups(this.latestGroups.groups, 15);
-      const event: PerformanceStreamEvent = {
-        kind: "groups",
-        groups: { t: now, cpu: top.cpu, mem: top.mem, hbots: this.latestGroups.hbots },
-      };
-      this.lastGroupsEvent = event.groups;
-      this.broadcast(event);
     }
 
     this.sampleDiskUsage(now);
@@ -458,6 +474,27 @@ export class PerformanceSampler {
     this.history.push(sample);
     if (this.history.length > this.deps.historySize) this.history.shift();
     this.broadcast({ kind: "sample", sample });
+  }
+
+  /**
+   * Ask for the bot attribution, once at a time. The promise resolves when the
+   * map is in, so the first grouping can wait for it; every later caller fires
+   * it and carries on. A failed read keeps the previous map, never an error.
+   */
+  private loadAttribution(children: ReadonlyArray<HelperChild>): Promise<void> {
+    if (this.attributionInFlight || this.deps.attribute === undefined) {
+      return Promise.resolve();
+    }
+    this.attributionInFlight = true;
+    return this.deps
+      .attribute(children)
+      .then((map) => {
+        this.attribution = map;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.attributionInFlight = false;
+      });
   }
 
   private broadcast(event: PerformanceStreamEvent): void {

@@ -1,4 +1,10 @@
-import type { PerformanceSample, PerformanceSlow } from "@t3tools/contracts";
+import type { ReactNode } from "react";
+import type {
+  PerformanceGroup,
+  PerformanceGroups,
+  PerformanceSample,
+  PerformanceSlow,
+} from "@t3tools/contracts";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -36,6 +42,10 @@ vi.mock("./PerfChart", () => ({
 }));
 vi.mock("./PerfSpark", () => ({ PerfSpark: () => null }));
 vi.mock("./PcAvatar", () => ({ PcAvatar: () => null }));
+// A bot row is a router Link; the label it draws is what these tests read.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children }: { readonly children?: ReactNode }) => children ?? null,
+}));
 
 import { PerformancePane } from "./PerformancePane";
 
@@ -92,6 +102,74 @@ const slow = (overrides: Partial<PerformanceSlow> = {}): PerformanceSlow => ({
   releasesGB: 8,
   ...overrides,
 });
+
+/** Three groups for "Heaviest right now", one of them a single-process bot. */
+const groups = (): PerformanceGroups => {
+  const cpu: PerformanceGroup[] = [
+    {
+      name: "Atlas",
+      kind: "bot",
+      botId: "bot-atlas",
+      provider: "codex",
+      processCount: 2,
+      cpuPct: 12,
+      memGB: 1.2,
+    },
+    {
+      name: "Forge",
+      kind: "bot",
+      botId: "bot-forge",
+      provider: "claudeAgent",
+      processCount: 1,
+      cpuPct: 8,
+      memGB: 0.9,
+    },
+    {
+      name: "hbots server",
+      kind: "hbots",
+      botId: null,
+      provider: null,
+      processCount: 1,
+      cpuPct: 1,
+      memGB: 0.4,
+    },
+  ];
+  return {
+    t: 1_000_000,
+    cpu,
+    mem: [...cpu].reverse(),
+    hbots: {
+      server: cpu[2]!,
+      bots: {
+        name: "Bots",
+        kind: "hbots",
+        botId: null,
+        provider: null,
+        processCount: 3,
+        cpuPct: 20,
+        memGB: 2.1,
+      },
+      browser: {
+        name: "Bots' browser",
+        kind: "hbots",
+        botId: null,
+        provider: null,
+        processCount: 2,
+        cpuPct: 1,
+        memGB: 0.5,
+      },
+      total: {
+        name: "Total",
+        kind: "hbots",
+        botId: null,
+        provider: null,
+        processCount: 6,
+        cpuPct: 22,
+        memGB: 3,
+      },
+    },
+  };
+};
 
 describe("PerformancePane render", () => {
   let renderer: ReactTestRenderer | null = null;
@@ -381,5 +459,28 @@ describe("PerformancePane render", () => {
       .map((node) => String(node.props["aria-label"]));
     expect(labels).toContain("CPU temp 64°C. Go to CPU temp");
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Sensors app not running");
+  });
+
+  it("names each bot's real provider, and says 1 process not 1 processes", () => {
+    // QA's live check on 1.66.41 (14 Oct): every bot row said "Claude Code",
+    // whatever the bot ran on, and a single CLI read "1 processes".
+    act(() => {
+      renderer = create(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    act(() => {
+      feed.state = {
+        ...feed.state,
+        samples: [sample(1_000_000)],
+        groups: groups(),
+        slow: slow(),
+        lastSampleAt: Date.now(),
+        status: "live",
+      };
+      renderer!.update(<PerformancePane botsBusy={0} tasksRunning={0} />);
+    });
+    const text = JSON.stringify(renderer!.toJSON());
+    expect(text).toContain("Codex · 2 processes");
+    expect(text).toContain("Claude Code · 1 process");
+    expect(text).not.toContain("1 processes");
   });
 });

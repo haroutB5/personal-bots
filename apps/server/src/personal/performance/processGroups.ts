@@ -20,6 +20,8 @@ const NON_PROCESS = new Set(["_total", "idle"]);
 export interface BotOwner {
   readonly botId: string;
   readonly name: string;
+  /** The provider the bot's session runs on (`claudeAgent`, `codex`, ...). */
+  readonly provider: string;
 }
 
 export interface GroupInput {
@@ -69,6 +71,12 @@ interface Accumulator {
   name: string;
   kind: PerformanceGroupKind;
   botId: string | null;
+  /**
+   * A bot's provider, or null for every non-bot group and for a bot whose
+   * live sessions disagree (two providers on one bot): an unknown provider
+   * is shown as none, never as another bot's.
+   */
+  provider: string | null;
   processCount: number;
   cpuPct: number;
   memGB: number;
@@ -159,6 +167,7 @@ export function groupProcesses(input: GroupInput): GroupedProcesses {
     name: "hbots server",
     kind: "hbots",
     botId: null,
+    provider: null,
     processCount: 0,
     cpuPct: 0,
     memGB: 0,
@@ -167,6 +176,7 @@ export function groupProcesses(input: GroupInput): GroupedProcesses {
     name: "Bots' browser",
     kind: "hbots",
     botId: null,
+    provider: null,
     processCount: 0,
     cpuPct: 0,
     memGB: 0,
@@ -175,6 +185,7 @@ export function groupProcesses(input: GroupInput): GroupedProcesses {
     name: "Windows",
     kind: "system",
     botId: null,
+    provider: null,
     processCount: 0,
     cpuPct: 0,
     memGB: 0,
@@ -185,18 +196,29 @@ export function groupProcesses(input: GroupInput): GroupedProcesses {
     acc.cpuPct += row.cpuOneCore / divisor;
     acc.memGB += row.memBytes / 1024 ** 3;
   };
-  const fresh = (name: string, kind: PerformanceGroupKind, botId: string | null): Accumulator => ({
+  const fresh = (
+    name: string,
+    kind: PerformanceGroupKind,
+    botId: string | null,
+    provider: string | null = null,
+  ): Accumulator => ({
     name,
     kind,
     botId,
+    provider,
     processCount: 0,
     cpuPct: 0,
     memGB: 0,
   });
   const botAcc = (owner: BotOwner): Accumulator => {
     const existing = byBot.get(owner.botId);
-    if (existing !== undefined) return existing;
-    const created = fresh(owner.name, "bot", owner.botId);
+    if (existing !== undefined) {
+      // Two live sessions of one bot on different providers: the row names
+      // no provider rather than the wrong one.
+      if (existing.provider !== owner.provider) existing.provider = null;
+      return existing;
+    }
+    const created = fresh(owner.name, "bot", owner.botId, owner.provider);
     byBot.set(owner.botId, created);
     return created;
   };
@@ -240,6 +262,7 @@ export function groupProcesses(input: GroupInput): GroupedProcesses {
     name: acc.name,
     kind: acc.kind,
     botId: acc.botId,
+    provider: acc.provider,
     processCount: acc.processCount,
     cpuPct: Math.round(acc.cpuPct * 10) / 10,
     memGB: Math.round(acc.memGB * 100) / 100,
@@ -265,6 +288,7 @@ export function groupProcesses(input: GroupInput): GroupedProcesses {
     name: "Total",
     kind: "hbots",
     botId: null,
+    provider: null,
     processCount: serverGroup.processCount + botsGroup.processCount + browserGroup.processCount,
     cpuPct: Math.round((serverGroup.cpuPct + botsGroup.cpuPct + browserGroup.cpuPct) * 10) / 10,
     memGB: Math.round((serverGroup.memGB + botsGroup.memGB + browserGroup.memGB) * 100) / 100,
