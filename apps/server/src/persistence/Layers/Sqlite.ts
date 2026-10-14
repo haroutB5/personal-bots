@@ -26,6 +26,31 @@ export const sqliteSynchronousFromEnv = (value: string | undefined): "NORMAL" | 
   return normalized === "full" || normalized === "2" || normalized === "extra" ? "FULL" : "NORMAL";
 };
 
+export const SQLITE_CACHE_DEFAULT_MB = 64;
+const SQLITE_CACHE_MAX_MB = 1024;
+
+/**
+ * Page cache of the server's connection, in MiB (`PRAGMA cache_size`). Every orchestration
+ * command probes a random leaf of each big UUID-keyed index (command receipts, event ids,
+ * event command ids and correlation ids: about 280 MB on the 14 Oct production copy). With
+ * SQLite's default 2 MiB cache nearly every probe is a file read on the main thread, and
+ * while the disk is busy one read can wait for seconds: on 14 Oct a 10.3 s receipt lookup
+ * (`getByCommandId`, a primary-key search) sat inside a 19.1 s stall. 64 MiB keeps the inner
+ * pages and recent leaves in memory: on the production copy a replay of 2,000 commands read
+ * 29 KB per command with the default cache and 12 KB with 64 MiB, and the receipt lookup
+ * alone 6.2 KB and 1.6 KB. `T3CODE_SQLITE_CACHE_MB=off` (or 0) keeps SQLite's default; a
+ * whole number from 1 to 1024 sets the size.
+ */
+export const sqliteCacheMbFromEnv = (value: string | undefined): number | null => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === undefined || normalized === "") return SQLITE_CACHE_DEFAULT_MB;
+  if (["off", "0", "false", "no", "default"].includes(normalized)) return null;
+  const mb = Number(normalized);
+  return Number.isInteger(mb) && mb >= 1 && mb <= SQLITE_CACHE_MAX_MB
+    ? mb
+    : SQLITE_CACHE_DEFAULT_MB;
+};
+
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -36,6 +61,11 @@ const setup = Layer.effectDiscard(
     yield* sql.unsafe(
       `PRAGMA synchronous = ${sqliteSynchronousFromEnv(process.env.T3CODE_SQLITE_SYNCHRONOUS)};`,
     );
+    const cacheMb = sqliteCacheMbFromEnv(process.env.T3CODE_SQLITE_CACHE_MB);
+    if (cacheMb !== null) {
+      // Negative = KiB, so the size does not depend on the page size.
+      yield* sql.unsafe(`PRAGMA cache_size = -${cacheMb * 1024};`);
+    }
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
