@@ -8,6 +8,8 @@ import {
   type OrchestrationSessionProviderRetry,
   type PersonalBotThread,
   type ServerProvider,
+  readPersonalFollowUp,
+  withPersonalFollowUp,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -269,6 +271,22 @@ describe("Retry for a failed message", () => {
     expect(findRetryTarget([])).toBeNull();
     const assistantOnly = [message({ role: "assistant" as ChatMessage["role"] })];
     expect(findRetryTarget(assistantOnly)).toBeNull();
+  });
+
+  it("re-sends a queue send as a queue send, marker and command together", () => {
+    const context = withPersonalFollowUp(null, "queue") ?? undefined;
+    const target = findRetryTarget([message({ turnId: null, context })]);
+    const input = build(target!);
+    // The label reads the marker off the message, so the command it rides with
+    // must say the same thing: a steer would make the label lie.
+    expect(readPersonalFollowUp(input.message.context)).toBe("queue");
+    expect(input.followUp).toBe("queue");
+  });
+
+  it("keeps a plain steer a steer", () => {
+    const input = build(findRetryTarget([message({ turnId: null })])!);
+    expect(readPersonalFollowUp(input.message.context)).toBeNull();
+    expect(input).not.toHaveProperty("followUp");
   });
 });
 

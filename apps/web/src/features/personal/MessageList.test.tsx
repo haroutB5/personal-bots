@@ -792,3 +792,66 @@ it("QA (1.60.22): a note line in an archived chat is read-only, with no Undo", a
   });
   expect(JSON.stringify(renderer!.toJSON())).toContain("note-row:Saved a note: Likes tea.:live");
 });
+
+/** The owner's message the read-status line sits under. */
+const ownerMessageItem: ConversationItem = {
+  kind: "message",
+  id: "message-status-1",
+  message: {
+    id: MessageId.make("message-status-1"),
+    role: "user",
+    text: "While you are at it",
+    turnId: null,
+    streaming: false,
+    createdAt: "2026-09-14T10:00:00.000Z",
+    updatedAt: "2026-09-14T10:00:00.000Z",
+  },
+};
+
+it("labels the owner's latest message with the status it was handed", async () => {
+  stubEnvironment();
+  // The one live region under the bubble, whatever else is on screen.
+  const statusText = () =>
+    renderer!.root
+      .findAllByProps({ role: "status" })
+      .map((node) => node.children.join(""))
+      .join("|");
+  const show = async (status: "steering" | "queued" | "read" | null) => {
+    const props = {
+      ...BASE_PROPS,
+      items: [ownerMessageItem],
+      ...(status === null
+        ? {}
+        : { latestMessageStatus: { messageId: "message-status-1", status } }),
+    };
+    await act(async () => {
+      if (renderer === undefined) renderer = create(<MessageList {...props} />);
+      else renderer.update(<MessageList {...props} />);
+    });
+    return statusText();
+  };
+
+  expect(await show("steering")).toBe("Steering");
+  expect(await show("queued")).toBe("Queued");
+  expect(await show("read")).toBe("Read");
+  expect(await show(null)).toBe("");
+  // A status about another message draws nothing under this one.
+  await act(async () => {
+    renderer!.update(
+      <MessageList
+        {...BASE_PROPS}
+        items={[ownerMessageItem]}
+        latestMessageStatus={{ messageId: "another-message", status: "queued" }}
+      />,
+    );
+  });
+  expect(statusText()).toBe("");
+});
+
+it("shows no read-status line when a screen passes none (a group chat)", async () => {
+  stubEnvironment();
+  await act(async () => {
+    renderer = create(<MessageList {...BASE_PROPS} items={[ownerMessageItem]} />);
+  });
+  expect(renderer!.root.findAllByProps({ role: "status" })).toEqual([]);
+});

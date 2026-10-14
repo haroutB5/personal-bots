@@ -8,6 +8,7 @@ import {
   PersonalGroupId,
   personalReplyContext,
   ThreadId,
+  withPersonalFollowUp,
 } from "@t3tools/contracts";
 
 import {
@@ -130,6 +131,12 @@ export function OutboxFlusher(): null {
       }
     }
     try {
+      // The queue kept the choice made when the message was typed; the message
+      // carries it so the label under the bubble reads it back on any device.
+      const messageContext = withPersonalFollowUp(
+        entry.replyTo !== null ? personalReplyContext(entry.replyTo) : null,
+        entry.turn.followUp ?? undefined,
+      );
       const result = await senders.startTurn({
         environmentId: targetEnvironment,
         input: {
@@ -142,7 +149,7 @@ export function OutboxFlusher(): null {
             role: "user",
             text: entry.sendText,
             attachments: uploaded ?? [],
-            ...(entry.replyTo !== null ? { context: personalReplyContext(entry.replyTo) } : {}),
+            ...(messageContext !== null ? { context: messageContext } : {}),
           },
           modelSelection: entry.turn.modelSelection,
           ...(entry.turn.titleSeed !== null ? { titleSeed: entry.turn.titleSeed } : {}),

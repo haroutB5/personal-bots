@@ -19,6 +19,7 @@ import {
   type PersonalReplyQuote,
   type ThreadId,
   type ThreadTurnFollowUp,
+  withPersonalFollowUp,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import { ArrowUp, CircleAlert, CircleDashed, FileText, Plus, Square, X } from "lucide-react";
@@ -803,6 +804,14 @@ export function PersonalComposer({
       // A dropped connection throws rather than returning a failure, and that
       // is the case worth retrying most, so it is folded in here.
       const commandId = CommandId.make(outboxCommandId(messageId));
+      // What this send is, on the message itself: the reply's quote, and the
+      // "Queue after this turn" choice when the hold menu asked for it. A plain
+      // tap stores no follow-up record, because absent is the contract's steer,
+      // and the label under the bubble says "Steering" for it.
+      const messageContext = withPersonalFollowUp(
+        quote !== null ? personalReplyContext(quote) : null,
+        followUp,
+      );
       const attempt = async (): Promise<{
         readonly result: { readonly _tag: string };
         readonly outcome: SendOutcome;
@@ -829,7 +838,7 @@ export function PersonalComposer({
                 role: "user",
                 text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
                 attachments: uploaded,
-                ...(quote !== null ? { context: personalReplyContext(quote) } : {}),
+                ...(messageContext !== null ? { context: messageContext } : {}),
               },
               modelSelection: chatTurnModelSelection(botModelSelection, thread.modelSelection),
               titleSeed,

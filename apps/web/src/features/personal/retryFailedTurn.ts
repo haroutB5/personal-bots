@@ -1,12 +1,13 @@
 import { useCallback, useState } from "react";
 
-import type {
-  ChatAttachment as ContractChatAttachment,
-  EnvironmentId,
-  MessageId,
-  ModelSelection,
-  OrchestrationMessageContext,
-  ThreadId,
+import {
+  type ChatAttachment as ContractChatAttachment,
+  type EnvironmentId,
+  type MessageId,
+  type ModelSelection,
+  type OrchestrationMessageContext,
+  readPersonalFollowUp,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 
@@ -95,6 +96,10 @@ export function buildRetryTurnInput({
   createdAt: string;
 }) {
   const first = target.attachments[0];
+  // The message re-sends the way it was sent: a "Queue after this turn" choice
+  // rides on its context, and the retried command must match it or the label
+  // under the bubble would claim a queue for a send that actually steered.
+  const followUp = readPersonalFollowUp(target.context);
   return {
     threadId,
     message: {
@@ -104,6 +109,7 @@ export function buildRetryTurnInput({
       attachments: [...target.attachments],
       ...(target.context !== undefined ? { context: target.context } : {}),
     },
+    ...(followUp !== null ? { followUp } : {}),
     modelSelection: chatTurnModelSelection(botModelSelection, thread.modelSelection),
     titleSeed: truncate(
       target.text ||

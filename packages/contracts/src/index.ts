@@ -37,6 +37,7 @@ export * from "./personalChatNotices.ts";
 export * from "./personalPerformance.ts";
 export * from "./personalGroups.ts";
 export * from "./personalReply.ts";
+export * from "./personalFollowUp.ts";
 export * from "./personalSecrets.ts";
 export * from "./personalConnections.ts";
 export * from "./personalCreateApp.ts";

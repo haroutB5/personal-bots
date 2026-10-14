@@ -3,7 +3,9 @@ import {
   MessageId,
   TurnId,
   type OrchestrationLatestTurn,
+  type OrchestrationMessageContext,
   type OrchestrationThreadActivity,
+  withPersonalFollowUp,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -15,7 +17,12 @@ import { deriveLatestMessageReadStatus, USER_MESSAGE_DELIVERED_KIND } from "./me
 
 const at = (seconds: number) => new Date(Date.UTC(2026, 8, 27, 10, 0, seconds)).toISOString();
 
-function message(id: string, role: "user" | "assistant", seconds: number): ConversationItem {
+function message(
+  id: string,
+  role: "user" | "assistant",
+  seconds: number,
+  context?: OrchestrationMessageContext,
+): ConversationItem {
   const chat: ChatMessage = {
     id: MessageId.make(id),
     role,
@@ -24,8 +31,14 @@ function message(id: string, role: "user" | "assistant", seconds: number): Conve
     streaming: false,
     createdAt: at(seconds),
     updatedAt: at(seconds),
+    ...(context !== undefined ? { context } : {}),
   } as ChatMessage;
   return { kind: "message", id, message: chat };
+}
+
+/** A "Queue after this turn" send, exactly as the composer writes it. */
+function queuedMessage(id: string, seconds: number): ConversationItem {
+  return message(id, "user", seconds, withPersonalFollowUp(null, "queue") ?? undefined);
 }
 
 function delivered(messageId: string, seconds: number): OrchestrationThreadActivity {
@@ -70,7 +83,7 @@ const completedTurn: OrchestrationLatestTurn = {
 };
 
 describe("deriveLatestMessageReadStatus", () => {
-  it("shows Queued for a message sent while the bot was busy, then Read once delivered", () => {
+  it("shows Steering for a plain mid-turn send, then Read once delivered", () => {
     const items = [
       message("m1", "user", 0),
       message("a1", "assistant", 5),
@@ -78,15 +91,58 @@ describe("deriveLatestMessageReadStatus", () => {
     ];
     const busy = { items, busy: true, latestTurn: runningTurn(1) };
 
+    // A plain tap steers: absent `followUp` is the contract's default.
     expect(deriveLatestMessageReadStatus({ ...busy, activities: [] })).toEqual({
       messageId: "m2",
-      status: "queued",
+      status: "steering",
     });
     // The Claude steer path: the CLI folds it in at the next tool result.
     expect(deriveLatestMessageReadStatus({ ...busy, activities: [delivered("m2", 30)] })).toEqual({
       messageId: "m2",
       status: "read",
     });
+  });
+
+  it("shows Queued only for a send that explicitly asked to wait", () => {
+    const items = [
+      message("m1", "user", 0),
+      message("a1", "assistant", 5),
+      queuedMessage("m2", 20),
+    ];
+    const busy = { items, busy: true, latestTurn: runningTurn(1) };
+
+    expect(deriveLatestMessageReadStatus({ ...busy, activities: [] })).toEqual({
+      messageId: "m2",
+      status: "queued",
+    });
+    // The queued message is its own turn once the running one ends: Read.
+    expect(deriveLatestMessageReadStatus({ ...busy, activities: [delivered("m2", 30)] })).toEqual({
+      messageId: "m2",
+      status: "read",
+    });
+  });
+
+  it("reads the queue choice back after a reload, from the message alone", () => {
+    // Only the persisted transcript and activities exist: the marker rides on
+    // the message's context, so nothing device-local is needed.
+    const items = [message("m1", "user", 0), queuedMessage("m2", 20)];
+    expect(
+      deriveLatestMessageReadStatus({
+        items,
+        activities: [],
+        busy: true,
+        latestTurn: runningTurn(1),
+      }),
+    ).toEqual({ messageId: "m2", status: "queued" });
+    // A plain steer is the other side of the same reload: no marker, Steering.
+    expect(
+      deriveLatestMessageReadStatus({
+        items: [message("m1", "user", 0), message("m2", "user", 20)],
+        activities: [],
+        busy: true,
+        latestTurn: runningTurn(1),
+      }),
+    ).toEqual({ messageId: "m2", status: "steering" });
   });
 
   it("does not flip to Read on bot output unrelated to the message", () => {
@@ -104,7 +160,7 @@ describe("deriveLatestMessageReadStatus", () => {
         busy: true,
         latestTurn: runningTurn(1),
       }),
-    ).toEqual({ messageId: "m2", status: "queued" });
+    ).toEqual({ messageId: "m2", status: "steering" });
   });
 
   it("goes straight to Read for an idle send that starts its own turn", () => {
