@@ -141,6 +141,8 @@ const makeDeepSeekConfig = (overrides: Partial<DeepSeekSettings>): DeepSeekSetti
   binaryPath: "claude",
   homePath: "",
   customModels: [],
+  engine: "dsh",
+  dshRuntimePath: "",
   ...overrides,
 });
 

@@ -1,6 +1,7 @@
 import {
   botEffectiveModelSelection,
   botFallbackActive,
+  DEEPSEEK_AGENT_MODE_OPTION_ID,
   type ModelSelection,
   type PersonalBot,
   type SelectProviderOptionDescriptor,
@@ -17,6 +18,41 @@ import { getProviderModelCapabilities } from "~/providerModels";
 /** Claude calls the effort option `effort`, Codex `reasoningEffort`, OpenCode `variant`. */
 export const EFFORT_OPTION_IDS: ReadonlyArray<string> = ["effort", "reasoningEffort", "variant"];
 
+/** The option id the DeepSeek Harness engine uses for a bot's agent mode. */
+const AGENT_MODE_OPTION_ID = DEEPSEEK_AGENT_MODE_OPTION_ID;
+
+/**
+ * The agent mode suffix a label carries, or null for the default (Standard).
+ * Only a DeepSeek bot on the DeepSeek Harness engine has the option at all, so
+ * every other bot's label is unchanged.
+ *
+ * The descriptor is read here rather than through `botFormModel`, which
+ * re-exports this module's effort ids: importing it back would make a cycle.
+ */
+function agentModeSuffix(
+  selection: ModelSelection,
+  provider: ServerProvider | undefined,
+  slug: string,
+): string | null {
+  // A provider this client cannot see (not loaded, or gone) says nothing
+  // about the model, so no suffix is invented for it.
+  if (provider?.models === undefined) return null;
+  const descriptor =
+    getProviderOptionDescriptors({
+      caps: getProviderModelCapabilities(provider.models, slug, provider.driver),
+    }).find(
+      (candidate): candidate is SelectProviderOptionDescriptor =>
+        candidate.type === "select" && candidate.id === AGENT_MODE_OPTION_ID,
+    ) ?? null;
+  if (descriptor === null) return null;
+  const value = getModelSelectionStringOptionValue(selection, AGENT_MODE_OPTION_ID);
+  if (value === undefined || value.trim() === "") return null;
+  const option = descriptor.options.find((entry) => entry.id === value);
+  if (option?.isDefault === true) return null;
+  const label = option?.label ?? value;
+  return ` · ${label}`;
+}
+
 /** The model as picked and the effort chosen for it, shared by both label forms. */
 function resolveSelection(selection: ModelSelection, providers: ReadonlyArray<ServerProvider>) {
   const slug = selection.model.trim();
@@ -30,7 +66,14 @@ function resolveSelection(selection: ModelSelection, providers: ReadonlyArray<Se
   const value =
     effortId === undefined ? undefined : getModelSelectionStringOptionValue(selection, effortId);
   const effort = value === undefined || value.trim() === "" ? undefined : value;
-  return { slug, provider, listedName, effortId, effort };
+  return {
+    slug,
+    provider,
+    listedName,
+    effortId,
+    effort,
+    agentMode: agentModeSuffix(selection, provider, slug),
+  };
 }
 
 /**
@@ -47,9 +90,10 @@ export function botModelLabel(
 ): string | null {
   const resolved = resolveSelection(selection, providers);
   if (resolved === null) return null;
-  const { slug, provider, listedName, effortId, effort } = resolved;
+  const { slug, provider, listedName, effortId, effort, agentMode } = resolved;
+  const mode = agentMode ?? "";
   const name = (listedName ?? slug).replace(/^Claude\s+/, "");
-  if (effort === undefined) return name;
+  if (effort === undefined) return `${name}${mode}`;
   const optionLabel =
     provider?.models === undefined
       ? undefined
@@ -61,7 +105,7 @@ export function botModelLabel(
               descriptor.type === "select" && descriptor.id === effortId,
           )
           ?.options.find((option) => option.id === effort)?.label;
-  return `${name} ${(optionLabel ?? effort).toLocaleLowerCase()}`;
+  return `${name} ${(optionLabel ?? effort).toLocaleLowerCase()}${mode}`;
 }
 
 /** One or two characters per effort, so the label fits the pinned tile. */
@@ -105,9 +149,12 @@ export function botModelShortLabel(
     resolved.listedName === undefined
       ? resolved.slug
       : shortModelName(resolved.listedName) || resolved.slug;
-  const abbreviation =
-    resolved.effort === undefined ? undefined : EFFORT_ABBREVIATIONS[resolved.effort];
-  return abbreviation === undefined ? name : `${name} · ${abbreviation}`;
+  const effort = resolved.effort;
+  const mode = resolved.agentMode ?? "";
+  if (effort === undefined) return `${name}${mode}`;
+  const abbreviation = EFFORT_ABBREVIATIONS[effort];
+  if (abbreviation === undefined) return `${name}${mode}`;
+  return `${name} · ${abbreviation}${mode}`;
 }
 
 /** The word the short label ends with while a bot runs on its fallback model. */

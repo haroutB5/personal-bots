@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -15,6 +17,16 @@ import type * as AcpSchema from "effect-acp/schema";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+/**
+ * The DeepSeek Harness profile: the capabilities, session shape, errors and
+ * the exact prompt/turn event order recorded from dsh 0.2.0-rc.2
+ * (`design/hbots/dsh-harness/probe/out/events-run1.jsonl`). It does NOT
+ * advertise `loadSession`, and it refuses a second prompt while one is in
+ * flight, both of which the adapter relies on.
+ */
+const dshProfile = process.env.T3_ACP_DSH_PROFILE === "1";
+/** The JSON-RPC error text a dsh prompt fails with, when the test sets one. */
+const dshPromptError = process.env.T3_ACP_DSH_PROMPT_ERROR?.trim() || undefined;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
 const emitInterleavedAssistantToolCalls =
@@ -76,6 +88,9 @@ let currentModeId = antigravityProfile ? "default" : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
+// Starts away from the effort hbots sends, so the dsh profile always exercises
+// `session/set_config_option` rather than a no-op match.
+let dshReasoningEffort = "low";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
@@ -372,6 +387,62 @@ const program = Effect.gen(function* () {
   const resumeRelease = yield* Deferred.make<void>();
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  // The dsh profile's own turn state: one prompt in flight at a time, and the
+  // cancel that settles the running one.
+  let dshPromptInFlight = false;
+  let dshPromptCount = 0;
+  const dshCancelRequested = yield* Deferred.make<void>();
+  const dshSessionIds = new Set<string>([sessionId]);
+  // The long tool call the second recorded prompt starts, so the cancel can
+  // report it aborted by its own id.
+  const dshRunningToolCallId = "call_00_FI7e8UthkdOSYjYzxjtc5336";
+  // dsh's own session log: the append-only zstd-frame file the adapter's usage
+  // ledger reads. The mock writes it exactly as the real agent does, one frame
+  // per event, under the DSH_HOME the launch environment names.
+  let dshLogFile: string | undefined;
+  let dshLogSeq = 0;
+  const dshSessionHeader = () =>
+    JSON.stringify({
+      type: "session",
+      version: 4,
+      id: sessionId,
+      createdAt: Date.now(),
+      cwd: dshCwd,
+      isSeeded: false,
+      delegationDepth: 0,
+    }) as unknown as Record<string, unknown>;
+  const appendDshLog = (event: Record<string, unknown>) => {
+    if (dshLogFile === undefined) return;
+    try {
+      NodeFS.mkdirSync(NodePath.dirname(dshLogFile), { recursive: true });
+      NodeFS.appendFileSync(
+        dshLogFile,
+        NodeZlib.zstdCompressSync(Buffer.from(`${JSON.stringify(event)}\n`, "utf8")),
+      );
+    } catch {
+      // A missing log only costs the usage test, never the turn.
+    }
+  };
+  const appendDshAssistantStep = (messageId: string, usage: Record<string, number>) => {
+    dshLogSeq += 1;
+    appendDshLog({
+      type: "assistant/message",
+      seq: dshLogSeq,
+      time: Date.now(),
+      data: {
+        turn: 1,
+        step: dshLogSeq,
+        message: {
+          role: "assistant",
+          content: [],
+          source: { kind: "model", provider: "deepseek-official", model: "deepseek-flash" },
+          id: messageId,
+        },
+        usage,
+      },
+    });
+  };
+  let dshCwd = process.cwd();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -396,6 +467,21 @@ const program = Effect.gen(function* () {
       }
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+      if (dshProfile) {
+        // Verbatim from the recorded handshake. No `loadSession`, and
+        // `sessionCapabilities.resume` is what the adapter's `resumeMethod`
+        // has to use.
+        return {
+          protocolVersion: 1,
+          agentInfo: { name: "deepseek-harness-acp", version: "0.0.1" },
+          agentCapabilities: {
+            mcpCapabilities: { http: true },
+            promptCapabilities: { image: true, audio: false, embeddedContext: false },
+            sessionCapabilities: { close: {}, list: {}, resume: {} },
+          },
+          authMethods: [],
+        };
+      }
       if (antigravityProfile) {
         return {
           protocolVersion: 1,
@@ -436,8 +522,28 @@ const program = Effect.gen(function* () {
     yield* agent.handleLogout(() => Effect.succeed({}));
   }
 
-  yield* agent.handleCreateSession(() =>
+  yield* agent.handleCreateSession((request) =>
     Effect.gen(function* () {
+      if (dshProfile) {
+        // dsh has no ACP modes and no `models` list: the model is a config
+        // option, and its values are JSON strings. Its own session log starts
+        // here, next to the harness home the launch environment names.
+        dshCwd = String(request.cwd ?? process.cwd());
+        const dshHome = process.env.DSH_HOME;
+        if (dshHome) {
+          dshLogFile = NodePath.join(
+            dshHome,
+            "sessions",
+            `--${dshCwd.replace(/[\\/:]/g, "-")}--`,
+            sessionId,
+            "session.v4.jsonl.zstd",
+          );
+          NodeFS.mkdirSync(NodePath.dirname(dshLogFile), { recursive: true });
+          NodeFS.writeFileSync(dshLogFile, Buffer.alloc(0));
+          appendDshLog(dshSessionHeader());
+        }
+        return { sessionId, configOptions: dshConfigOptions() };
+      }
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
       }
@@ -450,8 +556,54 @@ const program = Effect.gen(function* () {
     }),
   );
 
+  /** dsh's config options: `model` (JSON-string values) and `reasoning_effort`. */
+  function dshConfigOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+    return [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: '["deepseek-official","deepseek-flash"]',
+        options: [
+          {
+            group: "deepseek-official",
+            name: "DeepSeek",
+            options: [
+              { value: '["deepseek-official","deepseek-flash"]', name: "DeepSeek-V41-Flash" },
+              { value: '["deepseek-official","deepseek-v4-pro"]', name: "DeepSeek-V41-Pro" },
+            ],
+          },
+        ],
+      },
+      {
+        id: "reasoning_effort",
+        name: "Reasoning effort",
+        category: "thought_level",
+        type: "select",
+        currentValue: dshReasoningEffort,
+        options: [
+          { value: "off", name: "Off" },
+          { value: "low", name: "Low" },
+          { value: "high", name: "High" },
+          { value: "max", name: "Max" },
+        ],
+      },
+    ] as ReadonlyArray<AcpSchema.SessionConfigOption>;
+  }
+
   yield* agent.handleResumeSession((request) =>
     Effect.gen(function* () {
+      if (dshProfile) {
+        // `session/resume` only: an unknown id is refused with dsh's own text,
+        // which the adapter turns into a renewed session.
+        if (!dshSessionIds.has(request.sessionId)) {
+          return yield* AcpError.AcpRequestError.invalidParams(
+            `Invalid params: session is not resumable: ${request.sessionId}`,
+          );
+        }
+        return { configOptions: dshConfigOptions() };
+      }
       yield* agent.client.sessionUpdate({
         sessionId: request.sessionId,
         update: {
@@ -496,45 +648,49 @@ const program = Effect.gen(function* () {
     });
   };
 
-  yield* agent.handleLoadSession((request) =>
-    Effect.gen(function* () {
-      const requestedSessionId = String(request.sessionId ?? sessionId);
-      if (failLoadSession) {
-        return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
-      }
-      if (hangLoadSessionAfterReplay || delayLoadSessionAfterReplay) {
-        emitLoadReplayNotifications(requestedSessionId);
+  // dsh does not implement `session/load` at all: leaving the handler
+  // unregistered makes the library answer `-32601 Method not found`, exactly
+  // as the real agent does.
+  if (!dshProfile)
+    yield* agent.handleLoadSession((request) =>
+      Effect.gen(function* () {
+        const requestedSessionId = String(request.sessionId ?? sessionId);
+        if (failLoadSession) {
+          return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
+        }
+        if (hangLoadSessionAfterReplay || delayLoadSessionAfterReplay) {
+          emitLoadReplayNotifications(requestedSessionId);
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "user_message_chunk",
+              content: { type: "text", text: "replay-tail" },
+            },
+          });
+          yield* Effect.sleep(loadSessionDelayMs);
+          return {
+            modes: modeState(),
+            models: modelState(),
+            configOptions: configOptions(),
+          };
+        }
+        if (emitLoadReplay) {
+          emitLoadReplayNotifications(requestedSessionId);
+        }
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "user_message_chunk",
-            content: { type: "text", text: "replay-tail" },
+            content: { type: "text", text: "replay" },
           },
         });
-        yield* Effect.sleep(loadSessionDelayMs);
         return {
           modes: modeState(),
           models: modelState(),
           configOptions: configOptions(),
         };
-      }
-      if (emitLoadReplay) {
-        emitLoadReplayNotifications(requestedSessionId);
-      }
-      yield* agent.client.sessionUpdate({
-        sessionId: requestedSessionId,
-        update: {
-          sessionUpdate: "user_message_chunk",
-          content: { type: "text", text: "replay" },
-        },
-      });
-      return {
-        modes: modeState(),
-        models: modelState(),
-        configOptions: configOptions(),
-      };
-    }),
-  );
+      }),
+    );
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
@@ -593,6 +749,23 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (dshProfile) {
+        // dsh settles the running prompt ~20 ms after the cancel, and the
+        // tool the turn was running comes back failed.
+        yield* Deferred.succeed(dshCancelRequested, undefined);
+        yield* agent.client.sessionUpdate({
+          sessionId: cancelledSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: dshRunningToolCallId,
+            status: "failed",
+            content: [
+              { type: "content", content: { type: "text", text: "Error: tool call aborted" } },
+            ],
+          },
+        });
+        return;
+      }
       if (completeFirstPromptOnCancel) {
         yield* Deferred.succeed(nativeCancelRequested, undefined);
         yield* agent.client.sessionUpdate({
@@ -622,6 +795,129 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+
+      if (dshProfile) {
+        // One prompt in flight per session, refused with dsh's own text.
+        if (dshPromptInFlight) {
+          return yield* AcpError.AcpRequestError.invalidParams(
+            "Invalid params: a prompt is already in flight for this session",
+          );
+        }
+        dshPromptInFlight = true;
+        dshPromptCount += 1;
+        const promptText = (request.prompt ?? [])
+          .map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
+          .join("\n");
+        try {
+          if (dshPromptError !== undefined) {
+            return yield* AcpError.AcpRequestError.internalError(dshPromptError);
+          }
+          const update = (payload: Parameters<typeof agent.client.sessionUpdate>[0]["update"]) =>
+            agent.client.sessionUpdate({ sessionId: requestedSessionId, update: payload });
+          if (/start-sleep/i.test(promptText)) {
+            // The recorded cancelled turn: a thought, a context reading, then
+            // a `pwsh` tool that runs until the client cancels.
+            yield* update({
+              sessionUpdate: "agent_thought_chunk",
+              messageId: "8c16fb18-4e56-4c16-a9b0-a0301239a625",
+              content: { type: "text", text: "The user wants me to run a long command." },
+            });
+            yield* update({ sessionUpdate: "usage_update", used: 7050, size: 1000000 });
+            yield* update({
+              sessionUpdate: "tool_call",
+              toolCallId: dshRunningToolCallId,
+              title: "pwsh",
+              kind: "other",
+              status: "in_progress",
+              rawInput: { command: promptText },
+            });
+            appendDshAssistantStep("8c16fb18-4e56-4c16-a9b0-a0301239a625", {
+              inputTokens: 6600,
+              outputTokens: 30,
+              cacheReadTokens: 420,
+              cacheWriteTokens: 0,
+              totalTokens: 7050,
+            });
+            yield* Deferred.await(dshCancelRequested);
+            return { stopReason: "cancelled" };
+          }
+          // The recorded turn in `events-run1.jsonl`: three committed model
+          // steps, one `usage_update` each, an MCP call and a skill.
+          yield* update({
+            sessionUpdate: "agent_message_chunk",
+            messageId: "cb8ff6d0-2379-4301-bc1a-4e98693bc0f1",
+            content: { type: "text", text: "I'll do these in order." },
+          });
+          yield* update({ sessionUpdate: "usage_update", used: 6652, size: 1000000 });
+          yield* update({
+            sessionUpdate: "tool_call",
+            toolCallId: "call_00_ET_2cnwa0tA6yX29u4h9fdB8740",
+            title: "mcp__t3-code__save_memory",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { text: "hello dsh" },
+          });
+          appendDshAssistantStep("cb8ff6d0-2379-4301-bc1a-4e98693bc0f1", {
+            inputTokens: 6215,
+            outputTokens: 53,
+            cacheReadTokens: 384,
+            cacheWriteTokens: 0,
+            totalTokens: 6652,
+          });
+          yield* update({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call_00_ET_2cnwa0tA6yX29u4h9fdB8740",
+            status: "completed",
+            content: [{ type: "content", content: { type: "text", text: "ECHO:HELLO DSH" } }],
+          });
+          yield* update({
+            sessionUpdate: "agent_thought_chunk",
+            messageId: "93dc4425-a06a-4922-be77-70bd2df55914",
+            content: { type: "text", text: "Now load the skill probe-falcon." },
+          });
+          yield* update({ sessionUpdate: "usage_update", used: 6722, size: 1000000 });
+          yield* update({
+            sessionUpdate: "tool_call",
+            toolCallId: "call_00_Lre5pY2iDgyWaz8Z2Y1e9700",
+            title: "skill",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { name: "probe-falcon" },
+          });
+          appendDshAssistantStep("93dc4425-a06a-4922-be77-70bd2df55914", {
+            inputTokens: 6300,
+            outputTokens: 20,
+            cacheReadTokens: 402,
+            cacheWriteTokens: 0,
+            totalTokens: 6722,
+          });
+          yield* update({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call_00_Lre5pY2iDgyWaz8Z2Y1e9700",
+            status: "completed",
+            content: [{ type: "content", content: { type: "text", text: "<skill_content/>" } }],
+          });
+          yield* update({
+            sessionUpdate: "agent_message_chunk",
+            messageId: "ee7650ea-9c90-40aa-a418-e7700f3a9dd6",
+            content: {
+              type: "text",
+              text: "Probey\nECHO:HELLO DSH\nPELICAN\nFALCON-42\nOVER",
+            },
+          });
+          yield* update({ sessionUpdate: "usage_update", used: 6863, size: 1000000 });
+          appendDshAssistantStep("ee7650ea-9c90-40aa-a418-e7700f3a9dd6", {
+            inputTokens: 6400,
+            outputTokens: 40,
+            cacheReadTokens: 423,
+            cacheWriteTokens: 0,
+            totalTokens: 6863,
+          });
+          return { stopReason: "end_turn" };
+        } finally {
+          dshPromptInFlight = false;
+        }
+      }
 
       if (completeFirstPromptOnCancel && promptCount === 1) {
         yield* agent.client.sessionUpdate({

@@ -794,9 +794,37 @@ export const DeepSeekSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    engine: Schema.Literals(["dsh", "claude-code"]).pipe(
+      Schema.withDecodingDefault(Effect.succeed("dsh" as const)),
+      Schema.annotateKey({
+        title: "Engine",
+        description:
+          "DeepSeek Harness runs DeepSeek bots on DeepSeek's own agent harness. Claude Code runs them on the Claude Agent SDK against DeepSeek's Anthropic-compatible endpoint. A change applies from the next session; an open chat carries over from its text history.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "dsh", label: "DeepSeek Harness (dsh)" },
+            { value: "claude-code", label: "Claude Code" },
+          ],
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    dshRuntimePath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Harness path",
+        description:
+          "Where the DeepSeek Harness runtime is installed. Empty uses the pinned install under your home directory.",
+        providerSettingsForm: {
+          placeholder: "~/.personal-bots/runtimes/dsh-0.2.0-rc.2",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath"],
+    order: ["engine", "dshRuntimePath", "binaryPath", "homePath"],
   },
 );
 export type DeepSeekSettings = typeof DeepSeekSettings.Type;

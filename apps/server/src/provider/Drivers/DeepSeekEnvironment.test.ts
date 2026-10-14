@@ -22,7 +22,7 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
       Effect.gen(function* () {
         expect(DEEPSEEK_ANTHROPIC_BASE_URL).toBe("https://api.deepseek.com/anthropic");
         const env = yield* makeDeepSeekEnvironment(
-          { homePath: "" },
+          { engine: "dsh", homePath: "" },
           { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key", PATH: "/usr/bin" },
         );
         expect(env.ANTHROPIC_BASE_URL).toBe("https://api.deepseek.com/anthropic");
@@ -33,7 +33,7 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
     it.effect("replaces ambient endpoint and model overrides so they cannot reroute us", () =>
       Effect.gen(function* () {
         const env = yield* makeDeepSeekEnvironment(
-          { homePath: "" },
+          { engine: "dsh", homePath: "" },
           {
             ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key",
             ANTHROPIC_BASE_URL: "https://evil.example.com",
@@ -53,7 +53,7 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
         // DeepSeek Claude Code guide pins every one; ambient machine values
         // must not survive.
         const env = yield* makeDeepSeekEnvironment(
-          { homePath: "" },
+          { engine: "dsh", homePath: "" },
           {
             ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key",
             ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
@@ -80,16 +80,52 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
 
     it.effect("still pins the model environment when the base env is empty", () =>
       Effect.gen(function* () {
-        const env = yield* makeDeepSeekEnvironment({ homePath: "" }, {});
+        const env = yield* makeDeepSeekEnvironment({ engine: "dsh", homePath: "" }, {});
         expect(env.ANTHROPIC_MODEL).toBe("deepseek-flash[1m]");
         expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe("deepseek-flash");
+      }),
+    );
+
+    it.effect("quiets the Claude CLI's own background traffic on the Claude engine", () =>
+      Effect.gen(function* () {
+        // The CLI opens api.anthropic.com (tunnelled, so unreadable) even with
+        // DeepSeek as the model endpoint. Nothing on this engine needs that
+        // host, so both documented switches are set.
+        const env = yield* makeDeepSeekEnvironment(
+          { engine: "claude-code", homePath: "" },
+          { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+        );
+        expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe("1");
+        expect(env.DISABLE_TELEMETRY).toBe("1");
+      }),
+    );
+
+    it.effect("the harness engine gets no Claude CLI switches", () =>
+      Effect.gen(function* () {
+        const env = yield* makeDeepSeekEnvironment(
+          { engine: "dsh", homePath: "" },
+          { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key" },
+        );
+        expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined();
+        expect(env.DISABLE_TELEMETRY).toBeUndefined();
+      }),
+    );
+
+    it.effect("the kill switch quiets the CLI too, because the CLI is what runs", () =>
+      Effect.gen(function* () {
+        const env = yield* makeDeepSeekEnvironment(
+          { engine: "dsh", homePath: "" },
+          { ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key", PERSONAL_DEEPSEEK_ENGINE: "claude-code" },
+        );
+        expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe("1");
+        expect(env.DISABLE_TELEMETRY).toBe("1");
       }),
     );
 
     it.effect("strips secret placeholders and unrelated provider tokens", () =>
       Effect.gen(function* () {
         const env = yield* makeDeepSeekEnvironment(
-          { homePath: "" },
+          { engine: "dsh", homePath: "" },
           {
             ANTHROPIC_AUTH_TOKEN: "fake-deepseek-key",
             PB_SECRET_SOMETHING: "must-not-leak",
@@ -118,7 +154,7 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
         const path = yield* Path.Path;
         const resolved = path.resolve(path.join(NodeOS.homedir(), ".claude-t3-deepseek"));
         expect(yield* resolveDeepSeekHomePath({ homePath: "" }, {})).toBe(resolved);
-        const env = yield* makeDeepSeekEnvironment({ homePath: "" }, {});
+        const env = yield* makeDeepSeekEnvironment({ engine: "dsh", homePath: "" }, {});
         expect(env.CLAUDE_CONFIG_DIR).toBe(resolved);
         expect(resolved).not.toBe(path.resolve(path.join(NodeOS.homedir(), ".claude")));
       }),
