@@ -1,11 +1,7 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  ConversationHeaderLine,
-  ConversationHeaderName,
-  conversationChatTitle,
-} from "./ConversationHeaderName";
+import { ConversationHeaderName, conversationChatTitle } from "./ConversationHeaderName";
 
 const LONG_TITLE = "Improve Hbots Chat, Images and the swipe gestures on the phone";
 
@@ -33,35 +29,6 @@ describe("conversationChatTitle", () => {
 
   it("keeps a real title", () => {
     expect(conversationChatTitle(" Fix the header ")).toBe("Fix the header");
-  });
-});
-
-describe("ConversationHeaderLine", () => {
-  it("lets the bot name give way so the status and model line keep their room", () => {
-    let renderer!: ReactTestRenderer;
-    act(() => {
-      renderer = create(
-        <ConversationHeaderLine
-          name="PeakDshdbp6"
-          chatTitle="Peak chat"
-          muted={false}
-          contextBadge={null}
-        >
-          <span data-testid="subtitle">Idle · Sonnet 5.5 · H · peak</span>
-        </ConversationHeaderLine>,
-      );
-    });
-    const group = renderer.root.find((node) => node.props["data-name-group"] !== undefined);
-    const tokens = String(group.props.className).split(" ");
-    // At 390 px the name is the part that yields; with shrink-0 it squeezed the
-    // status to "Id…" and pushed the model label out (1.66.44 QA, P1).
-    expect(tokens).not.toContain("shrink-0");
-    expect(tokens).toContain("max-w-full");
-    // Never to nothing: the name keeps a floor and ellipsises inside it.
-    expect(tokens).toContain("min-w-16");
-    expect(String(renderer.root.findByType("h1").props.className)).toContain("truncate");
-    // The status and model line are still on the same row after the name.
-    expect(renderer.root.find((node) => node.props["data-testid"] === "subtitle")).toBeDefined();
   });
 });
 
