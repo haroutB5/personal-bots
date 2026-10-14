@@ -166,13 +166,13 @@ describe("the DeepSeek card's status", () => {
     models: [],
     slashCommands: [],
     skills: [],
-    message: "Add your DeepSeek API key in this instance's settings.",
+    message: "Set it in this instance's settings. Keys come from platform.deepseek.com.",
   };
 
   it("asks for the key instead of reporting an authentication failure", () => {
     expect(getProviderSummary(provider)).toEqual({
       headline: "Add your DeepSeek API key",
-      detail: "Add your DeepSeek API key in this instance's settings.",
+      detail: "Set it in this instance's settings. Keys come from platform.deepseek.com.",
     });
   });
 

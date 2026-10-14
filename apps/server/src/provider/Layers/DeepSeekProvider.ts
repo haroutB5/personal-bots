@@ -70,11 +70,12 @@ const BALANCE_FAILURE_NOTES: Record<DeepSeekBalanceFailureReason, string> = {
 
 /**
  * What the DeepSeek card says when the key is not set yet. A setup step, not
- * a failure: plain words pointing at the key field in this provider's
- * settings, never the environment-variable name the field hides.
+ * a failure, and it never repeats the card's own "Add your DeepSeek API key"
+ * headline: plain words pointing at the key field, never the variable name the
+ * field hides.
  */
 export const DEEPSEEK_KEY_MISSING_MESSAGE =
-  "Add your DeepSeek API key in this instance's settings. Keys come from platform.deepseek.com.";
+  "Set it in this instance's settings. Keys come from platform.deepseek.com.";
 
 /**
  * One balance read as the published contract shape. A failed read keeps the

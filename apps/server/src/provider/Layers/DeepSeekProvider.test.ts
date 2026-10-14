@@ -336,7 +336,7 @@ describe("DeepSeekProvider", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.auth.status).toBe("unauthenticated");
       expect(snapshot.message).toBe(
-        "Add your DeepSeek API key in this instance's settings. Keys come from platform.deepseek.com.",
+        "Set it in this instance's settings. Keys come from platform.deepseek.com.",
       );
       expect(snapshot.message).not.toMatch(/ANTHROPIC_AUTH_TOKEN/);
     }).pipe(Effect.provide(NodeServices.layer)),
