@@ -33,13 +33,18 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { classifyProviderError } from "../../personal/tasks/taskLimitPolicy.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resetBotProviderProcesses } from "../botProviderProcesses.ts";
 import { isMissingProviderConversationText } from "../missingProviderConversation.ts";
 import { DSH_PINNED_VERSION, makeDshAcpRuntime } from "../acp/DshAcpSupport.ts";
-import { makeDeepSeekDshAdapter, translateDshFailure } from "./DeepSeekDshAdapter.ts";
+import {
+  DSH_MAX_INLINE_IMAGE_BYTES,
+  makeDeepSeekDshAdapter,
+  translateDshFailure,
+} from "./DeepSeekDshAdapter.ts";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -148,6 +153,22 @@ const makeHarness = Effect.fn("makeDshHarness")(function* (cwd: string, options?
       while ((yield* Ref.get(seen)).length < count) yield* realSleep(10);
       return yield* Ref.get(seen);
     });
+  /**
+   * Waits for `count` settled turns before reading the event list. Reading it
+   * as soon as the second prompt went out loses the race on a loaded machine:
+   * the mock logs the request before its answer settles the turn. The bound is
+   * counted in real sleeps, not the test clock, like every other wait here.
+   */
+  const waitForTurnCompletions = (count: number) =>
+    Effect.gen(function* () {
+      const completed = (events: ReadonlyArray<ProviderRuntimeEvent>) =>
+        events.filter((event) => event.type === "turn.completed").length;
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        if (completed(yield* Ref.get(seen)) >= count) break;
+        yield* realSleep(10);
+      }
+      return yield* Ref.get(seen);
+    });
   const waitForPromptCount = (count: number) =>
     Effect.gen(function* () {
       while (requests().filter((request) => request.method === "session/prompt").length < count) {
@@ -162,6 +183,7 @@ const makeHarness = Effect.fn("makeDshHarness")(function* (cwd: string, options?
     eventTypes,
     seen: () => Ref.get(seen),
     waitForTurnCompleted,
+    waitForTurnCompletions,
     waitForEvents,
     waitForPromptCount,
   };
@@ -182,6 +204,26 @@ const startInput = (overrides: Partial<ProviderSessionStartInput> = {}) =>
     runtimeMode: "full-access",
     ...overrides,
   });
+
+/** Writes one image into the test data root's attachments folder and returns its metadata. */
+const writeImageAttachment = (input: {
+  readonly attachmentsDir: string;
+  readonly id: string;
+  readonly name: string;
+  readonly bytes: Uint8Array;
+}) => {
+  const attachment = {
+    type: "image" as const,
+    id: input.id,
+    name: input.name,
+    mimeType: "image/png",
+    sizeBytes: input.bytes.byteLength,
+  };
+  const filePath = NodePath.join(input.attachmentsDir, attachmentRelativePath(attachment)!);
+  NodeFS.mkdirSync(NodePath.dirname(filePath), { recursive: true });
+  NodeFS.writeFileSync(filePath, input.bytes);
+  return attachment;
+};
 
 const layer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-dsh-adapter-test-",
@@ -333,7 +375,7 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       yield* harness.adapter.interruptTurn(threadId);
       yield* Fiber.join(owner).pipe(Effect.ignore);
       yield* harness.waitForPromptCount(2);
-      yield* harness.waitForEvents(2);
+      yield* harness.waitForTurnCompletions(2);
       const types = yield* harness.eventTypes;
       expect(types.filter((type) => type === "turn.started").length).toBe(2);
       expect(types.filter((type) => type === "turn.completed").length).toBe(2);
@@ -485,6 +527,97 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
     }),
   );
 
+  it("the harness's own image validator overflows on the payload of the live photo", () => {
+    // The exact check `@deepseek-ai/dsh-acp` 0.2.0-rc.2 runs in `decodeImage`
+    // before it accepts an inline image. V8's regexp engine carries its own
+    // stack and walks this pattern four characters at a time, so a payload
+    // past ~4.47 M characters throws "RangeError: Maximum call stack size
+    // exceeded" (measured on Node 24.18.1: 4,472,820 characters pass,
+    // 4,472,824 throw). dsh reports that as "Internal error: prompt was not
+    // queued: Maximum call stack size exceeded" and the turn dies before the
+    // model is asked. The photo that failed on 14 Oct was 8,449,624 bytes.
+    const canonicalBase64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+    expect(() => canonicalBase64.test(Buffer.alloc(8_449_624).toString("base64"))).toThrow(
+      RangeError,
+    );
+    // The limit this adapter holds an inline image to passes the same check.
+    expect(canonicalBase64.test(Buffer.alloc(DSH_MAX_INLINE_IMAGE_BYTES).toString("base64"))).toBe(
+      true,
+    );
+  });
+
+  it.effect("refuses an image the harness cannot validate, instead of a stack-overflow turn", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { attachmentsDir } = yield* ServerConfig;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      const harness = yield* makeHarness(cwd);
+      yield* harness.adapter.startSession(startInput({ cwd }));
+      const attachment = writeImageAttachment({
+        attachmentsDir,
+        id: "dsh-oversized-12345678-1234-1234-1234-123456789abc",
+        name: "seiko.png",
+        bytes: Buffer.alloc(DSH_MAX_INLINE_IMAGE_BYTES + 1, 7),
+      });
+
+      const failure = yield* Effect.flip(
+        harness.adapter.sendTurn({
+          threadId,
+          input: "How much is this?",
+          attachments: [attachment],
+          modelSelection: { instanceId, model: "deepseek-flash" },
+        }),
+      );
+      expect(failure).toMatchObject({
+        _tag: "ProviderAdapterRequestError",
+        detail:
+          'DeepSeek can\'t read this image "seiko.png" (2.0 MB): the DeepSeek engine takes ' +
+          "images up to 2.0 MB. Send a smaller photo, or send it to a Claude bot.",
+      });
+      expect(JSON.stringify(failure)).not.toContain("Maximum call stack");
+      // The runtime never sees the payload it would have overflowed on.
+      expect(harness.requests().filter((request) => request.method === "session/prompt")).toEqual(
+        [],
+      );
+      yield* harness.adapter.stopSession(threadId);
+      resetBotProviderProcesses();
+    }),
+  );
+
+  it.effect("sends a small image inline, the way a turn always has", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { attachmentsDir } = yield* ServerConfig;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      const harness = yield* makeHarness(cwd);
+      yield* harness.adapter.startSession(startInput({ cwd }));
+      const attachment = writeImageAttachment({
+        attachmentsDir,
+        id: "dsh-small-12345678-1234-1234-1234-123456789abc",
+        name: "small.png",
+        bytes: Uint8Array.from([1, 2, 3, 4]),
+      });
+
+      yield* harness.adapter.sendTurn({
+        threadId,
+        input: "What's in this image?",
+        attachments: [attachment],
+        modelSelection: { instanceId, model: "deepseek-flash" },
+      });
+      yield* harness.waitForPromptCount(1);
+      const prompt = harness.requests().find((request) => request.method === "session/prompt");
+      const blocks = (prompt?.params as { prompt?: ReadonlyArray<unknown> } | undefined)?.prompt;
+      expect(blocks).toContainEqual({
+        type: "image",
+        data: "AQIDBA==",
+        mimeType: "image/png",
+      });
+      yield* harness.waitForTurnCompleted;
+      yield* harness.adapter.stopSession(threadId);
+      resetBotProviderProcesses();
+    }),
+  );
+
   it.effect("translates the failure wordings dsh reports", () =>
     Effect.sync(() => {
       expect(translateDshFailure("Internal error: turn failed: Insufficient Balance")).toEqual({
@@ -501,6 +634,16 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       expect(translateDshFailure("Internal error: turn failed: boom").text).toBe(
         "DeepSeek turn failed: boom",
       );
+      // The live failure of 14 Oct: dsh's own stack overflow, with our stack
+      // trace under it. It never reaches the chat in those words.
+      const overflow = translateDshFailure(
+        "Error: Internal error: prompt was not queued: Maximum call stack size exceeded\n" +
+          "    at decodeJsonError (file:///C:/.../bin.mjs:1:1)\n" +
+          "    at DeepSeekDshAdapter.beginTurnLocked (file:///C:/.../bin.mjs:2:2)",
+      );
+      expect(overflow.text).toContain("ran out of stack");
+      expect(overflow.text).not.toContain("Maximum call stack");
+      expect(overflow.rateLimited).toBe(false);
       expect(translateDshFailure("something else").rateLimited).toBe(false);
     }),
   );
