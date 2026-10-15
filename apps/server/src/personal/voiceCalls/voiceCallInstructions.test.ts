@@ -42,6 +42,13 @@ describe("voiceCallSystemInstruction", () => {
     }),
   );
 
+  it.effect("names the speech limits, choices blocks included", () =>
+    Effect.sync(() => {
+      const text = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
+      expect(text).toContain("no markdown, no code, no file paths, no links, no choices blocks");
+    }),
+  );
+
   it.effect("carries the bot's own saved personality and the owner's rules", () =>
     Effect.sync(() => {
       const text = voiceCallSystemInstruction(base);
