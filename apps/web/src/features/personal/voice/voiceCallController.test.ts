@@ -50,6 +50,7 @@ const SESSION: VoiceCallSession = {
     displayName: "Harout",
     botStatus: "Idle",
     botStatusDetail: "",
+    runningTaskTitles: [],
     recentMessages: [],
     callouts: [],
   },
@@ -102,6 +103,12 @@ function harness(overrides: { startFails?: boolean; connected?: boolean } = {}):
     async finish(input: VoiceCallFinishInput) {
       finishes.push(input);
       return { ok: true, value: { ok: true } } as const;
+    },
+    async lookupMemory() {
+      return {
+        ok: true,
+        value: { entries: [{ kind: "note", content: "Harout likes tennis" }], note: "" },
+      } as const;
     },
   } satisfies VoiceCallPort & {
     readonly sent: { text: string }[];
@@ -322,6 +329,46 @@ describe("send_to_bot and the Undo card", () => {
     ]);
     vi.advanceTimersByTime(VOICE_UNDO_MS * 2);
     expect(test.api.sent).toHaveLength(0);
+  });
+
+  it("reads his own saved notes for lookup_memory without posting anything", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    socket.receive({
+      toolCall: {
+        functionCalls: [{ id: "m-1", name: "lookup_memory", args: { query: "favourite sport" } }],
+      },
+    });
+    // The pill says what is happening while the lookup runs.
+    expect(test.last().state.pill).toBe("checking_memory");
+    await vi.advanceTimersByTimeAsync(0);
+    const answers = (
+      socket.sentOf("toolResponse") as unknown as ReadonlyArray<{
+        toolResponse: { functionResponses: ReadonlyArray<{ id: string; response: unknown }> };
+      }>
+    ).flatMap((frame) => frame.toolResponse.functionResponses);
+    expect(answers).toEqual([
+      {
+        id: "m-1",
+        name: "lookup_memory",
+        response: { entries: [{ kind: "note", content: "Harout likes tennis" }] },
+        scheduling: "INTERRUPT",
+      },
+    ]);
+    // Nothing was posted and the pill goes back to listening.
+    expect(test.api.sent).toHaveLength(0);
+    expect(test.last().state.pill).toBe("listening");
+  });
+
+  it("says Searching while Google's own search grounds an answer", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    socket.receive({
+      serverContent: { groundingMetadata: { webSearchQueries: ["weather in Croydon"] } },
+    });
+    expect(test.last().state.pill).toBe("searching");
+    socket.receive({ serverContent: { turnComplete: true } });
+    expect(test.last().state.pill).toBe("listening");
   });
 
   it("answers bot_status and latest_reply from the chat, never inventing work", async () => {

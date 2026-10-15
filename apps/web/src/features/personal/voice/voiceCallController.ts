@@ -63,6 +63,20 @@ export interface VoiceCallPort {
     readonly text: string;
   }): Promise<VoiceApiResult<{ readonly messageId: string }>>;
   finish(input: VoiceCallFinishInput): Promise<VoiceApiResult<{ readonly ok: boolean }>>;
+  /**
+   * The voice's own fast facts: the owner's saved notes, read out on the call.
+   * Nothing is posted into the chat and there is no Undo card.
+   */
+  lookupMemory(input: {
+    readonly threadId: string;
+    readonly callId: string;
+    readonly query: string;
+  }): Promise<
+    VoiceApiResult<{
+      readonly entries: ReadonlyArray<{ readonly kind: string; readonly content: string }>;
+      readonly note: string;
+    }>
+  >;
 }
 
 /** What the engine reads about the real bot, from the chat's own subscriptions. */
@@ -319,6 +333,41 @@ export function createVoiceCallController(
   const onToolCall = (call: LiveToolCall) => {
     lastSpeechAtMs = now();
     switch (call.name) {
+      case "lookup_memory": {
+        // Fast and invisible: the pill says what is happening, nothing is
+        // posted, and the voice gets the entries to say out loud.
+        const query = typeof call.args.query === "string" ? call.args.query.trim() : "";
+        const callId = session?.callId ?? "";
+        publish({ pill: "checking_memory" });
+        void options.api
+          .lookupMemory({ threadId: options.threadId, callId, query })
+          .then((result) => {
+            if (ended) return;
+            answerTool(
+              call.id,
+              call.name,
+              result.ok
+                ? {
+                    entries: result.value.entries.slice(0, 8),
+                    ...(result.value.note.length > 0 ? { note: result.value.note } : {}),
+                  }
+                : { entries: [], note: "Memory could not be read just now." },
+              "INTERRUPT",
+            );
+            publish({ pill: state.muted ? "muted" : "listening" });
+          })
+          .catch(() => {
+            if (ended) return;
+            answerTool(
+              call.id,
+              call.name,
+              { entries: [], note: "Memory could not be read just now." },
+              "INTERRUPT",
+            );
+            publish({ pill: state.muted ? "muted" : "listening" });
+          });
+        return;
+      }
       case "send_to_bot": {
         const text = typeof call.args.text === "string" ? call.args.text.trim() : "";
         if (text.length === 0) {
@@ -461,6 +510,12 @@ export function createVoiceCallController(
           publish({ pill: state.muted ? "muted" : "listening" });
         },
         onToolCall,
+        onGrounding: ({ queries }) => {
+          // Google's own Search answered: the pill says so until the voice
+          // finishes the sentence. Nothing is posted into the chat.
+          if (ended || queries.length === 0) return;
+          publish({ pill: "searching" });
+        },
         onGoAway: () => {
           // Silent by design: shown only if the reconnect drags on.
           reconnectSinceMs ??= now();

@@ -45,7 +45,13 @@ export const LIVE_ENDPOINTS: ReadonlyArray<{ readonly name: string; readonly pat
 export const LIVE_SOCKET_OPEN = 1;
 
 /** The four tools the client declares and answers (Backend owns the names). */
-export const LIVE_TOOLS = ["send_to_bot", "bot_status", "latest_reply", "end_call"] as const;
+export const LIVE_TOOLS = [
+  "lookup_memory",
+  "send_to_bot",
+  "bot_status",
+  "latest_reply",
+  "end_call",
+] as const;
 export type LiveToolName = (typeof LIVE_TOOLS)[number];
 
 export function liveSocketUrl(path: string, token: string): string {
@@ -75,8 +81,28 @@ export function liveSetupMessage(input: {
       inputAudioTranscription: {},
       outputAudioTranscription: {},
       tools: [
+        // Google's own live Search. It answers weather, news, scores and
+        // opening times instantly, without waking the bot (Harout's spike:
+        // "what's the weather in Croydon today" used to get a blank look).
+        // Grounding metadata arrives in serverContent and is passed through.
+        { googleSearch: {} },
         {
           functionDeclarations: [
+            {
+              name: "lookup_memory",
+              description:
+                "Look up what you have saved about the owner: his own life, his things, his choices, a fact you noted earlier. Use it before guessing or searching. Returns up to 8 short entries, or nothing.",
+              parameters: {
+                type: "OBJECT",
+                properties: {
+                  query: {
+                    type: "STRING",
+                    description: "What to look for, as a few plain words.",
+                  },
+                },
+                required: ["query"],
+              },
+            },
             {
               name: "send_to_bot",
               description:
@@ -144,6 +170,11 @@ export interface LiveEvents {
   readonly onTurnComplete?: () => void;
   readonly onToolCall?: (call: LiveToolCall) => void;
   readonly onToolCallCancellation?: (ids: ReadonlyArray<string>) => void;
+  /**
+   * Google's built-in Search grounded this answer. The words the voice spoke
+   * became the query; the client only says "Searching" while it lands.
+   */
+  readonly onGrounding?: (payload: { readonly queries: ReadonlyArray<string> }) => void;
   /** Google says this connection is about to be replaced; hand back the resume handle. */
   readonly onGoAway?: (payload: { readonly handle: string | null }) => void;
   readonly onUsage?: (payload: Record<string, unknown>) => void;
@@ -356,6 +387,16 @@ export function connectLive(options: LiveClientOptions): LiveClient {
     if (content === undefined) return;
 
     if (content.interrupted === true) options.events.onInterrupted?.();
+
+    // Google's own Search grounding rides along with the answer. The client
+    // only shows that a search happened; the payload is never rendered.
+    if (content.groundingMetadata !== undefined) {
+      const grounding = content.groundingMetadata as Record<string, unknown>;
+      const queries = Array.isArray(grounding.webSearchQueries)
+        ? grounding.webSearchQueries.filter((row): row is string => typeof row === "string")
+        : [];
+      options.events.onGrounding?.({ queries });
+    }
 
     const turn = content.modelTurn as
       | { parts?: ReadonlyArray<Record<string, unknown>> }

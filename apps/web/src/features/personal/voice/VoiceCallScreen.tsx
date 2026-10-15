@@ -246,7 +246,9 @@ export function VoiceCallScreen({
                   : "bg-[var(--personal-fill-muted)] text-[var(--personal-text)]"
               }`}
             >
-              {state.status === "reconnecting" ? (
+              {state.status === "reconnecting" ||
+              state.pill === "checking_memory" ||
+              state.pill === "searching" ? (
                 <Loader2 aria-hidden="true" className="size-[18px] animate-spin" strokeWidth={2} />
               ) : state.pill === "muted" ? (
                 <MicOff aria-hidden="true" className="size-[18px]" strokeWidth={2} />

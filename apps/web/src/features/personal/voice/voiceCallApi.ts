@@ -22,6 +22,9 @@ import {
   type VoiceCallFinishInput,
   type VoiceCallFinishResult,
   type VoiceCallKeyCheckResult,
+  type VoiceCallLookupMemoryInput,
+  type VoiceCallLookupMemoryResult,
+  type VoiceCallMemoryEntry,
   type VoiceCallListResult,
   type VoiceCallRecord,
   type VoiceCallSendInput,
@@ -76,8 +79,17 @@ export const personalVoiceCallCheckKey = createEnvironmentRpcCommand(connectionA
   tag: WS_METHODS.personalVoiceCallsCheckKey,
 });
 
+/** The voice's own fast facts: the owner's saved notes, read out on a call. */
+export const personalVoiceCallLookupMemory = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-voice-calls:lookup-memory",
+  tag: WS_METHODS.personalVoiceCallsLookupMemory,
+});
+
 export type {
   VoiceCallErrorCode,
+  VoiceCallLookupMemoryInput,
+  VoiceCallLookupMemoryResult,
+  VoiceCallMemoryEntry,
   VoiceCallFinishInput,
   VoiceCallFinishResult,
   VoiceCallKeyCheckResult,
