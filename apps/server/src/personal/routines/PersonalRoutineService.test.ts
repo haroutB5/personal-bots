@@ -36,6 +36,7 @@ import * as PersonalBotService from "../PersonalBotService.ts";
 import { pushEventForTask } from "../push/PersonalPushService.ts";
 import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
+import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
 import * as PersonalRoutineService from "./PersonalRoutineService.ts";
 
 /**
@@ -1692,3 +1693,59 @@ it.effect(
       expect(listed?.notifyMode).toBe("never");
     }).pipe(Effect.provide(makeLayer())),
 );
+
+const dueDailyRoutine = (routineId: PersonalRoutineId) =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T06:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "Kraken check",
+      prompt: "Check the balance.",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    // 09:00 BST has passed: the routine is due.
+    yield* setNow("2026-09-14T08:00:10Z");
+  });
+
+it.effect(
+  "schedulers off (restored test copy): a due routine is not caught up, no task, no turn",
+  () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    const routineId = PersonalRoutineId.make("due-on-restored-copy");
+    return Effect.gen(function* () {
+      yield* dueDailyRoutine(routineId);
+      // Several ticks and a task sweep, as the 30 s loops would run them.
+      yield* tickAndDrain;
+      yield* tickAndDrain;
+      const tasks = yield* PersonalTaskService.PersonalTaskService;
+      yield* tasks.sweep;
+      yield* tasks.drain;
+
+      expect(yield* occurrences(routineId)).toEqual([]);
+      expect(yield* routineTasks(routineId)).toEqual([]);
+      expect(turnStarts(dispatched)).toEqual([]);
+      // Still due: the copy changed nothing about it.
+      expect(yield* nextDueIso(routineId)).toBe("2026-09-14T08:00:00.000Z");
+    }).pipe(Effect.provide(makeLayer(undefined, dispatched)), withSchedulersEnv("off"));
+  },
+);
+
+it.effect("schedulers unset or on: the same due routine fires once and its task starts", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  const routineId = PersonalRoutineId.make("due-on-live");
+  return Effect.gen(function* () {
+    yield* dueDailyRoutine(routineId);
+    yield* tickAndDrain;
+
+    expect(yield* occurrences(routineId)).toEqual([
+      expect.objectContaining({ localOccurrence: "2026-09-14T09:00" }),
+    ]);
+    const created = yield* routineTasks(routineId);
+    expect(created.map((task) => task.status)).toEqual(["running"]);
+    expect(turnStarts(dispatched).length).toBe(1);
+    expect(yield* nextDueIso(routineId)).toBe("2026-09-15T08:00:00.000Z");
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched)), withSchedulersEnv(undefined));
+});

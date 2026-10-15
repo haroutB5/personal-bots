@@ -211,6 +211,7 @@ function Scenario-Happy {
         Assert ($res.liveMemoryRows -eq 8 -and $res.sentUnauthenticatedStatus -eq 401) 'live checks ran (memory rows, push/sent 401)'
         Assert ($res.serverPriority -eq 'AboveNormal') 'server priority checked'
         Assert ($res.logErrors -eq 0 -and $res.tokenOrPairingLines -eq 0) 'startup log clean (sql echo ignored)'
+        Assert ($res.schedulersOffLines -eq 0) 'no schedulers-OFF WARN after restart'
         Assert ($res.PSObject.Properties.Name -contains 'phoneRelayReconnected' -and $res.phoneRelayReconnected) 'relay check ran'
         Assert ($res.armToVerifiedSeconds -gt 0) 'armToVerifiedSeconds recorded'
         $sheet = (Get-Content -LiteralPath $w.Sheet)[2]
@@ -227,6 +228,7 @@ function Scenario-Rollbacks {
             @{ Id = 'smoke'; Flag = "smoke.$Rel.exit"; Val = '1'; Why = 'smoke exit 1' },
             @{ Id = 'errorline'; Flag = 'error-line'; Val = '1'; Why = 'ERROR line in startup log' },
             @{ Id = 'tokenline'; Flag = 'token-line'; Val = '1'; Why = 'Pairing URL line in log' },
+            @{ Id = 'schedulersoff'; Flag = 'schedulers-off'; Val = '1'; Why = 'schedulers-OFF WARN in log' },
             @{ Id = 'memory'; Flag = 'drop-memory'; Val = '1'; Why = 'memory rows dropped' },
             @{ Id = 'priority'; Flag = 'normal-priority'; Val = '1'; Why = 'server priority Normal' },
             @{ Id = 'push'; Flag = 'push-open'; Val = '1'; Why = 'push/sent not 401' },

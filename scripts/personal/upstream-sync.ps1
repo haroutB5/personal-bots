@@ -790,6 +790,7 @@ function Invoke-Sync {
     $backup = Invoke-PsScript -Name 'backup.ps1' -ScriptArgs @()
     if ($backup.Code -ne 0) { Stop-Sync 'stopped-red' "backup.ps1 failed (exit $($backup.Code)); nothing deployed." }
     $maxId = Get-MaxMigrationId
+    # restore-test.ps1 runs the copy with T3CODE_PERSONAL_SCHEDULERS=off: no real routine or task starts on it.
     $rehearsal = Invoke-PsScript -Name 'restore-test.ps1' -ScriptArgs @('-Release', $release, '-ExpectMigration', [string]$maxId, '-Seconds', '120')
     if ($rehearsal.Code -ne 0) { Stop-Sync 'stopped-red' "Migration rehearsal failed on a backup copy (expected migration $maxId); nothing deployed. $($rehearsal.Out.Trim())" }
 

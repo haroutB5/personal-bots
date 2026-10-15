@@ -55,6 +55,7 @@ import { forkParked } from "../../serverActivation.ts";
 import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import { personalSchedulersOff } from "../schedulersSwitch.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
 
@@ -302,7 +303,10 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const sweep: PersonalReleaseNotices["Service"]["sweep"] = lock.withPermit(
+  // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): pending notices stay in the inbox.
+  const schedulersOff = personalSchedulersOff();
+
+  const scheduledSweep: PersonalReleaseNotices["Service"]["sweep"] = lock.withPermit(
     Effect.gen(function* () {
       const names = yield* Effect.promise(() =>
         NodeFSP.readdir(inbox, { withFileTypes: true }).then(
@@ -317,15 +321,20 @@ export const make = Effect.gen(function* () {
       return yield* Effect.forEach(names, handle);
     }),
   );
+  const sweep: PersonalReleaseNotices["Service"]["sweep"] = schedulersOff
+    ? Effect.succeed([])
+    : scheduledSweep;
 
   const start: PersonalReleaseNotices["Service"]["start"] = () =>
-    forkParked(
-      sweep.pipe(
-        withStallJob("job:release-notice-sweep"),
-        Effect.repeat(Schedule.spaced(RELEASE_NOTICE_SWEEP_MS)),
-        Effect.asVoid,
-      ),
-    ).pipe(Effect.asVoid);
+    schedulersOff
+      ? Effect.void
+      : forkParked(
+          sweep.pipe(
+            withStallJob("job:release-notice-sweep"),
+            Effect.repeat(Schedule.spaced(RELEASE_NOTICE_SWEEP_MS)),
+            Effect.asVoid,
+          ),
+        ).pipe(Effect.asVoid);
 
   return { start, sweep } satisfies PersonalReleaseNotices["Service"];
 });

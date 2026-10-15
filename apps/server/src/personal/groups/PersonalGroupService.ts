@@ -28,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { personalSchedulersOff } from "../schedulersSwitch.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
 import { SWEEP_INTERVAL, type WorkItem } from "./groupShared.ts";
@@ -122,7 +123,9 @@ export const make = Effect.gen(function* () {
   const { activeMemberThreadIds, engine, groupThreadIds, lock, refreshCaches, upserts } = core;
 
   const votes = makeGroupVotes(core);
-  const turns = makeGroupTurns(core, votes);
+  // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): no sweep, and no member turn starts.
+  const schedulersOff = personalSchedulersOff();
+  const turns = makeGroupTurns(core, votes, { startsTurns: !schedulersOff });
   const { pump } = turns;
 
   const finish = makeGroupFinish(core, turns);
@@ -137,7 +140,7 @@ export const make = Effect.gen(function* () {
             case "pump":
               break;
             case "sweep":
-              yield* sweepOnce();
+              if (!schedulersOff) yield* sweepOnce();
               return;
             case "relay":
               yield* relayFromMember(item.threadId, item.delta);
@@ -243,6 +246,7 @@ export const make = Effect.gen(function* () {
     function* () {
       const events = yield* engine.subscribeDomainEvents;
       yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
+      if (schedulersOff) return;
       yield* forkParked(
         Effect.gen(function* () {
           yield* worker.enqueue({ type: "sweep" });

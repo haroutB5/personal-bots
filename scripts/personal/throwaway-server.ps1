@@ -18,6 +18,8 @@ Pair   (-Pair <n>): prints a fresh single-use pairing link for a running throwaw
 Down   (-Down <n>): stops only the recorded server (same PID check as -Stop) and KEEPS the root, so a test can lose the
        laptop on purpose (the phone's offline send queue). The browser's pairing and the data stay valid.
 Up     (-Up <n>): starts the same root again on the same port and waits until it answers. Pair with -Down.
+       -SchedulersOff (Start, Up): runs the server with T3CODE_PERSONAL_SCHEDULERS=off, as restore-test.ps1
+       does for a restored copy: no routine fires and no queued task starts.
 List   (-List): the throwaway roots under %TEMP% and whether their server runs.
 
 Two fake Claude CLIs are copied from scripts\personal\testing\fake-claude into <root>\fake:
@@ -48,6 +50,7 @@ param(
     [Parameter(ParameterSetName = 'Start')][int]$Port = 0,
     [Parameter(ParameterSetName = 'Start')][Parameter(ParameterSetName = 'Up')][int]$StartTimeoutSeconds = 300,
     [Parameter(ParameterSetName = 'Start')][Parameter(ParameterSetName = 'Up')][Parameter(ParameterSetName = 'Pair')][string]$Node,
+    [Parameter(ParameterSetName = 'Start')][Parameter(ParameterSetName = 'Up')][switch]$SchedulersOff,
     [Parameter(ParameterSetName = 'Stop', Mandatory = $true)][string]$Stop,
     [Parameter(ParameterSetName = 'Pair', Mandatory = $true)][string]$Pair,
     [Parameter(ParameterSetName = 'Down', Mandatory = $true)][string]$Down,
@@ -215,7 +218,7 @@ function Show-Result {
 # a Sonnet seed, the fake CLIs' pid dir, a headless browser, no auto connect, and usage-scan homes inside the root
 # (Grok, OpenCode and Antigravity have no settings homePath; the env vars are read per scan).
 function Start-TwServer {
-    param([string]$TwName, [string]$TwRoot, [string]$NodeExe, [string]$Bin, [int]$ServerPort)
+    param([string]$TwName, [string]$TwRoot, [string]$NodeExe, [string]$Bin, [int]$ServerPort, [switch]$NoSchedulers)
     $pidDir = Join-Path $TwRoot 'fake-pids'
     Clear-DevOriginEnv
     $envSet = [ordered]@{
@@ -228,6 +231,7 @@ function Start-TwServer {
         OPENCODE_DATA_DIR                 = (Join-Path $TwRoot 'homes\opencode')
         ANTIGRAVITY_DATA_DIR              = (Join-Path $TwRoot 'homes\antigravity')
     }
+    if ($NoSchedulers) { $envSet['T3CODE_PERSONAL_SCHEDULERS'] = 'off' }
     $previousEnv = @{}
     foreach ($key in $envSet.Keys) {
         $previousEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
@@ -346,7 +350,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Up') {
     }
     $nodeExe = Resolve-NodeExe -Node $Node
     $origin = 'http://127.0.0.1:' + $record.port
-    $proc = Start-TwServer -TwName $Up -TwRoot $root -NodeExe $nodeExe -Bin ([string]$record.bin) -ServerPort ([int]$record.port)
+    $proc = Start-TwServer -TwName $Up -TwRoot $root -NodeExe $nodeExe -Bin ([string]$record.bin) -ServerPort ([int]$record.port) -NoSchedulers:$SchedulersOff
     $record.pid = $proc.Id
     $record.startedAt = (Get-Date).ToString('o')
     Write-TwText -Path (Join-Path $root $RecordName) -Text ($record | ConvertTo-Json)
@@ -389,7 +393,7 @@ foreach ($homeName in @('claude', 'codex', 'deepseek', 'grok', 'opencode', 'anti
 New-TwFakeClaude -Root $root -NodeExe $nodeExe
 Write-TwSettings -Root $root
 
-$proc = Start-TwServer -TwName $Name -TwRoot $root -NodeExe $nodeExe -Bin $bin -ServerPort $Port
+$proc = Start-TwServer -TwName $Name -TwRoot $root -NodeExe $nodeExe -Bin $bin -ServerPort $Port -NoSchedulers:$SchedulersOff
 
 $record = [ordered]@{
     name      = $Name

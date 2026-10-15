@@ -378,6 +378,8 @@ function Invoke-Pipeline {
 # The DryRun half of steps 5-6: boot both releases on backup copies, and
 # revert for real in the worktree. The live server is never touched.
 function Invoke-Rehearsal {
+    # Both boots go through restore-test.ps1, which runs the copy with T3CODE_PERSONAL_SCHEDULERS=off:
+    # no real routine or task starts on it.
     $rehearsal = Invoke-PbScript -Name 'restore-test.ps1' -ScriptArgs @('-Release', $script:release, '-Seconds', '120') -TimeoutSeconds 600
     $clientVersion = Join-Path (Join-Path $paths.ReleasesDir $script:release) 'dist\client\version.txt'
     $staged = $null

@@ -28,6 +28,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
+import { personalSchedulersOff } from "./schedulersSwitch.ts";
 import {
   decideLimitHit,
   isPersonalResumeMessageId,
@@ -128,6 +129,8 @@ export const make = Effect.gen(function* () {
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
   const modelFallback = yield* Effect.serviceOption(PersonalModelFallback.PersonalModelFallback);
 
+  // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): due resumes stay scheduled.
+  const schedulersOff = personalSchedulersOff();
   const held = new Map<string, HeldSlot>();
   /** Last resume start per provider, for the gap between them. */
   const lastStartByProvider = new Map<string, number>();
@@ -454,13 +457,17 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const sweep: PersonalChatResumeShape["sweep"] = sweepOnce().pipe(
-    Effect.catchCause((cause) =>
-      Cause.hasInterruptsOnly(cause)
-        ? Effect.interrupt
-        : Effect.logWarning("personal chat resume sweep failed", { cause: Cause.pretty(cause) }),
-    ),
-  );
+  const sweep: PersonalChatResumeShape["sweep"] = schedulersOff
+    ? Effect.void
+    : sweepOnce().pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("personal chat resume sweep failed", {
+                cause: Cause.pretty(cause),
+              }),
+        ),
+      );
 
   const onSessionSet = (threadId: ThreadId, session: OrchestrationSession) =>
     Effect.gen(function* () {
@@ -516,6 +523,7 @@ export const make = Effect.gen(function* () {
     function* () {
       const events = yield* engine.subscribeDomainEvents;
       yield* forkParked(Stream.runForEach(events, (event) => worker.enqueue(event)));
+      if (schedulersOff) return;
       // Resumes due while the server was down run on the first pass.
       yield* forkParked(
         worker.drain.pipe(

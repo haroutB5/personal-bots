@@ -28,6 +28,7 @@ import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalTaskChatArchive from "../PersonalTaskChatArchiveService.ts";
+import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
 import {
   PersonalReleaseNotices,
   RELEASE_NOTICE_DIR,
@@ -469,4 +470,48 @@ describe("PersonalReleaseNotices", () => {
       expect(dispatched).toEqual([]);
     }).pipe(Effect.provide(makeLayer(dispatched)));
   });
+});
+
+describe("PersonalReleaseNotices with T3CODE_PERSONAL_SCHEDULERS (restored test copies)", () => {
+  const NOTICE = "20261015T090000Z-live.json";
+  /** A restored copy whose inbox still holds a notice for the CTO chat. */
+  const sweepPendingNotice = (dispatched: Array<OrchestrationCommand>) =>
+    Effect.gen(function* () {
+      yield* linkCtoChat;
+      yield* writeNotice(NOTICE, {
+        threadId: CTO_CHAT,
+        version: "1.66.48",
+        release: "abc123def456",
+        outcome: "live",
+        smokeExit: 0,
+        logPath: "C:\Users\Ht\.personal-bots\logs\restart-1.66.48.log",
+      });
+      const service = yield* PersonalReleaseNotices;
+      const outcomes = yield* service.sweep;
+      const dir = yield* inboxDir;
+      const inbox = yield* Effect.promise(async () =>
+        (await NodeFSP.readdir(dir, { withFileTypes: true }))
+          .filter((entry) => entry.isFile())
+          .map((entry) => entry.name),
+      );
+      return { outcomes, inbox, turns: turnStarts(dispatched) };
+    }).pipe(Effect.provide(makeLayer(dispatched)));
+
+  it.effect("off: a pending notice is not posted and stays in the inbox", () =>
+    Effect.gen(function* () {
+      const { outcomes, inbox, turns } = yield* sweepPendingNotice([]);
+      expect(outcomes).toEqual([]);
+      expect(turns).toEqual([]);
+      expect(inbox).toEqual([NOTICE]);
+    }).pipe(withSchedulersEnv("off")),
+  );
+
+  it.effect("on: the same notice posts one turn, as before", () =>
+    Effect.gen(function* () {
+      const { outcomes, inbox, turns } = yield* sweepPendingNotice([]);
+      expect(outcomes).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
+      expect(turns).toHaveLength(1);
+      expect(inbox).toEqual([]);
+    }).pipe(withSchedulersEnv("on")),
+  );
 });

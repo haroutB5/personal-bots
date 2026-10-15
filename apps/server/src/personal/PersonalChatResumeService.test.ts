@@ -35,6 +35,7 @@ import {
   PERSONAL_CHAT_RESUME_PROVIDER_GAP_MS,
 } from "./personalChatResumePolicy.ts";
 import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
+import { withSchedulersEnv } from "./schedulersSwitch.testFixtures.ts";
 
 const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
@@ -519,6 +520,38 @@ describe("PersonalChatResume", () => {
       expect(notices(harness).at(-1)?.delta).toBe(
         "Paused: Claude usage limit. It already continued on its own, so send a message to continue.",
       );
+    }).pipe(Effect.provide(dbLayer)),
+  );
+});
+
+describe("PersonalChatResume with T3CODE_PERSONAL_SCHEDULERS (restored test copies)", () => {
+  /** A limit hit on the live server, then a restored copy booted after the reset with `value`. */
+  const restoredCopyAfterReset = (value: string) =>
+    Effect.gen(function* () {
+      yield* setup;
+      const harness = makeHarness();
+      const live = yield* bootService(harness);
+      yield* hitLimit(live, harness, CHAT_A);
+      const restored = yield* bootService(harness).pipe(withSchedulersEnv(value));
+      yield* TestClock.setTime(RESET_MS + 5 * 60_000);
+      yield* restored.sweep;
+      yield* restored.sweep;
+      return harness;
+    });
+
+  it.effect("off: a due resume never starts a turn and stays scheduled", () =>
+    Effect.gen(function* () {
+      const harness = yield* restoredCopyAfterReset("off");
+      expect(turnStarts(harness)).toEqual([]);
+      expect(yield* resumeRows).toMatchObject([{ threadId: CHAT_A, status: "scheduled" }]);
+    }).pipe(Effect.provide(dbLayer)),
+  );
+
+  it.effect("on: the same due resume continues the chat once, as before", () =>
+    Effect.gen(function* () {
+      const harness = yield* restoredCopyAfterReset("on");
+      expect(turnStarts(harness)).toHaveLength(1);
+      expect(yield* resumeRows).toMatchObject([{ threadId: CHAT_A, status: "resumed" }]);
     }).pipe(Effect.provide(dbLayer)),
   );
 });

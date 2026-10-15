@@ -55,6 +55,7 @@ import {
 } from "../browser/sensitiveExposureStore.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
 import * as PersonalGroupService from "./PersonalGroupService.ts";
+import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
 
 /**
  * The orchestration side, stood in for. Commands are recorded AND applied to a
@@ -1621,6 +1622,56 @@ it.effect("a resume booked before a restart runs once after it", () =>
       expect(yield* limitRows).toMatchObject([{ status: "resumed" }]);
     }).pipe(Effect.provide(makeLayer(after, dbPath)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+/**
+ * A member cut off by a usage limit on the live server, then a restored copy
+ * of the same database booted after the reset with T3CODE_PERSONAL_SCHEDULERS
+ * set to `value`: sweeps and a pump run, and `check` sees the result.
+ */
+const restoredGroupCopyAfterReset = <E, R>(
+  value: string,
+  check: (after: Harness) => Effect.Effect<void, E, R>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-groups-db-" });
+    const dbPath = path.join(directory, "state.sqlite");
+
+    const before = makeHarness();
+    const assistantThread = yield* cutOffThenRoundEnds(before).pipe(
+      Effect.provide(makeLayer(before, dbPath)),
+    );
+
+    yield* TestClock.adjust("361 minutes");
+    const after = makeHarness();
+    after.liveThreads.add(assistantThread);
+    yield* Effect.gen(function* () {
+      yield* sweepGroup;
+      yield* sweepGroup;
+      yield* check(after);
+    }).pipe(Effect.provide(makeLayer(after, dbPath)), withSchedulersEnv(value));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.effect("schedulers off (restored test copy): a due group resume starts no member turn", () =>
+  restoredGroupCopyAfterReset("off", (after) =>
+    Effect.gen(function* () {
+      expect(turnStarts(after)).toEqual([]);
+      expect((yield* currentRound).status).toBe("completed");
+      expect(yield* limitRows).toMatchObject([{ status: "scheduled" }]);
+    }),
+  ),
+);
+
+it.effect("schedulers on: the same due group resume runs once, as before", () =>
+  restoredGroupCopyAfterReset("on", (after) =>
+    Effect.gen(function* () {
+      expect(turnStarts(after).length).toBe(1);
+      expect((yield* currentRound).activeBotId).toBe(botId("assistant"));
+      expect(yield* limitRows).toMatchObject([{ status: "resumed" }]);
+    }),
+  ),
 );
 
 it.effect("a verdict cut off by a usage limit is tried again at the reset", () => {
