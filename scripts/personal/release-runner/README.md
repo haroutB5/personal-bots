@@ -51,3 +51,19 @@ runner's helper pins are unchanged. Install hashes for the next release's notes
 | `hbots-release/tests/hbots-release.tests.ps1`                                                  | `e8628e77082bb50ecb8c10b32299cab3800ea57b7a2e1fb221da206781ceb998` |
 | `hbots-release/tests/stubs/restart.ps1`                                                        | `1561de620d04a3043fb111b615a849404742a144431f3f982a3bac22bd133ad7` |
 | `hbots-release/release-db-check.cjs`, `tree-hash.cjs`, `make-fixture.cjs`, `proc-priority.ps1` | unchanged from the 1.66.47 table                                   |
+
+## 1.66.48: dry-run backup estimate 160-420 s
+
+The dry run's fresh-backup line now says `160-420 s` (was 160-300 s): QA measured
+404.5 s on the busy laptop (15 Oct, 1.66.47), the quiet-disk range stays the low
+end. Only the estimate text changed; the runner test `s9` asserts the new range.
+No helper changed, so the pins are unchanged. Install hashes for the 1.66.48
+notes (sha256, LF bytes); the undo hashes are the 1.66.47 installed runner's
+(`6eb7898a...` runner, `b4751b87...` tests; helpers unchanged):
+
+| File                                                                                           | sha256                                                             |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `hbots-release.ps1`                                                                            | `9103091263f360313b3900c98467046037825da2af079d95a09b7335b59b0cee` |
+| `hbots-release/tests/hbots-release.tests.ps1`                                                  | `4af2581be37190d98e46a972b2f8ea1b9676c1197a095c83d1ab28c84e41511f` |
+| `hbots-release/tests/stubs/restart.ps1`                                                        | `1561de620d04a3043fb111b615a849404742a144431f3f982a3bac22bd133ad7` |
+| `hbots-release/release-db-check.cjs`, `tree-hash.cjs`, `make-fixture.cjs`, `proc-priority.ps1` | unchanged from the 1.66.47 table                                   |

@@ -853,10 +853,10 @@ try {
         Note ("  {0,-48} {1,7} s" -f $totalLabel, [math]::Round($totalSw.Elapsed.TotalSeconds, 1))
         $guardSeconds = 0.0
         foreach ($k in $script:Timings.Keys) { if ($k -like 'guards.*') { $guardSeconds += [double]$script:Timings[$k] } }
-        # A pair is a measured range (low, high); the 3 GB backup took 160-300 s with the server busy.
+        # A pair is a measured range (low, high); the 3 GB backup took 160-300 s quiet and about 405 s with the server and other builds busy (QA 15 Oct).
         $planned = [ordered]@{
             'idle gate: 3 looks 20 s apart (fixed)' = 40
-            'fresh backup: online copy, digest/read-ahead and ONE full check (3.04 GB copy)' = @(160, 300)
+            'fresh backup: online copy, digest/read-ahead and ONE full check (3.04 GB copy)' = @(160, 420)
             'backup proof: SHA-256 re-read (full integrity already completed)' = 2
             'seal re-verify + idle recheck' = 6
             'restart.ps1 (recent range 9-21 s)' = 15

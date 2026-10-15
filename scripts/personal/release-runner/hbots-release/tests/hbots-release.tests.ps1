@@ -462,7 +462,7 @@ function Scenario-DryRun {
         $r = Invoke-Runner $w @('-DryRun', '-VerifyLive', '-StableSeconds', '5') @{}
         Assert ($r.Exit -eq 0) 'dry run exit 0' $r.Out
         Assert ($r.Out -match 'DRY RUN OK') 'prints DRY RUN OK'
-        Assert ($r.Out -match 'ONE full check \(3\.04 GB copy\)\s+160-300 s') 'backup estimate is the measured 160-300 s range' $r.Out
+        Assert ($r.Out -match 'ONE full check \(3\.04 GB copy\)\s+160-420 s') 'backup estimate is the measured 160-420 s range' $r.Out
         Assert ($r.Out -match 'EXPECTED arm -> verified, idle from the start\s+\d+-\d+ s') 'expected total is a range' $r.Out
         Assert (-not (Test-Path (Join-Path $w.Run "restart-$Ver-result.json"))) 'real result file not written'
         Assert (-not (Test-Path (Join-Path $w.Home "logs\restart-$Ver.log"))) 'real log file not written'
