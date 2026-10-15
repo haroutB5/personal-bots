@@ -56,9 +56,32 @@ A real-CLI notice with an empty body produced a `runtime.warning` activity with 
 - Regression: a normal chat, a tool call, a steer mid-turn and a background subagent report on a throwaway; schedule start/end, usage-limit fallback and the header markers still behave as in 1.66.48.
 - The runner: `run/hbots-release.ps1` and its helpers are unchanged in this release (no install table needed), `-DryRun` estimate unchanged.
 
-## QA proof
+## QA proof (15 Oct 2026): SHIP, 5/5 pass on staged `9203dde389b7`
 
-PROOF_PLACEHOLDER: replace this line with QA's verdict, numbers and evidence path for the staged release.
+QA bot, 12:05-12:40 BST. Evidence `C:\Users\Ht\.personal-bots\qa\hbots-16649-qa\SUMMARY.md` (the scripts, JSON dumps, logs and 390 px dark screenshots sit beside it). Four throwaway roots from `throwaway-server.ps1` on this release, all stopped and deleted; the live server was untouched: `current.txt` and `/version.txt` still 1.66.48 `d029551610b6`. Bundled SDK in `dist/bin.mjs`: this release 0.3.300, 1.66.48 0.3.292; CLI `claude.exe` 2.1.299 on both.
+
+| #   | Check                                                       | Result | Numbers                                                                                                                                                                                                                                                                            |
+| --- | ----------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Real CLI, Haiku 5.5 low (root q49r): turn, tool call, steer | PASS   | `PONG-QA49` in 4.7 s; steer sent while a 25 s foreground tool ran: 1 turn, 1 CLI session `0928b6f4`, reply holds `SLOW-DONE-49` and `STEERED-QA49` (`core-steer-q49r.json`)                                                                                                        |
+| 2   | Resume after a forced compaction                            | PASS   | `/compact` 28.4K -> 1.89K; the facts came back in the same session and after a server restart, span `claude.resume.source=resume-session` (`e21f939c`), 0 memory rows holding them (`core-compact-q49r.json`)                                                                      |
+| 3   | Permissions A/B (same scripts, this release vs 1.66.48)     | PASS   | 7 probes identical: F1 Bash echo allowed; F2 and the Bash read of `userdata/secrets` denied by the CLI's own rules, no file names, 0 approvals; F5 AskUserQuestion answered; S1/S2 decline refused twice, folder absent; S3 accept created it (`perm-q49r.out` vs `perm-q48r.out`) |
+| 4   | Background subagent report as its own turn                  | PASS   | `STARTED-QA49` turn, then `BGREPORT-QA49` in its own turn with no user message (`core-bg-q49r.json`)                                                                                                                                                                               |
+| 5   | Delegation: QA Main -> QA Helper returns the result         | PASS   | child task completed, `HELPERDONE-QA49` came back and the requester replied with it in a continuation turn (`core-deleg-q49r.json`)                                                                                                                                                |
+| 6   | ERROR lines                                                 | PASS   | 0 ERROR, 0 `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`, 0 ingestion failures; 1 `claude.session.replacing` WARN from QA's own runtime-mode switch, the same on 1.66.48 (`server-q49r.log`)                                                                                                  |
+
+Findings on the fake CLI (q49f vs 1.66.48 q48f, `PERSONAL_MODEL_SCHEDULE_NOW=10:00Z`, TZ UTC, `PERSONAL_DEEPSEEK_PEAK_NOW=08:00Z`):
+
+1. One CLI start per switch: opening the scheduled chat and sending the first message started the CLI **once**, on Opus 5.5; 1.66.48 started it twice (Sonnet 5.5, then Opus 5.5) plus the `claude.session.replacing` WARN.
+2. Peak label: the DeepSeek-scheduled bot in a peak window read `Sonnet 5.5 · H · peak` / `(Scheduled, DeepSeek peak until 12:00)`; 1.66.48 read `· sched` / `(Scheduled model until 12:00)`. A Claude schedule still reads `Opus 5.5 · M · sched`.
+3. Malformed `schedule_json`: 2 list refreshes plus a 30 s sweep produced exactly 1 WARN naming the bot; a second distinct bad value added 1; the bot stayed listed with `schedule` null and still answered. 1.66.48 logged 0.
+
+Regression, 390 px dark (q49f, with 1.66.48 as the control on q48f): Bots list with no sideways scroll, chat opened from the list, send and reply, Steering label and Read receipt mid-turn, choice chips send on tap, scheduled-model form saves, 0 page errors, 0 console errors (`shots/`).
+
+Follow-ups for the next release (QA's low notes, none blocks this release):
+
+1. On the Bots row a long bot name shrinks the marker to `Sched DeepSe... Sonnet 5.5 · H · ...` (`BotRow.tsx:210-213`, the label gives way first). Pre-existing on 1.66.48 and real bot names are short. Possible later fix: keep the marker whole like the header's `splitModelMarker`.
+2. The long label `Scheduled, DeepSeek peak until <t>` takes the schedule's end (`botModelLabel.ts:278-282`); when the peak window ends first the bot leaves peak before `<t>`. Could show the earlier of the two ends.
+3. Note, not a fix: the 2.1.300 hook `updatedInput` validation cannot reach live bots today, because no plugin in `~/.personal-bots/dev/bot-plugins` defines hooks.
 
 ## Gate evidence
 
