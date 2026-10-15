@@ -8,6 +8,7 @@
  * @module usagePricing
  */
 import type { UsageCostSource, UsageModelPriceOverride } from "@t3tools/contracts";
+import { deepSeekPeakWindowEndMs } from "@t3tools/shared/deepseekPeak";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -76,7 +77,12 @@ export const DEEPSEEK_FLASH_PEAK_RATES: ModelRate = {
  * are off-peak in full as well; this ignores them, so their peak-hour records
  * price half too high rather than too low.
  */
+const fastDeepSeekPricing = process.env.T3CODE_DEEPSEEK_PRICING_FAST !== "off";
+
 export function isDeepSeekPeakTime(timestampMs: number): boolean {
+  if (fastDeepSeekPricing) {
+    return deepSeekPeakWindowEndMs(timestampMs) !== null;
+  }
   // A millisecond input makes a UTC DateTime; its parts are UTC. An
   // unreadable timestamp prices as off-peak rather than throwing mid-scan.
   const at = DateTime.make(timestampMs);

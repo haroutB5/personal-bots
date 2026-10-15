@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./deepseekPeak": {
+      "types": "./src/deepseekPeak.ts",
+      "import": "./src/deepseekPeak.ts"
+    },
     "./legacyCliLauncher": {
       "types": "./src/legacyCliLauncher.ts",
       "import": "./src/legacyCliLauncher.ts"

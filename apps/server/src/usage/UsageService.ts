@@ -608,12 +608,24 @@ export const make = Effect.gen(function* () {
       records += 1;
       if (sinceMs === null || record.timestampMs < sinceMs) sinceMs = record.timestampMs;
     };
+    const spendSlice = makeSliceYield();
+    const sliceSpend = process.env.T3CODE_DEEPSEEK_PRICING_FAST !== "off";
     for (const file of files) {
       const fileRecords = yield* readFileRecords(file.path, file.size, file.mtimeMs, "deepseek");
-      for (const record of fileRecords) collect(record);
+      for (let index = 0; index < fileRecords.length; index += 1) {
+        collect(fileRecords[index]!);
+        if (sliceSpend && (index & 63) === 0 && spendSlice.due()) {
+          yield* Effect.promise(spendSlice.yieldNow);
+        }
+      }
     }
     for (const file of retained) {
-      for (const record of file.records) collect(record);
+      for (let index = 0; index < file.records.length; index += 1) {
+        collect(file.records[index]!);
+        if (sliceSpend && (index & 63) === 0 && spendSlice.due()) {
+          yield* Effect.promise(spendSlice.yieldNow);
+        }
+      }
     }
 
     if (records === 0 || sinceMs === null) return null;
