@@ -3399,6 +3399,21 @@ const makeWsRpcLayer = (
             personalVoiceCalls.lookupMemory(input),
             { "rpc.aggregate": "server" },
           ),
+        // The call's own chat state, keyed by the call's thread, and one card's
+        // transcript on demand. Read-only, so a phone that navigated away
+        // mid-call still gets the truth about the call's chat.
+        [WS_METHODS.personalVoiceCallsSnapshot]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalVoiceCallsSnapshot,
+            personalVoiceCalls.snapshot(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalVoiceCallsTranscript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalVoiceCallsTranscript,
+            personalVoiceCalls.transcript(input),
+            { "rpc.aggregate": "server" },
+          ),
         // A team lead's request to remove or rewrite a bot it did not create. `decide` is the
         // tap on the card and the only way to approve one.
         [WS_METHODS.personalLeadBotChangesList]: (_input) =>
