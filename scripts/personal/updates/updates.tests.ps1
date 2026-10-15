@@ -343,20 +343,38 @@ $setDb = {
     "insert into projection_threads values ('live', null), ('gone', '2026-10-01')"
 )
 Assert-Equal 'nothing running: idle' 'idle' (Get-PbBusyState -StateDb $idleDb)
+# A database older than the lease table reads as no calls, never as unreadable.
+Assert-Equal 'no lease table at all: idle' 'idle' (Get-PbBusyState -StateDb $idleDb)
 & $setDb @("insert into projection_thread_sessions values ('gone', 'running')")
 Assert-Equal 'a running session of a deleted chat does not count' 'idle' (Get-PbBusyState -StateDb $idleDb)
 & $setDb @("insert into projection_thread_sessions values ('live', 'ready')")
 Assert-Equal 'a ready session does not count' 'idle' (Get-PbBusyState -StateDb $idleDb)
 & $setDb @("update projection_thread_sessions set status = 'running' where thread_id = 'live'")
-Assert-Equal 'any bot''s running chat session is busy' 'busy sessions=1 tasks=0' (Get-PbBusyState -StateDb $idleDb)
+Assert-Equal 'any bot''s running chat session is busy' 'busy sessions=1 tasks=0 calls=0' (Get-PbBusyState -StateDb $idleDb)
 & $setDb @("update projection_thread_sessions set status = 'ready'", "insert into personal_tasks values ('t1', 'personal-frontend', 'running')")
-Assert-Equal 'another bot''s running task (not the Updates bot) is busy' 'busy sessions=0 tasks=1' (Get-PbBusyState -StateDb $idleDb)
+Assert-Equal 'another bot''s running task (not the Updates bot) is busy' 'busy sessions=0 tasks=1 calls=0' (Get-PbBusyState -StateDb $idleDb)
 foreach ($status in @('queued', 'waiting_for_agent', 'waiting_for_user', 'waiting_for_browser', 'rate_limited')) {
     & $setDb @("update personal_tasks set status = '$status'")
-    Assert-Equal "a $status task is busy (same set as the idle waiter)" 'busy sessions=0 tasks=1' (Get-PbBusyState -StateDb $idleDb)
+    Assert-Equal "a $status task is busy (same set as the idle waiter)" 'busy sessions=0 tasks=1 calls=0' (Get-PbBusyState -StateDb $idleDb)
 }
 & $setDb @("update personal_tasks set status = 'completed'")
 Assert-Equal 'a finished task is not' 'idle' (Get-PbBusyState -StateDb $idleDb)
+
+# An open voice call is a live session: a restart mid-call drops it (1.66.53).
+Write-Host 'A voice call holds the nightly restart gate too'
+& $setDb @(
+    'create table personal_voice_call_leases (call_id text primary key, thread_id text, bot_id text, opened_at text, expires_at text)'
+)
+Assert-Equal 'the lease table empty: idle' 'idle' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("insert into personal_voice_call_leases values ('call-1', 'live', 'bot-cto', '2026-10-15T17:00:00.000Z', '2099-01-01T00:00:00.000Z')")
+Assert-Equal 'an open call is busy' 'busy sessions=0 tasks=0 calls=1' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("update personal_voice_call_leases set expires_at = '2020-01-01T00:00:00.000Z'")
+Assert-Equal 'a call whose lease ran out is not (the phone died)' 'idle' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("update personal_voice_call_leases set expires_at = 'not a timestamp'")
+Assert-Equal 'an unreadable expiry never holds a release' 'idle' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("update personal_voice_call_leases set expires_at = '2099-01-01T00:00:00.000Z'", "update personal_tasks set status = 'running'")
+Assert-Equal 'a task and an open call show on one line' 'busy sessions=0 tasks=1 calls=1' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("delete from personal_voice_call_leases", "update personal_tasks set status = 'completed'")
 Assert-Equal 'an unreadable database counts as busy, never idle' $true ((Get-PbBusyState -StateDb (Join-Path $tempRoot 'no-such.sqlite')) -like 'unreadable:*')
 
 & $setDb @("update personal_tasks set status = 'running'")
@@ -364,7 +382,7 @@ $waitLog = New-Object System.Collections.Generic.List[string]
 $waitSw = [System.Diagnostics.Stopwatch]::StartNew()
 $timedOut = Wait-PbAllIdle -TimeoutMinutes 0.05 -PollSeconds 1 -StateDb $idleDb -Log { param($t) $waitLog.Add($t) | Out-Null }
 Assert-Equal 'still busy at the timeout: not idle' $false $timedOut
-Assert-Equal 'the busy state was logged once' 'idle check: busy sessions=0 tasks=1' $waitLog.ToArray()
+Assert-Equal 'the busy state was logged once' 'idle check: busy sessions=0 tasks=1 calls=0' $waitLog.ToArray()
 Assert-Equal 'it really waited for the timeout (3 s)' $true ($waitSw.Elapsed.TotalSeconds -ge 2.5)
 
 # Busy, then the other bot's task ends (callback on the first busy look), then a task
@@ -382,7 +400,7 @@ $onLog = {
 $waitSw.Restart()
 $became = Wait-PbAllIdle -TimeoutMinutes 2 -PollSeconds 1 -StateDb $idleDb -Log $onLog
 Assert-Equal 'waits while the other bot works, restarts the count when work resumes, then proceeds' $true $became
-Assert-Equal 'the states it saw, in order' 'idle check: busy sessions=0 tasks=1|idle check: idle|idle check: busy sessions=0 tasks=1|idle check: idle' ($seq -join '|')
+Assert-Equal 'the states it saw, in order' 'idle check: busy sessions=0 tasks=1 calls=0|idle check: idle|idle check: busy sessions=0 tasks=1 calls=0|idle check: idle' ($seq -join '|')
 Assert-Equal 'three idle looks after the last busy one (about 2 s apart at 1 s polls)' $true ($waitSw.Elapsed.TotalSeconds -ge 4)
 
 Write-Host 'Detached launch survives the caller''s process tree being killed'

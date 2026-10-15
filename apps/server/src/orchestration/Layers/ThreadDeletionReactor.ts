@@ -76,18 +76,24 @@ const make = Effect.gen(function* () {
   // a private call, off the record, and nothing may outlive the chat they
   // belong to. This is the one hook every deletion path goes through (the
   // owner's own Delete, a bulk delete, a bot purge, a group's member removal),
-  // so a transcript cannot be left behind by whichever path was used.
+  // so a transcript cannot be left behind by whichever path was used. The
+  // chat's open-call lease goes too: a deleted chat can never be called, and a
+  // row left behind would keep a release waiter waiting for nothing.
   const deleteVoiceCallCards = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
-      effect: voiceCallCards
-        .deleteByThread(threadId)
-        .pipe(
-          Effect.flatMap((removed) =>
-            removed === 0
-              ? Effect.void
-              : Effect.logDebug("thread deletion removed voice call cards", { threadId, removed }),
-          ),
+      effect: voiceCallCards.deleteByThread(threadId).pipe(
+        Effect.tap((removed) =>
+          removed === 0
+            ? Effect.void
+            : Effect.logDebug("thread deletion removed voice call cards", { threadId, removed }),
         ),
+        Effect.flatMap(() => voiceCallCards.deleteLeasesByThread(threadId)),
+        Effect.tap((removed) =>
+          removed === 0
+            ? Effect.void
+            : Effect.logDebug("thread deletion removed voice call leases", { threadId, removed }),
+        ),
+      ),
       message: "thread deletion cleanup skipped voice call card removal",
       threadId,
     });

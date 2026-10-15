@@ -207,6 +207,11 @@ export const make = Effect.gen(function* () {
    * call does not belong to. The map is deliberately in memory: a call is a
    * live session, and a server restart ends it. `finish` does not consult it,
    * so a card is still stored after a restart.
+   *
+   * The same call is also written to `personal_voice_call_leases`, because the
+   * release waiter and the nightly Updates pipeline read the database from
+   * their own process: the row, not this map, is what stops a landing from
+   * restarting the app mid-call.
    */
   const activeCalls = new Map<
     string,
@@ -214,6 +219,29 @@ export const make = Effect.gen(function* () {
   >();
   /** How long past the call cap a lease is kept, for the last flush to land. */
   const ACTIVE_CALL_SLACK_MS = 5 * 60_000;
+  /** The call cap plus the slack: how long a call counts as open at most. */
+  const LEASE_SECONDS = VOICE_CALL_MAX_MINUTES * 60 + ACTIVE_CALL_SLACK_MS / 1000;
+  /** When a call minted now stops counting as open, in memory and in the row. */
+  const leaseExpiresAtMs = (startedAtMs: number): number => startedAtMs + LEASE_SECONDS * 1000;
+
+  /**
+   * A restart ends every call, so the rows a previous process left behind are
+   * cleared as this one comes up. Without that, a lease whose phone died would
+   * hold the release waiter (up to the call cap) after the very restart that
+   * ended it.
+   */
+  yield* calls.clearLeases().pipe(
+    Effect.tap((removed) =>
+      removed === 0
+        ? Effect.void
+        : Effect.logInfo("personal voice call leases cleared at boot", { removed }),
+    ),
+    // A database that is behind this server must not stop it from starting:
+    // the rows are a restart-gate hint, never a reason to refuse a boot.
+    Effect.catch((cause) =>
+      Effect.logWarning("personal voice call leases were not cleared at boot", { cause }),
+    ),
+  );
 
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
 
@@ -532,8 +560,29 @@ export const make = Effect.gen(function* () {
         pruneActiveCalls(startedAtMs);
         activeCalls.set(callId, {
           threadId: chat.threadId,
-          expiresAtMs: startedAtMs + VOICE_CALL_MAX_MINUTES * 60_000 + ACTIVE_CALL_SLACK_MS,
+          expiresAtMs: leaseExpiresAtMs(startedAtMs),
         });
+        const expiresAt = DateTime.add(startedAt, { seconds: LEASE_SECONDS });
+        // The row the restart gates read. Losing it would only mean a landing
+        // does not wait for this call, which is not a reason to refuse a call
+        // the owner asked for, so a failure is logged and the call goes on.
+        yield* calls.pruneLeases(startedAt).pipe(
+          Effect.flatMap(() =>
+            calls.openLease({
+              callId,
+              threadId: chat.threadId,
+              botId: chat.botId,
+              openedAt: startedAt,
+              expiresAt,
+            }),
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning(
+              "personal voice call lease not recorded; a restart gate may not see this call",
+              { threadId: chat.threadId, callId, cause },
+            ),
+          ),
+        );
         const systemInstruction = voiceCallSystemInstruction({
           botName: chat.bot.name,
           botTitle: chat.bot.title,
@@ -684,6 +733,24 @@ export const make = Effect.gen(function* () {
       return { messageId, createdAt } satisfies VoiceCallSendResult;
     });
 
+  /**
+   * The call is over: its lease goes with it, in memory and in the row the
+   * restart gates read, so a stale phone tab cannot keep posting with this
+   * call id and a landing is free to proceed. Idempotent: a retried `finish`
+   * deletes a row that is already gone.
+   */
+  const releaseCallLease = (callId: string) =>
+    Effect.gen(function* () {
+      activeCalls.delete(callId);
+      yield* calls
+        .closeLease(callId)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("personal voice call lease was not closed", { callId, cause }),
+          ),
+        );
+    });
+
   const finish: PersonalVoiceCallService["Service"]["finish"] = (input) =>
     Effect.gen(function* () {
       const existing = yield* calls
@@ -693,6 +760,7 @@ export const make = Effect.gen(function* () {
         );
       if (Option.isSome(existing)) {
         // Idempotent: a card is written once and never rewritten.
+        yield* releaseCallLease(input.callId);
         return { call: existing.value, alreadyStored: true } satisfies VoiceCallFinishResult;
       }
       // A chat archived, or whose bot had its switch turned off, mid-call still
@@ -739,12 +807,11 @@ export const make = Effect.gen(function* () {
           .get(input.callId)
           .pipe(Effect.orElseSucceed(() => Option.none()));
         if (Option.isSome(raced)) {
+          yield* releaseCallLease(input.callId);
           return { call: raced.value, alreadyStored: true } satisfies VoiceCallFinishResult;
         }
       }
-      // The call is over: its lease goes with it, so a stale tab cannot keep
-      // posting with this call id.
-      activeCalls.delete(input.callId);
+      yield* releaseCallLease(input.callId);
       yield* Effect.logInfo("personal voice call card stored", {
         threadId: chat.threadId,
         callId: input.callId,

@@ -632,19 +632,23 @@ function Invoke-UpdatesGates {
 
 # ---------------------------------------------------------------- is anything working
 
-# The same read-only check the hbots idle waiter uses (restart-<version>.ps1 runs
-# its own idle-check.mjs; keep the two in step): a chat session of a live thread
-# that is running, or a task that is not finished (queued, running, waiting for
-# an agent, the user or the browser, rate limited). A thread deleted mid-turn
-# keeps a 'running' session row, so only live threads count. Prints "idle" or
-# "busy sessions=<n> tasks=<n>".
-$UpdatesIdleQuery = 'const{DatabaseSync}=require("node:sqlite");const db=new DatabaseSync(process.env.PB_UPDATES_IDLE_DB,{readOnly:true});db.exec("PRAGMA busy_timeout=5000");const s=db.prepare("select count(*) n from projection_thread_sessions s join projection_threads t on t.thread_id=s.thread_id where s.status=''running'' and t.deleted_at is null").get().n;const t=db.prepare("select count(*) n from personal_tasks where status in (''queued'',''running'',''waiting_for_agent'',''waiting_for_user'',''waiting_for_browser'',''rate_limited'')").get().n;db.close();console.log(s===0&&t===0?"idle":"busy sessions="+s+" tasks="+t)'
+# The same read-only check the hbots idle waiter uses (the waiter runs
+# run\idle-classification-16617.mjs; keep the two in step): a chat session of a
+# live thread that is running, a task that is not finished (queued, running,
+# waiting for an agent, the user or the browser, rate limited), or an open
+# voice call (a live `personal_voice_call_leases` row, 1.66.53: a restart
+# mid-call drops it). A thread deleted mid-turn keeps a 'running' session row,
+# so only live threads count. A database older than the lease table is read as
+# no calls, never as an error. Prints "idle" or
+# "busy sessions=<n> tasks=<n> calls=<n>".
+$UpdatesIdleQuery = 'const{DatabaseSync}=require("node:sqlite");const db=new DatabaseSync(process.env.PB_UPDATES_IDLE_DB,{readOnly:true});db.exec("PRAGMA busy_timeout=5000");const s=db.prepare("select count(*) n from projection_thread_sessions s join projection_threads t on t.thread_id=s.thread_id where s.status=''running'' and t.deleted_at is null").get().n;const t=db.prepare("select count(*) n from personal_tasks where status in (''queued'',''running'',''waiting_for_agent'',''waiting_for_user'',''waiting_for_browser'',''rate_limited'')").get().n;const hasLeases=db.prepare("select count(*) n from sqlite_master where type=''table'' and name=''personal_voice_call_leases''").get().n>0;const now=Date.now();const c=hasLeases?db.prepare("select expires_at e from personal_voice_call_leases").all().filter(r=>typeof r.e==="string"&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(r.e)&&Number.isFinite(Date.parse(r.e))&&Date.parse(r.e)>now).length:0;db.close();console.log(s===0&&t===0&&c===0?"idle":"busy sessions="+s+" tasks="+t+" calls="+c)'
 
 <#
 .SYNOPSIS
-One look at whether any bot or task is working. Returns "idle", "busy sessions=<n>
-tasks=<n>", or "unreadable: <why>" (which counts as busy: when in doubt, no restart).
-PB_UPDATES_IDLE_DB points the check at another state.sqlite (the tests do).
+One look at whether any bot, task or voice call is working. Returns "idle",
+"busy sessions=<n> tasks=<n> calls=<n>", or "unreadable: <why>" (which counts as
+busy: when in doubt, no restart). PB_UPDATES_IDLE_DB points the check at another
+state.sqlite (the tests do).
 #>
 function Get-PbBusyState {
     param([string]$StateDb)
@@ -653,7 +657,7 @@ function Get-PbBusyState {
     $env:PB_UPDATES_IDLE_DB = $StateDb
     $res = Invoke-UpdatesProc -FilePath (Resolve-NodeExe) -ArgList @('--disable-warning=ExperimentalWarning', '-e', $UpdatesIdleQuery) -WorkingDirectory $UpdatesHome -TimeoutSeconds 60
     $text = $res.Out.Trim()
-    if ($res.Code -eq 0 -and ($text -eq 'idle' -or $text -match '^busy sessions=\d+ tasks=\d+$')) { return $text }
+    if ($res.Code -eq 0 -and ($text -eq 'idle' -or $text -match '^busy sessions=\d+ tasks=\d+ calls=\d+$')) { return $text }
     $why = $res.Err.Trim()
     if ($why.Length -gt 160) { $why = $why.Substring(0, 160) }
     return "unreadable: exit $($res.Code) $why"
@@ -661,11 +665,12 @@ function Get-PbBusyState {
 
 <#
 .SYNOPSIS
-Waits until EVERY bot and task is idle (Harout's rule: never restart while any bot
-or task is still working), like the idle waiter: $Streak idle looks in a row,
-$PollSeconds apart (that also covers a bot's last memory save). Tasks waiting on
-the user count as working, as in the waiter; the timeout is what ends a wait that
-nobody will answer. Returns $true when idle, $false on timeout.
+Waits until EVERY bot, task and voice call is idle (Harout's rule: never restart
+while any bot or task is still working), like the idle waiter: $Streak idle
+looks in a row, $PollSeconds apart (that also covers a bot's last memory save).
+Tasks waiting on the user count as working, as in the waiter; the timeout is
+what ends a wait that nobody will answer. Returns $true when idle, $false on
+timeout.
 #>
 function Wait-PbAllIdle {
     param([double]$TimeoutMinutes = 120, [int]$PollSeconds = 20, [int]$Streak = 3, [string]$StateDb, [scriptblock]$Log)

@@ -1,7 +1,8 @@
 /**
  * The call-card table against the real SQLite: the cheap list (no transcript
- * read), the one-card transcript request, and the delete that takes a chat's
- * cards with it when the chat is deleted (must-fix 9).
+ * read), the one-card transcript request, the delete that takes a chat's cards
+ * with it when the chat is deleted (must-fix 9), and the open-call lease rows
+ * the restart gates read from outside the server process.
  */
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
@@ -46,7 +47,7 @@ const layer = PersonalVoiceCallRepository.layer.pipe(
 
 it.layer(layer)("PersonalVoiceCallRepository", (it) => {
   const seed = Effect.gen(function* () {
-    yield* runMigrations({ toMigrationInclusive: 109 });
+    yield* runMigrations({ toMigrationInclusive: 110 });
     const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
     const createdAt = DateTime.makeUnsafe("2026-10-15T17:04:13.000Z");
     yield* repository.insert({ record: card("call-1", CHAT), createdAt });
@@ -104,6 +105,72 @@ it.layer(layer)("PersonalVoiceCallRepository", (it) => {
         SELECT count(*) AS "count" FROM personal_voice_calls
       `;
       assert.equal(Number(count?.count), 2);
+    }),
+  );
+
+  const lease = (callId: string, threadId: ThreadId, expiresAt: string) =>
+    Effect.gen(function* () {
+      const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
+      yield* repository.openLease({
+        callId,
+        threadId,
+        botId: PersonalBotId.make("bot-cto"),
+        openedAt: DateTime.makeUnsafe("2026-10-15T17:00:00.000Z"),
+        expiresAt: DateTime.makeUnsafe(expiresAt),
+      });
+    });
+
+  const leaseRows = Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* sql<{ readonly callId: string; readonly threadId: string }>`
+      SELECT call_id AS "callId", thread_id AS "threadId"
+      FROM personal_voice_call_leases ORDER BY call_id
+    `;
+  });
+
+  it.effect("keeps one row per open call and removes it when the call is closed", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      yield* lease("call-open", CHAT, "2026-10-15T17:35:00.000Z");
+      // Writing the same call again refreshes the row instead of duplicating it.
+      yield* lease("call-open", OTHER_CHAT, "2026-10-15T17:40:00.000Z");
+      const rows = yield* leaseRows;
+      assert.deepEqual(rows, [{ callId: "call-open", threadId: OTHER_CHAT }]);
+
+      const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
+      yield* repository.closeLease("call-open");
+      assert.deepEqual(yield* leaseRows, []);
+      // Closing a call that was never open is not an error: `finish` may retry.
+      yield* repository.closeLease("call-open");
+      assert.deepEqual(yield* leaseRows, []);
+    }),
+  );
+
+  it.effect("prunes expired rows and clears every row at boot", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      yield* lease("call-stale", CHAT, "2026-10-15T17:20:00.000Z");
+      yield* lease("call-live", OTHER_CHAT, "2026-10-15T17:35:00.000Z");
+      const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
+      const pruned = yield* repository.pruneLeases(DateTime.makeUnsafe("2026-10-15T17:30:00.000Z"));
+      assert.equal(pruned, 1);
+      assert.deepEqual(yield* leaseRows, [{ callId: "call-live", threadId: OTHER_CHAT }]);
+      // A restart ends every call, so boot clears what is left.
+      assert.equal(yield* repository.clearLeases(), 1);
+      assert.deepEqual(yield* leaseRows, []);
+      assert.equal(yield* repository.clearLeases(), 0);
+    }),
+  );
+
+  it.effect("a deleted chat's lease goes with the chat's cards", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      yield* lease("call-here", CHAT, "2026-10-15T17:35:00.000Z");
+      yield* lease("call-elsewhere", OTHER_CHAT, "2026-10-15T17:35:00.000Z");
+      const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
+      assert.equal(yield* repository.deleteLeasesByThread(CHAT), 1);
+      assert.deepEqual(yield* leaseRows, [{ callId: "call-elsewhere", threadId: OTHER_CHAT }]);
+      assert.equal(yield* repository.deleteLeasesByThread(CHAT), 0);
     }),
   );
 });

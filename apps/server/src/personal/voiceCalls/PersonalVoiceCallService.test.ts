@@ -670,6 +670,74 @@ describe("PersonalVoiceCallService.send acceptance", () => {
   });
 });
 
+describe("PersonalVoiceCallService open-call lease (the restart gates read it)", () => {
+  const leaseRows = () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      return yield* sql<{
+        readonly callId: string;
+        readonly threadId: string;
+        readonly openedAt: string;
+        readonly expiresAt: string;
+      }>`
+        SELECT call_id AS "callId", thread_id AS "threadId",
+               opened_at AS "openedAt", expires_at AS "expiresAt"
+        FROM personal_voice_call_leases
+      `;
+    });
+
+  const finishOnce = (
+    service: PersonalVoiceCallService["Service"],
+    callId: string,
+    threadId: ThreadId,
+  ) =>
+    service.finish({
+      threadId,
+      callId,
+      startedAt: DateTime.makeUnsafe("2026-10-15T17:00:00.000Z"),
+      endedAt: DateTime.makeUnsafe("2026-10-15T17:02:00.000Z"),
+      endReason: "hung_up",
+      transcript: [],
+      sentMessageIds: [],
+    });
+
+  it.effect("marks the call open for the idle gates, then closes the row on finish", () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    return withService({ calls: [], dispatched }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        const open = yield* leaseRows();
+        expect(open).toHaveLength(1);
+        expect(open[0]!.callId).toBe(started.callId);
+        expect(open[0]!.threadId).toBe(CTO_CHAT);
+        // Bounded: even a phone that dies leaves the gate waiting for the call
+        // cap plus the slack, never forever.
+        expect(Date.parse(open[0]!.expiresAt) - Date.parse(open[0]!.openedAt)).toBe(
+          (30 + 5) * 60_000,
+        );
+
+        yield* finishOnce(service, started.callId, CTO_CHAT);
+        expect(yield* leaseRows()).toHaveLength(0);
+        // A retried finish closes a row that is already gone without failing.
+        yield* finishOnce(service, started.callId, CTO_CHAT);
+        expect(yield* leaseRows()).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.effect("leaves no open-call row when the chat is refused before a call starts", () => {
+    const sensitive: Array<string> = ["https://bank.example"];
+    return withService({ calls: [], dispatched: [], sensitive }, (service) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(service.start({ threadId: CTO_CHAT }));
+        expect(error.code).toBe("sensitive_chat");
+        // A refused call must not hold the release waiter as if it were live.
+        expect(yield* leaseRows()).toHaveLength(0);
+      }),
+    );
+  });
+});
+
 describe("PersonalVoiceCallService.finish after the chat changed mid-call", () => {
   const storeOnce = (
     service: PersonalVoiceCallService["Service"],

@@ -117,12 +117,20 @@ describe("ThreadDeletionReactor drain", () => {
             released.push(released.length + 1);
           }),
       } as unknown as PersonalBrowser["Service"];
-      // A deleted chat takes its recorded call transcripts with it (must-fix 9).
+      // A deleted chat takes its recorded call transcripts with it (must-fix 9),
+      // and its open-call lease: a chat that is gone can never be called, and a
+      // row left behind would keep a release waiter waiting for nothing.
       const transcriptsRemoved: Array<string> = [];
+      const leasesRemoved: Array<string> = [];
       const voiceCallCards = {
         deleteByThread: (threadId: ThreadId) =>
           Effect.sync(() => {
             transcriptsRemoved.push(threadId);
+            return 0;
+          }),
+        deleteLeasesByThread: (threadId: ThreadId) =>
+          Effect.sync(() => {
+            leasesRemoved.push(threadId);
             return 0;
           }),
       } as unknown as PersonalVoiceCallRepository.PersonalVoiceCallRepository["Service"];
@@ -158,8 +166,10 @@ describe("ThreadDeletionReactor drain", () => {
           // lease row outlive the thread otherwise.
           expect(released).toEqual([1, 2]);
           // And every deletion drops that chat's call cards, so the recorded
-          // words of a call cannot outlive the chat.
+          // words of a call cannot outlive the chat, and its open-call lease
+          // with them.
           expect(transcriptsRemoved).toEqual([threadId, threadId]);
+          expect(leasesRemoved).toEqual([threadId, threadId]);
         }),
       ).pipe(Effect.provide(layer));
     }),

@@ -132,6 +132,31 @@ export class PersonalVoiceCallRepository extends Context.Service<
     readonly deleteByThread: (
       threadId: ThreadId,
     ) => Effect.Effect<number, PersonalVoiceCallRepositoryError>;
+    /**
+     * Marks one call open. The row is the only thing a restart gate can see
+     * from outside this process, so it is written when a call is minted and
+     * never carries a word said on the call. Writing the same call twice
+     * refreshes it rather than failing.
+     */
+    readonly openLease: (input: {
+      readonly callId: string;
+      readonly threadId: ThreadId;
+      readonly botId: PersonalBotId;
+      readonly openedAt: DateTime.Utc;
+      readonly expiresAt: DateTime.Utc;
+    }) => Effect.Effect<void, PersonalVoiceCallRepositoryError>;
+    /** The call is over (or was never open): the row goes. Idempotent. */
+    readonly closeLease: (callId: string) => Effect.Effect<void, PersonalVoiceCallRepositoryError>;
+    /** Drops rows whose expiry has passed, so a dead phone's row cannot linger. */
+    readonly pruneLeases: (
+      at: DateTime.Utc,
+    ) => Effect.Effect<number, PersonalVoiceCallRepositoryError>;
+    /** Every open-call row goes: a restart ends every call, so boot clears them. */
+    readonly clearLeases: () => Effect.Effect<number, PersonalVoiceCallRepositoryError>;
+    /** A deleted chat has no call: its lease goes with its cards. */
+    readonly deleteLeasesByThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<number, PersonalVoiceCallRepositoryError>;
   }
 >()("t3/personal/voiceCalls/PersonalVoiceCallRepository") {}
 
@@ -257,12 +282,74 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.map((rows) => rows.length));
 
+  const openLease: PersonalVoiceCallRepository["Service"]["openLease"] = (input) =>
+    query(
+      "openLease",
+      sql`
+        INSERT INTO personal_voice_call_leases (call_id, thread_id, bot_id, opened_at, expires_at)
+        VALUES (
+          ${input.callId}, ${input.threadId}, ${input.botId},
+          ${DateTime.formatIso(input.openedAt)}, ${DateTime.formatIso(input.expiresAt)}
+        )
+        ON CONFLICT(call_id) DO UPDATE SET
+          thread_id = excluded.thread_id,
+          bot_id = excluded.bot_id,
+          opened_at = excluded.opened_at,
+          expires_at = excluded.expires_at
+      `,
+    ).pipe(Effect.asVoid);
+
+  const closeLease: PersonalVoiceCallRepository["Service"]["closeLease"] = (callId) =>
+    query(
+      "closeLease",
+      sql`
+        DELETE FROM personal_voice_call_leases
+        WHERE call_id = ${callId}
+      `,
+    ).pipe(Effect.asVoid);
+
+  const pruneLeases: PersonalVoiceCallRepository["Service"]["pruneLeases"] = (at) =>
+    query(
+      "pruneLeases",
+      sql`
+        DELETE FROM personal_voice_call_leases
+        WHERE expires_at <= ${DateTime.formatIso(at)}
+        RETURNING call_id AS "callId"
+      `,
+    ).pipe(Effect.map((rows) => rows.length));
+
+  const clearLeases: PersonalVoiceCallRepository["Service"]["clearLeases"] = () =>
+    query(
+      "clearLeases",
+      sql`
+        DELETE FROM personal_voice_call_leases
+        RETURNING call_id AS "callId"
+      `,
+    ).pipe(Effect.map((rows) => rows.length));
+
+  const deleteLeasesByThread: PersonalVoiceCallRepository["Service"]["deleteLeasesByThread"] = (
+    threadId,
+  ) =>
+    query(
+      "deleteLeasesByThread",
+      sql`
+        DELETE FROM personal_voice_call_leases
+        WHERE thread_id = ${threadId}
+        RETURNING call_id AS "callId"
+      `,
+    ).pipe(Effect.map((rows) => rows.length));
+
   return {
     insert,
     get,
     listByThread,
     getTranscript,
     deleteByThread,
+    openLease,
+    closeLease,
+    pruneLeases,
+    clearLeases,
+    deleteLeasesByThread,
   } satisfies PersonalVoiceCallRepository["Service"];
 });
 

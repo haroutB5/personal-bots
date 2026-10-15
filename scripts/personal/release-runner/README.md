@@ -68,3 +68,26 @@ other helpers unchanged):
 | `hbots-release/tests/hbots-release.tests.ps1`                                                  | `4af2581be37190d98e46a972b2f8ea1b9676c1197a095c83d1ab28c84e41511f` |
 | `hbots-release/tests/stubs/restart.ps1`                                                        | `1561de620d04a3043fb111b615a849404742a144431f3f982a3bac22bd133ad7` |
 | `hbots-release/release-db-check.cjs`, `tree-hash.cjs`, `make-fixture.cjs`, `proc-priority.ps1` | unchanged from the 1.66.47 table                                   |
+
+## 1.66.53: an open voice call is busy
+
+The idle classifier gains the open-call check: an unexpired
+`personal_voice_call_leases` row holds the gate, so a landing cannot restart the
+app in the middle of a call. It carries 16633's pending-turn check as well, and
+a database older than the lease table (or a table that is not there yet) reads
+as no calls, never as an error. `updates-common.ps1` carries the same check into
+the nightly Updates restart gate.
+
+Install **before `-Prepare`**: `-Prepare` runs `Test-PinnedHelpers`, so the
+installed classifier must already match `$PinIdleClassifierSha` in the copied
+runner. Copy the classifier **over** `run/idle-classification-16617.mjs`; the
+runner keeps that file name.
+
+| File                                                                   | sha256                                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `hbots-release.ps1`                                                    | `24de4dc25206f7c7565f8c7047bc0afb1458b601a0fa1942c1a58500ad308003` |
+| `idle-classification-16653.mjs` -> `run/idle-classification-16617.mjs` | `b0f7586c6935c4cc650d3278e70588bee891afcd08d3ec7575b0241cce4efbdc` |
+| `hbots-release/tests/`, `hbots-release/*.cjs`, `proc-priority.ps1`     | unchanged from the 1.66.48 table                                   |
+
+To undo, restore the saved 1.66.48 runner and the saved classifier together:
+the pin in the runner and the installed classifier hash must agree.
