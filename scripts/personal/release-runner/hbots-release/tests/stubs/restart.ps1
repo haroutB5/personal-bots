@@ -16,6 +16,7 @@ Add-Content -LiteralPath $log -Value "[$(Get-Date -Format s)] INFO stall recorde
 if (Flag 'error-line') { Add-Content -LiteralPath $log -Value "[$(Get-Date -Format s)] ERROR something broke at startup" }
 if (Flag 'sql-echo') { Add-Content -LiteralPath $log -Value "      'sql 790 ms INSERT INTO orchestration_command_receipts ( command_id, status, error ) VALUES ...'" }
 if (Flag 'token-line') { Add-Content -LiteralPath $log -Value "[$(Get-Date -Format s)] INFO Pairing URL: http://x/pair#token=abc" }
+if (Flag 'schedulers-off') { Add-Content -LiteralPath $log -Value "[$(Get-Date -Format s)] WARN (#8): Personal schedulers are OFF (T3CODE_PERSONAL_SCHEDULERS=off): routines, queued tasks, group rounds, usage-limit chat resumes and release notices will not start." }
 $db = "$h\dev\userdata\state.sqlite"
 if (Flag 'drop-memory') { & node --disable-warning=ExperimentalWarning (Join-Path $env:HBOTS_TEST_STUBS 'dbtool.cjs') $db delete-memory }
 if (Flag 'normal-priority') {

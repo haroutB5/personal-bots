@@ -313,11 +313,14 @@ into a temp folder, serves it on a random loopback port, expects a 200 from
 `/.well-known/t3/environment` within `-Seconds` (default 120; the 3 GB
 database needs about 31 s to boot), then stops that server by PID and deletes
 the temp folder. The copy runs with `T3CODE_PERSONAL_SCHEDULERS=off` (no
-routine fires, no queued task starts; the server logs one WARN line at boot),
+routine fires, no queued task or group round starts, no usage-limit resume or
+release notice is posted; the server logs one WARN line at boot),
 because it keeps the real routines, tasks and provider CLIs. The nightly and
 upstream-sync rehearsals boot through `restore-test.ps1`, so they get it too.
 `Clear-DevOriginEnv` (common.ps1) clears the variable, so the live start path
-(`start.ps1`, `restart.ps1`, the logon task) never runs with it.
+(`start.ps1`, `restart.ps1`, the logon task) never runs with it, and the
+release runner fails (binary rollback) a release whose server logs that WARN
+after the restart.
 
 Restore for real (server stopped): copy the backup's files into
 `%USERPROFILE%\.personal-bots\<root>\userdata\`, replacing `state.sqlite`, and

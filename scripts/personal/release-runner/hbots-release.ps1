@@ -577,6 +577,12 @@ function Invoke-ChecksB([hashtable]$Ctx) {
     $pbOutcome['tokenOrPairingLines'] = $tok.Count
     if ($tok.Count -gt 0) { throw "Server log since restart has $($tok.Count) Token:/Pairing URL lines." }
     Note 'No Token:/Pairing URL lines in the server log since restart.'
+    # T3CODE_PERSONAL_SCHEDULERS=off is for restored test copies only: on the live server no routine,
+    # task, group round, usage-limit resume or release notice would ever start, so it fails the release.
+    $sched = @($lines | Where-Object { $_ -match 'Personal schedulers are OFF' })
+    $pbOutcome['schedulersOffLines'] = $sched.Count
+    if ($sched.Count -gt 0) { throw 'Server started with T3CODE_PERSONAL_SCHEDULERS=off (Personal schedulers are OFF WARN after restart); the live server must never run with it.' }
+    Note 'No schedulers-OFF WARN in the server log since restart.'
     if (-not $Ctx.SkipStartupMarker) {
         if ($text -notmatch '(?s)stall recorder on.{0,200}profiler:\s*''continuous''') { throw 'Stall recorder continuous-profiler startup marker absent.' }
         $pbOutcome['stallRecorderOn'] = $true

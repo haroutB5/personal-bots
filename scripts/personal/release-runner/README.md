@@ -34,3 +34,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/personal/release-run
 
 An installed copy of the runner tests needs `-ToolsDir <checkout>/scripts/personal`
 (or the new sealed tools' `scripts/personal`), since it has no repo-relative tools.
+
+## After 1.66.47: schedulers-OFF guard (fix/hbots-scheduler-switch)
+
+The post-restart log scan (checks B, from the restart offset) now fails the
+release, with the usual binary-only rollback, when the server logs
+`Personal schedulers are OFF` (`T3CODE_PERSONAL_SCHEDULERS=off`, meant for
+restored test copies only). The result JSON gains `schedulersOffLines`. Test:
+`s2-schedulersoff` (stub flag `schedulers-off`). No helper changed, so the
+runner's helper pins are unchanged. Install hashes for the next release's notes
+(sha256, LF bytes):
+
+| File                                                                                           | sha256                                                             |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `hbots-release.ps1`                                                                            | `b1a1bda1d32a1fbdb8b9ac8a2d227cb9a65177e844efe4893e5546f4ffd4766a` |
+| `hbots-release/tests/hbots-release.tests.ps1`                                                  | `e8628e77082bb50ecb8c10b32299cab3800ea57b7a2e1fb221da206781ceb998` |
+| `hbots-release/tests/stubs/restart.ps1`                                                        | `1561de620d04a3043fb111b615a849404742a144431f3f982a3bac22bd133ad7` |
+| `hbots-release/release-db-check.cjs`, `tree-hash.cjs`, `make-fixture.cjs`, `proc-priority.ps1` | unchanged from the 1.66.47 table                                   |

@@ -7,7 +7,7 @@ serves it on a random loopback port, and checks /.well-known/t3/environment.
 The throwaway server gets no secrets (backups carry none), so it cannot link
 T3 Connect or touch the real environment. The copy still holds the real
 routines, queued tasks and provider CLIs (settings.json), so the server runs
-with T3CODE_PERSONAL_SCHEDULERS=off: no routine fires and no task starts.
+with T3CODE_PERSONAL_SCHEDULERS=off: no routine, task, group round, usage-limit resume or release notice starts.
 Builds before that switch ignore it (the line after PASSED says which). It is stopped by its captured PID
 after the check, and only its own temp directory (%TEMP%\pb-restore-test-*) is
 deleted. The run log is kept in %USERPROFILE%\.personal-bots\logs.
