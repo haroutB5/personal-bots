@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - worker owns synchronous JSON parsing.
 import { isSea } from "node:sea";
+import * as NodeTimers from "node:timers";
 import { Worker } from "node:worker_threads";
 
 import type { TranscriptParsePosition, TranscriptParseResult } from "./usageTranscriptReader.ts";
 
 let worker: Worker | undefined;
-let idleTimer: ReturnType<typeof setTimeout> | undefined;
+let idleTimer: ReturnType<typeof NodeTimers.setTimeout> | undefined;
 let queue: Promise<unknown> = Promise.resolve();
 
 /** One reusable worker, one file at a time. No transcript bodies cross back. */
@@ -18,7 +19,7 @@ export function readDeepSeekOnWorker(
     // The executable has no sibling worker script. Its existing inline path
     // remains available, as it does when the worker switch is off.
     if (isSea()) throw new Error("Transcript worker needs a script runtime");
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    if (idleTimer !== undefined) NodeTimers.clearTimeout(idleTimer);
     const active = (worker ??= new Worker(
       new URL(
         import.meta.url.endsWith(".ts")
@@ -51,7 +52,10 @@ export function readDeepSeekOnWorker(
         cleanup();
         active.unref();
         // Release memory after a provider refresh/usage scan has finished.
-        idleTimer = setTimeout(() => {
+        // This worker lifecycle is outside Effect; the idle timer must unref
+        // so a completed command never stays alive just to release the worker.
+        // @effect-diagnostics-next-line globalTimers:off - native worker cleanup needs an unref timer outside any fiber, as in opencodeUsageReader
+        idleTimer = NodeTimers.setTimeout(() => {
           if (worker === active) worker = undefined;
           void active.terminate();
         }, 10_000);
