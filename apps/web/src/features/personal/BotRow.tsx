@@ -205,28 +205,25 @@ export const BotRow = memo(function BotRow({
       />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex min-w-0 items-center">
-          <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
-            {bot.name}
+          <span className="flex min-w-0 items-center">
+            <span className="max-w-full shrink-0 truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
+              {bot.name}
+            </span>
+            {rowModelLabel !== null ? (
+              <span
+                data-testid="bot-model-label"
+                className="ml-1.5 min-w-0 shrink-[100] truncate text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
+              >
+                {modelParts.base}
+              </span>
+            ) : null}
           </span>
-          {rowModelLabel !== null ? (
-            // Gives way before the name does: it shrinks first and truncates.
+          {modelParts.marker !== null ? (
             <span
-              data-testid="bot-model-label"
-              className={cn(
-                "text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]",
-                modelParts.marker === null ? "ml-1.5 min-w-0 shrink-[100] truncate" : "contents",
-              )}
+              data-testid="bot-model-marker"
+              className="shrink-0 whitespace-pre text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
             >
-              {modelParts.marker === null ? (
-                rowModelLabel
-              ) : (
-                <>
-                  <span className="ml-1.5 min-w-0 shrink-[100] truncate">{modelParts.base}</span>
-                  <span data-testid="bot-model-marker" className="shrink-0 whitespace-pre">
-                    {` · ${modelParts.marker}`}
-                  </span>
-                </>
-              )}
+              {` · ${modelParts.marker}`}
             </span>
           ) : null}
           {botMuteState(bot, now).muted ? <MutedBell className="ml-1.5" /> : null}
