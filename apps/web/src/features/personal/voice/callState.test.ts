@@ -2,11 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   VOICE_END_REASONS,
+  VOICE_GOODBYE_SPOKEN_LINE,
+  VOICE_QUIET_SPOKEN_LINE,
   callHint,
   callMetaLine,
   contrastRatio,
   endReasonLine,
   formatCallDuration,
+  isVoiceCancelPhrase,
   liftForContrast,
   limitBannerText,
   limitPointsMs,
@@ -15,6 +18,7 @@ import {
   quietDeadlineMs,
   quietExpired,
   quietWarningDue,
+  spokenInstruction,
   voiceCaptionLabel,
 } from "./callState";
 
@@ -146,5 +150,40 @@ describe("the bot's colour on the call's background", () => {
 
   it("keeps a malformed colour rather than guessing one", () => {
     expect(liftForContrast("rebeccapurple", BG, 3)).toBe("rebeccapurple");
+  });
+});
+
+describe("saying no, wait", () => {
+  it("matches the short ways the owner takes a send back", () => {
+    for (const phrase of [
+      "no",
+      "No, wait.",
+      "no wait",
+      "wait",
+      "stop",
+      "cancel that",
+      "never mind",
+      "don't send it",
+      "Undo",
+    ]) {
+      expect(isVoiceCancelPhrase(phrase)).toBe(true);
+    }
+  });
+
+  it("never fires on a real instruction that merely contains the word", () => {
+    for (const phrase of [
+      "stop the deploy",
+      "don't forget the tests",
+      "wait for the gates then ship",
+      "cancel the subscription for me",
+      "no more tasks please",
+    ]) {
+      expect(isVoiceCancelPhrase(phrase)).toBe(false);
+    }
+  });
+
+  it("wraps the lines the client asks the voice to speak", () => {
+    expect(spokenInstruction(VOICE_QUIET_SPOKEN_LINE)).toContain('"Still there?"');
+    expect(spokenInstruction(VOICE_GOODBYE_SPOKEN_LINE)).toContain("30 minute limit");
   });
 });

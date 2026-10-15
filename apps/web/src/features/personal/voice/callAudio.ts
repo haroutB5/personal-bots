@@ -19,6 +19,10 @@
  */
 import workletUrl from "./pcm16kCapture.js?url";
 
+import { createCallAudioContext } from "./callAudioContext";
+
+export { createCallAudioContext };
+
 /** Where the ring's level comes from. */
 export type VoiceLevelSource = "mic" | "voice" | "none";
 
@@ -53,11 +57,9 @@ export interface CallAudio extends CallAudioPort {
 type AudioContextLike = AudioContext;
 
 function createContext(): AudioContextLike {
-  const Ctor =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (Ctor === undefined) throw new Error("This browser has no Web Audio.");
-  return new Ctor();
+  const context = createCallAudioContext();
+  if (context === null) throw new Error("This browser has no Web Audio.");
+  return context;
 }
 
 /** Level smoothing: fast attack, slower release (spec 3.3). */
@@ -142,19 +144,10 @@ export interface CallAudioOptions {
   readonly context?: AudioContext | null;
 }
 
-/** Builds the call's AudioContext. Call it synchronously from the tap. */
-export function createCallAudioContext(): AudioContext | null {
-  try {
-    return createContext();
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Builds the call's audio. Call this straight from the tap: it creates and
- * resumes the AudioContext synchronously, which is the only way iOS lets a
- * page make sound.
+ * Builds the call's audio. Call this straight from the tap: it takes the
+ * AudioContext the tap already made, or creates one, which is the only way iOS
+ * lets a page make sound.
  */
 export function createCallAudio(options: CallAudioOptions): CallAudio {
   const echo = options.echoCancellation ?? true;
@@ -247,7 +240,7 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
       if (context === null || destination === null || closed) return;
       const media = navigator.mediaDevices;
       if (media === undefined) throw new Error("This browser has no microphone access.");
-      stream = await media.getUserMedia({
+      const pending = await media.getUserMedia({
         audio: {
           echoCancellation: echo,
           noiseSuppression: echo,
@@ -255,6 +248,14 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
           channelCount: 1,
         },
       });
+      // The call can end while the permission prompt is up (the owner taps End,
+      // or leaves the app). The stream then arrives with nobody to use it, so it
+      // is stopped here rather than left live behind a closed screen.
+      if (closed) {
+        for (const track of pending.getTracks()) track.stop();
+        return;
+      }
+      stream = pending;
       if (context.state !== "running") {
         try {
           await context.resume();
@@ -262,8 +263,19 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
           // A refused resume shows up as silence, not as a failed call.
         }
       }
+      if (closed) {
+        for (const track of pending.getTracks()) track.stop();
+        stream = null;
+        return;
+      }
       if (worklet === null) {
         await context.audioWorklet.addModule(workletUrl);
+        // The module load is another await, so the call may be over by now.
+        if (closed) {
+          for (const track of pending.getTracks()) track.stop();
+          stream = null;
+          return;
+        }
         worklet = new AudioWorkletNode(context, "pcm16k-capture");
         worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => options.onFrame(event.data);
         // The worklet writes nothing: a silent sink keeps it in the rendering
@@ -276,10 +288,10 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
       micAnalyser ??= context.createAnalyser();
       if (micAnalyser.fftSize !== 512) micAnalyser.fftSize = 512;
       micSource?.disconnect();
-      micSource = context.createMediaStreamSource(stream);
+      micSource = context.createMediaStreamSource(pending);
       micSource.connect(worklet);
       micSource.connect(micAnalyser);
-      const track = stream.getAudioTracks()[0];
+      const track = pending.getAudioTracks()[0];
       if (track !== undefined) track.enabled = !muted;
     },
     setMuted(next) {

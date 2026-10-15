@@ -106,6 +106,8 @@ export function VoiceCallLayer(): JSX.Element | null {
       elapsedMs={snapshot.elapsedMs}
       transcript={snapshot.transcript}
       captionsOn={voice.captionsOn}
+      wakeLockBlocked={voice.wakeLockBlocked}
+      quietMinutes={snapshot.quietMinutes}
       callSession={voice.session()}
       error={error}
       onMinimise={() => voice.setMinimised(true)}
@@ -156,6 +158,15 @@ export function errorCopyFor(
       return {
         title: "This chat can't take calls",
         body: "Calls work in your own chats with a bot, not in groups, tasks or archived chats.",
+        primary: "Close",
+        onPrimary: actions.onClose,
+      };
+    case "sensitive_chat":
+      // A chat that has had a private site open never goes to Google: the
+      // server refuses the call, and this says why in the owner's words.
+      return {
+        title: "Voice calls are off in chats that opened a private site",
+        body: "This chat has had a private site open, so its messages stay on your laptop. A call in another chat still works.",
         primary: "Close",
         onPrimary: actions.onClose,
       };

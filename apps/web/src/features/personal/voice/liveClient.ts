@@ -105,8 +105,13 @@ export function liveSetupMessage(input: {
             },
             {
               name: "send_to_bot",
+              // Non-blocking: the tool is answered only once the message really
+              // posted, and - while the bot is still working - only when its
+              // turn ends with the reply. Blocking here would freeze the
+              // conversation for as long as the bot takes.
+              behavior: "NON_BLOCKING",
               description:
-                "Send a message to the bot as the owner, exactly as if they typed it. Use this for anything that needs the bot to do work, decide something or answer.",
+                "Send a message to the bot as the owner, exactly as if they typed it. Use this for anything that needs the bot to do work, decide something or answer. This does not wait: carry on talking, and the real reply arrives later.",
               parameters: {
                 type: "OBJECT",
                 properties: {
@@ -228,6 +233,12 @@ export interface LiveClient {
     readonly response: Record<string, unknown>;
     readonly scheduling?: "INTERRUPT" | "WHEN_IDLE" | "SILENT";
   }): void;
+  /**
+   * Makes the voice say one line the client chose (the quiet warning, the
+   * goodbye at the call's cap). Live has no "speak" frame, so the words go in
+   * as a client turn carrying an instruction to say them.
+   */
+  speak(text: string): void;
   /** Closes the socket for good. A close after this is never reported as a drop. */
   stop(): void;
   /** True once the session is usable. */
@@ -525,6 +536,19 @@ export function connectLive(options: LiveClientOptions): LiveClient {
         JSON.stringify({
           toolResponse: {
             functionResponses: [{ id, name, response, ...(scheduling ? { scheduling } : {}) }],
+          },
+        }),
+      );
+    },
+    speak(text: string) {
+      const line = text.trim();
+      if (line.length === 0 || !ready) return;
+      if (socket === null || socket.readyState !== LIVE_SOCKET_OPEN) return;
+      socket.send(
+        JSON.stringify({
+          clientContent: {
+            turns: [{ role: "user", parts: [{ text: line }] }],
+            turnComplete: true,
           },
         }),
       );

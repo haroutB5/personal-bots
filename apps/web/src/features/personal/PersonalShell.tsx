@@ -33,21 +33,12 @@ import { PersonalTabBar } from "./PersonalTabBar";
 import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
 import { warmPersonalRoutes } from "./warmRoutes";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
-import { VoiceCallProvider } from "./voice/VoiceCallProvider";
+import { VoiceCallMount, VoiceCallProvider } from "./voice/VoiceCallProvider";
 
 // Desktop home pane only: the phone never shows it, so it stays off the
 // chats list's startup path.
 const TeamScreen = lazy(() =>
   import("./TeamScreen").then((module) => ({ default: module.TeamScreen })),
-);
-
-/**
- * Voice calls: the provider holds the one call (context only, no DOM) and the
- * layer is lazy, so nothing about a call sits in the shell's own chunk. The
- * layer renders nothing at all while no call is on.
- */
-const VoiceCallLayer = lazy(() =>
-  import("./voice/VoiceCallLayer").then((module) => ({ default: module.VoiceCallLayer })),
 );
 
 /**
@@ -145,7 +136,7 @@ export function PersonalShell(): JSX.Element {
           {swipeBack.layers}
           <ChunkLoadBoundary>
             <Suspense fallback={null}>
-              <VoiceCallLayer />
+              <VoiceCallMount />
             </Suspense>
           </ChunkLoadBoundary>
         </div>
@@ -219,7 +210,7 @@ export function PersonalShell(): JSX.Element {
         <OutboxFlusher />
         <ChunkLoadBoundary>
           <Suspense fallback={null}>
-            <VoiceCallLayer />
+            <VoiceCallMount />
           </Suspense>
         </ChunkLoadBoundary>
       </div>

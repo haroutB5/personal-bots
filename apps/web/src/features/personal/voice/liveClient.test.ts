@@ -69,7 +69,7 @@ describe("liveSetupMessage", () => {
     // question about the weather never has to wake the bot.
     expect(tools).toContainEqual({ googleSearch: {} });
     const declarations = tools.find((tool) => "functionDeclarations" in tool) as {
-      functionDeclarations: ReadonlyArray<{ name: string }>;
+      functionDeclarations: ReadonlyArray<{ name: string; behavior?: string }>;
     };
     expect(declarations.functionDeclarations.map((row) => row.name)).toEqual([
       "lookup_memory",
@@ -78,6 +78,10 @@ describe("liveSetupMessage", () => {
       "latest_reply",
       "end_call",
     ]);
+    // send_to_bot must not block the conversation while the bot works.
+    expect(
+      declarations.functionDeclarations.find((row) => row.name === "send_to_bot")?.behavior,
+    ).toBe("NON_BLOCKING");
     const instruction = setup.systemInstruction as { parts: ReadonlyArray<{ text: string }> };
     expect(instruction.parts[0]!.text).toBe("Speak as the bot.\n\n3 messages of context");
     const config = setup.generationConfig as Record<string, unknown>;
@@ -189,6 +193,26 @@ describe("connectLive", () => {
           functionResponses: [
             { id: "tc-1", name: "send_to_bot", response: { ok: true }, scheduling: "WHEN_IDLE" },
           ],
+        },
+      },
+    ]);
+  });
+
+  it("says one line the client chose, only once the session is live", () => {
+    const client = connectLive(options({}));
+    const socket = latestSocket();
+    socket.open();
+    // Before setupComplete the session cannot take a turn.
+    client.speak("Still there?");
+    expect(socket.sentOf("clientContent")).toHaveLength(0);
+    socket.setupComplete();
+    client.speak("Still there?");
+    client.speak("   ");
+    expect(socket.sentOf("clientContent")).toEqual([
+      {
+        clientContent: {
+          turns: [{ role: "user", parts: [{ text: "Still there?" }] }],
+          turnComplete: true,
         },
       },
     ]);
