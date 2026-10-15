@@ -13,6 +13,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { deepSeekPeakWindowEndMs } from "@t3tools/shared/deepseekPeak";
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -275,10 +276,14 @@ export function fallbackNoteLabel(
     return `${DEEPSEEK_PEAK_LABEL}${peakUntil}`;
   }
   if (active.reason === PERSONAL_FALLBACK_REASON_SCHEDULE) {
-    const scheduleUntil = Number.isFinite(resetMs)
-      ? ` until ${formatLocalTime(resetMs, nowMs, timeZone)}`
+    const scheduledPeak = onScheduledDeepSeekPeak(bot);
+    const peakEnd = scheduledPeak ? deepSeekPeakWindowEndMs(nowMs) : null;
+    const labelEnd =
+      peakEnd === null ? resetMs : Number.isFinite(resetMs) ? Math.min(resetMs, peakEnd) : peakEnd;
+    const scheduleUntil = Number.isFinite(labelEnd)
+      ? ` until ${formatLocalTime(labelEnd, nowMs, timeZone)}`
       : "";
-    const label = onScheduledDeepSeekPeak(bot) ? SCHEDULED_PEAK_LABEL : SCHEDULED_MODEL_LABEL;
+    const label = scheduledPeak ? SCHEDULED_PEAK_LABEL : SCHEDULED_MODEL_LABEL;
     return `${label}${scheduleUntil}`;
   }
   const provider = active.fromProvider.trim();

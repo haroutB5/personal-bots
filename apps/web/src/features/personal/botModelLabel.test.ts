@@ -1,5 +1,6 @@
 import {
   type ModelSelection,
+  type PersonalBot,
   ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
@@ -461,6 +462,34 @@ describe("a bot whose scheduled DeepSeek model is inside a peak window", () => {
     const bot = onScheduledPeak(deepseekSchedule);
     expect(fallbackNoteLabel(bot, NOW, "Europe/London")).toBe("Scheduled model until 11:00");
     expect(botActiveModelShortLabel(bot, allProviders)).toBe("DeepSeek V4.1 Flash · H · sched");
+  });
+
+  it("ends the peak note at the earlier of the schedule and the UTC peak window", () => {
+    const base = onScheduledPeak(peakModel) as unknown as PersonalBot;
+    const withReset = (at: string) => ({
+      ...base,
+      fallbackActive: { ...base.fallbackActive!, resetAt: DateTime.makeUnsafe(at) },
+    });
+    expect(fallbackNoteLabel(withReset("2026-10-14T12:00:00Z"), NOW, "Europe/London")).toBe(
+      "Scheduled, DeepSeek peak until 11:00",
+    );
+    expect(fallbackNoteLabel(withReset("2026-10-14T09:30:00Z"), NOW, "Europe/London")).toBe(
+      "Scheduled, DeepSeek peak until 10:30",
+    );
+    expect(
+      fallbackNoteLabel(
+        withReset("2026-10-27T12:00:00Z"),
+        Date.parse("2026-10-27T09:00:00Z"),
+        "Europe/London",
+      ),
+    ).toBe("Scheduled, DeepSeek peak until 10:00");
+    expect(
+      fallbackNoteLabel(
+        withReset("2026-10-14T05:00:00Z"),
+        Date.parse("2026-10-14T02:00:00Z"),
+        "UTC",
+      ),
+    ).toBe("Scheduled, DeepSeek peak until 04:00");
   });
 });
 

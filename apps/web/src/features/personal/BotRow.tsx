@@ -10,6 +10,7 @@ import type { AvatarMotion } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { MutedBell } from "./BotMute";
 import { botMuteState } from "./botMuteModel";
+import { splitModelMarker } from "./botModelLabel";
 import { botStatus, type BotSummary } from "./botSummaries";
 import { chatNoticeLabel, readChatNotice } from "./chatNotices";
 import { readServerTurn, type ServerTurn } from "./delegationModel";
@@ -190,6 +191,7 @@ export const BotRow = memo(function BotRow({
 
   // The same short form as the pinned tiles and the chat headers: "Sonnet 5.5 · H".
   const rowModelLabel = summary.modelShortLabel;
+  const modelParts = splitModelMarker(rowModelLabel ?? "");
   const content: ReactNode = (
     <>
       <BotAvatar
@@ -210,9 +212,21 @@ export const BotRow = memo(function BotRow({
             // Gives way before the name does: it shrinks first and truncates.
             <span
               data-testid="bot-model-label"
-              className="ml-1.5 min-w-0 shrink-[100] truncate text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
+              className={cn(
+                "ml-1.5 shrink-[100] text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]",
+                modelParts.marker === null ? "min-w-0 truncate" : "flex",
+              )}
             >
-              {rowModelLabel}
+              {modelParts.marker === null ? (
+                rowModelLabel
+              ) : (
+                <>
+                  <span className="min-w-0 truncate">{modelParts.base}</span>
+                  <span data-testid="bot-model-marker" className="shrink-0 whitespace-pre">
+                    {` · ${modelParts.marker}`}
+                  </span>
+                </>
+              )}
             </span>
           ) : null}
           {botMuteState(bot, now).muted ? <MutedBell className="ml-1.5" /> : null}
