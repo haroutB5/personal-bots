@@ -5,7 +5,10 @@ serves it on a random loopback port, and checks /.well-known/t3/environment.
 
 .DESCRIPTION
 The throwaway server gets no secrets (backups carry none), so it cannot link
-T3 Connect or touch the real environment. It is stopped by its captured PID
+T3 Connect or touch the real environment. The copy still holds the real
+routines, queued tasks and provider CLIs (settings.json), so the server runs
+with T3CODE_PERSONAL_SCHEDULERS=off: no routine fires and no task starts.
+Builds before that switch ignore it (the line after PASSED says which). It is stopped by its captured PID
 after the check, and only its own temp directory (%TEMP%\pb-restore-test-*) is
 deleted. The run log is kept in %USERPROFILE%\.personal-bots\logs.
 
@@ -122,6 +125,8 @@ if (-not (Copy-BackupAtLowPriority -From $backupDir -To $stateDir)) {
 
 Clear-DevOriginEnv
 $env:T3CODE_ENVIRONMENT_LABEL = 'Bots restore test'
+# Routines and the task queue stay off on the restored copy (QA saw one queue 2 real routine runs in 8 s).
+$env:T3CODE_PERSONAL_SCHEDULERS = 'off'
 $port = Get-FreeTcpPort
 $logFile = Join-Path $tempRoot 'restore-test.log'
 Write-Host "Restoring $backupDir into $tempRoot and serving on 127.0.0.1:$port ..."
@@ -203,6 +208,9 @@ if ($ok -and -not $migrationOk) {
 if ($ok) {
     Write-Host ("Restore test PASSED: {0} served environment '{1}' (t3 {2}) on port {3}." -f `
             (Split-Path -Leaf $backupDir), $descriptor.label, $descriptor.serverVersion, $port)
+    $schedulersConfirmed = (Test-Path -LiteralPath $keptLog) -and
+        [bool](Select-String -LiteralPath $keptLog -SimpleMatch -Pattern 'Personal schedulers are OFF' -Quiet)
+    Write-Host ("  Schedulers: {0}" -f $(if ($schedulersConfirmed) { 'off (the server logged it)' } else { 'switch set, not confirmed by this build (older builds ignore it)' }))
     if ($migration) {
         $columnText = @($ExpectColumn | ForEach-Object { "$_=$($migration.columns.$_)" }) -join ', '
         Write-Host ("  Migration rehearsal: max migration {0}{1}." -f $migration.maxMigration, $(if ($columnText) { "; $columnText" } else { '' }))

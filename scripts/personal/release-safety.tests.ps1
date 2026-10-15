@@ -45,6 +45,35 @@ Assert-Equal 'build.ps1 still accepts -NoActivate' $true ($buildText -match '\[s
 $restartText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'restart.ps1') -Raw
 Assert-Equal 'restart.ps1 (the rollback path) never calls the notes check' $false ($restartText -match 'check-release-notes')
 
+Write-Host 'scheduler switch (T3CODE_PERSONAL_SCHEDULERS): restored copies off, live start never'
+$schedEnv = 'T3CODE_PERSONAL_SCHEDULERS'
+$schedBefore = [Environment]::GetEnvironmentVariable($schedEnv, 'Process')
+try {
+    [Environment]::SetEnvironmentVariable($schedEnv, 'off', 'Process')
+    Clear-DevOriginEnv
+    Assert-Equal 'Clear-DevOriginEnv clears an inherited switch' $null ([Environment]::GetEnvironmentVariable($schedEnv, 'Process'))
+} finally {
+    [Environment]::SetEnvironmentVariable($schedEnv, $schedBefore, 'Process')
+}
+$schedSet = '\$env:T3CODE_PERSONAL_SCHEDULERS\s*=|SetEnvironmentVariable\(\s*[''"]T3CODE_PERSONAL_SCHEDULERS'
+$restoreText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'restore-test.ps1') -Raw
+Assert-Equal 'restore-test.ps1 sets it off after Clear-DevOriginEnv and before the server starts' $true `
+    ($restoreText -match "(?s)\nClear-DevOriginEnv\r?\n.*\n\`$env:T3CODE_PERSONAL_SCHEDULERS = 'off'\r?\n.*Start-PbServeProcess")
+Assert-Equal 'restore-test.ps1 sets it exactly once' 1 ([regex]::Matches($restoreText, $schedSet)).Count
+$startText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'start.ps1') -Raw
+Assert-Equal 'start.ps1 clears the launcher env before it starts the server' $true ($startText -match '(?s)\nClear-DevOriginEnv\r?\n.*Start-PbServeProcess')
+foreach ($live in @('start.ps1', 'restart.ps1', 'install-task.ps1', 'stop.ps1', 'smoke.ps1')) {
+    $liveText = Get-Content -LiteralPath (Join-Path $PSScriptRoot $live) -Raw
+    Assert-Equal "$live (live path) never names the switch" $false ($liveText -match $schedEnv)
+}
+foreach ($rehearsal in @('updates\nightly-pipeline.ps1', 'upstream-sync.ps1')) {
+    $rehearsalText = Get-Content -LiteralPath (Join-Path $PSScriptRoot $rehearsal) -Raw
+    Assert-Equal "$rehearsal boots its rehearsal through restore-test.ps1" $true ($rehearsalText -match "-Name 'restore-test\.ps1'")
+    Assert-Equal "$rehearsal never sets the switch in its own (live-restarting) process" 0 ([regex]::Matches($rehearsalText, $schedSet)).Count
+}
+$twText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'throwaway-server.ps1') -Raw
+Assert-Equal 'throwaway-server.ps1 sets it only behind -SchedulersOff' 1 ([regex]::Matches($twText, "if \(\`$NoSchedulers\) \{ \`$envSet\['T3CODE_PERSONAL_SCHEDULERS'\] = 'off' \}")).Count
+
 Write-Host 'check-release-notes.ps1'
 $check = Join-Path $PSScriptRoot 'check-release-notes.ps1'
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('hbots-relnotes-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))

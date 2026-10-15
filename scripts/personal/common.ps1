@@ -85,8 +85,11 @@ function Import-RepoDotEnv {
 # inside the live server's process tree, so an inherited value put throwaway and
 # restore-test stall captures into the live folder where they read as real.
 # Cleared, the server derives <baseDir>\userdata\logs\stalls from its own root.
+# T3CODE_PERSONAL_SCHEDULERS (=off stops routines and the task queue; restore-test.ps1 sets it after this
+# call for its restored copy) is cleared so the live start path (start.ps1, restart.ps1, the logon task)
+# never inherits it.
 function Clear-DevOriginEnv {
-    foreach ($name in @('VITE_DEV_SERVER_URL', 'VITE_HTTP_URL', 'VITE_WS_URL', 'T3CODE_HOME', 'T3CODE_PORT', 'T3CODE_MODE', 'T3CODE_PERSONAL_STALL_DIR')) {
+    foreach ($name in @('VITE_DEV_SERVER_URL', 'VITE_HTTP_URL', 'VITE_WS_URL', 'T3CODE_HOME', 'T3CODE_PORT', 'T3CODE_MODE', 'T3CODE_PERSONAL_STALL_DIR', 'T3CODE_PERSONAL_SCHEDULERS')) {
         [Environment]::SetEnvironmentVariable($name, $null, 'Process')
     }
 }
