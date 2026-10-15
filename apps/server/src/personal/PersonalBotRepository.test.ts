@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -552,3 +553,58 @@ it.effect("lists each bot chat's provider session for process attribution", () =
     );
   }).pipe(Effect.provide(testLayer)),
 );
+
+// 1.66.49 finding 3: a schedule_json that does not decode used to be skipped
+// silently. It still does not fail the read, but it logs one WARN with the bot
+// id (once, not on every list refresh).
+it.effect("warns once for a bot whose stored schedule_json cannot be decoded", () => {
+  const lines: Array<{ readonly level: string; readonly fields: Record<string, unknown> }> = [];
+  const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
+    const [, fields] = Array.isArray(message) ? message : [message, {}];
+    lines.push({ level: logLevel, fields: (fields ?? {}) as Record<string, unknown> });
+  });
+  return Effect.gen(function* () {
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const botId = PersonalBotId.make("bot-bad-schedule");
+    yield* repository.createBot(
+      decodeCreateBot({
+        botId,
+        name: "Scheduler",
+        title: "Ops",
+        description: "Runs at night.",
+        instructions: "Be brief.",
+        avatarShape: "blob",
+        avatarColor: "#1A73E8",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5-5",
+        },
+        team: "assistant",
+        lead: false,
+        pinned: false,
+        sortOrder: 0,
+        createdAt: "2026-10-15T20:38:00.000Z",
+        updatedAt: "2026-10-15T20:38:00.000Z",
+      }),
+    );
+    yield* sql`
+      UPDATE personal_bots SET schedule_json = '{"enabled":true,"from":"22:00"'
+      WHERE bot_id = ${botId}
+    `;
+
+    // Twice: the read still returns the bot (schedule off), and the warning is
+    // not repeated for the same stored value.
+    const first = yield* repository.listBots();
+    const second = yield* repository.listBots();
+
+    expect(first.map((bot) => bot.botId)).toContain(botId);
+    expect(first.find((bot) => bot.botId === botId)?.schedule).toBeUndefined();
+    expect(second).toHaveLength(first.length);
+    expect(lines).toEqual([
+      { level: "Warn", fields: expect.objectContaining({ botId: "bot-bad-schedule" }) },
+    ]);
+  }).pipe(
+    Effect.provide(Layer.merge(testLayer, Logger.layer([sink], { mergeWithExisting: false }))),
+  );
+});

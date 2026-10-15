@@ -2,6 +2,7 @@ import {
   type ModelSelection,
   type OrchestrationThreadShell,
   type PersonalBot,
+  type PersonalBotFallbackActive,
   PersonalBotId,
   type PersonalBotThread,
   ProviderInstanceId,
@@ -37,6 +38,7 @@ function setup(input?: {
   readonly link?: Partial<PersonalBotThread> | null;
   readonly group?: string;
   readonly botModel?: ModelSelection;
+  readonly fallbackActive?: Partial<PersonalBotFallbackActive>;
   readonly threadModel?: ModelSelection;
   readonly env?: Record<string, string>;
   readonly reactorOutcome?: Effect.Effect<ProviderSessionPrewarmOutcome>;
@@ -68,7 +70,13 @@ function setup(input?: {
       getThreadLink: () => Effect.succeed(Option.fromNullOr(link)),
       getBotById: () =>
         Effect.succeed(
-          Option.some({ botId, modelSelection: input?.botModel ?? claude("opus") } as PersonalBot),
+          Option.some({
+            botId,
+            modelSelection: input?.botModel ?? claude("opus"),
+            ...(input?.fallbackActive !== undefined
+              ? { fallbackActive: input.fallbackActive }
+              : {}),
+          } as PersonalBot),
         ),
     }),
     Layer.mock(PersonalGroupService)({
@@ -117,6 +125,45 @@ describe("personal session prewarm", () => {
     const codex = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
     expect(sendModelSelection(codex, claude("sonnet"))).toEqual(claude("sonnet"));
   });
+
+  // 1.66.49 finding 1: the first turn after a model switch warmed the bot's own
+  // model and restarted the CLI on the switched one 1-3 s later. The prewarm now
+  // warms what the turn will run on, so that send reuses the session.
+  it.effect("prewarms the switched model while the bot runs on its schedule or fallback", () =>
+    Effect.gen(function* () {
+      const scheduled = claude("opus");
+      const { calls, run } = setup({
+        botModel: claude("sonnet"),
+        threadModel: claude("sonnet"),
+        fallbackActive: {
+          modelSelection: scheduled,
+          fromProvider: "Claude",
+          reason: "schedule",
+        },
+      });
+
+      expect(yield* run((prewarm) => prewarm(threadId))).toBe("started");
+      expect(calls).toEqual([{ threadId, modelSelection: scheduled }]);
+    }),
+  );
+
+  it.effect("does not warm a chat whose switched model is on another provider", () =>
+    Effect.gen(function* () {
+      const { calls, run } = setup({
+        botModel: claude("sonnet"),
+        threadModel: claude("sonnet"),
+        fallbackActive: {
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+          fromProvider: "DeepSeek",
+          reason: "deepseek_peak",
+        },
+      });
+
+      // The next send moves the chat there and starts a fresh session itself.
+      expect(yield* run((prewarm) => prewarm(threadId))).toBe("provider-switch");
+      expect(calls).toEqual([]);
+    }),
+  );
 
   it.effect("does not warm the old provider for a chat whose bot moved to another one", () =>
     Effect.gen(function* () {

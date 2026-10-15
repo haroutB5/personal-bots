@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { botEffectiveModelSelection, type ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -38,9 +38,12 @@ export { sendModelSelection };
 
 /**
  * Opening a personal bot chat starts its Claude session in the background, so
- * the first message after a pause does not wait 1.5-2.6 s for it. No prompt is
- * sent and no turn starts; the session reaper stops it after the usual idle
- * window. Kill switch: PB_PERF_OFF=session-prewarm.
+ * the first message after a pause does not wait 1.5-2.6 s for it. The session is
+ * warmed on the model the next turn will run on (the bot's scheduled, peak or
+ * fallback model while one is active), so that send reuses it instead of
+ * restarting the CLI on the switched model. No prompt is sent and no turn
+ * starts; the session reaper stops it after the usual idle window. Kill switch:
+ * PB_PERF_OFF=session-prewarm.
  */
 export const makePersonalSessionPrewarmer = (options?: {
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -84,16 +87,21 @@ export const makePersonalSessionPrewarmer = (options?: {
         if (Option.isNone(bot)) return "not-a-bot-chat" as const;
         const thread = yield* projection.getThreadShellById(threadId);
         if (Option.isNone(thread)) return "missing" as const;
-        // The bot moved to another provider: the chat's next send starts a
-        // fresh session there. Warming the old provider's would be wasted.
-        if (bot.value.modelSelection.instanceId !== thread.value.modelSelection.instanceId) {
+        // The model the next turn will actually run on: a bot on its model
+        // schedule, the DeepSeek peak switch or a usage-limit fallback warms
+        // that model, not its saved one, or the first send restarts the session
+        // on the switched model (1.66.49 finding 1). It moves to another
+        // provider: the chat's next send starts a fresh session there. Warming
+        // the old provider's would be wasted.
+        const activeSelection = botEffectiveModelSelection(bot.value);
+        if (activeSelection.instanceId !== thread.value.modelSelection.instanceId) {
           return "provider-switch" as const;
         }
         if ((yield* countUnused) >= maxUnused) return "too-many-unused" as const;
         const startedAt = DateTime.formatIso(yield* DateTime.now);
         const outcome = yield* reactor.prewarmSession({
           threadId,
-          modelSelection: sendModelSelection(bot.value.modelSelection, thread.value.modelSelection),
+          modelSelection: activeSelection,
         });
         if (outcome === "started") prewarmedAt.set(threadId, startedAt);
         return outcome;

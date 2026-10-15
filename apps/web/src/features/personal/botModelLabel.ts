@@ -2,10 +2,13 @@ import {
   botEffectiveModelSelection,
   botFallbackActive,
   DEEPSEEK_AGENT_MODE_OPTION_ID,
+  isDeepSeekModelId,
   type ModelSelection,
   PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
   PERSONAL_FALLBACK_REASON_SCHEDULE,
   type PersonalBot,
+  type PersonalBotFallbackActive,
+  type PersonalBotSchedule,
   type SelectProviderOptionDescriptor,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -179,17 +182,49 @@ export const SCHEDULED_MODEL_LABEL = "Scheduled model";
 /** The schedule note's tight form ("Opus 5.5 · M · sched"), for the same lines the peak note is short on. */
 export const SCHEDULED_MODEL_SHORT_LABEL = "sched";
 
+/**
+ * "Scheduled, DeepSeek peak until 11:00": a scheduled DeepSeek model never runs
+ * on DeepSeek inside a peak window (the server's peak switch replaces it with
+ * Sonnet 5.5 High on the same `schedule` row), so the note carries both facts
+ * instead of reading plain "Scheduled model" with no hint of the peak (1.66.49
+ * finding 2).
+ */
+export const SCHEDULED_PEAK_LABEL = "Scheduled, DeepSeek peak";
+
 /** The bot is on its model schedule, not a usage-limit fallback or the peak switch. */
-function onModelSchedule(bot: Pick<PersonalBot, "fallbackActive">): boolean {
+function onModelSchedule(bot: BotFallbackFields): boolean {
   return botFallbackActive(bot)?.reason === PERSONAL_FALLBACK_REASON_SCHEDULE;
 }
 
+/**
+ * True while a schedule row is running on the peak model instead of the model
+ * it names: the schedule's own model is a DeepSeek one and the row is on
+ * something else. A schedule that names a non-DeepSeek model is never replaced,
+ * so it stays "Scheduled model".
+ */
+function onScheduledDeepSeekPeak(bot: BotFallbackFields): boolean {
+  const active = botFallbackActive(bot);
+  if (active?.reason !== PERSONAL_FALLBACK_REASON_SCHEDULE) return false;
+  const scheduled = bot.schedule?.modelSelection;
+  if (scheduled === undefined || !isDeepSeekModelId(scheduled.model)) return false;
+  return (
+    active.modelSelection.model !== scheduled.model ||
+    active.modelSelection.instanceId !== scheduled.instanceId
+  );
+}
+
 /** The bot is on the DeepSeek peak switch (1.66.44), not a usage-limit fallback. */
-function onDeepSeekPeak(bot: Pick<PersonalBot, "fallbackActive">): boolean {
+function onDeepSeekPeak(bot: BotFallbackFields): boolean {
   return botFallbackActive(bot)?.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK;
 }
 
-type BotWithFallback = Pick<PersonalBot, "modelSelection" | "fallbackActive">;
+/** What a label needs to know about the bot's fallback and model schedule. */
+type BotFallbackFields = {
+  readonly fallbackActive?: PersonalBotFallbackActive;
+  readonly schedule?: PersonalBotSchedule;
+};
+
+type BotWithFallback = Pick<PersonalBot, "modelSelection" | "fallbackActive"> & BotFallbackFields;
 
 function formatLocalTime(atMs: number, nowMs: number, timeZone: string | undefined): string {
   const day = (ms: number) =>
@@ -216,12 +251,13 @@ function formatLocalTime(atMs: number, nowMs: number, timeZone: string | undefin
 /**
  * Why a bot is on its fallback model, for a title or an accessible name:
  * "on fallback until about 14:30 (Codex usage limit)", or "DeepSeek peak until
- * 11:00" while the DeepSeek peak switch has it. The time is in the device's own
- * zone and is left out when the provider gave no reset time. Null while the bot
- * is on its own model.
+ * 11:00" while the DeepSeek peak switch has it. A scheduled DeepSeek model
+ * inside a peak window reads "Scheduled, DeepSeek peak until 11:00". The time is
+ * in the device's own zone and is left out when the provider gave no reset time.
+ * Null while the bot is on its own model.
  */
 export function fallbackNoteLabel(
-  bot: Pick<PersonalBot, "fallbackActive">,
+  bot: BotFallbackFields,
   nowMs: number = Date.now(),
   timeZone?: string,
 ): string | null {
@@ -242,7 +278,8 @@ export function fallbackNoteLabel(
     const scheduleUntil = Number.isFinite(resetMs)
       ? ` until ${formatLocalTime(resetMs, nowMs, timeZone)}`
       : "";
-    return `${SCHEDULED_MODEL_LABEL}${scheduleUntil}`;
+    const label = onScheduledDeepSeekPeak(bot) ? SCHEDULED_PEAK_LABEL : SCHEDULED_MODEL_LABEL;
+    return `${label}${scheduleUntil}`;
   }
   const provider = active.fromProvider.trim();
   return `on fallback${until}${provider === "" ? "" : ` (${provider} usage limit)`}`;
@@ -289,7 +326,9 @@ export function botActiveModelLabel(
  * The short model label for a bot: what it runs on right now, ending
  * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback"),
  * "· peak" while the DeepSeek peak switch has it ("Sonnet 5.5 · H · peak"), or
- * "· sched" while its model schedule has it ("Opus 5.5 · M · sched").
+ * "· sched" while its model schedule has it ("Opus 5.5 · M · sched"). A
+ * scheduled DeepSeek model inside a peak window ends "· peak": that is the
+ * switch the bot is actually on.
  *
  * The peak note is the short form on purpose: this label sits on the Bots rows,
  * the chat header, task cards and 72px pinned tiles, where "· DeepSeek peak
@@ -302,7 +341,9 @@ export function botActiveModelShortLabel(
 ): string | null {
   const label = botModelShortLabel(botEffectiveModelSelection(bot), providers);
   if (label === null) return null;
-  if (onDeepSeekPeak(bot)) return `${label} · ${DEEPSEEK_PEAK_SHORT_LABEL}`;
+  if (onDeepSeekPeak(bot) || onScheduledDeepSeekPeak(bot)) {
+    return `${label} · ${DEEPSEEK_PEAK_SHORT_LABEL}`;
+  }
   if (onModelSchedule(bot)) return `${label} · ${SCHEDULED_MODEL_SHORT_LABEL}`;
   return botFallbackActive(bot) === null ? label : `${label} · ${FALLBACK_LABEL_MARKER}`;
 }

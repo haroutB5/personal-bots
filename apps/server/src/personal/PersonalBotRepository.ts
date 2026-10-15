@@ -614,39 +614,86 @@ const decodePersonalBotThreadListDbRow = Schema.decodeUnknownEffect(PersonalBotT
 
 const decodeStoredSchedule = Schema.decodeUnknownOption(Schema.fromJsonString(PersonalBotSchedule));
 
-/** The bot's `schedule` field from its stored JSON; nothing when there is none or it does not decode. */
-function scheduleOfRow(stored: string | null): { readonly schedule?: PersonalBotSchedule } {
-  if (stored === null) return {};
-  const decoded = decodeStoredSchedule(stored);
-  return Option.isSome(decoded) ? { schedule: decoded.value } : {};
+/**
+ * Malformed stored schedules already warned about, by bot id and the value that
+ * failed. A repeated read (every `personalBots.list` refresh) must not repeat
+ * the WARN, so the warning is once per bot per distinct stored value.
+ */
+const warnedInvalidSchedules = new Set<string>();
+
+/** The first read of this exact malformed value for this bot (the one that warns). */
+function firstInvalidScheduleRead(botId: string, stored: string): boolean {
+  const key = `${botId}\u0000${stored}`;
+  if (warnedInvalidSchedules.has(key)) return false;
+  warnedInvalidSchedules.add(key);
+  return true;
 }
 
-function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
+/** A bot's stored schedule_json that did not decode, when there is one. */
+interface InvalidStoredSchedule {
+  readonly botId: string;
+  readonly stored: string;
+}
+
+/**
+ * The bot's `schedule` field from its stored JSON; nothing when there is none or
+ * it does not decode. A value that does not decode is not dropped silently: the
+ * caller logs one WARN with the bot id (1.66.49 finding 3).
+ */
+function scheduleOfRow(
+  botId: string,
+  stored: string | null,
+): {
+  readonly schedule?: PersonalBotSchedule;
+  readonly invalidSchedule: InvalidStoredSchedule | null;
+} {
+  if (stored === null) return { invalidSchedule: null };
+  const decoded = decodeStoredSchedule(stored);
+  if (Option.isSome(decoded)) return { schedule: decoded.value, invalidSchedule: null };
+  return { invalidSchedule: { botId, stored } };
+}
+
+/** One WARN per bot whose stored schedule_json could not be decoded; never fails. */
+const warnInvalidSchedule = (invalid: InvalidStoredSchedule | null) =>
+  invalid === null || !firstInvalidScheduleRead(invalid.botId, invalid.stored)
+    ? Effect.void
+    : Effect.logWarning("personal bot has a malformed schedule_json; its model schedule is off", {
+        botId: invalid.botId,
+      });
+
+function toPersonalBot(row: typeof PersonalBotDbRow.Type): {
+  readonly bot: PersonalBot;
+  readonly invalidSchedule: InvalidStoredSchedule | null;
+} {
+  const storedSchedule = scheduleOfRow(row.botId, row.schedule);
   return {
-    botId: row.botId,
-    name: row.name,
-    title: row.title,
-    description: row.description,
-    instructions: row.instructions,
-    avatarShape: row.avatarShape,
-    avatarColor: row.avatarColor,
-    modelSelection: row.modelSelection as ModelSelectionType,
-    enabled: row.enabled === 1,
-    sortOrder: row.sortOrder,
-    team: row.team,
-    lead: row.lead === 1,
-    pinned: row.pinned === 1,
-    memoryAutoSave: row.memoryAutoSave === 1,
-    hidePreviews: row.hidePreviews === 1,
-    fallback: {
-      enabled: row.fallbackEnabled === 1,
-      modelSelection:
-        (row.fallbackModel as ModelSelectionType | null) ?? PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
+    invalidSchedule: storedSchedule.invalidSchedule,
+    bot: {
+      botId: row.botId,
+      name: row.name,
+      title: row.title,
+      description: row.description,
+      instructions: row.instructions,
+      avatarShape: row.avatarShape,
+      avatarColor: row.avatarColor,
+      modelSelection: row.modelSelection as ModelSelectionType,
+      enabled: row.enabled === 1,
+      sortOrder: row.sortOrder,
+      team: row.team,
+      lead: row.lead === 1,
+      pinned: row.pinned === 1,
+      memoryAutoSave: row.memoryAutoSave === 1,
+      hidePreviews: row.hidePreviews === 1,
+      fallback: {
+        enabled: row.fallbackEnabled === 1,
+        modelSelection:
+          (row.fallbackModel as ModelSelectionType | null) ?? PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
+      },
+      ...(storedSchedule.schedule === undefined ? {} : { schedule: storedSchedule.schedule }),
+      notificationsMutedUntil: row.notificationsMutedUntil,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     },
-    ...scheduleOfRow(row.schedule),
-    notificationsMutedUntil: row.notificationsMutedUntil,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
   };
 }
 
@@ -1308,7 +1355,9 @@ export const make = Effect.gen(function* () {
       onSome: (row) =>
         decodePersonalBotDbRow(row).pipe(
           Effect.mapError((cause) => PersistenceDecodeError.fromSchemaError(operation, cause)),
-          Effect.map((decoded) => Option.some(toPersonalBot(decoded))),
+          Effect.map((decoded) => toPersonalBot(decoded)),
+          Effect.tap(({ invalidSchedule }) => warnInvalidSchedule(invalidSchedule)),
+          Effect.map(({ bot }) => Option.some(bot)),
         ),
     });
 
@@ -1383,7 +1432,9 @@ export const make = Effect.gen(function* () {
                 cause,
               ),
             ),
-            Effect.map(toPersonalBot),
+            Effect.map((decoded) => toPersonalBot(decoded)),
+            Effect.tap(({ invalidSchedule }) => warnInvalidSchedule(invalidSchedule)),
+            Effect.map(({ bot }) => bot),
           ),
         ),
       ),

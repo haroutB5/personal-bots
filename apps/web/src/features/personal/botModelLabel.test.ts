@@ -419,6 +419,51 @@ describe("a bot on its model schedule", () => {
   });
 });
 
+// 1.66.49 finding 2: a scheduled DeepSeek model in a peak window ran on the
+// peak model (Sonnet 5.5 High) while the label read "· sched" with no hint of
+// the peak. The server keeps the row's reason `schedule` and swaps the model,
+// so the label has to say both.
+describe("a bot whose scheduled DeepSeek model is inside a peak window", () => {
+  const allProviders = [...providers, deepseek];
+  const peakModel = selection("claudeAgent", "claude-sonnet-5-5", [
+    ["effort", "high"],
+    ["contextWindow", "1m"],
+  ]);
+  const deepseekSchedule = selection("deepseek", "deepseek-flash", [["effort", "high"]]);
+  const NOW = Date.parse("2026-10-14T09:00:00.000Z");
+  const onScheduledPeak = (rowModel: ModelSelection) =>
+    ({
+      modelSelection: selection("deepseek", "deepseek-flash"),
+      schedule: { enabled: true, from: "09:00", to: "11:00", modelSelection: deepseekSchedule },
+      fallbackActive: {
+        modelSelection: rowModel,
+        since: DateTime.makeUnsafe("2026-10-14T09:00:00.000Z"),
+        resetAt: DateTime.makeUnsafe("2026-10-14T10:00:00.000Z"),
+        fromProvider: "DeepSeek",
+        reason: "schedule",
+      },
+    }) as never;
+
+  it("shows the peak in the long label and in the tight one", () => {
+    const bot = onScheduledPeak(peakModel);
+    expect(fallbackNoteLabel(bot, NOW, "Europe/London")).toBe(
+      "Scheduled, DeepSeek peak until 11:00",
+    );
+    expect(botActiveModelLabel(bot, allProviders, NOW, "Europe/London")).toBe(
+      "Sonnet 5.5 high, Scheduled, DeepSeek peak until 11:00",
+    );
+    // The tight places (rows, header, task cards, tiles) keep the peak word.
+    expect(botActiveModelShortLabel(bot, allProviders)).toBe("Sonnet 5.5 · H · peak");
+    expect(taskCardBotLine(bot, allProviders)).toBe("Sonnet 5.5 · H · peak");
+  });
+
+  it("stays 'Scheduled model' while the row is on the model the schedule names", () => {
+    const bot = onScheduledPeak(deepseekSchedule);
+    expect(fallbackNoteLabel(bot, NOW, "Europe/London")).toBe("Scheduled model until 11:00");
+    expect(botActiveModelShortLabel(bot, allProviders)).toBe("DeepSeek V4.1 Flash · H · sched");
+  });
+});
+
 describe("splitModelMarker", () => {
   it("splits the three markers off the tight label", () => {
     expect(splitModelMarker("Sonnet 5.5 · H · peak")).toEqual({
