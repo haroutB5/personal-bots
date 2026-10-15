@@ -122,6 +122,7 @@ import {
   deriveConversationState,
   friendlyTurnError,
   isTurnThinking,
+  placeCallCards,
   placeDelegationCards,
   placeQuestionCards,
   placeSecretRequestCards,
@@ -131,6 +132,7 @@ import {
   placeMemoryCards,
   resolveConversationHeaderName,
   turnErrorNotice,
+  type VoiceCallCardItem,
 } from "./conversationModel";
 import { deriveLatestMessageReadStatus } from "./messageReadStatus";
 import { DelegationCard } from "./DelegationCard";
@@ -173,6 +175,13 @@ import {
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
+import * as DateTime from "effect/DateTime";
+import { voiceCallEndReasonLabel } from "@t3tools/contracts";
+import { CallCard } from "./voice/CallCard";
+import { personalVoiceCallsList } from "./voice/voiceCallApi";
+import { LiveVoiceCallCard } from "./voice/LiveVoiceCallCard";
+import { botVoiceCallColour, botVoiceCallsEnabled } from "./voice/botVoiceCalls";
+import { useVoiceCall } from "./voice/VoiceCallProvider";
 import { ProgressNoteLine } from "./ProgressNoteLine";
 import { deriveLatestProgressNote } from "./latestProgress";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
@@ -180,6 +189,7 @@ import { offlineComposerNotice } from "./offlineBanner";
 import { useQueuedMessages } from "./useQueuedMessages";
 import { useNewChatPrompt } from "./useNewChatPrompt";
 import { usePersonalRelatedTasks, usePersonalTasks } from "./usePersonalAutomation";
+import { useEnvironmentQuery } from "~/state/query";
 import { usePrewarmChatSession } from "./usePrewarmChatSession";
 import { mergeTaskLists } from "./taskPresentation";
 import {
@@ -525,23 +535,62 @@ export function ConversationScreen({
   // The cards the bot put in the conversation belong in it: an answered
   // question keeps the spot where it was asked, so the bot's next reply reads
   // below it instead of above a card stuck at the bottom of the chat.
+  //
+  // Voice calls join the same chain, but only once they have finished: the
+  // running one ticks every second and lives outside the timeline (see
+  // LiveVoiceCallCard), so a call never rebuilds the chat's items per second.
+  const voice = useVoiceCall();
+  // The chat's own call cards, from the server, placed at the time each call
+  // started. The running one ticks every second and lives outside the timeline
+  // (see LiveVoiceCallCard), so a call never rebuilds the chat's items per
+  // second.
+  const voiceCalls = useEnvironmentQuery(
+    environmentId === null ? null : personalVoiceCallsList({ environmentId, input: { threadId } }),
+  );
+  const startVoiceCall = useCallback(() => {
+    if (voice === null || bot === null) return;
+    void voice.start({
+      threadId,
+      botId: bot.botId,
+      botName: bot.name,
+      avatarShape: bot.avatarShape,
+      avatarColor: botVoiceCallColour(bot),
+    });
+  }, [voice, bot, threadId]);
+  const voiceCallCards = useMemo<ReadonlyArray<VoiceCallCardItem>>(
+    () =>
+      voiceCalls.data?.calls.map((row) => ({
+        callId: row.callId,
+        atMs: DateTime.toEpochMillis(row.startedAt),
+        live: false,
+        durationMs: row.durationSeconds * 1_000,
+        endedLine: voiceCallEndReasonLabel(row.endReason),
+        sentCount: row.messageCount,
+        voiceName: row.voiceName,
+        transcript: row.transcript,
+      })) ?? [],
+    [voiceCalls.data],
+  );
   const items = useMemo(
     () =>
-      placeMemoryCards(
-        placeLoginRequestCards(
-          placeLeadBotChangeCards(
-            placeConnectionApprovalCards(
-              placeSecretRequestCards(
-                placeQuestionCards(delegationItems, questionCards),
-                secretRequestCards,
+      placeCallCards(
+        placeMemoryCards(
+          placeLoginRequestCards(
+            placeLeadBotChangeCards(
+              placeConnectionApprovalCards(
+                placeSecretRequestCards(
+                  placeQuestionCards(delegationItems, questionCards),
+                  secretRequestCards,
+                ),
+                connectionApprovalCards,
               ),
-              connectionApprovalCards,
+              leadBotChangeCards,
             ),
-            leadBotChangeCards,
+            loginRequests.cards,
           ),
-          loginRequests.cards,
+          memoryChangeCards,
         ),
-        memoryChangeCards,
+        voiceCallCards,
       ),
     [
       connectionApprovalCards,
@@ -551,7 +600,28 @@ export function ConversationScreen({
       questionCards,
       secretRequestCards,
       loginRequests.cards,
+      voiceCallCards,
     ],
+  );
+
+  const renderCallCard = useCallback(
+    (card: VoiceCallCardItem) => (
+      <CallCard
+        model={{
+          callId: card.callId,
+          startedAtMs: card.atMs,
+          durationMs: card.durationMs,
+          endedLine: card.endedLine,
+          sentCount: card.sentCount,
+          transcript: card.transcript,
+          live: false,
+          voiceName: card.voiceName,
+        }}
+        onCallBack={startVoiceCall}
+        onReturn={() => undefined}
+      />
+    ),
+    [startVoiceCall],
   );
 
   const conversationState = deriveConversationState({
@@ -587,6 +657,29 @@ export function ConversationScreen({
     () => deriveLatestProgressNote({ working, messages, activities, latestTurn }),
     [working, messages, activities, latestTurn],
   );
+  // A call on this chat reads the bot's real state from here: the same working
+  // flag, the same progress line and the newest reply, never a second copy.
+  const voiceBotStatus = useRef({
+    state: "idle",
+    step: null as string | null,
+    elapsedMs: null as number | null,
+    latestReply: null as string | null,
+  });
+  useEffect(() => {
+    const latestReply = messages.findLast(
+      (message) => message.role === "assistant" && message.text.trim().length > 0,
+    );
+    voiceBotStatus.current = {
+      state: conversationState,
+      step: progressNote,
+      elapsedMs: null,
+      latestReply: latestReply?.text ?? null,
+    };
+  }, [conversationState, progressNote, messages]);
+  useEffect(() => {
+    if (voice === null) return;
+    return voice.registerBotStatus(threadId, () => voiceBotStatus.current);
+  }, [voice, threadId]);
   const latestMessageStatus = useMemo(
     () =>
       deriveLatestMessageReadStatus({ items: baseItems, activities, busy: turnBusy, latestTurn }),
@@ -1416,6 +1509,16 @@ export function ConversationScreen({
                 {chatSettingsHint(chipsShown)}
               </span>
             </MenuItem>
+            {/* The second door to a call, and the one that also works while the
+                field has text in it (spec 2). */}
+            {bot !== null && voice !== null && botVoiceCallsEnabled(bot) ? (
+              <MenuItem
+                disabled={voice.call !== null && voice.call.threadId !== threadId}
+                onClick={startVoiceCall}
+              >
+                Call {bot.name}
+              </MenuItem>
+            ) : null}
             <MenuSeparator />
             {bot !== null ? (
               <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
@@ -1533,6 +1636,7 @@ export function ConversationScreen({
             now={now}
             describeTurn={describeTurn}
             renderDelegation={renderDelegation}
+            renderCallCard={renderCallCard}
             readOnly={archived}
             onReply={archived ? undefined : onReply}
             onChoose={archived ? undefined : onChoose}
@@ -1570,25 +1674,39 @@ export function ConversationScreen({
               onDelete={() => void onDeleteChat()}
             />
           ) : (
-            <PersonalComposer
-              // One composer per chat: its in-flight send, error and queued
-              // state belong to the chat it was sent from.
-              key={threadId}
-              environmentId={environmentId}
-              threadId={threadId}
-              thread={thread}
-              botName={botName}
-              botModelSelection={botTurnModel}
-              disabledReason={sendBlockedReason}
-              offlineNotice={offlineNotice}
-              working={turnBusy}
-              canInterrupt={interruptInput !== null}
-              onInterrupt={onInterrupt}
-              onPendingChange={(update) => setPending((current) => update(current))}
-              replyTo={replyTo}
-              onClearReply={onClearReply}
-              quickSendRef={quickSendRef}
-            />
+            <>
+              {/* The running call, at the foot of the chat where the owner is
+                  looking. The finished one is a timeline card. */}
+              <LiveVoiceCallCard threadId={threadId} onReturn={() => voice?.setMinimised(false)} />
+              <PersonalComposer
+                // One composer per chat: its in-flight send, error and queued
+                // state belong to the chat it was sent from.
+                key={threadId}
+                environmentId={environmentId}
+                threadId={threadId}
+                thread={thread}
+                botName={botName}
+                botModelSelection={botTurnModel}
+                disabledReason={sendBlockedReason}
+                offlineNotice={offlineNotice}
+                working={turnBusy}
+                canInterrupt={interruptInput !== null}
+                onInterrupt={onInterrupt}
+                onPendingChange={(update) => setPending((current) => update(current))}
+                replyTo={replyTo}
+                onClearReply={onClearReply}
+                quickSendRef={quickSendRef}
+                voiceCall={
+                  bot !== null && botVoiceCallsEnabled(bot)
+                    ? {
+                        botId: bot.botId,
+                        avatarShape: bot.avatarShape,
+                        avatarColor: botVoiceCallColour(bot),
+                      }
+                    : null
+                }
+              />
+            </>
           )}
         </>
       ) : (
