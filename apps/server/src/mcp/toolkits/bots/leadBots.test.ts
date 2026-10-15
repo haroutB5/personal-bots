@@ -1817,3 +1817,152 @@ describe("lead bot usage-limit fallback settings", () => {
     ),
   );
 });
+
+describe("lead bot model schedule settings", () => {
+  const botNamed = (id: string) =>
+    liveBots.pipe(Effect.map((bots) => bots.find((bot) => bot.botId === botId(id))!));
+
+  it.effect("create_bot and update_bot set, change and switch off a model schedule", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup;
+        const made = yield* call("create_bot", {
+          name: "Night",
+          model: "claude-sonnet-5-5",
+          scheduleFrom: "22:00",
+          scheduleTo: "07:00",
+          scheduleModel: { model: "claude-opus-5-5", effort: "low" },
+        });
+        const created = (yield* liveBots).find((bot) => bot.botId === made.botId)!;
+        expect(created.schedule).toEqual({
+          enabled: true,
+          from: "22:00",
+          to: "07:00",
+          modelSelection: {
+            instanceId: CLAUDE,
+            model: "claude-opus-5-5",
+            options: [{ id: "effort", value: "low" }],
+          },
+        });
+        // The usage-limit fallback is not touched by it.
+        expect(created.fallback?.enabled).toBe(true);
+
+        const moved = yield* call("update_bot", { bot: "Night", scheduleTo: "06:30" });
+        expect(moved).toMatchObject({ pending: false, changed: ["schedule"] });
+        expect(moved.line).toBe(
+          "CFO edited bot 'Night' (model schedule → every day 22:00 to 06:30 on Opus 5.5 · L) on Finance",
+        );
+        expect(harness.notifications.at(-1)).toMatchObject({ title: "CFO edited bot 'Night'" });
+
+        const off = yield* call("update_bot", { bot: "Night", scheduleEnabled: false });
+        expect(off.changed).toEqual(["schedule"]);
+        const row = (yield* liveBots).find((bot) => bot.botId === made.botId)!;
+        expect(row.schedule).toMatchObject({ enabled: false, from: "22:00", to: "06:30" });
+
+        // Nothing new: nothing changes and nothing is announced.
+        const announced = harness.notifications.length;
+        const again = yield* call("update_bot", { bot: "Night", scheduleEnabled: false });
+        expect(again.changed).toEqual([]);
+        expect(harness.notifications).toHaveLength(announced);
+
+        // The audit row keeps the old and new schedule whole.
+        const sql = yield* SqlClient.SqlClient;
+        const audit = yield* sql<{ readonly before_json: string; readonly after_json: string }>`
+          SELECT before_json, after_json FROM personal_lead_bot_actions
+          WHERE action = 'update' ORDER BY created_at DESC, rowid DESC
+        `;
+        expect(parseJson(audit[0]!.before_json)).toMatchObject({
+          schedule: { enabled: true, to: "06:30" },
+        });
+        expect(parseJson(audit[0]!.after_json)).toMatchObject({ schedule: { enabled: false } });
+      }),
+    ),
+  );
+
+  it.effect("it is refused for From = To, a missing time, the bot's own model and Fable", () =>
+    withHarness(() =>
+      Effect.gen(function* () {
+        const { call, refusal } = yield* setup;
+        yield* call("create_bot", { name: "Tax", model: "claude-sonnet-5-5" });
+        expect(
+          yield* refusal("update_bot", {
+            bot: "Tax",
+            scheduleFrom: "08:00",
+            scheduleTo: "08:00",
+            scheduleModel: { model: "claude-opus-5-5" },
+          }),
+        ).toContain("can't be the same time");
+        expect(yield* refusal("update_bot", { bot: "Tax", scheduleFrom: "22:00" })).toContain(
+          "needs scheduleFrom and scheduleTo",
+        );
+        expect(
+          yield* refusal("update_bot", {
+            bot: "Tax",
+            scheduleFrom: "22:00",
+            scheduleTo: "07:00",
+            scheduleModel: { model: "claude-sonnet-5-5", effort: "medium" },
+          }),
+        ).toContain("Pick a different model");
+        expect(
+          yield* refusal("update_bot", {
+            bot: "Tax",
+            scheduleFrom: "22:00",
+            scheduleTo: "07:00",
+            scheduleModel: { model: "claude-fable-5-1" },
+          }),
+        ).toContain("only the user can choose it");
+        expect(
+          yield* refusal("create_bot", {
+            name: "Pricey",
+            scheduleFrom: "22:00",
+            scheduleTo: "07:00",
+            scheduleModel: { model: "claude-fable-5-1" },
+          }),
+        ).toContain("only the user can choose it");
+        expect((yield* liveBots).find((bot) => bot.name === "Tax")!.schedule).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("a bot the user made goes to a card for a schedule change", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, refusal } = yield* setup;
+        taskSays(harness, CFO_THREAD, "[Routine] Review the finance team's bots.");
+        expect(
+          yield* refusal("update_bot", {
+            bot: "Analyst",
+            scheduleFrom: "22:00",
+            scheduleTo: "07:00",
+            scheduleModel: { model: "claude-opus-5-5", effort: "low" },
+          }),
+        ).toContain("change its schedule");
+        expect((yield* botNamed("analyst")).schedule).toBeUndefined();
+
+        userSays(harness, CFO_THREAD, "Run Analyst on Opus at night, 22:00 to 07:00.");
+        const asked = yield* call("update_bot", {
+          bot: "Analyst",
+          scheduleFrom: "22:00",
+          scheduleTo: "07:00",
+          scheduleModel: { model: "claude-opus-5-5", effort: "low" },
+        });
+        expect(asked).toMatchObject({ pending: true, changed: ["schedule"] });
+        expect((yield* botNamed("analyst")).schedule).toBeUndefined();
+        const [change] = yield* pendingChanges;
+        expect(change!.lines).toEqual([
+          "model schedule: none → every day 22:00 to 07:00 on Opus 5.5 · L",
+        ]);
+        yield* tap("approved");
+        expect((yield* botNamed("analyst")).schedule).toMatchObject({
+          enabled: true,
+          from: "22:00",
+          to: "07:00",
+          modelSelection: { model: "claude-opus-5-5" },
+        });
+        expect(yield* auditSummary("update")).toBe(
+          "CFO edited bot 'Analyst' (model schedule → every day 22:00 to 07:00 on Opus 5.5 · L) on Finance (approved by the user)",
+        );
+      }),
+    ),
+  );
+});

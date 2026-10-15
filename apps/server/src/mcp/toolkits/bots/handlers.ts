@@ -6,6 +6,7 @@ import {
   DEFAULT_PERSONAL_BOT_TEAM,
   isBotOnTeam,
   PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+  PERSONAL_FALLBACK_REASON_SCHEDULE,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalTaskStatus,
   personalBotTeamLabel,
@@ -512,7 +513,8 @@ const make = Effect.gen(function* () {
     const resetAt = active.resetAt === undefined ? undefined : DateTime.formatIso(active.resetAt);
     const provider = active.fromProvider.trim();
     const peak = active.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK;
-    const reason = peak || provider === "" ? "" : ` (${provider} usage limit)`;
+    const scheduled = active.reason === PERSONAL_FALLBACK_REASON_SCHEDULE;
+    const reason = peak || scheduled || provider === "" ? "" : ` (${provider} usage limit)`;
     return {
       fallback: {
         provider: active.modelSelection.instanceId as string,
@@ -521,7 +523,8 @@ const make = Effect.gen(function* () {
         since: DateTime.formatIso(active.since),
         ...(resetAt === undefined ? {} : { resetAt }),
         ...(peak ? { reason: PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK } : {}),
-        label: `${peak ? "DeepSeek peak" : "fallback"}: ${active.modelSelection.model}${
+        ...(scheduled ? { reason: PERSONAL_FALLBACK_REASON_SCHEDULE } : {}),
+        label: `${peak ? "DeepSeek peak" : scheduled ? "scheduled model" : "fallback"}: ${active.modelSelection.model}${
           resetAt === undefined ? "" : ` until ${resetAt}`
         }${reason}`,
       },

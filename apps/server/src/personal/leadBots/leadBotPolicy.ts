@@ -69,7 +69,9 @@ export const isProtectedBot = (bot: { readonly botId: string; readonly name: str
  * user's tap on a confirm card: what the bot is (name), what it does
  * (instructions, description) and what it costs (model, provider, effort: one
  * "model" change; the usage-limit fallback, on/off or its model: one "fallback"
- * change). Title, avatar, mute and memory auto-save are cosmetic and stay open.
+ * change; the daily model schedule, its times, on/off or its model: one
+ * "schedule" change). Title, avatar, mute and memory auto-save are cosmetic and
+ * stay open.
  */
 export const LEAD_BOT_SENSITIVE_FIELDS = [
   "name",
@@ -77,6 +79,7 @@ export const LEAD_BOT_SENSITIVE_FIELDS = [
   "description",
   "model",
   "fallback",
+  "schedule",
 ] as const;
 export type LeadBotSensitiveField = (typeof LEAD_BOT_SENSITIVE_FIELDS)[number];
 
@@ -120,6 +123,16 @@ export interface LeadBotFacts {
     readonly instanceId: string;
     readonly model: string;
     /** True when instance, model, effort or context differs from the target's fallback now (always for create). */
+    readonly changed: boolean;
+  } | null;
+  /**
+   * The model of the daily model schedule the call asks for (create or update),
+   * when it names one. Held to the same Fable/Mythos rule as the main model.
+   */
+  readonly requestedScheduleModel?: {
+    readonly instanceId: string;
+    readonly model: string;
+    /** True when instance, model, effort or context differs from the target's scheduled model now (always for create). */
     readonly changed: boolean;
   } | null;
   /** Bots this lead created in the last {@link LEAD_BOT_CREATE_WINDOW_MS}. */
@@ -240,6 +253,17 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
       return refuse(
         "forbidden_model",
         `'${fallbackModel.model}' is one of the most expensive models and only the user can choose it, as a fallback too. Pick another model.`,
+      );
+    }
+  }
+
+  const scheduleModel = facts.requestedScheduleModel;
+  if (scheduleModel != null && isLeadForbiddenModel(scheduleModel.model)) {
+    const unchanged = facts.action === "update" && target !== null && !scheduleModel.changed;
+    if (!unchanged) {
+      return refuse(
+        "forbidden_model",
+        `'${scheduleModel.model}' is one of the most expensive models and only the user can choose it, as a scheduled model too. Pick another model.`,
       );
     }
   }

@@ -15,6 +15,7 @@ import {
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   PersonalBot,
   PersonalBotId,
+  PersonalBotSchedule,
   PersonalBotTeam,
   PersonalBotThread,
   ThreadId,
@@ -51,6 +52,8 @@ export const CreatePersonalBotInput = Schema.Struct({
   fallbackEnabled: Schema.optional(Schema.Boolean),
   /** Omitted means the default fallback model (stored as NULL). */
   fallbackModelSelection: Schema.optional(ModelSelection),
+  /** Omitted means no schedule (stored as NULL). */
+  schedule: Schema.optional(PersonalBotSchedule),
   sortOrder: Schema.Number,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -75,6 +78,8 @@ export const UpdatePersonalBotInput = Schema.Struct({
   hidePreviews: Schema.optional(Schema.Boolean),
   fallbackEnabled: Schema.optional(Schema.Boolean),
   fallbackModelSelection: Schema.optional(ModelSelection),
+  /** The whole schedule to store; absent leaves it alone. */
+  schedule: Schema.optional(PersonalBotSchedule),
   /** Absent leaves the mute alone; null turns notifications back on. */
   notificationsMutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   updatedAt: Schema.DateTimeUtcFromString,
@@ -455,6 +460,8 @@ const PersonalBotDbRow = Schema.Struct({
   hidePreviews: Schema.Number,
   fallbackEnabled: Schema.Number,
   fallbackModel: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+  /** The stored JSON; a value that does not decode reads as no schedule. */
+  schedule: Schema.NullOr(Schema.String),
   notificationsMutedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -479,6 +486,7 @@ const PersonalBotRawDbRow = Schema.Struct({
   hidePreviews: Schema.Unknown,
   fallbackEnabled: Schema.Unknown,
   fallbackModel: Schema.Unknown,
+  schedule: Schema.Unknown,
   notificationsMutedUntil: Schema.Unknown,
   createdAt: Schema.Unknown,
   updatedAt: Schema.Unknown,
@@ -604,6 +612,15 @@ const decodePersonalBotDbRow = Schema.decodeUnknownEffect(PersonalBotDbRow);
 const decodePersonalBotThreadDbRow = Schema.decodeUnknownEffect(PersonalBotThreadDbRow);
 const decodePersonalBotThreadListDbRow = Schema.decodeUnknownEffect(PersonalBotThreadListDbRow);
 
+const decodeStoredSchedule = Schema.decodeUnknownOption(Schema.fromJsonString(PersonalBotSchedule));
+
+/** The bot's `schedule` field from its stored JSON; nothing when there is none or it does not decode. */
+function scheduleOfRow(stored: string | null): { readonly schedule?: PersonalBotSchedule } {
+  if (stored === null) return {};
+  const decoded = decodeStoredSchedule(stored);
+  return Option.isSome(decoded) ? { schedule: decoded.value } : {};
+}
+
 function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
   return {
     botId: row.botId,
@@ -626,6 +643,7 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
       modelSelection:
         (row.fallbackModel as ModelSelectionType | null) ?? PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
     },
+    ...scheduleOfRow(row.schedule),
     notificationsMutedUntil: row.notificationsMutedUntil,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -773,6 +791,7 @@ export const make = Effect.gen(function* () {
           memory_auto_save,
           fallback_enabled,
           fallback_model_json,
+          schedule_json,
           created_at,
           updated_at,
           deleted_at
@@ -794,6 +813,7 @@ export const make = Effect.gen(function* () {
           ${input.memoryAutoSave === false ? 0 : 1},
           ${input.fallbackEnabled === false ? 0 : 1},
           ${input.fallbackModelSelection === undefined ? null : JSON.stringify(input.fallbackModelSelection)},
+          ${input.schedule === undefined ? null : JSON.stringify(input.schedule)},
           ${input.createdAt},
           ${input.updatedAt},
           NULL
@@ -824,6 +844,7 @@ export const make = Effect.gen(function* () {
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
+          schedule_json AS "schedule",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -856,6 +877,7 @@ export const make = Effect.gen(function* () {
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
+          schedule_json AS "schedule",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -903,6 +925,10 @@ export const make = Effect.gen(function* () {
               ${input.fallbackModelSelection === undefined ? null : JSON.stringify(input.fallbackModelSelection)},
               fallback_model_json
             ),
+            schedule_json = COALESCE(
+              ${input.schedule === undefined ? null : JSON.stringify(input.schedule)},
+              schedule_json
+            ),
             notifications_muted_until = CASE
               WHEN ${input.notificationsMutedUntil === undefined ? 0 : 1} = 1
                 THEN ${input.notificationsMutedUntil ?? null}
@@ -928,6 +954,7 @@ export const make = Effect.gen(function* () {
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
+          schedule_json AS "schedule",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

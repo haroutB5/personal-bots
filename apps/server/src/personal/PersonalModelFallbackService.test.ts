@@ -7,7 +7,9 @@ import {
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
   PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+  PERSONAL_FALLBACK_REASON_SCHEDULE,
   PersonalBotId,
+  type PersonalBotSchedule,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -1584,3 +1586,544 @@ it.effect("a bot created during a peak window is switched on the next pass", () 
     expect(peakState(yield* bots.listFallbackStates())).toBeDefined();
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+// --- the per-bot model schedule ---------------------------------------------------
+
+const OPUS_HOME: ModelSelection = {
+  instanceId: CLAUDE,
+  model: "claude-opus-5-5",
+  options: [{ id: "effort", value: "medium" }],
+} as ModelSelection;
+const SCHEDULED: ModelSelection = {
+  instanceId: CLAUDE,
+  model: "claude-haiku-5-5",
+  options: [{ id: "effort", value: "low" }],
+} as ModelSelection;
+const DS_OTHER: ModelSelection = {
+  instanceId: DEEPSEEK,
+  model: "deepseek-pro",
+} as ModelSelection;
+
+/** Thursday 15 October 2026, 23:30 BST: inside a 22:00 to 07:00 window. */
+const NIGHT_AT = Date.parse("2026-10-15T22:30:00.000Z");
+/** The window that opened at 22:00 BST ends at 07:00 BST = 06:00Z the next morning. */
+const NIGHT_ENDS = Date.parse("2026-10-16T06:00:00.000Z");
+const EARLY_AT = Date.parse("2026-10-16T02:30:00.000Z");
+const DAY_AT = Date.parse("2026-10-15T12:00:00.000Z");
+const SCHEDULE_TZ = { PERSONAL_MODEL_SCHEDULE_TZ: "Europe/London" };
+
+const nightSchedule = (patch: Partial<PersonalBotSchedule> = {}): PersonalBotSchedule => ({
+  enabled: true,
+  from: "22:00",
+  to: "07:00",
+  modelSelection: SCHEDULED,
+  ...patch,
+});
+
+/** A Claude Opus bot with a model schedule, on the shared chat. */
+const seedScheduledBot = (
+  patch: {
+    readonly home?: ModelSelection;
+    readonly schedule?: PersonalBotSchedule | undefined;
+    readonly fallbackModelSelection?: ModelSelection;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const schedule = "schedule" in patch ? patch.schedule : nightSchedule();
+    yield* bots.createBot({
+      botId: BOT,
+      name: "Sched",
+      title: "",
+      description: "",
+      instructions: "",
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
+      modelSelection: patch.home ?? OPUS_HOME,
+      team: "assistant",
+      lead: false,
+      pinned: false,
+      sortOrder: 0,
+      createdAt: DateTime.makeUnsafe(NOW),
+      updatedAt: DateTime.makeUnsafe(NOW),
+      ...(schedule === undefined ? {} : { schedule }),
+      ...(patch.fallbackModelSelection === undefined
+        ? {}
+        : { fallbackModelSelection: patch.fallbackModelSelection }),
+    });
+    yield* bots.insertThreadLink({
+      botId: BOT,
+      threadId: CHAT,
+      createdAt: DateTime.makeUnsafe(NOW),
+    });
+    yield* sql`
+      INSERT INTO projection_thread_sessions (thread_id, status, runtime_mode, updated_at)
+      VALUES (${CHAT}, 'ready', 'full-access', ${isoAt(NOW)})
+    `.pipe(Effect.ignore);
+  });
+
+const scheduleState = (states: ReadonlyArray<PersonalBotRepository.PersonalBotFallbackState>) =>
+  states.find((state) => state.reason === PERSONAL_FALLBACK_REASON_SCHEDULE);
+
+const claudeProviders = (harness: Harness) => {
+  harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+};
+
+it.effect("the model is stored on the bot and round-trips through the repository", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedScheduledBot();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const bot = Option.getOrThrow(yield* bots.getBotById({ botId: BOT }));
+    expect(bot.schedule).toEqual(nightSchedule());
+    // A bot with none reads as none.
+    const plain = Option.getOrThrow(
+      yield* bots.updateBot({
+        botId: BOT,
+        schedule: nightSchedule({ enabled: false }),
+        updatedAt: DateTime.makeUnsafe(NOW),
+      }),
+    );
+    expect(plain.schedule?.enabled).toBe(false);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a bot runs on its scheduled model inside the window and on its own outside it", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(DAY_AT);
+    yield* seedScheduledBot();
+    claudeProviders(harness);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+
+    // 13:00 BST: outside. Nothing changes.
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(OPUS_HOME);
+
+    // 23:30 BST: open. The row names the scheduled model and the window's end.
+    yield* TestClock.setTime(NIGHT_AT);
+    yield* service.sweep;
+    const state = scheduleState(yield* bots.listFallbackStates());
+    expect(state).toBeDefined();
+    expect(state!.fallbackModel).toEqual(SCHEDULED);
+    expect(state!.fromInstanceId).toBe(CLAUDE);
+    expect(DateTime.toEpochMillis(DateTime.makeUnsafe(state!.resetAt!))).toBe(NIGHT_ENDS);
+    // Every turn the server starts reads it.
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(SCHEDULED);
+    // The bot's own model is untouched, and no chat line was written.
+    const bot = Option.getOrThrow(yield* bots.getBotById({ botId: BOT }));
+    expect(bot.modelSelection).toEqual(OPUS_HOME);
+    expect(bot.fallbackActive?.reason).toBe(PERSONAL_FALLBACK_REASON_SCHEDULE);
+    expect(lines(harness)).toHaveLength(0);
+
+    // Past midnight the same row stays, still ending at 07:00.
+    yield* TestClock.setTime(EARLY_AT);
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(1);
+    expect(
+      DateTime.toEpochMillis(
+        DateTime.makeUnsafe(scheduleState(yield* bots.listFallbackStates())!.resetAt!),
+      ),
+    ).toBe(NIGHT_ENDS);
+
+    // 07:00 BST: closed, so the bot is back on its own model.
+    yield* TestClock.setTime(NIGHT_ENDS);
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(OPUS_HOME);
+    expect(lines(harness)).toHaveLength(0);
+  }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+});
+
+it.effect("a window on the night the clocks go back ends at 07:00 local, not 07:00 elapsed", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    // 23:30 BST on Saturday 24 October; the clocks go back at 02:00 BST.
+    yield* TestClock.setTime(Date.parse("2026-10-24T22:30:00.000Z"));
+    yield* seedScheduledBot();
+    claudeProviders(harness);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    const state = scheduleState(yield* bots.listFallbackStates());
+    expect(DateTime.toEpochMillis(DateTime.makeUnsafe(state!.resetAt!))).toBe(
+      Date.parse("2026-10-25T07:00:00.000Z"),
+    );
+    // 06:59 GMT: still the scheduled model. 07:00 GMT: back on its own.
+    yield* TestClock.setTime(Date.parse("2026-10-25T06:59:00.000Z"));
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(1);
+    yield* TestClock.setTime(Date.parse("2026-10-25T07:00:00.000Z"));
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+  }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+});
+
+it.effect("never cuts a running turn: it starts and ends only between turns", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NIGHT_AT);
+    yield* seedScheduledBot();
+    claudeProviders(harness);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+
+    // The window opens while a turn is running: nothing yet, so that turn is not touched.
+    yield* setBusy(true);
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+    // The turn ends: the next pass puts the bot on the scheduled model.
+    yield* setBusy(false);
+    yield* service.sweep;
+    expect(scheduleState(yield* bots.listFallbackStates())).toBeDefined();
+
+    // The window closes while a turn is running: the row stays until it is idle.
+    yield* setBusy(true);
+    yield* TestClock.setTime(NIGHT_ENDS);
+    yield* service.sweep;
+    expect(scheduleState(yield* bots.listFallbackStates())).toBeDefined();
+    yield* setBusy(false);
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+  }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+});
+
+it.effect(
+  "a restart inside a window applies it on the first sweep, and a stale row is corrected",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NIGHT_AT);
+      yield* seedScheduledBot();
+      claudeProviders(harness);
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+
+      // Boot: no row exists, the first sweep decides from the clock alone.
+      yield* service.sweep;
+      expect(scheduleState(yield* bots.listFallbackStates())).toBeDefined();
+
+      // A row left from a previous run, with an old end, is brought to the right one.
+      yield* bots.updateFallbackReset({ botId: BOT, resetAt: isoAt(NIGHT_AT + 60_000) });
+      yield* service.sweep;
+      expect(
+        DateTime.toEpochMillis(
+          DateTime.makeUnsafe(scheduleState(yield* bots.listFallbackStates())!.resetAt!),
+        ),
+      ).toBe(NIGHT_ENDS);
+    }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+  },
+);
+
+it.effect("PERSONAL_MODEL_SCHEDULE=off applies nothing and clears a row that exists", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NIGHT_AT);
+    yield* seedScheduledBot();
+    claudeProviders(harness);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* bots.startFallback({
+      botId: BOT,
+      fallbackModel: SCHEDULED,
+      fromInstanceId: CLAUDE,
+      fromProvider: "Claude",
+      reason: PERSONAL_FALLBACK_REASON_SCHEDULE,
+      startedAt: isoAt(NIGHT_AT - 60_000),
+      resetAt: isoAt(NIGHT_ENDS),
+      noticeThreadId: null,
+    });
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+  }).pipe(Effect.provide(makeLayer(harness, { ...SCHEDULE_TZ, PERSONAL_MODEL_SCHEDULE: "off" })));
+});
+
+it.effect("the clock override drives both switch-overs without waiting for a window", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    // The real clock is mid-day; the override says 23:30.
+    yield* TestClock.setTime(DAY_AT);
+    yield* seedScheduledBot();
+    claudeProviders(harness);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    expect(scheduleState(yield* bots.listFallbackStates())).toBeDefined();
+  }).pipe(
+    Effect.provide(
+      makeLayer(harness, { ...SCHEDULE_TZ, PERSONAL_MODEL_SCHEDULE_NOW: "2026-10-15T22:30:00Z" }),
+    ),
+  );
+});
+
+it.effect("a disabled schedule, the same model, or From = To does nothing", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NIGHT_AT);
+    claudeProviders(harness);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* seedScheduledBot();
+    const set = (schedule: PersonalBotSchedule) =>
+      bots.updateBot({ botId: BOT, schedule, updatedAt: DateTime.makeUnsafe(NIGHT_AT) });
+
+    yield* set(nightSchedule({ enabled: false }));
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+
+    yield* set(nightSchedule({ modelSelection: OPUS_HOME }));
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+
+    yield* set(nightSchedule({ from: "08:00", to: "08:00" }));
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+
+    // Back to a good one: it applies.
+    yield* set(nightSchedule());
+    yield* service.sweep;
+    expect(scheduleState(yield* bots.listFallbackStates())).toBeDefined();
+  }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+});
+
+it.effect(
+  "editing the schedule while it applies moves the row, and switching it off ends it",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NIGHT_AT);
+      claudeProviders(harness);
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      yield* seedScheduledBot();
+      yield* service.sweep;
+      expect(scheduleState(yield* bots.listFallbackStates())!.fallbackModel).toEqual(SCHEDULED);
+
+      // A different scheduled model: the row follows it.
+      const other: ModelSelection = {
+        instanceId: CLAUDE,
+        model: "claude-sonnet-5-5",
+      } as ModelSelection;
+      yield* bots.updateBot({
+        botId: BOT,
+        schedule: nightSchedule({ modelSelection: other }),
+        updatedAt: DateTime.makeUnsafe(NIGHT_AT),
+      });
+      yield* service.sweep;
+      expect(scheduleState(yield* bots.listFallbackStates())!.fallbackModel).toEqual(other);
+
+      // The window moved so that it has closed: the bot goes back.
+      yield* bots.updateBot({
+        botId: BOT,
+        schedule: nightSchedule({ modelSelection: other, from: "10:00", to: "11:00" }),
+        updatedAt: DateTime.makeUnsafe(NIGHT_AT),
+      });
+      yield* service.sweep;
+      expect(yield* bots.listFallbackStates()).toHaveLength(0);
+    }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+  },
+);
+
+it.effect(
+  "a usage limit outranks the schedule: the bot's own fallback takes over, then the schedule returns",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NIGHT_AT);
+      // Scheduled on Codex, with the default Claude Sonnet fallback.
+      const onCodex: ModelSelection = {
+        instanceId: CODEX,
+        model: "gpt-6.1-sol",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } as ModelSelection;
+      yield* seedScheduledBot({ schedule: nightSchedule({ modelSelection: onCodex }) });
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 10 }])),
+        READY_CLAUDE(),
+      ];
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      yield* service.sweep;
+      expect(scheduleState(yield* bots.listFallbackStates())!.fallbackModel).toEqual(onCodex);
+
+      // The scheduled Codex model hits its limit: the bot's own fallback runs.
+      const resetsAt = NIGHT_AT + 3_600_000;
+      harness.providers = [
+        snapshot(
+          "codex",
+          "codex",
+          usage([{ id: "primary", used: 100, resetsAt: isoAt(resetsAt) }]),
+        ),
+        READY_CLAUDE(),
+      ];
+      const result = yield* hit({ retryAt: isoAt(resetsAt), reason: "usage_limit" });
+      expect(result.switched).toBe(true);
+      const limited = yield* bots.listFallbackStates();
+      expect(limited).toHaveLength(1);
+      expect(limited[0]!.reason).toBe("usage_limit");
+      expect(limited[0]!.fallbackModel).toEqual(FALLBACK);
+
+      // While it is on the limit fallback the schedule does not touch it.
+      yield* TestClock.setTime(NIGHT_AT + 60_000);
+      yield* service.sweep;
+      expect((yield* bots.listFallbackStates())[0]!.reason).toBe("usage_limit");
+
+      // After the reset the bot leaves the limit fallback and, the window still open,
+      // the schedule applies again (on the same or the next pass).
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 5 }])),
+        READY_CLAUDE(),
+      ];
+      yield* TestClock.setTime(resetsAt + 120_000);
+      yield* service.sweep;
+      yield* service.sweep;
+      const after = yield* bots.listFallbackStates();
+      expect(after).toHaveLength(1);
+      expect(after[0]!.reason).toBe(PERSONAL_FALLBACK_REASON_SCHEDULE);
+    }).pipe(
+      Effect.provide(
+        makeLayer(harness, { ...SCHEDULE_TZ, PERSONAL_MODEL_SCHEDULE_NOW: "2026-10-15T22:30:00Z" }),
+      ),
+    );
+  },
+);
+
+it.effect("a usage limit already in force is never replaced by the schedule", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NIGHT_AT);
+    yield* seedScheduledBot();
+    claudeProviders(harness);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    const until = NIGHT_AT + 3_600_000;
+    yield* bots.startFallback({
+      botId: BOT,
+      fallbackModel: FALLBACK,
+      fromInstanceId: "claudeAgent",
+      fromProvider: "Claude",
+      reason: "usage_limit",
+      startedAt: isoAt(NIGHT_AT - 60_000),
+      resetAt: isoAt(until),
+      noticeThreadId: null,
+    });
+    yield* service.sweep;
+    const states = yield* bots.listFallbackStates();
+    expect(states).toHaveLength(1);
+    expect(states[0]!.reason).toBe("usage_limit");
+    expect(states[0]!.fallbackModel).toEqual(FALLBACK);
+  }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+});
+
+it.effect("the schedule outranks the DeepSeek peak switch for a DeepSeek bot", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    // Thursday 02:00 UTC is a peak window; 03:00 BST is also inside 22:00-07:00.
+    yield* TestClock.setTime(PEAK_AT);
+    yield* seedScheduledBot({ home: DS_HOME });
+    claudeProviders(harness);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+
+    // A peak row from before the schedule window mattered.
+    yield* bots.startFallback({
+      botId: BOT,
+      fallbackModel: FALLBACK,
+      fromInstanceId: DEEPSEEK,
+      fromProvider: "DeepSeek",
+      reason: PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+      startedAt: isoAt(PEAK_AT - 60_000),
+      resetAt: isoAt(PEAK_ENDS),
+      noticeThreadId: null,
+    });
+    yield* service.sweep;
+    const states = yield* bots.listFallbackStates();
+    expect(states).toHaveLength(1);
+    expect(states[0]!.reason).toBe(PERSONAL_FALLBACK_REASON_SCHEDULE);
+    expect(states[0]!.fallbackModel).toEqual(SCHEDULED);
+  }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+});
+
+it.effect("a scheduled DeepSeek model runs on Sonnet 5.5 High while a peak window is open", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    // Opus bot scheduled onto DeepSeek, 03:00 BST on Thursday: a peak window.
+    yield* TestClock.setTime(PEAK_AT);
+    yield* seedScheduledBot({ schedule: nightSchedule({ modelSelection: DS_OTHER }) });
+    harness.providers = [snapshot("deepseek", "deepseek"), READY_CLAUDE()];
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    const during = scheduleState(yield* bots.listFallbackStates());
+    expect(during).toBeDefined();
+    expect(during!.fallbackModel).toEqual(FALLBACK);
+
+    // Off peak but still inside the scheduled window (04:30 UTC = 05:30 BST, Thursday
+    // 04:00 UTC the peak ended): the row moves to DeepSeek itself.
+    yield* TestClock.setTime(Date.parse("2026-10-15T04:30:00.000Z"));
+    yield* service.sweep;
+    const after = scheduleState(yield* bots.listFallbackStates());
+    expect(after).toBeDefined();
+    expect(after!.fallbackModel).toEqual(DS_OTHER);
+  }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+});
+
+it.effect("a scheduled model whose provider cannot run is not applied", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NIGHT_AT);
+    yield* seedScheduledBot({ schedule: nightSchedule({ modelSelection: DS_OTHER }) });
+    // No DeepSeek provider at all.
+    harness.providers = [READY_CLAUDE()];
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* service.sweep;
+    expect(yield* bots.listFallbackStates()).toHaveLength(0);
+  }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+});
+
+it.effect(
+  "a bot whose usage limit ends inside the window is told it is back on the scheduled model",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NIGHT_AT);
+      const onCodex: ModelSelection = {
+        instanceId: CODEX,
+        model: "gpt-6.1-sol",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } as ModelSelection;
+      yield* seedScheduledBot({ schedule: nightSchedule({ modelSelection: onCodex }) });
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 100, resetsAt: isoAt(RESET) }])),
+        READY_CLAUDE(),
+      ];
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      // Opus (the bot's own model) hit its limit at 23:30; its fallback is Sonnet.
+      yield* bots.startFallback({
+        botId: BOT,
+        fallbackModel: FALLBACK,
+        fromInstanceId: "claudeAgent",
+        fromProvider: "Claude",
+        reason: "usage_limit",
+        startedAt: isoAt(NIGHT_AT - 60_000),
+        resetAt: isoAt(NIGHT_AT + 60_000),
+        noticeThreadId: CHAT,
+      });
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 5 }])),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 5 }])),
+      ];
+      yield* TestClock.setTime(NIGHT_AT + 120_000);
+      yield* service.sweep;
+      expect(lines(harness)).toEqual([expect.stringContaining("is back on gpt-6.1-sol")]);
+    }).pipe(Effect.provide(makeLayer(harness, SCHEDULE_TZ)));
+  },
+);

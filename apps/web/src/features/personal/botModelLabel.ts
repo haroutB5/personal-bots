@@ -4,6 +4,7 @@ import {
   DEEPSEEK_AGENT_MODE_OPTION_ID,
   type ModelSelection,
   PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+  PERSONAL_FALLBACK_REASON_SCHEDULE,
   type PersonalBot,
   type SelectProviderOptionDescriptor,
   type ServerProvider,
@@ -172,6 +173,17 @@ export const DEEPSEEK_PEAK_LABEL = "DeepSeek peak";
  */
 export const DEEPSEEK_PEAK_SHORT_LABEL = "peak";
 
+/** "Scheduled model until 07:00": why the bot's per-bot model schedule has it on another model. */
+export const SCHEDULED_MODEL_LABEL = "Scheduled model";
+
+/** The schedule note's tight form ("Opus 5.5 · M · sched"), for the same lines the peak note is short on. */
+export const SCHEDULED_MODEL_SHORT_LABEL = "sched";
+
+/** The bot is on its model schedule, not a usage-limit fallback or the peak switch. */
+function onModelSchedule(bot: Pick<PersonalBot, "fallbackActive">): boolean {
+  return botFallbackActive(bot)?.reason === PERSONAL_FALLBACK_REASON_SCHEDULE;
+}
+
 /** The bot is on the DeepSeek peak switch (1.66.44), not a usage-limit fallback. */
 function onDeepSeekPeak(bot: Pick<PersonalBot, "fallbackActive">): boolean {
   return botFallbackActive(bot)?.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK;
@@ -226,6 +238,12 @@ export function fallbackNoteLabel(
       : "";
     return `${DEEPSEEK_PEAK_LABEL}${peakUntil}`;
   }
+  if (active.reason === PERSONAL_FALLBACK_REASON_SCHEDULE) {
+    const scheduleUntil = Number.isFinite(resetMs)
+      ? ` until ${formatLocalTime(resetMs, nowMs, timeZone)}`
+      : "";
+    return `${SCHEDULED_MODEL_LABEL}${scheduleUntil}`;
+  }
   const provider = active.fromProvider.trim();
   return `on fallback${until}${provider === "" ? "" : ` (${provider} usage limit)`}`;
 }
@@ -249,8 +267,9 @@ export function botActiveModelLabel(
 
 /**
  * The short model label for a bot: what it runs on right now, ending
- * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback"), or
- * "· peak" while the DeepSeek peak switch has it ("Sonnet 5.5 · H · peak").
+ * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback"),
+ * "· peak" while the DeepSeek peak switch has it ("Sonnet 5.5 · H · peak"), or
+ * "· sched" while its model schedule has it ("Opus 5.5 · M · sched").
  *
  * The peak note is the short form on purpose: this label sits on the Bots rows,
  * the chat header, task cards and 72px pinned tiles, where "· DeepSeek peak
@@ -264,5 +283,6 @@ export function botActiveModelShortLabel(
   const label = botModelShortLabel(botEffectiveModelSelection(bot), providers);
   if (label === null) return null;
   if (onDeepSeekPeak(bot)) return `${label} · ${DEEPSEEK_PEAK_SHORT_LABEL}`;
+  if (onModelSchedule(bot)) return `${label} · ${SCHEDULED_MODEL_SHORT_LABEL}`;
   return botFallbackActive(bot) === null ? label : `${label} · ${FALLBACK_LABEL_MARKER}`;
 }

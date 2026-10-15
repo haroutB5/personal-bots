@@ -31,6 +31,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatarPicker } from "./BotAvatarPicker";
 import { BotFallbackSection } from "./BotFallbackSection";
+import { BotScheduleSection } from "./BotScheduleSection";
 import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
 import {
   agentModeOfSelection,
@@ -49,8 +50,14 @@ import {
   isFallbackDraftValid,
   modelOptionLabel,
   noBotProviderMessage,
+  type ScheduleDraft,
+  scheduleDraftFromBot,
+  scheduleDraftProblem,
+  scheduleDraftSelection,
+  scheduleInput,
   usesModelSearch,
 } from "./botFormModel";
+import { botModelLabel } from "./botModelLabel";
 import {
   botMuteState,
   initialNotificationsChoice,
@@ -96,6 +103,14 @@ interface BotDraft {
   fallbackModel: string;
   fallbackEffort: string;
   fallbackContextWindow: string;
+  /** The model schedule: on/off, From and To ("HH:MM") and its model, effort and context window. */
+  scheduleEnabled: boolean;
+  scheduleFrom: string;
+  scheduleTo: string;
+  scheduleInstanceId: string;
+  scheduleModel: string;
+  scheduleEffort: string;
+  scheduleContextWindow: string;
   team: PersonalBotTeam;
   lead: boolean;
   pinned: boolean;
@@ -123,6 +138,43 @@ function fallbackFields(
   };
 }
 
+function scheduleFields(
+  schedule: ScheduleDraft,
+): Pick<
+  BotDraft,
+  | "scheduleEnabled"
+  | "scheduleFrom"
+  | "scheduleTo"
+  | "scheduleInstanceId"
+  | "scheduleModel"
+  | "scheduleEffort"
+  | "scheduleContextWindow"
+> {
+  return {
+    scheduleEnabled: schedule.enabled,
+    scheduleFrom: schedule.from,
+    scheduleTo: schedule.to,
+    scheduleInstanceId: schedule.instanceId,
+    scheduleModel: schedule.model,
+    scheduleEffort: schedule.effort,
+    scheduleContextWindow: schedule.contextWindow,
+  };
+}
+
+function scheduleDraftOf(draft: BotDraft): ScheduleDraft {
+  return {
+    enabled: draft.scheduleEnabled,
+    from: draft.scheduleFrom,
+    to: draft.scheduleTo,
+    instanceId: draft.scheduleInstanceId,
+    model: draft.scheduleModel,
+    effort: draft.scheduleEffort,
+    contextWindow: draft.scheduleContextWindow,
+    // The scheduled model runs on its own provider; the mode belongs to the bot's own model.
+    agentMode: "",
+  };
+}
+
 function fallbackDraftOf(draft: BotDraft): FallbackDraft {
   return {
     enabled: draft.fallbackEnabled,
@@ -144,6 +196,7 @@ function botDraftsEqual(left: BotDraft, right: BotDraft): boolean {
 function draftFromBot(bot: PersonalBot): BotDraft {
   return {
     ...fallbackFields(fallbackDraftFromBot(bot)),
+    ...scheduleFields(scheduleDraftFromBot(bot)),
     name: bot.name,
     title: bot.title,
     description: bot.description,
@@ -280,6 +333,7 @@ function BotForm({
       contextWindow: "",
       agentMode: "",
       ...fallbackFields(fallbackDraftFromBot(null)),
+      ...scheduleFields(scheduleDraftFromBot(null)),
       team: DEFAULT_PERSONAL_BOT_TEAM,
       lead: false,
       pinned: false,
@@ -357,10 +411,33 @@ function BotForm({
     if (current !== undefined && !options.includes(current)) options.unshift(current);
     return options;
   }, [draft.fallbackInstanceId, providers, selectableProviders]);
+  // The schedule's provider: the saved one stays listed even when it went unavailable.
+  const scheduleProviderOptions = useMemo(() => {
+    const options = [...selectableProviders];
+    const current = providers.find((provider) => provider.instanceId === draft.scheduleInstanceId);
+    if (current !== undefined && !options.includes(current)) options.unshift(current);
+    return options;
+  }, [draft.scheduleInstanceId, providers, selectableProviders]);
+  const mainModelSelection = buildModelSelection(
+    draft,
+    selectedProvider,
+    bot?.modelSelection ?? null,
+  );
+  const scheduleSelection = scheduleDraftSelection(
+    scheduleDraftOf(draft),
+    providers,
+    bot?.schedule ?? null,
+  );
+  const scheduleProblem = scheduleDraftProblem(
+    scheduleDraftOf(draft),
+    mainModelSelection,
+    scheduleSelection,
+  );
   const canSave =
     draft.instanceId !== "" &&
     draft.model !== "" &&
     isFallbackDraftValid(fallbackDraftOf(draft)) &&
+    scheduleProblem === null &&
     !busy;
 
   const update = (patch: Partial<BotDraft>) => {
@@ -387,8 +464,7 @@ function BotForm({
       ? draft.contextWindow
       : "";
 
-  const buildMainModelSelection = (): ModelSelection =>
-    buildModelSelection(draft, selectedProvider, bot?.modelSelection ?? null);
+  const buildMainModelSelection = (): ModelSelection => mainModelSelection;
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -437,12 +513,23 @@ function BotForm({
       fallbackDraftOf(draft),
       providers,
     );
+    // Create sends the whole schedule when it is on; edit only what changed.
+    const schedule = scheduleInput(
+      bot?.schedule ?? null,
+      scheduleDraftOf(draft),
+      scheduleSelection,
+    );
     const notificationsMute = muteForChoice(draft.notifications, baseline.notifications);
     let result =
       bot === null
         ? await createBot({
             environmentId,
-            input: { botId, ...fields, ...(fallback === undefined ? {} : { fallback }) },
+            input: {
+              botId,
+              ...fields,
+              ...(fallback === undefined ? {} : { fallback }),
+              ...(schedule === undefined ? {} : { schedule }),
+            },
           })
         : await updateBot({
             environmentId,
@@ -450,6 +537,7 @@ function BotForm({
               botId,
               ...fields,
               ...(fallback === undefined ? {} : { fallback }),
+              ...(schedule === undefined ? {} : { schedule }),
               hidePreviews: draft.hidePreviews,
               ...(notificationsMute === undefined ? {} : { notificationsMute }),
             },
@@ -765,6 +853,27 @@ function BotForm({
         providers={providers}
         providerOptions={fallbackProviderOptions}
         main={{ instanceId: draft.instanceId, model: draft.model }}
+      />
+
+      <BotScheduleSection
+        draft={scheduleDraftOf(draft)}
+        onChange={(patch) =>
+          update({
+            ...(patch.enabled === undefined ? {} : { scheduleEnabled: patch.enabled }),
+            ...(patch.from === undefined ? {} : { scheduleFrom: patch.from }),
+            ...(patch.to === undefined ? {} : { scheduleTo: patch.to }),
+            ...(patch.instanceId === undefined ? {} : { scheduleInstanceId: patch.instanceId }),
+            ...(patch.model === undefined ? {} : { scheduleModel: patch.model }),
+            ...(patch.effort === undefined ? {} : { scheduleEffort: patch.effort }),
+            ...(patch.contextWindow === undefined
+              ? {}
+              : { scheduleContextWindow: patch.contextWindow }),
+          })
+        }
+        providers={providers}
+        providerOptions={scheduleProviderOptions}
+        problem={scheduleProblem}
+        modelLabel={scheduleSelection === null ? null : botModelLabel(scheduleSelection, providers)}
       />
 
       <div>

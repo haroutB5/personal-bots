@@ -8,9 +8,11 @@ import {
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
   PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+  PERSONAL_FALLBACK_REASON_SCHEDULE,
   type PersonalBot,
   type PersonalBotId,
   type PersonalChatNoticeMarker,
+  scheduleMatchesOwnModel as modelSelectionsMatch,
   ProviderInstanceId,
   type ServerProvider,
   ThreadId,
@@ -47,6 +49,15 @@ import {
   planPeakFallback,
 } from "./personalDeepSeekPeakPolicy.ts";
 import {
+  isScheduleFallback,
+  modelScheduleEnabledByEnv,
+  PERSONAL_MODEL_SCHEDULE_ENV,
+  PERSONAL_MODEL_SCHEDULE_NOW_ENV,
+  PERSONAL_MODEL_SCHEDULE_TZ_ENV,
+  scheduleState,
+  scheduleTimeZone,
+} from "./personalModelSchedulePolicy.ts";
+import {
   decideFallback,
   decideSwitchBack,
   FALLBACK_RESWITCH_COOLDOWN_MS,
@@ -81,13 +92,23 @@ import {
  * applies it on boot too, so a restart inside a window never puts bots back on
  * DeepSeek, and clears it when the window closes.
  *
- * The switch back is a sweep: once the original limit has reset (or the peak
- * window has closed) and the bot is idle (no turn running, no task running), the
- * row is deleted. Never mid-turn.
+ * The per-bot model schedule (reason `schedule`) rides it as well: while a bot's
+ * daily window ("Use a different model at set times") is open its row names the
+ * scheduled model and its `resetAt` is the window's end. Precedence: a usage
+ * limit hit wins (the bot's own fallback), then the schedule, then the DeepSeek
+ * peak switch; a scheduled DeepSeek model in a peak window runs on Sonnet 5.5
+ * High like any DeepSeek bot.
  *
- * Kill switches: `PERSONAL_MODEL_FALLBACK=off` (limits) and
- * `PERSONAL_DEEPSEEK_PEAK_SWITCH=off` (peak), plus the DeepSeek instance's own
- * "during peak hours" setting. Each switch and switch back is logged.
+ * The switch back is a sweep: once the original limit has reset (or the peak
+ * window or the scheduled window has closed) and the bot is idle (no turn
+ * running, no task running), the row is deleted. A schedule or a peak row also
+ * starts only while the bot is idle for the schedule (between turns). Never
+ * mid-turn.
+ *
+ * Kill switches: `PERSONAL_MODEL_FALLBACK=off` (limits),
+ * `PERSONAL_DEEPSEEK_PEAK_SWITCH=off` (peak) and `PERSONAL_MODEL_SCHEDULE=off`
+ * (schedule), plus the DeepSeek instance's own "during peak hours" setting. Each
+ * switch and switch back is logged.
  */
 export class PersonalModelFallback extends Context.Service<
   PersonalModelFallback,
@@ -183,6 +204,25 @@ export const make = Effect.gen(function* () {
     Config.option,
     Config.map((value) => parsePeakClockOverride(Option.getOrUndefined(value))),
     Effect.orElseSucceed(() => null),
+  );
+
+  /** `PERSONAL_MODEL_SCHEDULE=off` turns every bot's model schedule off. */
+  const scheduleKillSwitchOn = Config.String(PERSONAL_MODEL_SCHEDULE_ENV).pipe(
+    Config.option,
+    Config.map((value) => modelScheduleEnabledByEnv(Option.getOrUndefined(value))),
+    Effect.orElseSucceed(() => true),
+  );
+  /** Tests: `PERSONAL_MODEL_SCHEDULE_NOW` replaces the clock for the schedule decision only. */
+  const scheduleClockOverride = Config.String(PERSONAL_MODEL_SCHEDULE_NOW_ENV).pipe(
+    Config.option,
+    Config.map((value) => parsePeakClockOverride(Option.getOrUndefined(value))),
+    Effect.orElseSucceed(() => null),
+  );
+  /** The laptop's own time zone (schedule times are wall-clock times there); tests may name one. */
+  const timeZoneOverride = Config.String(PERSONAL_MODEL_SCHEDULE_TZ_ENV).pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+    Effect.orElseSucceed(() => undefined),
   );
 
   const lastSwitchBackAtMs = new Map<string, number>();
@@ -301,11 +341,14 @@ export const make = Effect.gen(function* () {
       const now = yield* nowMs;
       const on = yield* killSwitchOn;
       const active = bot.fallbackActive;
-      // The DeepSeek peak switch is a fallback row too, but not a limit one: a
-      // limit on the peak model is a limit on what the bot is actually running,
-      // so the bot's own fallback chain starts from there (1.66.44).
+      // The DeepSeek peak switch and the model schedule are fallback rows too,
+      // but not limit ones: a limit on that model is a limit on what the bot is
+      // actually running, so the bot's own fallback chain starts from there
+      // (1.66.44; the schedule rides the same rule).
       const peakActive =
-        active !== undefined && active.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK
+        active !== undefined &&
+        (active.reason === PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK ||
+          active.reason === PERSONAL_FALLBACK_REASON_SCHEDULE)
           ? active
           : undefined;
 
@@ -331,7 +374,7 @@ export const make = Effect.gen(function* () {
       }
 
       const fallbackProvider = yield* providerSnapshot(fallback.modelSelection.instanceId);
-      // On the peak switch the model that just hit its limit is the peak model.
+      // On the peak switch or the schedule the model that just hit its limit is the one the row names.
       const decisionHome = peakActive?.modelSelection ?? bot.modelSelection;
       const homeProvider = yield* providerSnapshot(decisionHome.instanceId);
       const retryAtMs = input.retryAt == null ? Number.NaN : Date.parse(input.retryAt);
@@ -387,8 +430,8 @@ export const make = Effect.gen(function* () {
         resetAt: decision.resetAtMs === null ? null : iso(decision.resetAtMs),
         noticeThreadId: input.threadId,
       };
-      // A peak row already exists for this bot: the real limit replaces it, so
-      // the bot is on its own fallback for the rest of the peak window too.
+      // A peak or schedule row already exists for this bot: the real limit
+      // replaces it, so the bot is on its own fallback until the limit resets.
       const started =
         peakActive === undefined
           ? yield* bots.startFallback(nextState)
@@ -402,7 +445,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.logInfo(
         peakActive === undefined
           ? "personal model fallback switched"
-          : "personal model fallback switched off the deepseek peak model",
+          : "personal model fallback switched off the deepseek peak or scheduled model",
         {
           botId: bot.botId,
           source: input.source,
@@ -477,6 +520,8 @@ export const make = Effect.gen(function* () {
     bot: PersonalBot | undefined,
     reason: string,
     now: number,
+    /** The model the bot runs on next when that is not its own (a schedule window is open). */
+    backOn?: ModelSelection,
   ) =>
     Effect.gen(function* () {
       // Persist the switch and wakeups together: a restart cannot lose the
@@ -519,7 +564,7 @@ export const make = Effect.gen(function* () {
         heldMs: now - Date.parse(state.startedAt),
       });
       if (bot === undefined || state.noticeThreadId === null) return;
-      const home = fallbackModelLabel(bot.modelSelection);
+      const home = fallbackModelLabel(backOn ?? bot.modelSelection);
       yield* postNotice(
         state.noticeThreadId,
         `${state.fromProvider} usage limit has reset. ${bot.name} is back on ${home}.`,
@@ -528,9 +573,10 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * Clears a DeepSeek peak state. Idle-gated like every other model change: a
-   * turn already running finishes on the peak model, the next one uses the
-   * bot's own. No notice and no task or chat wakeup: nothing was waiting.
+   * Clears a DeepSeek peak or model schedule state. Idle-gated like every other
+   * model change: a turn already running finishes on the model it started on,
+   * the next one uses the bot's own. No notice and no task or chat wakeup:
+   * nothing was waiting.
    */
   const endPeakFallback = (
     state: PersonalBotRepository.PersonalBotFallbackState,
@@ -545,16 +591,21 @@ export const make = Effect.gen(function* () {
         }),
       );
       if (!ended) return;
-      yield* Effect.logInfo("personal deepseek peak switch ended", {
-        botId: state.botId,
-        reason,
-        heldMs: now - Date.parse(state.startedAt),
-      });
+      yield* Effect.logInfo(
+        isScheduleFallback(state)
+          ? "personal model schedule ended"
+          : "personal deepseek peak switch ended",
+        {
+          botId: state.botId,
+          reason,
+          heldMs: now - Date.parse(state.startedAt),
+        },
+      );
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
-          : Effect.logWarning("personal deepseek peak switch could not end", {
+          : Effect.logWarning("personal deepseek peak or schedule switch could not end", {
               botId: state.botId,
               cause: Cause.pretty(cause),
             }),
@@ -565,18 +616,25 @@ export const make = Effect.gen(function* () {
     const realNow = yield* nowMs;
     const on = yield* killSwitchOn;
     const peakOn = yield* peakKillSwitchOn;
+    const scheduleOn = yield* scheduleKillSwitchOn;
     const override = yield* peakClockOverride;
     const peakNow = peakDecisionNowMs(realNow, override);
     const peakAt = isPeakAt(peakNow);
+    const scheduleNow = peakDecisionNowMs(realNow, yield* scheduleClockOverride);
+    const timeZone = scheduleTimeZone(yield* timeZoneOverride);
     const states = yield* bots.listFallbackStates();
-    const stateByBot = new Map(states.map((state) => [state.botId as string, state] as const));
     let now = realNow;
 
     // The peak switch needs the providers for the instance's driver and for the
     // Claude side's readiness, and settings for the instance's own toggle. Both
-    // are read once per pass, and only when a peak could matter.
+    // are read once per pass, and settings only when a peak or a schedule could
+    // matter.
     const list = yield* providers.getProviders;
-    const peakingNow = peakAt || states.some((state) => isPeakFallback(state));
+    const scheduled =
+      scheduleOn || states.some((state) => isScheduleFallback(state))
+        ? (yield* bots.listBots()).some((bot) => bot.schedule?.enabled === true)
+        : false;
+    const peakingNow = peakAt || scheduled || states.some((state) => isPeakFallback(state));
     const settings = peakingNow
       ? yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => undefined))
       : undefined;
@@ -608,12 +666,109 @@ export const make = Effect.gen(function* () {
         onPeakFallback,
       });
 
+    /**
+     * What a bot's model schedule asks for right now: the model to run on and
+     * when the window closes, or why it asks for nothing. A scheduled DeepSeek
+     * model while a peak window is open runs on Sonnet 5.5 High, as any DeepSeek
+     * bot does; a scheduled model whose provider cannot run is not applied.
+     */
+    const scheduleFor = (
+      bot: PersonalBot,
+    ):
+      | { readonly kind: "open"; readonly untilMs: number; readonly selection: ModelSelection }
+      | { readonly kind: "closed"; readonly reason: string } => {
+      const decided = scheduleState({
+        atMs: scheduleNow,
+        timeZone,
+        killSwitchOn: scheduleOn,
+        schedule: bot.schedule,
+        home: bot.modelSelection,
+      });
+      if (decided.kind === "closed") return decided;
+      let selection = decided.selection;
+      if (
+        peakAt &&
+        peakOn &&
+        driverOf(selection.instanceId) === DEEPSEEK_DRIVER &&
+        instanceSettingOn(selection.instanceId)
+      ) {
+        selection = peakTargetSelection(bot, list, driverOf) ?? selection;
+      }
+      if (!providerReady(list.find((entry) => entry.instanceId === selection.instanceId))) {
+        return { kind: "closed", reason: "provider_not_ready" };
+      }
+      return { kind: "open", untilMs: decided.untilMs, selection };
+    };
+
     for (const state of states) {
       const botOption = yield* bots.getBotById({ botId: state.botId });
       const bot = Option.isNone(botOption) ? undefined : botOption.value;
 
+      // ----- The model schedule -----
+      if (isScheduleFallback(state)) {
+        const wanted =
+          bot === undefined ? ({ kind: "closed", reason: "bot_gone" } as const) : scheduleFor(bot);
+        if (wanted.kind === "closed") {
+          yield* endPeakFallback(state, wanted.reason, realNow);
+          continue;
+        }
+        const nextResetAt = iso(wanted.untilMs);
+        if (!modelSelectionsMatch(state.fallbackModel, wanted.selection)) {
+          // The window is still open but the model it names moved (the schedule
+          // was edited, or a peak window opened or closed on a scheduled DeepSeek
+          // model): between turns only.
+          if (yield* botIsIdle(state.botId)) {
+            const swapped = yield* bots.switchFallback({
+              ...state,
+              fallbackModel: wanted.selection,
+              resetAt: nextResetAt,
+            });
+            if (swapped) {
+              yield* Effect.logInfo("personal model schedule model changed", {
+                botId: state.botId,
+                to: wanted.selection.model,
+                until: nextResetAt,
+              });
+            }
+          }
+          continue;
+        }
+        if (state.resetAt !== nextResetAt) {
+          yield* bots.updateFallbackReset({ botId: state.botId, resetAt: nextResetAt });
+        }
+        continue;
+      }
+
       // ----- The DeepSeek peak switch (1.66.44) -----
       if (isPeakFallback(state)) {
+        // A schedule outranks the peak switch: the bot moves onto its scheduled
+        // model, between turns.
+        const wanted = bot === undefined ? undefined : scheduleFor(bot);
+        if (wanted !== undefined && wanted.kind === "open") {
+          if (yield* botIsIdle(state.botId)) {
+            const swapped = yield* bots.switchFallback({
+              botId: state.botId,
+              fallbackModel: wanted.selection,
+              fromInstanceId: state.fromInstanceId,
+              fromProvider: state.fromProvider,
+              reason: PERSONAL_FALLBACK_REASON_SCHEDULE,
+              startedAt: iso(realNow),
+              resetAt: iso(wanted.untilMs),
+              noticeThreadId: null,
+            });
+            if (swapped) {
+              yield* Effect.logInfo(
+                "personal model schedule started over the deepseek peak switch",
+                {
+                  botId: state.botId,
+                  to: wanted.selection.model,
+                  until: iso(wanted.untilMs),
+                },
+              );
+            }
+          }
+          continue;
+        }
         const homeIsDeepSeek =
           bot !== undefined && driverOf(bot.modelSelection.instanceId) === DEEPSEEK_DRIVER;
         const plan = peakPlanFor(bot, homeIsDeepSeek, true, false);
@@ -670,24 +825,57 @@ export const make = Effect.gen(function* () {
         yield* bots.updateFallbackReset({ botId: state.botId, resetAt: iso(decision.resetAtMs) });
         continue;
       }
-      if (decision.kind === "back") yield* switchBack(state, bot, decision.reason, now);
+      if (decision.kind === "back") {
+        // Back to the model the bot runs on next: its scheduled one while a window is open.
+        const next = scheduleFor(bot);
+        yield* switchBack(
+          state,
+          bot,
+          decision.reason,
+          now,
+          next.kind === "open" ? next.selection : undefined,
+        );
+      }
     }
 
-    // ----- Put DeepSeek bots on the peak model while a window is open -----
-    if (!peakAt) return;
+    // ----- Put bots on their scheduled or the peak model while a window is open -----
+    if (!peakAt && !scheduled) return;
+    // Read after the pass above, so a row it ended or swapped is seen as it now is.
     const all = yield* bots.listBots();
     for (const bot of all) {
-      const state = stateByBot.get(bot.botId);
-      // A peak row was kept or cleared by the loop above; a usage-limit row is
-      // never touched by this switch.
-      if (state !== undefined && isPeakFallback(state)) continue;
+      // A row of any kind (a usage limit, the peak switch or the schedule) was
+      // kept or cleared by the loop above; a usage-limit row is never touched.
+      if (bot.fallbackActive !== undefined) continue;
       const homeInstanceId = bot.modelSelection.instanceId;
-      const plan = peakPlanFor(
-        bot,
-        driverOf(homeInstanceId) === DEEPSEEK_DRIVER,
-        false,
-        state !== undefined,
-      );
+
+      // The schedule outranks the peak switch. It starts between turns only.
+      const wanted = scheduleFor(bot);
+      if (wanted.kind === "open") {
+        if (!(yield* botIsIdle(bot.botId))) continue;
+        const started = yield* bots.startFallback({
+          botId: bot.botId,
+          fallbackModel: wanted.selection,
+          fromInstanceId: homeInstanceId,
+          fromProvider: providerLabel(driverOf(homeInstanceId) ?? homeInstanceId),
+          reason: PERSONAL_FALLBACK_REASON_SCHEDULE,
+          startedAt: iso(realNow),
+          resetAt: iso(wanted.untilMs),
+          // No notice: nothing was interrupted, and the caption says why.
+          noticeThreadId: null,
+        });
+        if (started) {
+          yield* Effect.logInfo("personal model schedule started", {
+            botId: bot.botId,
+            from: bot.modelSelection.model,
+            to: wanted.selection.model,
+            until: iso(wanted.untilMs),
+          });
+        }
+        continue;
+      }
+
+      if (!peakAt) continue;
+      const plan = peakPlanFor(bot, driverOf(homeInstanceId) === DEEPSEEK_DRIVER, false, false);
       if (plan.kind !== "switch_on") continue;
       const target = peakTargetSelection(bot, list, driverOf);
       if (target === null) {

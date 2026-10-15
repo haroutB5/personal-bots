@@ -369,3 +369,51 @@ describe("a bot on the DeepSeek peak switch", () => {
     );
   });
 });
+
+describe("a bot on its model schedule", () => {
+  const home = selection("claudeAgent", "claude-sonnet-5-5", [["effort", "high"]]);
+  const scheduled = selection("claudeAgent", "claude-opus-5-5", [["effort", "medium"]]);
+  const NOW = Date.parse("2026-10-15T23:30:00.000Z");
+  const onSchedule = (resetAt?: string) =>
+    ({
+      modelSelection: home,
+      fallbackActive: {
+        modelSelection: scheduled,
+        since: DateTime.makeUnsafe("2026-10-15T21:00:00.000Z"),
+        ...(resetAt === undefined ? {} : { resetAt: DateTime.makeUnsafe(resetAt) }),
+        fromProvider: "Claude",
+        reason: "schedule",
+      },
+    }) as never;
+
+  it("says it is the scheduled model and until when, in the device's own zone", () => {
+    // 06:00 UTC on 16 October is 07:00 in London (BST).
+    expect(fallbackNoteLabel(onSchedule("2026-10-16T06:00:00.000Z"), NOW, "Europe/London")).toBe(
+      "Scheduled model until 07:00",
+    );
+    expect(
+      botActiveModelLabel(onSchedule("2026-10-16T06:00:00.000Z"), providers, NOW, "Europe/London"),
+    ).toBe("Opus 5.5 medium, Scheduled model until 07:00");
+  });
+
+  it("keeps the tight labels short: the model, the effort and sched", () => {
+    const bot = onSchedule("2026-10-16T06:00:00.000Z");
+    expect(botActiveModelShortLabel(bot, providers)).toBe("Opus 5.5 · M · sched");
+    expect(botActiveModelShortLabel(bot, providers)).not.toContain("until");
+    expect(taskCardBotLine(bot, providers)).toBe("Opus 5.5 · M · sched");
+  });
+
+  it("never reads as a usage-limit fallback or the DeepSeek peak switch", () => {
+    const bot = onSchedule("2026-10-16T06:00:00.000Z");
+    const note = fallbackNoteLabel(bot, NOW, "UTC");
+    expect(note).not.toContain("fallback");
+    expect(note).not.toContain("usage limit");
+    expect(note).not.toContain("peak");
+    expect(botActiveModelShortLabel(bot, providers)).not.toContain("fallback");
+    expect(botActiveModelShortLabel(bot, providers)).not.toContain("peak");
+  });
+
+  it("leaves the time out when the row names none", () => {
+    expect(fallbackNoteLabel(onSchedule(), NOW, "UTC")).toBe("Scheduled model");
+  });
+});

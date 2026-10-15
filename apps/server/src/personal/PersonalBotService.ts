@@ -32,8 +32,11 @@ import {
   sameTeam,
   ProviderDriverKind,
   ThreadId,
+  type ModelSelection,
   type PersonalBot,
   type PersonalBotCreateInput,
+  type PersonalBotSchedule,
+  type PersonalBotScheduleInput,
   type PersonalBotNotificationMute,
   type PersonalBotSearchMessagesInput,
   type PersonalBotSearchMessagesResult,
@@ -70,6 +73,7 @@ import {
   PERSONAL_MESSAGE_SEARCH_RAW_ROWS,
   PERSONAL_SNOOZE_MAX_MS,
 } from "./personalMessageSearch.ts";
+import { scheduleProblem } from "./personalModelSchedulePolicy.ts";
 import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
 import { PERSONAL_SEED_MODEL_ENV, seedModelFor } from "./seedModel.ts";
 import {
@@ -298,6 +302,39 @@ export const make = Effect.gen(function* () {
     new PersonalBotsError({ message: `Personal bots ${operation} failed.`, cause });
 
   const notFound = (message: string) => new PersonalBotsError({ message });
+
+  /**
+   * The schedule to store after a create or update: the saved one with the
+   * fields of the request laid over it. On unless the request says `enabled:
+   * false`. An enabled schedule must name From, To and a model, and is refused
+   * when the two times are equal or the model is the bot's own (the same rules
+   * as the form). Undefined: nothing to store, leave the column alone.
+   */
+  const resolveSchedule = (
+    saved: PersonalBotSchedule | undefined,
+    requested: PersonalBotScheduleInput | undefined,
+    home: ModelSelection,
+  ) => {
+    if (requested === undefined) return Effect.succeed(undefined);
+    const enabled = requested.enabled ?? saved?.enabled ?? true;
+    const from = requested.from ?? saved?.from;
+    const to = requested.to ?? saved?.to;
+    const modelSelection = requested.modelSelection ?? saved?.modelSelection;
+    if (from === undefined || to === undefined || modelSelection === undefined) {
+      return enabled
+        ? Effect.fail(
+            new PersonalBotsError({
+              message: "A model schedule needs a From time, a To time and a model.",
+            }),
+          )
+        : Effect.succeed(undefined);
+    }
+    const next: PersonalBotSchedule = { enabled, from, to, modelSelection };
+    const problem = enabled ? scheduleProblem(next, home) : null;
+    return problem === null
+      ? Effect.succeed(next)
+      : Effect.fail(new PersonalBotsError({ message: problem }));
+  };
 
   // Live bots only: soft-deleted bots keep their threads but take no new ones.
   const requireBot = Effect.fn("PersonalBotService.requireBot")(function* (botId: PersonalBotId) {
@@ -530,10 +567,12 @@ export const make = Effect.gen(function* () {
       // team that was named has to be one that exists.
       const team = yield* requireKnownTeam(input.team ?? DEFAULT_PERSONAL_BOT_TEAM);
       const lead = input.lead ?? false;
-      const { fallback: fallbackInput, ...createFields } = input;
+      const { fallback: fallbackInput, schedule: scheduleInput, ...createFields } = input;
+      const schedule = yield* resolveSchedule(undefined, scheduleInput, input.modelSelection);
       yield* repository
         .createBot({
           ...createFields,
+          ...(schedule === undefined ? {} : { schedule }),
           ...(fallbackInput?.enabled === undefined
             ? {}
             : { fallbackEnabled: fallbackInput.enabled }),
@@ -570,10 +609,30 @@ export const make = Effect.gen(function* () {
       // Same rule as create, so the drag-and-drop path on the team diagram and
       // any API caller land on a team that exists.
       const team = input.team === undefined ? undefined : yield* requireKnownTeam(input.team);
-      const { notificationsMute, fallback: fallbackInput, ...fields } = input;
+      const {
+        notificationsMute,
+        fallback: fallbackInput,
+        schedule: scheduleInput,
+        ...fields
+      } = input;
+      let schedule: PersonalBotSchedule | undefined;
+      if (scheduleInput !== undefined) {
+        const current = yield* repository
+          .getBotById({ botId: input.botId })
+          .pipe(Effect.mapError(repositoryError("lookup")));
+        if (Option.isNone(current)) {
+          return yield* notFound(`Personal bot '${input.botId}' was not found.`);
+        }
+        schedule = yield* resolveSchedule(
+          current.value.schedule,
+          scheduleInput,
+          input.modelSelection ?? current.value.modelSelection,
+        );
+      }
       const updated = yield* repository
         .updateBot({
           ...fields,
+          ...(schedule === undefined ? {} : { schedule }),
           ...(fallbackInput?.enabled === undefined
             ? {}
             : { fallbackEnabled: fallbackInput.enabled }),

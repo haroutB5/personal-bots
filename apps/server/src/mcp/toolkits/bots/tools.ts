@@ -44,6 +44,12 @@ export const BotFallbackEntry = Schema.Struct({
       description: "When the original limit resets (ISO, UTC), if reported.",
     }),
   ),
+  reason: Schema.optional(
+    Schema.String.annotate({
+      description:
+        'Absent for a usage limit; "deepseek_peak" for the DeepSeek peak-hours switch; "schedule" while the model schedule of the bot runs.',
+    }),
+  ),
   label: Schema.String.annotate({
     description:
       'One line to quote, for example "fallback: claude-sonnet-5-5 until 2026-10-08T08:00:40.000Z".',
@@ -458,7 +464,7 @@ export type CastVoteResult = typeof CastVoteResult.Type;
 const LEAD_ONLY = "Team leads only.";
 const NOT_SETTABLE = "Not settable by a lead: any value is refused.";
 const USER_MADE_RULE =
-  "A bot you created yourself is yours to manage while it stays on your team. Any other bot (one the user set up, another lead made, or one moved since) is not: removing it, or changing its name, instructions, description, model, effort or usage-limit fallback, is not done at once. It puts a Yes/No card in this chat and nothing changes until Harout taps Yes himself; the call returns pending, so tell him in one line what you asked for and end your turn, and his answer arrives as a follow-up message. It works only from a chat turn Harout started (a routine, task or group turn is refused, so ask him to request it in chat). Title, avatar, mute and memory auto-save stay open. The built-in system bots (Updates, Sync reports and the seeded defaults) are never yours to change.";
+  "A bot you created yourself is yours to manage while it stays on your team. Any other bot (one the user set up, another lead made, or one moved since) is not: removing it, or changing its name, instructions, description, model, effort, usage-limit fallback or model schedule, is not done at once. It puts a Yes/No card in this chat and nothing changes until Harout taps Yes himself; the call returns pending, so tell him in one line what you asked for and end your turn, and his answer arrives as a follow-up message. It works only from a chat turn Harout started (a routine, task or group turn is refused, so ask him to request it in chat). Title, avatar, mute and memory auto-save stay open. The built-in system bots (Updates, Sync reports and the seeded defaults) are never yours to change.";
 
 /** The fields create_bot and update_bot share. Every one is optional. */
 const BotFieldsShape = {
@@ -544,6 +550,53 @@ const BotFieldsShape = {
     }).annotate({
       description:
         "The model the bot switches to when its usage limit is hit. Fields left out stay as the bot has them (a new bot starts from Sonnet 5.5, high effort, 1M context).",
+    }),
+  ),
+  scheduleEnabled: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Run the bot on a different model at set times every day (its model schedule), between scheduleFrom and scheduleTo, and on its own model the rest of the time. false turns the schedule off and keeps its times and model. A usage-limit fallback always takes priority over it. On when you give scheduleFrom and scheduleTo.",
+    }),
+  ),
+  scheduleFrom: Schema.optional(
+    Schema.String.annotate({
+      description:
+        'When the scheduled model starts, 24 hour "HH:MM" in local time on the laptop, for example "22:00". An overnight range such as 22:00 to 07:00 is fine; From and To cannot be equal.',
+    }),
+  ),
+  scheduleTo: Schema.optional(
+    Schema.String.annotate({
+      description: 'When it ends, 24 hour "HH:MM", for example "07:00".',
+    }),
+  ),
+  scheduleModel: Schema.optional(
+    Schema.Struct({
+      provider: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "Provider instance for the scheduled model, as list_bots shows it. Default: the schedule's current provider (Claude for a new schedule).",
+        }),
+      ),
+      model: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "A model slug that provider offers, for example claude-sonnet-5-5. Fable and Mythos models are refused, and it must differ from the bot's own model. Default: the schedule's current model (a new schedule: Sonnet 5.5).",
+        }),
+      ),
+      effort: Schema.optional(
+        Schema.String.annotate({
+          description: "An effort the scheduled model offers: low, medium, high, xhigh or max.",
+        }),
+      ),
+      context: Schema.optional(
+        Schema.String.annotate({
+          description:
+            'A context window the scheduled model offers, for example "1m". Only some models offer a choice.',
+        }),
+      ),
+    }).annotate({
+      description:
+        "The model the bot runs on between scheduleFrom and scheduleTo. Fields left out stay as they are (a new schedule starts from Sonnet 5.5, high effort, 1M context).",
     }),
   ),
   team: Schema.optional(Schema.Unknown.annotate({ description: NOT_SETTABLE })),
@@ -847,7 +900,7 @@ const CastVoteTool = Tool.make("cast_vote", {
   .annotate(Tool.OpenWorld, false);
 
 const CreateBotTool = Tool.make("create_bot", {
-  description: `${LEAD_ONLY} Create a new bot on your own team, always as an ordinary member: never a lead, never pinned, never on another team. It appears in list_bots at once, so you can delegate to it. Give it a clear name, a description and instructions, and pick a model and effort that fit the work (a cheaper model for simple jobs). Every bot switches to a fallback model when its usage limit is hit (Sonnet 5.5, high effort, 1M context unless you set fallbackEnabled or fallbackModel). Only models a provider actually offers are accepted, and never a Fable or Mythos model. The new bot gets no secrets or connections; the user grants those himself. Limited to 5 new bots per rolling 24 hours. Every create is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Create a new bot on your own team, always as an ordinary member: never a lead, never pinned, never on another team. It appears in list_bots at once, so you can delegate to it. Give it a clear name, a description and instructions, and pick a model and effort that fit the work (a cheaper model for simple jobs). Every bot switches to a fallback model when its usage limit is hit (Sonnet 5.5, high effort, 1M context unless you set fallbackEnabled or fallbackModel). It can also run on another model at set times every day (scheduleFrom, scheduleTo, scheduleModel). Only models a provider actually offers are accepted, and never a Fable or Mythos model. The new bot gets no secrets or connections; the user grants those himself. Limited to 5 new bots per rolling 24 hours. Every create is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
   parameters: CreateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,
@@ -860,7 +913,7 @@ const CreateBotTool = Tool.make("create_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const UpdateBotTool = Tool.make("update_bot", {
-  description: `${LEAD_ONLY} Change a bot that is on your own team: its name, title, description, instructions, avatar shape or colour, model and effort, usage-limit fallback (fallbackEnabled and fallbackModel), notification mute or memory auto-save. Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, and you cannot change anyone's team, lead flag or pinned state. ${USER_MADE_RULE} Ask the user before making a large change to the instructions of a bot you created (rewriting them, or changing what the bot may do); small tweaks are fine. Names need at least 3 characters with a letter, one alphabet only, and no invisible characters. A Fable or Mythos bot keeps its model and effort as they are. Every edit is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Change a bot that is on your own team: its name, title, description, instructions, avatar shape or colour, model and effort, usage-limit fallback (fallbackEnabled and fallbackModel), daily model schedule (scheduleEnabled, scheduleFrom, scheduleTo and scheduleModel), notification mute or memory auto-save. Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, and you cannot change anyone's team, lead flag or pinned state. ${USER_MADE_RULE} Ask the user before making a large change to the instructions of a bot you created (rewriting them, or changing what the bot may do); small tweaks are fine. Names need at least 3 characters with a letter, one alphabet only, and no invisible characters. A Fable or Mythos bot keeps its model and effort as they are. Every edit is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
   parameters: UpdateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,

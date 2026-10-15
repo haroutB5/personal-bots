@@ -142,6 +142,41 @@ export const PersonalBotFallbackActive = Schema.Struct({
 });
 export type PersonalBotFallbackActive = typeof PersonalBotFallbackActive.Type;
 
+/**
+ * The reason a bot's fallback row carries while it runs on its scheduled model
+ * (per-bot "Use a different model at set times"): the row's `resetAt` is the
+ * end of the daily window that is open.
+ */
+export const PERSONAL_FALLBACK_REASON_SCHEDULE = "schedule";
+
+/** A time of day, 24 h "HH:MM", in the laptop's local time. */
+export const PersonalBotScheduleTime = Schema.String.check(
+  Schema.isPattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+);
+
+/**
+ * The per-bot model schedule: between `from` and `to` every day (an overnight
+ * range such as 22:00 to 07:00 is fine) the bot's turns run on `modelSelection`
+ * instead of its own model. `enabled: false` keeps the times and model without
+ * applying them.
+ */
+export const PersonalBotSchedule = Schema.Struct({
+  enabled: Schema.Boolean,
+  from: PersonalBotScheduleTime,
+  to: PersonalBotScheduleTime,
+  modelSelection: ModelSelection,
+});
+export type PersonalBotSchedule = typeof PersonalBotSchedule.Type;
+
+/** What a create or update may set; absent fields stay as they are. */
+export const PersonalBotScheduleInput = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  from: Schema.optional(PersonalBotScheduleTime),
+  to: Schema.optional(PersonalBotScheduleTime),
+  modelSelection: Schema.optional(ModelSelection),
+});
+export type PersonalBotScheduleInput = typeof PersonalBotScheduleInput.Type;
+
 /** What a create or update may set; absent fields stay as they are. */
 export const PersonalBotFallbackInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
@@ -193,6 +228,11 @@ export const PersonalBot = Schema.Struct({
   /** Set only while the bot runs on its fallback. Read it through {@link botFallbackActive}. */
   fallbackActive: Schema.optionalKey(PersonalBotFallbackActive),
   /**
+   * The model schedule (absent when the bot has none; optional on the wire like
+   * the fields above). Read it through {@link botSchedule}.
+   */
+  schedule: Schema.optionalKey(PersonalBotSchedule),
+  /**
    * Notifications from this bot are silenced until this time: no web push and
    * no in-app banner. Null (or absent, from an older server) means on; a time
    * in the year 9999 means "until I turn it back on". Read it through
@@ -228,6 +268,36 @@ export const botFallback = (bot: {
 export const botFallbackActive = (bot: {
   readonly fallbackActive?: PersonalBotFallbackActive;
 }): PersonalBotFallbackActive | null => bot.fallbackActive ?? null;
+
+/** The option ids that carry a model's effort, across providers. */
+const SCHEDULE_EFFORT_OPTION_IDS: ReadonlyArray<string> = ["effort", "reasoningEffort", "variant"];
+
+/**
+ * Whether a schedule's model is the model the bot already runs on: the same
+ * provider instance, model and effort (the context window and other options do
+ * not make it a different model to the owner). A schedule like that would
+ * change nothing, so the form and the server refuse it; the same model on a
+ * different effort is a real schedule.
+ */
+export const scheduleMatchesOwnModel = (
+  own: ModelSelection,
+  scheduled: ModelSelection,
+): boolean => {
+  if (own.instanceId !== scheduled.instanceId || own.model !== scheduled.model) return false;
+  const effortOf = (selection: ModelSelection): string => {
+    const option = (selection.options ?? []).find((candidate) =>
+      SCHEDULE_EFFORT_OPTION_IDS.includes(candidate.id),
+    );
+    return option === undefined ? "" : String(option.value);
+  };
+  return effortOf(own) === effortOf(scheduled);
+};
+
+/** The bot's model schedule, or null when it has none or it is off. */
+export const botSchedule = (bot: {
+  readonly schedule?: PersonalBotSchedule;
+}): PersonalBotSchedule | null =>
+  bot.schedule !== undefined && bot.schedule.enabled ? bot.schedule : null;
 
 /**
  * The model the bot's turns use right now: its fallback while one is active,
@@ -414,6 +484,8 @@ export const PersonalBotCreateInput = Schema.Struct({
   memoryAutoSave: Schema.optional(Schema.Boolean),
   /** Omitted means on, with the default fallback model. */
   fallback: Schema.optional(PersonalBotFallbackInput),
+  /** Omitted means no schedule. */
+  schedule: Schema.optional(PersonalBotScheduleInput),
 });
 export type PersonalBotCreateInput = typeof PersonalBotCreateInput.Type;
 
@@ -437,6 +509,8 @@ export const PersonalBotUpdateInput = Schema.Struct({
   hidePreviews: Schema.optional(Schema.Boolean),
   /** Absent leaves it alone; a field inside it left out stays as it is. */
   fallback: Schema.optional(PersonalBotFallbackInput),
+  /** Absent leaves it alone; a field inside it left out stays as it is. */
+  schedule: Schema.optional(PersonalBotScheduleInput),
   notificationsMute: Schema.optional(PersonalBotNotificationMute),
 });
 export type PersonalBotUpdateInput = typeof PersonalBotUpdateInput.Type;

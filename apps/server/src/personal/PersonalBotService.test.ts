@@ -831,3 +831,78 @@ it.effect("saving a new main model ends a fallback the bot was running on", () =
     expect((yield* repository.listFallbackStates()).length).toBe(0);
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
+
+it.effect(
+  "a model schedule saves, merges field by field, and refuses what the form refuses",
+  () => {
+    const context = makeContext();
+    return Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      const created = yield* service.create(botInput("bot-schedule"));
+      expect(created.schedule).toBeUndefined();
+
+      const other = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-haiku-5-5",
+        options: [{ id: "effort", value: "low" }],
+      };
+      const saved = yield* service.update({
+        botId: created.botId,
+        schedule: { from: "22:00", to: "07:00", modelSelection: other },
+      });
+      // Given its times and a model it is on, with no explicit enabled.
+      expect(saved.schedule).toEqual({
+        enabled: true,
+        from: "22:00",
+        to: "07:00",
+        modelSelection: other,
+      });
+
+      // One field at a time: the rest stays.
+      const moved = yield* service.update({ botId: created.botId, schedule: { to: "06:30" } });
+      expect(moved.schedule).toEqual({
+        enabled: true,
+        from: "22:00",
+        to: "06:30",
+        modelSelection: other,
+      });
+
+      // Off keeps the times and the model.
+      const off = yield* service.update({ botId: created.botId, schedule: { enabled: false } });
+      expect(off.schedule).toEqual({
+        enabled: false,
+        from: "22:00",
+        to: "06:30",
+        modelSelection: other,
+      });
+
+      // From = To and the bot's own model are refused, in plain words.
+      const same = yield* service
+        .update({ botId: created.botId, schedule: { enabled: true, from: "08:00", to: "08:00" } })
+        .pipe(Effect.flip);
+      expect(same.message).toBe("From and To can't be the same time.");
+      const own = yield* service
+        .update({
+          botId: created.botId,
+          schedule: { enabled: true, modelSelection: created.modelSelection },
+        })
+        .pipe(Effect.flip);
+      expect(own.message).toBe("Pick a different model from the bot's own.");
+      // Neither refused edit changed anything.
+      const listed = (yield* service.list()).bots.find((bot) => bot.botId === created.botId);
+      expect(listed?.schedule?.enabled).toBe(false);
+      expect(listed?.schedule?.to).toBe("06:30");
+
+      // A bot made with a schedule; and one with no model for it is refused.
+      const withSchedule = yield* service.create({
+        ...botInput("bot-schedule-created"),
+        schedule: { from: "09:00", to: "17:00", modelSelection: other },
+      });
+      expect(withSchedule.schedule?.enabled).toBe(true);
+      const incomplete = yield* service
+        .create({ ...botInput("bot-schedule-bad"), schedule: { from: "09:00", to: "17:00" } })
+        .pipe(Effect.flip);
+      expect(incomplete.message).toBe("A model schedule needs a From time, a To time and a model.");
+    }).pipe(Effect.provide(makeTestLayer(context)));
+  },
+);

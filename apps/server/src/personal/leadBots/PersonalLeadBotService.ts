@@ -17,6 +17,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   BotAvatarShape,
   botFallback,
+  scheduleMatchesOwnModel,
   botNotificationsMutedUntil,
   botTeam,
   CommandId,
@@ -34,6 +35,7 @@ import {
   type OrchestrationMessageContext,
   type PersonalBot,
   type PersonalBotNotificationMute,
+  type PersonalBotSchedule,
   type PersonalBotRestoreResult,
   type PersonalBotUpdateInput,
   type PersonalLeadBotChange,
@@ -52,6 +54,7 @@ import { botModelSelectionForThread } from "../botModelSelection.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { PERSONAL_NOTICE_MESSAGE_ID_PREFIX } from "../personalChatResumePolicy.ts";
+import { scheduleProblem } from "../personalModelSchedulePolicy.ts";
 import { PERSONAL_SEED_MODEL_ENV } from "../seedModel.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
 import * as PersonalRoutineService from "../routines/PersonalRoutineService.ts";
@@ -126,6 +129,11 @@ export interface LeadBotFields {
   readonly fallbackEnabled?: boolean | undefined;
   /** The model that switch goes to; what is left out stays as the bot has it (a new bot: the default fallback). */
   readonly fallbackModel?: LeadModelRequest | undefined;
+  /** The daily model schedule: on or off, From and To ("HH:MM", the laptop's time) and the model it runs. */
+  readonly scheduleEnabled?: boolean | undefined;
+  readonly scheduleFrom?: string | undefined;
+  readonly scheduleTo?: string | undefined;
+  readonly scheduleModel?: LeadModelRequest | undefined;
   /** Present only so a call that carries them is refused rather than silently ignored. */
   readonly team?: unknown;
   readonly lead?: unknown;
@@ -203,6 +211,7 @@ const sensitiveChangesOf = (
   fields: LeadBotFields,
   model: LeadModelResult | null,
   fallbackModel: LeadModelResult | null,
+  scheduleModel: LeadModelResult | null,
 ): ReadonlyArray<LeadBotSensitiveField> => {
   const changes: Array<LeadBotSensitiveField> = [];
   if (
@@ -224,6 +233,15 @@ const sensitiveChangesOf = (
     (fallbackModel !== null && fallbackModel.ok && fallbackModel.changed)
   ) {
     changes.push("fallback");
+  }
+  if (
+    (fields.scheduleEnabled !== undefined &&
+      fields.scheduleEnabled !== (target.schedule?.enabled ?? false)) ||
+    (fields.scheduleFrom !== undefined && fields.scheduleFrom !== target.schedule?.from) ||
+    (fields.scheduleTo !== undefined && fields.scheduleTo !== target.schedule?.to) ||
+    (scheduleModel !== null && scheduleModel.ok && scheduleModel.changed)
+  ) {
+    changes.push("schedule");
   }
   return changes;
 };
@@ -265,6 +283,72 @@ const resolveFallbackRequest = (
     request: fields.fallbackModel ?? {},
   });
 
+/** True when the call names any part of the model schedule. */
+const wantsSchedule = (fields: LeadBotFields): boolean =>
+  fields.scheduleEnabled !== undefined ||
+  fields.scheduleFrom !== undefined ||
+  fields.scheduleTo !== undefined ||
+  fields.scheduleModel !== undefined;
+
+/**
+ * The scheduled model a call asks for, from the providers' own lists: what is
+ * left out stays as the bot has it, or starts from Sonnet 5.5 High (`base`).
+ */
+const resolveScheduleRequest = (
+  providers: ReadonlyArray<ServerProvider>,
+  fields: LeadBotFields,
+  base: ModelSelection,
+): LeadModelResult =>
+  resolveLeadModelSelection({
+    providers,
+    base,
+    seedFallback: false,
+    request: fields.scheduleModel ?? {},
+  });
+
+/**
+ * The schedule this call leaves the bot with, laid over the one it has, or the
+ * plain words it is refused in. `undefined` when the call changes none of it.
+ */
+const mergeSchedule = (
+  current: PersonalBot | null,
+  fields: LeadBotFields,
+  scheduleModel: LeadModelResult | null,
+  home: ModelSelection,
+):
+  | { readonly ok: true; readonly schedule: PersonalBotSchedule | undefined }
+  | { readonly ok: false; readonly reason: string } => {
+  if (!wantsSchedule(fields)) return { ok: true, schedule: undefined };
+  const saved = current?.schedule;
+  const enabled = fields.scheduleEnabled ?? saved?.enabled ?? true;
+  const from = fields.scheduleFrom ?? saved?.from;
+  const to = fields.scheduleTo ?? saved?.to;
+  const modelSelection =
+    scheduleModel !== null && scheduleModel.ok
+      ? scheduleModel.selection
+      : (saved?.modelSelection ?? PERSONAL_BOT_DEFAULT_FALLBACK_MODEL);
+  if (from === undefined || to === undefined) {
+    if (!enabled) return { ok: true, schedule: undefined };
+    return {
+      ok: false,
+      reason: "A model schedule needs scheduleFrom and scheduleTo, like 22:00 and 07:00.",
+    };
+  }
+  const next: PersonalBotSchedule = { enabled, from, to, modelSelection };
+  const problem = enabled ? scheduleProblem(next, home) : null;
+  if (problem !== null) return { ok: false, reason: problem };
+  return { ok: true, schedule: next };
+};
+
+/** One line for a schedule: "every day 22:00 to 07:00 on Sonnet 5.5 High", or "off". */
+const scheduleSummary = (
+  schedule: PersonalBotSchedule | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+): string =>
+  schedule === undefined
+    ? "none"
+    : `${schedule.enabled ? "every day" : "off, was every day"} ${schedule.from} to ${schedule.to} on ${leadBotModelLabel(schedule.modelSelection, providers)}`;
+
 /** The keys an approved update may write; anything else in a stored payload is ignored. */
 const PATCH_KEYS = [
   "name",
@@ -277,6 +361,7 @@ const PATCH_KEYS = [
   "memoryAutoSave",
   "notificationsMute",
   "fallback",
+  "schedule",
 ] as const;
 
 type Patch = { -readonly [K in keyof PersonalBotUpdateInput]?: PersonalBotUpdateInput[K] };
@@ -300,6 +385,9 @@ const baseOf = (current: PersonalBot, patch: Patch): Record<string, unknown> => 
         break;
       case "fallback":
         base[key] = botFallback(current);
+        break;
+      case "schedule":
+        base[key] = current.schedule ?? null;
         break;
       default:
         base[key] = current[key];
@@ -355,6 +443,13 @@ const diffLines = (
   if (patch.fallback?.modelSelection !== undefined) {
     lines.push(
       `fallback model: ${leadBotModelLabel(fallbackNow.modelSelection, providers)} → ${leadBotModelLabel(patch.fallback.modelSelection, providers)}`,
+    );
+  }
+  if (patch.schedule !== undefined) {
+    // A patch always carries the whole merged schedule (see mergeSchedule).
+    const after = { ...current.schedule, ...patch.schedule } as PersonalBotSchedule;
+    lines.push(
+      `model schedule: ${scheduleSummary(current.schedule, providers)} → ${scheduleSummary(after, providers)}`,
     );
   }
   return lines;
@@ -637,6 +732,13 @@ export const make = Effect.gen(function* () {
           readonly target: PersonalBot | null;
         }) => LeadModelResult)
       | undefined;
+    /** The same for the model schedule's model. */
+    readonly resolveScheduleModel?:
+      | ((rows: {
+          readonly caller: PersonalBot;
+          readonly target: PersonalBot | null;
+        }) => LeadModelResult)
+      | undefined;
   }) {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const caller = yield* liveBot(input.callerBotId);
@@ -649,6 +751,10 @@ export const make = Effect.gen(function* () {
       input.resolveFallbackModel === undefined || caller === null
         ? null
         : input.resolveFallbackModel({ caller, target });
+    const scheduleModel =
+      input.resolveScheduleModel === undefined || caller === null
+        ? null
+        : input.resolveScheduleModel({ caller, target });
     const busy =
       input.action === "remove" && target !== null
         ? yield* busyCountsOf(target.botId).pipe(orFail("check what the bot is doing"))
@@ -675,13 +781,21 @@ export const make = Effect.gen(function* () {
               changed: input.action === "create" || fallbackModel.changed,
             }
           : null,
+      requestedScheduleModel:
+        scheduleModel !== null && scheduleModel.ok
+          ? {
+              instanceId: scheduleModel.selection.instanceId,
+              model: scheduleModel.selection.model,
+              changed: input.action === "create" || scheduleModel.changed,
+            }
+          : null,
       createsInWindow:
         input.action === "create" && caller !== null
           ? yield* createsInWindow(caller.botId, nowMs)
           : 0,
       sensitiveChanges:
         input.action === "update" && target !== null
-          ? sensitiveChangesOf(target, input.fields, model, fallbackModel)
+          ? sensitiveChangesOf(target, input.fields, model, fallbackModel, scheduleModel)
           : [],
       targetOwnedByCaller:
         target !== null && caller !== null ? yield* ownedByCaller(caller.botId, target) : false,
@@ -706,6 +820,9 @@ export const make = Effect.gen(function* () {
     if (fallbackModel !== null && !fallbackModel.ok) {
       return yield* invalid(`Fallback model: ${fallbackModel.reason}`);
     }
+    if (scheduleModel !== null && !scheduleModel.ok) {
+      return yield* invalid(`Scheduled model: ${scheduleModel.reason}`);
+    }
     // The verdict only allows a real, live lead, so the caller row is present.
     return {
       caller: caller!,
@@ -713,6 +830,7 @@ export const make = Effect.gen(function* () {
       team: verdict.team,
       model,
       fallbackModel,
+      scheduleModel,
       confirm: verdict.confirm,
     };
   });
@@ -952,10 +1070,15 @@ export const make = Effect.gen(function* () {
           team,
           model,
           fallbackModel,
+          scheduleModel,
         } = yield* authorize({
           action: "create",
           callerBotId: caller.botId,
           fields,
+          // A new bot's schedule starts from Sonnet 5.5 High; what the call names changes it.
+          resolveScheduleModel: wantsSchedule(fields)
+            ? () => resolveScheduleRequest(all, fields, PERSONAL_BOT_DEFAULT_FALLBACK_MODEL)
+            : undefined,
           // A new bot's fallback starts from the default one; what the call names changes it.
           resolveFallbackModel: wantsFallbackModel(fields)
             ? () => resolveFallbackRequest(all, fields, PERSONAL_BOT_DEFAULT_FALLBACK_MODEL)
@@ -977,6 +1100,8 @@ export const make = Effect.gen(function* () {
         }
         const { name } = yield* validateText(fields, null);
         const selection = (model as Extract<LeadModelResult, { ok: true }>).selection;
+        const merged = mergeSchedule(null, fields, scheduleModel, selection);
+        if (!merged.ok) return yield* invalid(merged.reason);
         const created = yield* bots
           .create({
             botId: PersonalBotId.make(`bot-${NodeCrypto.randomUUID()}`),
@@ -992,6 +1117,7 @@ export const make = Effect.gen(function* () {
             lead: false,
             pinned: false,
             memoryAutoSave: fields.memoryAutoSave ?? false,
+            ...(merged.schedule === undefined ? {} : { schedule: merged.schedule }),
             ...(fields.fallbackEnabled === undefined && fallbackModel === null
               ? {}
               : {
@@ -1030,6 +1156,7 @@ export const make = Effect.gen(function* () {
             team: botTeam(created),
             memoryAutoSave: created.memoryAutoSave === true,
             fallback: botFallback(created),
+            schedule: created.schedule ?? null,
           },
           reason: null,
           line,
@@ -1055,6 +1182,7 @@ export const make = Effect.gen(function* () {
     nextName: string | undefined,
     model: LeadModelResult | null,
     fallbackModel: LeadModelResult | null,
+    schedule: PersonalBotSchedule | undefined,
     nowMs: number,
   ) => {
     const changed: Array<string> = [];
@@ -1111,6 +1239,17 @@ export const make = Effect.gen(function* () {
       changed.push("fallbackModel");
     }
     if (Object.keys(fallbackPatch).length > 0) patch.fallback = fallbackPatch;
+    if (
+      schedule !== undefined &&
+      (current.schedule === undefined ||
+        current.schedule.enabled !== schedule.enabled ||
+        current.schedule.from !== schedule.from ||
+        current.schedule.to !== schedule.to ||
+        !scheduleMatchesOwnModel(current.schedule.modelSelection, schedule.modelSelection))
+    ) {
+      patch.schedule = schedule;
+      changed.push("schedule");
+    }
     return { changed, patch };
   };
 
@@ -1160,6 +1299,10 @@ export const make = Effect.gen(function* () {
           before[key] = botFallback(current).modelSelection;
           after[key] = botFallback(updated).modelSelection;
           break;
+        case "schedule":
+          before[key] = current.schedule ?? null;
+          after[key] = updated.schedule ?? null;
+          break;
         default:
           before[key] = current[key as "name"];
           after[key] = updated[key as "name"];
@@ -1173,6 +1316,9 @@ export const make = Effect.gen(function* () {
         }
         if (key === "fallbackModel") {
           return `fallback model → ${leadBotModelLabel(botFallback(updated).modelSelection, input.providers)}`;
+        }
+        if (key === "schedule") {
+          return `model schedule → ${scheduleSummary(updated.schedule, input.providers)}`;
         }
         if (key === "instructions" || key === "description") {
           return `${key}: ${current[key].length} → ${updated[key].length} chars`;
@@ -1311,6 +1457,7 @@ export const make = Effect.gen(function* () {
           team,
           model,
           fallbackModel,
+          scheduleModel,
           confirm,
         } = yield* authorize({
           action: "update",
@@ -1318,6 +1465,16 @@ export const make = Effect.gen(function* () {
           targetBotId: botId,
           ownerTurn: caller.ownerTurn,
           fields,
+          resolveScheduleModel: wantsSchedule(fields)
+            ? ({ target: row }) =>
+                row === null
+                  ? { ok: false, reason: "No such bot." }
+                  : resolveScheduleRequest(
+                      all,
+                      fields,
+                      row.schedule?.modelSelection ?? PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
+                    )
+            : undefined,
           resolveModel: wantsModel
             ? ({ target: row }) =>
                 row === null
@@ -1339,12 +1496,18 @@ export const make = Effect.gen(function* () {
         const current = target!;
         const { name: nextName } = yield* validateText(fields, current);
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        // The model the bot will have once this call lands: the schedule is checked against it.
+        const homeAfter =
+          model !== null && model.ok && model.changed ? model.selection : current.modelSelection;
+        const mergedSchedule = mergeSchedule(current, fields, scheduleModel, homeAfter);
+        if (!mergedSchedule.ok) return yield* invalid(mergedSchedule.reason);
         const { changed, patch } = computePatch(
           current,
           fields,
           nextName,
           model,
           fallbackModel,
+          mergedSchedule.schedule,
           nowMs,
         );
         if (changed.length === 0) {

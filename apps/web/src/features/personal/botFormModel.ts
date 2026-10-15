@@ -2,6 +2,8 @@ import type {
   ModelSelection,
   PersonalBotFallback,
   PersonalBotFallbackInput,
+  PersonalBotSchedule,
+  PersonalBotScheduleInput,
   SelectProviderOptionDescriptor,
   ServerProvider,
   ServerProviderModel,
@@ -10,7 +12,9 @@ import {
   botFallback,
   DEEPSEEK_AGENT_MODE_OPTION_ID,
   driverCarriesBotInstructions,
+  PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   safeDefaultBotModelSlug,
+  scheduleMatchesOwnModel,
 } from "@t3tools/contracts";
 import {
   getModelSelectionStringOptionValue,
@@ -346,4 +350,121 @@ export function sameFamilyFallbackHint(
   if (main.instanceId === "" || main.model === "" || fallback.model === "") return null;
   if (main.instanceId !== fallback.instanceId) return null;
   return modelFamily(main.model) === modelFamily(fallback.model) ? SAME_FAMILY_FALLBACK_HINT : null;
+}
+
+// --- the per-bot model schedule ("Use a different model at set times") ---------
+
+/** What the schedule section of the bot form holds. */
+export interface ScheduleDraft extends ModelDraft {
+  readonly enabled: boolean;
+  /** 24 hour "HH:MM", the laptop's local time. */
+  readonly from: string;
+  readonly to: string;
+}
+
+export const DEFAULT_SCHEDULE_FROM = "22:00";
+export const DEFAULT_SCHEDULE_TO = "07:00";
+
+/** Every 15 minutes of a day, "00:00" to "23:45": what the From and To pickers offer. */
+export const SCHEDULE_TIME_OPTIONS: ReadonlyArray<string> = Array.from(
+  { length: 96 },
+  (_, index) => {
+    const minutes = index * 15;
+    const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
+    const rest = String(minutes % 60).padStart(2, "0");
+    return `${hours}:${rest}`;
+  },
+);
+
+/** The schedule a bot has now; a new one starts off, 22:00 to 07:00, on Sonnet 5.5 High. */
+export function scheduleDraftFromBot(
+  bot: { readonly schedule?: PersonalBotSchedule } | null,
+): ScheduleDraft {
+  const saved = bot?.schedule;
+  if (saved === undefined) {
+    return {
+      enabled: false,
+      from: DEFAULT_SCHEDULE_FROM,
+      to: DEFAULT_SCHEDULE_TO,
+      ...modelDraftFromSelection(PERSONAL_BOT_DEFAULT_FALLBACK_MODEL),
+    };
+  }
+  return {
+    enabled: saved.enabled,
+    from: saved.from,
+    to: saved.to,
+    ...modelDraftFromSelection(saved.modelSelection),
+  };
+}
+
+/**
+ * What stops a schedule that is on from being saved, in the owner's words, or
+ * null. `main` is the bot's own model as the form would save it.
+ */
+export function scheduleDraftProblem(
+  draft: ScheduleDraft,
+  main: ModelSelection,
+  scheduled: ModelSelection | null,
+): string | null {
+  if (!draft.enabled) return null;
+  if (draft.from === draft.to) return "From and To can't be the same time.";
+  if (scheduled === null) return "Pick a model for the scheduled time.";
+  if (scheduleMatchesOwnModel(main, scheduled)) {
+    return "Pick a different model from the bot's own, or a different effort.";
+  }
+  return null;
+}
+
+/** The scheduled model the draft stands for, or null while it has no provider or model. */
+export function scheduleDraftSelection(
+  draft: ScheduleDraft,
+  providers: ReadonlyArray<ServerProvider>,
+  saved: PersonalBotSchedule | null,
+): ModelSelection | null {
+  if (draft.instanceId === "" || draft.model === "") return null;
+  return buildModelSelection(
+    draft,
+    providers.find((provider) => provider.instanceId === draft.instanceId),
+    saved?.modelSelection ?? null,
+  );
+}
+
+/**
+ * What to send for the schedule: nothing for a bot that has none and keeps it
+ * off; on create the whole schedule when it is on; on edit only what differs
+ * from the saved one (the server lays it over what the bot has).
+ */
+export function scheduleInput(
+  saved: PersonalBotSchedule | null,
+  draft: ScheduleDraft,
+  selection: ModelSelection | null,
+): PersonalBotScheduleInput | undefined {
+  if (saved === null && !draft.enabled) return undefined;
+  if (saved === null) {
+    if (selection === null) return undefined;
+    return { enabled: true, from: draft.from, to: draft.to, modelSelection: selection };
+  }
+  const input: {
+    enabled?: boolean;
+    from?: string;
+    to?: string;
+    modelSelection?: ModelSelection;
+  } = {};
+  if (saved.enabled !== draft.enabled) input.enabled = draft.enabled;
+  if (draft.enabled) {
+    if (saved.from !== draft.from) input.from = draft.from;
+    if (saved.to !== draft.to) input.to = draft.to;
+    if (selection !== null && !modelSelectionsEqual(saved.modelSelection, selection)) {
+      input.modelSelection = selection;
+    }
+  }
+  return Object.keys(input).length === 0 ? undefined : input;
+}
+
+/** "Every day 22:00 to 07:00 this bot uses Sonnet 5.5 high": the one line that shows the result. */
+export function scheduleHelpLine(
+  draft: Pick<ScheduleDraft, "from" | "to">,
+  modelLabel: string | null,
+): string {
+  return `Every day ${draft.from} to ${draft.to} this bot uses ${modelLabel ?? "the model you pick"}`;
 }
