@@ -434,6 +434,141 @@ validationLayer("CodexAdapterLive validation", (it) => {
   );
 });
 
+const botSkillsRuntimeFactory = makeRuntimeFactory();
+const botSkillsLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: botSkillsRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "codex-bot-skills-" })),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+const botSkillsOffRuntimeFactory = makeRuntimeFactory();
+const botSkillsOffLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: botSkillsOffRuntimeFactory.factory,
+        environment: { ...process.env, PERSONAL_BOT_CODEX_SKILLS: "off" },
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "codex-bot-skills-off-" })),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+/** A bot plugin folder as hbots installs it: a manifest naming `.claude/skills`. */
+const writeBotPlugin = (baseDir: string, plugin: string) => {
+  const pluginDir = NodePath.join(baseDir, "bot-plugins", plugin);
+  const skillsDir = NodePath.join(pluginDir, ".claude", "skills");
+  NodeFS.mkdirSync(NodePath.join(pluginDir, ".claude-plugin"), { recursive: true });
+  NodeFS.mkdirSync(NodePath.join(skillsDir, "agent-browser"), { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(pluginDir, ".claude-plugin", "plugin.json"),
+    JSON.stringify({ name: plugin, version: "1.0.0", skills: "./.claude/skills/" }),
+  );
+  NodeFS.writeFileSync(
+    NodePath.join(skillsDir, "agent-browser", "SKILL.md"),
+    "---\nname: agent-browser\n---\n\nProbe.\n",
+  );
+  return skillsDir;
+};
+
+const startBotSession = (threadId: string, botId: string | undefined) =>
+  Effect.gen(function* () {
+    const adapter = yield* CodexAdapter;
+    yield* adapter.startSession({
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId(threadId),
+      runtimeMode: "full-access",
+      personalBot: true,
+      ...(botId === undefined ? {} : { personalBotId: botId }),
+    });
+  });
+
+botSkillsLayer("CodexAdapterLive bot plugin skills", (it) => {
+  it.effect("gives a Codex bot its own and the shared plugin skills, and no other bot's", () =>
+    Effect.gen(function* () {
+      botSkillsRuntimeFactory.factory.mockClear();
+      const config = yield* ServerConfig;
+      const shared = writeBotPlugin(config.baseDir, "_shared");
+      const own = writeBotPlugin(config.baseDir, "bot-one");
+      const other = writeBotPlugin(config.baseDir, "bot-two");
+
+      yield* startBotSession("thread-bot-skills-one", "bot-one");
+      yield* startBotSession("thread-bot-skills-two", "bot-two");
+      // A bot id with no plugin folder of its own still gets the shared one.
+      yield* startBotSession("thread-bot-skills-unknown", "bot-three");
+      // A session that names no bot id at all gets the shared folder only.
+      yield* startBotSession("thread-bot-skills-anonymous", undefined);
+
+      const options = botSkillsRuntimeFactory.factory.mock.calls.map(([value]) => value);
+      NodeAssert.deepStrictEqual(options[0]?.extraSkillRoots, [shared, own]);
+      NodeAssert.deepStrictEqual(options[1]?.extraSkillRoots, [shared, other]);
+      NodeAssert.deepStrictEqual(options[2]?.extraSkillRoots, [shared]);
+      NodeAssert.deepStrictEqual(options[3]?.extraSkillRoots, [shared]);
+      NodeAssert.ok(!(options[0]?.extraSkillRoots ?? []).includes(other));
+      NodeAssert.ok(!(options[1]?.extraSkillRoots ?? []).includes(own));
+      // The owner's own skill roots stay off, as before.
+      NodeAssert.ok(
+        (options[0]?.appServerArgs ?? []).some((arg) => arg.startsWith("skills.config=[")),
+      );
+    }),
+  );
+
+  it.effect("leaves a normal Codex session without extra skill roots", () =>
+    Effect.gen(function* () {
+      botSkillsRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-bot-skills-normal");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const options = botSkillsRuntimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.equal(options?.extraSkillRoots, undefined);
+      NodeAssert.ok(
+        !(options?.appServerArgs ?? []).some((arg) => arg.startsWith("skills.config=[")),
+      );
+    }),
+  );
+});
+
+botSkillsOffLayer("CodexAdapterLive bot plugin skills kill switch", (it) => {
+  it.effect("restores a Codex bot with no skills at all", () =>
+    Effect.gen(function* () {
+      botSkillsOffRuntimeFactory.factory.mockClear();
+      const config = yield* ServerConfig;
+      writeBotPlugin(config.baseDir, "_shared");
+      writeBotPlugin(config.baseDir, "bot-one");
+
+      yield* startBotSession("thread-bot-skills-off", "bot-one");
+
+      const options = botSkillsOffRuntimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.equal(options?.extraSkillRoots, undefined);
+      // The owner's skills are still turned off.
+      NodeAssert.ok(
+        (options?.appServerArgs ?? []).some((arg) => arg.startsWith("skills.config=[")),
+      );
+    }),
+  );
+});
+
 const sessionRuntimeFactory = makeRuntimeFactory();
 const sessionErrorLayer = it.layer(
   Layer.effect(

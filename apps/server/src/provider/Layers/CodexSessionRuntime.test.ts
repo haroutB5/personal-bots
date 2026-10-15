@@ -22,6 +22,7 @@ import {
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   readCodexThread,
+  registerCodexExtraSkillRoots,
   rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
@@ -1134,6 +1135,64 @@ describe("buildCodexAdditionalContext bot instructions", () => {
       NodeAssert.doesNotMatch(
         params.collaborationMode?.settings.developer_instructions ?? "",
         /bot_instructions/,
+      );
+    }),
+  );
+});
+
+describe("Codex extra skill roots", () => {
+  const recordingClient = (
+    calls: Array<{ readonly method: string; readonly params: unknown }>,
+    failure?: CodexErrors.CodexAppServerError,
+  ): Parameters<typeof registerCodexExtraSkillRoots>[0] => ({
+    request: <M extends CodexRpc.ClientRequestMethod>(
+      method: M,
+      params: CodexRpc.ClientRequestParamsByMethod[M],
+    ) => {
+      calls.push({ method, params });
+      return failure === undefined
+        ? Effect.succeed({} as unknown as CodexRpc.ClientRequestResponsesByMethod[M])
+        : Effect.fail(failure);
+    },
+  });
+
+  it.effect("names the bot's own skill folders to the app-server", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+      const roots = [
+        "C:/hbots/bot-plugins/_shared/.claude/skills",
+        "C:/hbots/bot-plugins/bot-1/.claude/skills",
+      ];
+      yield* registerCodexExtraSkillRoots(recordingClient(calls), roots);
+      NodeAssert.deepEqual(calls, [
+        { method: "skills/extraRoots/set", params: { extraRoots: roots } },
+      ]);
+    }),
+  );
+
+  it.effect("calls nothing when the session has no extra roots", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+      for (const roots of [undefined, []]) {
+        yield* registerCodexExtraSkillRoots(recordingClient(calls), roots);
+      }
+      NodeAssert.deepEqual(calls, []);
+    }),
+  );
+
+  it.effect("keeps the session when Codex refuses the roots", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+      const exit = yield* Effect.exit(
+        registerCodexExtraSkillRoots(
+          recordingClient(calls, CodexErrors.CodexAppServerRequestError.invalidRequest("nope")),
+          ["C:/hbots/bot-plugins/bot-1/.claude/skills"],
+        ),
+      );
+      NodeAssert.equal(exit._tag, "Success");
+      NodeAssert.deepEqual(
+        calls.map((call) => call.method),
+        ["skills/extraRoots/set"],
       );
     }),
   );

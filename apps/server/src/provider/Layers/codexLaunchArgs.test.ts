@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
 import {
   codexAppServerArgs,
   codexExecLaunchArgs,
+  personalBotCodexSkillsSwitchOn,
   resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
 
@@ -55,5 +56,26 @@ describe("codexExecLaunchArgs", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
       "--strict-config",
     ]);
+  });
+});
+
+describe("personalBotCodexSkillsSwitchOn", () => {
+  it("is on when the switch is unset or empty", () => {
+    NodeAssert.equal(personalBotCodexSkillsSwitchOn({}), true);
+    NodeAssert.equal(personalBotCodexSkillsSwitchOn({ PERSONAL_BOT_CODEX_SKILLS: "  " }), true);
+  });
+
+  it("is off for every off value, whatever its case or spacing", () => {
+    for (const value of ["off", " OFF ", "0", "false", "No", "disabled"]) {
+      NodeAssert.equal(
+        personalBotCodexSkillsSwitchOn({ PERSONAL_BOT_CODEX_SKILLS: value }),
+        false,
+        value,
+      );
+    }
+  });
+
+  it("is on for any other value", () => {
+    NodeAssert.equal(personalBotCodexSkillsSwitchOn({ PERSONAL_BOT_CODEX_SKILLS: "on" }), true);
   });
 });

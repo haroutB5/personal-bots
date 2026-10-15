@@ -188,6 +188,12 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  /**
+   * Skill folders this session adds to Codex's own roots: a personal bot's
+   * own and the shared plugin skills. Named to the app-server before the
+   * thread opens, so its catalogue has them.
+   */
+  readonly extraSkillRoots?: ReadonlyArray<string>;
   /** The provider's model list; supplies the display name for runtime info. */
   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
@@ -765,6 +771,38 @@ interface CodexThreadOpenClient {
     CodexErrors.CodexAppServerError
   >;
 }
+
+type CodexSkillRootsClient = Pick<CodexClient.CodexAppServerClient["Service"], "request">;
+
+/**
+ * Names the session's extra skill roots to Codex.
+ *
+ * Codex reads the owner's `~/.codex/skills` and `~/.agents/skills`, which a
+ * personal bot turns off, and has no config key for another root. The
+ * app-server's own `skills/extraRoots/set` (in-memory, per process, replacing
+ * the previous list) is the only way to give a bot its own plugin skills, the
+ * ones Claude and DeepSeek bots already load.
+ *
+ * A refusal is logged, never fatal: the bot then sees what it saw before this
+ * existed, no skills at all, and the session still runs.
+ */
+export const registerCodexExtraSkillRoots = (
+  client: CodexSkillRootsClient,
+  extraRoots: ReadonlyArray<string> | undefined,
+): Effect.Effect<void> => {
+  if (extraRoots === undefined || extraRoots.length === 0) return Effect.void;
+  const roots = [...extraRoots];
+  return client.request("skills/extraRoots/set", { extraRoots: roots }).pipe(
+    Effect.tap(() => Effect.logInfo("Codex extra skill roots registered", { extraRoots: roots })),
+    Effect.asVoid,
+    Effect.catch((cause) =>
+      Effect.logWarning(
+        "Codex refused this bot's own skill roots; its plugin skills will be missing.",
+        { extraRoots: roots, cause },
+      ),
+    ),
+  );
+};
 
 export const openCodexThread = (input: {
   readonly client: CodexThreadOpenClient;
@@ -2525,6 +2563,7 @@ export const makeCodexSessionRuntime = (
       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
       yield* client.request("initialize", buildCodexInitializeParams());
       yield* client.notify("initialized", undefined);
+      yield* registerCodexExtraSkillRoots(client, options.extraSkillRoots);
 
       const requestedModel = normalizeCodexModelSlug(options.model);
 

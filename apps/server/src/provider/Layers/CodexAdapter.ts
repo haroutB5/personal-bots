@@ -80,8 +80,10 @@ import {
   listOwnerCodexSkillFiles,
   PERSONAL_BOT_CODEX_APP_SERVER_ARGS,
   personalBotCodexSkillArgs,
+  personalBotCodexSkillsSwitchOn,
   resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
+import { resolvePersonalBotPluginSkillDirs } from "../botPluginSkillRoots.ts";
 import {
   type CodexRateLimitSnapshot,
   codexRateLimitsToUpdate,
@@ -2300,6 +2302,21 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        // A personal bot's own plugin skills (its folder and the shared one),
+        // the same ones a Claude or DeepSeek bot loads. Codex gets them by
+        // naming the folders to its app-server; the owner's own skill roots
+        // stay off below. The kill switch restores a bot with no skills.
+        const personalBotSkillRoots =
+          input.personalBot === true &&
+          personalBotCodexSkillsSwitchOn(options?.environment ?? process.env)
+            ? yield* resolvePersonalBotPluginSkillDirs({
+                baseDir: serverConfig.baseDir,
+                botId: input.personalBotId,
+              }).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              )
+            : [];
         const appServerArgs = [
           ...(mcpSession
             ? [
@@ -2336,6 +2353,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           binaryPath: codexConfig.binaryPath,
           ...(options?.models ? { models: options.models } : {}),
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
+          ...(personalBotSkillRoots.length > 0 ? { extraSkillRoots: personalBotSkillRoots } : {}),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)

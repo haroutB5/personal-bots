@@ -40,7 +40,12 @@ import { expandHomePath } from "../../pathExpansion.ts";
 import { BOT_PROTECTED_DB_SIDECAR_SUFFIXES } from "../../personal/secrets/botProtectedPaths.ts";
 import { DEEPSEEK_AUTH_TOKEN_ENV, isLeakedSecretName } from "../Drivers/DeepSeekEnvironment.ts";
 import { DSH_PINNED_VERSION, DSH_RUNTIME_DIR_NAME } from "../Drivers/DeepSeekEngine.ts";
-import { PERSONAL_BOT_PLUGINS_DIR, PERSONAL_BOT_SHARED_PLUGIN } from "../Layers/ClaudeAdapter.ts";
+import {
+  PERSONAL_BOT_ID_PATTERN,
+  PERSONAL_BOT_PLUGINS_DIR,
+  PERSONAL_BOT_SHARED_PLUGIN,
+} from "../Layers/ClaudeAdapter.ts";
+import { PLUGIN_MANIFEST_PATH, readPluginManifestSkillsField } from "../botPluginSkillRoots.ts";
 import { dedupeEnvironmentNames } from "../environmentNames.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -57,10 +62,6 @@ export { dedupeEnvironmentNames };
 
 /** The key dsh reads, and the only credential its child environment carries. */
 export const DEEPSEEK_DSH_API_KEY_ENV = "DEEPSEEK_API_KEY";
-
-/** Where a bot's own plugin folder keeps its skills, from its plugin manifest. */
-const PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
-const BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /**
  * Rows the patch must always carry. Named here so the patch builder and the
@@ -484,7 +485,7 @@ export const resolveDshSkillDirs = Effect.fn("resolveDshSkillDirs")(function* (i
   const pluginsRoot = path.join(input.baseDir, PERSONAL_BOT_PLUGINS_DIR);
   const pluginDirs = [
     path.join(pluginsRoot, PERSONAL_BOT_SHARED_PLUGIN),
-    ...(input.botId !== undefined && BOT_ID_PATTERN.test(input.botId)
+    ...(input.botId !== undefined && PERSONAL_BOT_ID_PATTERN.test(input.botId)
       ? [path.join(pluginsRoot, input.botId)]
       : []),
   ];
@@ -496,7 +497,7 @@ export const resolveDshSkillDirs = Effect.fn("resolveDshSkillDirs")(function* (i
     const text = yield* fileSystem
       .readFileString(manifestPath)
       .pipe(Effect.orElseSucceed(() => ""));
-    const skills = readManifestSkillsField(text);
+    const skills = readPluginManifestSkillsField(text);
     if (skills === undefined) continue;
     const dir = path.resolve(pluginDir, skills);
     const hasDir = yield* fileSystem.exists(dir).pipe(Effect.orElseSucceed(() => false));
@@ -509,28 +510,6 @@ export const resolveDshSkillDirs = Effect.fn("resolveDshSkillDirs")(function* (i
   }
   return dirs;
 });
-
-/** The `skills` path a plugin manifest names, when it is a usable relative path. */
-function readManifestSkillsField(text: string): string | undefined {
-  if (text.trim().length === 0) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const skills = (parsed as Record<string, unknown>)["skills"];
-  if (typeof skills !== "string") return undefined;
-  const trimmed = skills.trim();
-  if (trimmed.length === 0) return undefined;
-  // A plugin manifest is data on disk. An absolute path, or one climbing out
-  // of the plugin folder, would widen a bot's skill roots beyond its own.
-  if (trimmed.startsWith("/") || trimmed.startsWith("\\") || /^[A-Za-z]:/.test(trimmed)) {
-    return undefined;
-  }
-  return trimmed.split(/[\\/]/).includes("..") ? undefined : trimmed;
-}
 
 /**
  * The deny plugin a launch loads, from the server's own paths.

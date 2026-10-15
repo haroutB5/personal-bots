@@ -1660,7 +1660,7 @@ export const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
  */
 export const PERSONAL_BOT_SHARED_PLUGIN = "_shared";
 // Bot ids are UUIDs; anything else never becomes a path segment.
-const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+export const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
   ENABLE_CLAUDEAI_MCP_SERVERS: "false",

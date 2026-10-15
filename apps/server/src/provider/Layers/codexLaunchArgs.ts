@@ -78,6 +78,22 @@ export const personalBotCodexSkillArgs = (
       ];
 
 /**
+ * Kill switch for a Codex bot's own plugin skills. On (unset) a bot's session
+ * names its own and the shared plugin skill folders to Codex; `off` and its
+ * aliases restore the previous behaviour, where a personal Codex bot has no
+ * skills at all. Read when a bot session starts.
+ */
+export const PERSONAL_BOT_CODEX_SKILLS_ENV = "PERSONAL_BOT_CODEX_SKILLS";
+const PERSONAL_BOT_CODEX_SKILLS_OFF = new Set(["off", "0", "false", "no", "disabled"]);
+
+export const personalBotCodexSkillsSwitchOn = (
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean =>
+  !PERSONAL_BOT_CODEX_SKILLS_OFF.has(
+    environment[PERSONAL_BOT_CODEX_SKILLS_ENV]?.trim().toLowerCase() ?? "",
+  );
+
+/**
  * `SKILL.md` files under the given skill roots, skipping dot-folders (Codex's
  * bundled `.system` skills are part of Codex, not the owner's add-ons). A
  * missing or unreadable root lists nothing.
