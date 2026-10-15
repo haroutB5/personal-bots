@@ -166,6 +166,16 @@ export function errorCopyFor(
         primary: "Try again",
         onPrimary: actions.onRetry,
       };
+    case "key_quota":
+      // Measured on the live key (15 Oct 2026): the pass is accepted and Google
+      // closes the socket straight after setup with 1011 "You exceeded your
+      // current quota". Saying so beats the generic "can't reach Google".
+      return {
+        title: "Gemini is out of quota",
+        body: "Google paused this key for now. Try again later, or check the plan at aistudio.google.com.",
+        primary: "Close",
+        onPrimary: actions.onClose,
+      };
     case "google_unavailable":
       return {
         title: "Can't reach Google right now",

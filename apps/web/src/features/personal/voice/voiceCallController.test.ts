@@ -190,6 +190,23 @@ describe("starting a call", () => {
     expect(test.api.finishes).toHaveLength(0);
   });
 
+  it("names a spent free tier as out of quota, not as an unreachable Google", async () => {
+    const test = harness();
+    await test.controller.start();
+    const socket = latestSocket();
+    socket.open();
+    // What the live key really answers (15 Oct 2026): the pass is fine and
+    // Google closes straight after setup with 1011 and its own quota words.
+    socket.close(
+      1011,
+      "You exceeded your current quota, please check your plan and billing details.",
+    );
+    expect(test.last().state.status).toBe("error");
+    expect(test.last().state.errorCode).toBe("key_quota");
+    vi.advanceTimersByTime(60_000);
+    expect(test.api.finishes).toHaveLength(0);
+  });
+
   it("leaves no card when the call never connects", async () => {
     const test = harness();
     await test.controller.start();

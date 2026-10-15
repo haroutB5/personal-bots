@@ -178,11 +178,17 @@ export interface LiveEvents {
   /** Google says this connection is about to be replaced; hand back the resume handle. */
   readonly onGoAway?: (payload: { readonly handle: string | null }) => void;
   readonly onUsage?: (payload: Record<string, unknown>) => void;
-  /** The session is over for good. `refused` marks a token/auth refusal (1007/1008). */
+  /**
+   * The session is over for good. `refused` marks a token/auth refusal
+   * (1007/1008); `quota` marks Google pausing the key (1011, or its own quota
+   * words), which is terminal too: a single-use pass must not be spent
+   * retrying endpoints that will answer the same thing.
+   */
   readonly onClosed?: (payload: {
     readonly code: number;
     readonly reason: string;
     readonly refused: boolean;
+    readonly quota: boolean;
   }) => void;
   readonly onSetupTimeout?: (payload: { readonly ms: number }) => void;
   readonly onError?: (payload: { readonly message: string }) => void;
@@ -282,7 +288,7 @@ export function connectLive(options: LiveClientOptions): LiveClient {
     }
   };
 
-  const fail = (payload: { code: number; reason: string; refused: boolean }) => {
+  const fail = (payload: { code: number; reason: string; refused: boolean; quota: boolean }) => {
     clearSetupTimer();
     ready = false;
     if (stopped) return;
@@ -447,6 +453,7 @@ export function connectLive(options: LiveClientOptions): LiveClient {
         code: 0,
         reason: error instanceof Error ? error.message : "Could not open the socket.",
         refused: false,
+        quota: false,
       });
       return;
     }
@@ -475,13 +482,15 @@ export function connectLive(options: LiveClientOptions): LiveClient {
       const code = event?.code ?? 0;
       const reason = event?.reason ?? "";
       const refused = code === 1007 || code === 1008;
-      if (!ready && !refused && endpointIndex + 1 < LIVE_ENDPOINTS.length) {
+      // Google pausing the key: terminal, and never worth a second endpoint.
+      const quota = !refused && (code === 1011 || /quota|billing/i.test(reason));
+      if (!ready && !refused && !quota && endpointIndex + 1 < LIVE_ENDPOINTS.length) {
         // The constrained method may live on the other API version.
         endpointIndex += 1;
         open();
         return;
       }
-      if (!ready && !refused && modelIndex + 1 < models.length) {
+      if (!ready && !refused && !quota && modelIndex + 1 < models.length) {
         // Both versions refused this model before it ever answered: try the
         // contract's fallback model before giving the call up.
         modelIndex += 1;
@@ -489,7 +498,7 @@ export function connectLive(options: LiveClientOptions): LiveClient {
         open();
         return;
       }
-      fail({ code, reason, refused });
+      fail({ code, reason, refused, quota });
     };
   };
 

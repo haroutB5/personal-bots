@@ -212,6 +212,27 @@ describe("connectLive", () => {
       code: 1007,
       reason: "Missing or malformed auth token",
       refused: true,
+      quota: false,
+    });
+    expect(FakeLiveSocket.instances).toHaveLength(1);
+  });
+
+  it("treats a spent key as terminal: one socket, no second endpoint or model", () => {
+    const onClosed = vi.fn();
+    connectLive({ ...options({ onClosed }), fallbackModel: "gemini-3.1-flash-live-preview" });
+    const socket = latestSocket();
+    socket.open();
+    // What the live free-tier key really answers (15 Oct 2026). Retrying would
+    // spend a single-use pass on an endpoint that answers the same thing.
+    socket.close(
+      1011,
+      "You exceeded your current quota, please check your plan and billing details.",
+    );
+    expect(onClosed).toHaveBeenCalledWith({
+      code: 1011,
+      reason: "You exceeded your current quota, please check your plan and billing details.",
+      refused: false,
+      quota: true,
     });
     expect(FakeLiveSocket.instances).toHaveLength(1);
   });
@@ -227,6 +248,7 @@ describe("connectLive", () => {
       code: 1008,
       reason: "Method doesn't allow unregistered callers",
       refused: true,
+      quota: false,
     });
   });
 
