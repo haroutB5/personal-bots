@@ -847,9 +847,10 @@ try {
         Note ("  {0,-48} {1,7} s" -f $totalLabel, [math]::Round($totalSw.Elapsed.TotalSeconds, 1))
         $guardSeconds = 0.0
         foreach ($k in $script:Timings.Keys) { if ($k -like 'guards.*') { $guardSeconds += [double]$script:Timings[$k] } }
+        # A pair is a measured range (low, high); the 3 GB backup took 160-300 s with the server busy.
         $planned = [ordered]@{
             'idle gate: 3 looks 20 s apart (fixed)' = 40
-            'fresh backup: online copy, digest/read-ahead and ONE full check (3.04 GB copy)' = 160
+            'fresh backup: online copy, digest/read-ahead and ONE full check (3.04 GB copy)' = @(160, 300)
             'backup proof: SHA-256 re-read (full integrity already completed)' = 2
             'seal re-verify + idle recheck' = 6
             'restart.ps1 (recent range 9-21 s)' = 15
@@ -866,9 +867,13 @@ try {
         Note "Backup retention: $($tsBackups.Count) timestamp backups now; the fresh one makes $($tsBackups.Count + 1); -BackupKeep $BackupKeep would prune $($wouldPrune.Count)$(if ($wouldPrune.Count) { ': ' + (($wouldPrune | ForEach-Object { $_.Name }) -join ', ') })."
         Save-Outcome
         Note 'Not run in a dry run (they need idle and a restart); copy benchmark estimates, not a production SLA:'
-        $sum = $guardSeconds
-        foreach ($k in $planned.Keys) { Note ("  {0,-70} {1,5} s" -f $k, $planned[$k]); $sum += $planned[$k] }
-        Note ("  {0,-70} {1,5} s  (= {2} min; 1.66.30 took 731 s = 12.2 min at normal priority)" -f 'EXPECTED arm -> verified, idle from the start', [math]::Round($sum), [math]::Round($sum / 60, 1))
+        $sumLow = $guardSeconds; $sumHigh = $guardSeconds
+        foreach ($k in $planned.Keys) {
+            $low = [double]@($planned[$k])[0]; $high = [double]@($planned[$k])[-1]
+            $shown = if ($low -eq $high) { "$low" } else { "$low-$high" }
+            Note ("  {0,-70} {1,7} s" -f $k, $shown); $sumLow += $low; $sumHigh += $high
+        }
+        Note ("  {0,-70} {1,7} s  (= {2}-{3} min; 1.66.30 took 731 s = 12.2 min at normal priority)" -f 'EXPECTED arm -> verified, idle from the start', "$([math]::Round($sumLow))-$([math]::Round($sumHigh))", [math]::Round($sumLow / 60, 1), [math]::Round($sumHigh / 60, 1))
         exit 0
     }
 
