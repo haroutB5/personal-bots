@@ -1,6 +1,7 @@
 import {
   PERSONAL_FALLBACK_REASON_SCHEDULE,
   type ModelSelection,
+  type PersonalBotSchedule,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -32,7 +33,7 @@ const SONNET: ModelSelection = {
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const at = (text: string) => Date.parse(text);
 
-const schedule = (patch: Partial<{ from: string; to: string; enabled: boolean }> = {}) => ({
+const schedule = (patch: Partial<PersonalBotSchedule> = {}): PersonalBotSchedule => ({
   enabled: true,
   from: "22:00",
   to: "07:00",
