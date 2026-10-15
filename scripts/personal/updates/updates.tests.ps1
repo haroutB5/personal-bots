@@ -360,7 +360,7 @@ foreach ($status in @('queued', 'waiting_for_agent', 'waiting_for_user', 'waitin
 & $setDb @("update personal_tasks set status = 'completed'")
 Assert-Equal 'a finished task is not' 'idle' (Get-PbBusyState -StateDb $idleDb)
 
-# An open voice call is a live session: a restart mid-call drops it (1.66.53).
+# An open voice call is a live session: a restart mid-call drops it (1.66.54).
 Write-Host 'A voice call holds the nightly restart gate too'
 & $setDb @(
     'create table personal_voice_call_leases (call_id text primary key, thread_id text, bot_id text, opened_at text, expires_at text)'

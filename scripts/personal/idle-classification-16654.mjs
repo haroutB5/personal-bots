@@ -1,4 +1,4 @@
-// Idle classifier for the release waiter, 1.66.53.
+// Idle classifier for the release waiter, 1.66.54.
 //
 // Same interface and verdicts as idle-classification-16617.mjs ("idle" or a
 // "busy ..." line on stdout; the runner requires exactly 'idle'), plus:
@@ -10,7 +10,7 @@
 //    the stale residue the steer bug left behind (10 Oct) and is reported,
 //    never blocking - a stuck row must not hang a release forever.
 //
-//  - the voice-call leases (new in 1.66.53): an open call is a live session
+//  - the voice-call leases (new in 1.66.54): an open call is a live session
 //    between the owner's phone and Google, and a restart mid-call drops it.
 //    The server keeps its open calls in memory, where this process cannot see
 //    them, so it also writes one `personal_voice_call_leases` row per call,

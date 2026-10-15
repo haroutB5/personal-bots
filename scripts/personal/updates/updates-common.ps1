@@ -636,7 +636,7 @@ function Invoke-UpdatesGates {
 # run\idle-classification-16617.mjs; keep the two in step): a chat session of a
 # live thread that is running, a task that is not finished (queued, running,
 # waiting for an agent, the user or the browser, rate limited), or an open
-# voice call (a live `personal_voice_call_leases` row, 1.66.53: a restart
+# voice call (a live `personal_voice_call_leases` row, 1.66.54: a restart
 # mid-call drops it). A thread deleted mid-turn keeps a 'running' session row,
 # so only live threads count. A database older than the lease table is read as
 # no calls, never as an error. Prints "idle" or

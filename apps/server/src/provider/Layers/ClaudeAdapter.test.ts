@@ -33,6 +33,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -921,6 +922,17 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  /** Every WARN with its structured fields, so a test can count and name them. */
+  const captureWarnLines = () => {
+    const lines: Array<{ readonly text: string; readonly fields: Record<string, unknown> }> = [];
+    const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
+      if (logLevel !== "Warn") return;
+      const [text, fields] = Array.isArray(message) ? message : [message, {}];
+      lines.push({ text: String(text), fields: (fields ?? {}) as Record<string, unknown> });
+    });
+    return { lines, layer: Logger.layer([sink], { mergeWithExisting: false }) };
+  };
+
   const BOT_ID = "df17a657-d7bf-4439-856f-389848e1cec9";
   const makeBotPluginBaseDir = (withManifest: boolean) => {
     const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-bot-plugins-"));
@@ -1026,6 +1038,25 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(options?.plugins, undefined);
       assert.deepEqual(options?.settingSources, []);
     });
+  });
+
+  it.effect("warns once for the skill a bot's plugin folder cannot load", () => {
+    const { baseDir, pluginDir } = makeBotPluginBaseDir(true);
+    const bomSkill = NodePath.join(pluginDir, ".claude", "skills", "bom", "SKILL.md");
+    NodeFS.mkdirSync(NodePath.dirname(bomSkill), { recursive: true });
+    // A UTF-8 BOM is what the CLI drops in silence; the bot would simply lose
+    // the skill, so hbots names the file instead.
+    NodeFS.writeFileSync(bomSkill, "\uFEFF---\nname: bom\n---\n\nBody.\n");
+    const logs = captureWarnLines();
+    return Effect.gen(function* () {
+      yield* startWithBotPlugins(baseDir, { personalBot: true, personalBotId: BOT_ID });
+
+      const warnings = logs.lines.filter((line) => line.text === "bot plugin skill failed to load");
+      assert.equal(warnings.length, 1);
+      assert.equal(warnings[0]?.fields.botId, BOT_ID);
+      assert.equal(warnings[0]?.fields.path, bomSkill);
+      assert.ok(String(warnings[0]?.fields.reason).includes("UTF-8 BOM"));
+    }).pipe(Effect.provide(logs.layer));
   });
 
   it.effect("loads no bot plugins for a bot without an id or a folder", () => {

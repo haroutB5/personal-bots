@@ -69,7 +69,7 @@ other helpers unchanged):
 | `hbots-release/tests/stubs/restart.ps1`                                                        | `1561de620d04a3043fb111b615a849404742a144431f3f982a3bac22bd133ad7` |
 | `hbots-release/release-db-check.cjs`, `tree-hash.cjs`, `make-fixture.cjs`, `proc-priority.ps1` | unchanged from the 1.66.47 table                                   |
 
-## 1.66.53: an open voice call is busy
+## 1.66.54: an open voice call is busy
 
 The idle classifier gains the open-call check: an unexpired
 `personal_voice_call_leases` row holds the gate, so a landing cannot restart the
@@ -85,8 +85,8 @@ runner keeps that file name.
 
 | File                                                                   | sha256                                                             |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `hbots-release.ps1`                                                    | `24de4dc25206f7c7565f8c7047bc0afb1458b601a0fa1942c1a58500ad308003` |
-| `idle-classification-16653.mjs` -> `run/idle-classification-16617.mjs` | `b0f7586c6935c4cc650d3278e70588bee891afcd08d3ec7575b0241cce4efbdc` |
+| `hbots-release.ps1`                                                    | `9149a76e1adcfa28a109da261a51d56e9fcadebf321266377f4f5c857b90935e` |
+| `idle-classification-16654.mjs` -> `run/idle-classification-16617.mjs` | `78545adeba7cb03194ef6016e54beaba412895374b826795f8ae79deb75f328d` |
 | `hbots-release/tests/`, `hbots-release/*.cjs`, `proc-priority.ps1`     | unchanged from the 1.66.48 table                                   |
 
 To undo, restore the saved 1.66.48 runner and the saved classifier together:

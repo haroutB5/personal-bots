@@ -262,7 +262,13 @@ function failingSpawnerLayer(description: string) {
   );
 }
 
-function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>) {
+/**
+ * A spawner that hands back a process which never exits, so the probe hangs on
+ * its `initialize` request. `spawned` completes as soon as that handle exists:
+ * the probe reaches it through a real PATH walk, which the test's virtual clock
+ * cannot wait for.
+ */
+function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>, spawned: Deferred.Deferred<void>) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
@@ -281,6 +287,7 @@ function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>) {
           getOutputFd: () => Stream.empty,
         });
         yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+        yield* Deferred.succeed(spawned, void 0);
         return handle;
       }),
     ),
@@ -557,12 +564,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       it.effect("closes the app-server probe scope when provider status times out", () =>
         Effect.gen(function* () {
           const killCalls = yield* Ref.make(0);
+          const spawned = yield* Deferred.make<void>();
           const statusFiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
-            Effect.provide(hangingScopedSpawnerLayer(killCalls)),
+            Effect.provide(hangingScopedSpawnerLayer(killCalls, spawned)),
             Effect.forkChild,
           );
 
-          yield* Effect.yieldNow;
+          // The timeout is measured on the test clock, but the probe reaches
+          // its spawn through real async work (resolving the Codex path). Move
+          // the clock only once the app-server handle exists, or the probe is
+          // interrupted before it has anything to close and the kill is never
+          // expected. The scope itself is what this test checks.
+          yield* Deferred.await(spawned);
           yield* TestClock.adjust("11 seconds");
           yield* Effect.yieldNow;
 

@@ -60,10 +60,10 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------- pinned values
-# 1.66.53: idle-classification-16653.mjs (open voice call = busy). DevOps
+# 1.66.54: idle-classification-16654.mjs (open voice call = busy). DevOps
 # installs that file over run\idle-classification-16617.mjs and copies this
 # runner over run\hbots-release.ps1; the two hashes must change together.
-$PinIdleClassifierSha = 'B0F7586C6935C4CC650D3278E70588BEE891AFCD08D3EC7575B0241CCE4EFBDC'
+$PinIdleClassifierSha = '78545ADEBA7CB03194EF6016E54BEABA412895374B826795F8AE79DEB75F328D'
 $PinDbCheckSha = '4B1C6170218FBC1DC04C1ABC3A1C9C6FDF798E2D756A474EC1E88DC9E0065250'
 $PinTreeHashSha = '7917214BD75B56FCEF9D8C3BD244C298C12C376B38C7FB4981F972CD3C65428F'
 $PinFixtureSha = '1CAFF1EAC3A7940B320029B04BFB1CEF693F98970ABD0DB8AE1296351BE991FC'

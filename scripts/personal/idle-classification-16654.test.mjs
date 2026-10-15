@@ -1,15 +1,15 @@
 // The release waiter's idle classifier, against a real SQLite file.
 //
-// Proves the 1.66.53 addition: an open voice call (a live
+// Proves the 1.66.54 addition: an open voice call (a live
 // `personal_voice_call_leases` row) holds the gate, while an expired or
 // unreadable row does not, and a database that predates the table is read as
 // idle rather than as an error. Run:
-//   node --test scripts/personal/idle-classification-16653.test.mjs
+//   node --test scripts/personal/idle-classification-16654.test.mjs
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
-import { activeLeaseCount, classify } from "./idle-classification-16653.mjs";
+import { activeLeaseCount, classify } from "./idle-classification-16654.mjs";
 
 /** The tables the classifier reads, as the live database has them. */
 const schema = (db) => {
