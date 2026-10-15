@@ -42,6 +42,17 @@ describe("voiceCallSystemInstruction", () => {
     }),
   );
 
+  it.effect("spells out the combined case: weather needs his area from memory, then a search", () =>
+    Effect.sync(() => {
+      const text = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
+      expect(text).toContain("Weather where he is");
+      expect(text).toContain(
+        "look up his home area with lookup_memory first, then search that place",
+      );
+      expect(text).toContain("never guess where he is");
+    }),
+  );
+
   it.effect("names the speech limits, choices blocks included", () =>
     Effect.sync(() => {
       const text = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
