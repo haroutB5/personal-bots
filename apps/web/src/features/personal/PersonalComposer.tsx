@@ -68,6 +68,7 @@ import { activeMentionDraft, applyMention, matchMentionCandidates } from "./ment
 import { MentionPopover, type MentionRow } from "./MentionPopover";
 import { COMPOSER_INPUT_ATTRIBUTE, consumeComposerRefocus } from "./composerRefocus";
 import { ReplyBar } from "./ReplyQuote";
+import { ComposerCallButton } from "./voice/ComposerCallButton";
 import { useHoldCue } from "./useHoldCue";
 import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
 
@@ -247,6 +248,7 @@ export function PersonalComposer({
   replyTo = null,
   onClearReply,
   quickSendRef,
+  voiceCall = null,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -314,6 +316,16 @@ export function PersonalComposer({
    * field's own send, without touching the draft. Resolves true once sent.
    */
   quickSendRef?: MutableRefObject<((text: string) => Promise<boolean>) | null>;
+  /**
+   * Voice calls: the bot's id and avatar, so the field can carry the call
+   * button. Absent when this chat or this bot cannot take a call, which is what
+   * keeps the button off every other chat.
+   */
+  voiceCall?: {
+    readonly botId: string;
+    readonly avatarShape: string;
+    readonly avatarColor: string;
+  } | null;
 }): JSX.Element {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -1162,6 +1174,18 @@ export function PersonalComposer({
             enterKeyHint={isCoarsePointer() ? "enter" : "send"}
             className="block w-full resize-none bg-transparent py-[11px] text-base leading-[22px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)]"
           />
+          {/* The voice-mode spot: hidden while typing, so it never takes
+              typing room in the field (spec 2, entry B). */}
+          {voiceCall !== null && botName !== null ? (
+            <ComposerCallButton
+              threadId={threadId}
+              botId={voiceCall.botId}
+              botName={botName}
+              avatarShape={voiceCall.avatarShape}
+              avatarColor={voiceCall.avatarColor}
+              visible={prompt.length === 0 && !sending}
+            />
+          ) : null}
         </label>
         {showStop ? (
           <button

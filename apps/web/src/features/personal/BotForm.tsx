@@ -30,6 +30,7 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatarPicker } from "./BotAvatarPicker";
+import { botVoiceCallsEnabled } from "./voice/botVoiceCalls";
 import { BotFallbackSection } from "./BotFallbackSection";
 import { BotScheduleSection } from "./BotScheduleSection";
 import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
@@ -116,6 +117,8 @@ interface BotDraft {
   pinned: boolean;
   memoryAutoSave: boolean;
   hidePreviews: boolean;
+  /** Whether this bot shows the call button in its chats (default off). */
+  allowVoiceCalls: boolean;
   notifications: BotNotificationsChoice;
 }
 
@@ -210,6 +213,7 @@ function draftFromBot(bot: PersonalBot): BotDraft {
     pinned: isBotPinned(bot),
     memoryAutoSave: savesMemoryWithoutAsking(bot),
     hidePreviews: hidesBotPreviews(bot),
+    allowVoiceCalls: botVoiceCallsEnabled(bot),
     notifications: initialNotificationsChoice(bot, Date.now()),
     effort:
       EFFORT_OPTION_IDS.map((id) =>
@@ -339,6 +343,7 @@ function BotForm({
       pinned: false,
       memoryAutoSave: true,
       hidePreviews: false,
+      allowVoiceCalls: false,
       notifications: "on",
     };
   });
@@ -529,6 +534,7 @@ function BotForm({
               ...fields,
               ...(fallback === undefined ? {} : { fallback }),
               ...(schedule === undefined ? {} : { schedule }),
+              allowVoiceCalls: draft.allowVoiceCalls,
             },
           })
         : await updateBot({
@@ -539,11 +545,12 @@ function BotForm({
               ...(fallback === undefined ? {} : { fallback }),
               ...(schedule === undefined ? {} : { schedule }),
               hidePreviews: draft.hidePreviews,
+              allowVoiceCalls: draft.allowVoiceCalls,
               ...(notificationsMute === undefined ? {} : { notificationsMute }),
             },
           });
-    // Create takes no mute and no privacy switch: a new bot muted (or with
-    // previews hidden) from the start gets them right after.
+    // Create takes no mute and no privacy switch: a new bot created with
+    // either gets it right after. The call switch is on the create input.
     if (
       bot === null &&
       (notificationsMute !== undefined || draft.hidePreviews) &&
@@ -962,6 +969,21 @@ function BotForm({
           <span className="block text-sm text-[var(--personal-text-secondary)]">
             Keeps this bot's message text out of lists, cards, notifications and banners. It only
             shows inside the chat.
+          </span>
+        </span>
+      </label>
+
+      <label className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
+        <input
+          type="checkbox"
+          checked={draft.allowVoiceCalls}
+          onChange={(event) => update({ allowVoiceCalls: event.target.checked })}
+          className="size-5 shrink-0"
+        />
+        <span className="min-w-0">
+          Allow voice calls
+          <span className="block text-sm text-[var(--personal-text-secondary)]">
+            Shows a call button in this bot's chats.
           </span>
         </span>
       </label>

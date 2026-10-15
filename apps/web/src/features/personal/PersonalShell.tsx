@@ -32,11 +32,22 @@ import { setPersonalNumberPreference, usePersonalNumberPreference } from "./pers
 import { PersonalTabBar } from "./PersonalTabBar";
 import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
 import { warmPersonalRoutes } from "./warmRoutes";
+import { usePersonalEnvironmentId } from "./usePersonalBots";
+import { VoiceCallProvider } from "./voice/VoiceCallProvider";
 
 // Desktop home pane only: the phone never shows it, so it stays off the
 // chats list's startup path.
 const TeamScreen = lazy(() =>
   import("./TeamScreen").then((module) => ({ default: module.TeamScreen })),
+);
+
+/**
+ * Voice calls: the provider holds the one call (context only, no DOM) and the
+ * layer is lazy, so nothing about a call sits in the shell's own chunk. The
+ * layer renders nothing at all while no call is on.
+ */
+const VoiceCallLayer = lazy(() =>
+  import("./voice/VoiceCallLayer").then((module) => ({ default: module.VoiceCallLayer })),
 );
 
 /**
@@ -71,6 +82,8 @@ export function PersonalShell(): JSX.Element {
   const activeTab = activeTabFor(pathname);
   useHiddenRootAttribute();
   const router = useRouter();
+  // A voice call's own commands go to this laptop.
+  const environmentId = usePersonalEnvironmentId();
   useEffect(() => warmPersonalRoutes(router), [router]);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidth = usePersonalNumberPreference("sidebarWidth");
@@ -107,7 +120,7 @@ export function PersonalShell(): JSX.Element {
 
   if (!isWide) {
     return (
-      <>
+      <VoiceCallProvider environmentId={environmentId}>
         <div
           className="personal-app flex h-dvh flex-col overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
           style={swipeBack.style}
@@ -129,9 +142,14 @@ export function PersonalShell(): JSX.Element {
           {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
           <InAppNotifications />
           <OutboxFlusher />
+          {swipeBack.layers}
+          <ChunkLoadBoundary>
+            <Suspense fallback={null}>
+              <VoiceCallLayer />
+            </Suspense>
+          </ChunkLoadBoundary>
         </div>
-        {swipeBack.layers}
-      </>
+      </VoiceCallProvider>
     );
   }
 
@@ -142,60 +160,69 @@ export function PersonalShell(): JSX.Element {
   const sidePanelOpen =
     sidePanel.open && layout === "conversation" && !pathname.startsWith("/bots/groups/");
   return (
-    <div
-      ref={rootRef}
-      className="personal-app flex h-dvh overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
-      style={
-        {
-          "--personal-sidebar-width": `${sidebarWidth}px`,
-          "--personal-sidebar-effective": sidebarWidthCss(sidePanelOpen),
-        } as CSSProperties
-      }
-    >
-      <aside
-        id={SIDEBAR_ID}
-        aria-label="Bots"
-        className="relative flex shrink-0 flex-col border-r border-[var(--personal-border)]"
-        style={{ width: "var(--personal-sidebar-effective)" }}
+    <VoiceCallProvider environmentId={environmentId}>
+      <div
+        ref={rootRef}
+        className="personal-app flex h-dvh overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
+        style={
+          {
+            "--personal-sidebar-width": `${sidebarWidth}px`,
+            "--personal-sidebar-effective": sidebarWidthCss(sidePanelOpen),
+          } as CSSProperties
+        }
       >
-        <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
-          <ChatsScreen selectedChat={selectedChat} />
-        </div>
-        <PersonalTabBar active={activeTab ?? "chats"} />
-        <ColumnResizeHandle
-          label="Resize bot list"
-          edge="right"
-          controls={SIDEBAR_ID}
-          value={sidebarWidth}
-          min={SIDEBAR_WIDTH.min}
-          maxWidth={() => sidebarMaxWidth(window.innerWidth, sidePanelOpen)}
-          defaultWidth={SIDEBAR_WIDTH.default}
-          cssVar="--personal-sidebar-width"
-          target={() => rootRef.current}
-          measure={() => document.getElementById(SIDEBAR_ID)?.getBoundingClientRect().width ?? null}
-          onCommit={(next) => setPersonalNumberPreference("sidebarWidth", next)}
-        />
-      </aside>
-      <main className="personal-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
-        <PersonalOfflineBanner pathname={pathname} />
-        <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
-          {showsHome ? (
-            <div className={PANE_CONTENT_CLASS.column}>
-              <ChunkLoadBoundary>
-                <Suspense fallback={null}>
-                  <TeamScreen showBack={false} />
-                </Suspense>
-              </ChunkLoadBoundary>
-            </div>
-          ) : (
-            <div className={PANE_CONTENT_CLASS[layout]}>
-              <Outlet />
-            </div>
-          )}
-        </div>
-      </main>
-      <InAppNotifications />
-      <OutboxFlusher />
-    </div>
+        <aside
+          id={SIDEBAR_ID}
+          aria-label="Bots"
+          className="relative flex shrink-0 flex-col border-r border-[var(--personal-border)]"
+          style={{ width: "var(--personal-sidebar-effective)" }}
+        >
+          <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
+            <ChatsScreen selectedChat={selectedChat} />
+          </div>
+          <PersonalTabBar active={activeTab ?? "chats"} />
+          <ColumnResizeHandle
+            label="Resize bot list"
+            edge="right"
+            controls={SIDEBAR_ID}
+            value={sidebarWidth}
+            min={SIDEBAR_WIDTH.min}
+            maxWidth={() => sidebarMaxWidth(window.innerWidth, sidePanelOpen)}
+            defaultWidth={SIDEBAR_WIDTH.default}
+            cssVar="--personal-sidebar-width"
+            target={() => rootRef.current}
+            measure={() =>
+              document.getElementById(SIDEBAR_ID)?.getBoundingClientRect().width ?? null
+            }
+            onCommit={(next) => setPersonalNumberPreference("sidebarWidth", next)}
+          />
+        </aside>
+        <main className="personal-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
+          <PersonalOfflineBanner pathname={pathname} />
+          <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+            {showsHome ? (
+              <div className={PANE_CONTENT_CLASS.column}>
+                <ChunkLoadBoundary>
+                  <Suspense fallback={null}>
+                    <TeamScreen showBack={false} />
+                  </Suspense>
+                </ChunkLoadBoundary>
+              </div>
+            ) : (
+              <div className={PANE_CONTENT_CLASS[layout]}>
+                <Outlet />
+              </div>
+            )}
+          </div>
+        </main>
+        <InAppNotifications />
+        <OutboxFlusher />
+        <ChunkLoadBoundary>
+          <Suspense fallback={null}>
+            <VoiceCallLayer />
+          </Suspense>
+        </ChunkLoadBoundary>
+      </div>
+    </VoiceCallProvider>
   );
 }
