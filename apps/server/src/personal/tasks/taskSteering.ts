@@ -70,9 +70,9 @@ export const makeTaskSteering = (
    * Reopens a finished task in its own chat: it is queued again on the same
    * thread (so the next attempt resumes the same provider session where the
    * provider allows), with the steer and a "continue where you stopped" note
-   * as its continuation turn. No task is created, so the per-request
-   * delegation limit is untouched, and the slot cap applies as to any queued
-   * task.
+   * as its continuation turn. No task is created, so it never counts toward a
+   * delegation cap (the root's own, or PERSONAL_TASKS_MAX_CHILDREN), and the
+   * slot cap applies as to any queued task.
    *
    * The result must reach whoever delegated the task. Its handoff goes back
    * to pending, and every finished ancestor up to the first unfinished one is

@@ -978,15 +978,12 @@ describe("bots toolkit handlers", () => {
         expect(unknown.message).toContain("No enabled bot is called 'Nobody'");
         expect(unknown.message).toContain("Developer");
 
-        // Default root limit is 4 delegated tasks; the fifth is refused.
-        for (const objective of ["one", "two", "three", "four"]) {
-          yield* call("delegate_task", { targetBot: "developer", objective });
+        // No per-request cap (Harout, 15 Oct): six delegations in one turn all land.
+        const delegated = [];
+        for (const objective of ["one", "two", "three", "four", "five", "six"]) {
+          delegated.push(yield* call("delegate_task", { targetBot: "developer", objective }));
         }
-        const limited = yield* call("delegate_task", {
-          targetBot: "developer",
-          objective: "five",
-        }).pipe(Effect.flip);
-        expect(limited.message).toContain("Delegation limit reached");
+        expect(new Set(delegated.map((entry) => entry.childTaskId)).size).toBe(6);
       }),
     ),
   );

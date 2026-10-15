@@ -15,8 +15,9 @@ import {
   type PersonalTaskAttempt,
 } from "@t3tools/contracts";
 import {
-  PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
   PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
+  PERSONAL_TASKS_UNLIMITED_CHILDREN,
+  personalTasksDelegationLimit,
   type Changed,
   type WorkItem,
 } from "./taskShared.ts";
@@ -75,7 +76,7 @@ export const makeTaskLifecycle = (
             idempotencyKey: input.idempotencyKey,
             depth: 0,
             maxDepth: input.maxDepth ?? PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
-            maxChildren: input.maxChildren ?? PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
+            maxChildren: input.maxChildren ?? PERSONAL_TASKS_UNLIMITED_CHILDREN,
             result: null,
             errorCategory: null,
             errorMessage: null,
@@ -179,7 +180,7 @@ export const makeTaskLifecycle = (
             idempotencyKey: input.idempotencyKey,
             depth: 0,
             maxDepth: PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
-            maxChildren: PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
+            maxChildren: PERSONAL_TASKS_UNLIMITED_CHILDREN,
             result: { summary: input.text },
             errorCategory: null,
             errorMessage: null,
@@ -291,11 +292,18 @@ export const makeTaskLifecycle = (
           if (depth > root.maxDepth) {
             return yield* fail(`Delegation depth limit reached (max depth ${root.maxDepth}).`);
           }
-          const children = (yield* repository.countTasksInRoot(root.taskId)) - 1;
-          if (children >= root.maxChildren) {
-            return yield* fail(
-              `Delegation limit reached (at most ${root.maxChildren} delegated tasks per request).`,
-            );
+          // No cap by default (Harout, 15 Oct 2026: "Remove the cap i dont see it
+          // useful and its just constraining your work."). A cap applies only when
+          // the root carries one or PERSONAL_TASKS_MAX_CHILDREN sets one; running
+          // work stays bounded by the concurrency limit either way.
+          const limit = personalTasksDelegationLimit(root.maxChildren);
+          if (limit !== null) {
+            const children = (yield* repository.countTasksInRoot(root.taskId)) - 1;
+            if (children >= limit) {
+              return yield* fail(
+                `Delegation limit reached (at most ${limit} delegated tasks per request).`,
+              );
+            }
           }
           const chain: Array<PersonalTask> = [parent];
           let cursor = parent;

@@ -169,3 +169,22 @@ test("a JSON-RPC error is labelled refused, an isError result refused, a normal 
   assert.match(await prompt("MCPTOOL refuse_tool {}"), /^MCPTOOL refuse_tool refused: /);
   assert.match(await prompt("MCPTOOL ok_tool {}"), /^MCPTOOL ok_tool ok: /);
 });
+
+test("several MCPTOOL calls in one owner message all run, in order", async () => {
+  const run = await prompt('MCPTOOL first_tool {"n":1}\nMCPTOOL second_tool {"n":2}');
+  assert.deepEqual(
+    calls.map((call) => call.name),
+    ["first_tool", "second_tool"],
+  );
+  assert.deepEqual(
+    calls.map((call) => call.arguments),
+    [{ n: 1 }, { n: 2 }],
+  );
+  assert.match(run, /^MCPTOOL first_tool ok: /);
+  assert.match(run, /MCPTOOL second_tool ok: /);
+  // One bad call among good ones still runs the good ones and reports the bad one.
+  const mixed = await prompt('MCPTOOL ok_tool {"n":1}\nMCPTOOL bad_tool {}');
+  assert.equal(calls.length, 2);
+  assert.match(mixed, /^MCPTOOL ok_tool ok: /);
+  assert.match(mixed, /MCPTOOL bad_tool refused: \{"code":-32602/);
+});

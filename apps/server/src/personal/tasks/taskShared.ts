@@ -14,8 +14,41 @@ import { personalTaskMessageId } from "../personalThreadTitles.ts";
 /** What the task service's parts share: its status types, timings and message ids. */
 
 export const PERSONAL_TASKS_DEFAULT_MAX_DEPTH = 2;
-export const PERSONAL_TASKS_DEFAULT_MAX_CHILDREN = 4;
+/**
+ * A root task's own delegation cap, stored on its row. 0 means that request has
+ * none: it may delegate as many tasks as the work needs (Harout, 15 Oct 2026).
+ * Running work is still bounded by PERSONAL_TASKS_CONCURRENCY; extra tasks queue.
+ */
+export const PERSONAL_TASKS_UNLIMITED_CHILDREN = 0;
+/** Kill switch, read on every delegation: a positive whole number caps each request. */
+export const PERSONAL_TASKS_MAX_CHILDREN_ENV = "PERSONAL_TASKS_MAX_CHILDREN";
 export const LEASE_MINUTES = 2;
+
+/** The env kill switch's cap, or null when it is unset or not a positive whole number. */
+export const personalTasksMaxChildren = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number | null => {
+  const raw = env[PERSONAL_TASKS_MAX_CHILDREN_ENV]?.trim();
+  if (raw === undefined || raw.length === 0) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+};
+
+/**
+ * The cap a delegation from this root must respect: the root's own stored limit
+ * (0 = none) and the env kill switch, whichever is tighter. null = no cap.
+ */
+export const personalTasksDelegationLimit = (
+  rootMaxChildren: number,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number | null => {
+  const stored =
+    Number.isSafeInteger(rootMaxChildren) && rootMaxChildren > 0 ? rootMaxChildren : null;
+  const configured = personalTasksMaxChildren(env);
+  if (stored === null) return configured;
+  if (configured === null) return stored;
+  return Math.min(stored, configured);
+};
 /**
  * How long after an attempt settles its thread still counts as task-driven.
  * Only has to outlast the gap between two reactors of the same domain event,

@@ -2222,7 +2222,108 @@ it.effect("steer reopens an interrupted or cancelled child while its parent stil
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-it.effect("a reopen does not count toward the per-request delegation limit", () => {
+/** Runs `effect` with PERSONAL_TASKS_MAX_CHILDREN set to `value`, or unset. */
+const withMaxChildrenEnv =
+  (value: string | undefined) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const name = PersonalTaskService.PERSONAL_TASKS_MAX_CHILDREN_ENV;
+        const previous = process.env[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+        return previous;
+      }),
+      () => effect,
+      (previous) =>
+        Effect.sync(() => {
+          const name = PersonalTaskService.PERSONAL_TASKS_MAX_CHILDREN_ENV;
+          if (previous === undefined) delete process.env[name];
+          else process.env[name] = previous;
+        }),
+    );
+
+it("the delegation cap comes from the root row and the kill switch, and is off by default", () => {
+  const name = PersonalTaskService.PERSONAL_TASKS_MAX_CHILDREN_ENV;
+  expect(PersonalTaskService.personalTasksMaxChildren({})).toBeNull();
+  expect(PersonalTaskService.personalTasksMaxChildren({ [name]: "   " })).toBeNull();
+  expect(PersonalTaskService.personalTasksMaxChildren({ [name]: "four" })).toBeNull();
+  expect(PersonalTaskService.personalTasksMaxChildren({ [name]: "0" })).toBeNull();
+  expect(PersonalTaskService.personalTasksMaxChildren({ [name]: "-3" })).toBeNull();
+  expect(PersonalTaskService.personalTasksMaxChildren({ [name]: " 4 " })).toBe(4);
+  // No stored limit and no switch: no cap at all.
+  expect(PersonalTaskService.personalTasksDelegationLimit(0, {})).toBeNull();
+  expect(PersonalTaskService.personalTasksDelegationLimit(0, { [name]: "4" })).toBe(4);
+  // A root's own limit and the switch: the tighter one wins.
+  expect(PersonalTaskService.personalTasksDelegationLimit(9, {})).toBe(9);
+  expect(PersonalTaskService.personalTasksDelegationLimit(2, { [name]: "4" })).toBe(2);
+  expect(PersonalTaskService.personalTasksDelegationLimit(4, { [name]: "2" })).toBe(2);
+});
+
+it.effect("one request may delegate six tasks; five run at once and the rest queue", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("six-children");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const children = [];
+    for (let index = 1; index <= 6; index += 1) {
+      children.push(yield* delegate(index % 2 === 0 ? "developer" : "researcher", `Part ${index}`));
+    }
+    // The same bot and objective in the same turn is still one delegation.
+    const repeat = yield* delegate("developer", "Part 2");
+    expect(repeat.taskId).toBe(children[1]!.taskId);
+    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(7);
+
+    yield* endTurn(harness, rootThread, turnId, "Delegated six parts.");
+    yield* service.drain;
+
+    const states = yield* Effect.forEach(children, (child) => reload(child.taskId));
+    const running = states.filter((task) => task.status === "running");
+    const queued = states.filter((task) => task.status === "queued");
+    expect(running.length).toBe(PersonalTaskService.PERSONAL_TASKS_CONCURRENCY);
+    expect(queued.length).toBe(6 - PersonalTaskService.PERSONAL_TASKS_CONCURRENCY);
+
+    // A finished part frees its slot; the root's continuation takes it, and the
+    // queued part starts as soon as that turn ends.
+    yield* runTurn(harness, threadOf(running[0]!), "Part done.");
+    yield* service.drain;
+    yield* runTurn(harness, rootThread, "Noted the finished part.");
+    yield* service.drain;
+    expect((yield* reload(queued[0]!.taskId)).status).toBe("running");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("delegation still stops at two levels deep", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("depth-three");
+    const child = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Level one"),
+    });
+    const grandchild = yield* service.delegate({
+      parentTaskId: child.taskId,
+      targetBotId: botId("researcher"),
+      brief: brief("Level two"),
+    });
+    const tooDeep = yield* service
+      .delegate({
+        parentTaskId: grandchild.taskId,
+        targetBotId: botId("planner"),
+        brief: brief("Level three"),
+      })
+      .pipe(Effect.flip);
+    expect(tooDeep.message).toContain("depth limit");
+    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(3);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a reopen creates no task, so a full request can still reopen one", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
     yield* seedBots;
@@ -2230,12 +2331,12 @@ it.effect("a reopen does not count toward the per-request delegation limit", () 
     const root = yield* createRoot("reopen-limit");
     const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
     const children = [];
-    for (let index = 1; index <= PersonalTaskService.PERSONAL_TASKS_DEFAULT_MAX_CHILDREN; index++) {
+    for (let index = 1; index <= 4; index++) {
       children.push(yield* delegate(index % 2 === 0 ? "developer" : "researcher", `Part ${index}`));
     }
-    yield* endTurn(harness, rootThread, turnId, "Delegated the limit.");
+    yield* endTurn(harness, rootThread, turnId, "Delegated four.");
     const limited = yield* delegate("planner", "One too many").pipe(Effect.flip);
-    expect(limited.message).toContain("Delegation limit reached");
+    expect(limited.message).toContain("at most 4 delegated tasks per request");
 
     const first = children[0]!;
     yield* service.cancel({ taskId: first.taskId });
@@ -2245,10 +2346,12 @@ it.effect("a reopen does not count toward the per-request delegation limit", () 
       message: "Carry on.",
     });
     expect(steered.outcome).toBe("reopened");
-    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(
-      1 + PersonalTaskService.PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
-    );
-  }).pipe(Effect.provide(makeLayer(harness)));
+    // The reopened task is the same row: no new task, so the cap still refuses
+    // the next genuinely new delegation.
+    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(5);
+    const stillLimited = yield* delegate("planner", "One too many").pipe(Effect.flip);
+    expect(stillLimited.message).toContain("at most 4 delegated tasks per request");
+  }).pipe(Effect.provide(makeLayer(harness)), withMaxChildrenEnv("4"));
 });
 
 it.effect("a reopened task waits for a free slot like any queued task", () => {
