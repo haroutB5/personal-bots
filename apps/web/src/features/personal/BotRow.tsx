@@ -213,15 +213,15 @@ export const BotRow = memo(function BotRow({
             <span
               data-testid="bot-model-label"
               className={cn(
-                "ml-1.5 shrink-[100] text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]",
-                modelParts.marker === null ? "min-w-0 truncate" : "flex",
+                "text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]",
+                modelParts.marker === null ? "ml-1.5 min-w-0 shrink-[100] truncate" : "contents",
               )}
             >
               {modelParts.marker === null ? (
                 rowModelLabel
               ) : (
                 <>
-                  <span className="min-w-0 truncate">{modelParts.base}</span>
+                  <span className="ml-1.5 min-w-0 shrink-[100] truncate">{modelParts.base}</span>
                   <span data-testid="bot-model-marker" className="shrink-0 whitespace-pre">
                     {` · ${modelParts.marker}`}
                   </span>
