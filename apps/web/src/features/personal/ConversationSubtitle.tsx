@@ -2,7 +2,7 @@ import type { JSX } from "react";
 
 import { cn } from "~/lib/utils";
 
-import type { ConversationState } from "./conversationModel";
+import { CONVERSATION_STATE_LABEL, type ConversationState } from "./conversationModel";
 
 const STATE_DOT: Record<ConversationState, string> = {
   idle: "bg-[var(--personal-text-tertiary)]",
@@ -25,6 +25,11 @@ const STATE_DOT: Record<ConversationState, string> = {
  * first and ends in an ellipsis, and a status too wide for the line on its own
  * is the only thing that gets cut. Both sit on one 18px row. The provider name
  * is not shown: the model label names the runtime.
+ *
+ * While a marker rides the model label (sched, peak, fallback) an idle bot
+ * drops the word "Idle" and keeps the state dot, so the marker fits at 390 px
+ * beside two chat chips (Harout, 15 Oct). A busy, waiting or broken status is
+ * still spoken out loud; the dropped word stays in the line for screen readers.
  */
 export function ConversationSubtitle({
   state,
@@ -38,6 +43,11 @@ export function ConversationSubtitle({
   modelNote?: string | null;
   status: string;
 }): JSX.Element {
+  const showsMarker = modelNote !== null && modelLabel !== null;
+  const dropIdleWord =
+    state === "idle" &&
+    showsMarker &&
+    (status === CONVERSATION_STATE_LABEL.idle || status.trim() === "");
   return (
     <p className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
@@ -45,13 +55,19 @@ export function ConversationSubtitle({
         data-testid="chat-status-line"
         className="flex h-[18px] min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
       >
-        <span className="max-w-full shrink-0 truncate whitespace-nowrap">{status}</span>
+        {dropIdleWord ? (
+          status.trim() === "" ? null : (
+            <span className="sr-only">{status}</span>
+          )
+        ) : (
+          <span className="max-w-full shrink-0 truncate whitespace-nowrap">{status}</span>
+        )}
         {modelLabel !== null ? (
           <span
             data-testid="chat-model-label"
             className="min-w-0 shrink-[100] truncate whitespace-nowrap"
           >
-            <span aria-hidden="true">· </span>
+            {dropIdleWord ? null : <span aria-hidden="true">· </span>}
             {modelLabel}
             {modelNote !== null ? <span className="sr-only"> ({modelNote})</span> : null}
           </span>

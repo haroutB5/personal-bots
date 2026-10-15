@@ -66,6 +66,65 @@ describe("ConversationSubtitle", () => {
     expect(String(dot?.props.className)).toContain("--personal-live");
   });
 
+  it("drops the word Idle, keeps the dot and the marker, while a marker rides the label (1.66.48)", () => {
+    for (const [label, note] of [
+      ["Sonnet 5.5 · H · sched", "Scheduled model until 07:00"],
+      ["Sonnet 5.5 · H · peak", "DeepSeek peak until 11:00"],
+      ["Sonnet 5.5 · H · fallback", "on fallback until about 14:30 (Codex usage limit)"],
+    ] as const) {
+      const renderer = render({
+        state: "idle",
+        status: "Idle",
+        modelLabel: label,
+        modelNote: note,
+      });
+      const marker = renderer.root.find((node) => node.props["data-testid"] === "chat-model-label");
+      const visible = marker.children
+        .map((child) => (typeof child === "string" ? child : ""))
+        .join("");
+      expect(visible).toBe(label);
+      // No visible "Idle" and no leading separator; the dot is still there and the
+      // word stays for screen readers.
+      expect(
+        renderer.root.findAll(
+          (node) =>
+            node.type === "span" &&
+            !String(node.props.className).includes("sr-only") &&
+            node.children.some((child) => child === "Idle"),
+        ),
+      ).toHaveLength(0);
+      expect(
+        renderer.root.findAll(
+          (node) => node.type === "span" && String(node.props.className).includes("size-2"),
+        ),
+      ).toHaveLength(1);
+      expect(JSON.stringify(renderer.toJSON())).toContain("Idle");
+      expect(marker.children[0]).toBe(label);
+      // The label still gives way, never the name group: no min-width floor on it.
+      expect(String(marker.props.className)).not.toContain("min-w-[");
+    }
+  });
+
+  it("keeps Idle when no marker is shown, and every non-idle status with a marker", () => {
+    const plain = render({ state: "idle", status: "Idle", modelLabel: "Sonnet 5.5 · H" });
+    expect(JSON.stringify(plain.toJSON())).toContain("Idle");
+    expect(classOf(plain, "Idle")).toContain("shrink-0");
+    const working = render({
+      state: "working",
+      status: "Working",
+      modelLabel: "Sonnet 5.5 · H · sched",
+      modelNote: "Scheduled model until 07:00",
+    });
+    expect(classOf(working, "Working")).toContain("shrink-0");
+    const broke = render({
+      state: "idle",
+      status: "Update broke Claude Code",
+      modelLabel: "Sonnet 5.5 · H · peak",
+      modelNote: "DeepSeek peak until 11:00",
+    });
+    expect(classOf(broke, "Update broke Claude Code")).toContain("shrink-0");
+  });
+
   it("omits the separator when the bot has no model", () => {
     const renderer = render({ state: "idle", status: "Idle", modelLabel: null });
     expect(
