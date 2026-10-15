@@ -59,7 +59,8 @@ The dry run's fresh-backup line now says `160-420 s` (was 160-300 s): QA measure
 end. Only the estimate text changed; the runner test `s9` asserts the new range.
 No helper changed, so the pins are unchanged. Install hashes for the 1.66.48
 notes (sha256, LF bytes); the undo hashes are the 1.66.47 installed runner's
-(`6eb7898a...` runner, `b4751b87...` tests; helpers unchanged):
+(`6eb7898a...` runner, `b4751b87...` tests, `05ec3dea...` stub `restart.ps1`; the
+other helpers unchanged):
 
 | File                                                                                           | sha256                                                             |
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
