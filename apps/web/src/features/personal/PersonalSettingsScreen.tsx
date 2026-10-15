@@ -45,6 +45,7 @@ import {
 import { useAppVersion } from "./appVersion";
 import { useRemovedBots } from "./useRemovedBots";
 import { pendingTidyChanges } from "./memoryPresentation";
+import { VoiceSettingsSection } from "./voice/VoiceSettingsSection";
 import { usePersonalMemoryTidyLog } from "./usePersonalAutomation";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalProviderRows } from "./PersonalProviderRows";
@@ -463,6 +464,13 @@ export function PersonalSettingsScreen(): JSX.Element {
             </li>
           ) : null}
         </ul>
+      </section>
+
+      <section aria-labelledby="settings-voice">
+        <h2 id="settings-voice" className={SECTION_TITLE}>
+          Voice calls
+        </h2>
+        <VoiceSettingsSection />
       </section>
 
       <section aria-labelledby="settings-plugins">

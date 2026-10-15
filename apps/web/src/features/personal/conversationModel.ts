@@ -15,6 +15,8 @@ import { classifyTurnFailure, isRefusedTurnInput } from "@t3tools/shared/turnFai
 
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 
+import type { VoiceCallTranscriptEntry } from "./voice/voiceCallApi";
+
 import type { ChatMessage, ProposedPlan } from "~/types";
 import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
 
@@ -420,9 +422,7 @@ export function turnErrorNotice(input: {
     // message's own input (an image its engine cannot read) would only be
     // refused again: no Retry, and the sentence says what to do instead.
     canRetry:
-      state === "error" &&
-      input.lastMessageTurnStarted !== null &&
-      !isRefusedTurnInput(raw),
+      state === "error" && input.lastMessageTurnStarted !== null && !isRefusedTurnInput(raw),
   };
 }
 
@@ -618,7 +618,26 @@ export type ConversationItem =
   /** A team lead asking to remove or rewrite a bot, in the lead's chat. */
   | { readonly kind: "lead-bot-change"; readonly id: string; readonly card: LeadBotChangeCardItem }
   /** A bot's save or forget of memory other bots see, waiting for the owner's OK. */
-  | { readonly kind: "memory-change"; readonly id: string; readonly card: MemoryCardItem };
+  | { readonly kind: "memory-change"; readonly id: string; readonly card: MemoryCardItem }
+  /**
+   * A voice call's card, at the time the call started: the running one while
+   * the call is on, then the finished one with its duration, reason, Call back
+   * and transcript.
+   */
+  | { readonly kind: "call"; readonly id: string; readonly card: VoiceCallCardItem };
+
+/** One call card's own data, as the chat renders it. */
+export interface VoiceCallCardItem {
+  readonly callId: string;
+  /** Epoch ms of the call's start: where the card sits in the timeline. */
+  readonly atMs: number;
+  readonly live: boolean;
+  readonly durationMs: number;
+  readonly endedLine: string | null;
+  readonly sentCount: number;
+  readonly voiceName: string | null;
+  readonly transcript: ReadonlyArray<VoiceCallTranscriptEntry>;
+}
 
 /**
  * Flattens the upstream timeline into chat rows: consecutive work entries
@@ -813,7 +832,34 @@ function itemTimeMs(item: ConversationItem): number {
     case "lead-bot-change":
     case "memory-change":
       return item.card.createdAtMs;
+    case "call":
+      return item.card.atMs;
   }
+}
+
+/**
+ * Puts each call card where the call started. A call is its own moment in the
+ * chat (nothing else was written while it ran), so the card goes after the last
+ * row at or before its start, never swept to the end of a later turn.
+ */
+export function placeCallCards(
+  items: ReadonlyArray<ConversationItem>,
+  calls: ReadonlyArray<VoiceCallCardItem>,
+): ConversationItem[] {
+  if (calls.length === 0) return [...items];
+  const placed = [...items];
+  const times = items.map(itemTimeMs);
+  for (const call of [...calls].toSorted((left, right) => left.atMs - right.atMs)) {
+    let anchor = -1;
+    for (let index = 0; index < placed.length; index += 1) {
+      const at = times[index]!;
+      if (Number.isFinite(at) && at <= call.atMs) anchor = index;
+    }
+    const id = `call:${call.callId}`;
+    placed.splice(anchor + 1, 0, { kind: "call", id, card: call });
+    times.splice(anchor + 1, 0, call.atMs);
+  }
+  return placed;
 }
 
 /**

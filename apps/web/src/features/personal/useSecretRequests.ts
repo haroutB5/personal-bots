@@ -99,6 +99,16 @@ export const personalSecretSetMode = createEnvironmentRpcCommand(connectionAtomR
     ),
 });
 
+/** Removes one saved key. Settings > Voice calls uses it for the Gemini key. */
+export const personalSecretDelete = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-secrets:delete",
+  tag: WS_METHODS.personalSecretsDelete,
+  onSuccess: (target, registry) =>
+    Effect.sync(() =>
+      registry.refresh(personalSavedSecrets({ environmentId: target.environmentId, input: {} })),
+    ),
+});
+
 export function useSavedSecrets(environmentId: EnvironmentId | null) {
   const atom = useMemo(
     () => (environmentId === null ? null : personalSavedSecrets({ environmentId, input: {} })),

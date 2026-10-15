@@ -56,7 +56,11 @@ vi.mock("@tanstack/react-router", () => ({
   }: Record<string, unknown> & { children: React.ReactNode }) => <a {...props}>{children}</a>,
   useNavigate: () => state.navigate,
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => [],
+  // The voice section's own atoms: nothing saved, nothing to refresh.
+  useAtomRefresh: () => () => undefined,
+}));
 vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
@@ -261,6 +265,7 @@ vi.mock("./conversationModel", () => ({
   placeConnectionApprovalCards: (items: unknown) => items,
   placeLeadBotChangeCards: (items: unknown) => items,
   placeMemoryCards: (items: unknown) => items,
+  placeCallCards: (items: unknown) => items,
   resolveConversationHeaderName: ({ botName }: { botName: string | null }) =>
     botName === null ? { status: "loading" } : { status: "ready", name: botName },
   // A final failed turn: Retry would show on an open chat.
@@ -272,6 +277,21 @@ vi.mock("./conversationModel", () => ({
   }),
 }));
 vi.mock("./messageReadStatus", () => ({ deriveLatestMessageReadStatus: () => null }));
+// The voice feature's own server atoms are not what this test is about: the
+// call card simply reports no calls, and the call button is off.
+vi.mock("./voice/voiceCallApi", () => ({
+  personalVoiceCallsList: () => ({}),
+  personalVoiceCallStart: {},
+  personalVoiceCallSend: {},
+  personalVoiceCallFinish: {},
+  personalVoiceCallCheckKey: {},
+  voiceCallFailureCode: () => "google_unavailable",
+  voiceFailureDetail: () => "",
+  voiceApiKeyCheckLine: () => null,
+  hasVoiceCallKey: () => false,
+  CURATED_VOICES: [],
+  MORE_VOICES: [],
+}));
 vi.mock("./DelegationCard", () => ({ DelegationCard: () => null }));
 vi.mock("./desktopColumns", () => ({
   useChatSidePanel: () => ({ fits: false, open: false }),

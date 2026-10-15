@@ -23,7 +23,11 @@ import { isFileAttachment, type ChatMessage } from "~/types";
 import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
 
 import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
-import { type ConversationItem, formatDayDivider } from "./conversationModel";
+import {
+  type ConversationItem,
+  type VoiceCallCardItem,
+  formatDayDivider,
+} from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
 import { chatNoticeLabel, chatNoticeUndo, isServerTurnNotice } from "./chatNotices";
 import { ContextUsed } from "./ContextUsedPanel";
@@ -794,6 +798,7 @@ export function MessageList({
   now,
   describeTurn,
   renderDelegation,
+  renderCallCard,
   groupSpeaker,
   readOnly = false,
   showContextUsed = false,
@@ -808,6 +813,11 @@ export function MessageList({
   describeTurn: (turn: ServerTurn) => string;
   /** The live card for a task delegated from this thread. */
   renderDelegation: (task: PersonalTask) => ReactNode;
+  /**
+   * A voice call's card in this thread: the running one while the call is on,
+   * then the finished one. Only a bot chat passes it.
+   */
+  renderCallCard?: (card: VoiceCallCardItem) => ReactNode;
   /**
    * How to draw a group member. Only a group transcript passes it; without it
    * no `group-message` item can exist, because only a group conversation asks
@@ -1582,6 +1592,8 @@ export function MessageList({
                     );
                   case "delegation":
                     return <div key={item.id}>{renderDelegation(item.task)}</div>;
+                  case "call":
+                    return <div key={item.id}>{renderCallCard?.(item.card) ?? null}</div>;
                   case "question":
                     return lockCard(
                       item.id,

@@ -19,7 +19,11 @@ const state = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => [],
+  // The voice section's own atoms: nothing saved, nothing to refresh.
+  useAtomRefresh: () => () => undefined,
+}));
 vi.mock("~/state/server", () => ({
   primaryServerProvidersAtom: {},
   serverEnvironment: { updateProvider: {} },
@@ -35,10 +39,23 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("./usePersonalBots", () => ({
   personalProfileSet: {},
+  personalProfile: () => ({}),
   personalProviderRecheck: {},
   usePersonalEnvironmentId: () => "env-1",
   usePersonalBotsList: () => ({ data: { bots: [] } }),
   usePersonalProfile: () => ({ data: { displayName: "Harout" } }),
+}));
+vi.mock("./voice/voiceCallApi", () => ({
+  // The voice section's own row: no key saved, so it draws its empty state.
+  personalVoiceCallCheckKey: {},
+  VOICE_CALL_KEY_ORIGIN_LABEL: "generativelanguage.googleapis.com",
+  VOICE_CALL_KEY_PLACEMENT: { header: "x-goog-api-key" },
+  GEMINI_KEYS_URL: "https://aistudio.google.com/apikey",
+  GEMINI_KEYS_URL_LABEL: "aistudio.google.com",
+  CURATED_VOICES: [],
+  MORE_VOICES: [],
+  hasVoiceCallKey: () => false,
+  voiceApiKeyCheckLine: () => ({ tone: "pending", text: "Checking this key…" }),
 }));
 vi.mock("./useRemovedBots", () => ({
   useRemovedBots: () => ({
@@ -193,11 +210,13 @@ describe("Settings chat preferences", () => {
     });
 
     // Chat > Show tool steps, Chat > Show routines, Chat > Auto-archive
-    // finished task chats (server side, on), Advanced > Diagnostics.
+    // finished task chats (server side, on), Voice calls > the key row's
+    // Show/Hide toggle, Advanced > Diagnostics.
     expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([
       false,
       true,
       true,
+      false,
       false,
     ]);
 
@@ -211,6 +230,7 @@ describe("Settings chat preferences", () => {
       true,
       false,
       true,
+      false,
       false,
     ]);
   });
