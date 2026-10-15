@@ -100,6 +100,10 @@ describe("ConversationSubtitle", () => {
       ).toHaveLength(1);
       expect(JSON.stringify(renderer.toJSON())).toContain("Idle");
       expect(marker.children[0]).toBe(label);
+      // The dropped word's room goes to the marker: a tighter dot gap and 12px text.
+      const line = renderer.root.find((node) => node.type === "p");
+      expect(String(line.props.className)).toContain("text-[12px]");
+      expect(String(line.props.className)).toContain("gap-1 ");
       // The label still gives way, never the name group: no min-width floor on it.
       expect(String(marker.props.className)).not.toContain("min-w-[");
     }
@@ -109,6 +113,9 @@ describe("ConversationSubtitle", () => {
     const plain = render({ state: "idle", status: "Idle", modelLabel: "Sonnet 5.5 · H" });
     expect(JSON.stringify(plain.toJSON())).toContain("Idle");
     expect(classOf(plain, "Idle")).toContain("shrink-0");
+    expect(String(plain.root.find((node) => node.type === "p").props.className)).toContain(
+      "text-[13px]",
+    );
     const working = render({
       state: "working",
       status: "Working",

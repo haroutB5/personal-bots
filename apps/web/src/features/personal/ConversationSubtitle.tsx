@@ -49,7 +49,15 @@ export function ConversationSubtitle({
     showsMarker &&
     (status === CONVERSATION_STATE_LABEL.idle || status.trim() === "");
   return (
-    <p className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+    <p
+      className={cn(
+        "flex min-w-0 items-center overflow-hidden leading-[18px] text-[var(--personal-text-secondary)]",
+        // The dropped word's room goes to the marker: the dot sits a little
+        // closer and the label a point smaller, so more of "Sonnet 5.5 · H ·
+        // peak" fits at 390 px beside the name and two chat chips.
+        dropIdleWord ? "-ml-0.5 gap-1 text-[12px]" : "gap-1.5 text-[13px]",
+      )}
+    >
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
       <span
         data-testid="chat-status-line"
