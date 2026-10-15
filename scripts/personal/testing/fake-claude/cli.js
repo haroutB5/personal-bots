@@ -16,9 +16,12 @@
 //   text is streamed first (message_start, content_block_*), as the real CLI sends it.
 //   TABLEMSG  a markdown table wider than a 390 px phone.   TABLEFIT  a table that fits the screen.
 //   WIDECODE  an unwrapped code block wider than a phone (the sideways-scroll checks drag them).
-//   DELEGATE:<botId>  calls the delegate_task MCP tool.   TASKDONE  answers a delegated task.
+//   DELEGATE:<botId>  calls the delegate_task MCP tool (not on a [Task continuation] turn, which quotes
+//     the request).   TASKDONE  answers a delegated task.
 //   MCPTOOL <name> <one-line json>  calls any MCP tool the bot has (update_bot, create_bot, ...) and
-//     answers "MCPTOOL <name> ok|refused: <the tool's result>", so a test reads the outcome in the chat.
+//     answers "MCPTOOL <name> ok|refused: <the tool's result>", so a test reads the outcome in the chat
+//     (refused = the tool's isError result or a JSON-RPC error). MCPTOOL, MCPONCE and DELEGATE are read
+//     from the owner's message only, never from the memory block or chat handoff the server puts first.
 //     $ENV{NAME} inside the json becomes that environment variable's value (a bot typing a key it holds).
 //   CATFILE <path>  tries to read a file the way a bot's Read tool would: refused (and says which rule) when
 //     the server's --settings permissions.deny covers the path, else reads it and reports the size.
@@ -58,6 +61,10 @@ const log = (line) =>
     `${new Date().toISOString()} ${process.pid} ${line}\n`,
   );
 const args = process.argv.slice(2);
+// Server text in front of the owner's message (apps/server/src/personal/sessionHandoff.ts and
+// memory/memoryBlock.ts); MCPTOOL/MCPONCE and DELEGATE read only what follows them.
+const HANDOFF_FOOTER = "End of earlier messages. The owner's new message follows.";
+const MEMORY_BLOCK_HEADER_START = "Known facts (from memory),";
 if (args.includes("--version") || args.includes("-v")) {
   if (flag("version-hang") !== "") await new Promise((resolve) => setTimeout(resolve, 15000));
   console.log("2.1.290 (Claude Code)");
@@ -434,6 +441,19 @@ lines.on("line", async (line) => {
   }
   const quote = text.match(/\[Replying to [^\]]*\]/)?.[0];
   const fence = "```";
+  // The owner's own message: the server puts an earlier-chat handoff and the memory block in front
+  // of it (`${handoff}\n\n${memory}\n\n${message}`), and task summaries in that block can quote
+  // old MCPTOOL/DELEGATE calls that must not run again.
+  const ownerText = (() => {
+    let rest = text;
+    const footer = rest.lastIndexOf(HANDOFF_FOOTER);
+    if (footer !== -1) rest = rest.slice(footer + HANDOFF_FOOTER.length).trimStart();
+    if (rest.startsWith(MEMORY_BLOCK_HEADER_START)) {
+      const end = rest.indexOf("\n\n");
+      rest = end === -1 ? "" : rest.slice(end + 2);
+    }
+    return rest;
+  })();
   log(`${NAME} handles prompt`);
   // A prompt that is itself an MCPTOOL/MCPONCE call may quote the trigger word in its arguments.
   if (text.includes("WHATWORD") && !/MCP(?:TOOL|ONCE) /.test(text)) {
@@ -601,21 +621,22 @@ lines.on("line", async (line) => {
   // fails to parse (a prompt that quotes an earlier, truncated call and puts the real instruction
   // further down - QA 1.66.33 F7) are brace-matched candidates tried in order, so a multi-line or
   // later call can still be found. Nothing is ever run that did not parse.
+  // Only the owner's message is searched (not the memory block or handoff in front of it).
   const toolCandidates = [];
-  if (!(text.includes("MCPONCE ") && text.startsWith("[Task continuation]"))) {
-    const greedy = text.match(/MCP(?:TOOL|ONCE) (\w+) (\{.*\})/);
+  if (!(ownerText.includes("MCPONCE ") && ownerText.startsWith("[Task continuation]"))) {
+    const greedy = ownerText.match(/MCP(?:TOOL|ONCE) (\w+) (\{.*\})/);
     if (greedy) toolCandidates.push({ name: greedy[1], json: greedy[2] });
     const trigger = /MCP(?:TOOL|ONCE) (\w+) /g;
     let hit;
-    while ((hit = trigger.exec(text)) !== null) {
-      const open = text.indexOf("{", hit.index + hit[0].length);
+    while ((hit = trigger.exec(ownerText)) !== null) {
+      const open = ownerText.indexOf("{", hit.index + hit[0].length);
       if (open === -1) continue;
       let depth = 0;
       let inString = false;
       let escaped = false;
       let end = -1;
-      for (let at = open; at < text.length; at += 1) {
-        const ch = text[at];
+      for (let at = open; at < ownerText.length; at += 1) {
+        const ch = ownerText[at];
         if (inString) {
           if (escaped) escaped = false;
           else if (ch === "\\") escaped = true;
@@ -640,7 +661,7 @@ lines.on("line", async (line) => {
       }
     }
   }
-  if (toolCandidates.length > 0 || /MCP(?:TOOL|ONCE) \w+ \{/.test(text)) {
+  if (toolCandidates.length > 0 || /MCP(?:TOOL|ONCE) \w+ \{/.test(ownerText)) {
     let toolName;
     let toolArgs;
     let lastError;
@@ -661,7 +682,7 @@ lines.on("line", async (line) => {
       }
     }
     if (toolName === undefined) {
-      const named = /MCP(?:TOOL|ONCE) (\w+)/.exec(text);
+      const named = /MCP(?:TOOL|ONCE) (\w+)/.exec(ownerText);
       toolName = named?.[1] ?? "unknown";
     }
     if (toolArgs === undefined) {
@@ -673,7 +694,9 @@ lines.on("line", async (line) => {
       (res) => {
         const body = JSON.stringify(res?.result ?? res?.error ?? res).slice(0, 1500);
         log(`mcptool ${toolName} ${body}`);
-        assistant(`MCPTOOL ${toolName} ${res?.result?.isError ? "refused" : "ok"}: ${body}`);
+        // A JSON-RPC error (unknown tool, bad params) is a refusal too, not "ok".
+        const refused = res?.error !== undefined || res?.result?.isError === true;
+        assistant(`MCPTOOL ${toolName} ${refused ? "refused" : "ok"}: ${body}`);
         finish("ok", false);
       },
       (err) => {
@@ -703,7 +726,11 @@ lines.on("line", async (line) => {
     finish("ok", false);
     return;
   }
-  const delegate = text.match(/DELEGATE:([\w-]+)/);
+  // A continuation turn quotes the original request; delegating again there would repeat the
+  // delegation on every continuation until the per-request cap.
+  const delegate = ownerText.startsWith("[Task continuation]")
+    ? null
+    : ownerText.match(/DELEGATE:([\w-]+)/);
   if (delegate) {
     mcpCall("delegate_task", {
       targetBot: delegate[1],
