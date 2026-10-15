@@ -80,6 +80,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { logUnloadableBotPluginSkills } from "../botPluginSkillDiagnostics.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -578,6 +579,9 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
       provideFs,
       Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
     );
+    // The harness skips a skill it cannot parse (a UTF-8 BOM does it) without
+    // a word, so name each file that will not load for this bot.
+    yield* logUnloadableBotPluginSkills({ botId: input.botId, skillDirs }).pipe(provideFs);
     const deny = yield* resolveDshDenyPlugin({
       runtimeDir: options.runtime.runtimeDir,
       paths: { secretsDir: serverConfig.secretsDir, dbPath: serverConfig.dbPath },

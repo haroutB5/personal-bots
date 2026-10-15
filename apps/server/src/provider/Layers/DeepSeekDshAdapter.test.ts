@@ -28,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -41,7 +42,11 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resetBotProviderProcesses } from "../botProviderProcesses.ts";
 import { isMissingProviderConversationText } from "../missingProviderConversation.ts";
 import { DSH_PINNED_VERSION, makeDshAcpRuntime } from "../acp/DshAcpSupport.ts";
-import { makeDeepSeekDshAdapter, dshImageTooLargeText, translateDshFailure } from "./DeepSeekDshAdapter.ts";
+import {
+  makeDeepSeekDshAdapter,
+  dshImageTooLargeText,
+  translateDshFailure,
+} from "./DeepSeekDshAdapter.ts";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -49,6 +54,17 @@ const instanceId = ProviderInstanceId.make("deepseek-dsh-test");
 const threadId = ThreadId.make("dsh-thread");
 const nativeSessionId = "mock-session-1";
 const decodeStart = Schema.decodeSync(ProviderSessionStartInput);
+
+/** Every WARN with its structured fields, so a test can count and name them. */
+const captureWarnLines = () => {
+  const lines: Array<{ readonly text: string; readonly fields: Record<string, unknown> }> = [];
+  const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
+    if (logLevel !== "Warn") return;
+    const [text, fields] = Array.isArray(message) ? message : [message, {}];
+    lines.push({ text: String(text), fields: (fields ?? {}) as Record<string, unknown> });
+  });
+  return { lines, layer: Logger.layer([sink], { mergeWithExisting: false }) };
+};
 
 interface HarnessOptions {
   /** The error text a prompt fails with, as dsh reports it. */
@@ -663,6 +679,42 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       resetBotProviderProcesses();
     }),
   );
+
+  it.effect("warns once for the skill a bot's plugin folder cannot load", () => {
+    const logs = captureWarnLines();
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig;
+      const botId = "bot-one";
+      const pluginDir = path.join(config.baseDir, "bot-plugins", botId);
+      const skillDir = path.join(pluginDir, ".claude", "skills", "bom");
+      yield* fileSystem.makeDirectory(skillDir, { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(pluginDir, ".claude-plugin"), { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(pluginDir, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: botId, skills: "./.claude/skills/" }),
+      );
+      // A UTF-8 BOM is what the harness drops in silence.
+      yield* fileSystem.writeFileString(
+        path.join(skillDir, "SKILL.md"),
+        "\uFEFF---\nname: bom\n---\n\nBody.\n",
+      );
+
+      const harness = yield* makeHarness(process.cwd());
+      yield* harness.adapter.startSession(startInput({ personalBot: true, personalBotId: botId }));
+
+      const warnings = logs.lines.filter((line) => line.text === "bot plugin skill failed to load");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        fields: {
+          botId,
+          path: path.join(skillDir, "SKILL.md"),
+          reason: expect.stringContaining("UTF-8 BOM"),
+        },
+      });
+    }).pipe(Effect.provide(logs.layer));
+  });
 
   it.effect("translates the failure wordings dsh reports", () =>
     Effect.sync(() => {

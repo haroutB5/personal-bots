@@ -115,6 +115,7 @@ import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/Claude
 import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
+import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
 import { exploreSubagentAgents } from "../claudeBackgroundModels.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -5302,6 +5303,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const botPluginDirs = personalBot
         ? yield* resolvePersonalBotPluginDirs(input.personalBotId)
         : [];
+      // The CLI loads these skills itself and drops an unparsable one in
+      // silence (a UTF-8 BOM does it), so name each one that cannot load.
+      if (personalBot) {
+        yield* logPersonalBotPluginSkillProblems({
+          baseDir: serverConfig.baseDir,
+          botId: input.personalBotId,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
+      }
       const plugins: ClaudeQueryOptions["plugins"] =
         botPluginDirs.length > 0
           ? botPluginDirs.map((pluginDir) => ({ type: "local" as const, path: pluginDir }))

@@ -28,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -70,6 +71,17 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
+
+/** Every WARN with its structured fields, so a test can count and name them. */
+const captureWarnLines = () => {
+  const lines: Array<{ readonly text: string; readonly fields: Record<string, unknown> }> = [];
+  const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
+    if (logLevel !== "Warn") return;
+    const [text, fields] = Array.isArray(message) ? message : [message, {}];
+    lines.push({ text: String(text), fields: (fields ?? {}) as Record<string, unknown> });
+  });
+  return { lines, layer: Logger.layer([sink], { mergeWithExisting: false }) };
+};
 
 class FakeCodexRuntime implements CodexSessionRuntimeShape {
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
@@ -529,6 +541,30 @@ botSkillsLayer("CodexAdapterLive bot plugin skills", (it) => {
       );
     }),
   );
+
+  it.effect("warns once for the skill a bot's plugin folder cannot load", () => {
+    const logs = captureWarnLines();
+    return Effect.gen(function* () {
+      botSkillsRuntimeFactory.factory.mockClear();
+      const config = yield* ServerConfig;
+      writeBotPlugin(config.baseDir, "_shared");
+      const own = writeBotPlugin(config.baseDir, "bot-one");
+      // A UTF-8 BOM is exactly what Codex refuses: its parser reports the
+      // frontmatter as missing and the skill disappears from the catalogue.
+      NodeFS.writeFileSync(
+        NodePath.join(own, "agent-browser", "SKILL.md"),
+        "\uFEFF---\nname: agent-browser\n---\n\nProbe.\n",
+      );
+
+      yield* startBotSession("thread-bot-skills-bom", "bot-one");
+
+      const warnings = logs.lines.filter((line) => line.text === "bot plugin skill failed to load");
+      NodeAssert.equal(warnings.length, 1);
+      NodeAssert.equal(warnings[0]?.fields.botId, "bot-one");
+      NodeAssert.equal(warnings[0]?.fields.path, NodePath.join(own, "agent-browser", "SKILL.md"));
+      NodeAssert.match(String(warnings[0]?.fields.reason), /UTF-8 BOM/);
+    }).pipe(Effect.provide(logs.layer));
+  });
 
   it.effect("leaves a normal Codex session without extra skill roots", () =>
     Effect.gen(function* () {

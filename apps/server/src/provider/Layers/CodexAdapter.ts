@@ -83,6 +83,7 @@ import {
   personalBotCodexSkillsSwitchOn,
   resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
+import { logUnloadableBotPluginSkills } from "../botPluginSkillDiagnostics.ts";
 import { resolvePersonalBotPluginSkillDirs } from "../botPluginSkillRoots.ts";
 import {
   type CodexRateLimitSnapshot,
@@ -2317,6 +2318,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 Effect.provideService(Path.Path, path),
               )
             : [];
+        // Codex refuses an unparsable skill (a UTF-8 BOM does it) and reports
+        // it only inside its own `skills/list` answer, which a bot session
+        // never asks for. Check the same folders here, before naming them, so
+        // the broken skill is logged instead of silently missing.
+        if (personalBotSkillRoots.length > 0) {
+          yield* logUnloadableBotPluginSkills({
+            botId: input.personalBotId,
+            skillDirs: personalBotSkillRoots,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          );
+        }
         const appServerArgs = [
           ...(mcpSession
             ? [
