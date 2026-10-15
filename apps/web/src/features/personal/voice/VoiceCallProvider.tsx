@@ -285,6 +285,43 @@ export function VoiceCallProvider({
     void sentinel.release().catch(() => undefined);
   }, []);
 
+  /**
+   * One server read of the call's OWN chat. Called only while the voice is
+   * waiting on the bot, or right after the voice asks a question: it is one
+   * small indexed read, not a loop that runs for the whole call.
+   */
+  const refreshCallSnapshot = useCallback(async (): Promise<void> => {
+    const engine = engineRef.current;
+    const voiceApi = voiceApiRef.current;
+    const callId = engine?.session?.callId ?? null;
+    const threadId = activeRef.current?.threadId ?? null;
+    if (
+      engine === null ||
+      voiceApi === null ||
+      callId === null ||
+      threadId === null ||
+      environmentId === null ||
+      engine.ended
+    ) {
+      return;
+    }
+    const result = await runAtomCommand(
+      registry,
+      voiceApi.personalVoiceCallSnapshot,
+      { environmentId, input: { threadId: ThreadId.make(threadId), callId } },
+      { reportFailure: false, reportDefect: false },
+    );
+    // A newer call has taken over while this one was in flight.
+    if (engineRef.current !== engine) return;
+    if (result._tag !== "Success") {
+      // `not_found` means the server no longer holds this call: the laptop
+      // restarted and its lease is gone. The call ends cleanly, nothing retried.
+      if (voiceApi.voiceCallFailureCode(result) === "not_found") engine.callLost();
+      return;
+    }
+    serverStatusRef.current = { callId, status: botStatusFromSnapshot(result.value) };
+  }, [environmentId, registry]);
+
   const end = useCallback(
     (reason: VoiceEndReason = "hung_up") => {
       const engine = engineRef.current;
@@ -468,6 +505,7 @@ export function VoiceCallProvider({
         },
         audio,
         botStatus: readBotStatus,
+        refreshBotStatus: refreshCallSnapshot,
         onChange: publish,
         ...(createSocket === undefined ? {} : { createSocket }),
       });
@@ -547,27 +585,19 @@ export function VoiceCallProvider({
     if (call === null) return;
     let cancelled = false;
 
-    const refreshServerStatus = async () => {
-      const engine = engineRef.current;
-      const voiceApi = voiceApiRef.current;
-      const callId = engine?.session?.callId ?? null;
-      if (engine === null || voiceApi === null || callId === null || environmentId === null) return;
-      if (engine.ended) return;
-      const result = await runAtomCommand(
-        registry,
-        voiceApi.personalVoiceCallSnapshot,
-        { environmentId, input: { threadId: ThreadId.make(call.threadId), callId } },
-        { reportFailure: false, reportDefect: false },
-      );
-      if (cancelled || result._tag !== "Success") return;
-      serverStatusRef.current = { callId, status: botStatusFromSnapshot(result.value) };
-    };
-
     const interval = setInterval(() => {
-      void refreshServerStatus().then(() => {
+      const engine = engineRef.current;
+      if (engine === null) return;
+      if (!engine.watchBot) {
+        // Nothing is waiting on the bot: the timer still ticks for the screen,
+        // but the server is not asked at all.
+        publish(engine.snapshot());
+        return;
+      }
+      void refreshCallSnapshot().then(() => {
         if (cancelled) return;
-        const engine = engineRef.current;
-        if (engine === null) return;
+        const live = engineRef.current;
+        if (live !== engine) return;
         const next = engine.snapshot();
         publish(next);
         // The turn end is read from the CALL's own chat. A screen going away
@@ -586,7 +616,7 @@ export function VoiceCallProvider({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [call, environmentId, publish, readBotStatus, registry, statusWatch]);
+  }, [call, publish, readBotStatus, refreshCallSnapshot, statusWatch]);
 
   // Unmounting the shell is the end of the call: the socket, the microphone and
   // the audio all go, and the card is still handed to the server first.

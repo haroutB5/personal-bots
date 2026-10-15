@@ -135,6 +135,14 @@ export const VOICE_RECONNECT_HIDDEN_MS = 1_500;
 /** Give up on a reconnect after this and end the call as dropped. */
 export const VOICE_RECONNECT_GIVE_UP_MS = 15_000;
 
+/**
+ * The line when the server has forgotten the call entirely (`not_found`: the
+ * laptop restarted and its in-memory lease is gone). The ended screen says this
+ * instead of "The call dropped", which would send the owner looking at their
+ * connection.
+ */
+export const VOICE_CALL_LOST_LINE = "The laptop restarted, so this call ended.";
+
 /** The hard cap, and where it warns and says goodbye (fractions of it). */
 export const VOICE_LIMIT_WARN_FRACTION = 28 / 30;
 export const VOICE_LIMIT_BYE_FRACTION = 29.75 / 30;
