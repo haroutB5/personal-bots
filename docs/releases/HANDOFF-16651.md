@@ -108,7 +108,7 @@ Cap-removal and loop-guard evidence: `C:/Users/Ht/.personal-bots/qa/hbots-16651/
 
 Cleanup exception: automatic approval review rejected deletion of the isolated read-only real-ledger copy with "blocked by policy", including a narrower attempt. It remains at `C:/Users/Ht/AppData/Local/Temp/hbots-16650-ledger` (123 copied files including ancillary files; 99 JSONL ledgers). Its absolute root was verified and reparse-point count is zero. CTO should arrange cleanup through the permitted path; the copy must not be shipped or committed.
 
-Gate evidence follows. Focused QA must replace PROOF_PLACEHOLDER with its result in a docs-only commit before DevOps can arm the idle waiter. DevOps alone ships; the builder has not restarted or activated hbots.
+Gate evidence follows. Focused QA must replace the placeholder on line 3 with its result in a docs-only commit before DevOps can arm the idle waiter. DevOps alone ships; the builder has not restarted or activated hbots.
 
 ## Supplemental checks outside the default fork gate
 
