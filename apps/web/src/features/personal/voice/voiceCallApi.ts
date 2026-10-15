@@ -29,6 +29,10 @@ import {
   type VoiceCallRecord,
   type VoiceCallSendInput,
   type VoiceCallSendResult,
+  type VoiceCallSnapshotInput,
+  type VoiceCallSnapshotResult,
+  type VoiceCallTranscriptInput,
+  type VoiceCallTranscriptResult,
   VOICE_CALL_QUIET_MINUTES,
   VOICE_CALL_SECRET_HEADER,
   VOICE_CALL_SECRET_NAME,
@@ -55,11 +59,39 @@ export const personalVoiceCallStart = createEnvironmentRpcCommand(connectionAtom
   tag: WS_METHODS.personalVoiceCallsStart,
 });
 
-/** The chat's own call cards, newest first. */
+/** The chat's own call cards, newest first. Carries no transcript: see below. */
 export const personalVoiceCallsList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "personal-voice-calls:list",
   tag: WS_METHODS.personalVoiceCallsList,
   staleTimeMs: 10_000,
+});
+
+/**
+ * One card's transcript, fetched when the owner expands it. `list` never reads
+ * the stored transcripts, so opening a chat costs one small query whatever the
+ * call history; this is the only thing that fetches a transcript.
+ */
+export const personalVoiceCallTranscript = createEnvironmentRpcQueryAtomFamily(
+  connectionAtomRuntime,
+  {
+    label: "personal-voice-calls:transcript",
+    tag: WS_METHODS.personalVoiceCallsTranscript,
+    staleTimeMs: 5 * 60_000,
+  },
+);
+
+/**
+ * The call's OWN chat while a call is running: the bot's status, whether its
+ * turn is running, and the newest finished reply (redacted and capped on the
+ * server). `bot_status`, `latest_reply` and the turn end all read this, so the
+ * voice can never see whatever chat happens to be on screen.
+ *
+ * A command, not a query: the call polls it once a second and wants the answer
+ * as of now, never a cached one.
+ */
+export const personalVoiceCallSnapshot = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-voice-calls:snapshot",
+  tag: WS_METHODS.personalVoiceCallsSnapshot,
 });
 
 /** Posts one utterance as the owner's message in the call's chat. */
@@ -108,9 +140,13 @@ export type {
   VoiceCallSendResult,
   VoiceCallSettings,
   VoiceCallSettingsInput,
+  VoiceCallSnapshotInput,
+  VoiceCallSnapshotResult,
   VoiceCallStartInput,
   VoiceCallStartResult,
   VoiceCallTranscriptEntry,
+  VoiceCallTranscriptInput,
+  VoiceCallTranscriptResult,
 };
 
 export {
@@ -132,15 +168,11 @@ export interface AtomCommandResult<T> {
 }
 
 /**
- * A failure code this client already has words for, added by the server after
- * the contract's own list. Keeping it here means the screen can name it the day
- * the server starts sending it, and the union collapses once the contract
- * carries it too.
+ * Every failure code the call screen can render. The set below is written out
+ * so a code the contract adds is only ever named in one place, and so an older
+ * client still recognises it if the server gets ahead.
  */
-export type VoiceCallLocalErrorCode = "sensitive_chat";
-
-/** Every failure code the call screen can render. */
-export type VoiceCallAnyErrorCode = VoiceCallErrorCode | VoiceCallLocalErrorCode;
+export type VoiceCallAnyErrorCode = VoiceCallErrorCode;
 
 const VOICE_CALL_ERROR_CODES: ReadonlySet<string> = new Set([
   "no_key",
@@ -148,13 +180,15 @@ const VOICE_CALL_ERROR_CODES: ReadonlySet<string> = new Set([
   "key_quota",
   "calls_not_allowed",
   "not_owner_chat",
+  // A chat that has had a private site open: the server refuses the call
+  // outright rather than sending its messages to Google (review finding 1).
+  "sensitive_chat",
+  // The chat refused the message, so nothing was posted (must-fix 2).
+  "send_failed",
   "google_unavailable",
   "rate_limited",
   "invalid_input",
   "not_found",
-  // A chat that has had a private site open: the server refuses the call
-  // outright rather than sending its messages to Google (review finding 1).
-  "sensitive_chat",
 ]);
 
 export function isVoiceCallErrorCode(value: unknown): value is VoiceCallAnyErrorCode {

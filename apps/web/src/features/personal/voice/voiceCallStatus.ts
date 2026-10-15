@@ -1,9 +1,12 @@
 /**
  * Where the voice reads the real bot from.
  *
- * One source per thread, registered by whichever chat screens are mounted, and
- * the call reads only the thread it is on. Two rules make this safe (pre-ship
- * review, finding 6):
+ * The first source is the server's own snapshot of the CALL's chat
+ * (`personalVoiceCalls.snapshot`), which is read whatever screen is showing.
+ * The local watch below is the fallback for the moment before the first
+ * snapshot lands, and it can only ever answer for the call's own thread.
+ *
+ * Two rules make this safe (pre-ship review, finding 6):
  *
  * 1. A source that is not the call's thread is never read, so a minimised call
  *    can never read the chat the owner happens to be looking at.
@@ -14,6 +17,7 @@
  *
  * @module features/personal/voice/voiceCallStatus
  */
+import type { VoiceCallSnapshotResult } from "./voiceCallApi";
 import type { BotStatusPort } from "./voiceCallController";
 
 /** What is known about a bot before anything has been read. */
@@ -98,4 +102,20 @@ export function observeCallTurn(input: {
   if (!input.watching) return { working: input.wasWorking, ended: false };
   const working = input.live && input.status.state === "working";
   return { working, ended: turnJustEnded({ wasWorking: input.wasWorking, working }) };
+}
+
+/**
+ * The server's snapshot of the call's chat, in the engine's own shape. The
+ * reply and the step are already redacted and capped there; the engine redacts
+ * again on its way out. The app's own word for the state rides in `label`, so
+ * the voice says "Working" rather than an internal code.
+ */
+export function botStatusFromSnapshot(snapshot: VoiceCallSnapshotResult): BotStatusPort {
+  return {
+    state: snapshot.turnRunning ? "working" : "idle",
+    label: snapshot.status.trim() === "" ? null : snapshot.status,
+    step: snapshot.stepNote.trim() === "" ? null : snapshot.stepNote,
+    elapsedMs: null,
+    latestReply: snapshot.latestReply.trim() === "" ? null : snapshot.latestReply,
+  };
 }

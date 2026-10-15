@@ -178,6 +178,7 @@ import { PersonalComposer } from "./PersonalComposer";
 import * as DateTime from "effect/DateTime";
 import { voiceCallEndReasonLabel } from "@t3tools/contracts";
 import { CallCard } from "./voice/CallCard";
+import { CallTranscript } from "./voice/CallTranscript";
 import { personalVoiceCallsList } from "./voice/voiceCallApi";
 import { LiveVoiceCallCard } from "./voice/LiveVoiceCallCard";
 import { botVoiceCallColour, botVoiceCallsEnabled } from "./voice/botVoiceCalls";
@@ -625,6 +626,10 @@ export function ConversationScreen({
           live: false,
           voiceName: card.voiceName,
         }}
+        // Read only when the card is opened, and only this call's rows.
+        transcript={
+          <CallTranscript callId={card.callId} startedAtMs={card.atMs} voiceName={card.voiceName} />
+        }
         onCallBack={startVoiceCall}
         onReturn={() => undefined}
       />

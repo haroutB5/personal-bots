@@ -102,14 +102,19 @@ export interface VoiceCallPort {
 }
 
 /**
- * What the engine reads about the real bot. The provider supplies it from a
- * source bound to the call's own thread, never from the chat on screen, and
+ * What the engine reads about the real bot. The provider supplies it from the
+ * server's snapshot of the call's OWN chat, never from the chat on screen, and
  * keeps the last known answer rather than reporting `idle` when that chat is
  * not mounted.
  */
 export interface BotStatusPort {
   /** "working", "idle", "needs_help", ... */
   readonly state: string;
+  /**
+   * The app's own word for the state ("Working", "Waiting on you"), when the
+   * source has one. This is what the voice is told; `state` is for the engine.
+   */
+  readonly label?: string | null;
   /** The chat's own current progress line, or null. */
   readonly step: string | null;
   /** How long the current turn has been running, ms, or null. */
@@ -290,6 +295,7 @@ export function createVoiceCallController(
     const status = options.botStatus();
     return {
       state: status.state,
+      label: status.label ?? null,
       step: redactForVoice(status.step) || null,
       elapsedMs: status.elapsedMs,
       latestReply: redactForVoice(status.latestReply) || null,
@@ -620,7 +626,9 @@ export function createVoiceCallController(
           call.id,
           call.name,
           {
-            state: status.state,
+            // The app's own word when the source has one ("Working"), so the
+            // voice repeats what the chat really says.
+            state: status.label ?? status.state,
             step: status.step,
             elapsedSeconds: status.elapsedMs === null ? null : Math.round(status.elapsedMs / 1_000),
           },
