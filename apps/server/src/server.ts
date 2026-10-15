@@ -135,6 +135,7 @@ import * as PersonalBotTokenUsage from "./personal/PersonalBotTokenUsageService.
 import * as PersonalTaskChatArchive from "./personal/PersonalTaskChatArchiveService.ts";
 import * as PersonalReleaseNotices from "./personal/releaseNotices/PersonalReleaseNoticeService.ts";
 import * as PersonalLeadBots from "./personal/leadBots/PersonalLeadBotService.ts";
+import { logPersonalSchedulersAtBoot } from "./personal/schedulersSwitch.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -565,6 +566,8 @@ const PersonalBotsSeedLive = Layer.effectDiscard(
 const PersonalTasksDispatcherLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const personalTasks = yield* PersonalTaskService.PersonalTaskService;
+    // One WARN at boot when T3CODE_PERSONAL_SCHEDULERS=off (restored test copies only).
+    yield* logPersonalSchedulersAtBoot();
     yield* personalTasks.start();
   }),
 );

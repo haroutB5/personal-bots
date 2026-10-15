@@ -57,6 +57,7 @@ import {
   rootExposureKey,
   threadExposureKey,
 } from "../browser/sensitiveExposureStore.ts";
+import { PERSONAL_SCHEDULERS_ENV } from "../schedulersSwitch.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
 import { TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL } from "../taskChatAutoArchivePolicy.ts";
 
@@ -4474,4 +4475,71 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
       }).pipe(Effect.provide(makeLayer(harness)));
     },
   );
+});
+
+/** Runs `effect` (layer build included) with T3CODE_PERSONAL_SCHEDULERS set to `value`, or unset. */
+const withSchedulersEnv =
+  (value: string | undefined) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = process.env[PERSONAL_SCHEDULERS_ENV];
+        if (value === undefined) delete process.env[PERSONAL_SCHEDULERS_ENV];
+        else process.env[PERSONAL_SCHEDULERS_ENV] = value;
+        return previous;
+      }),
+      () => effect,
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env[PERSONAL_SCHEDULERS_ENV];
+          else process.env[PERSONAL_SCHEDULERS_ENV] = previous;
+        }),
+    );
+
+it.effect("schedulers off (restored test copy): queued tasks never start, sweep or not", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const first = yield* service.createTask({
+      idempotencyKey: "routine:cto:2026-10-15T09:00",
+      botId: botId("assistant"),
+      title: "CTO routine",
+      objective: "Run the morning check.",
+      source: "routine",
+    });
+    const second = yield* service.createTask({
+      idempotencyKey: "routine:cfo:2026-10-15T09:00",
+      botId: botId("planner"),
+      title: "Kraken check",
+      objective: "Check the balance.",
+      source: "routine",
+    });
+    yield* service.drain;
+    yield* service.sweep;
+    yield* service.drain;
+
+    expect(turnStarts(harness)).toEqual([]);
+    expect((yield* reload(first.taskId)).status).toBe("queued");
+    expect((yield* reload(second.taskId)).status).toBe("queued");
+  }).pipe(Effect.provide(makeLayer(harness)), withSchedulersEnv("off"));
+});
+
+it.effect("schedulers on: the same queued task starts as before", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const task = yield* service.createTask({
+      idempotencyKey: "routine:cto:2026-10-15T09:00",
+      botId: botId("assistant"),
+      title: "CTO routine",
+      objective: "Run the morning check.",
+      source: "routine",
+    });
+    yield* service.drain;
+
+    expect(turnStarts(harness).length).toBe(1);
+    expect((yield* reload(task.taskId)).status).toBe("running");
+  }).pipe(Effect.provide(makeLayer(harness)), withSchedulersEnv("on"));
 });

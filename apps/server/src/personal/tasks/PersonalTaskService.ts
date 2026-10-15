@@ -45,6 +45,7 @@ import { makeTaskSteering } from "./taskSteering.ts";
 import { makeTaskWaiting } from "./taskWaiting.ts";
 import { SWEEP_INTERVAL, type WorkItem } from "./taskShared.ts";
 import { sessionIsBusy } from "./taskSessionPolicy.ts";
+import { personalSchedulersOff } from "../schedulersSwitch.ts";
 
 /** Global cap on active provider turns started by the dispatcher. */
 export const PERSONAL_TASKS_CONCURRENCY = 5;
@@ -356,7 +357,11 @@ export const make = Effect.gen(function* () {
     upserts,
   } = core;
 
-  const dispatch = makeTaskDispatch(core, PERSONAL_TASKS_CONCURRENCY);
+  // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): no sweep, and queued tasks stay queued.
+  const schedulersOff = personalSchedulersOff();
+  const dispatch = makeTaskDispatch(core, PERSONAL_TASKS_CONCURRENCY, {
+    startsTasks: !schedulersOff,
+  });
   const { pump } = dispatch;
 
   const settling = makeTaskSettling(core, dispatch);
@@ -370,7 +375,7 @@ export const make = Effect.gen(function* () {
             case "pump":
               break;
             case "sweep":
-              yield* sweepOnce();
+              if (!schedulersOff) yield* sweepOnce();
               return;
             case "session":
               yield* observeSession(item.threadId, item.session);
@@ -471,6 +476,7 @@ export const make = Effect.gen(function* () {
     function* () {
       const events = yield* engine.subscribeDomainEvents;
       yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
+      if (schedulersOff) return;
       yield* forkParked(
         Effect.gen(function* () {
           yield* worker.enqueue({ type: "sweep" });

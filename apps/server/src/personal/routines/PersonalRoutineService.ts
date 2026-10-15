@@ -44,6 +44,7 @@ import { timingSafeEqualBase64Url } from "../../auth/utils.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { resolveDeliveryThread } from "../automaticDelivery.ts";
+import { personalSchedulersOff } from "../schedulersSwitch.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { buildEventRoutinePrompt, formatHookPayload } from "./eventPrompt.ts";
@@ -248,6 +249,8 @@ export const make = Effect.gen(function* () {
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   // Serialises ticks with mutations so an edit never races a firing.
   const lock = yield* Semaphore.make(1);
+  // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off) never catches up its routines.
+  const schedulersOff = personalSchedulersOff();
   const preparers = new Map<string, PersonalRoutinePreparer>();
 
   const fail = (message: string, cause?: unknown) =>
@@ -629,7 +632,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const tick: PersonalRoutineService["Service"]["tick"] = lock
+  const scheduledTick: PersonalRoutineService["Service"]["tick"] = lock
     .withPermit(
       Effect.gen(function* () {
         const now = yield* DateTime.now;
@@ -668,6 +671,9 @@ export const make = Effect.gen(function* () {
           : Effect.logWarning("personal routines tick failed", { cause: Cause.pretty(cause) }),
       ),
     );
+  const tick: PersonalRoutineService["Service"]["tick"] = schedulersOff
+    ? Effect.void
+    : scheduledTick;
 
   const list: PersonalRoutineService["Service"]["list"] = () =>
     Effect.gen(function* () {
@@ -1064,13 +1070,15 @@ export const make = Effect.gen(function* () {
   ) => Effect.sync(() => void preparers.set(routineId, preparer));
 
   const start: PersonalRoutineService["Service"]["start"] = () =>
-    forkParked(
-      tick.pipe(
-        withStallJob("job:routine-tick"),
-        Effect.repeat(Schedule.spaced(TICK_INTERVAL)),
-        Effect.asVoid,
-      ),
-    ).pipe(Effect.asVoid);
+    schedulersOff
+      ? Effect.void
+      : forkParked(
+          tick.pipe(
+            withStallJob("job:routine-tick"),
+            Effect.repeat(Schedule.spaced(TICK_INTERVAL)),
+            Effect.asVoid,
+          ),
+        ).pipe(Effect.asVoid);
 
   return {
     list,

@@ -51,7 +51,12 @@ import {
 } from "./taskTurnPolicy.ts";
 import type { TaskCore } from "./taskCore.ts";
 
-export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
+export const makeTaskDispatch = (
+  core: TaskCore,
+  concurrency: number,
+  /** T3CODE_PERSONAL_SCHEDULERS=off (a restored test copy): the pump never starts a task. */
+  options: { readonly startsTasks: boolean } = { startsTasks: true },
+) => {
   const {
     activeThreadIds,
     backgroundByThread,
@@ -526,6 +531,7 @@ export const makeTaskDispatch = (core: TaskCore, concurrency: number) => {
   // Fills free slots. Slots are active attempts, not task statuses: a parent
   // waiting on children has ended its attempt and holds nothing.
   const pump = Effect.fn("PersonalTaskService.pump")(function* () {
+    if (!options.startsTasks) return;
     while (true) {
       const active = yield* repository.listActiveAttempts();
       if (active.length + externalSlots.size >= concurrency) {
