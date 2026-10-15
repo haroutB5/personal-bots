@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -34,6 +35,47 @@ const insertMessage = (input: {
         ${input.createdAt}, ${input.createdAt})
     `;
   });
+
+// The bot form's "Allow voice calls": off for a new bot, and the switch round-trips.
+it.effect("stores the Allow voice calls switch, off unless asked for", () =>
+  Effect.gen(function* () {
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const quiet = PersonalBotId.make("bot-quiet");
+    const callable = PersonalBotId.make("bot-callable");
+    const base = {
+      name: "Ada",
+      title: "",
+      description: "",
+      instructions: "",
+      avatarShape: "blob" as const,
+      avatarColor: "#1A73E8",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" },
+      team: "assistant",
+      lead: false,
+      pinned: false,
+      sortOrder: 0,
+      createdAt: "2026-10-15T17:00:00.000Z",
+      updatedAt: "2026-10-15T17:00:00.000Z",
+    };
+    yield* repository.createBot(decodeCreateBot({ ...base, botId: quiet }));
+    yield* repository.createBot(
+      decodeCreateBot({ ...base, botId: callable, allowVoiceCalls: true }),
+    );
+
+    const bots = yield* repository.listBots();
+    const byId = new Map(bots.map((bot) => [bot.botId, bot]));
+    expect(byId.get(quiet)?.allowVoiceCalls).toBe(false);
+    expect(byId.get(callable)?.allowVoiceCalls).toBe(true);
+
+    yield* repository.updateBot({
+      botId: quiet,
+      allowVoiceCalls: true,
+      updatedAt: DateTime.makeUnsafe("2026-10-15T17:01:00.000Z"),
+    });
+    const after = yield* repository.getBotById({ botId: quiet });
+    expect(after.pipe(Option.getOrThrow).allowVoiceCalls).toBe(true);
+  }).pipe(Effect.provide(testLayer)),
+);
 
 // A `reasoning` message is the provider's thinking trace, not something the bot
 // said: it must never become the chats list preview.

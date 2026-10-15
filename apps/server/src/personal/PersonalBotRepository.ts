@@ -54,6 +54,8 @@ export const CreatePersonalBotInput = Schema.Struct({
   fallbackModelSelection: Schema.optional(ModelSelection),
   /** Omitted means no schedule (stored as NULL). */
   schedule: Schema.optional(PersonalBotSchedule),
+  /** Omitted means off: the bot's chats show no call button. */
+  allowVoiceCalls: Schema.optional(Schema.Boolean),
   sortOrder: Schema.Number,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -80,6 +82,8 @@ export const UpdatePersonalBotInput = Schema.Struct({
   fallbackModelSelection: Schema.optional(ModelSelection),
   /** The whole schedule to store; absent leaves it alone. */
   schedule: Schema.optional(PersonalBotSchedule),
+  /** Absent leaves the "Allow voice calls" switch alone. */
+  allowVoiceCalls: Schema.optional(Schema.Boolean),
   /** Absent leaves the mute alone; null turns notifications back on. */
   notificationsMutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   updatedAt: Schema.DateTimeUtcFromString,
@@ -462,6 +466,7 @@ const PersonalBotDbRow = Schema.Struct({
   fallbackModel: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   /** The stored JSON; a value that does not decode reads as no schedule. */
   schedule: Schema.NullOr(Schema.String),
+  allowVoiceCalls: Schema.Number,
   notificationsMutedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -487,6 +492,7 @@ const PersonalBotRawDbRow = Schema.Struct({
   fallbackEnabled: Schema.Unknown,
   fallbackModel: Schema.Unknown,
   schedule: Schema.Unknown,
+  allowVoiceCalls: Schema.Unknown,
   notificationsMutedUntil: Schema.Unknown,
   createdAt: Schema.Unknown,
   updatedAt: Schema.Unknown,
@@ -695,6 +701,7 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): {
           (row.fallbackModel as ModelSelectionType | null) ?? PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
       },
       ...(storedSchedule.schedule === undefined ? {} : { schedule: storedSchedule.schedule }),
+      allowVoiceCalls: row.allowVoiceCalls === 1,
       notificationsMutedUntil: row.notificationsMutedUntil,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -844,6 +851,7 @@ export const make = Effect.gen(function* () {
           fallback_enabled,
           fallback_model_json,
           schedule_json,
+          allow_voice_calls,
           created_at,
           updated_at,
           deleted_at
@@ -866,6 +874,7 @@ export const make = Effect.gen(function* () {
           ${input.fallbackEnabled === false ? 0 : 1},
           ${input.fallbackModelSelection === undefined ? null : JSON.stringify(input.fallbackModelSelection)},
           ${input.schedule === undefined ? null : JSON.stringify(input.schedule)},
+          ${input.allowVoiceCalls === true ? 1 : 0},
           ${input.createdAt},
           ${input.updatedAt},
           NULL
@@ -897,6 +906,7 @@ export const make = Effect.gen(function* () {
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
           schedule_json AS "schedule",
+          allow_voice_calls AS "allowVoiceCalls",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -930,6 +940,7 @@ export const make = Effect.gen(function* () {
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
           schedule_json AS "schedule",
+          allow_voice_calls AS "allowVoiceCalls",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -981,6 +992,10 @@ export const make = Effect.gen(function* () {
               ${input.schedule === undefined ? null : JSON.stringify(input.schedule)},
               schedule_json
             ),
+            allow_voice_calls = COALESCE(
+              ${input.allowVoiceCalls === undefined ? null : input.allowVoiceCalls ? 1 : 0},
+              allow_voice_calls
+            ),
             notifications_muted_until = CASE
               WHEN ${input.notificationsMutedUntil === undefined ? 0 : 1} = 1
                 THEN ${input.notificationsMutedUntil ?? null}
@@ -1007,6 +1022,7 @@ export const make = Effect.gen(function* () {
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
           schedule_json AS "schedule",
+          allow_voice_calls AS "allowVoiceCalls",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

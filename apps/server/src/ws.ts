@@ -213,6 +213,7 @@ import {
   type PersonalSessionPrewarmer,
 } from "./personal/sessionPrewarm.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
+import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
@@ -772,6 +773,7 @@ const makeWsRpcLayer = (
       const personalTasks = yield* PersonalTaskService.PersonalTaskService;
       const personalGroups = yield* PersonalGroupService.PersonalGroupService;
       const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
+      const personalVoiceCalls = yield* PersonalVoiceCallService.PersonalVoiceCallService;
       const personalLogins = yield* PersonalLoginService.PersonalLoginService;
       const loginRequests = yield* PersonalLoginRequestService.PersonalLoginRequestService;
       const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
@@ -3365,6 +3367,28 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.personalBotsRestore]: (input) =>
           observeRpcEffect(WS_METHODS.personalBotsRestore, personalLeadBots.restore(input), {
+            "rpc.aggregate": "server",
+          }),
+        // Voice calls with a bot. Owner-only: the mint spends the saved Gemini
+        // key, and `send` posts into a chat as the owner himself.
+        [WS_METHODS.personalVoiceCallsStart]: (input) =>
+          observeRpcEffect(WS_METHODS.personalVoiceCallsStart, personalVoiceCalls.start(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalVoiceCallsCheckKey]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalVoiceCallsCheckKey, personalVoiceCalls.checkKey(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalVoiceCallsSend]: (input) =>
+          observeRpcEffect(WS_METHODS.personalVoiceCallsSend, personalVoiceCalls.send(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalVoiceCallsFinish]: (input) =>
+          observeRpcEffect(WS_METHODS.personalVoiceCallsFinish, personalVoiceCalls.finish(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalVoiceCallsList]: (input) =>
+          observeRpcEffect(WS_METHODS.personalVoiceCallsList, personalVoiceCalls.list(input), {
             "rpc.aggregate": "server",
           }),
         // A team lead's request to remove or rewrite a bot it did not create. `decide` is the

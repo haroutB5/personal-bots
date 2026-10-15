@@ -46,6 +46,10 @@ import {
   type PersonalProfile,
   type PersonalProfileSetInput,
   type ServerProvider,
+  VoiceCallSettings,
+  DEFAULT_VOICE_CALL_SETTINGS,
+  isVoiceCallVoice,
+  profileVoiceCallSettings,
 } from "@t3tools/contracts";
 
 import {
@@ -84,6 +88,12 @@ import {
 const PERSONAL_META_SEEDED = "seeded";
 const PERSONAL_META_PROJECT_ID = "personalProjectId";
 const PERSONAL_META_DISPLAY_NAME = "displayName";
+/** Settings > Voice calls: the voice and the quiet-hangup time, as JSON. */
+const PERSONAL_META_VOICE_CALLS = "voiceCalls";
+const decodeVoiceCallSettings = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(VoiceCallSettings),
+);
+const encodeVoiceCallSettings = Schema.encodeEffect(Schema.fromJsonString(VoiceCallSettings));
 const decodeCustomTeams = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Array(PersonalBotTeam)),
 );
@@ -1000,10 +1010,20 @@ export const make = Effect.gen(function* () {
           )
         : [];
       const autoArchive = yield* repository.getMeta({ key: TASK_CHAT_AUTO_ARCHIVE_META_KEY });
+      const storedVoiceCalls = yield* repository.getMeta({ key: PERSONAL_META_VOICE_CALLS });
+      // A row that does not decode reads as the defaults rather than failing the
+      // whole profile: the greeting name is stored separately and must keep working.
+      const voiceCalls = Option.isSome(storedVoiceCalls)
+        ? yield* decodeVoiceCallSettings(storedVoiceCalls.value).pipe(
+            Effect.map((decoded): VoiceCallSettings => decoded),
+            Effect.catchCause(() => Effect.succeed(DEFAULT_VOICE_CALL_SETTINGS)),
+          )
+        : DEFAULT_VOICE_CALL_SETTINGS;
       return {
         displayName: Option.getOrElse(stored, () => ""),
         ...(customTeams.length > 0 ? { customTeams } : {}),
         autoArchiveTaskChats: taskChatAutoArchiveEnabled(Option.getOrNull(autoArchive)),
+        voiceCalls,
       };
     }).pipe(Effect.mapError(repositoryError("profile lookup")));
 
@@ -1058,6 +1078,22 @@ export const make = Effect.gen(function* () {
             key: TASK_CHAT_AUTO_ARCHIVE_META_KEY,
             value: input.autoArchiveTaskChats ? "on" : "off",
           })
+          .pipe(Effect.mapError(repositoryError("profile update")));
+      }
+      if (input.voiceCalls !== undefined) {
+        const current = profileVoiceCallSettings(profile);
+        const next: VoiceCallSettings = {
+          voiceName: input.voiceCalls.voiceName ?? current.voiceName,
+          quietHangupMinutes: input.voiceCalls.quietHangupMinutes ?? current.quietHangupMinutes,
+        };
+        if (!isVoiceCallVoice(next.voiceName)) {
+          return yield* notFound("That is not a voice Gemini Live offers.");
+        }
+        const value = yield* encodeVoiceCallSettings(next).pipe(
+          Effect.mapError(repositoryError("voice call settings encoding")),
+        );
+        yield* repository
+          .setMeta({ key: PERSONAL_META_VOICE_CALLS, value })
           .pipe(Effect.mapError(repositoryError("profile update")));
       }
       yield* repository

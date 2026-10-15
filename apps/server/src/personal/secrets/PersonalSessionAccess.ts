@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import {
+  PersonalBotId,
   personalSecretEnvVar,
-  type PersonalBotId,
   type PersonalSecretMode,
   type PersonalSecretPlacement,
   type ThreadId,
@@ -54,6 +54,12 @@ export interface PersonalSessionSecret {
 const NONE: PersonalSessionGrant = { botId: null, environment: {}, systemInstructions: null };
 
 /**
+ * A bot id no real bot has, used to ask for the shared secrets alone: the
+ * lookup keeps rows that are `shared` whatever the id is.
+ */
+const OWNER_SCOPE_BOT_ID = PersonalBotId.make("shared-scope");
+
+/**
  * The narrow hook ProviderService consults when it starts a provider session:
  * whether the thread is a personal bot's (the "bots" MCP capability), which
  * secrets reach its process environment, and the bot's session instructions.
@@ -72,6 +78,13 @@ export class PersonalSessionAccess extends Context.Service<
     readonly secretsForThread: (
       threadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<PersonalSessionSecret>>;
+    /**
+     * The secrets every bot shares, for a server path that has no chat to
+     * resolve them through (Settings checking the Gemini key behind voice
+     * calls). Same shape and same rules as `secretsForThread`; never put in a
+     * response.
+     */
+    readonly sharedSecrets: () => Effect.Effect<ReadonlyArray<PersonalSessionSecret>>;
     /**
      * Just the bot's session instructions (no secret reads), for turns sent
      * outside the reactor such as the post-restart continuation. Null for
@@ -234,9 +247,23 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * The shared rows only. A reserved bot id no real bot has, so `readSecrets`
+   * keeps exactly the secrets every bot can use.
+   */
+  const sharedSecrets: PersonalSessionAccess["Service"]["sharedSecrets"] = () =>
+    readSecrets(OWNER_SCOPE_BOT_ID).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("shared personal secret lookup failed; granting nothing", {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as([] as ReadonlyArray<PersonalSessionSecret>)),
+      ),
+    );
+
   return {
     forThread,
     secretsForThread,
+    sharedSecrets,
     instructionsForThread,
   } satisfies PersonalSessionAccess["Service"];
 });

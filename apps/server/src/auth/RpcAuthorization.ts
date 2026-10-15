@@ -123,6 +123,13 @@ export const RPC_REQUIRED_SCOPES = {
   // Owner-only, like every other write: no MCP tool reaches these.
   [WS_METHODS.personalBotsListRemoved]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsRestore]: AuthOrchestrationOperateScope,
+  // Voice calls spend the saved Gemini key and post into a chat as the owner:
+  // owner-only, with no MCP tool reaching any of them.
+  [WS_METHODS.personalVoiceCallsStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalVoiceCallsCheckKey]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalVoiceCallsSend]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalVoiceCallsFinish]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalVoiceCallsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalLeadBotChangesList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalLeadBotChangesDecide]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalFilesDelete]: AuthOrchestrationOperateScope,

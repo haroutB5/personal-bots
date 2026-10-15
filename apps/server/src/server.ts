@@ -93,6 +93,7 @@ import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
+import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
@@ -725,7 +726,12 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     // come before them.
     Layer.provideMerge(PersonalTasksDispatcherLive),
     Layer.provideMerge(PersonalGroupsDispatcherLive),
-    Layer.provideMerge(PersonalSecretService.layerLive),
+    // Voice calls consume the bot service, the repository, the session access
+    // and the orchestration engine below, so they are provided with them.
+    // Merged with the secrets layer in one step: a pipe takes at most 20.
+    Layer.provideMerge(
+      Layer.mergeAll(PersonalSecretService.layerLive, PersonalVoiceCallService.layerLive),
+    ),
     Layer.provideMerge(PersonalTaskService.layerLive),
     Layer.provideMerge(PersonalGroupService.layerLive),
     Layer.provideMerge(PersonalBotsSeedLive),

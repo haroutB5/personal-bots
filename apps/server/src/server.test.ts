@@ -113,6 +113,7 @@ import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
+import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
@@ -816,6 +817,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalTaskService.PersonalTaskService)({}),
           Layer.mock(PersonalGroupService.PersonalGroupService)({}),
           Layer.mock(PersonalSecretService.PersonalSecretService)({}),
+          Layer.mock(PersonalVoiceCallService.PersonalVoiceCallService)({}),
           Layer.mock(PersonalLoginService.PersonalLoginService)({}),
           Layer.mock(PersonalLoginRequestService.PersonalLoginRequestService)({}),
           Layer.mock(PersonalConnectionService.PersonalConnectionService)({}),
