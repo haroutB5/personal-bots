@@ -520,13 +520,18 @@ export function createVoiceCallController(
           // Silent by design: shown only if the reconnect drags on.
           reconnectSinceMs ??= now();
         },
-        onClosed: ({ refused, code, reason }) => {
+        onClosed: ({ refused, code, reason, quota }) => {
           if (ended) return;
           if (!everConnected) {
             errorDetail = reason.length > 0 ? reason : `Gemini closed the call (${code}).`;
+            // A pass that is fine but a key that is out of quota closes the
+            // socket the same way a dropped line does, with 1011 and Google's
+            // own words. Naming it is the difference between "try again" and
+            // "your free tier is spent", which is what the owner needs to know
+            // (measured on the live key, 15 Oct 2026).
             publish({
               status: "error",
-              errorCode: refused ? "key_rejected" : "google_unavailable",
+              errorCode: refused ? "key_rejected" : quota ? "key_quota" : "google_unavailable",
               pill: "none",
               hint: null,
             });
