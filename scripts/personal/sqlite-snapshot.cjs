@@ -3,7 +3,34 @@ const { DatabaseSync, backup } = require('node:sqlite');
 const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
+const { Worker } = require('node:worker_threads');
 const { checkDatabase, fileHash, startReadAhead } = require('./sqlite-check.cjs');
+
+// The hard limit lives on its own thread: integrity_check runs synchronously on
+// this one, so a timer here could never fire during a stuck check. On expiry it
+// ends the whole process (exit 1); backup.ps1 then removes the fresh folder.
+const WATCHDOG_WORKER = `
+const { parentPort } = require('node:worker_threads');
+const { writeSync } = require('node:fs');
+const { EOL } = require('node:os');
+let timer;
+parentPort.on('message', ({ ms, message }) => {
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    try { writeSync(2, message + EOL); } catch {}
+    process.kill(process.pid, 'SIGKILL');
+  }, ms);
+});
+`;
+function startWatchdog() {
+  const worker = new Worker(WATCHDOG_WORKER, { eval: true });
+  worker.on('error', () => {});
+  worker.unref();
+  return {
+    arm(ms, message) { worker.postMessage({ ms, message }); },
+    stop() { return worker.terminate(); },
+  };
+}
 
 // The copy may take max(900 s, database bytes / 4 MB/s); the slowest measured
 // 3 GB copy at background priority took 298 s.
@@ -15,7 +42,7 @@ function timeLimitMs(source) {
   return limitForBytes(size(source) + size(`${source}-wal`));
 }
 
-async function snapshot(source, target, { maxMs, maxRestarts = 0, rate = 1024, hardStopMs } = {}) {
+async function snapshot(source, target, { maxMs, maxRestarts = 0, rate = 1024, hardStopMs, verifyHardStopMs } = {}) {
   if (!source || !target) throw new Error('PB_SNAPSHOT_SOURCE and PB_SNAPSHOT_TARGET are required.');
   if (fs.existsSync(target) || fs.existsSync(`${target}.integrity.json`)) throw new Error('Snapshot target already exists.');
   maxMs ??= timeLimitMs(source);
@@ -45,10 +72,8 @@ async function snapshot(source, target, { maxMs, maxRestarts = 0, rate = 1024, h
     ahead = startReadAhead(source, pageSize);
     // A single step that never returns (a stuck disk) cannot reach the progress
     // check; the helper then exits and backup.ps1 removes the fresh folder.
-    watchdog = setTimeout(() => {
-      console.error('Online backup step exceeded the hard time limit.');
-      process.exit(1);
-    }, hardStopMs ?? maxMs + 120000);
+    watchdog = startWatchdog();
+    watchdog.arm(hardStopMs ?? maxMs + 120000, 'Online backup step exceeded the hard time limit.');
     let previousCopied = 0;
     let restarts = 0;
     // Node finalizes sqlite3_backup when progress throws. A restart would mean
@@ -62,13 +87,17 @@ async function snapshot(source, target, { maxMs, maxRestarts = 0, rate = 1024, h
       }
       ahead.advance(copied);
     } });
-    clearTimeout(watchdog); watchdog = null;
     if (performance.now() - started > maxMs) throw new Error('Online backup time limit exceeded.');
     timings.snapshotSeconds = (performance.now() - started) / 1000;
     console.log(`backup timing snapshotSeconds: ${timings.snapshotSeconds.toFixed(3)} s`);
     db.exec('COMMIT');
     db.close(); db = null;
     await ahead.close(); ahead = null;
+    // The digest and full check get their own bound, the same size rule as the
+    // copy plus the same margin, and it stays armed until the proof is written.
+    const verifyLimitMs = verifyHardStopMs ?? limitForBytes(fs.statSync(candidate).size) + 120000;
+    timings.verifyLimitSeconds = verifyLimitMs / 1000;
+    watchdog.arm(verifyLimitMs, 'Backup hash or integrity check exceeded the hard time limit.');
     // The required digest pass also reads ahead in bounded 8 MiB chunks. Doing
     // it before the full check avoids cold, random 4 KiB integrity-check I/O.
     const hashStarted = performance.now();
@@ -85,10 +114,11 @@ async function snapshot(source, target, { maxMs, maxRestarts = 0, rate = 1024, h
     // A fresh backup owns its directory; failure after rename has no backup.json.
     fs.renameSync(candidate, target);
     fs.writeFileSync(`${target}.integrity.json`, JSON.stringify(proof), { flag: 'wx' });
+    await watchdog.stop(); watchdog = null;
     console.log('snapshot ok (full integrity_check)');
     return proof;
   } finally {
-    if (watchdog) clearTimeout(watchdog);
+    if (watchdog) await watchdog.stop();
     if (ahead) await ahead.close();
     if (db) db.close();
     for (const suffix of ['', '-journal', '-wal', '-shm']) fs.rmSync(candidate + suffix, { force: true });

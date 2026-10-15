@@ -162,6 +162,52 @@ test('commits between every copy step cause no restart; the copy is one point-in
   } finally {copy.close();}
  } finally {clearInterval(timer);writer.close();cleanup(f);}
 });
+// Runs snapshot() in a child whose sqlite-check export is replaced by `hang`
+// before sqlite-snapshot.cjs loads, so only the hard-limit watchdog can end it.
+function hungSnapshot(f, hang) {
+ const { spawnSync }=require('node:child_process');
+ const script=`
+  const check=require(${JSON.stringify(path.join(__dirname,'sqlite-check.cjs'))});
+  ${hang}
+  const {snapshot}=require(${JSON.stringify(path.join(__dirname,'sqlite-snapshot.cjs'))});
+  snapshot(process.argv[1],process.argv[2],{verifyHardStopMs:500}).then(()=>console.log('finished'),e=>{console.error(e.message);process.exitCode=3;});`;
+ const started=Date.now();
+ const r=spawnSync(process.execPath,['--disable-warning=ExperimentalWarning','-e',script,f.source,f.target],{encoding:'utf8',timeout:60000});
+ return {...r,ms:Date.now()-started};
+}
+test('watchdog ends a synchronous integrity check that never returns; nothing is published', () => {
+ const f=fixture();
+ try {
+  // A real synchronous block of the main thread, like a stuck integrity_check read.
+  const r=hungSnapshot(f,`check.checkDatabase=()=>{Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000);throw new Error('not ended');};`);
+  assert.equal(r.error,undefined);
+  assert.equal(r.status,1);
+  assert.match(r.stderr,/integrity check exceeded the hard time limit/);
+  assert.doesNotMatch(r.stdout,/finished/);
+  assert.ok(r.ms<20000,`ended after ${r.ms} ms`);
+  assert.equal(fs.existsSync(f.target),false);assert.equal(fs.existsSync(f.target+'.integrity.json'),false);
+ } finally {cleanup(f);}
+});
+test('watchdog ends a digest pass that never finishes; nothing is published', () => {
+ const f=fixture();
+ try {
+  const r=hungSnapshot(f,`check.fileHash=()=>new Promise(()=>{setInterval(()=>{},1000);});`);
+  assert.equal(r.status,1);
+  assert.match(r.stderr,/hash or integrity check exceeded the hard time limit/);
+  assert.ok(r.ms<20000,`ended after ${r.ms} ms`);
+  assert.equal(fs.existsSync(f.target),false);assert.equal(fs.existsSync(f.target+'.integrity.json'),false);
+ } finally {cleanup(f);}
+});
+test('watchdog is stopped once the proof is written: the helper exits by itself, well inside the bound', () => {
+ const f=fixture();
+ try {
+  const r=hungSnapshot(f,'');
+  assert.equal(r.status,0,r.stderr);
+  assert.match(r.stdout,/finished/);
+  const proof=JSON.parse(fs.readFileSync(f.target+'.integrity.json','utf8'));
+  assert.equal(proof.ic,'ok');assert.equal(proof.timings.verifyLimitSeconds,0.5);
+ } finally {cleanup(f);}
+});
 test('copy time limit is max(900 s, bytes / 4 MB/s)', () => {
  assert.equal(limitForBytes(0),900000);
  assert.equal(limitForBytes(3067301888),900000);
