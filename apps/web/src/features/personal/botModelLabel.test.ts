@@ -15,6 +15,7 @@ import {
   botModelLabel,
   botModelShortLabel,
   fallbackNoteLabel,
+  splitModelMarker,
 } from "./botModelLabel";
 import { taskCardBotLine } from "./botSummaries";
 
@@ -415,5 +416,27 @@ describe("a bot on its model schedule", () => {
 
   it("leaves the time out when the row names none", () => {
     expect(fallbackNoteLabel(onSchedule(), NOW, "UTC")).toBe("Scheduled model");
+  });
+});
+
+describe("splitModelMarker", () => {
+  it("splits the three markers off the tight label", () => {
+    expect(splitModelMarker("Sonnet 5.5 · H · peak")).toEqual({
+      base: "Sonnet 5.5 · H",
+      marker: "peak",
+    });
+    expect(splitModelMarker("Opus 5.5 · M · sched")).toEqual({
+      base: "Opus 5.5 · M",
+      marker: "sched",
+    });
+    expect(splitModelMarker("Sonnet 5.5 · H · fallback")).toEqual({
+      base: "Sonnet 5.5 · H",
+      marker: "fallback",
+    });
+  });
+
+  it("leaves a label with no marker whole", () => {
+    expect(splitModelMarker("Opus 5.5 · M")).toEqual({ base: "Opus 5.5 · M", marker: null });
+    expect(splitModelMarker("peak")).toEqual({ base: "peak", marker: null });
   });
 });

@@ -2,6 +2,7 @@ import type { JSX } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { splitModelMarker } from "./botModelLabel";
 import { CONVERSATION_STATE_LABEL, type ConversationState } from "./conversationModel";
 
 const STATE_DOT: Record<ConversationState, string> = {
@@ -30,6 +31,8 @@ const STATE_DOT: Record<ConversationState, string> = {
  * drops the word "Idle" and keeps the state dot, so the marker fits at 390 px
  * beside two chat chips (Harout, 15 Oct). A busy, waiting or broken status is
  * still spoken out loud; the dropped word stays in the line for screen readers.
+ * With a marker the model name is what gives way, so "peak" or "sched" is the
+ * last thing cut; the bot's name never shrinks for either.
  */
 export function ConversationSubtitle({
   state,
@@ -44,6 +47,10 @@ export function ConversationSubtitle({
   status: string;
 }): JSX.Element {
   const showsMarker = modelNote !== null && modelLabel !== null;
+  const split =
+    modelNote !== null && modelLabel !== null
+      ? splitModelMarker(modelLabel)
+      : { base: modelLabel ?? "", marker: null };
   const dropIdleWord =
     state === "idle" &&
     showsMarker &&
@@ -73,10 +80,23 @@ export function ConversationSubtitle({
         {modelLabel !== null ? (
           <span
             data-testid="chat-model-label"
-            className="min-w-0 shrink-[100] truncate whitespace-nowrap"
+            className={cn(
+              "min-w-0 shrink-[100] truncate whitespace-nowrap",
+              // With a marker the model name gives way and the marker stays.
+              split.marker !== null && "flex",
+            )}
           >
             {dropIdleWord ? null : <span aria-hidden="true">· </span>}
-            {modelLabel}
+            {split.marker !== null ? (
+              <>
+                <span className="min-w-0 truncate">{split.base}</span>
+                <span data-testid="chat-model-marker" className="shrink-0 whitespace-pre">
+                  {` · ${split.marker}`}
+                </span>
+              </>
+            ) : (
+              modelLabel
+            )}
             {modelNote !== null ? <span className="sr-only"> ({modelNote})</span> : null}
           </span>
         ) : null}

@@ -249,6 +249,26 @@ export function fallbackNoteLabel(
 }
 
 /**
+ * A tight label split at its marker: "Sonnet 5.5 · H · peak" -> base "Sonnet 5.5 · H",
+ * marker "peak". The chat header lets the base give way first so the marker (why
+ * the model is not the bot's own) is the last thing to be cut. A label with no
+ * marker comes back whole.
+ */
+export function splitModelMarker(label: string): { base: string; marker: string | null } {
+  for (const marker of [
+    DEEPSEEK_PEAK_SHORT_LABEL,
+    SCHEDULED_MODEL_SHORT_LABEL,
+    FALLBACK_LABEL_MARKER,
+  ]) {
+    const suffix = ` · ${marker}`;
+    if (label.endsWith(suffix) && label.length > suffix.length) {
+      return { base: label.slice(0, -suffix.length), marker };
+    }
+  }
+  return { base: label, marker: null };
+}
+
+/**
  * The long model label for a bot: what it runs on right now, with the fallback
  * note when that is its fallback ("Sonnet 5.5 high, on fallback until about
  * 14:30 (Codex usage limit)").

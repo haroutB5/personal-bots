@@ -79,10 +79,19 @@ describe("ConversationSubtitle", () => {
         modelNote: note,
       });
       const marker = renderer.root.find((node) => node.props["data-testid"] === "chat-model-label");
-      const visible = marker.children
-        .map((child) => (typeof child === "string" ? child : ""))
-        .join("");
-      expect(visible).toBe(label);
+      const baseAndMarker = label.split(" · ");
+      const markerWord = baseAndMarker[baseAndMarker.length - 1];
+      const tail = renderer.root.find((node) => node.props["data-testid"] === "chat-model-marker");
+      expect(tail.children.join("")).toBe(` · ${markerWord}`);
+      // The marker never shrinks; the model name in front of it is what gives way.
+      expect(String(tail.props.className)).toContain("shrink-0");
+      const base = marker.findAll(
+        (node) =>
+          node.type === "span" &&
+          String(node.props.className) === "min-w-0 truncate" &&
+          node.children.join("") === label.slice(0, -` · ${markerWord}`.length),
+      );
+      expect(base).toHaveLength(1);
       // No visible "Idle" and no leading separator; the dot is still there and the
       // word stays for screen readers.
       expect(
@@ -99,7 +108,6 @@ describe("ConversationSubtitle", () => {
         ),
       ).toHaveLength(1);
       expect(JSON.stringify(renderer.toJSON())).toContain("Idle");
-      expect(marker.children[0]).toBe(label);
       // The dropped word's room goes to the marker: a tighter dot gap and 12px text.
       const line = renderer.root.find((node) => node.type === "p");
       expect(String(line.props.className)).toContain("text-[12px]");
