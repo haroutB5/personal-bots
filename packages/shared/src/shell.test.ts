@@ -27,7 +27,9 @@ import {
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
   resolveSpawnExecutableWithNode,
+  resolveSpawnExecutableWithNodeAsync,
   resolveWindowsEnvironment,
+  spawnAsyncResolveEnabled,
   spawnResolutionCache,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
@@ -584,7 +586,90 @@ describe("resolveSpawnExecutableWithNode", () => {
   });
 });
 
+describe("resolveSpawnExecutableWithNodeAsync", () => {
+  let root = "";
+
+  beforeEach(() => {
+    spawnResolutionCache.clear();
+    root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-async-"));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("finds what the synchronous walk finds, in the same PATH and PATHEXT order", async () => {
+    const empty = NodePath.join(root, "empty");
+    const first = NodePath.join(root, "first");
+    const second = NodePath.join(root, "second");
+    for (const dir of [empty, first, second]) NodeFS.mkdirSync(dir);
+    NodeFS.writeFileSync(NodePath.join(first, "tool.CMD"), "");
+    NodeFS.writeFileSync(NodePath.join(first, "tool.EXE"), "");
+    NodeFS.writeFileSync(NodePath.join(second, "tool.EXE"), "");
+    NodeFS.mkdirSync(NodePath.join(first, "dir.EXE"));
+    NodeFS.writeFileSync(NodePath.join(second, "dir.EXE"), "");
+    NodeFS.writeFileSync(NodePath.join(second, "plain.txt"), "");
+    const env = { PATH: `${empty};"${first}";;${second}`, PATHEXT: ".EXE;.CMD" };
+
+    for (const command of [
+      "tool",
+      "tool.cmd",
+      "dir",
+      "plain.txt",
+      "missing",
+      NodePath.join(second, "tool"),
+    ]) {
+      spawnResolutionCache.clear();
+      const synchronous = resolveSpawnExecutableWithNode(command, "win32", env);
+      spawnResolutionCache.clear();
+      expect(await resolveSpawnExecutableWithNodeAsync(command, "win32", env)).toBe(synchronous);
+    }
+    expect(await resolveSpawnExecutableWithNodeAsync("tool", "win32", env)).toBe(
+      NodePath.join(first, "tool.EXE"),
+    );
+  });
+
+  it("shares the synchronous resolver's cache", async () => {
+    const executable = NodePath.join(root, "shared.EXE");
+    NodeFS.writeFileSync(executable, "");
+    const env = { PATH: root, PATHEXT: ".EXE" };
+    expect(await resolveSpawnExecutableWithNodeAsync("shared", "win32", env)).toBe(executable);
+    NodeFS.rmSync(executable);
+    expect(resolveSpawnExecutableWithNode("shared", "win32", env)).toBe(executable);
+    expect(await resolveSpawnExecutableWithNodeAsync("shared", "win32", env)).toBe(executable);
+  });
+
+  it("is on unless T3CODE_SPAWN_ASYNC_RESOLVE switches it off", () => {
+    expect(spawnAsyncResolveEnabled({})).toBe(true);
+    expect(spawnAsyncResolveEnabled({ T3CODE_SPAWN_ASYNC_RESOLVE: "on" })).toBe(true);
+    for (const value of ["off", "0", "false", "no", " OFF "]) {
+      expect(spawnAsyncResolveEnabled({ T3CODE_SPAWN_ASYNC_RESOLVE: value })).toBe(false);
+    }
+  });
+});
+
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
+  it.effect("resolves a command shim from PATH with the default resolver", () =>
+    Effect.gen(function* () {
+      spawnResolutionCache.clear();
+      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "spawn-shim-"));
+      const shim = NodePath.join(dir, "shimmed.cmd");
+      NodeFS.writeFileSync(shim, "");
+      try {
+        const command = yield* resolveSpawnCommand("shimmed", ["x"], {
+          env: { PATH: dir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+        expect(command.shell).toBe(true);
+        expect(command.command.toLowerCase()).toContain("shimmed.cmd");
+        expect(command.command).toContain(NodePath.basename(dir));
+      } finally {
+        NodeFS.rmSync(dir, { recursive: true, force: true });
+        spawnResolutionCache.clear();
+      }
+    }),
+  );
+
   it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {

@@ -188,6 +188,89 @@ export function resolveSpawnExecutableWithNode(
   return undefined;
 }
 
+async function isExecutableFileAsync(
+  candidate: string,
+  platform: NodeJS.Platform,
+  windowsPathExtensions: ReadonlyArray<string>,
+  extname: (path: string) => string,
+): Promise<boolean> {
+  try {
+    if (!(await NodeFS.promises.stat(candidate)).isFile()) return false;
+    if (platform === "win32")
+      return windowsPathExtensions.includes(extname(candidate).toUpperCase());
+    await NodeFS.promises.access(candidate, NodeFS.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * {@link resolveSpawnExecutableWithNode} with its stat probes on the libuv
+ * thread pool instead of the event loop: same candidates, same order, same
+ * cache. A statSync on a program Windows Defender is scanning waits for the
+ * scan; on the live server one such walk held the event loop for 4.3 s
+ * (stall 2026-10-15 04:00). `T3CODE_SPAWN_ASYNC_RESOLVE=off` goes back to the
+ * synchronous walk.
+ */
+export async function resolveSpawnExecutableWithNodeAsync(
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
+  const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
+  const candidates = resolveCommandCandidates(
+    command,
+    platform,
+    windowsPathExtensions,
+    path.extname,
+  );
+  const firstExecutable = async (paths: ReadonlyArray<string>) => {
+    const found = await Promise.all(
+      paths.map((candidate) =>
+        isExecutableFileAsync(candidate, platform, windowsPathExtensions, path.extname),
+      ),
+    );
+    const index = found.indexOf(true);
+    return index === -1 ? undefined : paths[index];
+  };
+
+  if (command.includes("/") || command.includes("\\")) {
+    return firstExecutable(candidates);
+  }
+
+  const pathValue = readEnvPath(env) ?? "";
+  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
+    SPAWN_RESOLUTION_CACHE_KEY_SEPARATOR,
+  );
+  const nowMs = Date.now();
+  const cached = spawnResolutionCache.get(cacheKey);
+  if (cached !== undefined) {
+    if (cached.expiresAtMs > nowMs) return cached.resolvedPath ?? undefined;
+    spawnResolutionCache.delete(cacheKey);
+  }
+
+  for (const pathEntry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
+    if (normalizedPathEntry.length === 0) continue;
+    const candidatePath = await firstExecutable(
+      candidates.map((candidate) => path.join(normalizedPathEntry, candidate)),
+    );
+    if (candidatePath !== undefined) {
+      cacheSpawnResolution(cacheKey, candidatePath, nowMs);
+      return candidatePath;
+    }
+  }
+  cacheSpawnResolution(cacheKey, null, nowMs);
+  return undefined;
+}
+
+export function spawnAsyncResolveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.T3CODE_SPAWN_ASYNC_RESOLVE?.trim().toLowerCase();
+  return !(value === "off" || value === "0" || value === "false" || value === "no");
+}
+
 export const SpawnExecutableResolution = Context.Reference<SpawnExecutableResolver>(
   "@t3tools/shared/shell/SpawnExecutableResolution",
   {
@@ -754,7 +837,12 @@ export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(functi
         ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const resolvedCommand = resolveExecutable(command, platform, env) ?? command;
+  // The default resolver walks PATH off the event loop; an injected one (tests,
+  // embedders) is called as given.
+  const resolvedCommand =
+    (resolveExecutable === resolveSpawnExecutableWithNode && spawnAsyncResolveEnabled()
+      ? yield* Effect.promise(() => resolveSpawnExecutableWithNodeAsync(command, platform, env))
+      : resolveExecutable(command, platform, env)) ?? command;
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };
