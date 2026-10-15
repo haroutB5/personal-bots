@@ -8,7 +8,8 @@ import * as NodeSqlite from "node:sqlite";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { readTranscriptRecords, readTranscriptRecordsInline } from "./usageTranscriptReader.ts";
+import { readDeepSeekOnWorker } from "./usageTranscriptWorkerClient.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
@@ -96,6 +97,51 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
 }
 
 describe("readTranscriptRecords resume", () => {
+  it("keeps DeepSeek worker results identical across tail completion, append, rewrite and concurrent reads", async () => {
+    const path = NodePath.join(dir, "deepseek.jsonl");
+    await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7).trimEnd());
+    const first = await readDeepSeekOnWorker(path);
+    assert.deepStrictEqual(first, await readTranscriptRecordsInline(path, "deepseek"));
+    assert.isNotNull(first);
+    assert.strictEqual(first.tailRecords.length, 1);
+    await NodeFSP.appendFile(path, `\n${claudeLine(3, 11)}`);
+    const resumed = await readDeepSeekOnWorker(path, first.position);
+    assert.deepStrictEqual(
+      resumed,
+      await readTranscriptRecordsInline(path, "deepseek", first.position),
+    );
+    assert.isTrue(resumed!.resumed);
+    const full = await readDeepSeekOnWorker(path);
+    assert.deepStrictEqual([...first.records, ...resumed!.records], full!.records);
+    await NodeFSP.writeFile(path, claudeLine(4, 25));
+    const [rewritten, missing] = await Promise.all([
+      readDeepSeekOnWorker(path, first.position),
+      readDeepSeekOnWorker(NodePath.join(dir, "missing.jsonl")),
+    ]);
+    assert.isNull(missing);
+    assert.isFalse(rewritten!.resumed);
+    assert.deepStrictEqual(
+      rewritten,
+      await readTranscriptRecordsInline(path, "deepseek", first.position),
+    );
+  });
+
+  it("uses the same streaming projection for large DeepSeek tool records on the worker", async () => {
+    const path = NodePath.join(dir, "deepseek-large.jsonl");
+    const large = claudeLine(1, 5).replace(
+      '"message":{',
+      `"padding":${JSON.stringify("tool 文".repeat(80_000))},"message":{`,
+    );
+    await NodeFSP.writeFile(path, large + "broken JSON\n" + claudeLine(2, 7));
+    const options = { streamingThresholdBytes: 256 * 1024 };
+    const actual = await readDeepSeekOnWorker(path, undefined, options);
+    assert.deepStrictEqual(
+      actual,
+      await readTranscriptRecordsInline(path, "deepseek", undefined, options),
+    );
+    assert.strictEqual(actual!.records.length, 2);
+  });
+
   it("parses only appended lines when resuming a grown file", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));

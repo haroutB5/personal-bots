@@ -22,6 +22,7 @@ import * as NodeStringDecoder from "node:string_decoder";
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { createTranscriptJsonReader } from "../project/AgentSessionJson.ts";
+import { readDeepSeekOnWorker } from "./usageTranscriptWorkerClient.ts";
 
 import {
   initialCodexScanState,
@@ -254,6 +255,25 @@ async function guardMatches(
  * correct.
  */
 export async function readTranscriptRecords(
+  filePath: string,
+  provider: UsageProviderKind,
+  resumeFrom?: TranscriptParsePosition,
+  options?: { readonly streamingThresholdBytes?: number },
+): Promise<TranscriptParseResult | null> {
+  if (provider === "deepseek" && process.env.T3CODE_DEEPSEEK_SCAN_WORKER !== "off") {
+    try {
+      return await readDeepSeekOnWorker(filePath, resumeFrom, options);
+    } catch {
+      // An unavailable worker must not turn previously readable usage into
+      // an empty cached result. Use the original reader for this call.
+      return readTranscriptRecordsInline(filePath, provider, resumeFrom, options);
+    }
+  }
+  return readTranscriptRecordsInline(filePath, provider, resumeFrom, options);
+}
+
+/** The same byte reader on the worker and on the kill-switch path. */
+export async function readTranscriptRecordsInline(
   filePath: string,
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
