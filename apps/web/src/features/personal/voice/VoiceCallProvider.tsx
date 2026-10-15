@@ -52,6 +52,7 @@ import { VOICE_UNDO_MS, endReasonLine } from "./callState";
 import type { VoiceCallSession, VoiceCallTranscriptEntry } from "./voiceCallApi";
 import {
   type VoiceCallStatusWatch,
+  botStatusFromSnapshot,
   createVoiceCallStatusWatch,
   observeCallTurn,
 } from "./voiceCallStatus";
@@ -221,6 +222,10 @@ export function VoiceCallProvider({
   const statusWatchRef = useRef<VoiceCallStatusWatch | null>(null);
   statusWatchRef.current ??= createVoiceCallStatusWatch();
   const statusWatch = statusWatchRef.current;
+  /** The last snapshot the server gave for this call's own chat. */
+  const serverStatusRef = useRef<{ callId: string; status: BotStatusPort } | null>(null);
+  /** The loaded voiceCallApi module, kept for the snapshot poll. */
+  const voiceApiRef = useRef<typeof import("./voiceCallApi") | null>(null);
   const workingRef = useRef(false);
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
 
@@ -259,15 +264,19 @@ export function VoiceCallProvider({
   }, []);
 
   /**
-   * The bot's real state for the CALL's thread. It never falls back to `idle`
-   * just because the chat is not on screen: a missing source keeps the last
-   * known answer, which is what stops a navigation being read as "the bot
-   * finished its turn".
+   * The bot's real state for the CALL's thread, from the server's own snapshot
+   * of that chat. It never falls back to `idle` just because the chat is not on
+   * screen: before the first snapshot, and if the server cannot be asked at
+   * all, the last answer stands. That is what stops a navigation being read as
+   * "the bot finished its turn".
    */
-  const readBotStatus = useCallback(
-    (): BotStatusPort => statusWatch.read(activeRef.current?.threadId ?? null),
-    [statusWatch],
-  );
+  const readBotStatus = useCallback((): BotStatusPort => {
+    const server = serverStatusRef.current;
+    if (server !== null && server.callId === engineRef.current?.session?.callId) {
+      return server.status;
+    }
+    return statusWatch.read(activeRef.current?.threadId ?? null);
+  }, [statusWatch]);
 
   const releaseWakeLock = useCallback(() => {
     const sentinel = wakeLockRef.current;
@@ -308,6 +317,8 @@ export function VoiceCallProvider({
       startingRef.current = false;
       workingRef.current = false;
       statusWatch.reset();
+      serverStatusRef.current = null;
+      voiceApiRef.current = null;
       releaseWakeLock();
       setWakeLockBlocked(false);
       storeRef.current.snapshot = EMPTY_SNAPSHOT;
@@ -345,6 +356,9 @@ export function VoiceCallProvider({
         return;
       }
       if (!startingRef.current) return;
+      // Kept for the call's own status poll: the snapshot RPC is the only thing
+      // the voice reads the bot from.
+      voiceApiRef.current = voiceApi;
       const [{ createCallAudio }, { createVoiceCallController }] = await Promise.all([
         import("./callAudio"),
         import("./voiceCallController"),
@@ -525,26 +539,54 @@ export function VoiceCallProvider({
 
   // The screen is the only thing that knows about time passing, so the timer
   // lives in the store: no interval in the shell, and nothing at all while idle.
+  //
+  // Each tick asks the server for the CALL's own chat before it decides
+  // anything, so the voice reads the bot's real state and its real reply
+  // whatever chat happens to be on screen (review finding 6).
   useEffect(() => {
     if (call === null) return;
-    const interval = setInterval(() => {
+    let cancelled = false;
+
+    const refreshServerStatus = async () => {
       const engine = engineRef.current;
-      if (engine === null) return;
-      const next = engine.snapshot();
-      publish(next);
-      // The turn end is read from the CALL's own chat, and only while a source
-      // for that thread is really mounted. A screen going away changes nothing.
-      const turn = observeCallTurn({
-        watching: statusWatch.hasSource(call.threadId),
-        live: next.state.status === "live",
-        status: readBotStatus(),
-        wasWorking: workingRef.current,
+      const voiceApi = voiceApiRef.current;
+      const callId = engine?.session?.callId ?? null;
+      if (engine === null || voiceApi === null || callId === null || environmentId === null) return;
+      if (engine.ended) return;
+      const result = await runAtomCommand(
+        registry,
+        voiceApi.personalVoiceCallSnapshot,
+        { environmentId, input: { threadId: ThreadId.make(call.threadId), callId } },
+        { reportFailure: false, reportDefect: false },
+      );
+      if (cancelled || result._tag !== "Success") return;
+      serverStatusRef.current = { callId, status: botStatusFromSnapshot(result.value) };
+    };
+
+    const interval = setInterval(() => {
+      void refreshServerStatus().then(() => {
+        if (cancelled) return;
+        const engine = engineRef.current;
+        if (engine === null) return;
+        const next = engine.snapshot();
+        publish(next);
+        // The turn end is read from the CALL's own chat. A screen going away
+        // changes nothing: with neither source the last answer is held.
+        const turn = observeCallTurn({
+          watching: serverStatusRef.current !== null || statusWatch.hasSource(call.threadId),
+          live: next.state.status === "live",
+          status: readBotStatus(),
+          wasWorking: workingRef.current,
+        });
+        if (turn.ended) engine.botTurnEnded();
+        workingRef.current = turn.working;
       });
-      if (turn.ended) engine.botTurnEnded();
-      workingRef.current = turn.working;
     }, CALL_WATCH_MS);
-    return () => clearInterval(interval);
-  }, [call, publish, readBotStatus, statusWatch]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [call, environmentId, publish, readBotStatus, registry, statusWatch]);
 
   // Unmounting the shell is the end of the call: the socket, the microphone and
   // the audio all go, and the card is still handed to the server first.
@@ -558,6 +600,8 @@ export function VoiceCallProvider({
       contextRef.current = null;
       activeRef.current = null;
       startingRef.current = false;
+      serverStatusRef.current = null;
+      voiceApiRef.current = null;
       const sentinel = wakeLockRef.current;
       wakeLockRef.current = null;
       if (sentinel !== null) void sentinel.release().catch(() => undefined);

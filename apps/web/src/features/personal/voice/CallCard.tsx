@@ -8,7 +8,7 @@
  *
  * @module features/personal/voice/CallCard
  */
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 import { useState } from "react";
 
 import { ChevronDown, Phone } from "lucide-react";
@@ -41,10 +41,17 @@ export function CallCard({
   model,
   onCallBack,
   onReturn,
+  transcript = null,
 }: {
   readonly model: VoiceCallCardModel;
   readonly onCallBack: () => void;
   readonly onReturn: () => void;
+  /**
+   * The expanded transcript. Omitted where the rows are already at hand; the
+   * chat passes a lazily-fetched one, so nothing is read until the owner opens
+   * the card.
+   */
+  readonly transcript?: ReactNode | undefined;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const sentLine =
@@ -115,25 +122,26 @@ export function CallCard({
           </button>
           {open ? (
             <div className="pb-3">
-              {model.transcript.map((row, index) => (
-                <div key={`${index}-${row.speaker}`} className="flex gap-2 py-0.5">
-                  <span className="w-[34px] shrink-0 text-[12px] leading-[19px] text-[var(--personal-text-tertiary)] [font-variant-numeric:tabular-nums]">
-                    {transcriptOffset(model.startedAtMs, row.at)}
-                  </span>
-                  <span
-                    className={`w-[52px] shrink-0 truncate text-[13px] leading-[19px] font-semibold ${
-                      row.speaker === "you"
-                        ? "text-[var(--personal-text-secondary)]"
-                        : "text-[var(--personal-text-tertiary)]"
-                    }`}
-                  >
-                    {row.speaker === "you" ? "You" : (model.voiceName ?? "Voice")}
-                  </span>
-                  <span className="min-w-0 flex-1 text-[14px] leading-[19px] break-words text-[var(--personal-text)]">
-                    {row.text}
-                  </span>
-                </div>
-              ))}
+              {transcript ??
+                model.transcript.map((row, index) => (
+                  <div key={`${index}-${row.speaker}`} className="flex gap-2 py-0.5">
+                    <span className="w-[34px] shrink-0 text-[12px] leading-[19px] text-[var(--personal-text-tertiary)] [font-variant-numeric:tabular-nums]">
+                      {transcriptOffset(model.startedAtMs, row.at)}
+                    </span>
+                    <span
+                      className={`w-[52px] shrink-0 truncate text-[13px] leading-[19px] font-semibold ${
+                        row.speaker === "you"
+                          ? "text-[var(--personal-text-secondary)]"
+                          : "text-[var(--personal-text-tertiary)]"
+                      }`}
+                    >
+                      {row.speaker === "you" ? "You" : (model.voiceName ?? "Voice")}
+                    </span>
+                    <span className="min-w-0 flex-1 text-[14px] leading-[19px] break-words text-[var(--personal-text)]">
+                      {row.text}
+                    </span>
+                  </div>
+                ))}
               <p className="mt-2 text-[12px] leading-[17px] text-[var(--personal-text-tertiary)]">
                 {[
                   `Gemini Live`,

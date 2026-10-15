@@ -1,11 +1,18 @@
 /**
- * The review's finding 6: the voice must read the CALL's own chat, and a screen
- * going away must never look like the bot finishing its turn.
+ * The review's finding 6: the voice must read the CALL's own chat - the
+ * server's snapshot of it - and a screen going away must never look like the
+ * bot finishing its turn.
  */
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import type { VoiceCallSnapshotResult } from "./voiceCallApi";
 import type { BotStatusPort } from "./voiceCallController";
-import { UNKNOWN_BOT_STATUS, createVoiceCallStatusWatch, observeCallTurn } from "./voiceCallStatus";
+import {
+  UNKNOWN_BOT_STATUS,
+  botStatusFromSnapshot,
+  createVoiceCallStatusWatch,
+  observeCallTurn,
+} from "./voiceCallStatus";
 
 const status = (patch: Partial<BotStatusPort> = {}): BotStatusPort => ({
   state: "idle",
@@ -14,6 +21,17 @@ const status = (patch: Partial<BotStatusPort> = {}): BotStatusPort => ({
   latestReply: null,
   ...patch,
 });
+
+const snapshot = (patch: Partial<VoiceCallSnapshotResult> = {}): VoiceCallSnapshotResult =>
+  ({
+    status: "Idle",
+    stepNote: "",
+    turnRunning: false,
+    latestReply: "",
+    latestReplyMessageId: "",
+    latestReplyAt: null,
+    ...patch,
+  }) as VoiceCallSnapshotResult;
 
 /** One tick of the provider's own watch loop. */
 function makeTick(watch: ReturnType<typeof createVoiceCallStatusWatch>, threadId: string) {
@@ -97,5 +115,43 @@ describe("createVoiceCallStatusWatch", () => {
     watch.register("call-thread", () => status({ state: "working" }));
     watch.reset();
     expect(watch.read("call-thread")).toEqual(UNKNOWN_BOT_STATUS);
+  });
+});
+
+describe("botStatusFromSnapshot", () => {
+  it("maps the server's own words and its turn flag", () => {
+    expect(
+      botStatusFromSnapshot(
+        snapshot({
+          status: "Working",
+          stepNote: "Running the gates",
+          turnRunning: true,
+          latestReply: "Shipped 1.66.52.",
+        }),
+      ),
+    ).toEqual({
+      state: "working",
+      label: "Working",
+      step: "Running the gates",
+      elapsedMs: null,
+      latestReply: "Shipped 1.66.52.",
+    });
+  });
+
+  it("reads an idle call as idle, with the reply the voice may read", () => {
+    expect(botStatusFromSnapshot(snapshot({ status: "Waiting on you" }))).toEqual({
+      state: "idle",
+      label: "Waiting on you",
+      step: null,
+      elapsedMs: null,
+      latestReply: null,
+    });
+  });
+
+  it("never invents a step or a reply out of an empty string", () => {
+    const mapped = botStatusFromSnapshot(snapshot({ status: "", stepNote: "  ", latestReply: "" }));
+    expect(mapped.label).toBeNull();
+    expect(mapped.step).toBeNull();
+    expect(mapped.latestReply).toBeNull();
   });
 });

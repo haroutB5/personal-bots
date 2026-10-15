@@ -647,6 +647,26 @@ describe("send_to_bot and the Undo card", () => {
     });
   });
 
+  it("tells the voice the app's own word for the state when the source has one", async () => {
+    const test = harness();
+    // What the server's snapshot says: "Waiting on you" is a label, and the
+    // engine's own "working" is what decides the turn end.
+    test.status.current = {
+      state: "working",
+      label: "Waiting on you",
+      step: null,
+      elapsedMs: null,
+      latestReply: null,
+    };
+    const socket = await connected(test);
+    socket.receive({ toolCall: { functionCalls: [{ id: "s-1", name: "bot_status", args: {} }] } });
+    expect(toolAnswers(socket)[0]!.response).toEqual({
+      state: "Waiting on you",
+      step: null,
+      elapsedSeconds: null,
+    });
+  });
+
   it("ends the call when the voice hears bye", async () => {
     const test = harness();
     const socket = await connected(test);
