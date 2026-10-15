@@ -135,10 +135,15 @@ export type VoiceCallStartResult = typeof VoiceCallStartResult.Type;
  * - `calls_not_allowed`: the bot's "Allow voice calls" switch is off.
  * - `not_owner_chat`: not an owner chat (a group, task or archived chat, or no
  *   bot behind the thread at all).
+ * - `sensitive_chat`: the chat has had a site the owner marked sensitive open.
+ *   A call fails closed there and nothing from that chat is ever run through
+ *   the voice: `start` and `send` refuse, and the snapshot returns no chat text.
+ * - `send_failed`: the chat refused the message, so nothing was posted.
  * - `google_unavailable`: Google could not be reached, or answered 5xx.
  * - `rate_limited`: too many starts in a row from this client.
  * - `invalid_input`: a field the server cannot use.
- * - `not_found`: the chat or the call does not exist.
+ * - `not_found`: the chat or the call does not exist, or the call is not open
+ *   any more (a stale tab, or a server restart mid-call).
  */
 export const VoiceCallErrorCode = Schema.Literals([
   "no_key",
@@ -146,6 +151,8 @@ export const VoiceCallErrorCode = Schema.Literals([
   "key_quota",
   "calls_not_allowed",
   "not_owner_chat",
+  "sensitive_chat",
+  "send_failed",
   "google_unavailable",
   "rate_limited",
   "invalid_input",
@@ -344,11 +351,75 @@ export type VoiceCallListInput = typeof VoiceCallListInput.Type;
 /**
  * The chat's call cards, newest first. The client drops each one into the
  * transcript at its `startedAt`, the way a delegated task's card is placed.
+ *
+ * Each row's `transcript` is **always empty here**: the list never reads the
+ * stored transcripts, so opening a chat costs one small query whatever the call
+ * history. The client fetches a card's transcript with
+ * {@link VoiceCallTranscriptInput} when the owner expands it.
  */
 export const VoiceCallListResult = Schema.Struct({
   calls: Schema.Array(VoiceCallRecord),
 });
 export type VoiceCallListResult = typeof VoiceCallListResult.Type;
+
+// ---------------------------------------------------------------------------
+// snapshot (a running call's own chat state)
+// ---------------------------------------------------------------------------
+
+/** Longest the reply the voice may read out is allowed to get, in characters. */
+export const VOICE_CALL_SNAPSHOT_REPLY_CHARS = 4_000;
+
+export const VoiceCallSnapshotInput = Schema.Struct({
+  threadId: ThreadId,
+  callId: TrimmedNonEmptyString,
+});
+export type VoiceCallSnapshotInput = typeof VoiceCallSnapshotInput.Type;
+
+/**
+ * The call's own chat, as of now, for the client's `bot_status` and
+ * `latest_reply` tools.
+ *
+ * The server reads this **for the call's own thread**, never for whatever chat
+ * happens to be on screen, so opening another chat mid-call cannot make the
+ * voice read a stranger's reply or think a turn ended. Every text here is
+ * redacted and bounded on the server; a chat that has had a site the owner
+ * marked sensitive open returns the status only, with no chat text at all.
+ */
+export const VoiceCallSnapshotResult = Schema.Struct({
+  /** "Working", "Idle" or "Waiting on you", in the app's own words. */
+  status: Schema.String,
+  /** The current step line while it works; redacted, empty when there is none. */
+  stepNote: Schema.String,
+  /** True while the bot's own turn is running. */
+  turnRunning: Schema.Boolean,
+  /** The newest finished reply in the call's chat; redacted, capped, may be "". */
+  latestReply: Schema.String,
+  /** The id of that reply, so the client only speaks each one once; "" when none. */
+  latestReplyMessageId: Schema.String,
+  /** When that reply landed; null when there is none. */
+  latestReplyAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+});
+export type VoiceCallSnapshotResult = typeof VoiceCallSnapshotResult.Type;
+
+// ---------------------------------------------------------------------------
+// transcript (fetched when a card is expanded)
+// ---------------------------------------------------------------------------
+
+/**
+ * The call card's transcript, on its own request. The list deliberately does
+ * not carry transcripts: a chat with fifty calls would otherwise send every
+ * one of them on every chat open, voice on or off.
+ */
+export const VoiceCallTranscriptInput = Schema.Struct({
+  callId: TrimmedNonEmptyString,
+});
+export type VoiceCallTranscriptInput = typeof VoiceCallTranscriptInput.Type;
+
+export const VoiceCallTranscriptResult = Schema.Struct({
+  callId: TrimmedNonEmptyString,
+  transcript: Schema.Array(VoiceCallTranscriptEntry),
+});
+export type VoiceCallTranscriptResult = typeof VoiceCallTranscriptResult.Type;
 
 /** The card's reason line, in the owner's words. */
 export const voiceCallEndReasonLabel = (reason: VoiceCallEndReason): string =>
