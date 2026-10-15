@@ -10,9 +10,11 @@ import * as YAML from "yaml";
 
 import { ServerConfig } from "../../config.ts";
 import { botProtectedPaths } from "../../personal/secrets/botProtectedPaths.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import {
   buildDshEnvironment,
   buildDshLaunchPatch,
+  buildDshPersona,
   parseDshResumeCursor,
   resolveDshDenyPlugin,
   resolveDshRuntime,
@@ -111,6 +113,29 @@ it.layer(layer)("DshAcpSupport", (it) => {
       >;
       expect(config.personaSuffix).toBe("{\u200b{nope}}");
       expect(config.personaPrefix).toContain("{{model}}");
+    }),
+  );
+
+  it.effect("carries the dsh-only reply style, and no other harness does", () =>
+    Effect.sync(() => {
+      const dsh = buildRuntimeInstructions({ harness: "DeepSeek Harness" });
+      const persona = buildDshPersona("Be brief.", dsh);
+      expect(persona).toContain("<reply_style>");
+      expect(persona).toContain("Your thinking is hidden from the user");
+      expect(persona).toContain(
+        "Before a tool call, write one complete sentence saying what you found or what you are about to do",
+      );
+      expect(persona).toContain("Never end a message with a colon");
+      // The bot's own block still comes last, after the reply style.
+      expect(persona.indexOf("<reply_style>")).toBeLessThan(persona.indexOf("<bot_instructions>"));
+      // A bot with no instructions still gets it.
+      expect(buildDshPersona(undefined, dsh)).toContain("<reply_style>");
+      // dsh only: the shared runtime instructions and every other harness stay
+      // as they were.
+      expect(dsh).not.toContain("<reply_style>");
+      for (const harness of ["Claude Code", "Codex", "OpenCode", "Cursor", "Grok", "Antigravity"]) {
+        expect(buildRuntimeInstructions({ harness })).not.toContain("<reply_style>");
+      }
     }),
   );
 

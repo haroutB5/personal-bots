@@ -242,6 +242,10 @@ interface SessionContext {
   pendingEffort: string | undefined;
   session: ProviderSession;
   activeTurnId: TurnId | undefined;
+  /** The turn's thinking text has already started, so a later step joins onto it. */
+  thoughtTextStarted: boolean;
+  /** A tool call happened since the last thought chunk (paragraph-break bookkeeping). */
+  toolCallSinceThought: boolean;
   promptFiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> | undefined;
   generation: number;
   draining: boolean;
@@ -653,7 +657,27 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
           }),
         );
         return;
-      case "ThoughtDelta":
+      case "ThoughtDelta": {
+        // dsh joins the thinking of separate steps with no break of its own
+        // ("Let me check.The pattern is"), so a thought that follows a tool
+        // call, in a turn whose thinking already started, opens a new
+        // paragraph. Cosmetic and adapter-only: the frame keeps its own text.
+        const paragraphBreak = context.thoughtTextStarted && context.toolCallSinceThought;
+        context.thoughtTextStarted = true;
+        context.toolCallSinceThought = false;
+        yield* emit(
+          makeAcpContentDeltaEvent({
+            stamp: yield* stamp,
+            provider: PROVIDER,
+            threadId: context.threadId,
+            turnId: context.activeTurnId,
+            streamKind: "reasoning_text",
+            text: paragraphBreak ? `\n\n${event.text}` : event.text,
+            rawPayload: event.rawPayload,
+          }),
+        );
+        return;
+      }
       case "ContentDelta":
         yield* emit(
           makeAcpContentDeltaEvent({
@@ -661,14 +685,14 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
             provider: PROVIDER,
             threadId: context.threadId,
             turnId: context.activeTurnId,
-            ...(event._tag === "ContentDelta" && event.itemId ? { itemId: event.itemId } : {}),
-            ...(event._tag === "ThoughtDelta" ? { streamKind: "reasoning_text" } : {}),
+            ...(event.itemId ? { itemId: event.itemId } : {}),
             text: event.text,
             rawPayload: event.rawPayload,
           }),
         );
         return;
       case "ToolCallUpdated":
+        context.toolCallSinceThought = true;
         yield* emit(
           makeAcpToolCallEvent({
             stamp: yield* stamp,
@@ -1061,6 +1085,8 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
             updatedAt: createdAt,
           },
           activeTurnId: undefined,
+          thoughtTextStarted: false,
+          toolCallSinceThought: false,
           promptFiber: undefined,
           generation: 0,
           draining: false,
@@ -1148,6 +1174,8 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
     Effect.gen(function* () {
       context.activeTurnId = undefined;
       context.promptFiber = undefined;
+      context.thoughtTextStarted = false;
+      context.toolCallSinceThought = false;
       context.session = {
         ...context.session,
         status: payload.state === "failed" ? "error" : "ready",
@@ -1201,6 +1229,8 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
     }
     const generation = ++context.generation;
     context.activeTurnId = turn.turnId;
+    context.thoughtTextStarted = false;
+    context.toolCallSinceThought = false;
     context.session = {
       ...context.session,
       status: "running",

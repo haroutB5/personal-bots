@@ -579,19 +579,33 @@ export const sweepDshLaunchDir = Effect.fn("sweepDshLaunchDir")(function* (input
 });
 
 /**
- * The persona text a launch carries: the runtime instructions, then the bot's
- * own instructions in their own tagged block. Built with the same helper the
- * Claude and OpenCode adapters use, so a bot reads the same persona on either
- * engine (`botInstructionCoverage` walks this module's import closure).
+ * dsh-only reply style. The engine writes most of what it finds into its
+ * thinking stream, which the chat hides by design, so its visible replies were
+ * arriving as bare "Now the X:" lead-ins whose facts never reached the owner.
+ * This block is added only by this module, so no other harness carries it.
+ */
+const DSH_REPLY_STYLE_INSTRUCTIONS = `<reply_style>
+Your thinking is hidden from the user: only the reply text reaches the chat. Put what you found, the numbers, the error text and your decisions in the reply itself, not only in your thinking.
+Before a tool call, write one complete sentence saying what you found or what you are about to do. Never end a message with a colon.
+Stay brief.
+</reply_style>`;
+
+/**
+ * The persona text a launch carries: the runtime instructions, the dsh-only
+ * reply style, then the bot's own instructions in their own tagged block.
+ * Built with the same helper the Claude and OpenCode adapters use, so a bot
+ * reads the same persona on either engine (`botInstructionCoverage` walks this
+ * module's import closure).
  */
 export function buildDshPersona(
   systemInstructions: string | undefined,
   runtimeInstructions: string,
 ): string {
+  const base = `${runtimeInstructions}\n\n${DSH_REPLY_STYLE_INSTRUCTIONS}`;
   const extra = systemInstructions?.trim();
   return extra === undefined || extra.length === 0
-    ? runtimeInstructions
-    : `${runtimeInstructions}\n\n<bot_instructions>${extra}</bot_instructions>`;
+    ? base
+    : `${base}\n\n<bot_instructions>${extra}</bot_instructions>`;
 }
 
 export interface DshAcpRuntimeInput extends Omit<

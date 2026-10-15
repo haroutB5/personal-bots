@@ -841,6 +841,42 @@ const program = Effect.gen(function* () {
             yield* Deferred.await(dshCancelRequested);
             return { stopReason: "cancelled" };
           }
+          if (/paragraph-probe/i.test(promptText)) {
+            // Two thinking steps split by a tool call, in dsh's own frame
+            // shapes: the order the adapter's reasoning paragraph break is
+            // written for (thought, tool_call, tool_call_update, thought).
+            yield* update({
+              sessionUpdate: "agent_thought_chunk",
+              messageId: "dsh-paragraph-probe-1",
+              content: { type: "text", text: "Let me check the file." },
+            });
+            yield* update({ sessionUpdate: "usage_update", used: 7000, size: 1000000 });
+            yield* update({
+              sessionUpdate: "tool_call",
+              toolCallId: "dsh-paragraph-probe-call",
+              title: "read_file",
+              kind: "other",
+              status: "in_progress",
+              rawInput: { path: promptText },
+            });
+            yield* update({
+              sessionUpdate: "tool_call_update",
+              toolCallId: "dsh-paragraph-probe-call",
+              status: "completed",
+              content: [{ type: "content", content: { type: "text", text: "ok" } }],
+            });
+            yield* update({
+              sessionUpdate: "agent_thought_chunk",
+              messageId: "dsh-paragraph-probe-2",
+              content: { type: "text", text: "The file is fine." },
+            });
+            yield* update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "dsh-paragraph-probe-3",
+              content: { type: "text", text: "Done." },
+            });
+            return { stopReason: "end_turn" };
+          }
           // The recorded turn in `events-run1.jsonl`: three committed model
           // steps, one `usage_update` each, an MCP call and a skill.
           yield* update({
