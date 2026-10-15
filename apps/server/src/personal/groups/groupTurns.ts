@@ -36,7 +36,12 @@ import type { GroupCore } from "./groupCore.ts";
 import type { GroupVotes } from "./groupVotes.ts";
 import { loopEndedText, nextRound, pausedBudgetText } from "./groupSchedulePolicy.ts";
 
-export const makeGroupTurns = (core: GroupCore, votes: GroupVotes) => {
+export const makeGroupTurns = (
+  core: GroupCore,
+  votes: GroupVotes,
+  /** T3CODE_PERSONAL_SCHEDULERS=off (a restored test copy): the pump never starts a member turn. */
+  options: { readonly startsTurns: boolean } = { startsTurns: true },
+) => {
   const {
     activeMemberThreadIds,
     botName,
@@ -343,6 +348,7 @@ export const makeGroupTurns = (core: GroupCore, votes: GroupVotes) => {
     void,
     PersonalGroupsError | PersonalGroupRepository.PersonalGroupRepositoryError
   > = Effect.gen(function* () {
+    if (!options.startsTurns) return;
     while (true) {
       const live = yield* repository.listLiveRounds();
       const now = yield* DateTime.now;

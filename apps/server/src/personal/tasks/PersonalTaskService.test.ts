@@ -57,7 +57,7 @@ import {
   rootExposureKey,
   threadExposureKey,
 } from "../browser/sensitiveExposureStore.ts";
-import { PERSONAL_SCHEDULERS_ENV } from "../schedulersSwitch.ts";
+import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
 import { TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL } from "../taskChatAutoArchivePolicy.ts";
 
@@ -4476,25 +4476,6 @@ describe("a delegated task continuing the owner's chat (1.66.12)", () => {
     },
   );
 });
-
-/** Runs `effect` (layer build included) with T3CODE_PERSONAL_SCHEDULERS set to `value`, or unset. */
-const withSchedulersEnv =
-  (value: string | undefined) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const previous = process.env[PERSONAL_SCHEDULERS_ENV];
-        if (value === undefined) delete process.env[PERSONAL_SCHEDULERS_ENV];
-        else process.env[PERSONAL_SCHEDULERS_ENV] = value;
-        return previous;
-      }),
-      () => effect,
-      (previous) =>
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env[PERSONAL_SCHEDULERS_ENV];
-          else process.env[PERSONAL_SCHEDULERS_ENV] = previous;
-        }),
-    );
 
 it.effect("schedulers off (restored test copy): queued tasks never start, sweep or not", () => {
   const harness = makeHarness();
