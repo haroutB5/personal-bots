@@ -302,6 +302,19 @@ import {
   PersonalProfileSetInput,
 } from "./personalBots.ts";
 import {
+  PersonalVoiceCallsError,
+  VoiceCallFinishInput,
+  VoiceCallFinishResult,
+  VoiceCallKeyCheckInput,
+  VoiceCallKeyCheckResult,
+  VoiceCallListInput,
+  VoiceCallListResult,
+  VoiceCallSendInput,
+  VoiceCallSendResult,
+  VoiceCallStartInput,
+  VoiceCallStartResult,
+} from "./personalVoiceCalls.ts";
+import {
   PersonalTask,
   PersonalTaskCreateInput,
   PersonalTaskDetail,
@@ -629,6 +642,14 @@ export const WS_METHODS = {
   personalBotsRecheckProvider: "personalBots.recheckProvider",
   personalBotsListRemoved: "personalBots.listRemoved",
   personalBotsRestore: "personalBots.restore",
+
+  // Voice calls with a bot (Gemini Live). The key never leaves the server: the
+  // phone gets one single-use token per call.
+  personalVoiceCallsStart: "personalVoiceCalls.start",
+  personalVoiceCallsCheckKey: "personalVoiceCalls.checkKey",
+  personalVoiceCallsSend: "personalVoiceCalls.send",
+  personalVoiceCallsFinish: "personalVoiceCalls.finish",
+  personalVoiceCallsList: "personalVoiceCalls.list",
   personalLeadBotChangesList: "personalLeadBotChanges.list",
   personalLeadBotChangesDecide: "personalLeadBotChanges.decide",
   personalFilesDelete: "personalFiles.delete",
@@ -1403,6 +1424,43 @@ const WsPersonalFilesDeleteManyRpc = Rpc.make(WS_METHODS.personalFilesDeleteMany
   payload: PersonalFilesDeleteManyInput,
   success: PersonalFilesBatchResult,
   error: PersonalBotsRpcError,
+});
+
+// Voice calls: owner-only, like everything that can spend the saved Gemini key
+// or post into a chat. No MCP tool reaches any of them.
+const PersonalVoiceCallsRpcError = Schema.Union([
+  PersonalVoiceCallsError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsPersonalVoiceCallsStartRpc = Rpc.make(WS_METHODS.personalVoiceCallsStart, {
+  payload: VoiceCallStartInput,
+  success: VoiceCallStartResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+const WsPersonalVoiceCallsCheckKeyRpc = Rpc.make(WS_METHODS.personalVoiceCallsCheckKey, {
+  payload: VoiceCallKeyCheckInput,
+  success: VoiceCallKeyCheckResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+const WsPersonalVoiceCallsSendRpc = Rpc.make(WS_METHODS.personalVoiceCallsSend, {
+  payload: VoiceCallSendInput,
+  success: VoiceCallSendResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+const WsPersonalVoiceCallsFinishRpc = Rpc.make(WS_METHODS.personalVoiceCallsFinish, {
+  payload: VoiceCallFinishInput,
+  success: VoiceCallFinishResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+const WsPersonalVoiceCallsListRpc = Rpc.make(WS_METHODS.personalVoiceCallsList, {
+  payload: VoiceCallListInput,
+  success: VoiceCallListResult,
+  error: PersonalVoiceCallsRpcError,
 });
 
 const PersonalTasksRpcError = Schema.Union([PersonalTasksError, EnvironmentAuthorizationError]);
@@ -2634,6 +2692,11 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsRecheckProviderRpc,
   WsPersonalBotsListRemovedRpc,
   WsPersonalBotsRestoreRpc,
+  WsPersonalVoiceCallsStartRpc,
+  WsPersonalVoiceCallsCheckKeyRpc,
+  WsPersonalVoiceCallsSendRpc,
+  WsPersonalVoiceCallsFinishRpc,
+  WsPersonalVoiceCallsListRpc,
   WsPersonalLeadBotChangesListRpc,
   WsPersonalLeadBotChangesDecideRpc,
   WsPersonalFilesDeleteRpc,
