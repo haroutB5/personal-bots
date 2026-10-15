@@ -15,6 +15,7 @@ import {
   type SpawnImageWarmer,
   type SpawnWarmupResult,
   withSpawnImageWarmup,
+  SpawnImageWarmupLive,
   withSpawnImageWarmupLayer,
 } from "./spawnImageWarmup.ts";
 
@@ -244,5 +245,33 @@ describe("withSpawnImageWarmupLayer", () => {
       yield* spawner.exitCode(ChildProcess.make("C:\npm\tool.cmd", [], { shell: true }));
       expect(spawned).toEqual(["C:\npm\tool.cmd"]);
     }).pipe(Effect.provide(withSpawnImageWarmupLayer(platform)));
+  });
+});
+
+const currentSpawner = Effect.gen(function* () {
+  return yield* ChildProcessSpawner.ChildProcessSpawner;
+});
+
+describe("SpawnImageWarmupLive", () => {
+  it.effect("re-wraps a plain spawner that a layer in between brings back", () => {
+    const base = ChildProcessSpawner.make(() => Effect.sync(emptyProcessHandle));
+    // Like NodeHttpServer's layer, which carries its own NodeServices.
+    const shadowing = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, base);
+    const platform = withSpawnImageWarmupLayer(
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, base),
+    );
+    return Effect.gen(function* () {
+      const shadowed = yield* currentSpawner.pipe(
+        Effect.provide(shadowing.pipe(Layer.provideMerge(platform))),
+      );
+      expect(shadowed).toBe(base);
+      const rewrapped = yield* currentSpawner.pipe(
+        Effect.provide(
+          SpawnImageWarmupLive.pipe(Layer.provideMerge(shadowing), Layer.provideMerge(platform)),
+        ),
+      );
+      expect(rewrapped).not.toBe(base);
+      expect(withSpawnImageWarmup(rewrapped)).toBe(rewrapped);
+    });
   });
 });

@@ -39,7 +39,7 @@ import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
-import { withSpawnImageWarmupLayer } from "./process/spawnImageWarmup.ts";
+import { SpawnImageWarmupLive, withSpawnImageWarmupLayer } from "./process/spawnImageWarmup.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
@@ -1229,6 +1229,10 @@ const makeServerLayer = Layer.unwrap(
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),
       Layer.provide(activationLayer),
+      // NodeHttpServer's layer carries its own NodeServices, whose plain
+      // ChildProcessSpawner would otherwise shadow PlatformServicesLive's for
+      // everything above it (providers, sessions); wrap it again here.
+      Layer.provideMerge(SpawnImageWarmupLive),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpServerLive),
       Layer.provide(ApplicationObservabilityLive),

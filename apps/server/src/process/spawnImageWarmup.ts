@@ -314,20 +314,36 @@ const warmCommandImages = (
     { concurrency: "unbounded", discard: true },
   );
 
+const WARMING_SPAWNER = Symbol.for("t3code/process/spawnImageWarmup");
+
 /**
  * A ChildProcessSpawner that warms each program it is about to start. On other
- * platforms, or with the switch off, it costs one check per spawn.
+ * platforms, or with the switch off, it costs one check per spawn. Wrapping a
+ * spawner that already warms returns it unchanged.
  */
 export const withSpawnImageWarmup = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   warmer: SpawnImageWarmer = spawnImageWarmer,
   platform: NodeJS.Platform = process.platform,
-): ChildProcessSpawner.ChildProcessSpawner["Service"] =>
-  ChildProcessSpawner.make((command) =>
-    platform === "win32" && spawnWarmupEnabled()
-      ? warmCommandImages(command, warmer).pipe(Effect.andThen(spawner.spawn(command)))
-      : spawner.spawn(command),
+): ChildProcessSpawner.ChildProcessSpawner["Service"] => {
+  if (WARMING_SPAWNER in spawner) return spawner;
+  return Object.assign(
+    ChildProcessSpawner.make((command) =>
+      platform === "win32" && spawnWarmupEnabled()
+        ? warmCommandImages(command, warmer).pipe(Effect.andThen(spawner.spawn(command)))
+        : spawner.spawn(command),
+    ),
+    { [WARMING_SPAWNER]: true },
   );
+};
+
+/** Replaces the ChildProcessSpawner below it with one that warms programs first. */
+export const SpawnImageWarmupLive = Layer.effect(
+  ChildProcessSpawner.ChildProcessSpawner,
+  Effect.gen(function* () {
+    return withSpawnImageWarmup(yield* ChildProcessSpawner.ChildProcessSpawner);
+  }),
+);
 
 /**
  * `platform` (e.g. NodeServices.layer) with its ChildProcessSpawner replaced by
@@ -336,12 +352,4 @@ export const withSpawnImageWarmup = (
 export const withSpawnImageWarmupLayer = <ROut, E, RIn>(
   platform: Layer.Layer<ROut | ChildProcessSpawner.ChildProcessSpawner, E, RIn>,
 ): Layer.Layer<ROut | ChildProcessSpawner.ChildProcessSpawner, E, RIn> =>
-  Layer.merge(
-    platform,
-    Layer.effect(
-      ChildProcessSpawner.ChildProcessSpawner,
-      Effect.gen(function* () {
-        return withSpawnImageWarmup(yield* ChildProcessSpawner.ChildProcessSpawner);
-      }),
-    ).pipe(Layer.provide(platform)),
-  );
+  Layer.merge(platform, SpawnImageWarmupLive.pipe(Layer.provide(platform)));
