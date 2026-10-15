@@ -1,8 +1,8 @@
-# hbots 1.66.52: SQLite checkpoints off the main thread
+# hbots 1.66.52: SQLite checkpoints off the main thread, and Codex bot skills
 
 PROOF_PLACEHOLDER: QA result on this exact staged artifact goes here.
 
-Staged release: `de81b5740839` (`dist/bin.mjs` sha256 in the Gate evidence section), branch `perf/hbots-commit-pauses`, based on live notes `525daec605` (1.66.51). No migration: 108 -> 108. `PERSONAL_TASKS_CONCURRENCY = 5`. Code commit `03c2e748bd`; this release adds only the version bump and these notes.
+Staged release: `d4bf5da25c1b` (`dist/bin.mjs` sha256 in the Gate evidence section), branch `perf/hbots-commit-pauses`, based on live notes `525daec605` (1.66.51). No migration: 108 -> 108. `PERSONAL_TASKS_CONCURRENCY = 5`. Code commits `03c2e748bd` (SQLite checkpoints) and `d4bf5da25c` (Codex bot skills, folded in after the first stage); this release adds only the version bump and these notes.
 
 ## The problem
 
@@ -45,13 +45,61 @@ Found and fixed before commit: a first version triggered on WAL file size, which
 - Crash-kill (`crash.json`): SIGKILL at a random point after 933-2937 acknowledged commits, 7 runs (5 worker NORMAL, worker FULL, legacy). Every acknowledged commit recovered, ids contiguous, `quick_check` ok each time.
 - Backup under load (`backup-load.json`, `backup-integrity.json`): `scripts/personal/sqlite-snapshot.cjs` on the 3.3 GB copy while writing 10 commits/s with the worker on. Snapshot 96.5 s, full `integrity_check` ok, 0 restarts, migration 108.
 - No live database was opened. The production copy in `%TEMP%` was deleted after the runs (no junctions).
-- Staged artifact `de81b5740839` on a throwaway root (`throwaway-server.ps1`, stopped and deleted after): boot with no `checkpoint worker unavailable` WARN and 0 ERROR. A probe wrote 3,133 WAL frames from its own connection with auto-checkpoint off, so only the server's worker could copy them in: the WAL restarted at frame 4 (the file stayed 26.6 MB, reused in place) and the worker backfilled all 3,137 frames within 5.5 s in one 4.3 s pass, logged as `SQLite background checkpoint`; no main-thread stall in that window (`staged-worker-probe-2.json`, `staged-throwaway-server.log`). An earlier pass on the same root took 77 s for a 27 MB WAL while the disk was busy just after the gates (the TEMP root, unlike the live DB, has no Defender exclusion; not verified as the cause); it ran off the main thread, and the server logged no slow SQL statement in that time. Boot itself logged one 2.0 s COMMIT on the fresh root during start-up, before or around the worker's start; not attributed. QA: on a TEMP throwaway root, expect slow background checkpoints and allow up to about 90 s for the WAL check.
+- Staged artifact `de81b5740839` (the first stage; the fold-in is re-gated below and the release e2e runs on the final artifact) on a throwaway root (`throwaway-server.ps1`, stopped and deleted after): boot with no `checkpoint worker unavailable` WARN and 0 ERROR. A probe wrote 3,133 WAL frames from its own connection with auto-checkpoint off, so only the server's worker could copy them in: the WAL restarted at frame 4 (the file stayed 26.6 MB, reused in place) and the worker backfilled all 3,137 frames within 5.5 s in one 4.3 s pass, logged as `SQLite background checkpoint`; no main-thread stall in that window (`staged-worker-probe-2.json`, `staged-throwaway-server.log`). An earlier pass on the same root took 77 s for a 27 MB WAL while the disk was busy just after the gates (the TEMP root, unlike the live DB, has no Defender exclusion; not verified as the cause); it ran off the main thread, and the server logged no slow SQL statement in that time. Boot itself logged one 2.0 s COMMIT on the fresh root during start-up, before or around the worker's start; not attributed. QA: on a TEMP throwaway root, expect slow background checkpoints and allow up to about 90 s for the WAL check.
 
 Evidence: `C:/Users/Ht/.personal-bots/qa/hbots-commit-pauses/` (`REPORT.md`, raw per-commit JSON, bench and crash scripts, live log classification `live-commits.json`, `wal-timeline.txt`).
+
+## Codex bots see their own plugin skills (folded in after the first stage)
+
+Astra's review (`qa/agent-browser-astra-review/`, P1) found the agent-browser rollout
+incomplete: a personal Codex bot got no skills at all. The adapter turns the owner's
+`~/.codex/skills` and `~/.agents/skills` off for a bot (`skills.config=[{path=...,enabled=false}]`)
+and Codex has no config key for another root, so QA and Optimizer (both on Codex) never
+saw `agent-browser`, while the Claude and DeepSeek bots did.
+
+- `apps/server/src/provider/botPluginSkillRoots.ts` (new): the skill folders a bot's own
+  plugins declare, the shared folder (`bot-plugins/_shared/`) then the bot's own
+  (`bot-plugins/<botId>/`), read from the same manifest field DeepSeek uses. Only folders
+  that exist are named, and an unknown or unsafe bot id gets the shared folder alone, so no
+  bot can reach another bot's skills.
+- `CodexAdapter` resolves them for a personal bot and passes them as `extraSkillRoots` on
+  the session. `CodexSessionRuntime` names them with the app-server's own
+  `skills/extraRoots/set` (in-memory, per process, absolute paths) right after `initialize`
+  and before `thread/start`, so the session's catalogue has them. A refusal logs one WARN
+  (`Codex refused this bot's own skill roots; its plugin skills will be missing.`) and the
+  session still runs, with the skills missing: today's behaviour, never a broken session.
+  Success logs one INFO line naming the roots.
+- The owner's own skill roots stay turned off, unchanged, and a normal (non-bot) Codex
+  session is untouched: no extra roots, no `skills.config` entry.
+- `DshAcpSupport` now imports the shared manifest reader and the exported bot id pattern
+  instead of keeping its own copies. No DeepSeek behaviour changed (its test still passes).
+
+Blocker found in the real install: all four installed `agent-browser/SKILL.md` files began
+with a UTF-8 BOM. Claude Code tolerates it; Codex's frontmatter parser refuses the file
+(`missing YAML frontmatter delimited by ---`), so wiring the root alone would still have
+left QA and Optimizer without the skill. The BOM was stripped from the four files (QA
+`02ac9a2b`, Backend `247ca831`, Optimizer `bot-6238bcf0`, Frontend `df17a657`); the body is
+byte-identical (sha256 before and after). That fix is outside the repo: whoever installs a
+skill with a BOM brings it back, and Codex will refuse that one skill again.
+
+Real proof (`C:/Users/Ht/.personal-bots/qa/hbots-codex-bot-skills/`): the shipped resolver
+run for the real Optimizer and QA bot ids over the real plugin root, then the real `codex`
+0.162.1 app-server driven exactly as the runtime drives it (`initialize` /
+`skills/extraRoots/set` / `skills/list`) with a scratch `CODEX_HOME`, so nothing the owner
+has installed can be what shows up and nothing is written to the real one. Before the call
+neither bot's skill is listed (and the agent-browser file still carried its BOM in the first
+run: `missing YAML frontmatter delimited by ---`); after it, `optimizer-bot:agent-browser`
+and `qa-bot:agent-browser` are listed with no errors (`optimizer-skills-list.txt`,
+`qa-skills-list.txt`). A throwaway hbots root was not used for a live Codex session: it
+gives Codex its own account-less home on purpose, and without an account Codex lists no
+models, so a Codex bot cannot exist there at all (the adapter and runtime plumbing is
+covered by the unit tests below, and the release's own e2e runs on the staged artifact).
 
 ## Kill switch
 
 `T3CODE_SQLITE_CHECKPOINT_WORKER=off` (also `0`/`false`/`no`/`disabled`): no worker; the main connection keeps `wal_autocheckpoint=1000`, the old behaviour. Read at server start, so the usual idle restart applies it. In the app sheet's env table from 1.66.52.
+
+`PERSONAL_BOT_CODEX_SKILLS=off` (also `0`/`false`/`no`/`disabled`): a Codex bot's session names no extra skill roots, so it has no skills at all, as before this change. Read when a bot session starts, so no restart is needed to flip it. In the app sheet's env table from 1.66.52.
 
 ## QA checks
 
@@ -60,6 +108,10 @@ Evidence: `C:/Users/Ht/.personal-bots/qa/hbots-commit-pauses/` (`REPORT.md`, raw
 - [ ] Crash-kill: kill the throwaway server's PID mid-write; on restart every message or task that was acknowledged before the kill is still there, `PRAGMA quick_check` ok.
 - [ ] Backup under load: `backup.ps1` (or `sqlite-snapshot.cjs`) on the throwaway root while a bot is writing succeeds, and the backup passes `integrity_check`.
 - [ ] Kill switch: with `T3CODE_SQLITE_CHECKPOINT_WORKER=off` the server boots with no ERROR and the same write load keeps the WAL bounded the same way (the main connection checkpoints again). The pragma itself is covered by the unit test `keeps legacy auto-checkpoints when the worker kill switch is set`.
+- [ ] Codex bot skills (the delta): the new tests pass (`CodexSessionRuntime.test.ts` -t "extra skill roots", `CodexAdapter.test.ts` -t "bot plugin skills", `codexLaunchArgs.test.ts` -t "personalBotCodexSkillsSwitchOn"), and the real-binary probe in `qa/hbots-codex-bot-skills/` re-run for `02ac9a2b-b042-496b-ba67-41a37907b2e2` still lists `qa-bot:agent-browser|user` with no errors.
+- [ ] Codex bot skills, live (the real end-to-end, only possible with an account): once this release is live, the QA bot's own next chat is a Codex session; the live server log must hold one `Codex extra skill roots registered` line naming `bot-plugins/02ac9a2b-b042-496b-ba67-41a37907b2e2/.claude/skills` and `bot-plugins/_shared/.claude/skills`, and no `Codex refused this bot's own skill roots` WARN.
+- [ ] Codex bot skills, kill switch: `PERSONAL_BOT_CODEX_SKILLS=off` on a throwaway root starts the server with no ERROR, and a Codex session logs neither the registration line nor the refusal WARN.
+- [ ] No regression: a normal (non-bot) Codex session's app-server args carry no `skills.config` and no extra roots; Claude and DeepSeek bots still load the same skills as before (Claude/DSH tests pass).
 - [ ] Quick regression at 390 x 844 dark: Bots list, open a chat, send a message, delegate a task.
 
 ## Gate evidence
