@@ -7,8 +7,8 @@ import * as Option from "effect/Option";
 import { PersonalTaskId, type PersonalTask, type PersonalTaskAttempt } from "@t3tools/contracts";
 import {
   LEASE_MINUTES,
-  PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
   PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
+  PERSONAL_TASKS_UNLIMITED_CHILDREN,
   PERSONAL_TASK_TURN_OWNERSHIP_MS,
   minutesFrom,
   type WorkItem,
@@ -87,7 +87,7 @@ export const makeTaskCallers = (
             idempotencyKey,
             depth: 0,
             maxDepth: PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
-            maxChildren: PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
+            maxChildren: PERSONAL_TASKS_UNLIMITED_CHILDREN,
             result: null,
             errorCategory: null,
             errorMessage: null,

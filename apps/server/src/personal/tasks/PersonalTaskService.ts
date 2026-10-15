@@ -50,10 +50,13 @@ import { personalSchedulersOff } from "../schedulersSwitch.ts";
 /** Global cap on active provider turns started by the dispatcher. */
 export const PERSONAL_TASKS_CONCURRENCY = 5;
 export {
-  PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
   PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
+  PERSONAL_TASKS_MAX_CHILDREN_ENV,
+  PERSONAL_TASKS_UNLIMITED_CHILDREN,
   PERSONAL_TASK_TURN_OWNERSHIP_MS,
   personalTaskMessageContext,
+  personalTasksDelegationLimit,
+  personalTasksMaxChildren,
 } from "./taskShared.ts";
 
 export {

@@ -20,7 +20,9 @@
 //     the request).   TASKDONE  answers a delegated task.
 //   MCPTOOL <name> <one-line json>  calls any MCP tool the bot has (update_bot, create_bot, ...) and
 //     answers "MCPTOOL <name> ok|refused: <the tool's result>", so a test reads the outcome in the chat
-//     (refused = the tool's isError result or a JSON-RPC error). MCPTOOL, MCPONCE and DELEGATE are read
+//     (refused = the tool's isError result or a JSON-RPC error). Several MCPTOOL calls in one owner
+//     message all run, in order, one answer line each (a bot may delegate six tasks in the one turn).
+//     MCPTOOL, MCPONCE and DELEGATE are read
 //     from the owner's message only, never from the memory block or chat handoff the server puts first.
 //     $ENV{NAME} inside the json becomes that environment variable's value (a bot typing a key it holds).
 //   CATFILE <path>  tries to read a file the way a bot's Read tool would: refused (and says which rule) when
@@ -662,49 +664,53 @@ lines.on("line", async (line) => {
     }
   }
   if (toolCandidates.length > 0 || /MCP(?:TOOL|ONCE) \w+ \{/.test(ownerText)) {
-    let toolName;
-    let toolArgs;
+    const calls = [];
     let lastError;
+    let firstName;
     for (const candidate of toolCandidates) {
-      toolName = candidate.name;
+      firstName ??= candidate.name;
       try {
         // $ENV{NAME} becomes that environment variable's value, so a test can make the bot "type" a
         // key it holds (an env-mode key) into a tool call without the value ever being in the prompt.
-        toolArgs = JSON.parse(
-          candidate.json.replace(/\$ENV\{(\w+)\}/g, (_match, name) =>
-            JSON.stringify(process.env[name] ?? "").slice(1, -1),
+        calls.push({
+          name: candidate.name,
+          args: JSON.parse(
+            candidate.json.replace(/\$ENV\{(\w+)\}/g, (_match, name) =>
+              JSON.stringify(process.env[name] ?? "").slice(1, -1),
+            ),
           ),
-        );
-        lastError = undefined;
-        break;
+        });
       } catch (err) {
         lastError = err;
       }
     }
-    if (toolName === undefined) {
+    if (calls.length === 0) {
       const named = /MCP(?:TOOL|ONCE) (\w+)/.exec(ownerText);
-      toolName = named?.[1] ?? "unknown";
-    }
-    if (toolArgs === undefined) {
-      assistant(`MCPTOOL ${toolName} has bad JSON: ${lastError}`);
+      assistant(`MCPTOOL ${named?.[1] ?? firstName ?? "unknown"} has bad JSON: ${lastError}`);
       finish("failed", false);
       return;
     }
-    mcpCall(toolName, toolArgs).then(
-      (res) => {
-        const body = JSON.stringify(res?.result ?? res?.error ?? res).slice(0, 1500);
-        log(`mcptool ${toolName} ${body}`);
-        // A JSON-RPC error (unknown tool, bad params) is a refusal too, not "ok".
-        const refused = res?.error !== undefined || res?.result?.isError === true;
-        assistant(`MCPTOOL ${toolName} ${refused ? "refused" : "ok"}: ${body}`);
-        finish("ok", false);
-      },
-      (err) => {
-        log(`mcptool ${toolName} failed ${err}`);
-        assistant(`MCPTOOL ${toolName} failed: ${err}`);
+    // Several calls in one owner message all run, in the order they appear, each
+    // reported on its own line: a bot may delegate six tasks in the one turn.
+    const lines = [];
+    for (const entry of calls) {
+      let result;
+      try {
+        result = await mcpCall(entry.name, entry.args);
+      } catch (err) {
+        log(`mcptool ${entry.name} failed ${err}`);
+        assistant(`MCPTOOL ${entry.name} failed: ${err}`);
         finish("failed", false);
-      },
-    );
+        return;
+      }
+      const body = JSON.stringify(result?.result ?? result?.error ?? result).slice(0, 1500);
+      log(`mcptool ${entry.name} ${body}`);
+      // A JSON-RPC error (unknown tool, bad params) is a refusal too, not "ok".
+      const refused = result?.error !== undefined || result?.result?.isError === true;
+      lines.push(`MCPTOOL ${entry.name} ${refused ? "refused" : "ok"}: ${body}`);
+    }
+    for (const line of lines) assistant(line);
+    finish(lines.join("\n"), false);
     return;
   }
   const catFile = text.match(/CATFILE (\S+)/);
@@ -727,7 +733,8 @@ lines.on("line", async (line) => {
     return;
   }
   // A continuation turn quotes the original request; delegating again there would repeat the
-  // delegation on every continuation until the per-request cap.
+  // delegation on every continuation. A request has no delegation cap (1.66.51), so the fake
+  // delegates once per owner turn and the queued tasks wait behind the five running at once.
   const delegate = ownerText.startsWith("[Task continuation]")
     ? null
     : ownerText.match(/DELEGATE:([\w-]+)/);
