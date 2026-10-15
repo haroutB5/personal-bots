@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { resolveSpawnExecutable } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
@@ -65,9 +65,11 @@ export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecuta
       return binaryPath;
     }
 
-    const resolveExecutable = yield* SpawnExecutableResolution;
     const isFile = yield* ClaudeExecutableFileCheck;
-    const resolved = resolveExecutable(binaryPath, platform, environment) ?? binaryPath;
+    // Off the event loop with the default resolver: a stat on a CLI Windows is
+    // still checking waits for the check (see resolveSpawnExecutableWithNodeAsync).
+    const resolved =
+      (yield* resolveSpawnExecutable(binaryPath, platform, environment)) ?? binaryPath;
     const extension = NodePath.win32.extname(resolved).toLowerCase();
     if (!WINDOWS_SHIM_EXTENSIONS.has(extension)) {
       return resolved;

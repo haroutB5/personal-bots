@@ -278,6 +278,26 @@ export const SpawnExecutableResolution = Context.Reference<SpawnExecutableResolv
   },
 );
 
+/**
+ * Resolves a command with {@link SpawnExecutableResolution}. The default
+ * resolver walks PATH off the event loop; an injected one (tests, embedders)
+ * is called as given.
+ */
+export const resolveSpawnExecutable = (
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Effect.Effect<string | undefined> =>
+  Effect.gen(function* () {
+    const resolveExecutable = yield* SpawnExecutableResolution;
+    if (resolveExecutable === resolveSpawnExecutableWithNode && spawnAsyncResolveEnabled()) {
+      return yield* Effect.promise(() =>
+        resolveSpawnExecutableWithNodeAsync(command, platform, env),
+      );
+    }
+    return resolveExecutable(command, platform, env);
+  });
+
 export interface WindowsEnvironmentProbeOptions {
   readonly loadProfile?: boolean;
 }
@@ -836,13 +856,7 @@ export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(functi
       : options.extendEnv
         ? { ...hostEnvironment, ...options.env }
         : options.env;
-  const resolveExecutable = yield* SpawnExecutableResolution;
-  // The default resolver walks PATH off the event loop; an injected one (tests,
-  // embedders) is called as given.
-  const resolvedCommand =
-    (resolveExecutable === resolveSpawnExecutableWithNode && spawnAsyncResolveEnabled()
-      ? yield* Effect.promise(() => resolveSpawnExecutableWithNodeAsync(command, platform, env))
-      : resolveExecutable(command, platform, env)) ?? command;
+  const resolvedCommand = (yield* resolveSpawnExecutable(command, platform, env)) ?? command;
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };
