@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 
 import { deepSeekPeakWindowEndMs } from "./deepseekPeak.ts";
 
@@ -9,7 +10,7 @@ describe("DeepSeek UTC peak windows", () => {
       for (const base of [at, Date.UTC(2026, 9, 1)]) {
         for (const offset of [-1, 0, 0.5, 1]) {
           const ms = base + hour * 3_600_000 + offset;
-          const date = new Date(ms);
+          const date = DateTime.toDateUtc(DateTime.makeUnsafe(ms));
           const utcHour = date.getUTCHours();
           const end =
             date.getUTCDay() % 6 === 0
