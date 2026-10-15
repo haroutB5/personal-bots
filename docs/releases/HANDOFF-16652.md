@@ -2,7 +2,7 @@
 
 PROOF_PLACEHOLDER: QA result on this exact staged artifact goes here.
 
-Staged release: see the Gate evidence section below, branch `perf/hbots-commit-pauses`, based on live notes `525daec605` (1.66.51). No migration: 108 -> 108. `PERSONAL_TASKS_CONCURRENCY = 5`. Code commit `03c2e748bd`; this release adds only the version bump and these notes.
+Staged release: `de81b5740839` (`dist/bin.mjs` sha256 in the Gate evidence section), branch `perf/hbots-commit-pauses`, based on live notes `525daec605` (1.66.51). No migration: 108 -> 108. `PERSONAL_TASKS_CONCURRENCY = 5`. Code commit `03c2e748bd`; this release adds only the version bump and these notes.
 
 ## The problem
 
@@ -45,6 +45,7 @@ Found and fixed before commit: a first version triggered on WAL file size, which
 - Crash-kill (`crash.json`): SIGKILL at a random point after 933-2937 acknowledged commits, 7 runs (5 worker NORMAL, worker FULL, legacy). Every acknowledged commit recovered, ids contiguous, `quick_check` ok each time.
 - Backup under load (`backup-load.json`, `backup-integrity.json`): `scripts/personal/sqlite-snapshot.cjs` on the 3.3 GB copy while writing 10 commits/s with the worker on. Snapshot 96.5 s, full `integrity_check` ok, 0 restarts, migration 108.
 - No live database was opened. The production copy in `%TEMP%` was deleted after the runs (no junctions).
+- Staged artifact `de81b5740839` on a throwaway root (`throwaway-server.ps1`, stopped and deleted after): boot with no `checkpoint worker unavailable` WARN and 0 ERROR. A probe wrote 3,133 WAL frames from its own connection with auto-checkpoint off, so only the server's worker could copy them in: the WAL restarted at frame 4 (the file stayed 26.6 MB, reused in place) and the worker backfilled all 3,137 frames within 5.5 s in one 4.3 s pass, logged as `SQLite background checkpoint`; no main-thread stall in that window (`staged-worker-probe-2.json`, `staged-throwaway-server.log`). An earlier pass on the same root took 77 s for a 27 MB WAL while the disk was busy just after the gates (the TEMP root, unlike the live DB, has no Defender exclusion; not verified as the cause); it ran off the main thread, and the server logged no slow SQL statement in that time. Boot itself logged one 2.0 s COMMIT on the fresh root during start-up, before or around the worker's start; not attributed. QA: on a TEMP throwaway root, expect slow background checkpoints and allow up to about 90 s for the WAL check.
 
 Evidence: `C:/Users/Ht/.personal-bots/qa/hbots-commit-pauses/` (`REPORT.md`, raw per-commit JSON, bench and crash scripts, live log classification `live-commits.json`, `wal-timeline.txt`).
 
@@ -60,3 +61,25 @@ Evidence: `C:/Users/Ht/.personal-bots/qa/hbots-commit-pauses/` (`REPORT.md`, raw
 - [ ] Backup under load: `backup.ps1` (or `sqlite-snapshot.cjs`) on the throwaway root while a bot is writing succeeds, and the backup passes `integrity_check`.
 - [ ] Kill switch: with `T3CODE_SQLITE_CHECKPOINT_WORKER=off` the server boots with no ERROR and the same write load keeps the WAL bounded the same way (the main connection checkpoints again). The pragma itself is covered by the unit test `keeps legacy auto-checkpoints when the worker kill switch is set`.
 - [ ] Quick regression at 390 x 844 dark: Bots list, open a chat, send a message, delegate a task.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=de81b5740839c9b35405aaf346410502d4077a4a release=de81b5740839 json-sha256=44d01eba6b52cbf2d5a889c3b43abedd016ee8378e7d100a0ccf54bd45d609e6 result=PASS -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-15T17:59:14Z. Version 1.66.52, release `de81b5740839`, commit `de81b5740839c9b35405aaf346410502d4077a4a` on `perf/hbots-commit-pauses`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\de81b5740839\gate-evidence.json` (sha256 `44d01eba6b52cbf2d5a889c3b43abedd016ee8378e7d100a0ccf54bd45d609e6`) and the full gate logs in `releases\de81b5740839\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2699 tests passed, 0 failed, 3 skipped, in 194 files | 272.1   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 42.5    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2626 tests passed, 0 failed, 0 skipped, in 238 files | 34.6    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 5.7     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 247 checks ok, 0 failed                              | 66.2    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-freeze-1\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\de81b5740839" -Json` (in `.`)                                                                                                                  | 0    | pass: 12/12 journeys passed                                | 291.9   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `de81b5740839c9b35405aaf346410502d4077a4a`, at end `de81b5740839c9b35405aaf346410502d4077a4a`; tracked files modified: none. Staged release: version 1.66.52, sha de81b5740839, dirty False, externals copied; `dist/bin.mjs` sha256 `ccbe5009683ceac6d2b1f4ed4bd8beba89487199f849f0b46e8e821f4f324c19`.
+<!-- gate-evidence:end -->
