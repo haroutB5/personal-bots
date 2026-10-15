@@ -1,8 +1,8 @@
 # hbots 1.66.53: an unloadable bot plugin skill is logged, and the provider probe-timeout test is fixed
 
-QA: not started. Recommended tier: **small fix** (one new diagnostic WARN plus a test-only fix; nothing changes for a skill that loads). Builder proof is in this file. What QA should look at if it runs: send one message to a bot whose plugin folder holds a BOM `SKILL.md` and confirm exactly one `bot plugin skill failed to load` WARN naming that bot, with the file and the reason.
+QA: not started. Recommended tier: **small fix** (one new diagnostic WARN plus a test-only fix; nothing changes for a skill that loads). Builder proof is complete and in this file, including a running-server check. What QA should look at if it runs: send one message to a bot whose plugin folder holds a BOM `SKILL.md` and confirm exactly one `bot plugin skill failed to load` WARN naming that bot, with the file and the reason.
 
-Staged release: `STAGED_SHA`, branch `release/hbots-16653`, based on live notes `761ad6625e` (1.66.52). No migration: 108 -> 108. `PERSONAL_TASKS_CONCURRENCY = 5`. Staged with `build.ps1 -CopyExternals`.
+Staged release: `a31b7eb866c2`, branch `release/hbots-16653`, based on live notes `761ad6625e` (1.66.52). No migration: 108 -> 108. `PERSONAL_TASKS_CONCURRENCY = 5`. Staged with `build.ps1 -CopyExternals` (the build loaded all 4 public `.env` keys; version 1.66.53).
 
 ## Follow-up 1: a broken bot plugin skill is no longer silent
 
@@ -29,14 +29,14 @@ The fix is in the test: `hangingScopedSpawnerLayer` now completes a `Deferred` w
 
 ## Builder proof
 
-- `vp test run src/provider` fully green: `2346 passed | 4 skipped (2350)` across 46 files (numbers from the run below); the four new provider-path tests are listed there.
+- `vp test run src/provider` fully green: `1755 passed | 58 skipped (1813)` across 107 files plus 2 skipped files, run with `--maxWorkers=4` (the default-parallel run is flaky on this laptop under load: two earlier full runs each lost one different timing-sensitive test, `DeepSeekDshAdapter` "settles a cancelled turn with the aborted tool" once and a 120 s timeout in `ProviderRegistry` "re-probes when settings change the codex binaryPath" once; both pass on their own and neither touches this change). For comparison, the same full run at the base commit `761ad6625e` fails the probe-timeout test below, which this release fixes.
 - New `apps/server/src/provider/botPluginSkillDiagnostics.test.ts`: 5 tests. A BOM file, a missing-frontmatter file and a malformed-YAML file each produce one problem; a good skill (LF and CRLF), a folder with no `SKILL.md` and a dot-folder produce none; a root-level `SKILL.md` is read; the WARN carries the bot id, the exact path and the reason; a bot with healthy skills logs nothing; the shared and the bot's own plugin folders are both checked.
 - One new test per provider path, each against the real adapter with its provider runtime mocked:
   - `CodexAdapter.test.ts` `warns once for the skill a bot's plugin folder cannot load`,
   - `ClaudeAdapter.test.ts` `warns once for the skill a bot's plugin folder cannot load`,
   - `DeepSeekDshAdapter.test.ts` `warns once for the skill a bot's plugin folder cannot load` (real ACP runtime against the recorded dsh mock),
   - `CodexProvider.test.ts` `warns once for each skill Codex refused in `skills/list``.
-- Proved on a running server (throwaway root on the staged release, not the live one): a BOM `SKILL.md` in a seeded bot's plugin folder produced exactly one WARN ... (`THROWAWAY_PROOF`).
+- Proved on a running server: throwaway root, staged release `a31b7eb866c2`, a BOM `SKILL.md` (`EF BB BF` verified) in the seeded Developer bot's plugin folder plus one healthy skill in the same folder. The whole run logged **exactly one** `bot plugin skill failed to load` line, naming `personal-seed-developer`, that file and the BOM reason, at that bot's session start; the healthy skill and the Researcher bot (no broken skill, session started and answered) logged none, and a second turn on the open chat added none. Evidence: `C:/Users/Ht/.personal-bots/qa/hbots-16653-backend/README.md` (`warn-excerpt.txt`, `send-run.log`, `researcher-run.log`, `chat-390-dark.png`; agent-browser 0.39.1 through `ab.cmd`, 0 page errors, one unrelated Clerk console warning). The root was stopped and deleted afterwards; the live server and live release were untouched.
 - The probe-timeout test now passes, repeated: `vp test run src/provider/Layers/ProviderRegistry.test.ts -t "closes the app-server probe scope"` green (it failed 0/1 before).
 
 ## QA checks (only if QA runs)
@@ -47,4 +47,22 @@ The fix is in the test: `hangingScopedSpawnerLayer` now completes a `Deferred` w
 
 ## Gate evidence
 
-See the section below (written by `gate-evidence.ps1`).
+<!-- gate-evidence:begin sha=a31b7eb866c2efc4e596ccac38ed02957755567d release=a31b7eb866c2 json-sha256=08f8858ca9a5eaaa773e33c6271d5e2a898a11a82c451b003e41bc6e3243bf42 result=PASS -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-15T22:27:32Z. Version 1.66.53, release `a31b7eb866c2`, commit `a31b7eb866c2efc4e596ccac38ed02957755567d` on `release/hbots-16653`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\a31b7eb866c2\gate-evidence.json` (sha256 `08f8858ca9a5eaaa773e33c6271d5e2a898a11a82c451b003e41bc6e3243bf42`) and the full gate logs in `releases\a31b7eb866c2\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2699 tests passed, 0 failed, 3 skipped, in 194 files | 300.6   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 46.1    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2626 tests passed, 0 failed, 0 skipped, in 238 files | 45.8    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 40.1    |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 247 checks ok, 0 failed                              | 76.7    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16653\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\a31b7eb866c2" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 294.8   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `a31b7eb866c2efc4e596ccac38ed02957755567d`, at end `a31b7eb866c2efc4e596ccac38ed02957755567d`; tracked files modified: none. Staged release: version 1.66.53, sha a31b7eb866c2, dirty False, externals copied; `dist/bin.mjs` sha256 `06d03152ed7c55f922e7b9aecbe9f4fe570734cc36255bb99840c9479709182b`.
+<!-- gate-evidence:end -->
