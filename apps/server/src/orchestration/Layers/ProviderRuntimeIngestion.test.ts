@@ -4253,6 +4253,36 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("keeps a runtime.warning whose message is empty, labelled generically", async () => {
+    // Measured 15 Oct 2026 with the real CLI: a notice with an empty body made
+    // the activity summary empty, and the event store (summary min length 1)
+    // rejected the whole event, so the work-log row was lost with a WARN.
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "runtime.warning",
+      eventId: asEventId("evt-warning-empty"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        message: "",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-warning-empty" && activity.kind === "runtime.warning",
+      ),
+    );
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.id === "evt-warning-empty",
+    );
+    expect(activity?.summary).toBe("Runtime warning");
+  });
+
   it("maps session/thread lifecycle and item.started into session/activity projections", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

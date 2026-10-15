@@ -194,6 +194,14 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+/**
+ * The row label for a `runtime.warning` whose adapter-supplied message is
+ * empty. The activity summary must be at least one character or the event store
+ * rejects the whole event (measured 15 Oct 2026 on a real-CLI prompt larger than
+ * the auto-compact window: the CLI's own notice arrived with an empty body).
+ */
+const RUNTIME_WARNING_FALLBACK = "Runtime warning";
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -625,6 +633,12 @@ export function runtimeEventToActivities(
     }
 
     case "runtime.warning": {
+      // A CLI notification can arrive with no text at all (measured 15 Oct on a
+      // prompt over the auto-compact window: the CLI's own notice had an empty
+      // body). The activity's summary must be non-empty or the whole event is
+      // rejected by the event store and the row is lost with a WARN, so an empty
+      // message falls back to the generic word.
+      const summary = truncateDetail(event.payload.message, 120) || RUNTIME_WARNING_FALLBACK;
       return [
         {
           id: event.eventId,
@@ -633,9 +647,9 @@ export function runtimeEventToActivities(
           kind: "runtime.warning",
           // Use the adapter-supplied message as the row label so the work log
           // shows what the warning was about, not a generic "Runtime warning".
-          summary: truncateDetail(event.payload.message, 120),
+          summary,
           payload: {
-            message: truncateDetail(event.payload.message),
+            message: truncateDetail(event.payload.message) || RUNTIME_WARNING_FALLBACK,
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
