@@ -30,6 +30,8 @@ import {
   VOICE_CALL_CONTEXT_MESSAGES,
   VOICE_CALL_DEFAULT_VOICE,
   VOICE_CALL_FALLBACK_MODEL,
+  VOICE_CALL_LOOKUP_MEMORY_CHARS,
+  VOICE_CALL_LOOKUP_MEMORY_MAX,
   VOICE_CALL_MAX_MINUTES,
   VOICE_CALL_MAX_SENT_CHARS,
   VOICE_CALL_MAX_TRANSCRIPT_CHARS,
@@ -49,6 +51,8 @@ import {
   type VoiceCallFinishResult,
   type VoiceCallKeyCheckResult,
   type VoiceCallListResult,
+  type VoiceCallLookupMemoryResult,
+  type VoiceCallMemoryEntry,
   type VoiceCallRecord,
   type VoiceCallSendResult,
   type VoiceCallStartResult,
@@ -68,11 +72,14 @@ import * as ProjectionSnapshotQuery from "../../orchestration/Services/Projectio
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
+import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalLoginRequestRepository from "../secrets/PersonalLoginRequestRepository.ts";
 import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
 import type { SecretBrokerError } from "../secrets/secretBroker.ts";
 import { personalWorkingProgress } from "../workingProgress.ts";
+import { redactSecrets } from "../secretText.ts";
 import * as PersonalVoiceCallRepository from "./PersonalVoiceCallRepository.ts";
 import { createVoiceCallRateLimiter } from "./voiceCallRateLimit.ts";
 import * as VoiceCallGemini from "./voiceCallGemini.ts";
@@ -130,6 +137,17 @@ export class PersonalVoiceCallService extends Context.Service<
     readonly list: (input: {
       readonly threadId: ThreadId;
     }) => Effect.Effect<VoiceCallListResult, PersonalVoiceCallsError>;
+    /**
+     * The voice's own fast facts, without waking the real bot: up to 8 short
+     * entries from the same search `search_memory` runs for that bot (shared,
+     * its team and its own). Memory already refuses secrets, so no value can
+     * come back; a chat with a sensitive site open gets nothing at all.
+     */
+    readonly lookupMemory: (input: {
+      readonly threadId: ThreadId;
+      readonly callId: string;
+      readonly query: string;
+    }) => Effect.Effect<VoiceCallLookupMemoryResult, PersonalVoiceCallsError>;
   }
 >()("t3/personal/voiceCalls/PersonalVoiceCallService") {}
 
@@ -150,6 +168,8 @@ export const make = Effect.gen(function* () {
   const calls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
   const secrets = yield* PersonalSecretRepository.PersonalSecretRepository;
   const loginRequests = yield* PersonalLoginRequestRepository.PersonalLoginRequestRepository;
+  const memory = yield* PersonalMemoryService.PersonalMemoryService;
+  const browser = yield* PersonalBrowser.PersonalBrowser;
   const http = yield* VoiceCallGemini.VoiceCallHttp;
   const sql = yield* SqlClient.SqlClient;
 
@@ -319,12 +339,35 @@ export const make = Effect.gen(function* () {
           .filter((row) => !isServerOnlyNotice(row.text))
           .map((row): VoiceCallContextMessage => ({
             role: row.role === "user" ? "user" : "bot",
-            text: row.text,
+            // A key the owner pasted into a message must not reach Google: the
+            // same strict redaction memory applies, applied on the way out.
+            text: redactSecrets(row.text),
             at: DateTime.makeUnsafe(row.at),
           }))
           .reverse(),
       ),
       Effect.orElseSucceed(() => [] as ReadonlyArray<VoiceCallContextMessage>),
+    );
+
+  /**
+   * The bot's unfinished tasks, titles only, newest first. A title is
+   * something the owner or the app wrote on one line, so it is safe to say
+   * out loud; a brief, a result or a step is not and never comes from here.
+   */
+  const runningTaskTitles = (botId: PersonalBot["botId"]) =>
+    sql<{ readonly title: string }>`
+      SELECT title AS "title" FROM personal_tasks
+      WHERE bot_id = ${botId}
+        AND status IN (
+          'queued', 'running', 'waiting_for_agent', 'waiting_for_user',
+          'waiting_for_browser', 'rate_limited'
+        )
+        AND length(trim(title)) > 0
+      ORDER BY created_at DESC
+      LIMIT 5
+    `.pipe(
+      Effect.map((rows) => rows.map((row) => row.title)),
+      Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
     );
 
   const voiceName = (settings: { readonly voiceName: string }): string =>
@@ -361,6 +404,14 @@ export const make = Effect.gen(function* () {
         );
         const context = yield* recentMessages(chat.threadId);
         const callouts = yield* calloutLines(chat.threadId);
+        const taskTitles = yield* runningTaskTitles(chat.botId);
+        // The bot's own personality and the owner's standing rules for it. Both
+        // are read-only: a call must not consume the real bot's next-turn
+        // preference list.
+        const preferences = yield* memory.preferencesForBot({ botId: chat.botId }).pipe(
+          Effect.map((entries) => entries.map((entry) => entry.content)),
+          Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+        );
         const statusLabel = statusOf(chat.shell);
         const statusDetail = notes[0]?.note ?? "";
         const name = voiceName(settings);
@@ -369,6 +420,9 @@ export const make = Effect.gen(function* () {
         const systemInstruction = voiceCallSystemInstruction({
           botName: chat.bot.name,
           botTitle: chat.bot.title,
+          botDescription: chat.bot.description,
+          botInstructions: chat.bot.instructions,
+          preferences,
           displayName: profile.displayName,
           statusLabel,
           statusDetail,
@@ -405,6 +459,7 @@ export const make = Effect.gen(function* () {
             displayName: profile.displayName,
             botStatus: statusLabel,
             botStatusDetail: statusDetail,
+            runningTaskTitles: taskTitles,
             recentMessages: context,
             callouts,
           },
@@ -584,12 +639,57 @@ export const make = Effect.gen(function* () {
       return { calls: rows } satisfies VoiceCallListResult;
     });
 
+  const lookupMemory: PersonalVoiceCallService["Service"]["lookupMemory"] = (input) =>
+    Effect.gen(function* () {
+      const chat = yield* callableChat(input.threadId);
+      const query = input.query.trim();
+      if (query.length === 0) {
+        return {
+          entries: [],
+          note: "No question to look up.",
+        } satisfies VoiceCallLookupMemoryResult;
+      }
+      // A chat that has had a site the owner marked sensitive open sends
+      // nothing to Google from here: memory text can carry what was on it.
+      const exposed = yield* browser
+        .sensitiveExposure(chat.threadId)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      if (exposed.length > 0) {
+        return {
+          entries: [],
+          note: "This chat has had a site the owner marked sensitive open, so nothing can be read out here.",
+        } satisfies VoiceCallLookupMemoryResult;
+      }
+      const found = yield* memory
+        .search({ query, botId: chat.botId, limit: VOICE_CALL_LOOKUP_MEMORY_MAX })
+        .pipe(Effect.orElseSucceed(() => []));
+      const entries: Array<VoiceCallMemoryEntry> = found
+        .slice(0, VOICE_CALL_LOOKUP_MEMORY_MAX)
+        .map((entry) => ({
+          kind: String(entry.kind),
+          content: entry.content.slice(0, VOICE_CALL_LOOKUP_MEMORY_CHARS),
+        }));
+      yield* Effect.logInfo("personal voice call memory lookup", {
+        threadId: chat.threadId,
+        callId: input.callId,
+        entries: entries.length,
+      });
+      return {
+        entries,
+        note:
+          entries.length === 0
+            ? "Nothing saved about that. Say you do not have it saved and ask them."
+            : "",
+      } satisfies VoiceCallLookupMemoryResult;
+    });
+
   return {
     start,
     checkKey,
     send,
     finish,
     list,
+    lookupMemory,
   } satisfies PersonalVoiceCallService["Service"];
 });
 

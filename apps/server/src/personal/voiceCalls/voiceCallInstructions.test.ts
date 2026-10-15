@@ -6,6 +6,7 @@ import type { VoiceCallContextMessage } from "@t3tools/contracts";
 
 import {
   VOICE_CALL_INSTRUCTION_CONTEXT_CHARS,
+  VOICE_CALL_INSTRUCTION_RULES_CHARS,
   voiceCallSystemInstruction,
 } from "./voiceCallInstructions.ts";
 
@@ -19,6 +20,9 @@ const message = (role: "user" | "bot", text: string): VoiceCallContextMessage =>
 const base = {
   botName: "CTO",
   botTitle: "Chief technology officer",
+  botDescription: "Plans, prioritises and reports.",
+  botInstructions: "Talk plainly, outcome first, no filler. Never ship without a gate.",
+  preferences: ["Lead with the outcome."] as ReadonlyArray<string>,
   displayName: "Harout",
   statusLabel: "Idle",
   statusDetail: "",
@@ -35,6 +39,62 @@ describe("voiceCallSystemInstruction", () => {
       expect(text).toContain("speaking in the first person");
       // The relayed wording is named as the wrong thing to say.
       expect(text).toContain('never "I\'ve sent that to CTO"');
+    }),
+  );
+
+  it.effect("carries the bot's own saved personality and the owner's rules", () =>
+    Effect.sync(() => {
+      const text = voiceCallSystemInstruction(base);
+      expect(text).toContain("Who you are");
+      expect(text).toContain("Plans, prioritises and reports.");
+      expect(text).toContain("Never ship without a gate.");
+      expect(text).toContain("Standing rules Harout has saved for you");
+      expect(text).toContain("- Lead with the outcome.");
+    }),
+  );
+
+  it.effect(
+    "routes public facts to Google Search, own facts to lookup_memory, work to the bot",
+    () =>
+      Effect.sync(() => {
+        const text = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
+        expect(text).toContain("built-in Google Search");
+        expect(text).toContain("weather, news, sport, opening times");
+        expect(text).toContain("Use lookup_memory for anything about the owner's own life");
+        expect(text).toContain("Use the real bot only for real work");
+      }),
+  );
+
+  it.effect("drops the personality and rules blocks when the bot has none", () =>
+    Effect.sync(() => {
+      const text = voiceCallSystemInstruction({
+        ...base,
+        botDescription: "",
+        botInstructions: "",
+        preferences: [],
+      });
+      expect(text).not.toContain("Who you are");
+      expect(text).not.toContain("Standing rules");
+      // The honesty rule is never optional.
+      expect(text).toContain("Report only what the chat and the status below actually say");
+    }),
+  );
+
+  it.effect("never lets the rules block run away", () =>
+    Effect.sync(() => {
+      const text = voiceCallSystemInstruction({
+        ...base,
+        preferences: Array.from({ length: 200 }, (_, index) => `rule ${index} ${"y".repeat(60)}`),
+      });
+      const start = text.indexOf("Standing rules");
+      const end = text.indexOf("How you talk:");
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const rules = text.slice(start, end);
+      expect(rules.length).toBeLessThanOrEqual(VOICE_CALL_INSTRUCTION_RULES_CHARS + 120);
+      expect(rules).toContain("rule 0");
+      // The cap drops the tail rather than truncating a rule mid-sentence.
+      expect(rules).not.toContain("rule 199");
     }),
   );
 

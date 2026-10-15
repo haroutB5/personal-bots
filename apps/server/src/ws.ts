@@ -3391,6 +3391,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalVoiceCallsList, personalVoiceCalls.list(input), {
             "rpc.aggregate": "server",
           }),
+        // The voice's own fast facts: the same memory search the bot's
+        // search_memory tool runs, so nothing new reaches Google.
+        [WS_METHODS.personalVoiceCallsLookupMemory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalVoiceCallsLookupMemory,
+            personalVoiceCalls.lookupMemory(input),
+            { "rpc.aggregate": "server" },
+          ),
         // A team lead's request to remove or rewrite a bot it did not create. `decide` is the
         // tap on the card and the only way to approve one.
         [WS_METHODS.personalLeadBotChangesList]: (_input) =>

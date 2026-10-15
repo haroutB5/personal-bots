@@ -251,6 +251,16 @@ export class PersonalMemoryService extends Context.Service<
       readonly apps: ReadonlyArray<string>;
     }) => Effect.Effect<ReadonlyArray<PersonalMemoryEntry>, PersonalMemoryError>;
     /**
+     * The owner's standing rules (kind `preference`) a bot receives, capped
+     * like a turn caps them, newest first. Read-only, and it does not touch
+     * the "preferences were sent" bookkeeping a real turn owns: a voice call
+     * reads the bot's rules without stealing its next turn's list.
+     */
+    readonly preferencesForBot: (input: {
+      readonly botId: PersonalBotId;
+      readonly limit?: number | undefined;
+    }) => Effect.Effect<ReadonlyArray<PersonalMemoryEntry>, PersonalMemoryError>;
+    /**
      * How full the most rules any bot can receive at once are against the
      * per-turn caps (every app counted as active), for the Memory screen.
      */
@@ -300,6 +310,7 @@ export const make = Effect.gen(function* () {
     setFeedback: persistence.setFeedback,
     rulesForApps: retrieval.rulesForApps,
     rulesUsage: retrieval.rulesUsage,
+    preferencesForBot: retrieval.preferencesForBot,
     confirmPreferencesSent: retrieval.confirmPreferencesSent,
     saveTaskSummary: persistence.saveTaskSummary,
     start: persistence.start,

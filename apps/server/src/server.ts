@@ -706,7 +706,14 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     // as one step because a single pipe accepts at most 20; both still resolve
     // their own requirements from the steps below.
     Layer.provideMerge(Layer.mergeAll(WhatsAppSession.layer, WhatsAppSendLog.layer)),
-    Layer.provideMerge(PersonalLoginService.layerLive),
+    // Voice calls ride this step: they read the shared browser (the
+    // sensitive-site guard on a memory lookup), memory and the bot records,
+    // all provided by steps below. Placed before the browser's own step
+    // because in this chain a later step feeds the earlier ones. Merged with
+    // the logins layer in one step: a pipe takes at most 20.
+    Layer.provideMerge(
+      Layer.mergeAll(PersonalLoginService.layerLive, PersonalVoiceCallService.layerLive),
+    ),
     // personal browser: the service needs the lease (-> its repository ->
     // SqlClient), PreviewManager and PersonalBotRepository, all provided by
     // later steps below.
@@ -726,12 +733,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     // come before them.
     Layer.provideMerge(PersonalTasksDispatcherLive),
     Layer.provideMerge(PersonalGroupsDispatcherLive),
-    // Voice calls consume the bot service, the repository, the session access
-    // and the orchestration engine below, so they are provided with them.
-    // Merged with the secrets layer in one step: a pipe takes at most 20.
-    Layer.provideMerge(
-      Layer.mergeAll(PersonalSecretService.layerLive, PersonalVoiceCallService.layerLive),
-    ),
+    Layer.provideMerge(PersonalSecretService.layerLive),
     Layer.provideMerge(PersonalTaskService.layerLive),
     Layer.provideMerge(PersonalGroupService.layerLive),
     Layer.provideMerge(PersonalBotsSeedLive),

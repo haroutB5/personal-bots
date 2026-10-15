@@ -775,6 +775,28 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
       };
     }).pipe(storageFailure("rules usage"));
 
+  /**
+   * The owner's standing rules a bot receives, capped exactly as a turn caps
+   * them, newest first. Read-only and outside any turn: a voice call shows the
+   * bot's own personality and rules without touching the "preferences were
+   * sent" bookkeeping a real turn owns.
+   */
+  const preferencesForBot: PersonalMemoryService["Service"]["preferencesForBot"] = (input) =>
+    Effect.gen(function* () {
+      const rows = yield* sql`
+        SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
+        WHERE m.deleted_at IS NULL
+          AND m.superseded_at IS NULL
+          AND m.kind = 'preference'
+          AND ${scopeCondition({ botId: input.botId })}
+        ORDER BY m.created_at DESC, m.seq DESC
+        LIMIT 500
+      `.pipe(Effect.flatMap(decodeAll), storageFailure("preferences for a call"));
+      const capped = capPreferences(rows);
+      const limit = input.limit ?? PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES;
+      return capped.kept.slice(0, Math.max(0, limit));
+    }).pipe(Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<PersonalMemoryEntry>)));
+
   return {
     search,
     similar,
@@ -783,6 +805,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
     turnContext,
     rulesForApps,
     rulesUsage,
+    preferencesForBot,
   };
 };
 
