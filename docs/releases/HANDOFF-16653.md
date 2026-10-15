@@ -3,7 +3,7 @@
 **QA: PROOF_PLACEHOLDER** (the builder's line: QA replaces this whole paragraph
 with the real proof, per pass, before the release waiter can be armed. The
 waiter's `check-release-notes.ps1` refuses these notes while the word
-PROOF_PLACEHOLDER is on this line, so nothing ships on unfinished proof.)
+`PROOF_PLACEHOLDER` is on this line, so nothing ships on unfinished proof.)
 
 Voice calls ship in this release: from a bot's chat the owner taps Call, the
 laptop mints a single-use Gemini Live pass from the Gemini key saved in Settings
@@ -191,6 +191,22 @@ no restart is needed.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin -->
+<!-- gate-evidence:begin sha=cb5ef8455668c18c52e00ae9745034052f921dc3 release=cb5ef8455668 json-sha256=d044090263399d4e68b86fdd28172608d14c3de80c39cc050423d91a105ec6ae result=PASS -->
 
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-15T22:35:13Z. Version 1.66.53, release `cb5ef8455668`, commit `cb5ef8455668c18c52e00ae9745034052f921dc3` on `feat/hbots-voice-calls`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\cb5ef8455668\gate-evidence.json` (sha256 `d044090263399d4e68b86fdd28172608d14c3de80c39cc050423d91a105ec6ae`) and the full gate logs in `releases\cb5ef8455668\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2756 tests passed, 0 failed, 4 skipped, in 200 files | 315.2   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 45.2    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2748 tests passed, 0 failed, 0 skipped, in 248 files | 39.8    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 32.4    |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 68.6    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-voice-server\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\cb5ef8455668" -Json` (in `.`)                                                                                                              | 0    | pass: 12/12 journeys passed                                | 291.5   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `cb5ef8455668c18c52e00ae9745034052f921dc3`, at end `cb5ef8455668c18c52e00ae9745034052f921dc3`; tracked files modified: none. Staged release: version 1.66.53, sha cb5ef8455668, dirty False, externals copied; `dist/bin.mjs` sha256 `c0fc50b8c25d22bffad5cb6c046a8f50750348fde176fc4f43997413963dbe6f`.
 <!-- gate-evidence:end -->
