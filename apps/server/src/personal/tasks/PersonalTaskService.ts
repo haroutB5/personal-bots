@@ -60,6 +60,13 @@ export {
 } from "./taskShared.ts";
 
 export {
+  PERSONAL_TASKS_LOOP_GUARD_ENV,
+  PERSONAL_TASKS_LOOP_GUARD_MS,
+  loopGuardMatches,
+  loopGuardObjective,
+  personalTasksLoopGuardEnabled,
+} from "./taskLoopGuard.ts";
+export {
   PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS,
   PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS,
   PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES,

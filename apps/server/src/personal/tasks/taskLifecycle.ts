@@ -22,6 +22,7 @@ import {
   type WorkItem,
 } from "./taskShared.ts";
 import { isTerminal } from "./taskSessionPolicy.ts";
+import { loopGuardMatches, personalTasksLoopGuardEnabled } from "./taskLoopGuard.ts";
 import type { TaskCore } from "./taskCore.ts";
 import type { PersonalTaskService } from "./PersonalTaskService.ts";
 
@@ -257,6 +258,25 @@ export const makeTaskLifecycle = (
     }
   });
 
+  /**
+   * The chat a delegated task was handed into, or null when it works in its own
+   * chat. A task's own chat is created for it when it starts and is marked as a
+   * task chat (a chat that came after the task); a chat the lead picked with
+   * continueChatId existed before it. The row cannot tell the two apart, because
+   * the dispatcher writes a task's own chat into the same `thread_id` column.
+   */
+  const delegationChat = Effect.fn("PersonalTaskService.delegationChat")(function* (
+    task: PersonalTask,
+  ) {
+    if (task.threadId === null) return null;
+    const facts = yield* botRepository
+      .getChatFacts({ threadId: task.threadId })
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    return Option.isSome(facts) && !facts.value.taskChat && !facts.value.routineChat
+      ? task.threadId
+      : null;
+  });
+
   const delegate: PersonalTaskService["Service"]["delegate"] = (input) =>
     lock
       .withPermit(
@@ -318,6 +338,35 @@ export const makeTaskLifecycle = (
             return yield* fail(
               `Delegation loop: bot '${input.targetBotId}' is already working on this request.`,
             );
+          }
+          // Loop guard, not a work cap: a bot that re-sends the same brief on
+          // every continuation turn (the tool's idempotency key includes the
+          // caller's turn, so a later turn is a new key) would otherwise queue
+          // a twin each turn. The same bot, chat and objective in one root,
+          // still active or completed in the last 30 minutes, is one task.
+          // PERSONAL_TASKS_LOOP_GUARD=off returns to the plain behaviour.
+          if (personalTasksLoopGuardEnabled()) {
+            const wantedChat = input.continueThreadId ?? null;
+            const matches = loopGuardMatches({
+              tasks: yield* repository.listRootDelegationsForBot(root.taskId, input.targetBotId),
+              botId: input.targetBotId,
+              objective: input.brief.objective,
+              nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+            });
+            for (const candidate of matches) {
+              if ((yield* delegationChat(candidate)) !== wantedChat) continue;
+              yield* Effect.logInfo(
+                "personal task delegation loop guard returned an existing task",
+                {
+                  rootTaskId: root.taskId,
+                  parentTaskId: parent.taskId,
+                  botId: input.targetBotId,
+                  taskId: candidate.taskId,
+                  status: candidate.status,
+                },
+              );
+              return candidate;
+            }
           }
           if (input.continueThreadId !== undefined) {
             yield* requireContinuableChat(input.targetBotId, input.continueThreadId);

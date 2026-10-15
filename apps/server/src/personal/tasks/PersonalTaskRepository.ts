@@ -217,6 +217,14 @@ export class PersonalTaskRepository extends Context.Service<
       rootTaskId: PersonalTaskId,
     ) => Effect.Effect<number, PersonalTaskRepositoryError>;
     /**
+     * The tasks delegated in `rootTaskId` to `botId`, newest first: the loop
+     * guard reads them to find the task a repeat delegation already covers.
+     */
+    readonly listRootDelegationsForBot: (
+      rootTaskId: PersonalTaskId,
+      botId: PersonalBotId,
+    ) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
+    /**
      * Writes every mutable column of `task`, only while the row still has
      * `expectedStatus`. Returns whether the row was written.
      */
@@ -532,6 +540,19 @@ export const make = Effect.gen(function* () {
       "countTasksInRoot",
       sql`SELECT COUNT(*) AS "count" FROM personal_tasks WHERE root_task_id = ${rootTaskId}`,
     ).pipe(Effect.map((rows) => Number(rows[0]?.count ?? 0)));
+
+  const listRootDelegationsForBot: PersonalTaskRepository["Service"]["listRootDelegationsForBot"] =
+    (rootTaskId, botId) =>
+      query(
+        "listRootDelegationsForBot",
+        sql`
+        SELECT ${sql.literal(TASK_COLUMNS)} FROM personal_tasks
+        WHERE root_task_id = ${rootTaskId}
+          AND bot_id = ${botId}
+          AND task_id <> ${rootTaskId}
+        ORDER BY created_at DESC, rowid DESC
+      `,
+      ).pipe(Effect.flatMap((rows) => decodeTasks("listRootDelegationsForBot", rows)));
 
   const writeTask: PersonalTaskRepository["Service"]["writeTask"] = (task, expectedStatus) =>
     query(
@@ -858,6 +879,7 @@ export const make = Effect.gen(function* () {
     listRelated,
     listDescendants,
     countTasksInRoot,
+    listRootDelegationsForBot,
     writeTask,
     listClaimable,
     insertAttempt,

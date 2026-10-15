@@ -408,6 +408,29 @@ describe("bots toolkit handlers", () => {
     ),
   );
 
+  it.effect("the loop guard returns the same child when a later turn repeats the brief", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const input = { targetBot: "developer", objective: "Write the migration." };
+        const first = yield* call("delegate_task", input);
+        yield* tasks.drain;
+
+        // A later turn in the same chat: a new tool idempotency key, the same
+        // root task and the same brief, so the guard returns the first child.
+        harness.sessions.set(CALLER_THREAD, {
+          ...runningSession(CALLER_THREAD),
+          activeTurnId: TurnId.make("turn-2"),
+        });
+        const repeat = yield* call("delegate_task", input);
+
+        expect(repeat.childTaskId).toBe(first.childTaskId);
+        expect((yield* call("list_tasks", {})).tasks).toHaveLength(2);
+      }),
+    ),
+  );
+
   it.effect("refuses a thread that is not a personal bot's, even with the capability", () =>
     withHarness((harness) =>
       Effect.gen(function* () {

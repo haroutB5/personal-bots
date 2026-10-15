@@ -2222,13 +2222,12 @@ it.effect("steer reopens an interrupted or cancelled child while its parent stil
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-/** Runs `effect` with PERSONAL_TASKS_MAX_CHILDREN set to `value`, or unset. */
-const withMaxChildrenEnv =
-  (value: string | undefined) =>
+/** Runs `effect` with `name` set to `value`, or unset, then restores what it was. */
+const withTaskEnv =
+  (name: string, value: string | undefined) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.acquireUseRelease(
       Effect.sync(() => {
-        const name = PersonalTaskService.PERSONAL_TASKS_MAX_CHILDREN_ENV;
         const previous = process.env[name];
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
@@ -2237,11 +2236,18 @@ const withMaxChildrenEnv =
       () => effect,
       (previous) =>
         Effect.sync(() => {
-          const name = PersonalTaskService.PERSONAL_TASKS_MAX_CHILDREN_ENV;
           if (previous === undefined) delete process.env[name];
           else process.env[name] = previous;
         }),
     );
+
+/** Runs `effect` with PERSONAL_TASKS_MAX_CHILDREN set to `value`, or unset. */
+const withMaxChildrenEnv = (value: string | undefined) =>
+  withTaskEnv(PersonalTaskService.PERSONAL_TASKS_MAX_CHILDREN_ENV, value);
+
+/** Runs `effect` with PERSONAL_TASKS_LOOP_GUARD set to `value`, or unset. */
+const withLoopGuardEnv = (value: string | undefined) =>
+  withTaskEnv(PersonalTaskService.PERSONAL_TASKS_LOOP_GUARD_ENV, value);
 
 it("the delegation cap comes from the root row and the kill switch, and is off by default", () => {
   const name = PersonalTaskService.PERSONAL_TASKS_MAX_CHILDREN_ENV;
@@ -2292,6 +2298,151 @@ it.effect("one request may delegate six tasks; five run at once and the rest que
     yield* runTurn(harness, rootThread, "Noted the finished part.");
     yield* service.drain;
     expect((yield* reload(queued[0]!.taskId)).status).toBe("running");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it("the loop guard switch is off only when it says so, and reads objectives loosely", () => {
+  const name = PersonalTaskService.PERSONAL_TASKS_LOOP_GUARD_ENV;
+  expect(PersonalTaskService.personalTasksLoopGuardEnabled({})).toBe(true);
+  expect(PersonalTaskService.personalTasksLoopGuardEnabled({ [name]: " on " })).toBe(true);
+  expect(PersonalTaskService.personalTasksLoopGuardEnabled({ [name]: "off" })).toBe(false);
+  expect(PersonalTaskService.personalTasksLoopGuardEnabled({ [name]: " OFF " })).toBe(false);
+  expect(PersonalTaskService.personalTasksLoopGuardEnabled({ [name]: "0" })).toBe(false);
+  expect(PersonalTaskService.loopGuardObjective("  Audit \n the  mocks ")).toBe("audit the mocks");
+});
+
+it.effect("the loop guard returns the task a repeat of the same bot and objective covers", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("loop-guard");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const first = yield* delegate("developer", "Audit the mocks");
+    yield* endTurn(harness, rootThread, turnId, "Delegated.");
+    yield* runTurn(harness, threadOf(yield* reload(first.taskId)), "Audited.");
+
+    // The later turn re-sends the same brief: a new tool idempotency key and a
+    // different title, and the objective differs only in case and spacing.
+    const repeat = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: { title: "Audit the mocks again", objective: "  audit   THE mocks  OBJECTIVE " },
+      idempotencyKey: "loop-guard-later-turn",
+    });
+
+    expect(repeat.taskId).toBe(first.taskId);
+    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(2);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("the loop guard never limits a different objective", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("loop-guard-objectives");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const first = yield* delegate("developer", "Audit the mocks");
+    yield* endTurn(harness, rootThread, turnId, "Delegated.");
+    yield* runTurn(harness, threadOf(yield* reload(first.taskId)), "Audited.");
+
+    const other = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Write the report"),
+      idempotencyKey: "loop-guard-other-objective",
+    });
+
+    expect(other.taskId).not.toBe(first.taskId);
+    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(3);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("the loop guard lets a cancelled task be delegated again", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("loop-guard-retry");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const first = yield* delegate("developer", "Audit the mocks");
+    yield* endTurn(harness, rootThread, turnId, "Delegated.");
+    yield* service.cancel({ taskId: first.taskId });
+    yield* service.drain;
+    expect((yield* reload(first.taskId)).status).toBe("cancelled");
+
+    const retry = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Audit the mocks"),
+      idempotencyKey: "loop-guard-retry",
+    });
+
+    expect(retry.taskId).not.toBe(first.taskId);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("PERSONAL_TASKS_LOOP_GUARD=off restores a new task for a repeat", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("loop-guard-off");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const first = yield* delegate("developer", "Audit the mocks");
+    yield* endTurn(harness, rootThread, turnId, "Delegated.");
+    yield* runTurn(harness, threadOf(yield* reload(first.taskId)), "Audited.");
+
+    const repeat = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Audit the mocks"),
+      idempotencyKey: "loop-guard-off-later-turn",
+    });
+
+    expect(repeat.taskId).not.toBe(first.taskId);
+    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(3);
+  }).pipe(Effect.provide(makeLayer(harness)), withLoopGuardEnv("off"));
+});
+
+it.effect("the loop guard forgets a completion after 30 minutes and ignores another bot", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("loop-guard-window");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const first = yield* delegate("developer", "Audit the mocks");
+    yield* endTurn(harness, rootThread, turnId, "Delegated.");
+    yield* runTurn(harness, threadOf(yield* reload(first.taskId)), "Audited.");
+    const child = (yield* service.get({ taskId: first.taskId })).task;
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+
+    expect(
+      PersonalTaskService.loopGuardMatches({
+        tasks: [child],
+        botId: botId("developer"),
+        objective: "audit   the MOCKS objective",
+        nowMs,
+      }).map((task) => task.taskId),
+    ).toEqual([child.taskId]);
+    expect(
+      PersonalTaskService.loopGuardMatches({
+        tasks: [child],
+        botId: botId("researcher"),
+        objective: child.objective,
+        nowMs,
+      }),
+    ).toEqual([]);
+    expect(
+      PersonalTaskService.loopGuardMatches({
+        tasks: [child],
+        botId: botId("developer"),
+        objective: child.objective,
+        nowMs: nowMs + PersonalTaskService.PERSONAL_TASKS_LOOP_GUARD_MS,
+      }),
+    ).toEqual([]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
