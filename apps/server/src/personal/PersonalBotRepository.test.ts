@@ -558,10 +558,18 @@ it.effect("lists each bot chat's provider session for process attribution", () =
 // silently. It still does not fail the read, but it logs one WARN with the bot
 // id (once, not on every list refresh).
 it.effect("warns once for a bot whose stored schedule_json cannot be decoded", () => {
-  const lines: Array<{ readonly level: string; readonly fields: Record<string, unknown> }> = [];
+  const lines: Array<{
+    readonly level: string;
+    readonly text: string;
+    readonly fields: Record<string, unknown>;
+  }> = [];
   const sink = Logger.make<unknown, void>(({ logLevel, message }) => {
-    const [, fields] = Array.isArray(message) ? message : [message, {}];
-    lines.push({ level: logLevel, fields: (fields ?? {}) as Record<string, unknown> });
+    const [text, fields] = Array.isArray(message) ? message : [message, {}];
+    lines.push({
+      level: logLevel,
+      text: String(text),
+      fields: (fields ?? {}) as Record<string, unknown>,
+    });
   });
   return Effect.gen(function* () {
     const repository = yield* PersonalBotRepository.PersonalBotRepository;
@@ -601,9 +609,14 @@ it.effect("warns once for a bot whose stored schedule_json cannot be decoded", (
     expect(first.map((bot) => bot.botId)).toContain(botId);
     expect(first.find((bot) => bot.botId === botId)?.schedule).toBeUndefined();
     expect(second).toHaveLength(first.length);
-    expect(lines).toEqual([
-      { level: "Warn", fields: expect.objectContaining({ botId: "bot-bad-schedule" }) },
-    ]);
+    // One line, naming the bot both ways: the server's text log prints only the
+    // message, and the annotation is what structured readers see.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      level: "Warn",
+      text: expect.stringContaining("bot-bad-schedule"),
+      fields: expect.objectContaining({ botId: "bot-bad-schedule" }),
+    });
   }).pipe(
     Effect.provide(Layer.merge(testLayer, Logger.layer([sink], { mergeWithExisting: false }))),
   );

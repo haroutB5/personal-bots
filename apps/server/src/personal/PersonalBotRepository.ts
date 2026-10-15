@@ -653,13 +653,18 @@ function scheduleOfRow(
   return { invalidSchedule: { botId, stored } };
 }
 
-/** One WARN per bot whose stored schedule_json could not be decoded; never fails. */
+/**
+ * One WARN per bot whose stored schedule_json could not be decoded; never fails.
+ * The bot id is in the text as well as the annotation: the server's text log
+ * prints only the message, and this line's whole point is to name the bot.
+ */
 const warnInvalidSchedule = (invalid: InvalidStoredSchedule | null) =>
   invalid === null || !firstInvalidScheduleRead(invalid.botId, invalid.stored)
     ? Effect.void
-    : Effect.logWarning("personal bot has a malformed schedule_json; its model schedule is off", {
-        botId: invalid.botId,
-      });
+    : Effect.logWarning(
+        `personal bot ${invalid.botId} has a malformed schedule_json; its model schedule is off`,
+        { botId: invalid.botId },
+      );
 
 function toPersonalBot(row: typeof PersonalBotDbRow.Type): {
   readonly bot: PersonalBot;
