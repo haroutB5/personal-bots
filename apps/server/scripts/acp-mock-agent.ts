@@ -751,8 +751,9 @@ const program = Effect.gen(function* () {
       cancelledSessions.add(cancelledSessionId);
       if (dshProfile) {
         // dsh settles the running prompt ~20 ms after the cancel, and the
-        // tool the turn was running comes back failed.
-        yield* Deferred.succeed(dshCancelRequested, undefined);
+        // tool the turn was running comes back failed. The failed update is
+        // written first, as the recording shows: settling before it made the
+        // cancelled turn's tool card race the prompt response.
         yield* agent.client.sessionUpdate({
           sessionId: cancelledSessionId,
           update: {
@@ -764,6 +765,8 @@ const program = Effect.gen(function* () {
             ],
           },
         });
+        yield* Effect.sleep("20 millis");
+        yield* Deferred.succeed(dshCancelRequested, undefined);
         return;
       }
       if (completeFirstPromptOnCancel) {

@@ -353,6 +353,42 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
     }),
   );
 
+  it.effect("starts a new reasoning paragraph when a thought follows a tool call", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      const harness = yield* makeHarness(cwd);
+      yield* harness.adapter.startSession(startInput({ cwd }));
+      const beforeTurn = (yield* harness.seen()).length;
+      yield* harness.adapter.sendTurn({
+        threadId,
+        input: "paragraph-probe",
+        modelSelection: { instanceId, model: "deepseek-flash" },
+      });
+      const events = (yield* harness.seen()).slice(beforeTurn);
+      // The real frame order through the real ACP runtime: thought, tool_call,
+      // tool_call_update, thought. dsh sends no break of its own between the
+      // two thinking steps, so the adapter adds one to the second.
+      const deltas = events.filter((event) => event.type === "content.delta");
+      expect(deltas.filter((event) => event.payload.streamKind === "reasoning_text").length).toBe(
+        2,
+      );
+      expect(
+        deltas
+          .filter((event) => event.payload.streamKind === "reasoning_text")
+          .map((event) => event.payload.delta),
+      ).toEqual(["Let me check the file.", "\n\nThe file is fine."]);
+      // The visible reply is untouched.
+      expect(
+        deltas
+          .filter((event) => event.payload.streamKind === "assistant_text")
+          .map((event) => event.payload.delta),
+      ).toEqual(["Done."]);
+      yield* harness.adapter.stopSession(threadId);
+      resetBotProviderProcesses();
+    }),
+  );
+
   it.effect("holds a steer until the running turn ends, and never cancels that turn", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -743,45 +779,6 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       expect(overflow.text).not.toContain("Maximum call stack");
       expect(overflow.rateLimited).toBe(false);
       expect(translateDshFailure("something else").rateLimited).toBe(false);
-    }),
-  );
-
-  // Kept last on purpose: the cancel test above races a cancelled prompt's
-  // trailing tool update, and one more spawned mock agent before it shifts
-  // that race. This test does not depend on file order.
-  it.effect("starts a new reasoning paragraph when a thought follows a tool call", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
-      const harness = yield* makeHarness(cwd);
-      yield* harness.adapter.startSession(startInput({ cwd }));
-      const beforeTurn = (yield* harness.seen()).length;
-      yield* harness.adapter.sendTurn({
-        threadId,
-        input: "paragraph-probe",
-        modelSelection: { instanceId, model: "deepseek-flash" },
-      });
-      const events = (yield* harness.seen()).slice(beforeTurn);
-      // The real frame order through the real ACP runtime: thought, tool_call,
-      // tool_call_update, thought. dsh sends no break of its own between the
-      // two thinking steps, so the adapter adds one to the second.
-      const deltas = events.filter((event) => event.type === "content.delta");
-      expect(deltas.filter((event) => event.payload.streamKind === "reasoning_text").length).toBe(
-        2,
-      );
-      expect(
-        deltas
-          .filter((event) => event.payload.streamKind === "reasoning_text")
-          .map((event) => event.payload.delta),
-      ).toEqual(["Let me check the file.", "\n\nThe file is fine."]);
-      // The visible reply is untouched.
-      expect(
-        deltas
-          .filter((event) => event.payload.streamKind === "assistant_text")
-          .map((event) => event.payload.delta),
-      ).toEqual(["Done."]);
-      yield* harness.adapter.stopSession(threadId);
-      resetBotProviderProcesses();
     }),
   );
 });
