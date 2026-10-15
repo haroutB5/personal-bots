@@ -81,6 +81,16 @@ const CALL_COLUMNS = `
 `;
 
 /**
+ * The same row, with the transcript replaced by an empty one: the list never
+ * reads `transcript_json`, so a chat's whole call history costs one small
+ * query rather than every transcript of up to fifty calls.
+ */
+const CALL_COLUMNS_WITHOUT_TRANSCRIPT = CALL_COLUMNS.replace(
+  'transcript_json AS "transcript"',
+  `'[]' AS "transcript"`,
+);
+
+/**
  * The call cards. Deliberately their own table and never a chat message:
  * nothing here is ever handed to a bot's model context, which is exactly what
  * the owner's transcript needs. `call_id` is the primary key, so storing a
@@ -97,11 +107,31 @@ export class PersonalVoiceCallRepository extends Context.Service<
     readonly get: (
       callId: string,
     ) => Effect.Effect<Option.Option<VoiceCallRecord>, PersonalVoiceCallRepositoryError>;
-    /** Newest call first. */
+    /**
+     * Newest call first, **without** reading any stored transcript: `transcript`
+     * on every row is empty. A chat with fifty calls still costs one small
+     * query, and the client asks for one card's transcript with `getTranscript`
+     * when the owner expands it.
+     */
     readonly listByThread: (
       threadId: ThreadId,
       limit: number,
     ) => Effect.Effect<ReadonlyArray<VoiceCallRecord>, PersonalVoiceCallRepositoryError>;
+    /** One call's stored transcript, or none when the call is unknown. */
+    readonly getTranscript: (
+      callId: string,
+    ) => Effect.Effect<
+      Option.Option<ReadonlyArray<VoiceCallTranscriptEntry>>,
+      PersonalVoiceCallRepositoryError
+    >;
+    /**
+     * Removes every call card of one chat and reports how many went. Called
+     * when the chat is deleted: the transcript is the owner's own words and
+     * must not outlive the chat it belongs to.
+     */
+    readonly deleteByThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<number, PersonalVoiceCallRepositoryError>;
   }
 >()("t3/personal/voiceCalls/PersonalVoiceCallRepository") {}
 
@@ -188,7 +218,7 @@ export const make = Effect.gen(function* () {
     query(
       "listByThread",
       sql`
-        SELECT ${sql.literal(CALL_COLUMNS)}
+        SELECT ${sql.literal(CALL_COLUMNS_WITHOUT_TRANSCRIPT)}
         FROM personal_voice_calls
         WHERE thread_id = ${threadId}
         ORDER BY started_at DESC, rowid DESC
@@ -200,7 +230,40 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return { insert, get, listByThread } satisfies PersonalVoiceCallRepository["Service"];
+  const getTranscript: PersonalVoiceCallRepository["Service"]["getTranscript"] = (callId) =>
+    query(
+      "getTranscript",
+      sql<{ readonly transcript: string }>`
+        SELECT transcript_json AS "transcript"
+        FROM personal_voice_calls
+        WHERE call_id = ${callId}
+      `,
+    ).pipe(
+      Effect.map((rows) =>
+        Option.match(Option.fromNullishOr(rows[0]), {
+          onNone: () => Option.none<ReadonlyArray<VoiceCallTranscriptEntry>>(),
+          onSome: (row) => Option.some(parseTranscript(row.transcript)),
+        }),
+      ),
+    );
+
+  const deleteByThread: PersonalVoiceCallRepository["Service"]["deleteByThread"] = (threadId) =>
+    query(
+      "deleteByThread",
+      sql`
+        DELETE FROM personal_voice_calls
+        WHERE thread_id = ${threadId}
+        RETURNING call_id AS "callId"
+      `,
+    ).pipe(Effect.map((rows) => rows.length));
+
+  return {
+    insert,
+    get,
+    listByThread,
+    getTranscript,
+    deleteByThread,
+  } satisfies PersonalVoiceCallRepository["Service"];
 });
 
 export const layer = Layer.effect(PersonalVoiceCallRepository, make);

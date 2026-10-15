@@ -7,6 +7,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { PersonalBrowser } from "../../personal/browser/PersonalBrowser.ts";
+import * as PersonalVoiceCallRepository from "../../personal/voiceCalls/PersonalVoiceCallRepository.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -43,6 +44,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager.TerminalManager;
   const personalBrowser = yield* PersonalBrowser;
+  const voiceCallCards = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -70,6 +72,26 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  // A chat's voice-call cards go with the chat. They hold the recorded words of
+  // a private call, off the record, and nothing may outlive the chat they
+  // belong to. This is the one hook every deletion path goes through (the
+  // owner's own Delete, a bulk delete, a bot purge, a group's member removal),
+  // so a transcript cannot be left behind by whichever path was used.
+  const deleteVoiceCallCards = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: voiceCallCards
+        .deleteByThread(threadId)
+        .pipe(
+          Effect.flatMap((removed) =>
+            removed === 0
+              ? Effect.void
+              : Effect.logDebug("thread deletion removed voice call cards", { threadId, removed }),
+          ),
+        ),
+      message: "thread deletion cleanup skipped voice call card removal",
+      threadId,
+    });
+
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
@@ -77,6 +99,7 @@ const make = Effect.gen(function* () {
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
     yield* releaseBrowser(threadId);
+    yield* deleteVoiceCallCards(threadId);
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

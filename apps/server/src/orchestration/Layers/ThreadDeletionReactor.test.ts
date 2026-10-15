@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PersonalBrowser } from "../../personal/browser/PersonalBrowser.ts";
+import * as PersonalVoiceCallRepository from "../../personal/voiceCalls/PersonalVoiceCallRepository.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -116,10 +117,22 @@ describe("ThreadDeletionReactor drain", () => {
             released.push(released.length + 1);
           }),
       } as unknown as PersonalBrowser["Service"];
+      // A deleted chat takes its recorded call transcripts with it (must-fix 9).
+      const transcriptsRemoved: Array<string> = [];
+      const voiceCallCards = {
+        deleteByThread: (threadId: ThreadId) =>
+          Effect.sync(() => {
+            transcriptsRemoved.push(threadId);
+            return 0;
+          }),
+      } as unknown as PersonalVoiceCallRepository.PersonalVoiceCallRepository["Service"];
       const layer = ThreadDeletionReactorLive.pipe(
         Layer.provide(Layer.succeed(ProviderService, providerService)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
         Layer.provide(Layer.succeed(PersonalBrowser, personalBrowser)),
+        Layer.provide(
+          Layer.succeed(PersonalVoiceCallRepository.PersonalVoiceCallRepository, voiceCallCards),
+        ),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
       );
 
@@ -144,6 +157,9 @@ describe("ThreadDeletionReactor drain", () => {
           // Every deletion also gives the shared browser back: the tab and the
           // lease row outlive the thread otherwise.
           expect(released).toEqual([1, 2]);
+          // And every deletion drops that chat's call cards, so the recorded
+          // words of a call cannot outlive the chat.
+          expect(transcriptsRemoved).toEqual([threadId, threadId]);
         }),
       ).pipe(Effect.provide(layer));
     }),

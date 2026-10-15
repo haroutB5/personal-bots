@@ -40,6 +40,7 @@ import {
   VOICE_CALL_NEW_SESSION_TTL_SECONDS,
   VOICE_CALL_SECRET_NAME,
   VOICE_CALL_SECRET_ORIGIN,
+  VOICE_CALL_SNAPSHOT_REPLY_CHARS,
   VOICE_CALL_STARTS_PER_MINUTE,
   VOICE_CALL_TOKEN_TTL_SECONDS,
   isVoiceCallVoice,
@@ -55,8 +56,10 @@ import {
   type VoiceCallMemoryEntry,
   type VoiceCallRecord,
   type VoiceCallSendResult,
+  type VoiceCallSnapshotResult,
   type VoiceCallStartResult,
   type VoiceCallTranscriptEntry,
+  type VoiceCallTranscriptResult,
   PersonalVoiceCallsError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -138,6 +141,22 @@ export class PersonalVoiceCallService extends Context.Service<
       readonly threadId: ThreadId;
     }) => Effect.Effect<VoiceCallListResult, PersonalVoiceCallsError>;
     /**
+     * The **call's own** chat, as of now: status, step and newest reply, all
+     * redacted and bounded here. The thread comes from the call's lease, never
+     * from whatever chat the phone happens to be showing, so navigating away
+     * mid-send cannot make the voice read another chat's reply or decide the
+     * turn ended. A chat that has had a sensitive site open returns the status
+     * alone, with no chat text.
+     */
+    readonly snapshot: (input: {
+      readonly threadId: ThreadId;
+      readonly callId: string;
+    }) => Effect.Effect<VoiceCallSnapshotResult, PersonalVoiceCallsError>;
+    /** One card's stored transcript, read only when the owner expands it. */
+    readonly transcript: (input: {
+      readonly callId: string;
+    }) => Effect.Effect<VoiceCallTranscriptResult, PersonalVoiceCallsError>;
+    /**
      * The voice's own fast facts, without waking the real bot: up to 8 short
      * entries from the same search `search_memory` runs for that bot (shared,
      * its team and its own). Memory already refuses secrets, so no value can
@@ -181,7 +200,75 @@ export const make = Effect.gen(function* () {
   // for the one call the owner thinks he made.
   const startLock = yield* Semaphore.make(1);
 
+  /**
+   * The calls this process has open, `callId` -> the chat it was minted for.
+   * `send`, `lookupMemory` and `snapshot` are answered from here, so a stale
+   * tab (or a second chat on screen) can never post into, or read, a chat the
+   * call does not belong to. The map is deliberately in memory: a call is a
+   * live session, and a server restart ends it. `finish` does not consult it,
+   * so a card is still stored after a restart.
+   */
+  const activeCalls = new Map<
+    string,
+    { readonly threadId: ThreadId; readonly expiresAtMs: number }
+  >();
+  /** How long past the call cap a lease is kept, for the last flush to land. */
+  const ACTIVE_CALL_SLACK_MS = 5 * 60_000;
+
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
+
+  const pruneActiveCalls = (atMs: number): void => {
+    for (const [callId, lease] of activeCalls) {
+      if (lease.expiresAtMs <= atMs) activeCalls.delete(callId);
+    }
+  };
+
+  /** The call must be one this process minted, for this very chat. */
+  const requireCall = (callId: string, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const atMs = yield* nowMs;
+      pruneActiveCalls(atMs);
+      const lease = activeCalls.get(callId);
+      if (lease === undefined) {
+        return yield* fail("not_found", "This call is not open any more. Start a new one.");
+      }
+      if (lease.threadId !== threadId) {
+        return yield* fail("not_found", "That call belongs to another chat.");
+      }
+    });
+
+  /**
+   * A chat that has had a site the owner marked sensitive open sends nothing
+   * to Google and reads nothing out: the call fails closed rather than pushing
+   * the private things on that page through a voice session.
+   */
+  const sensitiveExposure = (threadId: ThreadId) =>
+    browser
+      .sensitiveExposure(threadId)
+      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+
+  const refuseSensitiveChat = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const exposed = yield* sensitiveExposure(threadId);
+      if (exposed.length > 0) {
+        return yield* fail(
+          "sensitive_chat",
+          "This chat has had a site you marked sensitive open, so it cannot be read out on a call. Use the chat itself, or a new chat.",
+        );
+      }
+    });
+
+  /** The chat's own facts, or a refusal naming the reason. */
+  const chatFacts = (rawThreadId: ThreadId) =>
+    Effect.gen(function* () {
+      const facts = yield* bots
+        .getChatFacts({ threadId: rawThreadId })
+        .pipe(Effect.mapError((cause) => fail("not_found", "Could not read that chat.", cause)));
+      if (Option.isNone(facts)) {
+        return yield* fail("not_owner_chat", "That chat cannot take a call.");
+      }
+      return facts.value;
+    });
 
   /**
    * The chat must be one the owner is in on his own: a bot chat with the
@@ -191,13 +278,7 @@ export const make = Effect.gen(function* () {
    */
   const callableChat = (rawThreadId: ThreadId) =>
     Effect.gen(function* () {
-      const facts = yield* bots
-        .getChatFacts({ threadId: rawThreadId })
-        .pipe(Effect.mapError((cause) => fail("not_found", "Could not read that chat.", cause)));
-      if (Option.isNone(facts)) {
-        return yield* fail("not_owner_chat", "That chat cannot take a call.");
-      }
-      const chat = facts.value;
+      const chat = yield* chatFacts(rawThreadId);
       if (chat.archived || chat.deleted || chat.groupRelay || chat.taskChat || chat.routineChat) {
         return yield* fail(
           "not_owner_chat",
@@ -225,6 +306,27 @@ export const make = Effect.gen(function* () {
         threadId: chat.threadId,
         shell: shell.value,
       } satisfies CallableChat;
+    });
+
+  /**
+   * A chat a finished call can still be filed against: it is still the owner's
+   * own bot chat, whatever happened to it during the call. A chat archived, or
+   * whose bot had its switch turned off, mid-call still gets its card; the
+   * alternative is losing the transcript of a call that really happened.
+   */
+  const storableChat = (rawThreadId: ThreadId) =>
+    Effect.gen(function* () {
+      const chat = yield* chatFacts(rawThreadId);
+      if (chat.deleted || chat.groupRelay || chat.taskChat || chat.routineChat) {
+        return yield* fail("not_owner_chat", "That chat cannot take a call.");
+      }
+      const bot = yield* bots
+        .getBotById({ botId: chat.botId })
+        .pipe(Effect.mapError((cause) => fail("not_found", "Could not read that bot.", cause)));
+      if (Option.isNone(bot)) {
+        return yield* fail("not_owner_chat", "That chat cannot take a call.");
+      }
+      return { bot: bot.value, botId: bot.value.botId, threadId: chat.threadId };
     });
 
   /**
@@ -373,10 +475,14 @@ export const make = Effect.gen(function* () {
   const voiceName = (settings: { readonly voiceName: string }): string =>
     isVoiceCallVoice(settings.voiceName) ? settings.voiceName : VOICE_CALL_DEFAULT_VOICE;
 
+  /** True while the bot's own turn is running (starting counts: it is coming). */
+  const turnRunning = (shell: CallableChat["shell"]): boolean =>
+    shell.session?.status === "running" || shell.session?.status === "starting";
+
   const statusOf = (shell: CallableChat["shell"]): string =>
     shell.hasPendingApprovals || shell.hasPendingUserInput
       ? "Waiting on you"
-      : shell.session?.status === "running" || shell.session?.status === "starting"
+      : turnRunning(shell)
         ? "Working"
         : "Idle";
 
@@ -390,6 +496,9 @@ export const make = Effect.gen(function* () {
           );
         }
         const chat = yield* callableChat(input.threadId);
+        // A chat that had the bank open is refused before a single token is
+        // minted: nothing private ever reaches Google through a call.
+        yield* refuseSensitiveChat(chat.threadId);
         const profile = yield* botService
           .getProfile()
           .pipe(Effect.mapError((cause) => fail("not_found", "Could not read settings.", cause)));
@@ -403,20 +512,28 @@ export const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => [] as ReadonlyArray<{ readonly note: string }>),
         );
         const context = yield* recentMessages(chat.threadId);
-        const callouts = yield* calloutLines(chat.threadId);
-        const taskTitles = yield* runningTaskTitles(chat.botId);
+        const callouts = (yield* calloutLines(chat.threadId)).map((line) => redactSecrets(line));
+        const taskTitles = (yield* runningTaskTitles(chat.botId)).map((title) =>
+          redactSecrets(title),
+        );
         // The bot's own personality and the owner's standing rules for it. Both
         // are read-only: a call must not consume the real bot's next-turn
         // preference list.
         const preferences = yield* memory.preferencesForBot({ botId: chat.botId }).pipe(
-          Effect.map((entries) => entries.map((entry) => entry.content)),
+          Effect.map((entries) => entries.map((entry) => redactSecrets(entry.content))),
           Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
         );
         const statusLabel = statusOf(chat.shell);
-        const statusDetail = notes[0]?.note ?? "";
+        const statusDetail = redactSecrets(notes[0]?.note ?? "");
         const name = voiceName(settings);
         const startedAt = yield* DateTime.now;
+        const startedAtMs = DateTime.toEpochMillis(startedAt);
         const callId = NodeCrypto.randomUUID();
+        pruneActiveCalls(startedAtMs);
+        activeCalls.set(callId, {
+          threadId: chat.threadId,
+          expiresAtMs: startedAtMs + VOICE_CALL_MAX_MINUTES * 60_000 + ACTIVE_CALL_SLACK_MS,
+        });
         const systemInstruction = voiceCallSystemInstruction({
           botName: chat.bot.name,
           botTitle: chat.bot.title,
@@ -502,6 +619,10 @@ export const make = Effect.gen(function* () {
   const send: PersonalVoiceCallService["Service"]["send"] = (input) =>
     Effect.gen(function* () {
       const chat = yield* callableChat(input.threadId);
+      // The call must be this process's, for this very chat, and the chat must
+      // still be one that may reach Google at all.
+      yield* requireCall(input.callId, chat.threadId);
+      yield* refuseSensitiveChat(chat.threadId);
       const text = input.text.trim();
       if (text.length === 0) {
         return yield* fail("invalid_input", "There was nothing to send.");
@@ -530,6 +651,9 @@ export const make = Effect.gen(function* () {
           },
         ],
       };
+      // The answer is only ever "sent" once the chat has really taken the
+      // message: the dispatch is awaited here and a refusal comes back as a
+      // typed `send_failed`, so the voice is never told a lie it can repeat.
       yield* engine
         .dispatch({
           type: "thread.turn.start",
@@ -549,7 +673,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError((cause) =>
-            fail("google_unavailable", "The message could not be posted to the chat.", cause),
+            fail("send_failed", "The message could not be posted to the chat.", cause),
           ),
         );
       yield* Effect.logInfo("personal voice call message posted", {
@@ -571,7 +695,10 @@ export const make = Effect.gen(function* () {
         // Idempotent: a card is written once and never rewritten.
         return { call: existing.value, alreadyStored: true } satisfies VoiceCallFinishResult;
       }
-      const chat = yield* callableChat(input.threadId);
+      // A chat archived, or whose bot had its switch turned off, mid-call still
+      // gets its card: the call really happened, and the transcript is the only
+      // place it survives. Only a chat that is not the owner's at all is refused.
+      const chat = yield* storableChat(input.threadId);
       const profile = yield* botService
         .getProfile()
         .pipe(Effect.orElseSucceed(() => ({ displayName: "", voiceCalls: undefined })));
@@ -615,6 +742,9 @@ export const make = Effect.gen(function* () {
           return { call: raced.value, alreadyStored: true } satisfies VoiceCallFinishResult;
         }
       }
+      // The call is over: its lease goes with it, so a stale tab cannot keep
+      // posting with this call id.
+      activeCalls.delete(input.callId);
       yield* Effect.logInfo("personal voice call card stored", {
         threadId: chat.threadId,
         callId: input.callId,
@@ -631,6 +761,14 @@ export const make = Effect.gen(function* () {
         .getChatFacts({ threadId: input.threadId })
         .pipe(Effect.orElseSucceed(() => Option.none()));
       if (Option.isNone(facts)) return { calls: [] } satisfies VoiceCallListResult;
+      // A bot that cannot take calls has no cards to show, and the query is
+      // skipped outright: the chat screen asks on every open, voice or not.
+      const bot = yield* bots
+        .getBotById({ botId: facts.value.botId })
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(bot) || !botAllowsVoiceCalls(bot.value)) {
+        return { calls: [] } satisfies VoiceCallListResult;
+      }
       const rows = yield* calls
         .listByThread(facts.value.threadId, VOICE_CALL_LIST_LIMIT)
         .pipe(
@@ -639,9 +777,102 @@ export const make = Effect.gen(function* () {
       return { calls: rows } satisfies VoiceCallListResult;
     });
 
+  const transcript: PersonalVoiceCallService["Service"]["transcript"] = (input) =>
+    Effect.gen(function* () {
+      const stored = yield* calls
+        .getTranscript(input.callId)
+        .pipe(
+          Effect.mapError((cause) => fail("not_found", "Could not read the transcript.", cause)),
+        );
+      if (Option.isNone(stored)) {
+        return yield* fail("not_found", "That call is not here any more.");
+      }
+      return {
+        callId: input.callId,
+        transcript: stored.value,
+      } satisfies VoiceCallTranscriptResult;
+    });
+
+  /** The newest finished reply in the chat, already redacted and bounded. */
+  const latestReply = (threadId: ThreadId) =>
+    sql<{ readonly messageId: string; readonly text: string; readonly at: string }>`
+      SELECT message_id AS "messageId", text AS "text", created_at AS "at"
+      FROM projection_thread_messages
+      WHERE thread_id = ${threadId}
+        AND role = 'assistant'
+        AND is_streaming = 0
+        AND length(trim(text)) > 0
+      ORDER BY created_at DESC, message_id DESC
+      LIMIT 5
+    `.pipe(
+      Effect.map((rows) => rows.find((row) => !isServerOnlyNotice(row.text))),
+      Effect.map((row) =>
+        row === undefined
+          ? null
+          : {
+              messageId: row.messageId,
+              text: redactSecrets(row.text).slice(0, VOICE_CALL_SNAPSHOT_REPLY_CHARS),
+              at: DateTime.makeUnsafe(row.at),
+            },
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+
+  const snapshot: PersonalVoiceCallService["Service"]["snapshot"] = (input) =>
+    Effect.gen(function* () {
+      // The call's own chat wins over whatever the phone is showing. A live
+      // call asked about another chat is a client bug, refused rather than
+      // answered with the wrong chat's words.
+      const atMs = yield* nowMs;
+      pruneActiveCalls(atMs);
+      const lease = activeCalls.get(input.callId);
+      if (lease !== undefined && lease.threadId !== input.threadId) {
+        return yield* fail("not_found", "That call belongs to another chat.");
+      }
+      const threadId = lease?.threadId ?? input.threadId;
+      const facts = yield* bots
+        .getChatFacts({ threadId })
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(facts)) {
+        return yield* fail("not_found", "That chat is not here any more.");
+      }
+      const shell = yield* projections
+        .getThreadShellById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const exposed = yield* sensitiveExposure(threadId);
+      const privateChat = exposed.length > 0;
+      const base = {
+        status: Option.isSome(shell) ? statusOf(shell.value) : "Idle",
+        turnRunning: Option.isSome(shell) ? turnRunning(shell.value) : false,
+      };
+      if (privateChat) {
+        // Status and turn state are the app's own words, but every line of the
+        // chat stays on the laptop: this chat must not be read out.
+        return {
+          ...base,
+          stepNote: "",
+          latestReply: "",
+          latestReplyMessageId: "",
+          latestReplyAt: null,
+        } satisfies VoiceCallSnapshotResult;
+      }
+      const notes = yield* personalWorkingProgress(sql, [threadId]).pipe(
+        Effect.orElseSucceed(() => [] as ReadonlyArray<{ readonly note: string }>),
+      );
+      const reply = yield* latestReply(threadId);
+      return {
+        ...base,
+        stepNote: redactSecrets(notes[0]?.note ?? "").slice(0, 400),
+        latestReply: reply?.text ?? "",
+        latestReplyMessageId: reply?.messageId ?? "",
+        latestReplyAt: reply?.at ?? null,
+      } satisfies VoiceCallSnapshotResult;
+    });
+
   const lookupMemory: PersonalVoiceCallService["Service"]["lookupMemory"] = (input) =>
     Effect.gen(function* () {
       const chat = yield* callableChat(input.threadId);
+      yield* requireCall(input.callId, chat.threadId);
       const query = input.query.trim();
       if (query.length === 0) {
         return {
@@ -651,9 +882,7 @@ export const make = Effect.gen(function* () {
       }
       // A chat that has had a site the owner marked sensitive open sends
       // nothing to Google from here: memory text can carry what was on it.
-      const exposed = yield* browser
-        .sensitiveExposure(chat.threadId)
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      const exposed = yield* sensitiveExposure(chat.threadId);
       if (exposed.length > 0) {
         return {
           entries: [],
@@ -689,6 +918,8 @@ export const make = Effect.gen(function* () {
     send,
     finish,
     list,
+    snapshot,
+    transcript,
     lookupMemory,
   } satisfies PersonalVoiceCallService["Service"];
 });
