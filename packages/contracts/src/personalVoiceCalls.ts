@@ -83,6 +83,11 @@ export const VoiceCallContext = Schema.Struct({
   botStatus: Schema.String,
   /** The current step line while the bot works; empty when it is not working. */
   botStatusDetail: Schema.String,
+  /**
+   * Titles of the bot's unfinished tasks, newest first (titles only, never a
+   * brief or a result). A title the owner wrote is safe to say out loud.
+   */
+  runningTaskTitles: Schema.Array(Schema.String),
   /** Up to the last 20 text messages of the chat, oldest first. */
   recentMessages: Schema.Array(VoiceCallContextMessage),
   /**
@@ -185,6 +190,41 @@ export const VoiceCallKeyCheckResult = Schema.Struct({
   origin: Schema.String,
 });
 export type VoiceCallKeyCheckResult = typeof VoiceCallKeyCheckResult.Type;
+
+// ---------------------------------------------------------------------------
+// lookupMemory (the voice's own fast facts)
+// ---------------------------------------------------------------------------
+
+/** At most this many memory entries one lookup returns. */
+export const VOICE_CALL_LOOKUP_MEMORY_MAX = 8;
+/** At most this many characters of an entry the voice is handed. */
+export const VOICE_CALL_LOOKUP_MEMORY_CHARS = 400;
+/** At most this many of the owner's standing rules go into the instruction. */
+export const VOICE_CALL_PREFERENCES_MAX_ENTRIES = 40;
+
+export const VoiceCallLookupMemoryInput = Schema.Struct({
+  threadId: ThreadId,
+  callId: TrimmedNonEmptyString,
+  query: TrimmedNonEmptyString,
+});
+export type VoiceCallLookupMemoryInput = typeof VoiceCallLookupMemoryInput.Type;
+
+/** One entry the voice may say out loud. Never a value: memory refuses secrets. */
+export const VoiceCallMemoryEntry = Schema.Struct({
+  kind: Schema.String,
+  content: Schema.String,
+});
+export type VoiceCallMemoryEntry = typeof VoiceCallMemoryEntry.Type;
+
+export const VoiceCallLookupMemoryResult = Schema.Struct({
+  entries: Schema.Array(VoiceCallMemoryEntry),
+  /**
+   * Empty when the lookup ran. Otherwise the reason it returned nothing, said
+   * plainly so the voice can repeat it instead of guessing.
+   */
+  note: Schema.String,
+});
+export type VoiceCallLookupMemoryResult = typeof VoiceCallLookupMemoryResult.Type;
 
 // ---------------------------------------------------------------------------
 // send

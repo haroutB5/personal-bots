@@ -309,6 +309,8 @@ import {
   VoiceCallKeyCheckResult,
   VoiceCallListInput,
   VoiceCallListResult,
+  VoiceCallLookupMemoryInput,
+  VoiceCallLookupMemoryResult,
   VoiceCallSendInput,
   VoiceCallSendResult,
   VoiceCallStartInput,
@@ -647,6 +649,7 @@ export const WS_METHODS = {
   // phone gets one single-use token per call.
   personalVoiceCallsStart: "personalVoiceCalls.start",
   personalVoiceCallsCheckKey: "personalVoiceCalls.checkKey",
+  personalVoiceCallsLookupMemory: "personalVoiceCalls.lookupMemory",
   personalVoiceCallsSend: "personalVoiceCalls.send",
   personalVoiceCallsFinish: "personalVoiceCalls.finish",
   personalVoiceCallsList: "personalVoiceCalls.list",
@@ -1460,6 +1463,12 @@ const WsPersonalVoiceCallsFinishRpc = Rpc.make(WS_METHODS.personalVoiceCallsFini
 const WsPersonalVoiceCallsListRpc = Rpc.make(WS_METHODS.personalVoiceCallsList, {
   payload: VoiceCallListInput,
   success: VoiceCallListResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+const WsPersonalVoiceCallsLookupMemoryRpc = Rpc.make(WS_METHODS.personalVoiceCallsLookupMemory, {
+  payload: VoiceCallLookupMemoryInput,
+  success: VoiceCallLookupMemoryResult,
   error: PersonalVoiceCallsRpcError,
 });
 
@@ -2697,6 +2706,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalVoiceCallsSendRpc,
   WsPersonalVoiceCallsFinishRpc,
   WsPersonalVoiceCallsListRpc,
+  WsPersonalVoiceCallsLookupMemoryRpc,
   WsPersonalLeadBotChangesListRpc,
   WsPersonalLeadBotChangesDecideRpc,
   WsPersonalFilesDeleteRpc,
