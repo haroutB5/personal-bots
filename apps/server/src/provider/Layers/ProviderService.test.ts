@@ -5282,6 +5282,7 @@ describe("agent browser access", () => {
                       : { botId: null, environment: {}, systemInstructions: null },
                   ),
                 secretsForThread: () => Effect.succeed([]),
+                sharedSecrets: () => Effect.succeed([]),
                 instructionsForThread: () =>
                   Effect.succeed(
                     options.personalBotThread ? (options.botInstructions ?? null) : null,
