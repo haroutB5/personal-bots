@@ -22,18 +22,21 @@ import { unarchivedChatTitle, withChatTitleLock } from "./personalChatTitles.ts"
 import {
   ARCHIVED_BUSY_CHATS_SQL,
   decideTaskChatArchive,
+  TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
   TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL,
   TASK_CHAT_AUTO_ARCHIVE_META_KEY,
   TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS,
   TASK_CHAT_OPEN_WORK_SQL,
   taskChatAutoArchiveEnabled,
+  taskChatAutoArchiveIdleMs,
   type TaskChatArchiveCandidate,
 } from "./taskChatAutoArchivePolicy.ts";
 import { withStallJob } from "../observability/stallJobs.ts";
 
 /**
- * Archives finished delegated-task chats after 48 idle hours. Routine-run
- * chats archive after opening and 48 idle hours, or after 48 hours unread.
+ * Archives finished delegated-task chats after a wait Settings sets (48 hours
+ * by default, 5m..720h, `taskChatAutoArchiveAfterMinutes`). Routine-run chats
+ * archive after opening and that same wait, or after it unread.
  *
  * Which chats and when: `taskChatAutoArchivePolicy.ts`. The archive itself is
  * the manual one (`PersonalBotService.archiveThread`): the link row gets
@@ -88,7 +91,17 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
 
-  const archiveOne = (candidate: CandidateRow, nowMs: number) =>
+  /**
+   * How long a finished chat waits, from Settings. Read once per sweep, like
+   * the toggle, so a change applies at the next sweep without a restart. An
+   * unreadable row is the 48 hour default, never "archive now".
+   */
+  const savedIdleMs = repository.getMeta({ key: TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY }).pipe(
+    Effect.map((stored) => taskChatAutoArchiveIdleMs(Option.getOrNull(stored))),
+    Effect.orElseSucceed(() => taskChatAutoArchiveIdleMs(null)),
+  );
+
+  const archiveOne = (candidate: CandidateRow, nowMs: number, idleMs: number) =>
     Effect.gen(function* () {
       const threadId = candidate.threadId as ThreadId;
       // Fresh live state: the row's session status comes from the same
@@ -108,6 +121,7 @@ export const make = Effect.gen(function* () {
           backgroundWork: thread.backgroundLiveness != null,
           latestTurnCompletedAt: thread.latestTurn?.completedAt ?? null,
         },
+        idleMs,
       );
       if (decision.kind !== "archive") return false;
       // The candidate list was read at the start of the sweep; a task reopened
@@ -213,12 +227,13 @@ export const make = Effect.gen(function* () {
       return 0;
     }
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const idleMs = yield* savedIdleMs;
     const candidates = yield* sql.unsafe<CandidateRow>(TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL);
     let archived = 0;
     let archivedTaskChats = 0;
     let archivedRoutineChats = 0;
     for (const candidate of candidates) {
-      if (yield* archiveOne(candidate, nowMs)) {
+      if (yield* archiveOne(candidate, nowMs, idleMs)) {
         archived += 1;
         if (candidate.chatKind === "routine") archivedRoutineChats += 1;
         else archivedTaskChats += 1;

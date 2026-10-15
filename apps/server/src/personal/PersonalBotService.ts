@@ -21,8 +21,11 @@ import {
   isProviderAvailable,
   PersonalBotId,
   PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
+  PERSONAL_CHAT_ARCHIVE_AFTER_ERROR,
   PERSONAL_MESSAGE_SEARCH_MAX_RESULTS,
   PERSONAL_MESSAGE_SEARCH_MIN_QUERY_CHARS,
+  personalChatArchiveAfterMinutesFromStored,
+  personalChatArchiveAfterMinutesValid,
   PersonalBotTeam,
   PersonalBotsError,
   PersonalBotThread,
@@ -77,6 +80,7 @@ import { scheduleProblem } from "./personalModelSchedulePolicy.ts";
 import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
 import { PERSONAL_SEED_MODEL_ENV, seedModelFor } from "./seedModel.ts";
 import {
+  TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
   TASK_CHAT_AUTO_ARCHIVE_META_KEY,
   taskChatAutoArchiveEnabled,
 } from "./taskChatAutoArchivePolicy.ts";
@@ -1000,10 +1004,16 @@ export const make = Effect.gen(function* () {
           )
         : [];
       const autoArchive = yield* repository.getMeta({ key: TASK_CHAT_AUTO_ARCHIVE_META_KEY });
+      const autoArchiveAfter = yield* repository.getMeta({
+        key: TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
+      });
       return {
         displayName: Option.getOrElse(stored, () => ""),
         ...(customTeams.length > 0 ? { customTeams } : {}),
         autoArchiveTaskChats: taskChatAutoArchiveEnabled(Option.getOrNull(autoArchive)),
+        autoArchiveTaskChatsAfterMinutes: personalChatArchiveAfterMinutesFromStored(
+          Option.getOrNull(autoArchiveAfter),
+        ),
       };
     }).pipe(Effect.mapError(repositoryError("profile lookup")));
 
@@ -1057,6 +1067,19 @@ export const make = Effect.gen(function* () {
           .setMeta({
             key: TASK_CHAT_AUTO_ARCHIVE_META_KEY,
             value: input.autoArchiveTaskChats ? "on" : "off",
+          })
+          .pipe(Effect.mapError(repositoryError("profile update")));
+      }
+      if (input.autoArchiveTaskChatsAfterMinutes !== undefined) {
+        // Refused, never clamped: a value the sweep could not use is a mistake,
+        // not a request for something else.
+        if (!personalChatArchiveAfterMinutesValid(input.autoArchiveTaskChatsAfterMinutes)) {
+          return yield* notFound(PERSONAL_CHAT_ARCHIVE_AFTER_ERROR);
+        }
+        yield* repository
+          .setMeta({
+            key: TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
+            value: String(input.autoArchiveTaskChatsAfterMinutes),
           })
           .pipe(Effect.mapError(repositoryError("profile update")));
       }

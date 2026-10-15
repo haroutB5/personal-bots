@@ -2,7 +2,14 @@ import type { FormEvent, JSX } from "react";
 import { cloneElement, useMemo, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  formatPersonalChatArchiveAfterDuration,
+  parsePersonalChatArchiveAfterDuration,
+  personalChatArchiveAfterDurationLabel,
+  PERSONAL_CHAT_ARCHIVE_AFTER_DEFAULT_MINUTES,
+  PERSONAL_CHAT_ARCHIVE_AFTER_ERROR,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Bell,
@@ -162,19 +169,36 @@ function PreferenceRow({
  * "Auto-archive finished task and routine chats". Unlike `PreferenceRow` this setting
  * lives on the laptop (the server runs the sweep), so it is the same on every
  * device and saves through the profile.
+ *
+ * The wait under it (5m to 720h) is one value for both the finished-task idle
+ * clock and the unread routine report. It has no Save button: blur or Enter
+ * commits, Escape or a bad blur puts the saved value back, and the hint above
+ * says the saved wait in words.
  */
 function AutoArchiveTaskChatsRow({
   environmentId,
   enabled,
+  savedMinutes = PERSONAL_CHAT_ARCHIVE_AFTER_DEFAULT_MINUTES,
 }: {
   environmentId: EnvironmentId;
   enabled: boolean;
+  savedMinutes?: number;
 }): JSX.Element {
   const setProfile = useAtomCommand(personalProfileSet);
   const [pending, setPending] = useState<boolean | null>(null);
   const [saved, setSaved] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const shown = pending ?? saved ?? enabled;
+
+  // The saved wait, the field's text (null = show the saved value) and what is
+  // under it. Typing an equivalent form ("120m" for a saved 2h) keeps the
+  // saved value and only rewrites the text in the app's own shape.
+  const [savedAfter, setSavedAfter] = useState<number | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [afterError, setAfterError] = useState<string | null>(null);
+  const [afterBusy, setAfterBusy] = useState(false);
+  const minutes = savedAfter ?? savedMinutes;
+  const text = draft ?? formatPersonalChatArchiveAfterDuration(minutes);
 
   const toggle = async () => {
     if (pending !== null) return;
@@ -186,7 +210,39 @@ function AutoArchiveTaskChatsRow({
     setError(failure);
     if (failure === null && result._tag === "Success") {
       setSaved(result.value.autoArchiveTaskChats ?? true);
+      // The wait row goes with the toggle: a half-typed value or its error
+      // must not be waiting when it comes back.
+      setDraft(null);
+      setAfterError(null);
     }
+  };
+
+  /** Commits the field. False when nothing was saved, so a blur can restore. */
+  const saveAfter = async (raw: string): Promise<boolean> => {
+    const parsed = parsePersonalChatArchiveAfterDuration(raw);
+    if (parsed === null) {
+      setAfterError(PERSONAL_CHAT_ARCHIVE_AFTER_ERROR);
+      return false;
+    }
+    setAfterError(null);
+    if (parsed === minutes) {
+      setDraft(null);
+      return true;
+    }
+    setAfterBusy(true);
+    const result = await setProfile({
+      environmentId,
+      input: { autoArchiveTaskChatsAfterMinutes: parsed },
+    });
+    setAfterBusy(false);
+    const failure = commandFailureMessage(result, "Couldn't save the setting. Try again.");
+    if (result._tag !== "Success" || failure !== null) {
+      setAfterError(failure ?? PERSONAL_CHAT_ARCHIVE_AFTER_ERROR);
+      return false;
+    }
+    setSavedAfter(result.value.autoArchiveTaskChatsAfterMinutes ?? parsed);
+    setDraft(null);
+    return true;
   };
 
   return (
@@ -203,13 +259,73 @@ function AutoArchiveTaskChatsRow({
             Auto-archive finished task and routine chats
           </span>
           <span className="text-[13px] text-[var(--personal-text-secondary)]">
-            Finished task and routine-run chats archive after 48 hours unused. Nothing is deleted.
+            {`Finished task and routine-run chats archive after ${personalChatArchiveAfterDurationLabel(
+              minutes,
+            )} unused. Nothing is deleted.`}
           </span>
         </span>
         <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
           {shown ? "On" : "Off"}
         </span>
       </button>
+      {shown ? (
+        <div className="border-t border-[var(--personal-border)] px-4 py-2.5">
+          <div className="flex min-h-11 items-center gap-3">
+            <label htmlFor="personal-auto-archive-after" className="flex min-w-0 flex-1 flex-col">
+              <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+                Archive after
+              </span>
+              <span className="text-[13px] text-[var(--personal-text-secondary)]">
+                Time unused before a finished chat archives. 5m to 720h.
+              </span>
+            </label>
+            <input
+              id="personal-auto-archive-after"
+              value={text}
+              inputMode="text"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-invalid={afterError !== null}
+              aria-busy={afterBusy}
+              aria-describedby={
+                afterError !== null ? "personal-auto-archive-after-error" : undefined
+              }
+              onChange={(event) => {
+                setDraft(event.target.value);
+                setAfterError(null);
+              }}
+              onBlur={() =>
+                // A blur that cannot save (bad text, or a save that failed)
+                // puts the saved value back: the field never shows an unsaved
+                // number as though it were in force.
+                saveAfter(text).then((landed) => {
+                  if (!landed) setDraft(null);
+                })
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void saveAfter(text);
+                } else if (event.key === "Escape") {
+                  setDraft(null);
+                  setAfterError(null);
+                }
+              }}
+              className="h-11 w-20 shrink-0 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] px-2 text-center text-base text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            />
+          </div>
+          {afterError !== null ? (
+            <p
+              id="personal-auto-archive-after-error"
+              role="alert"
+              className="mt-1.5 text-sm text-[var(--personal-error)]"
+            >
+              {afterError}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {error !== null ? (
         <p role="alert" className="px-4 pb-2.5 text-sm text-[var(--personal-error)]">
           {error}
@@ -459,6 +575,10 @@ export function PersonalSettingsScreen(): JSX.Element {
               <AutoArchiveTaskChatsRow
                 environmentId={environmentId}
                 enabled={profile.data.autoArchiveTaskChats ?? true}
+                savedMinutes={
+                  profile.data.autoArchiveTaskChatsAfterMinutes ??
+                  PERSONAL_CHAT_ARCHIVE_AFTER_DEFAULT_MINUTES
+                }
               />
             </li>
           ) : null}
