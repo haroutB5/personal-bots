@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -37,11 +38,7 @@ const captureLogLines = () => {
   return { lines, layer: Logger.layer([sink], { mergeWithExisting: false }) };
 };
 
-const writeSkill = (
-  root: string,
-  relativePath: string,
-  contents: string,
-): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path> =>
+const writeSkill = (root: string, relativePath: string, contents: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
