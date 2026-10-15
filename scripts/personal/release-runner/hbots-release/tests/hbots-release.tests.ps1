@@ -59,7 +59,7 @@ function New-World([string]$Name, [string]$Concurrency = '5') {
     # git repo with the tools tree
     $repo = Join-Path $root 'repo'
     New-Item -ItemType Directory -Force -Path (Join-Path $repo 'scripts\personal'), (Join-Path $repo 'apps\server\src\personal\tasks'), (Join-Path $repo 'docs\releases') | Out-Null
-    foreach ($f in 'common.ps1', 'backup.ps1', 'sqlite-snapshot.cjs', 'sqlite-check.cjs', 'migration-check.cjs') { Copy-Item -LiteralPath (Join-Path $realTools $f) -Destination (Join-Path $repo "scripts\personal\$f") }
+    foreach ($f in 'common.ps1', 'background-priority.ps1', 'backup.ps1', 'sqlite-snapshot.cjs', 'sqlite-check.cjs', 'migration-check.cjs') { Copy-Item -LiteralPath (Join-Path $realTools $f) -Destination (Join-Path $repo "scripts\personal\$f") }
     foreach ($f in 'check-release-notes.ps1', 'check-gate-evidence.ps1', 'restart.ps1', 'smoke.ps1', 'notify-release.ps1') { Copy-Item -LiteralPath (Join-Path $stubs $f) -Destination (Join-Path $repo "scripts\personal\$f") }
     Write-File (Join-Path $repo 'apps\server\src\personal\tasks\PersonalTaskService.ts') "export const PERSONAL_TASKS_CONCURRENCY = $Concurrency;`n"
     Write-File (Join-Path $repo 'docs\releases\HANDOFF-999.md') "notes`n"
