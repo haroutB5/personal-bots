@@ -39,6 +39,7 @@ import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import { withSpawnImageWarmupLayer } from "./process/spawnImageWarmup.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
@@ -322,7 +323,10 @@ const HttpServerLive = Layer.unwrap(
   }),
 );
 
-const PlatformServicesLive = NodeServices.layer;
+// Every process the server starts goes through this spawner: a big program
+// Windows has not checked yet is started once on a worker first, so the check
+// does not hold the event loop (see process/spawnImageWarmup.ts).
+const PlatformServicesLive = withSpawnImageWarmupLayer(NodeServices.layer);
 
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),

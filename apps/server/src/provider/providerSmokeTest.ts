@@ -41,6 +41,7 @@ import {
   personalBotCodexSkillArgs,
 } from "./Layers/codexLaunchArgs.ts";
 import { personalBotOpenCodeEnvironment } from "./opencodeBotIsolation.ts";
+import { warmSpawnImage } from "../process/spawnImageWarmup.ts";
 
 export const SMOKE_TEST_PROMPT = "Reply with exactly one word: ready. Do not use any tools.";
 const SMOKE_TEST_TIMEOUT = Duration.minutes(3);
@@ -143,6 +144,7 @@ export const runClaudeSmokeTest = (input: {
       input.createQuery ??
       ((request) => query({ prompt: request.prompt, options: request.options }));
 
+    yield* warmSpawnImage(input.executablePath);
     const messages = yield* Effect.tryPromise({
       try: async (signal) => {
         signal.addEventListener("abort", () => abortController.abort(), { once: true });

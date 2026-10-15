@@ -36,6 +36,7 @@ import {
   makeClaudeProcessHandle,
   makeRecordingClaudeSpawner,
 } from "./claudeProcessSpawner.ts";
+import { warmSpawnImage } from "../../process/spawnImageWarmup.ts";
 import { claudeApiRetryInfo, claudeRateLimitRejectionInfo } from "./claudeRetryInfo.ts";
 import { terminateDescendants } from "../processTree.ts";
 import {
@@ -5463,6 +5464,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 
+      // The SDK spawns the CLI synchronously inside createQuery; a CLI Windows
+      // has not checked yet is started once on a worker first (spawnImageWarmup).
+      yield* warmSpawnImage(claudeBinaryPath);
       const queryRuntime = yield* Effect.try({
         try: () =>
           createQuery({

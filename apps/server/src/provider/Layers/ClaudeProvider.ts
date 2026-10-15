@@ -49,6 +49,7 @@ import {
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
 } from "../ClaudeModelCatalog.ts";
+import { warmSpawnImage } from "../../process/spawnImageWarmup.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -376,6 +377,7 @@ const probeClaudeCapabilities = (
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
+    yield* warmSpawnImage(executablePath);
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
