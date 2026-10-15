@@ -28,6 +28,8 @@ import * as ProjectionSnapshotQuery from "../../orchestration/Services/Projectio
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
+import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalLoginRequestRepository from "../secrets/PersonalLoginRequestRepository.ts";
 import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
@@ -47,6 +49,13 @@ const modelSelection = {
   model: "claude-opus-5-5",
 };
 
+/**
+ * Just the parts of a memory entry the voice call reads. The real entry type
+ * carries twenty more fields the call never touches, so a mock supplies these.
+ */
+const logOnlyEntry = (input: { readonly content: string }) =>
+  ({ memoryId: "mem-test", kind: "note", scope: "shared", ...input }) as never;
+
 /** The broker request the service built, as the fake transport saw it. */
 interface HttpCall {
   readonly request: BrokerRequest;
@@ -62,9 +71,15 @@ const setSwitch = (botId: PersonalBotId, allow: boolean) =>
 const seedChats = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const now = DateTime.formatIso(yield* DateTime.now);
-  for (const [botId, name, allow] of [
-    [CTO_BOT, "CTO", true],
-    [PersonalBotId.make("bot-qa"), "QA", false],
+  for (const [botId, name, allow, description, instructions] of [
+    [
+      CTO_BOT,
+      "CTO",
+      true,
+      "Plans, prioritises and reports.",
+      "Talk plainly, outcome first, no filler.",
+    ],
+    [PersonalBotId.make("bot-qa"), "QA", false, "", ""],
   ] as const) {
     yield* sql`
       INSERT INTO personal_bots (
@@ -72,7 +87,7 @@ const seedChats = Effect.gen(function* () {
         model_selection_json, enabled, sort_order, created_at, updated_at, allow_voice_calls
       )
       VALUES (
-        ${botId}, ${name}, '', '', 'blob', '#1A73E8',
+        ${botId}, ${name}, ${description}, ${instructions}, 'blob', '#1A73E8',
         ${JSON.stringify(modelSelection)}, 1, 0, ${now}, ${now}, ${allow ? 1 : 0}
       )
     `;
@@ -97,6 +112,8 @@ const makeHarness = (options: {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly mint?: () => VoiceCallMintOutcome;
   readonly secret?: PersonalSessionAccess.PersonalSessionSecret | null;
+  /** Origins of a site the owner marked sensitive that this chat has had open. */
+  readonly sensitive?: ReadonlyArray<string>;
 }) => {
   const key: PersonalSessionAccess.PersonalSessionSecret = options.secret ?? {
     name: "GEMINI_API_KEY",
@@ -120,6 +137,22 @@ const makeHarness = (options: {
             autoArchiveTaskChats: true,
             voiceCalls: { voiceName: "Kore", quietHangupMinutes: 5 },
           }),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(PersonalMemoryService.PersonalMemoryService)({
+        // The bot's own saved rules, as a real call reads them, and the one
+        // entry a lookup_memory query finds. Only the fields the voice call
+        // reads are set; the rest of an entry never leaves the server.
+        preferencesForBot: () =>
+          Effect.succeed([logOnlyEntry({ content: "Talk plainly and lead with the outcome." })]),
+        search: () => Effect.succeed([logOnlyEntry({ content: "Harout lives in north London." })]),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(PersonalBrowser.PersonalBrowser)({
+        // No sensitive site has been open in this chat unless the test says so.
+        sensitiveExposure: () => Effect.succeed(options.sensitive ?? []),
       }),
     ),
     Layer.provideMerge(
@@ -177,9 +210,9 @@ const makeHarness = (options: {
   );
 };
 
-const withService = <A, E>(
+const withService = <A, E, R>(
   options: Parameters<typeof makeHarness>[0],
-  body: (service: PersonalVoiceCallService["Service"]) => Effect.Effect<A, E>,
+  body: (service: PersonalVoiceCallService["Service"]) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
     yield* seedChats;
@@ -194,6 +227,28 @@ const turnStarts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
   );
 
 describe("PersonalVoiceCallService.start", () => {
+  it.effect("blanks a key the owner pasted into the chat before it reaches Google", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO projection_thread_messages (
+            message_id, thread_id, role, text, is_streaming, created_at, updated_at
+          ) VALUES (
+            'm-secret', ${CTO_CHAT}, 'user',
+            'my key is sk-live-ABCDEFGHIJKLMNOPQRSTUVWX please keep it', 0,
+            '2026-10-15T16:59:00.000Z', '2026-10-15T16:59:00.000Z'
+          )
+        `;
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        const context = started.context.recentMessages.map((message) => message.text).join("\n");
+        expect(context).not.toContain("sk-live-ABCDEFGHIJKLMNOPQRSTUVWX");
+        expect(context).toContain("[redacted]");
+      }),
+    );
+  });
+
   it.effect("mints one token and hands the phone a pass, never the key", () => {
     const calls: Array<HttpCall> = [];
     return withService({ calls, dispatched: [] }, (service) =>
@@ -236,6 +291,23 @@ describe("PersonalVoiceCallService.start", () => {
         expect(error.code).toBe("calls_not_allowed");
         // Nothing was minted and nothing was spent.
         expect(calls).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.effect("hands the voice the bot's own personality, rules and task titles", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        // The bot's saved words reach the instruction, and the owner's rule.
+        expect(started.systemInstruction).toContain("Who you are");
+        expect(started.systemInstruction).toContain("Talk plainly");
+        expect(started.systemInstruction).toContain("- Talk plainly and lead with the outcome.");
+        // A dead task is not listed; this chat has no unfinished ones.
+        expect(started.context.runningTaskTitles).toEqual([]);
+        // Only the key, the chat context and the bot's own words go to Google.
+        expect(JSON.stringify(started)).not.toContain(KEY_VALUE);
       }),
     );
   });
@@ -357,6 +429,43 @@ describe("PersonalVoiceCallService.send", () => {
         );
         expect(huge.code).toBe("invalid_input");
         expect(turnStarts(dispatched)).toHaveLength(0);
+      }),
+    );
+  });
+});
+
+describe("PersonalVoiceCallService.lookupMemory", () => {
+  it.effect("returns the bot's own saved facts, never a secret", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        const found = yield* service.lookupMemory({
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          query: "where does Harout live",
+        });
+        expect(found.entries).toHaveLength(1);
+        expect(found.entries[0]?.content).toBe("Harout lives in north London.");
+        expect(found.note).toBe("");
+        // A lookup never wakes the real bot: no turn is dispatched.
+        expect(calls).toHaveLength(1);
+      }),
+    );
+  });
+
+  it.effect("refuses a chat that has had a sensitive site open", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [], sensitive: ["https://bank.example"] }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        const found = yield* service.lookupMemory({
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          query: "anything",
+        });
+        expect(found.entries).toEqual([]);
+        expect(found.note).toContain("sensitive");
       }),
     );
   });

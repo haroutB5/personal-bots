@@ -25,6 +25,12 @@ export interface VoiceCallInstructionInput {
   readonly botName: string;
   /** Empty when the bot has no title. */
   readonly botTitle: string;
+  /** The bot's own saved one-liner ("What this bot is for"). */
+  readonly botDescription: string;
+  /** The bot's own saved instructions: its real personality text, before the app's rules. */
+  readonly botInstructions: string;
+  /** The owner's standing rules for this bot, newest first, already capped. */
+  readonly preferences: ReadonlyArray<string>;
   /** The owner's display name; "the owner" when unset. */
   readonly displayName: string;
   /** "Working", "Idle", "Waiting on you". */
@@ -37,7 +43,39 @@ export interface VoiceCallInstructionInput {
   readonly voiceName: string;
 }
 
+/** Longest the bot's own instructions are quoted at, in characters. */
+export const VOICE_CALL_INSTRUCTION_PERSONA_CHARS = 2_000;
+/** Longest the owner's standing-rules block is allowed to get, in characters. */
+export const VOICE_CALL_INSTRUCTION_RULES_CHARS = 2_000;
+
 const clean = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/**
+ * The bot's own saved words, kept whole in meaning and cut only at the cap:
+ * this is the personality the owner wrote for it, which the voice must carry.
+ */
+const personaBlock = (input: VoiceCallInstructionInput): string => {
+  const parts: Array<string> = [];
+  const description = clean(input.botDescription);
+  const instructions = input.botInstructions.trim();
+  if (description !== "") parts.push(`What you are for: ${description}`);
+  if (instructions !== "") parts.push(instructions.slice(0, VOICE_CALL_INSTRUCTION_PERSONA_CHARS));
+  return parts.join("\n");
+};
+
+/** The owner's standing rules, newest first, cut at the cap. */
+const rulesBlock = (preferences: ReadonlyArray<string>): string => {
+  const kept: Array<string> = [];
+  let used = 0;
+  for (const preference of preferences) {
+    const line = `- ${clean(preference)}`;
+    if (line === "- ") continue;
+    if (used + line.length > VOICE_CALL_INSTRUCTION_RULES_CHARS) break;
+    used += line.length;
+    kept.push(line);
+  }
+  return kept.join("\n");
+};
 
 /** One recent message, flattened to one line so the block stays readable. */
 const messageLine = (message: VoiceCallContextMessage): string =>
@@ -69,10 +107,25 @@ export const voiceCallSystemInstruction = (input: VoiceCallInstructionInput): st
   const self = title === "" ? input.botName : `${input.botName} (${title})`;
   const context = contextBlock(input);
   const callouts = input.callouts.map(clean).filter((line) => line.length > 0);
+  const persona = personaBlock(input);
+  const rules = rulesBlock(input.preferences);
 
   return [
     `You are on a live phone call with ${who}. You ARE ${self}, speaking in the first person:`,
     `say "I'll look at that", never "I've sent that to ${input.botName}".`,
+    persona === ""
+      ? ""
+      : [
+          "",
+          "Who you are (your own saved instructions, the same ones you work from in the chat;",
+          "keep their substance and their tone, but say it, do not read it out):",
+          persona,
+        ].join("\n"),
+    rules === ""
+      ? ""
+      : ["", `Standing rules ${who} has saved for you. They still hold on a call:`, rules].join(
+          "\n",
+        ),
     "",
     "How you talk:",
     "- Short, plain spoken sentences. One or two at a time, then let them answer.",
@@ -87,10 +140,16 @@ export const voiceCallSystemInstruction = (input: VoiceCallInstructionInput): st
     "  is done when the status below does not say so.",
     "- Never read out a password, a key, a token or a long path.",
     "",
-    "What you do:",
-    "- Anything that needs real work, a decision or code: say you are sending it, and the",
-    "  app posts your words into the chat as the owner's message so you can do it properly.",
-    "  Then say you will tell them when it is done. Do not pretend it already is.",
+    "Which tool for what:",
+    "- Let the call's built-in Google Search handle public, current facts: weather, news,",
+    "  sport, opening times, a quick definition. Answer those directly, do not send them.",
+    "  Their words become a Google search, so keep them to the fact being asked about.",
+    "- Use lookup_memory for anything about the owner's own life, his things, his choices,",
+    "  or a fact you saved earlier. It reads your own saved notes and rules. If it has",
+    "  nothing, say you do not have it saved and ask him.",
+    "- Use the real bot only for real work (files, apps, repos, tasks, a decision, code):",
+    "  say you are sending it, and the app posts your words into the chat so you can do it",
+    "  properly. Then say you will tell them when it is done. Do not pretend it already is.",
     "- A login or a key has to go in the chat, not on a call. Say so plainly.",
     "- If they ask you to stop, or to hang up, agree and let the call end.",
     "",
