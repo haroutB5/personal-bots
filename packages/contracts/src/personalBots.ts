@@ -12,6 +12,7 @@ import {
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection, OrchestrationMessageRole } from "./orchestration.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { VoiceCallSettings, VoiceCallSettingsInput } from "./personalVoiceCallSettings.ts";
 import { UsageProviderKind } from "./usage.ts";
 
 /**
@@ -253,6 +254,13 @@ export const PersonalBot = Schema.Struct({
    * read it through {@link isGroupOnlyBot}.
    */
   groupOnly: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The bot form's "Allow voice calls": whether this bot's owner chats offer
+   * the call button. On for the CTO only at launch, off for every other bot
+   * and for a new one. Optional on the wire like the fields above; read it
+   * through {@link botAllowsVoiceCalls}.
+   */
+  allowVoiceCalls: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
@@ -486,6 +494,8 @@ export const PersonalBotCreateInput = Schema.Struct({
   fallback: Schema.optional(PersonalBotFallbackInput),
   /** Omitted means no schedule. */
   schedule: Schema.optional(PersonalBotScheduleInput),
+  /** Omitted means off: this bot's chats show no call button. */
+  allowVoiceCalls: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotCreateInput = typeof PersonalBotCreateInput.Type;
 
@@ -512,6 +522,8 @@ export const PersonalBotUpdateInput = Schema.Struct({
   /** Absent leaves it alone; a field inside it left out stays as it is. */
   schedule: Schema.optional(PersonalBotScheduleInput),
   notificationsMute: Schema.optional(PersonalBotNotificationMute),
+  /** Absent leaves it alone. */
+  allowVoiceCalls: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotUpdateInput = typeof PersonalBotUpdateInput.Type;
 
@@ -841,6 +853,13 @@ export const PersonalProfile = Schema.Struct({
    * Optional so an older server's profile still decodes (read as on).
    */
   autoArchiveTaskChats: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Settings > Voice calls. Optional so an older server's profile still
+   * decodes; read it through {@link profileVoiceCallSettings} for the
+   * defaults. The Gemini key itself is not here: it is an ordinary saved key
+   * in the secret store (`personalSecrets`), never part of the profile.
+   */
+  voiceCalls: Schema.optionalKey(VoiceCallSettings),
 });
 export type PersonalProfile = typeof PersonalProfile.Type;
 
@@ -854,6 +873,8 @@ export const PersonalProfileSetInput = Schema.Struct({
     }),
   ),
   autoArchiveTaskChats: Schema.optional(Schema.Boolean),
+  /** Merged field by field; anything left out keeps its current value. */
+  voiceCalls: Schema.optional(VoiceCallSettingsInput),
 });
 export type PersonalProfileSetInput = typeof PersonalProfileSetInput.Type;
 
