@@ -313,8 +313,12 @@ import {
   VoiceCallLookupMemoryResult,
   VoiceCallSendInput,
   VoiceCallSendResult,
+  VoiceCallSnapshotInput,
+  VoiceCallSnapshotResult,
   VoiceCallStartInput,
   VoiceCallStartResult,
+  VoiceCallTranscriptInput,
+  VoiceCallTranscriptResult,
 } from "./personalVoiceCalls.ts";
 import {
   PersonalTask,
@@ -653,6 +657,8 @@ export const WS_METHODS = {
   personalVoiceCallsSend: "personalVoiceCalls.send",
   personalVoiceCallsFinish: "personalVoiceCalls.finish",
   personalVoiceCallsList: "personalVoiceCalls.list",
+  personalVoiceCallsSnapshot: "personalVoiceCalls.snapshot",
+  personalVoiceCallsTranscript: "personalVoiceCalls.transcript",
   personalLeadBotChangesList: "personalLeadBotChanges.list",
   personalLeadBotChangesDecide: "personalLeadBotChanges.decide",
   personalFilesDelete: "personalFiles.delete",
@@ -1469,6 +1475,20 @@ const WsPersonalVoiceCallsListRpc = Rpc.make(WS_METHODS.personalVoiceCallsList, 
 const WsPersonalVoiceCallsLookupMemoryRpc = Rpc.make(WS_METHODS.personalVoiceCallsLookupMemory, {
   payload: VoiceCallLookupMemoryInput,
   success: VoiceCallLookupMemoryResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+// The call's own chat state, bound to the call's thread rather than whatever
+// chat the phone is showing, and the one card's transcript on demand.
+const WsPersonalVoiceCallsSnapshotRpc = Rpc.make(WS_METHODS.personalVoiceCallsSnapshot, {
+  payload: VoiceCallSnapshotInput,
+  success: VoiceCallSnapshotResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+const WsPersonalVoiceCallsTranscriptRpc = Rpc.make(WS_METHODS.personalVoiceCallsTranscript, {
+  payload: VoiceCallTranscriptInput,
+  success: VoiceCallTranscriptResult,
   error: PersonalVoiceCallsRpcError,
 });
 
@@ -2707,6 +2727,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalVoiceCallsFinishRpc,
   WsPersonalVoiceCallsListRpc,
   WsPersonalVoiceCallsLookupMemoryRpc,
+  WsPersonalVoiceCallsSnapshotRpc,
+  WsPersonalVoiceCallsTranscriptRpc,
   WsPersonalLeadBotChangesListRpc,
   WsPersonalLeadBotChangesDecideRpc,
   WsPersonalFilesDeleteRpc,
