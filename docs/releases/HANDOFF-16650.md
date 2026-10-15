@@ -65,6 +65,8 @@ Gate evidence follows. Focused QA must replace PROOF_PLACEHOLDER with its result
 
 ## Supplemental checks outside the default fork gate
 
+Final live-log observation: the still-running 1.66.49 recorded a 2.1 s SQLite COMMIT at 15:05:55 BST and a 3.4 s synchronous executable stat/spawn at 15:29:14 BST. The candidate covers that old stat/spawn path; the SQLite/disk stall remains outside this change. All heavy work ran at background priority, but these reports alone cannot establish whether it contributed to the COMMIT delay. Sources: live `logs/stalls/stall-20261015T140555Z-2061ms.json` and `stall-20261015T142914Z-3439ms.json`.
+
 | Check                                                                                | Result          | Exit |
 | ------------------------------------------------------------------------------------ | --------------- | ---: |
 | Touched usage pricing, byte reader/worker, streaming, UsageService and session usage | 74 tests passed |    0 |
