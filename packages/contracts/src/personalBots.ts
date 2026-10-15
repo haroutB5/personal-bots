@@ -849,7 +849,8 @@ export const PersonalProfile = Schema.Struct({
   customTeams: Schema.optionalKey(Schema.Array(PersonalBotTeam)),
   /**
    * Chats made for a delegated task archive themselves once the task has
-   * finished and the chat sat idle for 30 minutes. On unless turned off.
+   * finished and the chat sat idle for `autoArchiveTaskChatsAfterMinutes`
+   * (48 hours unless the owner set another wait). On unless turned off.
    * Optional so an older server's profile still decodes (read as on).
    */
   autoArchiveTaskChats: Schema.optionalKey(Schema.Boolean),
