@@ -5,16 +5,24 @@
  * SQL and decision. The service (`PersonalTaskChatArchiveService`) applies it.
  */
 
+import {
+  PERSONAL_CHAT_ARCHIVE_AFTER_DEFAULT_MINUTES,
+  personalChatArchiveAfterMinutesFromStored,
+} from "@t3tools/contracts";
+
 /**
- * A finished task chat archives once it has been idle and unopened this long:
- * 48 hours (Harout, 2 Oct; it was 30 minutes).
+ * A finished task chat archives once it has been idle and unopened this long.
+ * 48 hours is the default; Settings can set 5m..720h, and the sweep passes the
+ * saved value as `decideTaskChatArchive`'s `idleMs`.
  */
-export const TASK_CHAT_AUTO_ARCHIVE_IDLE_MS = 48 * 60 * 60_000;
+export const TASK_CHAT_AUTO_ARCHIVE_IDLE_MS = PERSONAL_CHAT_ARCHIVE_AFTER_DEFAULT_MINUTES * 60_000;
 /**
- * An unopened routine report stays visible this long from chat creation. Same
- * 48 hours, so an unread report never goes sooner than a read one.
+ * An unopened routine report stays visible this long from chat creation. The
+ * same saved value as the task idle clock, so an unread report never goes
+ * sooner than a read one.
  */
-export const ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS = 48 * 60 * 60_000;
+export const ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS =
+  PERSONAL_CHAT_ARCHIVE_AFTER_DEFAULT_MINUTES * 60_000;
 /** How often the sweep looks. It also runs once at startup. */
 export const TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS = 5 * 60_000;
 /**
@@ -25,6 +33,15 @@ export const TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS = 5 * 60_000;
 export const TASK_CHAT_VIEWED_WRITE_INTERVAL_MS = 60_000;
 /** `personal_meta` key of the Settings toggle. Absent = on. */
 export const TASK_CHAT_AUTO_ARCHIVE_META_KEY = "taskChatAutoArchive";
+/**
+ * `personal_meta` key of the Settings duration: whole minutes as text, one
+ * value driving both waits above. Absent or unreadable is 2880 (48 hours).
+ */
+export const TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY = "taskChatAutoArchiveAfterMinutes";
+
+/** The stored duration as milliseconds, defaulting to 48 hours. */
+export const taskChatAutoArchiveIdleMs = (stored: string | null | undefined): number =>
+  personalChatArchiveAfterMinutesFromStored(stored) * 60_000;
 
 /**
  * Statuses a task never leaves on its own. Interrupted counts as finished: a
@@ -226,6 +243,12 @@ export function decideTaskChatArchive(
   candidate: TaskChatArchiveCandidate,
   nowMs: number,
   live?: TaskChatLiveState,
+  /**
+   * The saved wait, in ms, for both the finished-task idle clock and the
+   * unread routine report. Defaults to `TASK_CHAT_AUTO_ARCHIVE_IDLE_MS`
+   * (48 hours) so an older caller keeps its behaviour.
+   */
+  idleMs: number = TASK_CHAT_AUTO_ARCHIVE_IDLE_MS,
 ): TaskChatArchiveDecision {
   if (
     candidate.sessionStatus === "running" ||
@@ -245,7 +268,7 @@ export function decideTaskChatArchive(
   ) {
     const createdMs = parseMs(candidate.createdAt);
     if (createdMs === null) return { kind: "keep", reason: "recent" };
-    const dueAtMs = createdMs + ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS;
+    const dueAtMs = createdMs + idleMs;
     return nowMs < dueAtMs
       ? { kind: "keep", reason: "recent", dueAtMs }
       : { kind: "archive", idleSinceMs: createdMs };
@@ -253,7 +276,7 @@ export function decideTaskChatArchive(
   const idleSinceMs = taskChatIdleSinceMs(candidate, live);
   // Every finished task has an updated_at, so this only guards bad data.
   if (idleSinceMs === null) return { kind: "keep", reason: "recent" };
-  const dueAtMs = idleSinceMs + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS;
+  const dueAtMs = idleSinceMs + idleMs;
   if (nowMs < dueAtMs) return { kind: "keep", reason: "recent", dueAtMs };
   return { kind: "archive", idleSinceMs };
 }

@@ -538,6 +538,28 @@ describe("PersonalTaskChatArchive", () => {
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 
+  it.effect("uses the saved wait for a finished task chat and an unread routine report", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [
+        { id: "chat-done" },
+        { id: "run-unread", tasks: [{ source: "routine", status: "completed" }] },
+      ]);
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* bots.setProfile({ autoArchiveTaskChatsAfterMinutes: 30 });
+      const thirty = 30 * MIN;
+
+      // Neither is due one minute before 30: the task chat's clock starts when
+      // its task ended, an unread routine report's when the chat was made.
+      expect(yield* sweepAt(T0 + thirty - 1)).toBe(0);
+      expect(yield* sweepAt(T0 + thirty)).toBe(1);
+      expect(yield* archivedIds).toEqual(["run-unread"]);
+      expect(yield* sweepAt(TASK_DONE_MS + thirty - 1)).toBe(0);
+      expect(yield* sweepAt(TASK_DONE_MS + thirty)).toBe(1);
+      expect(yield* archivedIds).toEqual(["chat-done", "run-unread"]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
   it.effect("survives a restart, archives once, and leaves an unarchived chat alone", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

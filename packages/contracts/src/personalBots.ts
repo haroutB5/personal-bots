@@ -841,6 +841,14 @@ export const PersonalProfile = Schema.Struct({
    * Optional so an older server's profile still decodes (read as on).
    */
   autoArchiveTaskChats: Schema.optionalKey(Schema.Boolean),
+  /**
+   * How long a finished task or routine-run chat waits before the sweep
+   * archives it, in whole minutes (5m..720h). Stored in `personal_meta` under
+   * "taskChatAutoArchiveAfterMinutes"; absent or unreadable is 2880 (48
+   * hours), the fixed value this setting replaced. Optional so an older
+   * server's profile still decodes (read as the default).
+   */
+  autoArchiveTaskChatsAfterMinutes: Schema.optionalKey(Schema.Int),
 });
 export type PersonalProfile = typeof PersonalProfile.Type;
 
@@ -854,6 +862,11 @@ export const PersonalProfileSetInput = Schema.Struct({
     }),
   ),
   autoArchiveTaskChats: Schema.optional(Schema.Boolean),
+  /**
+   * Whole minutes, 5m (the sweep interval) to 720h (30 days). The server
+   * refuses anything outside that range rather than clamping it.
+   */
+  autoArchiveTaskChatsAfterMinutes: Schema.optional(Schema.Int),
 });
 export type PersonalProfileSetInput = typeof PersonalProfileSetInput.Type;
 
