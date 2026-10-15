@@ -22,11 +22,26 @@ import type { VoiceCallErrorCode } from "./voiceCallApi";
  */
 export type VoiceCallUiErrorCode = VoiceCallErrorCode | "unknown";
 
-/** The pill: what the line is doing right now. */
-export type VoicePill = "listening" | "speaking" | "reading" | "muted" | "reconnecting" | "none";
-
 /** The work card: what the real bot is doing for the voice. */
 export type VoiceWorkKind = "sending" | "working" | "replied" | "asking" | "login";
+
+/**
+ * The pill: what the line is doing right now. The last two are the fast tools
+ * the voice runs without the bot: its own memory lookup and Google's built-in
+ * Search. Both show as a pill and nothing else, because neither posts anything
+ * into the chat.
+ */
+export type VoicePill =
+  | "listening"
+  | "speaking"
+  | "reading"
+  | "muted"
+  | "reconnecting"
+  /** Reading the owner's own saved notes (lookup_memory). */
+  | "checking_memory"
+  /** Google Search is grounding an answer about a public fact. */
+  | "searching"
+  | "none";
 
 export interface VoicePendingSend {
   /** The exact text the voice wants to send. */
@@ -201,6 +216,10 @@ export function pillLabel(pill: VoicePill, botName: string): string {
       return "Muted";
     case "reconnecting":
       return "Reconnecting";
+    case "checking_memory":
+      return "Checking memory";
+    case "searching":
+      return "Searching";
     case "none":
       return "";
   }
@@ -222,6 +241,12 @@ export function callHint(input: {
   }
   if (state.pill === "muted") {
     return "The voice can't hear you. It still tells you when the bot replies.";
+  }
+  if (state.pill === "checking_memory") {
+    return "Reading your own saved notes. Nothing goes into the chat.";
+  }
+  if (state.pill === "searching") {
+    return "Looking that up. Nothing goes into the chat.";
   }
   if (state.status === "reconnecting") {
     return "Hold on, the line is reconnecting. Nothing you said is lost.";

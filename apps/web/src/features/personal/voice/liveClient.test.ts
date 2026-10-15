@@ -51,7 +51,7 @@ describe("liveSocketUrl", () => {
 });
 
 describe("liveSetupMessage", () => {
-  it("carries the model, the voice, both transcriptions and the four tools", () => {
+  it("carries the model, the voice, both transcriptions, Google Search and the five tools", () => {
     const message = liveSetupMessage({
       model: "gemini-3.8-live",
       voiceName: "Charon",
@@ -64,10 +64,15 @@ describe("liveSetupMessage", () => {
     expect(setup.outputAudioTranscription).toEqual({});
     expect(setup.sessionResumption).toEqual({});
     expect(setup.contextWindowCompression).toEqual({ slidingWindow: {} });
-    const tools = setup.tools as ReadonlyArray<{
+    const tools = setup.tools as ReadonlyArray<Record<string, unknown>>;
+    // Google's own live Search rides beside the function declarations, so a
+    // question about the weather never has to wake the bot.
+    expect(tools).toContainEqual({ googleSearch: {} });
+    const declarations = tools.find((tool) => "functionDeclarations" in tool) as {
       functionDeclarations: ReadonlyArray<{ name: string }>;
-    }>;
-    expect(tools[0]!.functionDeclarations.map((row) => row.name)).toEqual([
+    };
+    expect(declarations.functionDeclarations.map((row) => row.name)).toEqual([
+      "lookup_memory",
       "send_to_bot",
       "bot_status",
       "latest_reply",
@@ -136,6 +141,35 @@ describe("connectLive", () => {
       },
     });
     expect(calls).toEqual([{ id: "tc-1", name: "send_to_bot", args: { text: "Deploy matchday" } }]);
+  });
+
+  it("reports a memory lookup like any other tool call", () => {
+    const calls: LiveToolCall[] = [];
+    connectLive(options({ onToolCall: (call) => calls.push(call) }));
+    const socket = latestSocket();
+    socket.open();
+    socket.setupComplete();
+    socket.receive({
+      toolCall: {
+        functionCalls: [{ id: "m-1", name: "lookup_memory", args: { query: "weather" } }],
+      },
+    });
+    expect(calls[0]?.name).toBe("lookup_memory");
+  });
+
+  it("says when Google's own Search grounded an answer, and survives odd shapes", () => {
+    const onGrounding = vi.fn();
+    connectLive(options({ onGrounding }));
+    const socket = latestSocket();
+    socket.open();
+    socket.setupComplete();
+    // A shape this build does not know must not throw.
+    socket.receive({ serverContent: { groundingMetadata: { retrievalQueries: [{ x: 1 }] } } });
+    expect(onGrounding).toHaveBeenCalledWith({ queries: [] });
+    socket.receive({
+      serverContent: { groundingMetadata: { webSearchQueries: ["weather in Croydon"] } },
+    });
+    expect(onGrounding).toHaveBeenLastCalledWith({ queries: ["weather in Croydon"] });
   });
 
   it("answers a tool call with the scheduling hint Gemini needs", () => {

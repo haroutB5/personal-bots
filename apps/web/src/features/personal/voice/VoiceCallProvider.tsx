@@ -39,6 +39,7 @@ import {
   type VoiceCallSession,
   type VoiceCallTranscriptEntry,
   personalVoiceCallFinish,
+  personalVoiceCallLookupMemory,
   personalVoiceCallSend,
   personalVoiceCallStart,
   voiceCallFailureCode,
@@ -144,6 +145,7 @@ export function VoiceCallProvider({
   const startCall = useAtomCommand(personalVoiceCallStart, { reportFailure: false });
   const sendToBot = useAtomCommand(personalVoiceCallSend, { reportFailure: false });
   const finishCall = useAtomCommand(personalVoiceCallFinish, { reportFailure: false });
+  const lookupMemory = useAtomCommand(personalVoiceCallLookupMemory, { reportFailure: false });
   const [call, setCall] = useState<ActiveVoiceCall | null>(null);
   const [captionsOn, setCaptionsOn] = useState(true);
   const [finished, setFinished] = useState<ReadonlyArray<FinishedVoiceCall>>([]);
@@ -306,6 +308,26 @@ export function VoiceCallProvider({
             });
             return result._tag === "Success"
               ? { ok: true, value: { messageId: result.value.messageId } }
+              : {
+                  ok: false,
+                  code: voiceCallFailureCode(result),
+                  detail: voiceFailureDetail(result),
+                };
+          },
+          lookupMemory: async (memoryInput) => {
+            if (environmentId === null) {
+              return { ok: false, code: "google_unavailable", detail: "No laptop is connected." };
+            }
+            const result = await lookupMemory({
+              environmentId,
+              input: {
+                threadId: ThreadId.make(memoryInput.threadId),
+                callId: memoryInput.callId,
+                query: memoryInput.query,
+              },
+            });
+            return result._tag === "Success"
+              ? { ok: true, value: result.value }
               : {
                   ok: false,
                   code: voiceCallFailureCode(result),
