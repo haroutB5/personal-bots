@@ -13,14 +13,14 @@
  *
  * @module features/personal/voice/callState
  */
-import type { VoiceCallErrorCode } from "./voiceCallApi";
+import type { VoiceCallAnyErrorCode } from "./voiceCallApi";
 
 /**
  * A failure code the call screen can render. The server's own codes come from
  * the contract; "unknown" is a local failure (the microphone, usually) that
  * never reached the laptop at all.
  */
-export type VoiceCallUiErrorCode = VoiceCallErrorCode | "unknown";
+export type VoiceCallUiErrorCode = VoiceCallAnyErrorCode | "unknown";
 
 /** The work card: what the real bot is doing for the voice. */
 export type VoiceWorkKind = "sending" | "working" | "replied" | "asking" | "login";
@@ -96,6 +96,32 @@ export const VOICE_END_REASONS: ReadonlyArray<VoiceEndReason> = [
 
 /** How long the Undo window stays open after a send_to_bot tool call. */
 export const VOICE_UNDO_MS = 3_000;
+
+/**
+ * How many sends may be held at once. A second `send_to_bot` while one is held
+ * queues behind it instead of posting the first one early (the review's
+ * finding 3); a fourth is refused with `one_at_a_time` rather than growing
+ * without bound.
+ */
+export const VOICE_SEND_QUEUE_MAX = 3;
+
+/**
+ * How long a sent message may wait for the bot's turn to end before the voice
+ * is told about the send on its own. The bot's turn usually starts within this
+ * window; when it does, the reply is handed over at the real turn end instead.
+ */
+export const VOICE_REPLY_GRACE_MS = 1_500;
+
+/**
+ * The hard cap on reaching a live session. Past this the call is over as
+ * `google_unavailable`, whatever the socket is still doing (spec 3.2).
+ */
+export const VOICE_CONNECT_TIMEOUT_MS = 20_000;
+
+/** Delay before each `finish` retry, then never again. One call, one card. */
+export const VOICE_FINISH_RETRY_MS: ReadonlyArray<number> = [
+  1_000, 2_000, 5_000, 10_000, 30_000, 60_000,
+];
 
 /** No speech either way, nothing pending: the quiet timer's warning lead. */
 export const VOICE_QUIET_WARNING_MS = 15_000;
@@ -267,6 +293,60 @@ export function pendingSendTitle(botName: string): string {
 /** What the voice says while the Undo window is open. */
 export function pendingSendSpokenLine(botName: string): string {
   return `Sending that to ${botName}.`;
+}
+
+/**
+ * The owner's own short way of taking a send back ("no, wait"), matched on the
+ * whole utterance so "stop the deploy" is never read as "stop".
+ */
+const CANCEL_PHRASES: ReadonlySet<string> = new Set([
+  "no",
+  "no wait",
+  "no no",
+  "no no wait",
+  "wait",
+  "wait wait",
+  "hold on",
+  "cancel",
+  "cancel that",
+  "cancel it",
+  "stop",
+  "undo",
+  "undo that",
+  "never mind",
+  "nevermind",
+  "don't",
+  "dont",
+  "don't send it",
+  "dont send it",
+  "don't send that",
+  "dont send that",
+]);
+
+/** True when what the owner just said means "take that back". */
+export function isVoiceCancelPhrase(text: string): boolean {
+  const plain = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return CANCEL_PHRASES.has(plain);
+}
+
+/** What the voice says when it is about to hang up on a quiet line (spec 5). */
+export const VOICE_QUIET_SPOKEN_LINE = "Still there?";
+
+/** What the voice says at 29:45, before the 30-minute cap ends the call (spec 5). */
+export const VOICE_GOODBYE_SPOKEN_LINE =
+  "I have to go, we've hit the 30 minute limit on this call. Bye.";
+
+/**
+ * A line the client wants the voice to say out loud. Gemini Live has no
+ * "speak this" frame, so the words ride in as a client turn wrapped in an
+ * instruction that keeps the model from treating it as the owner speaking.
+ */
+export function spokenInstruction(text: string): string {
+  return `System note from the app, not from Harout. Say this out loud now, in your own voice, and nothing else: "${text}"`;
 }
 
 /** The caption label for the voice: the bot's own name. */

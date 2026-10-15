@@ -1,14 +1,22 @@
 /**
- * The scripted call: the acceptance check for the voice feature. A fake Live
- * socket stands in for Gemini and a fake API for our server, so every rule the
- * brief names is proved on the real engine code:
+ * The scripted call: the acceptance check for the voice feature, and the home
+ * of the pre-ship review's reproducers (Astra's `controller-probe.mjs`, 15 Oct
+ * 2026), which now live here as ordinary cases that would have failed before
+ * the fix round.
+ *
+ * A fake Live socket stands in for Gemini and a fake API for our server, so
+ * every rule the brief names is proved on the real engine code:
  *
  * - connect with the short-lived pass, no key in the client;
  * - captions from both transcriptions;
  * - send_to_bot -> Undo card -> the message posts after 3 s;
- * - Undo cancels and answers the tool call with cancelled_by_user;
- * - the tool call is answered at the end of the bot's turn, WHEN_IDLE;
- * - every end reason writes exactly one call card;
+ * - the tool answer is never a static "sent": it carries the real message id,
+ *   the typed failure, or the bot's reply;
+ * - a second send queues behind the first, a cancellation takes it back, and
+ *   "no, wait" does the same;
+ * - ending during the microphone prompt still closes the audio;
+ * - a goAway reconnects on the same pass with the resumption handle;
+ * - the card is retried until the server acknowledges it;
  * - Stop is never an error.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -20,7 +28,12 @@ import {
   latestSocket,
   resetFakeSockets,
 } from "./fakeLiveSocket.test-helper";
-import { VOICE_END_REASONS, VOICE_UNDO_MS, type VoiceEndReason } from "./callState";
+import {
+  VOICE_REPLY_GRACE_MS,
+  VOICE_UNDO_MS,
+  VOICE_END_REASONS,
+  type VoiceEndReason,
+} from "./callState";
 import * as DateTime from "effect/DateTime";
 import { PersonalBotId } from "@t3tools/contracts";
 import type {
@@ -28,7 +41,12 @@ import type {
   VoiceCallSession,
   VoiceCallTranscriptEntry,
 } from "./voiceCallApi";
-import type { BotStatusPort, VoiceCallPort, VoiceCallSnapshot } from "./voiceCallController";
+import type {
+  BotStatusPort,
+  VoiceApiResult,
+  VoiceCallPort,
+  VoiceCallSnapshot,
+} from "./voiceCallController";
 import { createVoiceCallController } from "./voiceCallController";
 
 const SESSION: VoiceCallSession = {
@@ -56,15 +74,29 @@ const SESSION: VoiceCallSession = {
   },
 };
 
+interface HarnessOverrides {
+  readonly startFails?: boolean;
+  /** What `send` answers; the default accepts with "m-1", "m-2", ... */
+  readonly sendResult?: (attempt: number) => VoiceApiResult<{ readonly messageId: string }>;
+  /** One answer per `finish` call: false makes it fail. Beyond the list: success. */
+  readonly finishResults?: ReadonlyArray<boolean>;
+  readonly connectTimeoutMs?: number;
+  readonly finishRetryMs?: ReadonlyArray<number>;
+  /** Replaces the microphone: the default resolves at once. */
+  readonly mic?: () => Promise<void>;
+}
+
 interface Harness {
   readonly api: VoiceCallPort & {
     readonly sent: { text: string }[];
     readonly finishes: VoiceCallFinishInput[];
+    readonly finishAttempts: number;
     startCalls: number;
   };
   readonly audio: CallAudioPort & {
     readonly cues: VoiceCue[];
     readonly levels: VoiceLevelSource[];
+    readonly closeCalls: () => number;
   };
   readonly controller: ReturnType<typeof createVoiceCallController>;
   readonly snapshots: VoiceCallSnapshot[];
@@ -72,12 +104,13 @@ interface Harness {
   last(): VoiceCallSnapshot;
 }
 
-function harness(overrides: { startFails?: boolean; connected?: boolean } = {}): Harness {
+function harness(overrides: HarnessOverrides = {}): Harness {
   const snapshots: VoiceCallSnapshot[] = [];
   const sent: { text: string }[] = [];
   const finishes: VoiceCallFinishInput[] = [];
   const cues: VoiceCue[] = [];
   const levels: VoiceLevelSource[] = [];
+  let closeCalls = 0;
   const status = {
     current: {
       state: "idle",
@@ -86,23 +119,40 @@ function harness(overrides: { startFails?: boolean; connected?: boolean } = {}):
       latestReply: null,
     } as BotStatusPort,
   };
-  const api = {
+  const counters = { startCalls: 0, finishAttempts: 0 };
+  const api: VoiceCallPort & {
+    readonly sent: { text: string }[];
+    readonly finishes: VoiceCallFinishInput[];
+    readonly finishAttempts: number;
+    readonly startCalls: number;
+  } = {
     sent,
     finishes,
-    startCalls: 0,
+    get startCalls() {
+      return counters.startCalls;
+    },
+    get finishAttempts() {
+      return counters.finishAttempts;
+    },
     async start() {
-      api.startCalls += 1;
+      counters.startCalls += 1;
       return overrides.startFails === true
         ? ({ ok: false, code: "no_key", detail: "no key" } as const)
         : ({ ok: true, value: SESSION } as const);
     },
     async send(input: { text: string }) {
       sent.push({ text: input.text });
-      return { ok: true, value: { messageId: `m-${sent.length}` } } as const;
+      return overrides.sendResult === undefined
+        ? ({ ok: true, value: { messageId: `m-${sent.length}` } } as const)
+        : overrides.sendResult(sent.length);
     },
     async finish(input: VoiceCallFinishInput) {
       finishes.push(input);
-      return { ok: true, value: { ok: true } } as const;
+      counters.finishAttempts += 1;
+      const allowed = overrides.finishResults?.[counters.finishAttempts - 1] ?? true;
+      return allowed
+        ? ({ ok: true, value: { ok: true } } as const)
+        : ({ ok: false, code: "google_unavailable", detail: "offline" } as const);
     },
     async lookupMemory() {
       return {
@@ -110,17 +160,14 @@ function harness(overrides: { startFails?: boolean; connected?: boolean } = {}):
         value: { entries: [{ kind: "note", content: "Harout likes tennis" }], note: "" },
       } as const;
     },
-  } satisfies VoiceCallPort & {
-    readonly sent: { text: string }[];
-    readonly finishes: VoiceCallFinishInput[];
-    startCalls: number;
   };
   const audio = {
     cues,
     levels,
+    closeCalls: () => closeCalls,
     play: vi.fn(),
     stopPlayback: vi.fn(),
-    startMic: vi.fn(async () => undefined),
+    startMic: vi.fn(overrides.mic ?? (async () => undefined)),
     setMuted: vi.fn(),
     readLevel: (source: VoiceLevelSource) => {
       levels.push(source);
@@ -129,8 +176,14 @@ function harness(overrides: { startFails?: boolean; connected?: boolean } = {}):
     cue: (kind: VoiceCue) => {
       cues.push(kind);
     },
-    close: vi.fn(),
-  } satisfies CallAudioPort & { readonly cues: VoiceCue[]; readonly levels: VoiceLevelSource[] };
+    close: vi.fn(() => {
+      closeCalls += 1;
+    }),
+  } satisfies CallAudioPort & {
+    readonly cues: VoiceCue[];
+    readonly levels: VoiceLevelSource[];
+    readonly closeCalls: () => number;
+  };
 
   const controller = createVoiceCallController({
     threadId: "thread-1",
@@ -139,6 +192,10 @@ function harness(overrides: { startFails?: boolean; connected?: boolean } = {}):
     audio,
     botStatus: () => status.current,
     createSocket: createFakeSocket,
+    ...(overrides.connectTimeoutMs === undefined
+      ? {}
+      : { connectTimeoutMs: overrides.connectTimeoutMs }),
+    ...(overrides.finishRetryMs === undefined ? {} : { finishRetryMs: overrides.finishRetryMs }),
     onChange: (snapshot) => snapshots.push(snapshot),
   });
 
@@ -161,6 +218,34 @@ async function connected(test: Harness): Promise<FakeLiveSocket> {
   return socket;
 }
 
+/** One `send_to_bot` call from the voice. */
+const sendTool = (socket: FakeLiveSocket, id: string, text: string) =>
+  socket.receive({ toolCall: { functionCalls: [{ id, name: "send_to_bot", args: { text } }] } });
+
+/** Every function response the client has sent, flattened. */
+function toolAnswers(socket: FakeLiveSocket): ReadonlyArray<{
+  readonly id: string;
+  readonly name: string;
+  readonly response: Record<string, unknown>;
+  readonly scheduling?: string;
+}> {
+  return (
+    socket.sentOf("toolResponse") as unknown as ReadonlyArray<{
+      toolResponse: {
+        functionResponses: ReadonlyArray<{
+          id: string;
+          name: string;
+          response: Record<string, unknown>;
+          scheduling?: string;
+        }>;
+      };
+    }>
+  ).flatMap((frame) => frame.toolResponse.functionResponses);
+}
+
+/** Long enough for the Undo window and the reply grace to both pass. */
+const afterSend = () => VOICE_UNDO_MS + VOICE_REPLY_GRACE_MS + 2_500;
+
 beforeEach(() => {
   resetFakeSockets();
   vi.useFakeTimers();
@@ -179,6 +264,16 @@ describe("starting a call", () => {
     expect(socket.url).not.toContain("AIza");
     expect(test.last().state.status).toBe("live");
     expect(test.audio.cues).toContain("connected");
+  });
+
+  it("mints one pass when two taps race the same frame", async () => {
+    const test = harness();
+    // Both calls start before either await resolves: the synchronous slot is
+    // what stops a second mint (review finding 4).
+    const first = test.controller.start();
+    const second = test.controller.start();
+    await Promise.all([first, second]);
+    expect(test.api.startCalls).toBe(1);
   });
 
   it("shows the typed error and leaves no card when the server refuses", async () => {
@@ -218,6 +313,17 @@ describe("starting a call", () => {
     vi.advanceTimersByTime(60_000);
     expect(test.api.finishes).toHaveLength(0);
   });
+
+  it("gives up as google_unavailable when the session never answers in time", async () => {
+    const test = harness({ connectTimeoutMs: 5_000 });
+    await test.controller.start();
+    // The socket opens but setupComplete never arrives.
+    latestSocket().open();
+    vi.advanceTimersByTime(5_100);
+    expect(test.last().state.status).toBe("error");
+    expect(test.last().state.errorCode).toBe("google_unavailable");
+    expect(test.api.finishes).toHaveLength(0);
+  });
 });
 
 describe("captions", () => {
@@ -251,11 +357,7 @@ describe("send_to_bot and the Undo card", () => {
   it("holds the message for 3 seconds, then posts it as the owner's message", async () => {
     const test = harness();
     const socket = await connected(test);
-    socket.receive({
-      toolCall: {
-        functionCalls: [{ id: "tc-1", name: "send_to_bot", args: { text: "Deploy it" } }],
-      },
-    });
+    sendTool(socket, "tc-1", "Deploy it");
     const held = test.last().state.pending;
     expect(held).toEqual({
       text: "Deploy it",
@@ -266,86 +368,224 @@ describe("send_to_bot and the Undo card", () => {
     expect(held!.dueAtMs - held!.atMs).toBe(VOICE_UNDO_MS);
     expect(test.api.sent).toHaveLength(0);
 
-    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 10);
+    await vi.advanceTimersByTimeAsync(afterSend());
     expect(test.api.sent).toEqual([{ text: "Deploy it" }]);
     expect(test.last().state.pending).toBeNull();
     expect(test.last().sentMessageIds).toEqual(["m-1"]);
   });
 
-  it("answers the tool call at the end of the bot's turn, WHEN_IDLE", async () => {
+  it("answers the tool with the real message id, never a static sent", async () => {
     const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(afterSend());
+    expect(toolAnswers(socket)).toEqual([
+      {
+        id: "tc-1",
+        name: "send_to_bot",
+        response: { ok: true, status: "sent", messageId: "m-1" },
+        scheduling: "WHEN_IDLE",
+      },
+    ]);
+  });
+
+  it("tells the voice the truth when the send is refused", async () => {
+    const test = harness({
+      sendResult: () => ({
+        ok: false,
+        code: "google_unavailable",
+        detail: "synthetic dispatch refusal",
+      }),
+    });
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(afterSend());
+    expect(toolAnswers(socket)).toEqual([
+      {
+        id: "tc-1",
+        name: "send_to_bot",
+        response: {
+          ok: false,
+          reason: "google_unavailable",
+          detail: "synthetic dispatch refusal",
+        },
+        scheduling: "INTERRUPT",
+      },
+    ]);
+    expect(test.last().sentMessageIds).toEqual([]);
+  });
+
+  it("waits for the real end of the bot's turn and carries its reply", async () => {
+    const test = harness();
+    const socket = await connected(test);
     test.status.current = {
       state: "working",
       step: "Deploying",
       elapsedMs: 1_000,
       latestReply: null,
     };
-    const socket = await connected(test);
-    socket.receive({
-      toolCall: {
-        functionCalls: [{ id: "tc-1", name: "send_to_bot", args: { text: "Deploy it" } }],
-      },
-    });
-    vi.advanceTimersByTime(VOICE_UNDO_MS + 10);
-    // Still working: the voice must not read anything back yet.
-    expect(socket.sentOf("toolResponse")).toHaveLength(0);
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 10);
+    // Posted, but the voice has not been told yet: the bot is still working.
+    expect(test.api.sent).toEqual([{ text: "Deploy it" }]);
+    expect(toolAnswers(socket)).toHaveLength(0);
     expect(test.last().state.work?.kind).toBe("working");
 
+    test.status.current = {
+      state: "idle",
+      step: null,
+      elapsedMs: null,
+      latestReply: "Deployed. Matchday is on 1.67.",
+    };
     test.controller.botTurnEnded();
-    expect(socket.sentOf("toolResponse")).toEqual([
+    expect(toolAnswers(socket)).toEqual([
       {
-        toolResponse: {
-          functionResponses: [
-            {
-              id: "tc-1",
-              name: "send_to_bot",
-              response: { ok: true, status: "sent" },
-              scheduling: "WHEN_IDLE",
-            },
-          ],
+        id: "tc-1",
+        name: "send_to_bot",
+        response: {
+          ok: true,
+          status: "sent",
+          messageId: "m-1",
+          reply: "Deployed. Matchday is on 1.67.",
         },
+        scheduling: "WHEN_IDLE",
       },
     ]);
   });
 
-  it("reads the reply straight away when the bot is already idle", async () => {
+  it("redacts what it hands the voice and caps the length", async () => {
     const test = harness();
     const socket = await connected(test);
+    test.status.current = {
+      state: "idle",
+      step: "using sk-abcdefghijklmnopqrstuvwxyz012345",
+      elapsedMs: 12_000,
+      latestReply: `the key is AIzaSyA1234567890abcdefghijklmnopq and that is all ${"x".repeat(2_000)}`,
+    };
+    socket.receive({ toolCall: { functionCalls: [{ id: "s-1", name: "bot_status", args: {} }] } });
     socket.receive({
-      toolCall: {
-        functionCalls: [{ id: "tc-1", name: "send_to_bot", args: { text: "Deploy it" } }],
-      },
+      toolCall: { functionCalls: [{ id: "r-1", name: "latest_reply", args: {} }] },
     });
-    vi.advanceTimersByTime(VOICE_UNDO_MS + 10);
-    expect(socket.sentOf("toolResponse")).toHaveLength(1);
+    const answers = toolAnswers(socket);
+    const status = answers.find((row) => row.id === "s-1")?.response as
+      | { step: string }
+      | undefined;
+    const reply = answers.find((row) => row.id === "r-1")?.response as
+      | { reply: string }
+      | undefined;
+    expect(status?.step).toBe("using [hidden]");
+    expect(reply?.reply).not.toContain("AIzaSy");
+    expect(reply?.reply).toContain("[hidden]");
+    expect((reply?.reply ?? "").length).toBeLessThanOrEqual(1_200);
+  });
+
+  it("reads the reply after the grace window when the bot never starts a turn", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 100);
+    await vi.advanceTimersByTimeAsync(VOICE_REPLY_GRACE_MS + 2_000);
+    expect(toolAnswers(socket)).toHaveLength(1);
+    expect(toolAnswers(socket)[0]!.response).toEqual({
+      ok: true,
+      status: "sent",
+      messageId: "m-1",
+    });
   });
 
   it("Undo cancels: nothing is posted and the tool call is interrupted", async () => {
     const test = harness();
     const socket = await connected(test);
-    socket.receive({
-      toolCall: {
-        functionCalls: [{ id: "tc-1", name: "send_to_bot", args: { text: "Deploy it" } }],
-      },
-    });
+    sendTool(socket, "tc-1", "Deploy it");
     test.controller.undoPendingSend();
     expect(test.last().state.pending?.cancelled).toBe(true);
-    expect(socket.sentOf("toolResponse")).toEqual([
+    expect(toolAnswers(socket)).toEqual([
       {
-        toolResponse: {
-          functionResponses: [
-            {
-              id: "tc-1",
-              name: "send_to_bot",
-              response: { ok: false, cancelled_by_user: true },
-              scheduling: "INTERRUPT",
-            },
-          ],
-        },
+        id: "tc-1",
+        name: "send_to_bot",
+        response: { ok: false, cancelled_by_user: true },
+        scheduling: "INTERRUPT",
       },
     ]);
-    vi.advanceTimersByTime(VOICE_UNDO_MS * 2);
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS * 2);
     expect(test.api.sent).toHaveLength(0);
+  });
+
+  it("queues a second tool call behind the first instead of posting early", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "first action");
+    await vi.advanceTimersByTimeAsync(100);
+    // The first message must still be held: this is the review's reproducer.
+    expect(test.api.sent).toHaveLength(0);
+    sendTool(socket, "tc-2", "second action");
+    expect(test.api.sent).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 50);
+    expect(test.api.sent.map((row) => row.text)).toEqual(["first action"]);
+    // The second one now has its own window.
+    expect(test.last().state.pending?.text).toBe("second action");
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 50);
+    expect(test.api.sent.map((row) => row.text)).toEqual(["first action", "second action"]);
+  });
+
+  it("refuses a fourth held send with one_at_a_time", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "one");
+    sendTool(socket, "tc-2", "two");
+    sendTool(socket, "tc-3", "three");
+    sendTool(socket, "tc-4", "four");
+    expect(toolAnswers(socket)).toEqual([
+      {
+        id: "tc-4",
+        name: "send_to_bot",
+        response: { ok: false, reason: "one_at_a_time" },
+        scheduling: "INTERRUPT",
+      },
+    ]);
+  });
+
+  it("honours a toolCallCancellation: the held message never posts", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    socket.receive({ toolCallCancellation: { ids: ["tc-1"] } });
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS * 3);
+    expect(test.api.sent).toHaveLength(0);
+    // Google withdrew the call, so no answer is sent for it.
+    expect(toolAnswers(socket)).toHaveLength(0);
+    expect(test.last().state.pending).toBeNull();
+  });
+
+  it("takes it back when the owner says no, wait", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    socket.receive({
+      serverContent: { inputTranscription: { text: "No, wait.", finished: true } },
+    });
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS * 3);
+    expect(test.api.sent).toHaveLength(0);
+    expect(toolAnswers(socket)).toEqual([
+      {
+        id: "tc-1",
+        name: "send_to_bot",
+        response: { ok: false, cancelled_by_user: true },
+        scheduling: "INTERRUPT",
+      },
+    ]);
+  });
+
+  it("leaves a send alone when an instruction merely contains the word stop", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    socket.receive({
+      serverContent: { inputTranscription: { text: "stop the deploy", finished: true } },
+    });
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 50);
+    expect(test.api.sent.map((row) => row.text)).toEqual(["Deploy it"]);
   });
 
   it("reads his own saved notes for lookup_memory without posting anything", async () => {
@@ -359,12 +599,7 @@ describe("send_to_bot and the Undo card", () => {
     // The pill says what is happening while the lookup runs.
     expect(test.last().state.pill).toBe("checking_memory");
     await vi.advanceTimersByTimeAsync(0);
-    const answers = (
-      socket.sentOf("toolResponse") as unknown as ReadonlyArray<{
-        toolResponse: { functionResponses: ReadonlyArray<{ id: string; response: unknown }> };
-      }>
-    ).flatMap((frame) => frame.toolResponse.functionResponses);
-    expect(answers).toEqual([
+    expect(toolAnswers(socket)).toEqual([
       {
         id: "m-1",
         name: "lookup_memory",
@@ -388,7 +623,7 @@ describe("send_to_bot and the Undo card", () => {
     expect(test.last().state.pill).toBe("listening");
   });
 
-  it("answers bot_status and latest_reply from the chat, never inventing work", async () => {
+  it("answers bot_status and latest_reply from the call's own chat, never inventing work", async () => {
     const test = harness();
     test.status.current = {
       state: "working",
@@ -401,10 +636,7 @@ describe("send_to_bot and the Undo card", () => {
     socket.receive({
       toolCall: { functionCalls: [{ id: "r-1", name: "latest_reply", args: {} }] },
     });
-    const frames = socket.sentOf("toolResponse") as unknown as ReadonlyArray<{
-      toolResponse: { functionResponses: ReadonlyArray<{ id: string; response: unknown }> };
-    }>;
-    const answers = frames.flatMap((frame) => frame.toolResponse.functionResponses);
+    const answers = toolAnswers(socket);
     expect(answers.find((row) => row.id === "s-1")?.response).toEqual({
       state: "working",
       step: "Running the gates",
@@ -419,10 +651,83 @@ describe("send_to_bot and the Undo card", () => {
     const test = harness();
     const socket = await connected(test);
     socket.receive({ toolCall: { functionCalls: [{ id: "e-1", name: "end_call", args: {} }] } });
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(test.last().state.status).toBe("ended");
     expect(test.last().state.endReason).toBe("said_bye");
     expect(test.api.finishes).toHaveLength(1);
+  });
+});
+
+describe("lifecycle", () => {
+  it("closes the audio when the call ends during the microphone prompt", async () => {
+    const gate: { release: () => void } = { release: () => undefined };
+    const mic = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const test = harness({ mic: () => mic });
+    const starting = test.controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    test.controller.end("hung_up");
+    gate.release();
+    await starting;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(test.controller.ended).toBe(true);
+    expect(test.audio.closeCalls()).toBeGreaterThanOrEqual(1);
+    // Nothing was stored: the call never connected.
+    expect(test.last().state.status).toBe("error");
+    expect(test.api.finishes).toHaveLength(0);
+  });
+
+  it("disposes the socket on unmount", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.controller.dispose();
+    expect(socket.readyState).toBe(FakeLiveSocket.CLOSED);
+  });
+});
+
+describe("reconnect", () => {
+  it("opens a replacement on the same pass with the resumption handle after a goAway", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    socket.receive({ sessionResumptionUpdate: { newHandle: "synthetic-handle", resumable: true } });
+    socket.receive({ goAway: { timeLeft: "10s" } });
+    socket.close(1000, "planned rotation");
+    // The replacement opens at once; the 15 s give-up has not run yet.
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(FakeLiveSocket.instances).toHaveLength(2);
+    const replacement = latestSocket();
+    expect(replacement.url).toContain("access_token=pass-abc");
+    replacement.open();
+    const setup = replacement.sentOf("setup")[0] as
+      | { setup: { sessionResumption?: { handle?: string } } }
+      | undefined;
+    expect(setup?.setup.sessionResumption?.handle).toBe("synthetic-handle");
+    replacement.setupComplete();
+    await vi.advanceTimersByTimeAsync(16_000);
+    // Still the same call, not a drop: the reconnect cleared the give-up.
+    expect(test.last().state.status).toBe("live");
+    expect(test.last().state.endReason).toBeNull();
+    expect(test.api.finishes).toHaveLength(0);
+  });
+
+  it("ignores the stale socket once its replacement is open", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    socket.receive({ goAway: { timeLeft: "10s" } });
+    socket.close(1006, "connection lost");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeLiveSocket.instances).toHaveLength(2);
+    // The old socket's own close callback must not open a third one.
+    socket.close(1006, "connection lost");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(FakeLiveSocket.instances).toHaveLength(2);
+    latestSocket().open();
+    latestSocket().setupComplete();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(test.last().state.status).toBe("live");
+    expect(test.api.finishes).toHaveLength(0);
   });
 });
 
@@ -432,11 +737,43 @@ describe("ending a call", () => {
     await connected(test);
     test.controller.end(reason as VoiceEndReason);
     test.controller.end(reason as VoiceEndReason);
-    vi.advanceTimersByTime(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(test.api.finishes).toHaveLength(1);
     expect(test.api.finishes[0]!.endReason).toBe(reason);
     expect(test.api.finishes[0]!.callId).toBe("call-1");
     expect(test.api.finishes[0]!.threadId).toBe("thread-1");
+  });
+
+  it("retries a card the server did not acknowledge, once", async () => {
+    const test = harness({
+      finishResults: [false, false],
+      finishRetryMs: [1_000, 2_000, 5_000],
+    });
+    await connected(test);
+    test.controller.end("hung_up");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(test.api.finishes).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(test.api.finishes).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(test.api.finishes).toHaveLength(3);
+    expect(test.controller.finishPending).toBe(false);
+    // Acknowledged: nothing more is sent, and the card is a single row.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(test.api.finishes).toHaveLength(3);
+    expect(new Set(test.api.finishes.map((row) => row.callId)).size).toBe(1);
+  });
+
+  it("can be nudged to retry a card when the network returns", async () => {
+    const test = harness({ finishResults: [false], finishRetryMs: [60_000] });
+    await connected(test);
+    test.controller.end("hung_up");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(test.controller.finishPending).toBe(true);
+    test.controller.retryFinish();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(test.api.finishes).toHaveLength(2);
+    expect(test.controller.finishPending).toBe(false);
   });
 
   it("Stop shows no error", async () => {
@@ -453,21 +790,45 @@ describe("ending a call", () => {
   it("ends as quiet after the setting's minutes with no speech", async () => {
     const test = harness();
     await connected(test);
-    vi.advanceTimersByTime(2 * 60_000 + 2_000);
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 2_000);
     expect(test.last().state.endReason).toBe("quiet");
     expect(test.api.finishes).toHaveLength(1);
+  });
+
+  it("says the quiet warning out loud before it hangs up", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    await vi.advanceTimersByTimeAsync(2 * 60_000 - 10_000);
+    const spoken = socket.sentOf("clientContent") as unknown as ReadonlyArray<{
+      clientContent: { turns: ReadonlyArray<{ parts: ReadonlyArray<{ text: string }> }> };
+    }>;
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]!.clientContent.turns[0]!.parts[0]!.text).toContain("Still there?");
+  });
+
+  it("says goodbye at 29:45 and ends at the cap", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    // A line a minute keeps the call alive to its own cap.
+    for (let minute = 0; minute < 30; minute += 1) {
+      socket.receive({
+        serverContent: { outputTranscription: { text: `still here ${minute}`, finished: true } },
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+    expect(test.last().state.endReason).toBe("limit");
+    const spoken = socket.sentOf("clientContent") as unknown as ReadonlyArray<{
+      clientContent: { turns: ReadonlyArray<{ parts: ReadonlyArray<{ text: string }> }> };
+    }>;
+    expect(spoken.at(-1)!.clientContent.turns[0]!.parts[0]!.text).toContain("30 minute limit");
   });
 
   it("does not run the quiet timer while a send is pending", async () => {
     const test = harness();
     const socket = await connected(test);
-    socket.receive({
-      toolCall: {
-        functionCalls: [{ id: "tc-1", name: "send_to_bot", args: { text: "Deploy it" } }],
-      },
-    });
+    sendTool(socket, "tc-1", "Deploy it");
     test.status.current = { state: "working", step: null, elapsedMs: null, latestReply: null };
-    vi.advanceTimersByTime(2 * 60_000);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
     expect(test.api.finishes).toHaveLength(0);
   });
 
@@ -475,28 +836,9 @@ describe("ending a call", () => {
     const test = harness();
     test.status.current = { state: "working", step: null, elapsedMs: null, latestReply: null };
     const socket = await connected(test);
-    socket.receive({
-      toolCall: {
-        functionCalls: [{ id: "tc-1", name: "send_to_bot", args: { text: "Deploy it" } }],
-      },
-    });
-    vi.advanceTimersByTime(5 * 60_000 + 5_000);
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(5 * 60_000 + 5_000);
     expect(test.last().state.endReason).toBe("waiting_cap");
-    expect(test.api.finishes).toHaveLength(1);
-  });
-
-  it("ends at the 30-minute cap even while the two of them keep talking", async () => {
-    const test = harness();
-    const socket = await connected(test);
-    // A real call is never silent for the quiet timer's whole window; a line a
-    // minute keeps the call alive until its own cap.
-    for (let minute = 0; minute < 30; minute += 1) {
-      socket.receive({
-        serverContent: { outputTranscription: { text: `still here ${minute}`, finished: true } },
-      });
-      vi.advanceTimersByTime(60_000);
-    }
-    expect(test.last().state.endReason).toBe("limit");
     expect(test.api.finishes).toHaveLength(1);
   });
 
@@ -505,11 +847,11 @@ describe("ending a call", () => {
     const socket = await connected(test);
     socket.close(1006, "connection lost");
     // Reconnect in progress: nothing is shown for the first 1.5 s.
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(test.last().state.status).toBe("live");
-    vi.advanceTimersByTime(1_100);
+    await vi.advanceTimersByTimeAsync(1_100);
     expect(test.last().state.status).toBe("reconnecting");
-    vi.advanceTimersByTime(14_000);
+    await vi.advanceTimersByTimeAsync(14_000);
     expect(test.last().state.endReason).toBe("dropped");
     expect(test.api.finishes).toHaveLength(1);
   });
@@ -518,10 +860,10 @@ describe("ending a call", () => {
     const test = harness();
     const socket = await connected(test);
     socket.close(1006, "connection lost");
-    vi.advanceTimersByTime(400);
+    await vi.advanceTimersByTimeAsync(400);
     latestSocket().open();
     latestSocket().setupComplete();
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(test.last().state.status).toBe("live");
     expect(test.api.finishes).toHaveLength(0);
   });

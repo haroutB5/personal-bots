@@ -42,44 +42,6 @@ export interface VoiceCallErrorCopy {
   readonly onSecondary?: () => void;
 }
 
-const ERROR_COPY: Record<string, { title: string; body: string; primary: string }> = {
-  no_key: {
-    title: "Add a Gemini key to call",
-    body: "Calls run on Google Gemini Live. Add your key once in Settings > Voice calls.",
-    primary: "Open Settings",
-  },
-  key_rejected: {
-    title: "Google didn't accept the Gemini key",
-    body: "Replace it in Settings > Voice calls, then call again.",
-    primary: "Open Settings",
-  },
-  calls_not_allowed: {
-    title: "This bot can't take calls",
-    body: "Turn on Allow voice calls on this bot's page.",
-    primary: "Open the bot's page",
-  },
-  not_owner_chat: {
-    title: "This chat can't take calls",
-    body: "Calls work in your own chats with a bot, not in groups or archived chats.",
-    primary: "Close",
-  },
-  google_unavailable: {
-    title: "Can't reach Google right now",
-    body: "Check your connection, then try again.",
-    primary: "Try again",
-  },
-  rate_limited: {
-    title: "Gemini is busy right now",
-    body: "Google paused this key for the moment. Try again in a few minutes.",
-    primary: "Try again",
-  },
-  unknown: {
-    title: "Can't start the call",
-    body: "Something went wrong opening the call. Try again in a moment.",
-    primary: "Try again",
-  },
-};
-
 export function VoiceCallScreen({
   botName,
   shape,
@@ -89,6 +51,8 @@ export function VoiceCallScreen({
   elapsedMs,
   transcript,
   captionsOn,
+  wakeLockBlocked = false,
+  quietMinutes,
   callSession,
   error,
   onMinimise,
@@ -107,6 +71,10 @@ export function VoiceCallScreen({
   readonly elapsedMs: number;
   readonly transcript: ReadonlyArray<VoiceCallTranscriptEntry>;
   readonly captionsOn: boolean;
+  /** True when the browser refused the screen wake lock. */
+  readonly wakeLockBlocked?: boolean | undefined;
+  /** The quiet setting in force, for the ended line. */
+  readonly quietMinutes?: number | undefined;
   readonly callSession: VoiceCallSession | null;
   readonly error: VoiceCallErrorCopy | null;
   readonly onMinimise: () => void;
@@ -201,8 +169,7 @@ export function VoiceCallScreen({
         </div>
         {state.nearLimit && state.status === "live" ? (
           <p className="mx-4 mb-2 flex h-9 items-center justify-center rounded-full bg-[var(--personal-review-bg)] text-[13px] font-semibold text-[var(--personal-review-text)]">
-            {limitBannerText(0) === "" ? "" : null}
-            {limitLeftText(state, callSession)}
+            {limitBannerText(callSession?.maxCallMinutes ?? 30)}
           </p>
         ) : null}
       </div>
@@ -271,7 +238,13 @@ export function VoiceCallScreen({
           >
             {state.status === "ended" ? (
               <p className="text-[15px] leading-[21px] text-[var(--personal-text-secondary)]">
-                {state.hint ?? (state.endReason ? endReasonLine(state.endReason, 2) : "")}
+                {state.hint ??
+                  (state.endReason
+                    ? endReasonLine(
+                        state.endReason,
+                        quietMinutes ?? callSession?.quietHangupMinutes ?? 2,
+                      )
+                    : "")}
               </p>
             ) : state.hint !== null ? (
               <p className="text-[15px] leading-[21px] text-[var(--personal-text-secondary)]">
@@ -296,6 +269,11 @@ export function VoiceCallScreen({
           {state.quietWarning && state.status === "live" ? (
             <p className="mt-2 text-[13px] leading-[18px] text-[var(--personal-review-text)]">
               Still there? The call ends in 15 seconds.
+            </p>
+          ) : null}
+          {wakeLockBlocked && (state.status === "live" || state.status === "reconnecting") ? (
+            <p className="mt-2 text-[13px] leading-[18px] text-[var(--personal-text-tertiary)]">
+              Keep this screen on. The phone may sleep during the call.
             </p>
           ) : null}
         </div>
@@ -327,13 +305,6 @@ export function VoiceCallScreen({
       </div>
     </div>
   );
-}
-
-function limitLeftText(state: VoiceCallState, session: VoiceCallSession | null): string {
-  const total = session?.maxCallMinutes ?? 30;
-  const left = Math.max(0, Math.round(total - Math.round(total * (28 / 30))));
-  const minutes = left <= 1 ? 1 : left;
-  return `${minutes} min left on this call${state.nearLimit ? "" : ""}`;
 }
 
 function Controls({
@@ -421,5 +392,3 @@ function ErrorBlock({ error }: { readonly error: VoiceCallErrorCopy }): JSX.Elem
 
 /** The end reasons the screen can print without a session (never connected). */
 export const VOICE_SCREEN_END_REASONS: ReadonlyArray<VoiceEndReason> = ["hung_up", "failed"];
-
-export { ERROR_COPY };

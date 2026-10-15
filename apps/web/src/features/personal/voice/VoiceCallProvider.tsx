@@ -8,6 +8,16 @@
  * synchronously in that tap handler, before the lazy import resolves, because
  * iOS only starts audio from a tap.
  *
+ * The pre-ship review's client fixes live here (15 Oct 2026):
+ * - the start slot is reserved synchronously, so two taps mint one pass;
+ * - the bot status the voice reads is bound to the CALL's own thread, and the
+ *   last known answer is kept when that chat is not mounted, so navigating away
+ *   can never look like the bot finishing its turn;
+ * - the screen wake lock is held for the call and taken again when the app
+ *   comes back to the foreground;
+ * - the server calls go through `voiceCallApi`, imported on the tap rather than
+ *   on every shell render.
+ *
  * High-frequency state (captions, the ring's level, the timer) never
  * re-renders the app: the snapshot lives in a small external store that only
  * the call screen and the bar subscribe to, coalesced to about ten updates a
@@ -15,9 +25,13 @@
  *
  * @module features/personal/voice/VoiceCallProvider
  */
+import { RegistryContext } from "@effect/atom-react";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { JSX, ReactNode } from "react";
 import {
   createContext,
+  lazy,
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -28,23 +42,19 @@ import {
 } from "react";
 
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useAtomCommand } from "~/state/use-atom-command";
 
+import { createCallAudioContext } from "./callAudioContext";
 import type { CallAudio, CallAudioPort } from "./callAudio";
 import type { CreateLiveSocket } from "./liveClient";
 import type { BotStatusPort, VoiceCallController, VoiceCallSnapshot } from "./voiceCallController";
 import { type VoiceEndReason, type VoiceCallState, INITIAL_VOICE_CALL_STATE } from "./callState";
 import { VOICE_UNDO_MS, endReasonLine } from "./callState";
+import type { VoiceCallSession, VoiceCallTranscriptEntry } from "./voiceCallApi";
 import {
-  type VoiceCallSession,
-  type VoiceCallTranscriptEntry,
-  personalVoiceCallFinish,
-  personalVoiceCallLookupMemory,
-  personalVoiceCallSend,
-  personalVoiceCallStart,
-  voiceCallFailureCode,
-  voiceFailureDetail,
-} from "./voiceCallApi";
+  type VoiceCallStatusWatch,
+  createVoiceCallStatusWatch,
+  observeCallTurn,
+} from "./voiceCallStatus";
 
 /** One call, in the shell. */
 export interface ActiveVoiceCall {
@@ -77,6 +87,11 @@ export interface VoiceCallContextValue {
   /** The call in progress, or null. Changes only when a call starts or ends. */
   readonly call: ActiveVoiceCall | null;
   readonly captionsOn: boolean;
+  /**
+   * True when the browser refused the screen wake lock: the screen may sleep
+   * mid-call, which the call screen says plainly instead of pretending.
+   */
+  readonly wakeLockBlocked: boolean;
   /** Opens a call for one chat. Safe to call from a tap handler. */
   start: (input: {
     readonly threadId: string;
@@ -92,9 +107,9 @@ export interface VoiceCallContextValue {
   undoSend: () => void;
   /** Reads the live level for the ring; never causes a render. */
   readLevel: () => number;
-  /** Called by a chat screen with its own bot-status source for the open call. */
+  /** Called by a chat screen with its own bot-status source for one thread. */
   registerBotStatus: (threadId: string, source: () => BotStatusPort) => () => void;
-  /** A chat screen reports that the bot's turn ended. */
+  /** A chat screen reports that the bot's turn ended on its own thread. */
   notifyBotTurnEnded: () => void;
   /** The newest snapshot, read on demand. */
   snapshot: () => VoiceCallSnapshot;
@@ -122,6 +137,29 @@ const VoiceCallContext = createContext<VoiceCallContextValue | null>(null);
 /** About ten captions a second: enough to read, cheap on a phone. */
 const SNAPSHOT_FLUSH_MS = 100;
 
+/** How often the shell looks at the call's own chat while a call is on. */
+const CALL_WATCH_MS = 1_000;
+
+/**
+ * The call layer, lazy on purpose. It is only mounted while a call exists, so
+ * its chunk is never fetched on an ordinary shell render (review finding: idle
+ * cost on normal chats).
+ */
+const VoiceCallLayer = lazy(() =>
+  import("./VoiceCallLayer").then((module) => ({ default: module.VoiceCallLayer })),
+);
+
+/** Renders the call UI only while there is a call. Costs nothing when idle. */
+export function VoiceCallMount(): JSX.Element | null {
+  const voice = useVoiceCall();
+  if (voice === null || voice.call === null) return null;
+  return (
+    <Suspense fallback={null}>
+      <VoiceCallLayer />
+    </Suspense>
+  );
+}
+
 /**
  * Preload the engine as soon as a finger lands on the call button, so the tap
  * itself is not the first thing to wait for a chunk.
@@ -129,6 +167,27 @@ const SNAPSHOT_FLUSH_MS = 100;
 export function preloadVoiceCall(): void {
   void import("./voiceCallController");
   void import("./callAudio");
+  void import("./voiceCallApi");
+}
+
+interface WakeLockSentinelLike {
+  release(): Promise<void>;
+  readonly released: boolean;
+}
+
+/** The Screen Wake Lock API, when the browser has one. */
+function requestScreenWakeLock(): Promise<WakeLockSentinelLike> | null {
+  const api = (
+    navigator as unknown as {
+      wakeLock?: { request(type: "screen"): Promise<WakeLockSentinelLike> };
+    }
+  ).wakeLock;
+  if (api === undefined) return null;
+  try {
+    return api.request("screen");
+  } catch {
+    return null;
+  }
 }
 
 export function VoiceCallProvider({
@@ -142,20 +201,28 @@ export function VoiceCallProvider({
   /** Test seam: a fake Live socket. */
   readonly createSocket?: CreateLiveSocket;
 }): JSX.Element {
-  const startCall = useAtomCommand(personalVoiceCallStart, { reportFailure: false });
-  const sendToBot = useAtomCommand(personalVoiceCallSend, { reportFailure: false });
-  const finishCall = useAtomCommand(personalVoiceCallFinish, { reportFailure: false });
-  const lookupMemory = useAtomCommand(personalVoiceCallLookupMemory, { reportFailure: false });
+  const registry = useContext(RegistryContext);
   const [call, setCall] = useState<ActiveVoiceCall | null>(null);
   const [captionsOn, setCaptionsOn] = useState(true);
+  const [wakeLockBlocked, setWakeLockBlocked] = useState(false);
   const [finished, setFinished] = useState<ReadonlyArray<FinishedVoiceCall>>([]);
   const engineRef = useRef<VoiceCallController | null>(null);
+  /** Reserved synchronously on the tap: two taps are one call. */
+  const startingRef = useRef(false);
   /** The shell-side record of the open call, read when it ends. */
   const activeRef = useRef<ActiveVoiceCall | null>(null);
   const audioRef = useRef<CallAudio | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
-  const statusSourceRef = useRef<{ threadId: string; source: () => BotStatusPort } | null>(null);
+  /**
+   * One bot-status source per thread, registered by whichever chat screens are
+   * mounted. The call reads only its own thread's, and keeps the last answer it
+   * got when that screen goes away.
+   */
+  const statusWatchRef = useRef<VoiceCallStatusWatch | null>(null);
+  statusWatchRef.current ??= createVoiceCallStatusWatch();
+  const statusWatch = statusWatchRef.current;
   const workingRef = useRef(false);
+  const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
 
   // The coalesced snapshot store. Only the call UI subscribes.
   const storeRef = useRef<{
@@ -191,193 +258,268 @@ export function VoiceCallProvider({
     };
   }, []);
 
-  /** The offline bot-status fallback: a call without a chat screen still works. */
-  const fallbackStatus = useCallback((): BotStatusPort => {
-    const source = statusSourceRef.current;
-    return source === null
-      ? { state: "idle", step: null, elapsedMs: null, latestReply: null }
-      : source.source();
+  /**
+   * The bot's real state for the CALL's thread. It never falls back to `idle`
+   * just because the chat is not on screen: a missing source keeps the last
+   * known answer, which is what stops a navigation being read as "the bot
+   * finished its turn".
+   */
+  const readBotStatus = useCallback(
+    (): BotStatusPort => statusWatch.read(activeRef.current?.threadId ?? null),
+    [statusWatch],
+  );
+
+  const releaseWakeLock = useCallback(() => {
+    const sentinel = wakeLockRef.current;
+    wakeLockRef.current = null;
+    if (sentinel === null) return;
+    void sentinel.release().catch(() => undefined);
   }, []);
 
-  const end = useCallback((reason: VoiceEndReason = "hung_up") => {
-    const engine = engineRef.current;
-    const ended = engine?.snapshot() ?? null;
-    const callInfo = activeRef.current;
-    engine?.end(reason);
-    if (engine !== null && ended !== null && callInfo !== null && engine.session !== null) {
-      const session = engine.session;
-      setFinished((previous) => [
-        ...previous,
-        {
-          threadId: callInfo.threadId,
-          botId: callInfo.botId,
-          botName: callInfo.botName,
-          callId: session.callId,
-          startedAtMs: callInfo.startedAtMs,
-          durationMs: ended.elapsedMs,
-          endedLine: endReasonLine(reason, ended.quietMinutes),
-          sentCount: ended.sentMessageIds.length,
-          transcript: ended.transcript,
-          voiceName: session.voiceName,
-        },
-      ]);
-    }
-    engine?.dispose();
-    engineRef.current = null;
-    audioRef.current = null;
-    contextRef.current = null;
-    statusSourceRef.current = null;
-    activeRef.current = null;
-    workingRef.current = false;
-    storeRef.current.snapshot = EMPTY_SNAPSHOT;
-    setCall(null);
-  }, []);
+  const end = useCallback(
+    (reason: VoiceEndReason = "hung_up") => {
+      const engine = engineRef.current;
+      const ended = engine?.snapshot() ?? null;
+      const callInfo = activeRef.current;
+      engine?.end(reason);
+      if (engine !== null && ended !== null && callInfo !== null && engine.session !== null) {
+        const session = engine.session;
+        setFinished((previous) => [
+          ...previous,
+          {
+            threadId: callInfo.threadId,
+            botId: callInfo.botId,
+            botName: callInfo.botName,
+            callId: session.callId,
+            startedAtMs: callInfo.startedAtMs,
+            durationMs: ended.elapsedMs,
+            endedLine: endReasonLine(reason, ended.quietMinutes),
+            sentCount: ended.sentMessageIds.length,
+            transcript: ended.transcript,
+            voiceName: session.voiceName,
+          },
+        ]);
+      }
+      engine?.dispose();
+      engineRef.current = null;
+      audioRef.current = null;
+      contextRef.current = null;
+      activeRef.current = null;
+      startingRef.current = false;
+      workingRef.current = false;
+      statusWatch.reset();
+      releaseWakeLock();
+      setWakeLockBlocked(false);
+      storeRef.current.snapshot = EMPTY_SNAPSHOT;
+      setCall(null);
+    },
+    [releaseWakeLock],
+  );
 
   const start = useCallback<VoiceCallContextValue["start"]>(
     async (input) => {
-      if (engineRef.current !== null) return;
+      // The slot is taken before the first await, so a double tap cannot mint
+      // two passes (review finding 4).
+      if (engineRef.current !== null || startingRef.current) return;
+      startingRef.current = true;
       // iOS: the context must be made here, in the tap, before anything awaits.
       if (contextRef.current === null) {
-        const { createCallAudioContext } = await import("./callAudio");
         contextRef.current = createCallAudioContext();
       }
       const context = contextRef.current;
       if (context !== null && context.state !== "running") {
         void context.resume().catch(() => undefined);
       }
-      setCall({
-        threadId: input.threadId,
-        botId: input.botId,
-        botName: input.botName,
-        avatarShape: input.avatarShape,
-        avatarColor: input.avatarColor,
-        startedAtMs: Date.now(),
-        minimised: false,
-      });
-      activeRef.current = {
-        threadId: input.threadId,
-        botId: input.botId,
-        botName: input.botName,
-        avatarShape: input.avatarShape,
-        avatarColor: input.avatarColor,
-        startedAtMs: Date.now(),
-        minimised: false,
-      };
+      const startedAtMs = Date.now();
+      const active: ActiveVoiceCall = { ...input, startedAtMs, minimised: false };
+      activeRef.current = active;
+      setCall(active);
 
+      let voiceApi: typeof import("./voiceCallApi");
+      try {
+        voiceApi = await import("./voiceCallApi");
+      } catch {
+        startingRef.current = false;
+        activeRef.current = null;
+        setCall(null);
+        return;
+      }
+      if (!startingRef.current) return;
       const [{ createCallAudio }, { createVoiceCallController }] = await Promise.all([
         import("./callAudio"),
         import("./voiceCallController"),
       ]);
+      if (!startingRef.current) return;
 
       const audio = createCallAudio({
         context,
         onFrame: (pcm) => engineRef.current?.sendAudio(pcm),
       });
       audioRef.current = audio;
+      /** Every server call: silent on failure, the engine renders the code. */
+      const commandOptions = { reportFailure: false, reportDefect: false } as const;
+      const offline = {
+        ok: false as const,
+        code: "google_unavailable" as const,
+        detail: "No laptop is connected.",
+      };
       const engine = createVoiceCallController({
         threadId: input.threadId,
         botName: input.botName,
         api: {
           start: async (threadId) => {
-            if (environmentId === null) {
-              return { ok: false, code: "google_unavailable", detail: "No laptop is connected." };
-            }
-            const result = await startCall({
-              environmentId,
-              input: { threadId: ThreadId.make(threadId) },
-            });
+            if (environmentId === null) return offline;
+            const result = await runAtomCommand(
+              registry,
+              voiceApi.personalVoiceCallStart,
+              { environmentId, input: { threadId: ThreadId.make(threadId) } },
+              commandOptions,
+            );
             return result._tag === "Success"
               ? { ok: true, value: result.value }
               : {
                   ok: false,
-                  code: voiceCallFailureCode(result),
-                  detail: voiceFailureDetail(result),
+                  code: voiceApi.voiceCallFailureCode(result),
+                  detail: voiceApi.voiceFailureDetail(result),
                 };
           },
           send: async (sendInput) => {
-            if (environmentId === null) {
-              return { ok: false, code: "google_unavailable", detail: "No laptop is connected." };
-            }
-            const result = await sendToBot({
-              environmentId,
-              input: {
-                threadId: ThreadId.make(sendInput.threadId),
-                callId: sendInput.callId,
-                text: sendInput.text,
+            if (environmentId === null) return offline;
+            const result = await runAtomCommand(
+              registry,
+              voiceApi.personalVoiceCallSend,
+              {
+                environmentId,
+                input: {
+                  threadId: ThreadId.make(sendInput.threadId),
+                  callId: sendInput.callId,
+                  text: sendInput.text,
+                },
               },
-            });
+              commandOptions,
+            );
             return result._tag === "Success"
               ? { ok: true, value: { messageId: result.value.messageId } }
               : {
                   ok: false,
-                  code: voiceCallFailureCode(result),
-                  detail: voiceFailureDetail(result),
+                  code: voiceApi.voiceCallFailureCode(result),
+                  detail: voiceApi.voiceFailureDetail(result),
                 };
           },
           lookupMemory: async (memoryInput) => {
-            if (environmentId === null) {
-              return { ok: false, code: "google_unavailable", detail: "No laptop is connected." };
-            }
-            const result = await lookupMemory({
-              environmentId,
-              input: {
-                threadId: ThreadId.make(memoryInput.threadId),
-                callId: memoryInput.callId,
-                query: memoryInput.query,
+            if (environmentId === null) return offline;
+            const result = await runAtomCommand(
+              registry,
+              voiceApi.personalVoiceCallLookupMemory,
+              {
+                environmentId,
+                input: {
+                  threadId: ThreadId.make(memoryInput.threadId),
+                  callId: memoryInput.callId,
+                  query: memoryInput.query,
+                },
               },
-            });
+              commandOptions,
+            );
             return result._tag === "Success"
               ? { ok: true, value: result.value }
               : {
                   ok: false,
-                  code: voiceCallFailureCode(result),
-                  detail: voiceFailureDetail(result),
+                  code: voiceApi.voiceCallFailureCode(result),
+                  detail: voiceApi.voiceFailureDetail(result),
                 };
           },
           finish: async (finishInput) => {
-            if (environmentId === null) {
-              return { ok: false, code: "google_unavailable", detail: "No laptop is connected." };
-            }
-            const result = await finishCall({
-              environmentId,
-              input: {
-                ...finishInput,
-                threadId: ThreadId.make(finishInput.threadId),
+            if (environmentId === null) return offline;
+            const result = await runAtomCommand(
+              registry,
+              voiceApi.personalVoiceCallFinish,
+              {
+                environmentId,
+                input: {
+                  ...finishInput,
+                  threadId: ThreadId.make(finishInput.threadId),
+                },
               },
-            });
+              commandOptions,
+            );
             return result._tag === "Success"
               ? { ok: true, value: { ok: true } }
               : {
                   ok: false,
-                  code: voiceCallFailureCode(result),
-                  detail: voiceFailureDetail(result),
+                  code: voiceApi.voiceCallFailureCode(result),
+                  detail: voiceApi.voiceFailureDetail(result),
                 };
           },
         },
         audio,
-        botStatus: fallbackStatus,
+        botStatus: readBotStatus,
         onChange: publish,
         ...(createSocket === undefined ? {} : { createSocket }),
       });
       engineRef.current = engine;
       await engine.start();
     },
-    [createSocket, environmentId, fallbackStatus, finishCall, publish, sendToBot, startCall],
+    [createSocket, environmentId, publish, readBotStatus, registry],
   );
 
   // Leaving the app or locking the phone ends the call: iOS stops the mic and
   // the audio anyway, so the call is flushed with keepalive rather than left
-  // hanging on the server.
+  // hanging on the server. Coming back re-takes the wake lock and retries a card
+  // the server has not acknowledged.
   useEffect(() => {
     if (call === null) return;
-    const onHidden = () => {
+    let wakeLock: WakeLockSentinelLike | null = null;
+    let cancelled = false;
+
+    const request = () => {
+      if (cancelled) return;
+      const pending = requestScreenWakeLock();
+      if (pending === null) {
+        setWakeLockBlocked(true);
+        return;
+      }
+      void pending
+        .then((sentinel) => {
+          if (cancelled) {
+            void sentinel.release().catch(() => undefined);
+            return;
+          }
+          wakeLock = sentinel;
+          wakeLockRef.current = sentinel;
+          setWakeLockBlocked(false);
+        })
+        .catch(() => {
+          if (!cancelled) setWakeLockBlocked(true);
+        });
+    };
+
+    request();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        end("left_app");
+        return;
+      }
+      // Back in the foreground: the lock the OS dropped must be taken again,
+      // and a card that never reached the server gets another try.
+      request();
+      engineRef.current?.retryFinish();
+    };
+    const onPageHide = () => {
       if (document.visibilityState === "hidden") end("left_app");
     };
-    document.addEventListener("visibilitychange", onHidden);
-    window.addEventListener("pagehide", onHidden);
+    const onOnline = () => engineRef.current?.retryFinish();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("online", onOnline);
     return () => {
-      document.removeEventListener("visibilitychange", onHidden);
-      window.removeEventListener("pagehide", onHidden);
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("online", onOnline);
+      if (wakeLock !== null) void wakeLock.release().catch(() => undefined);
+      if (wakeLockRef.current === wakeLock) wakeLockRef.current = null;
     };
   }, [call, end]);
 
@@ -390,16 +532,35 @@ export function VoiceCallProvider({
       if (engine === null) return;
       const next = engine.snapshot();
       publish(next);
-      const working = next.state.status === "live" && fallbackStatus().state === "working";
-      if (workingRef.current && !working) engine.botTurnEnded();
-      workingRef.current = working;
-    }, 1_000);
+      // The turn end is read from the CALL's own chat, and only while a source
+      // for that thread is really mounted. A screen going away changes nothing.
+      const turn = observeCallTurn({
+        watching: statusWatch.hasSource(call.threadId),
+        live: next.state.status === "live",
+        status: readBotStatus(),
+        wasWorking: workingRef.current,
+      });
+      if (turn.ended) engine.botTurnEnded();
+      workingRef.current = turn.working;
+    }, CALL_WATCH_MS);
     return () => clearInterval(interval);
-  }, [call, fallbackStatus, publish]);
+  }, [call, publish, readBotStatus, statusWatch]);
 
+  // Unmounting the shell is the end of the call: the socket, the microphone and
+  // the audio all go, and the card is still handed to the server first.
   useEffect(
     () => () => {
-      engineRef.current?.dispose();
+      const engine = engineRef.current;
+      engine?.end("hung_up");
+      engine?.dispose();
+      engineRef.current = null;
+      audioRef.current = null;
+      contextRef.current = null;
+      activeRef.current = null;
+      startingRef.current = false;
+      const sentinel = wakeLockRef.current;
+      wakeLockRef.current = null;
+      if (sentinel !== null) void sentinel.release().catch(() => undefined);
     },
     [],
   );
@@ -408,6 +569,7 @@ export function VoiceCallProvider({
     () => ({
       call,
       captionsOn,
+      wakeLockBlocked,
       start,
       end,
       toggleMute: () => {
@@ -422,19 +584,15 @@ export function VoiceCallProvider({
       },
       undoSend: () => engineRef.current?.undoPendingSend(),
       readLevel: () => engineRef.current?.readLevel() ?? 0,
-      registerBotStatus: (threadId: string, source: () => BotStatusPort) => {
-        statusSourceRef.current = { threadId, source };
-        return () => {
-          if (statusSourceRef.current?.source === source) statusSourceRef.current = null;
-        };
-      },
+      registerBotStatus: (threadId: string, source: () => BotStatusPort) =>
+        statusWatch.register(threadId, source),
       notifyBotTurnEnded: () => engineRef.current?.botTurnEnded(),
       snapshot: () => storeRef.current.snapshot,
       session: () => engineRef.current?.session ?? null,
       finished,
       subscribe,
     }),
-    [call, captionsOn, end, finished, start, subscribe],
+    [call, captionsOn, end, finished, start, subscribe, wakeLockBlocked],
   );
 
   return <VoiceCallContext.Provider value={value}>{children}</VoiceCallContext.Provider>;

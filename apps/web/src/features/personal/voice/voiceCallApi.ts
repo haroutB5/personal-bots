@@ -45,6 +45,7 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
+import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "../../../connection/runtime";
 
@@ -71,6 +72,14 @@ export const personalVoiceCallSend = createEnvironmentRpcCommand(connectionAtomR
 export const personalVoiceCallFinish = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-voice-calls:finish",
   tag: WS_METHODS.personalVoiceCallsFinish,
+  // A finished call's card must appear without navigating away and back: the
+  // chat's list query is refreshed as soon as the card is stored (finding 7).
+  onSuccess: (target, registry) =>
+    Effect.sync(() =>
+      registry.refresh(
+        personalVoiceCallsList({ environmentId: target.environmentId, input: target.input }),
+      ),
+    ),
 });
 
 /** Proves the saved key can open a Live session (no audio billed). */
@@ -122,6 +131,17 @@ export interface AtomCommandResult<T> {
   readonly error?: unknown;
 }
 
+/**
+ * A failure code this client already has words for, added by the server after
+ * the contract's own list. Keeping it here means the screen can name it the day
+ * the server starts sending it, and the union collapses once the contract
+ * carries it too.
+ */
+export type VoiceCallLocalErrorCode = "sensitive_chat";
+
+/** Every failure code the call screen can render. */
+export type VoiceCallAnyErrorCode = VoiceCallErrorCode | VoiceCallLocalErrorCode;
+
 const VOICE_CALL_ERROR_CODES: ReadonlySet<string> = new Set([
   "no_key",
   "key_rejected",
@@ -132,9 +152,12 @@ const VOICE_CALL_ERROR_CODES: ReadonlySet<string> = new Set([
   "rate_limited",
   "invalid_input",
   "not_found",
+  // A chat that has had a private site open: the server refuses the call
+  // outright rather than sending its messages to Google (review finding 1).
+  "sensitive_chat",
 ]);
 
-export function isVoiceCallErrorCode(value: unknown): value is VoiceCallErrorCode {
+export function isVoiceCallErrorCode(value: unknown): value is VoiceCallAnyErrorCode {
   return typeof value === "string" && VOICE_CALL_ERROR_CODES.has(value);
 }
 
@@ -144,9 +167,9 @@ export function isVoiceCallErrorCode(value: unknown): value is VoiceCallErrorCod
  * has no code at all, which reads as `google_unavailable` because that is the
  * one the call screen can offer a fix for ("try again").
  */
-export function voiceCallFailureCode(failure: unknown): VoiceCallErrorCode {
+export function voiceCallFailureCode(failure: unknown): VoiceCallAnyErrorCode {
   const seen = new Set<unknown>();
-  const walk = (value: unknown, depth: number): VoiceCallErrorCode | null => {
+  const walk = (value: unknown, depth: number): VoiceCallAnyErrorCode | null => {
     if (depth > 4 || value === null || typeof value !== "object" || seen.has(value)) return null;
     seen.add(value);
     const record = value as Record<string, unknown>;

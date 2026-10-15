@@ -544,8 +544,16 @@ export function ConversationScreen({
   // started. The running one ticks every second and lives outside the timeline
   // (see LiveVoiceCallCard), so a call never rebuilds the chat's items per
   // second.
+  //
+  // Nothing is fetched for a bot whose voice calls are off, unless a call is
+  // running on this very chat (which can happen the moment the switch is
+  // turned off): that is the idle cost the review flagged.
+  const voiceCallsWanted =
+    environmentId !== null && (botVoiceCallsEnabled(bot) || voice?.call?.threadId === threadId);
   const voiceCalls = useEnvironmentQuery(
-    environmentId === null ? null : personalVoiceCallsList({ environmentId, input: { threadId } }),
+    voiceCallsWanted && environmentId !== null
+      ? personalVoiceCallsList({ environmentId, input: { threadId } })
+      : null,
   );
   const startVoiceCall = useCallback(() => {
     if (voice === null || bot === null) return;

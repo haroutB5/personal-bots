@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { readPersonalReplyQuote, type PersonalReplyQuote } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowDown, ChevronRight, FileText } from "lucide-react";
+import { ArrowDown, ChevronRight, FileText, Phone } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -53,6 +53,7 @@ import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
 import { SwipeTimeRow } from "./MessageSwipeTime";
 import { parseSentAt } from "./messageTime";
+import { readVoiceCallMarker, VOICE_CALL_TAG_LABEL } from "./voice/voiceCallMessage";
 import type { OutboxEntry, OutboxRow } from "./outbox";
 import {
   transcriptRange,
@@ -327,6 +328,9 @@ const UserMessage = memo(function UserMessage({
   onJump?: ((messageId: string) => void) | undefined;
 }) {
   const quote = useMemo(() => readPersonalReplyQuote(message.context), [message.context]);
+  // A message the voice sent during a call reads as the owner's own; the tag is
+  // what tells them apart (spec 7 / review should-fix).
+  const fromCall = useMemo(() => readVoiceCallMarker(message.context) !== null, [message.context]);
   const sentAt = useMemo(() => parseSentAt(message.createdAt), [message.createdAt]);
   const resources = useMemo(
     () => selectMessageImageResources(message.attachments),
@@ -341,6 +345,15 @@ const UserMessage = memo(function UserMessage({
   return (
     <div className="flex flex-col items-end gap-1.5">
       <span className="sr-only">You said:</span>
+      {fromCall ? (
+        <span
+          data-testid="voice-call-tag"
+          className="flex items-center gap-1 text-[12px] leading-4 font-medium text-[var(--personal-text-tertiary)]"
+        >
+          <Phone aria-hidden="true" className="size-3.5" strokeWidth={1.75} />
+          {VOICE_CALL_TAG_LABEL}
+        </span>
+      ) : null}
       {resources.length > 0 ? (
         <div className="flex max-w-[78%] flex-wrap justify-end gap-1.5">
           {resources.map((resource, index) => {

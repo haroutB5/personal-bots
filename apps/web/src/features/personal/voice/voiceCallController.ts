@@ -4,16 +4,29 @@
  * screen is a renderer, so the whole call can be driven by a fake socket and a
  * fake API in a test.
  *
- * Rules that come straight from the brief and the spec:
- * - `send_to_bot` is non-blocking: the Undo card holds the message for 3
- *   seconds, then it posts as the owner's own message; the tool call itself is
- *   answered when the bot's turn ends, with scheduling WHEN_IDLE, so the voice
- *   reads the reply at a natural pause and never talks over him.
- * - Undo (or "no, wait") answers the tool call with `cancelled_by_user` and
- *   scheduling INTERRUPT; nothing is posted.
+ * Rules that come straight from the brief and the spec, plus the pre-ship
+ * review's fixes (15 Oct 2026):
+ * - `send_to_bot` is NON_BLOCKING and never lies. The Undo card holds the
+ *   message for 3 seconds; the tool call is answered only once the real send
+ *   resolved, and while the bot is working the answer waits for the real end of
+ *   its turn so it can carry the redacted reply with WHEN_IDLE scheduling.
+ * - A second `send_to_bot` while one is held queues behind it; a fourth is
+ *   refused with `one_at_a_time`. A Google `toolCallCancellation`, and "no,
+ *   wait" said out loud, both take the message back before it posts.
+ * - One call, always torn down: the start slot is reserved synchronously, every
+ *   await re-checks `ended`, and the audio is closed on every end path even if
+ *   the microphone permission resolves afterwards.
+ * - A goAway is not a drop. The replacement socket opens with the resumption
+ *   handle and the same single-use pass, and callbacks from the stale socket
+ *   are ignored.
+ * - The card is retried until the server acknowledges it.
  * - A call that never connected leaves nothing in the chat.
  * - `finish()` runs exactly once per call, whatever ended it.
  * - A user tapping Stop is not an error: it ends as `hung_up`, never as a drop.
+ *
+ * Everything the voice is told about the chat goes through `redactForVoice`
+ * and is length-capped first: the server redacts too, but the browser must not
+ * forward raw chat text to Google on its own account.
  *
  * @module features/personal/voice/voiceCallController
  */
@@ -28,11 +41,17 @@ const decodeThreadId = Schema.decodeUnknownSync(ThreadId);
 const decodeMessageId = Schema.decodeUnknownSync(MessageId);
 const decodeTranscriptEntry = Schema.decodeUnknownSync(VoiceCallTranscriptEntry);
 
-import type { VoiceCallErrorCode, VoiceCallFinishInput, VoiceCallSession } from "./voiceCallApi";
+import type { VoiceCallAnyErrorCode, VoiceCallFinishInput, VoiceCallSession } from "./voiceCallApi";
 import {
   INITIAL_VOICE_CALL_STATE,
+  VOICE_CONNECT_TIMEOUT_MS,
+  VOICE_FINISH_RETRY_MS,
+  VOICE_GOODBYE_SPOKEN_LINE,
+  VOICE_QUIET_SPOKEN_LINE,
   VOICE_RECONNECT_GIVE_UP_MS,
   VOICE_RECONNECT_HIDDEN_MS,
+  VOICE_REPLY_GRACE_MS,
+  VOICE_SEND_QUEUE_MAX,
   VOICE_UNDO_MS,
   VOICE_WAITING_CAP_MS,
   type VoiceCallState,
@@ -40,11 +59,14 @@ import {
   type VoiceWorkCard,
   callHint,
   endReasonLine,
+  isVoiceCancelPhrase,
   limitPointsMs,
   quietDeadlineMs,
   quietExpired,
   quietWarningAtMs,
+  spokenInstruction,
 } from "./callState";
+import { redactForVoice } from "./voiceRedaction";
 
 /**
  * One server answer, as the engine reads it. The provider maps the RPC's own
@@ -52,7 +74,7 @@ import {
  */
 export type VoiceApiResult<T> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly code: VoiceCallErrorCode; readonly detail: string };
+  | { readonly ok: false; readonly code: VoiceCallAnyErrorCode; readonly detail: string };
 
 /** The server calls the engine makes; a test supplies its own. */
 export interface VoiceCallPort {
@@ -79,7 +101,12 @@ export interface VoiceCallPort {
   >;
 }
 
-/** What the engine reads about the real bot, from the chat's own subscriptions. */
+/**
+ * What the engine reads about the real bot. The provider supplies it from a
+ * source bound to the call's own thread, never from the chat on screen, and
+ * keeps the last known answer rather than reporting `idle` when that chat is
+ * not mounted.
+ */
 export interface BotStatusPort {
   /** "working", "idle", "needs_help", ... */
   readonly state: string;
@@ -108,11 +135,15 @@ export interface VoiceCallControllerOptions {
   readonly botName: string;
   readonly api: VoiceCallPort;
   readonly audio: CallAudioPort;
-  /** Live look at the real bot; the provider wires this to the chat's subscriptions. */
+  /** Live look at the real bot, bound to this call's own thread. */
   readonly botStatus: () => BotStatusPort;
   readonly createSocket?: CreateLiveSocket;
   /** How long to wait for setupComplete before the endpoint is abandoned. */
   readonly setupTimeoutMs?: number;
+  /** Hard cap on reaching a live session; past it the call fails. */
+  readonly connectTimeoutMs?: number;
+  /** The retry ladder for `finish`; a test shortens it. */
+  readonly finishRetryMs?: ReadonlyArray<number>;
   readonly now?: () => number;
   /** Every state change, already folded with the elapsed time and transcript. */
   readonly onChange: (snapshot: VoiceCallSnapshot) => void;
@@ -128,8 +159,8 @@ export interface VoiceCallController {
   /** The owner tapped Undo, or said "no, wait". */
   undoPendingSend(): void;
   /** The voice stopped talking: drop anything still queued. */
-  interrupted(): void;
-  /** Called by the provider when the bot's turn ends (WHEN_IDLE bookkeeping). */
+  interruptPlayback(): void;
+  /** Called by the provider when the bot's turn really ends (WHEN_IDLE bookkeeping). */
   botTurnEnded(): void;
   /** Feed one transcribed line in, for the stored transcript. */
   noteTranscript(row: VoiceCallTranscriptEntry): void;
@@ -140,20 +171,20 @@ export interface VoiceCallController {
   snapshot(): VoiceCallSnapshot;
   /** Ends the call, exactly once, through `finish()`. */
   end(reason: VoiceEndReason): void;
+  /** Attempts a card the server has not acknowledged yet. Safe to call often. */
+  retryFinish(): void;
+  /** True while a card is still owed to the server. */
+  readonly finishPending: boolean;
   /** Removes every listener and timer this call added. */
   dispose(): void;
   readonly session: VoiceCallSession | null;
   readonly ended: boolean;
 }
 
-/** A tool call whose answer is still owed: read at the end of the bot's turn. */
-interface PendingToolAnswer {
-  readonly id: string;
-  readonly name: string;
-  readonly response: Record<string, unknown>;
-}
-
-/** The send the Undo card is holding, with the tool call it belongs to. */
+/**
+ * The send the Undo card is holding. A second tool call queues behind it rather
+ * than posting the first one early.
+ */
 interface OpenSend {
   readonly text: string;
   readonly atMs: number;
@@ -161,30 +192,59 @@ interface OpenSend {
   cancelled: boolean;
 }
 
+/** A posted message whose tool answer is still owed to the voice. */
+interface OpenReply {
+  readonly toolCallId: string;
+  readonly messageId: string;
+  readonly sentAtMs: number;
+  /** True once the bot was really seen working on it. */
+  sawWorking: boolean;
+}
+
+const RETRY_FINISH_FOREVER_MS = 60_000;
+
 export function createVoiceCallController(
   options: VoiceCallControllerOptions,
 ): VoiceCallController {
   const now = options.now ?? (() => Date.now());
   const startedAtMs = now();
+  const finishRetryMs = options.finishRetryMs ?? VOICE_FINISH_RETRY_MS;
+  const connectTimeoutMs = options.connectTimeoutMs ?? VOICE_CONNECT_TIMEOUT_MS;
   let state: VoiceCallState = { ...INITIAL_VOICE_CALL_STATE };
   let transcript: VoiceCallTranscriptEntry[] = [];
   const sentMessageIds: string[] = [];
   let session: VoiceCallSession | null = null;
   let live: LiveClient | null = null;
+  /** Bumped for every socket, so a stale one's callbacks are ignored. */
+  let generation = 0;
   let ended = false;
-  let finished = false;
+  let started = false;
+  let disposed = false;
   let everConnected = false;
   let errorDetail: string | null = null;
   let lastSpeechAtMs = startedAtMs;
   let quietWarned = false;
   let limitWarned = false;
+  let byeSaid = false;
   let waitingSinceMs: number | null = null;
+  /** The connection is down and a replacement is being opened. */
   let reconnectSinceMs: number | null = null;
-  let micStarted = false;
-  let openSend: OpenSend | null = null;
+  /** Google announced a planned rotation. This alone is not a drop. */
+  let goAwayAtMs: number | null = null;
+  let reconnectAttempts = 0;
+  /** The send the Undo card is showing, first in line. */
+  let sendQueue: OpenSend[] = [];
+  /** The posted message the voice has not been told about yet. */
+  let openReply: OpenReply | null = null;
   let tick: ReturnType<typeof setInterval> | null = null;
+  let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let audioClosed = false;
+  let pendingFinish: VoiceCallFinishInput | null = null;
+  let finishAttempts = 0;
+  let finishInFlight = false;
+  /** The finish retry's own timer, kept out of `timeouts` so it can be reset alone. */
+  let finishTimer: ReturnType<typeof setTimeout> | null = null;
   const timeouts = new Set<ReturnType<typeof setTimeout>>();
-  const pendingAnswers: PendingToolAnswer[] = [];
 
   const later = (fn: () => void, ms: number) => {
     const timer = setTimeout(() => {
@@ -193,6 +253,12 @@ export function createVoiceCallController(
     }, ms);
     timeouts.add(timer);
     return timer;
+  };
+
+  const clearFinishTimer = () => {
+    if (finishTimer === null) return;
+    clearTimeout(finishTimer);
+    finishTimer = null;
   };
 
   const quietMinutes = () => session?.quietHangupMinutes ?? 2;
@@ -219,14 +285,34 @@ export function createVoiceCallController(
     transcript = [...transcript, row];
   };
 
+  /** Reads the bot, redacted and capped, for anything the voice will hear. */
+  const safeStatus = () => {
+    const status = options.botStatus();
+    return {
+      state: status.state,
+      step: redactForVoice(status.step) || null,
+      elapsedMs: status.elapsedMs,
+      latestReply: redactForVoice(status.latestReply) || null,
+    };
+  };
+
+  const say = (line: string) => {
+    try {
+      live?.speak(spokenInstruction(line));
+    } catch {
+      // A dead socket: the on-screen line is still there.
+    }
+  };
+
   /**
-   * One call card per call, with the reason, whatever ended it. A call that
-   * never connected leaves nothing in the chat, so nothing is stored for it.
+   * One call card per call, with the reason, whatever ended it, retried until
+   * the server acknowledges it: a brief offline or a locked phone must not cost
+   * the card (review finding 7). A call that never connected leaves nothing in
+   * the chat, so nothing is stored for it.
    */
   const finish = (reason: VoiceEndReason) => {
-    if (finished || session === null || !everConnected) return;
-    finished = true;
-    void options.api.finish({
+    if (pendingFinish !== null || session === null || !everConnected) return;
+    pendingFinish = {
       threadId: decodeThreadId(options.threadId),
       callId: session.callId,
       startedAt: DateTime.makeUnsafe(startedAtMs),
@@ -235,7 +321,47 @@ export function createVoiceCallController(
       transcript,
       sentMessageIds: sentMessageIds.map((id) => decodeMessageId(id)),
       ...(errorDetail === null ? {} : { detail: errorDetail.slice(0, 400) }),
-    });
+    };
+    void flushFinish();
+  };
+
+  const flushFinish = async (): Promise<void> => {
+    if (disposed || finishInFlight || pendingFinish === null) return;
+    const payload = pendingFinish;
+    finishInFlight = true;
+    let ok = false;
+    try {
+      const result = await options.api.finish(payload);
+      ok = result.ok;
+    } catch {
+      ok = false;
+    }
+    finishInFlight = false;
+    if (ok) {
+      pendingFinish = null;
+      return;
+    }
+    if (disposed) return;
+    const delay =
+      finishAttempts < finishRetryMs.length
+        ? finishRetryMs[finishAttempts]!
+        : RETRY_FINISH_FOREVER_MS;
+    finishAttempts += 1;
+    clearFinishTimer();
+    finishTimer = setTimeout(() => {
+      finishTimer = null;
+      void flushFinish();
+    }, delay);
+  };
+
+  const closeAudio = () => {
+    if (audioClosed) return;
+    audioClosed = true;
+    try {
+      options.audio.close();
+    } catch {
+      // Nothing left to close.
+    }
   };
 
   const end = (reason: VoiceEndReason) => {
@@ -243,22 +369,19 @@ export function createVoiceCallController(
     ended = true;
     if (tick !== null) clearInterval(tick);
     tick = null;
+    if (connectTimer !== null) clearTimeout(connectTimer);
+    connectTimer = null;
     try {
       live?.stop();
     } catch {
       // Already closed.
     }
     live = null;
-    if (micStarted) {
-      try {
-        options.audio.close();
-      } catch {
-        // Nothing left to close.
-      }
-      micStarted = false;
-    }
-    pendingAnswers.length = 0;
-    openSend = null;
+    // Always, whether or not the mic ever came up: a permission prompt that
+    // resolves after this must not leave a live stream behind (finding 4).
+    closeAudio();
+    sendQueue = [];
+    openReply = null;
     if (reason !== "failed") {
       try {
         options.audio.cue("ended");
@@ -279,10 +402,11 @@ export function createVoiceCallController(
   };
 
   const workFor = (): VoiceWorkCard | null => {
-    if (openSend !== null && !openSend.cancelled) {
-      return { kind: "sending", title: "", detail: openSend.text, sinceMs: openSend.atMs };
+    const head = sendQueue[0] ?? null;
+    if (head !== null) {
+      return { kind: "sending", title: "", detail: head.text, sinceMs: head.atMs };
     }
-    const status = options.botStatus();
+    const status = safeStatus();
     if (status.state === "working") {
       return { kind: "working", title: "", detail: status.step ?? "", sinceMs: null };
     }
@@ -292,23 +416,15 @@ export function createVoiceCallController(
     return null;
   };
 
-  /** The message the voice sent really posts as the owner's own message. */
-  const postSend = async (send: OpenSend) => {
-    if (session === null) return;
-    const result = await options.api.send({
-      threadId: options.threadId,
-      callId: session.callId,
-      text: send.text,
-    });
-    if (result.ok) {
-      sentMessageIds.push(result.value.messageId);
-      options.onSent?.({ messageId: result.value.messageId, text: send.text });
-      // The card in the chat counts what went, so the snapshot has to catch up.
-      publish({});
-      return;
-    }
-    errorDetail = result.detail;
-    publish({});
+  const pendingCard = () => {
+    const head = sendQueue[0];
+    if (head === undefined || head.cancelled) return null;
+    return {
+      text: head.text,
+      atMs: head.atMs,
+      dueAtMs: head.atMs + VOICE_UNDO_MS,
+      cancelled: false,
+    };
   };
 
   const answerTool = (
@@ -324,10 +440,116 @@ export function createVoiceCallController(
     }
   };
 
-  const answerOwedToolCalls = (scheduling: "INTERRUPT" | "WHEN_IDLE" | "SILENT") => {
-    for (const answer of pendingAnswers.splice(0, pendingAnswers.length)) {
-      answerTool(answer.id, answer.name, answer.response, scheduling);
+  /** Posts one held message, as the owner's own message. */
+  const postSend = async (send: OpenSend): Promise<void> => {
+    if (session === null || ended) return;
+    let result: VoiceApiResult<{ readonly messageId: string }>;
+    try {
+      result = await options.api.send({
+        threadId: options.threadId,
+        callId: session.callId,
+        text: send.text,
+      });
+    } catch (error) {
+      result = {
+        ok: false,
+        code: "google_unavailable",
+        detail: error instanceof Error ? error.message : "The send failed.",
+      };
     }
+    if (ended) return;
+    if (!result.ok) {
+      errorDetail = result.detail;
+      // The voice is told the truth at once: nothing was sent, and why.
+      answerTool(
+        send.toolCallId,
+        "send_to_bot",
+        { ok: false, reason: result.code, detail: result.detail.slice(0, 200) },
+        "INTERRUPT",
+      );
+      publish({ work: workFor() });
+      return;
+    }
+    sentMessageIds.push(result.value.messageId);
+    options.onSent?.({ messageId: result.value.messageId, text: send.text });
+    // The card in the chat counts what went, so the snapshot has to catch up.
+    publish({});
+    // The answer carries the real id, and waits for the bot's turn when there
+    // is one to wait for, so the voice can read the reply the moment it lands.
+    openReply = {
+      toolCallId: send.toolCallId,
+      messageId: result.value.messageId,
+      sentAtMs: now(),
+      sawWorking: false,
+    };
+    if (safeStatus().state === "working") {
+      openReply.sawWorking = true;
+      waitingSinceMs ??= now();
+    }
+  };
+
+  /** Hands the voice the send result, with the reply when there is one. */
+  const deliverReply = (withReply: boolean) => {
+    const delivery = openReply;
+    if (delivery === null) return;
+    openReply = null;
+    waitingSinceMs = null;
+    const reply = withReply ? safeStatus().latestReply : null;
+    answerTool(
+      delivery.toolCallId,
+      "send_to_bot",
+      {
+        ok: true,
+        status: "sent",
+        messageId: delivery.messageId,
+        ...(reply === null || reply.length === 0 ? {} : { reply }),
+      },
+      "WHEN_IDLE",
+    );
+    publish({ work: workFor() });
+  };
+
+  /**
+   * Opens the Undo window for the head of the queue. Called when a send is
+   * first held and again each time the head leaves the queue.
+   */
+  const openWindow = () => {
+    const head = sendQueue[0];
+    if (head === undefined) {
+      publish({ pending: null, work: workFor() });
+      return;
+    }
+    publish({
+      pending: {
+        text: head.text,
+        atMs: head.atMs,
+        dueAtMs: head.atMs + VOICE_UNDO_MS,
+        cancelled: false,
+      },
+      work: { kind: "sending", title: "", detail: head.text, sinceMs: head.atMs },
+    });
+    later(() => {
+      void closeWindow(head);
+    }, VOICE_UNDO_MS);
+  };
+
+  /** The head's window ran out: post it, then open the next one's. */
+  const closeWindow = async (send: OpenSend) => {
+    if (ended) return;
+    if (send.cancelled || sendQueue[0] !== send) return;
+    sendQueue = sendQueue.slice(1);
+    publish({ pending: pendingCard(), work: workFor() });
+    await postSend(send);
+    if (ended) return;
+    if (sendQueue.length > 0) openWindow();
+  };
+
+  const dropFromQueue = (toolCallId: string): boolean => {
+    const index = sendQueue.findIndex((send) => send.toolCallId === toolCallId);
+    if (index < 0) return false;
+    const wasHead = index === 0;
+    sendQueue = [...sendQueue.slice(0, index), ...sendQueue.slice(index + 1)];
+    return wasHead;
   };
 
   const onToolCall = (call: LiveToolCall) => {
@@ -374,44 +596,26 @@ export function createVoiceCallController(
           answerTool(call.id, call.name, { ok: false, reason: "empty" }, "INTERRUPT");
           return;
         }
-        // A second send while one is held posts the first straight away.
-        const previous = openSend;
-        if (previous !== null && !previous.cancelled) {
-          pendingAnswers.push({
-            id: previous.toolCallId,
-            name: "send_to_bot",
-            response: { ok: true, status: "sent" },
-          });
-          void postSend(previous);
+        // Three held at once is the ceiling; past that the voice is told to
+        // wait rather than the queue growing without bound.
+        if (sendQueue.length >= VOICE_SEND_QUEUE_MAX) {
+          answerTool(call.id, call.name, { ok: false, reason: "one_at_a_time" }, "INTERRUPT");
+          return;
         }
-        const atMs = now();
-        openSend = { text, atMs, toolCallId: call.id, cancelled: false };
-        publish({
-          pending: { text, atMs, dueAtMs: atMs + VOICE_UNDO_MS, cancelled: false },
-          work: { kind: "sending", title: "", detail: text, sinceMs: atMs },
-        });
-        later(() => {
-          const send = openSend;
-          if (send === null || send.cancelled || send.toolCallId !== call.id) return;
-          openSend = null;
-          publish({ pending: null, work: workFor() });
-          void postSend(send);
-          pendingAnswers.push({
-            id: call.id,
-            name: call.name,
-            response: { ok: true, status: "sent" },
-          });
-          // With no bot turn running there is no end to wait for: read it now.
-          if (options.botStatus().state !== "working") {
-            answerOwedToolCalls("WHEN_IDLE");
-          } else {
-            waitingSinceMs = now();
-          }
-        }, VOICE_UNDO_MS);
+        const queued: OpenSend = {
+          text,
+          atMs: now(),
+          toolCallId: call.id,
+          cancelled: false,
+        };
+        const wasEmpty = sendQueue.length === 0;
+        sendQueue = [...sendQueue, queued];
+        if (wasEmpty) openWindow();
+        else publish({ work: workFor() });
         return;
       }
       case "bot_status": {
-        const status = options.botStatus();
+        const status = safeStatus();
         answerTool(
           call.id,
           call.name,
@@ -425,12 +629,7 @@ export function createVoiceCallController(
         return;
       }
       case "latest_reply": {
-        answerTool(
-          call.id,
-          call.name,
-          { reply: options.botStatus().latestReply ?? "" },
-          "INTERRUPT",
-        );
+        answerTool(call.id, call.name, { reply: safeStatus().latestReply ?? "" }, "INTERRUPT");
         return;
       }
       case "end_call": {
@@ -444,11 +643,23 @@ export function createVoiceCallController(
     }
   };
 
+  /** Google took a tool call back: the held message never posts. */
+  const onToolCallCancellation = (ids: ReadonlyArray<string>) => {
+    for (const id of ids) {
+      if (openReply?.toolCallId === id) openReply = null;
+      const wasHead = dropFromQueue(id);
+      if (!wasHead) continue;
+      // No answer is sent for a cancelled call: Google already withdrew it.
+      publish({ pending: pendingCard(), work: workFor() });
+      if (sendQueue.length > 0) openWindow();
+    }
+  };
+
   const undoPendingSend = () => {
-    const send = openSend;
-    if (send === null || send.cancelled) return;
-    send.cancelled = true;
-    openSend = null;
+    const head = sendQueue[0];
+    if (head === undefined || head.cancelled) return;
+    head.cancelled = true;
+    sendQueue = sendQueue.slice(1);
     const held = state.pending;
     publish({
       pending: held === null ? null : { ...held, cancelled: true },
@@ -459,12 +670,17 @@ export function createVoiceCallController(
     }, 600);
     // The tool call is answered the moment the owner undoes it, so the voice
     // can say "OK, I didn't send it" without waiting out the window.
-    answerTool(send.toolCallId, "send_to_bot", { ok: false, cancelled_by_user: true }, "INTERRUPT");
+    answerTool(head.toolCallId, "send_to_bot", { ok: false, cancelled_by_user: true }, "INTERRUPT");
+    if (sendQueue.length > 0) openWindow();
   };
 
   const openSocket = () => {
-    if (session === null || ended) return;
+    if (session === null || ended || disposed) return;
+    // Read the handle before the old client is replaced: a goAway's handle is
+    // what lets the replacement keep the conversation and the audio.
     const handle = live?.resumeHandle ?? null;
+    generation += 1;
+    const myGeneration = generation;
     live = connectLive({
       model: session.model,
       // The server's own persona and chat context are already inside
@@ -478,20 +694,31 @@ export function createVoiceCallController(
       ...(options.setupTimeoutMs === undefined ? {} : { setupTimeoutMs: options.setupTimeoutMs }),
       events: {
         onSetupComplete: () => {
+          if (myGeneration !== generation || ended) return;
           const resumed = everConnected;
           everConnected = true;
           reconnectSinceMs = null;
+          goAwayAtMs = null;
+          reconnectAttempts = 0;
+          if (connectTimer !== null) clearTimeout(connectTimer);
+          connectTimer = null;
           if (!resumed) options.audio.cue("connected");
           publish({ status: "live", pill: state.muted ? "muted" : "listening", hint: null });
         },
         onAudio: ({ base64, rate }) => {
+          if (myGeneration !== generation) return;
           lastSpeechAtMs = now();
           if (state.pill !== "speaking" && !state.muted) publish({ pill: "speaking" });
           options.audio.play(base64, rate);
         },
         onCaption: ({ who, text, finished }) => {
+          if (myGeneration !== generation) return;
           if (text.length === 0) return;
           lastSpeechAtMs = now();
+          // "No, wait" takes the held message back, exactly like tapping Undo.
+          if (who === "you" && finished && sendQueue.length > 0 && isVoiceCancelPhrase(text)) {
+            undoPendingSend();
+          }
           // A finished line joins the transcript before the snapshot is built,
           // so the stored transcript and the live caption never disagree.
           if (finished) {
@@ -502,26 +729,30 @@ export function createVoiceCallController(
           publish({ caption: { who, text } });
         },
         onInterrupted: () => {
+          if (myGeneration !== generation) return;
           options.audio.stopPlayback();
           if (!ended) publish({ pill: state.muted ? "muted" : "listening" });
         },
         onTurnComplete: () => {
-          if (ended) return;
+          if (myGeneration !== generation || ended) return;
           publish({ pill: state.muted ? "muted" : "listening" });
         },
         onToolCall,
+        onToolCallCancellation,
         onGrounding: ({ queries }) => {
           // Google's own Search answered: the pill says so until the voice
           // finishes the sentence. Nothing is posted into the chat.
-          if (ended || queries.length === 0) return;
+          if (myGeneration !== generation || ended || queries.length === 0) return;
           publish({ pill: "searching" });
         },
         onGoAway: () => {
-          // Silent by design: shown only if the reconnect drags on.
-          reconnectSinceMs ??= now();
+          // A planned rotation, not a drop: remembered only so the connection
+          // going down afterwards is treated as expected rather than as a fault.
+          if (myGeneration !== generation) return;
+          goAwayAtMs ??= now();
         },
         onClosed: ({ refused, code, reason, quota }) => {
-          if (ended) return;
+          if (myGeneration !== generation || ended) return;
           if (!everConnected) {
             errorDetail = reason.length > 0 ? reason : `Gemini closed the call (${code}).`;
             // A pass that is fine but a key that is out of quota closes the
@@ -538,17 +769,24 @@ export function createVoiceCallController(
             end("failed");
             return;
           }
-          // A live call that dropped: reconnect silently (the spec only shows
-          // the Reconnecting state if it drags on) and hand the resume handle
-          // back so the context survives.
-          const firstDrop = reconnectSinceMs === null;
+          // A live call that dropped, or a planned rotation: open a replacement
+          // with the resumption handle on the SAME single-use pass (Google
+          // accepts it inside the token's expiry, proved 15 Oct 2026). The spec
+          // only shows Reconnecting if it drags on.
           reconnectSinceMs ??= now();
-          if (firstDrop) openSocket();
+          if (reconnectAttempts >= 5) return;
+          const delay = reconnectAttempts === 0 ? 0 : 500;
+          reconnectAttempts += 1;
+          later(() => {
+            if (!ended) openSocket();
+          }, delay);
         },
         onSetupTimeout: () => {
-          if (!ended) publish({ status: "connecting" });
+          if (myGeneration !== generation || ended) return;
+          publish({ status: "connecting" });
         },
         onError: ({ message }) => {
+          if (myGeneration !== generation) return;
           errorDetail = message;
         },
       },
@@ -569,6 +807,12 @@ export function createVoiceCallController(
         limitWarned = true;
         publish({ nearLimit: true });
       }
+      // 29:45: the voice says goodbye out loud before the cap ends the call
+      // (spec 5). Once only.
+      if (!byeSaid && at - startedAtMs >= limit.byeAtMs) {
+        byeSaid = true;
+        say(VOICE_GOODBYE_SPOKEN_LINE);
+      }
 
       // A reconnect that is over in under 1.5 s must show nothing at all.
       if (reconnectSinceMs !== null) {
@@ -581,6 +825,19 @@ export function createVoiceCallController(
           publish({ status: "reconnecting", pill: "reconnecting" });
         }
         return;
+      }
+
+      // A posted message the voice has not been told about yet. The bot's turn
+      // usually starts within the grace window; if it never does, the voice is
+      // still told the truth about the send.
+      if (openReply !== null) {
+        const working = safeStatus().state === "working";
+        if (working) {
+          openReply.sawWorking = true;
+          waitingSinceMs ??= at;
+        } else if (openReply.sawWorking || at - openReply.sentAtMs >= VOICE_REPLY_GRACE_MS) {
+          deliverReply(openReply.sawWorking);
+        }
       }
 
       // Waiting on the bot has its own cap, whatever the quiet setting says.
@@ -597,11 +854,12 @@ export function createVoiceCallController(
         quietMinutes: quietMinutes(),
         // Waiting on the bot pauses the quiet timer (spec 5): the waiting cap
         // above is what ends a call nobody is talking on.
-        pendingSend:
-          (state.pending !== null && !state.pending.cancelled) || waitingSinceMs !== null,
+        pendingSend: sendQueue.length > 0 || waitingSinceMs !== null || openReply !== null,
       };
       if (!quietWarned && at >= quietWarningAtMs(quietInput) && at < quietDeadlineMs(quietInput)) {
         quietWarned = true;
+        // Said out loud as well as shown: the owner may be looking away.
+        say(VOICE_QUIET_SPOKEN_LINE);
         publish({ quietWarning: true });
       }
       if (quietExpired(quietInput)) {
@@ -622,15 +880,34 @@ export function createVoiceCallController(
   };
 
   const start = async (): Promise<void> => {
+    // The slot is taken synchronously: two taps in the same frame must not mint
+    // two passes (finding 4).
+    if (started) return;
+    started = true;
     const result = await options.api.start(options.threadId);
+    if (disposed) return;
     if (!result.ok) {
       errorDetail = result.detail;
       publish({ status: "error", errorCode: result.code, pill: "none", hint: null });
       return;
     }
+    if (ended) return;
     session = result.value;
     publish({ status: "connecting", pill: "none", hint: null });
     openSocket();
+    // The hard cap: whatever the socket is doing, past this the call is over.
+    connectTimer = setTimeout(() => {
+      connectTimer = null;
+      if (ended || promisedLive()) return;
+      errorDetail = "Google did not answer in time.";
+      publish({
+        status: "error",
+        errorCode: "google_unavailable",
+        pill: "none",
+        hint: null,
+      });
+      end("failed");
+    }, connectTimeoutMs);
     later(() => {
       if (!ended && !everConnected) {
         publish({ hint: callHint({ state, waitingMs: 400 }) });
@@ -638,25 +915,37 @@ export function createVoiceCallController(
     }, 400);
     try {
       await options.audio.startMic();
-      micStarted = true;
     } catch (error) {
+      if (disposed) return;
       errorDetail = error instanceof Error ? error.message : "Microphone unavailable.";
       publish({ status: "error", errorCode: "unknown", pill: "none", hint: null });
       end("failed");
       return;
     }
-    if (!ended) startTimer();
+    // The call can end while the microphone prompt is up: then the audio is
+    // already closed and no timer may start.
+    if (ended || disposed) {
+      closeAudio();
+      return;
+    }
+    startTimer();
   };
+
+  /** True once a session answered or a replacement is already under way. */
+  const promisedLive = () => everConnected || reconnectSinceMs !== null || live?.ready === true;
 
   return {
     start,
     sendAudio: (pcm: ArrayBuffer) => live?.sendAudio(pcm),
     undoPendingSend,
-    interrupted: () => options.audio.stopPlayback(),
+    interruptPlayback: () => options.audio.stopPlayback(),
     botTurnEnded: () => {
       waitingSinceMs = null;
-      if (pendingAnswers.length > 0) answerOwedToolCalls("WHEN_IDLE");
-      else publish({ work: workFor() });
+      if (openReply !== null) {
+        deliverReply(true);
+        return;
+      }
+      publish({ work: workFor() });
     },
     noteTranscript,
     readLevel: () =>
@@ -677,11 +966,31 @@ export function createVoiceCallController(
     },
     snapshot,
     end,
+    retryFinish: () => {
+      if (pendingFinish === null || finishInFlight) return;
+      clearFinishTimer();
+      finishAttempts = 0;
+      void flushFinish();
+    },
+    get finishPending() {
+      return pendingFinish !== null;
+    },
     dispose: () => {
+      disposed = true;
       if (tick !== null) clearInterval(tick);
       tick = null;
+      if (connectTimer !== null) clearTimeout(connectTimer);
+      connectTimer = null;
+      clearFinishTimer();
       for (const timer of timeouts) clearTimeout(timer);
       timeouts.clear();
+      try {
+        live?.stop();
+      } catch {
+        // Already closed.
+      }
+      live = null;
+      closeAudio();
     },
     get session() {
       return session;
