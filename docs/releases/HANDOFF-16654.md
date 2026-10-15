@@ -13,7 +13,9 @@ call is stored as one card beside the chat with its transcript. The pre-ship
 review (`dev-team/reviews/hbots-voice-calls-review.md`, verdict FIX-FIRST, nine
 must-fixes) is answered here on the server and on the same branch in the web
 client; the review's nine findings and the tests that now hold each of them are
-listed below.
+listed below. This same version also carries the DeepSeek dsh reply-style fix
+(its own short section below), which the CTO briefed and Harout chose to fold in
+here rather than start a new version.
 
 Staged release: see the Gate evidence section below (added by
 `scripts/personal/gate-evidence.ps1`). Branch `feat/hbots-voice-calls`, based on
@@ -197,24 +199,59 @@ itself is his iPhone check.
       Google and asserts no key value appears anywhere in the result or the
       request.
 
+## DeepSeek dsh replies: findings in the reply, and a break between steps
+
+Folded into 1.66.54 on the CTO's brief (Harout chose it). dsh engine only: no
+migration, no env switch, and no other harness's persona changes.
+
+- **The problem.** On the dsh engine DeepSeek writes its findings into its
+  thinking, which the chat hides by design, so the visible reply arrived as bare
+  "Now the X:" lead-ins. The CTO measured it in `state.sqlite`: since 14 Oct,
+  48% of DeepSeek reply segments end with a colon (144 are short stubs), against
+  4% for Claude and 0% for Codex; hidden thinking is 39 characters per reply
+  character, against 6 for Claude. The voice-calls turn itself wrote 266k
+  characters of thinking and 4.9k of reply across 276 tool calls. Event routing
+  is correct and untouched (`ThoughtDelta` -> `reasoning_text`, `ContentDelta` ->
+  the reply).
+- **The change.** `buildDshPersona` (`apps/server/src/provider/acp/DshAcpSupport.ts`)
+  now adds a `<reply_style>` block, dsh only: the user never sees the thinking,
+  one complete sentence before a tool call saying what was found or is about to
+  happen, never end a message with a colon, put findings, numbers, errors and
+  decisions in the reply itself, stay brief. Adapter-side and cosmetic, with
+  dsh's own frames unchanged: a `ThoughtDelta` that follows a tool call in a
+  turn whose thinking already started now begins a new paragraph, because dsh
+  joins separate steps with no break of its own ("Let me check.The pattern is").
+- **Tests.** `DshAcpSupport` `carries the dsh-only reply style, and no other
+harness does`; `DeepSeekDshAdapter` `starts a new reasoning paragraph when a
+thought follows a tool call`, over the real frame order through the real ACP
+  runtime (thought, tool_call, tool_call_update, thought). The touched provider
+  suite (`vp test run src/provider`: 107 files, 1757 passed, 58 skipped) covers
+  the code the fork gate does not run (`src/personal` + `src/mcp`).
+- **Cost.** The persona hash changes, so every open DeepSeek chat restarts its
+  dsh process once on its next turn, with one mostly-uncached first request.
+- **Also in the fold-in.** The dsh mock agent settled a cancelled prompt before
+  writing the aborted tool update, so the pre-existing cancel test raced under
+  load; it now writes the update first and settles about 20 ms later, as the
+  recording shows.
+
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=a445d8f5c57ed4024f106d4373f880636c0ec00b release=a445d8f5c57e json-sha256=8354ae6d6b4becb67e4067e14cd9aa8899584b2c3e9acb6170c32632d7ea4abd result=PASS -->
+<!-- gate-evidence:begin sha=f8804ccaeea6f764bd09bafbc7294d737ee90189 release=f8804ccaeea6 json-sha256=943a97fef4ccdbb3f3199ca940e5220618128775e66b41da9869f17c9f85ebf4 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-15T22:54:23Z. Version 1.66.54, release `a445d8f5c57e`, commit `a445d8f5c57ed4024f106d4373f880636c0ec00b` on `feat/hbots-voice-calls`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-15T23:57:41Z. Version 1.66.54, release `f8804ccaeea6`, commit `f8804ccaeea6f764bd09bafbc7294d737ee90189` on `feat/hbots-voice-calls`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\a445d8f5c57e\gate-evidence.json` (sha256 `8354ae6d6b4becb67e4067e14cd9aa8899584b2c3e9acb6170c32632d7ea4abd`) and the full gate logs in `releases\a445d8f5c57e\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\f8804ccaeea6\gate-evidence.json` (sha256 `943a97fef4ccdbb3f3199ca940e5220618128775e66b41da9869f17c9f85ebf4`) and the full gate logs in `releases\f8804ccaeea6\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2756 tests passed, 0 failed, 4 skipped, in 200 files | 280.2   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 47.4    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2748 tests passed, 0 failed, 0 skipped, in 248 files | 40.4    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 6.7     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 69.4    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-voice-server\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\a445d8f5c57e" -Json` (in `.`)                                                                                                              | 0    | pass: 12/12 journeys passed                                | 270.3   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2756 tests passed, 0 failed, 4 skipped, in 200 files | 274.7   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 47.7    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2748 tests passed, 0 failed, 0 skipped, in 248 files | 39.7    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 7.5     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 68.7    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-voice-server\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\f8804ccaeea6" -Json` (in `.`)                                                                                                              | 0    | pass: 12/12 journeys passed                                | 271.5   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `a445d8f5c57ed4024f106d4373f880636c0ec00b`, at end `a445d8f5c57ed4024f106d4373f880636c0ec00b`; tracked files modified: none. Staged release: version 1.66.54, sha a445d8f5c57e, dirty False, externals copied; `dist/bin.mjs` sha256 `19d4cd0439096fc5b63e22b4e2cd436dc5042788ee316a502b2da60bfb46ca08`.
+Tree: HEAD at start `f8804ccaeea6f764bd09bafbc7294d737ee90189`, at end `f8804ccaeea6f764bd09bafbc7294d737ee90189`; tracked files modified: none. Staged release: version 1.66.54, sha f8804ccaeea6, dirty False, externals copied; `dist/bin.mjs` sha256 `8386ff2a997bf49de1a9dbe3a087f83a4155142bc0e422ecf58298974017797f`.
 <!-- gate-evidence:end -->
