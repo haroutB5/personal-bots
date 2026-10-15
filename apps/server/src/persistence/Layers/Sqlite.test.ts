@@ -3,12 +3,28 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import type * as NodeWorkerThreads from "node:worker_threads";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { vi } from "vite-plus/test";
+
+const capturedWorkers = vi.hoisted(() => ({ workers: [] as NodeWorkerThreads.Worker[] }));
+vi.mock("node:worker_threads", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:worker_threads")>();
+  return {
+    ...actual,
+    Worker: class extends actual.Worker {
+      constructor(filename: string | URL, options?: NodeWorkerThreads.WorkerOptions) {
+        super(filename, options);
+        capturedWorkers.workers.push(this);
+      }
+    },
+  };
+});
 
 import {
   SQLITE_CACHE_DEFAULT_MB,
@@ -80,8 +96,9 @@ it.effect("shrinks the WAL file back to the size limit after a large write", () 
     `;
     assert.isAbove(walFileSize(), WAL_SIZE_LIMIT_BYTES);
 
-    // The auto-checkpoint after the large commit copied every frame into the
-    // database, so the next commit restarts the WAL and cuts the file back.
+    // Wait for a completed checkpoint, independent of whether the background
+    // worker or the legacy auto-checkpointer is enabled.
+    yield* sql`PRAGMA wal_checkpoint(PASSIVE)`;
     yield* sql`INSERT INTO wal_probe(payload) VALUES (x'00')`;
     assert.isAtMost(walFileSize(), WAL_SIZE_LIMIT_BYTES);
   }).pipe(
@@ -97,6 +114,68 @@ it.effect("applies busy_timeout in the shared persistence setup", () =>
     assert.equal(rows[0]?.timeout, 5000);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect("keeps legacy auto-checkpoints when the worker kill switch is set", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-checkpoint-off-"));
+  const previous = process.env.T3CODE_SQLITE_CHECKPOINT_WORKER;
+  process.env.T3CODE_SQLITE_CHECKPOINT_WORKER = "off";
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ wal_autocheckpoint: number }>`PRAGMA wal_autocheckpoint`;
+    assert.strictEqual(row!.wal_autocheckpoint, 1000);
+  }).pipe(
+    Effect.provide(
+      makeSqlitePersistenceLive(NodePath.join(tempDir, "state.sqlite")).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env.T3CODE_SQLITE_CHECKPOINT_WORKER;
+        else process.env.T3CODE_SQLITE_CHECKPOINT_WORKER = previous;
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }),
+    ),
+  );
+});
+
+it.effect("moves automatic checkpoints off the main connection", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-checkpoint-on-"));
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ wal_autocheckpoint: number }>`PRAGMA wal_autocheckpoint`;
+    assert.strictEqual(row!.wal_autocheckpoint, 0);
+  }).pipe(
+    Effect.provide(
+      makeSqlitePersistenceLive(NodePath.join(tempDir, "state.sqlite")).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("restores main-thread auto-checkpoints if the running worker exits", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-checkpoint-fail-"));
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [before] = yield* sql<{ wal_autocheckpoint: number }>`PRAGMA wal_autocheckpoint`;
+    assert.strictEqual(before!.wal_autocheckpoint, 0);
+    yield* Effect.promise(() => capturedWorkers.workers.at(-1)!.terminate());
+    yield* Effect.yieldNow;
+    const [after] = yield* sql<{ wal_autocheckpoint: number }>`PRAGMA wal_autocheckpoint`;
+    assert.strictEqual(after!.wal_autocheckpoint, 1000);
+    yield* sql`CREATE TABLE after_failure(id INTEGER)`;
+    yield* sql`INSERT INTO after_failure VALUES (1)`;
+  }).pipe(
+    Effect.provide(
+      makeSqlitePersistenceLive(NodePath.join(tempDir, "state.sqlite")).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
 
 it("syncs the WAL only at checkpoints unless the kill switch asks for FULL", () => {
   assert.strictEqual(sqliteSynchronousFromEnv(undefined), "NORMAL");
