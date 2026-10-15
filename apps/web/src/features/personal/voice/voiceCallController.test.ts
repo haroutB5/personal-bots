@@ -84,6 +84,8 @@ interface HarnessOverrides {
   readonly finishRetryMs?: ReadonlyArray<number>;
   /** Replaces the microphone: the default resolves at once. */
   readonly mic?: () => Promise<void>;
+  /** What the server is asked when the voice wants the bot's state. */
+  readonly refreshBotStatus?: () => Promise<void>;
 }
 
 interface Harness {
@@ -196,6 +198,9 @@ function harness(overrides: HarnessOverrides = {}): Harness {
       ? {}
       : { connectTimeoutMs: overrides.connectTimeoutMs }),
     ...(overrides.finishRetryMs === undefined ? {} : { finishRetryMs: overrides.finishRetryMs }),
+    ...(overrides.refreshBotStatus === undefined
+      ? {}
+      : { refreshBotStatus: overrides.refreshBotStatus }),
     onChange: (snapshot) => snapshots.push(snapshot),
   });
 
@@ -466,6 +471,7 @@ describe("send_to_bot and the Undo card", () => {
     socket.receive({
       toolCall: { functionCalls: [{ id: "r-1", name: "latest_reply", args: {} }] },
     });
+    await vi.advanceTimersByTimeAsync(0);
     const answers = toolAnswers(socket);
     const status = answers.find((row) => row.id === "s-1")?.response as
       | { step: string }
@@ -636,6 +642,8 @@ describe("send_to_bot and the Undo card", () => {
     socket.receive({
       toolCall: { functionCalls: [{ id: "r-1", name: "latest_reply", args: {} }] },
     });
+    // The voice asked, so the status is fetched first and answered after.
+    await vi.advanceTimersByTimeAsync(0);
     const answers = toolAnswers(socket);
     expect(answers.find((row) => row.id === "s-1")?.response).toEqual({
       state: "working",
@@ -660,11 +668,83 @@ describe("send_to_bot and the Undo card", () => {
     };
     const socket = await connected(test);
     socket.receive({ toolCall: { functionCalls: [{ id: "s-1", name: "bot_status", args: {} }] } });
+    await vi.advanceTimersByTimeAsync(0);
     expect(toolAnswers(socket)[0]!.response).toEqual({
       state: "Waiting on you",
       step: null,
       elapsedSeconds: null,
     });
+  });
+
+  it("asks the server for the bot's state only when the voice asks", async () => {
+    const refreshBotStatus = vi.fn(async () => undefined);
+    const test = harness({ refreshBotStatus });
+    const socket = await connected(test);
+    expect(refreshBotStatus).not.toHaveBeenCalled();
+
+    // The voice's question is what triggers the read, and it answers from it.
+    refreshBotStatus.mockImplementationOnce(async () => {
+      test.status.current = {
+        state: "working",
+        label: "Working",
+        step: "Rebasing now",
+        elapsedMs: null,
+        latestReply: null,
+      };
+    });
+    socket.receive({ toolCall: { functionCalls: [{ id: "s-1", name: "bot_status", args: {} }] } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshBotStatus).toHaveBeenCalledTimes(1);
+    expect(toolAnswers(socket)[0]!.response).toEqual({
+      state: "Working",
+      step: "Rebasing now",
+      elapsedSeconds: null,
+    });
+  });
+
+  it("only watches the bot while a message is really waiting on it", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    expect(test.controller.watchBot).toBe(false);
+    sendTool(socket, "tc-1", "Deploy it");
+    expect(test.controller.watchBot).toBe(true);
+    test.controller.undoPendingSend();
+    expect(test.controller.watchBot).toBe(false);
+    expect(test.last().state.pending?.cancelled).toBe(true);
+  });
+
+  it("ends the call cleanly when the server no longer holds it", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.controller.callLost();
+    expect(test.last().state.status).toBe("ended");
+    expect(test.last().state.hint).toBe("The laptop restarted, so this call ended.");
+    expect(test.api.finishes).toHaveLength(1);
+    // Nothing is retried: one card, one ending.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(test.api.finishes).toHaveLength(1);
+  });
+
+  it("treats a not_found send as the call being over, and does not retry it", async () => {
+    const test = harness({
+      sendResult: () => ({ ok: false, code: "not_found", detail: "no such call" }),
+    });
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 100);
+    expect(toolAnswers(socket)).toEqual([
+      {
+        id: "tc-1",
+        name: "send_to_bot",
+        response: { ok: false, reason: "not_found", detail: "no such call" },
+        scheduling: "INTERRUPT",
+      },
+    ]);
+    expect(test.last().state.status).toBe("ended");
+    expect(test.last().state.hint).toBe("The laptop restarted, so this call ended.");
+    await vi.advanceTimersByTimeAsync(3 * VOICE_UNDO_MS);
+    expect(test.api.sent).toHaveLength(1);
+    expect(test.api.finishes).toHaveLength(1);
   });
 
   it("ends the call when the voice hears bye", async () => {

@@ -54,6 +54,7 @@ import {
   VOICE_SEND_QUEUE_MAX,
   VOICE_UNDO_MS,
   VOICE_WAITING_CAP_MS,
+  VOICE_CALL_LOST_LINE,
   type VoiceCallState,
   type VoiceEndReason,
   type VoiceWorkCard,
@@ -142,6 +143,12 @@ export interface VoiceCallControllerOptions {
   readonly audio: CallAudioPort;
   /** Live look at the real bot, bound to this call's own thread. */
   readonly botStatus: () => BotStatusPort;
+  /**
+   * Asks the server for a fresh snapshot of the call's chat, right now. Used
+   * when the voice asks a question; the provider owns the RPC. Absent in a test
+   * that drives the status directly.
+   */
+  readonly refreshBotStatus?: () => Promise<void>;
   readonly createSocket?: CreateLiveSocket;
   /** How long to wait for setupComplete before the endpoint is abandoned. */
   readonly setupTimeoutMs?: number;
@@ -174,8 +181,19 @@ export interface VoiceCallController {
   /** Mic on or off. The track is disabled, never stopped, so unmute is instant. */
   setMuted(muted: boolean): void;
   snapshot(): VoiceCallSnapshot;
-  /** Ends the call, exactly once, through `finish()`. */
-  end(reason: VoiceEndReason): void;
+  /**
+   * Ends the call, exactly once, through `finish()`. `notice` replaces the
+   * ended screen's line when the reason alone would not say what happened.
+   */
+  end(reason: VoiceEndReason, notice?: string): void;
+  /**
+   * True while the voice is waiting on the real bot: a message is held, or one
+   * has posted and its reply is still owed. The provider polls the server
+   * snapshot only while this is true (one small indexed read, not a loop).
+   */
+  readonly watchBot: boolean;
+  /** The call is gone on the server: end it cleanly, with nothing retried. */
+  callLost(): void;
   /** Attempts a card the server has not acknowledged yet. Safe to call often. */
   retryFinish(): void;
   /** True while a card is still owed to the server. */
@@ -370,7 +388,7 @@ export function createVoiceCallController(
     }
   };
 
-  const end = (reason: VoiceEndReason) => {
+  const end = (reason: VoiceEndReason, notice?: string) => {
     if (ended) return;
     ended = true;
     if (tick !== null) clearInterval(tick);
@@ -401,10 +419,23 @@ export function createVoiceCallController(
       status: everConnected ? "ended" : "error",
       pill: "none",
       endReason: reason,
-      hint: endReasonLine(reason, quietMinutes()),
+      // `notice` is for the endings the reason alone would not explain, like the
+      // laptop restarting under the call.
+      hint: notice ?? endReasonLine(reason, quietMinutes()),
       pending: null,
       work: null,
     });
+  };
+
+  /**
+   * The server no longer knows this call: its lease is gone, which in practice
+   * means the laptop restarted under it. Nothing is retried and the call ends
+   * cleanly, saying so.
+   */
+  const callLost = () => {
+    if (ended) return;
+    errorDetail = VOICE_CALL_LOST_LINE;
+    end("dropped", VOICE_CALL_LOST_LINE);
   };
 
   const workFor = (): VoiceWorkCard | null => {
@@ -474,6 +505,9 @@ export function createVoiceCallController(
         "INTERRUPT",
       );
       publish({ work: workFor() });
+      // `not_found` is the lease being gone: the laptop restarted, or the call
+      // was ended elsewhere. Nothing is retried; the call ends cleanly.
+      if (result.code === "not_found") callLost();
       return;
     }
     sentMessageIds.push(result.value.messageId);
@@ -558,6 +592,33 @@ export function createVoiceCallController(
     return wasHead;
   };
 
+  /** Answers `bot_status` or `latest_reply` from a just-fetched snapshot. */
+  const answerStatusQuestion = async (call: LiveToolCall, name: string): Promise<void> => {
+    try {
+      await options.refreshBotStatus?.();
+    } catch {
+      // The last known answer is the answer; the voice is never left hanging.
+    }
+    if (ended) return;
+    const status = safeStatus();
+    if (name === "latest_reply") {
+      answerTool(call.id, call.name, { reply: status.latestReply ?? "" }, "INTERRUPT");
+      return;
+    }
+    answerTool(
+      call.id,
+      call.name,
+      {
+        // The app's own word when the source has one ("Working"), so the voice
+        // repeats what the chat really says.
+        state: status.label ?? status.state,
+        step: status.step,
+        elapsedSeconds: status.elapsedMs === null ? null : Math.round(status.elapsedMs / 1_000),
+      },
+      "INTERRUPT",
+    );
+  };
+
   const onToolCall = (call: LiveToolCall) => {
     lastSpeechAtMs = now();
     switch (call.name) {
@@ -621,23 +682,13 @@ export function createVoiceCallController(
         return;
       }
       case "bot_status": {
-        const status = safeStatus();
-        answerTool(
-          call.id,
-          call.name,
-          {
-            // The app's own word when the source has one ("Working"), so the
-            // voice repeats what the chat really says.
-            state: status.label ?? status.state,
-            step: status.step,
-            elapsedSeconds: status.elapsedMs === null ? null : Math.round(status.elapsedMs / 1_000),
-          },
-          "INTERRUPT",
-        );
+        // The voice asked, so the server is asked now: the snapshot is not
+        // polled while nothing is waiting on the bot.
+        void answerStatusQuestion(call, "bot_status");
         return;
       }
       case "latest_reply": {
-        answerTool(call.id, call.name, { reply: safeStatus().latestReply ?? "" }, "INTERRUPT");
+        void answerStatusQuestion(call, "latest_reply");
         return;
       }
       case "end_call": {
@@ -974,6 +1025,12 @@ export function createVoiceCallController(
     },
     snapshot,
     end,
+    callLost,
+    get watchBot() {
+      // A message is held, or one has posted and its reply is still owed: the
+      // only times the server's snapshot is worth polling.
+      return sendQueue.length > 0 || openReply !== null;
+    },
     retryFinish: () => {
       if (pendingFinish === null || finishInFlight) return;
       clearFinishTimer();
