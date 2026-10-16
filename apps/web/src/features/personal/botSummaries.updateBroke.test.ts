@@ -106,3 +106,31 @@ describe("Update broke", () => {
     );
   });
 });
+
+describe("Waiting for a usage limit is not Update broke", () => {
+  const waiting = {
+    ...claude("2.1.264", "2.1.264"),
+    smokeCheck: {
+      status: "waiting_for_limit",
+      version: "2.1.264",
+      checkedAt: "2026-09-15T09:30:00.000Z",
+      message: "claude-opus-5: You've hit your limit",
+      retryAt: "2026-09-15T12:00:00.000Z",
+    },
+  } as unknown as ServerProvider;
+
+  it("leaves the bot's status and the chat header alone", () => {
+    expect(statusFor(shell(), waiting)).toEqual({ label: "Ready", tone: "normal" });
+    expect(statusFor(shell({ session: { status: "running" } }), waiting).label).not.toContain(
+      "broke",
+    );
+    const summary = buildBotSummaries({
+      bots: [nova],
+      links: [link],
+      shells: [shell()],
+      providers: [waiting],
+    })[0]!;
+    expect(summary.provider.broken).toBe(false);
+    expect(conversationHeaderStatus("idle", "Idle", summary.provider)).toBe("Idle");
+  });
+});

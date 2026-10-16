@@ -137,6 +137,65 @@ describe("providerUpdateRow", () => {
   });
 });
 
+describe("a usage limit is not a broken update", () => {
+  const waiting = {
+    status: "waiting_for_limit",
+    version: "2.1.264",
+    checkedAt: "2026-10-16T07:10:00.000Z",
+    message: "gpt-6-astra: ERROR: You've hit your usage limit.",
+    retryAt: "2026-10-16T11:47:00.000Z",
+  } as const;
+  // 12:47 London time (BST), later the same day.
+  const NOW = new Date("2026-10-16T08:52:00.000Z");
+
+  it("says the test waits and when it retries, never Update broke", () => {
+    const row = providerUpdateRow(
+      claude({ version: "2.1.264", smokeCheck: waiting }),
+      "Codex",
+      NOW,
+    );
+    expect(row.status).toEqual({
+      text: "Update test waits for the usage limit (retries 12:47)",
+      tone: "normal",
+    });
+    expect(row.detail).toBeNull();
+    expect(row.canCheck).toBe(true);
+    expect(row.busy).toBe(false);
+    expect(JSON.stringify(row)).not.toContain("Update broke");
+  });
+
+  it("adds the weekday when the retry is not today, and copes with no time", () => {
+    const tomorrow = providerUpdateRow(
+      claude({
+        version: "2.1.264",
+        smokeCheck: { ...waiting, retryAt: "2026-10-17T07:30:00.000Z" },
+      }),
+      "Codex",
+      NOW,
+    );
+    expect(tomorrow.status?.text).toBe("Update test waits for the usage limit (retries Sat 08:30)");
+    const { retryAt: _retryAt, ...unknown } = waiting;
+    const noTime = providerUpdateRow(
+      claude({ version: "2.1.264", smokeCheck: unknown }),
+      "Codex",
+      NOW,
+    );
+    expect(noTime.status).toEqual({
+      text: "Update test waits for the usage limit",
+      tone: "normal",
+    });
+  });
+
+  it("ignores a wait recorded for a version that is no longer installed", () => {
+    const row = providerUpdateRow(
+      claude({ version: "2.1.265", smokeCheck: waiting }),
+      "Codex",
+      NOW,
+    );
+    expect(row.status).toBeNull();
+  });
+});
+
 describe("withPendingAction", () => {
   it("answers a tap at once, before the snapshot catches up", () => {
     // Check again refreshes the provider first (seconds) before the server

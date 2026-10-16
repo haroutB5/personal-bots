@@ -11,8 +11,17 @@
  * - Runs one isolated test message per new installed version per provider
  *   (`ProviderInstance.smokeTest`), persists the verdict, projects it onto the
  *   provider snapshot (`ServerProvider.smokeCheck`) and sends one push when it
- *   fails. A later pass clears it. Never retried automatically; "Check again"
- *   (`recheck`) re-runs it on request.
+ *   fails. A later pass clears it. A failure is not retried automatically;
+ *   "Check again" (`recheck`) re-runs it on request.
+ * - Except a usage limit: when no model passed and every failure was a usage
+ *   limit or an empty balance (`smokeLimit.ts`), the update is not blamed. The
+ *   verdict is `waiting_for_limit` with a `retryAt` (the error's "try again at"
+ *   time, else the provider's usage reset, else 30 minutes out), no push, and
+ *   the same single worker runs the test again a minute after it. `retryAt` is
+ *   persisted, so a restart re-arms the timer (or runs the test at once when the
+ *   time has passed); a retry that meets the limit again waits again with the
+ *   new time. A stored "failed" verdict whose message is a usage limit (written
+ *   before this existed) reads back as waiting.
  *
  * @module personal/providerUpdates/PersonalProviderUpdates
  */
@@ -29,11 +38,14 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -50,6 +62,13 @@ import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
+import {
+  isUsageLimitFailure,
+  smokeLimitDueAtMs,
+  smokeLimitResetMs,
+  smokeLimitRetryAtMs,
+  type SmokeLimitFailure,
+} from "./smokeLimit.ts";
 
 /** Catches restarts the turn-end event raced (the projection lags the provider). */
 const RESTART_SWEEP_INTERVAL = Duration.seconds(30);
@@ -58,9 +77,11 @@ const MESSAGE_MAX_LENGTH = 500;
 const PersistedSmokeCheck = Schema.Struct({
   version: Schema.String,
   // "baseline": the version seen the first time; nobody updated to it, so it is not tested.
-  status: Schema.Literals(["baseline", "passed", "failed"]),
+  status: Schema.Literals(["baseline", "passed", "failed", "waiting_for_limit"]),
   checkedAt: Schema.NullOr(Schema.String),
   message: Schema.NullOr(Schema.String),
+  // Only on waiting_for_limit: when the limit is expected to be over.
+  retryAt: Schema.optional(Schema.String),
 });
 export type PersistedSmokeCheck = typeof PersistedSmokeCheck.Type;
 const decodePersisted = Schema.decodeUnknownEffect(Schema.fromJsonString(PersistedSmokeCheck));
@@ -196,6 +217,9 @@ const projectionOf = (persisted: PersistedSmokeCheck): ServerProviderSmokeCheck 
         version: persisted.version,
         checkedAt: persisted.checkedAt,
         message: persisted.message,
+        ...(persisted.status === "waiting_for_limit" && persisted.retryAt !== undefined
+          ? { retryAt: persisted.retryAt }
+          : {}),
       };
 
 const sameProjection = (
@@ -208,7 +232,8 @@ const sameProjection = (
       current.status === wanted.status &&
       current.version === wanted.version &&
       current.checkedAt === wanted.checkedAt &&
-      current.message === wanted.message;
+      current.message === wanted.message &&
+      current.retryAt === wanted.retryAt;
 
 const failureDetail = (cause: Cause.Cause<{ readonly detail: string }>): string => {
   const failure = Cause.squash(cause);
@@ -233,6 +258,13 @@ export const makeWith = (
     // In memory on purpose: provider sessions do not survive a server restart.
     const sessionVersions = new Map<ThreadId, SessionVersion>();
     const checking = new Set<ProviderInstanceId>();
+    // One retry timer per provider waiting on a usage limit. In memory on
+    // purpose: the persisted `retryAt` re-arms it after a server restart.
+    const retryTimers = new Map<
+      ProviderInstanceId,
+      { readonly dueAtMs: number; readonly fiber: Fiber.Fiber<void> }
+    >();
+    const scope = yield* Effect.scope;
     const restartLock = yield* Semaphore.make(1);
 
     const logFailure =
@@ -347,7 +379,7 @@ export const makeWith = (
         // Stops at the first model that answers: one working model proves the
         // provider survived the update. Every model is tried only when things
         // are already failing, which is when the extra turns are worth it.
-        let lastFailure: { readonly model: string; readonly detail: string } | null = null;
+        const failures: Array<SmokeLimitFailure> = [];
         let passed = false;
         for (const model of request.models) {
           const outcome = yield* Effect.exit(request.test(model));
@@ -355,26 +387,62 @@ export const makeWith = (
             passed = true;
             break;
           }
-          lastFailure = { model, detail: failureDetail(outcome.cause) };
+          failures.push({ model, detail: failureDetail(outcome.cause) });
         }
-        const checkedAt = DateTime.formatIso(yield* DateTime.now);
+        const lastFailure = failures.at(-1) ?? null;
+        const nowMs = yield* Clock.currentTimeMillis;
+        const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
+        // Named, because "it failed" alone sends someone hunting an outage when
+        // one bot simply points at a model that is gone.
+        const message =
+          lastFailure === null
+            ? "No model could be tested."
+            : `${lastFailure.model}: ${lastFailure.detail}`;
+        // Out of usage is not a broken update: wait for the reset instead.
+        const limited =
+          !passed &&
+          failures.length > 0 &&
+          failures.every((failure) => isUsageLimitFailure(failure.detail));
+        const retryAtMs = limited
+          ? smokeLimitRetryAtMs(
+              smokeLimitResetMs({
+                instanceId,
+                provider,
+                failures,
+                nowMs,
+                failedAtMs: nowMs,
+                allowPast: false,
+              }),
+              nowMs,
+            )
+          : null;
         const next: PersistedSmokeCheck = passed
           ? { version, status: "passed", checkedAt, message: null }
-          : {
-              version,
-              status: "failed",
-              checkedAt,
-              // Named, because "it failed" alone sends someone hunting an
-              // outage when one bot simply points at a model that is gone.
-              message:
-                lastFailure === null
-                  ? "No model could be tested."
-                  : `${lastFailure.model}: ${lastFailure.detail}`,
-            };
+          : retryAtMs !== null
+            ? {
+                version,
+                status: "waiting_for_limit",
+                checkedAt,
+                message,
+                retryAt: DateTime.formatIso(DateTime.makeUnsafe(retryAtMs)),
+              }
+            : { version, status: "failed", checkedAt, message };
+        yield* cancelRetry(instanceId);
         yield* writePersisted(instanceId, next);
         yield* deps.setSmokeCheck(instanceId, projectionOf(next));
         if (next.status === "passed") {
           yield* Effect.logInfo("personal provider test message passed", { instanceId, version });
+          return;
+        }
+        if (retryAtMs !== null) {
+          // No alert and no "broke": the test runs again after the reset.
+          yield* Effect.logInfo("personal provider test message waits for the usage limit", {
+            instanceId,
+            version,
+            retryAt: next.retryAt,
+            message: next.message,
+          });
+          yield* armRetry(instanceId, smokeLimitDueAtMs(retryAtMs), nowMs);
           return;
         }
         yield* Effect.logWarning("personal provider test message failed", {
@@ -399,21 +467,108 @@ export const makeWith = (
     // One check at a time, across providers: each spawns a CLI and a model turn.
     const worker = yield* makeDrainableWorker(runCheck);
 
+    const cancelRetry = (instanceId: ProviderInstanceId) =>
+      Effect.gen(function* () {
+        const existing = retryTimers.get(instanceId);
+        if (existing === undefined) return;
+        retryTimers.delete(instanceId);
+        yield* Fiber.interrupt(existing.fiber);
+      });
+
+    /** Looks at one provider again, as if its snapshot had just changed. */
+    const reconsider = (instanceId: ProviderInstanceId) =>
+      Effect.gen(function* () {
+        const provider = (yield* deps.getProviders).find(
+          (candidate) => candidate.instanceId === instanceId,
+        );
+        if (provider === undefined) return;
+        yield* considerSmoke(provider, yield* deps.listBots, false);
+      });
+
+    /** Runs the test again at `dueAtMs`; a timer for the same time is left alone. */
+    const armRetry = (instanceId: ProviderInstanceId, dueAtMs: number, nowMs: number) =>
+      Effect.gen(function* () {
+        if (retryTimers.get(instanceId)?.dueAtMs === dueAtMs) return;
+        yield* cancelRetry(instanceId);
+        // The fiber waits for the registration below, so a delay of zero cannot
+        // fire (and delete its entry) before the entry exists.
+        const armed = yield* Deferred.make<void>();
+        const fiber = yield* Deferred.await(armed).pipe(
+          Effect.andThen(Effect.sleep(Duration.millis(Math.max(0, dueAtMs - nowMs)))),
+          Effect.andThen(Effect.sync(() => void retryTimers.delete(instanceId))),
+          Effect.andThen(reconsider(instanceId)),
+          Effect.catchCause(
+            logFailure("personal provider usage-limit retry failed", { instanceId }),
+          ),
+          Effect.forkIn(scope),
+        );
+        retryTimers.set(instanceId, { dueAtMs, fiber });
+        yield* Deferred.succeed(armed, undefined);
+      });
+
+    /**
+     * The stored verdict, with a "failed" one whose message is a usage limit read
+     * as waiting (it was written before waiting existed; Harout's "Update broke
+     * Codex" with "try again at Oct 16th, 2026 12:47 AM" was one). The change is
+     * saved, so the retry time stays put instead of moving on every read.
+     */
+    const readVerdict = (provider: ServerProvider, nowMs: number) =>
+      Effect.gen(function* () {
+        const stored = yield* readPersisted(provider.instanceId);
+        if (
+          stored === null ||
+          stored.status !== "failed" ||
+          stored.message === null ||
+          !isUsageLimitFailure(stored.message)
+        ) {
+          return stored;
+        }
+        const separator = stored.message.indexOf(": ");
+        const checkedMs = stored.checkedAt === null ? Number.NaN : Date.parse(stored.checkedAt);
+        const resetMs = smokeLimitResetMs({
+          instanceId: provider.instanceId,
+          provider,
+          failures: [
+            {
+              model: separator > 0 ? stored.message.slice(0, separator) : "",
+              detail: stored.message,
+            },
+          ],
+          nowMs,
+          failedAtMs: Number.isFinite(checkedMs) ? checkedMs : nowMs,
+          allowPast: true,
+        });
+        const converted: PersistedSmokeCheck = {
+          ...stored,
+          status: "waiting_for_limit",
+          retryAt: DateTime.formatIso(DateTime.makeUnsafe(smokeLimitRetryAtMs(resetMs, nowMs))),
+        };
+        yield* writePersisted(provider.instanceId, converted);
+        yield* Effect.logInfo("personal provider test message failure was a usage limit", {
+          instanceId: provider.instanceId,
+          version: converted.version,
+          retryAt: converted.retryAt,
+        });
+        return converted;
+      });
+
     const considerSmoke = (
       provider: ServerProvider,
       bots: ReadonlyArray<PersonalBot>,
       force: boolean,
-    ) =>
+    ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const instanceId = provider.instanceId;
         if (checking.has(instanceId)) return;
         const version = provider.version;
         if (version === null || !provider.installed || !provider.enabled) {
           // Nothing testable; a verdict about another version must not linger.
+          yield* cancelRetry(instanceId);
           if (provider.smokeCheck !== undefined) yield* deps.setSmokeCheck(instanceId, null);
           return;
         }
-        const persisted = yield* readPersisted(instanceId);
+        const nowMs = yield* Clock.currentTimeMillis;
+        const persisted = yield* readVerdict(provider, nowMs);
         if (!force) {
           if (persisted === null) {
             yield* writePersisted(instanceId, {
@@ -429,7 +584,15 @@ export const makeWith = (
             if (!sameProjection(provider.smokeCheck, wanted)) {
               yield* deps.setSmokeCheck(instanceId, wanted);
             }
-            return;
+            if (persisted.status !== "waiting_for_limit") return;
+            // Waiting for a usage limit: the test runs once its time has come,
+            // here or from the timer armed for it.
+            const retryMs = Date.parse(persisted.retryAt ?? "");
+            const dueAtMs = Number.isFinite(retryMs) ? smokeLimitDueAtMs(retryMs) : nowMs;
+            if (dueAtMs > nowMs) {
+              yield* armRetry(instanceId, dueAtMs, nowMs);
+              return;
+            }
           }
           // Signed out is not a broken update; the check runs once the account is back.
           if (provider.auth.status === "unauthenticated") return;

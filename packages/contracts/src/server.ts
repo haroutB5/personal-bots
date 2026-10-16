@@ -206,19 +206,29 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
-export const ServerProviderSmokeCheckStatus = Schema.Literals(["checking", "passed", "failed"]);
+export const ServerProviderSmokeCheckStatus = Schema.Literals([
+  "checking",
+  "passed",
+  "failed",
+  // No model passed and every failure was a usage limit or an empty balance:
+  // the update is not blamed, and the test runs again after `retryAt`.
+  "waiting_for_limit",
+]);
 export type ServerProviderSmokeCheckStatus = typeof ServerProviderSmokeCheckStatus.Type;
 
 /**
  * Outcome of the one-message test turn the server runs after a provider's
  * installed version changes (personal bots). `version` is the version that was
  * tested; a result for an older version says nothing about the current one.
+ * `retryAt` rides on `waiting_for_limit`: when the limit is expected to be over
+ * (the test runs about a minute later).
  */
 export const ServerProviderSmokeCheck = Schema.Struct({
   status: ServerProviderSmokeCheckStatus,
   version: TrimmedNonEmptyString,
   checkedAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(TrimmedNonEmptyString),
+  retryAt: Schema.optional(IsoDateTime),
 });
 export type ServerProviderSmokeCheck = typeof ServerProviderSmokeCheck.Type;
 

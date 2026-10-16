@@ -11,6 +11,7 @@ import {
 } from "~/components/ProviderUpdateLaunchNotification.logic";
 
 import { resolveBotProvider } from "./botSummaries";
+import { formatRetryTime } from "./conversationModel";
 
 export interface ProviderUpdateRow {
   readonly instanceId: ProviderInstanceId;
@@ -42,6 +43,7 @@ export interface ProviderUpdateRow {
 export function buildProviderUpdateRows(
   providers: ReadonlyArray<ServerProvider>,
   bots: ReadonlyArray<PersonalBot>,
+  now: Date = new Date(),
 ): ReadonlyArray<ProviderUpdateRow> {
   const rows: Array<ProviderUpdateRow> = [];
   const seen = new Set<string>();
@@ -64,14 +66,14 @@ export function buildProviderUpdateRows(
             busy: false,
             canCheck: false,
           }
-        : providerUpdateRow(snapshot, label),
+        : providerUpdateRow(snapshot, label, now),
     );
   }
   for (const snapshot of providers) {
     if (seen.has(snapshot.instanceId)) continue;
     seen.add(snapshot.instanceId);
     rows.push(
-      providerUpdateRow(snapshot, resolveBotProvider(snapshot.instanceId, providers).label),
+      providerUpdateRow(snapshot, resolveBotProvider(snapshot.instanceId, providers).label, now),
     );
   }
   return rows;
@@ -102,7 +104,19 @@ export function withPendingAction(
   };
 }
 
-export function providerUpdateRow(snapshot: ServerProvider, label: string): ProviderUpdateRow {
+/** "Update test waits for the usage limit (retries 12:47)"; no time when the server has none. */
+function waitingForLimitText(retryAt: string | undefined, now: Date): string {
+  const at = retryAt === undefined ? Number.NaN : Date.parse(retryAt);
+  return Number.isFinite(at)
+    ? `Update test waits for the usage limit (retries ${formatRetryTime(new Date(at), now)})`
+    : "Update test waits for the usage limit";
+}
+
+export function providerUpdateRow(
+  snapshot: ServerProvider,
+  label: string,
+  now: Date = new Date(),
+): ProviderUpdateRow {
   const update = snapshot.updateState;
   const advisory = snapshot.versionAdvisory;
   // A verdict about another version says nothing about the installed one.
@@ -121,6 +135,9 @@ export function providerUpdateRow(snapshot: ServerProvider, label: string): Prov
     status = { text: "Waiting for another update to finish", tone: "normal" };
   } else if (smoke?.status === "checking") {
     status = { text: `Testing ${smoke.version} with one message…`, tone: "normal" };
+  } else if (smoke?.status === "waiting_for_limit") {
+    // Out of usage, not a broken update: the server tests again after the reset.
+    status = { text: waitingForLimitText(smoke.retryAt, now), tone: "normal" };
   } else if (smoke?.status === "failed") {
     status = { text: `Update broke ${label}`, tone: "review" };
     detail = smoke.message;

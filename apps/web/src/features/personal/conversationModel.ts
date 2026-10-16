@@ -207,7 +207,12 @@ export function conversationStateLabel(
     : "Retrying";
 }
 
-function formatRetryTime(at: Date, now: Date, timeZone: string): string {
+/** "10:47", or "Fri 10:47" when the time is not today (London by default). */
+export function formatRetryTime(
+  at: Date,
+  now: Date,
+  timeZone: string = PERSONAL_TIME_ZONE,
+): string {
   const time = formatter(timeZone, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
     at,
   );

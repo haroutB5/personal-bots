@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off globalDateInEffect:off preferSchemaOverJson:off - local-time dates as Codex prints them; stored verdicts are asserted on verbatim.
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -11,8 +12,11 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   makeWith,
@@ -350,5 +354,410 @@ it.effect("tries each distinct model once, however many bots share it", () =>
     yield* service.drainChecks;
 
     assert.deepEqual(state.smokeModels, ["dead-model", "claude-opus-5"]);
+  }),
+);
+
+// --- Usage limits: out of tokens is not a broken update --------------------
+
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+const ordinal = (day: number) => {
+  if (day % 100 >= 11 && day % 100 <= 13) return "th";
+  return day % 10 === 1 ? "st" : day % 10 === 2 ? "nd" : day % 10 === 3 ? "rd" : "th";
+};
+/** Codex's "try again at" stamp, in the machine's local time: "Oct 16th, 2026 12:47 AM". */
+const codexStamp = (ms: number) => {
+  const at = new Date(ms);
+  const hour = at.getHours() % 12 === 0 ? 12 : at.getHours() % 12;
+  const minute = String(at.getMinutes()).padStart(2, "0");
+  const meridiem = at.getHours() < 12 ? "AM" : "PM";
+  return `${MONTH_NAMES[at.getMonth()]} ${at.getDate()}${ordinal(at.getDate())}, ${at.getFullYear()} ${hour}:${minute} ${meridiem}`;
+};
+const limitText = (resetMs: number) =>
+  `ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at ${codexStamp(resetMs)}.`;
+const localMs = (...parts: [number, number, number, number, number]) =>
+  new Date(...parts).getTime();
+const MINUTE = 60_000;
+
+/** Lets the retry timer's fiber and the worker run after the test clock moved. */
+const settle = (service: { readonly drainChecks: Effect.Effect<void> }) =>
+  Effect.gen(function* () {
+    for (let round = 0; round < 3; round += 1) {
+      yield* Effect.yieldNow;
+      yield* service.drainChecks;
+    }
+  });
+
+/** The harness with a version change behind it, so the next provider snapshot runs the test. */
+const updatedHarness = (meta = new Map<string, string>()) => {
+  const harness = makeHarness(meta);
+  harness.setVersion("2.1.264");
+  return harness;
+};
+
+it.effect("every model out of usage waits for the reset: no Update broke, no push", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    yield* TestClock.setTime(localMs(2026, 9, 16, 8, 52));
+    const service = yield* makeWith(deps);
+    state.bots = [
+      { modelSelection: { instanceId: CLAUDE, model: "gpt-6-astra" }, sortOrder: 0 },
+      { modelSelection: { instanceId: CLAUDE, model: "gpt-6-luna" }, sortOrder: 1 },
+    ];
+    yield* service.handleProviders(state.providers);
+
+    const resetAt = localMs(2026, 9, 16, 23, 47);
+    state.smokeFailure = limitText(resetAt);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+
+    assert.deepEqual(state.smokeModels, ["gpt-6-astra", "gpt-6-luna"]);
+    const check = state.providers[0]?.smokeCheck;
+    assert.equal(check?.status, "waiting_for_limit");
+    assert.equal(check?.version, "2.1.264");
+    assert.equal(check?.retryAt, new Date(resetAt).toISOString());
+    assert.include(check?.message ?? "", "gpt-6-luna: ");
+    assert.deepEqual(state.pushes, []);
+    assert.include(state.meta.get(smokeCheckMetaKey(CLAUDE)) ?? "", '"status":"waiting_for_limit"');
+    assert.notInclude(JSON.stringify(state.projections), '"failed"');
+  }),
+);
+
+it.effect("a limit on one model and a real error on another is still a failed update", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    yield* TestClock.setTime(localMs(2026, 9, 16, 8, 52));
+    const service = yield* makeWith(deps);
+    state.bots = [
+      { modelSelection: { instanceId: CLAUDE, model: "limited" }, sortOrder: 0 },
+      { modelSelection: { instanceId: CLAUDE, model: "broken" }, sortOrder: 1 },
+    ];
+    state.smokeFailureByModel.set("limited", limitText(localMs(2026, 9, 16, 23, 47)));
+    state.smokeFailureByModel.set("broken", "API Error: 500");
+    yield* service.handleProviders(state.providers);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+
+    assert.equal(state.providers[0]?.smokeCheck?.status, "failed");
+    assert.deepEqual(state.pushes, [
+      { instanceId: CLAUDE, label: "Claude Code", version: "2.1.264" },
+    ]);
+    // A failure is not retried by the clock.
+    const tried = state.smokeModels.length;
+    yield* TestClock.adjust("2 days");
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, tried);
+  }),
+);
+
+it.effect("one model that answers passes the update even when another is out of usage", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    yield* TestClock.setTime(localMs(2026, 9, 16, 8, 52));
+    const service = yield* makeWith(deps);
+    state.bots = [
+      { modelSelection: { instanceId: CLAUDE, model: "limited" }, sortOrder: 0 },
+      { modelSelection: { instanceId: CLAUDE, model: "works" }, sortOrder: 1 },
+    ];
+    state.smokeFailureByModel.set("limited", limitText(localMs(2026, 9, 16, 23, 47)));
+    yield* service.handleProviders(state.providers);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
+    assert.deepEqual(state.pushes, []);
+  }),
+);
+
+it.effect("the retry runs a minute after the reset on the clock, and can pass", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    const start = localMs(2026, 9, 16, 8, 52);
+    yield* TestClock.setTime(start);
+    const service = yield* makeWith(deps);
+    yield* service.handleProviders(state.providers);
+    const resetAt = localMs(2026, 9, 16, 23, 47);
+    state.smokeFailure = limitText(resetAt);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+    assert.equal(state.providers[0]?.smokeCheck?.status, "waiting_for_limit");
+    assert.equal(state.smokeModels.length, 1);
+
+    // The limit clears, but the clock has not reached reset + 1 minute yet.
+    state.smokeFailure = null;
+    yield* TestClock.adjust(resetAt + 59_000 - start);
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, 1);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "waiting_for_limit");
+
+    yield* TestClock.adjust("2 seconds");
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, 2);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
+    assert.equal(state.providers[0]?.smokeCheck?.retryAt, undefined);
+    assert.deepEqual(state.pushes, []);
+
+    // Nothing is left on the clock.
+    yield* TestClock.adjust("3 days");
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, 2);
+  }),
+);
+
+it.effect("a retry that meets the limit again keeps waiting with the new reset time", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    const start = localMs(2026, 9, 16, 8, 52);
+    yield* TestClock.setTime(start);
+    const service = yield* makeWith(deps);
+    yield* service.handleProviders(state.providers);
+    const firstReset = localMs(2026, 9, 16, 12, 47);
+    state.smokeFailure = limitText(firstReset);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+
+    // The weekly window turns out to be spent too: the provider names a later time.
+    const secondReset = localMs(2026, 9, 18, 3, 15);
+    state.smokeFailure = limitText(secondReset);
+    yield* TestClock.adjust(firstReset + 61_000 - start);
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, 2);
+    const waiting = state.providers[0]?.smokeCheck;
+    assert.equal(waiting?.status, "waiting_for_limit");
+    assert.equal(waiting?.retryAt, new Date(secondReset).toISOString());
+    assert.deepEqual(state.pushes, []);
+
+    state.smokeFailure = null;
+    yield* TestClock.adjust(secondReset - firstReset);
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, 3);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
+    assert.deepEqual(state.pushes, []);
+  }),
+);
+
+it.effect("with no reset time anywhere the test runs again 30 minutes later", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    yield* TestClock.setTime(localMs(2026, 9, 16, 8, 52));
+    const service = yield* makeWith(deps);
+    yield* service.handleProviders(state.providers);
+    state.smokeFailure = "You've hit your usage limit.";
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+    assert.equal(state.providers[0]?.smokeCheck?.status, "waiting_for_limit");
+
+    yield* TestClock.adjust(30 * MINUTE - 1000);
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, 1);
+    state.smokeFailure = null;
+    yield* TestClock.adjust("2 seconds");
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, 2);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
+  }),
+);
+
+const HAROUT_MESSAGE =
+  "gpt-6-astra: …ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Oct 16th, 2026 12:47 AM.";
+const legacyFailed = JSON.stringify({
+  version: "2.1.264",
+  status: "failed",
+  checkedAt: "2026-10-15T23:50:00.000Z",
+  message: HAROUT_MESSAGE,
+});
+
+it.effect("Harout's stored 'Update broke' record reads as waiting and is retried at once", () =>
+  Effect.gen(function* () {
+    const meta = new Map([[smokeCheckMetaKey(CLAUDE), legacyFailed]]);
+    const { state, deps } = updatedHarness(meta);
+    // The morning he saw it still on screen, long after the reset.
+    yield* TestClock.setTime(localMs(2026, 9, 16, 8, 52));
+    const service = yield* makeWith(deps);
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+
+    // First it reads back as waiting (not failed), with the message's own time...
+    assert.equal(state.projections[0]?.status, "waiting_for_limit");
+    assert.equal(
+      state.projections[0]?.retryAt,
+      new Date(localMs(2026, 9, 16, 0, 47)).toISOString(),
+    );
+    // ...and as that time has passed, the test ran and Codex answered.
+    assert.deepEqual(state.smokeModels, ["claude-opus-5"]);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
+    assert.deepEqual(state.pushes, []);
+    assert.notInclude(JSON.stringify(state.projections), '"failed"');
+  }),
+);
+
+it.effect("a stored limit failure whose reset is still ahead waits and then retries", () =>
+  Effect.gen(function* () {
+    const meta = new Map([[smokeCheckMetaKey(CLAUDE), legacyFailed]]);
+    const { state, deps } = updatedHarness(meta);
+    const start = localMs(2026, 9, 15, 23, 0);
+    yield* TestClock.setTime(start);
+    const service = yield* makeWith(deps);
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+    assert.equal(state.providers[0]?.smokeCheck?.status, "waiting_for_limit");
+    assert.deepEqual(state.smokeModels, []);
+    // Saved as waiting, so the time does not move on the next read.
+    assert.include(state.meta.get(smokeCheckMetaKey(CLAUDE)) ?? "", '"status":"waiting_for_limit"');
+    yield* service.handleProviders(state.providers);
+    assert.equal(
+      state.providers[0]?.smokeCheck?.retryAt,
+      new Date(localMs(2026, 9, 16, 0, 47)).toISOString(),
+    );
+
+    yield* TestClock.adjust(localMs(2026, 9, 16, 0, 47) + 59_000 - start);
+    yield* settle(service);
+    assert.deepEqual(state.smokeModels, []);
+    yield* TestClock.adjust("2 seconds");
+    yield* settle(service);
+    assert.deepEqual(state.smokeModels, ["claude-opus-5"]);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
+  }),
+);
+
+it.effect("a restart re-arms a waiting record, and runs it at once when its time has passed", () =>
+  Effect.gen(function* () {
+    const start = localMs(2026, 9, 16, 8, 52);
+    yield* TestClock.setTime(start);
+    const resetAt = localMs(2026, 9, 16, 23, 47);
+    const first = makeHarness();
+    first.state.smokeFailure = limitText(resetAt);
+    const scope = yield* Scope.make();
+    const service = yield* makeWith(first.deps).pipe(Effect.provideService(Scope.Scope, scope));
+    yield* service.handleProviders(first.state.providers);
+    first.setVersion("2.1.264");
+    yield* service.handleProviders(first.state.providers);
+    yield* service.drainChecks;
+    assert.equal(first.state.providers[0]?.smokeCheck?.status, "waiting_for_limit");
+    // The server stops: the timer goes with it, the stored retry time stays.
+    yield* Scope.close(scope, Exit.void);
+
+    const second = updatedHarness(first.state.meta);
+    const restarted = yield* makeWith(second.deps);
+    yield* restarted.handleProviders(second.state.providers);
+    yield* restarted.drainChecks;
+    assert.equal(second.state.providers[0]?.smokeCheck?.status, "waiting_for_limit");
+    assert.deepEqual(second.state.smokeModels, []);
+
+    yield* TestClock.adjust(resetAt + 61_000 - start);
+    yield* settle(restarted);
+    assert.deepEqual(second.state.smokeModels, ["claude-opus-5"]);
+    assert.equal(second.state.providers[0]?.smokeCheck?.status, "passed");
+    assert.deepEqual(first.state.smokeModels, ["claude-opus-5"]);
+
+    // Once more, restarted after the time has passed: it runs straight away.
+    const late = updatedHarness(
+      new Map([
+        [
+          smokeCheckMetaKey(CLAUDE),
+          JSON.stringify({
+            version: "2.1.264",
+            status: "waiting_for_limit",
+            checkedAt: "2026-10-16T08:00:00.000Z",
+            message: "claude-opus-5: limit",
+            retryAt: new Date(resetAt).toISOString(),
+          }),
+        ],
+      ]),
+    );
+    const lateService = yield* makeWith(late.deps);
+    yield* lateService.handleProviders(late.state.providers);
+    yield* lateService.drainChecks;
+    assert.deepEqual(late.state.smokeModels, ["claude-opus-5"]);
+    assert.equal(late.state.providers[0]?.smokeCheck?.status, "passed");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("'Check again' runs the test at once and cancels the wait", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    const start = localMs(2026, 9, 16, 8, 52);
+    yield* TestClock.setTime(start);
+    const service = yield* makeWith(deps);
+    yield* service.handleProviders(state.providers);
+    const resetAt = localMs(2026, 9, 16, 23, 47);
+    state.smokeFailure = limitText(resetAt);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+    assert.equal(state.smokeModels.length, 1);
+
+    state.smokeFailure = null;
+    yield* service.recheck({ instanceId: CLAUDE });
+    yield* service.drainChecks;
+    assert.equal(state.smokeModels.length, 2);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
+
+    yield* TestClock.adjust(resetAt + 2 * MINUTE - start);
+    yield* settle(service);
+    assert.equal(state.smokeModels.length, 2);
+    assert.deepEqual(state.pushes, []);
+
+    // Checking again into a real failure is a real failure, with its one push.
+    state.smokeFailure = "API Error: 500";
+    yield* service.recheck({ instanceId: CLAUDE });
+    yield* service.drainChecks;
+    assert.equal(state.providers[0]?.smokeCheck?.status, "failed");
+    assert.equal(state.pushes.length, 1);
+  }),
+);
+
+it.effect("a waiting record does not run while the account is signed out", () =>
+  Effect.gen(function* () {
+    const meta = new Map([
+      [
+        smokeCheckMetaKey(CLAUDE),
+        JSON.stringify({
+          version: "2.1.264",
+          status: "waiting_for_limit",
+          checkedAt: "2026-10-16T08:00:00.000Z",
+          message: "claude-opus-5: limit",
+          retryAt: "2026-10-16T09:00:00.000Z",
+        }),
+      ],
+    ]);
+    const { state, deps } = updatedHarness(meta);
+    yield* TestClock.setTime(Date.parse("2026-10-16T10:00:00.000Z"));
+    const service = yield* makeWith(deps);
+    state.providers = state.providers.map((provider) => ({
+      ...provider,
+      auth: { status: "unauthenticated" as const },
+    }));
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+    assert.deepEqual(state.smokeModels, []);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "waiting_for_limit");
+
+    state.providers = state.providers.map((provider) => ({
+      ...provider,
+      auth: { status: "authenticated" as const },
+    }));
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+    assert.deepEqual(state.smokeModels, ["claude-opus-5"]);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
   }),
 );
