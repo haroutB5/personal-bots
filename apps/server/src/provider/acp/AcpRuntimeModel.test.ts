@@ -258,6 +258,115 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
+  it("labels an MCP tool call in plain words from its model-facing name", () => {
+    // The DeepSeek Harness sends the MCP name as the ACP title (`dsh-mcp-client`
+    // builds `mcp__<server>__<rawName>`) and the arguments as `rawInput`.
+    const notification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-mcp-1",
+        title: "mcp__t3-code__preview_navigate",
+        kind: "other",
+        status: "in_progress",
+        rawInput: { url: "https://www.clubspark.uk/booking/42?token=abc123#top" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    const { events } = parseSessionUpdateEvent(notification);
+    const event = events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+
+    expect(event.toolCall.title).toBe("Opening clubspark.uk");
+    // Hostname only: the path, query and fragment never reach the step line
+    // (the tool call's own `data.rawInput` record keeps the arguments, as on
+    // every other provider, for the expanded step).
+    const shown = `${event.toolCall.title ?? ""}\n${event.toolCall.detail ?? ""}`;
+    expect(shown).not.toContain("abc123");
+    expect(shown).not.toContain("booking/42");
+  });
+
+  it("humanises an MCP name from a server with no hand-written line", () => {
+    const { events } = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-mcp-2",
+        title: "mcp__github__fetch_pr",
+        kind: "other",
+        status: "in_progress",
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    const event = events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+
+    expect(event.toolCall.title).toBe("Fetch PR");
+  });
+
+  it("keeps a provider's own plain title for its built-in tools", () => {
+    const { events } = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-builtin-1",
+        title: "Running start_subagent",
+        kind: "other",
+        status: "in_progress",
+        rawInput: {},
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    const event = events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+
+    expect(event.toolCall.title).toBe("Running start_subagent");
+  });
+
+  it("keeps the announced title when the result update names nothing", () => {
+    // dsh sends the MCP name on `tool_call` and a title-less `tool_call_update`
+    // on completion. The update's own derived fallback ("Tool") used to replace
+    // the real title on merge, so every finished step read "Tool".
+    const created = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-mcp-1",
+        title: "mcp__t3-code__preview_navigate",
+        kind: "other",
+        status: "in_progress",
+        rawInput: { url: "https://www.clubspark.uk/booking/42" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    const updated = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-mcp-1",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "Page opened" } }],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    const createdEvent = created.events[0];
+    const updatedEvent = updated.events[0];
+    if (createdEvent?._tag !== "ToolCallUpdated" || updatedEvent?._tag !== "ToolCallUpdated") {
+      throw new Error("expected two ToolCallUpdated events");
+    }
+
+    expect(updatedEvent.toolCall.title).toBeUndefined();
+    expect(mergeToolCallState(createdEvent.toolCall, updatedEvent.toolCall)).toMatchObject({
+      toolCallId: "tool-mcp-1",
+      status: "completed",
+      title: "Opening clubspark.uk",
+      detail: "Page opened",
+    });
+  });
+
   it("trims padded current mode updates before emitting a mode change", () => {
     const result = parseSessionUpdateEvent({
       sessionId: "session-1",

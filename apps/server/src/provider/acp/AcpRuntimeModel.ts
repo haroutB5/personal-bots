@@ -6,6 +6,7 @@ import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
 import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -472,6 +473,21 @@ export function canonicalItemTypeFromAcpToolKind(kind: string | undefined): Tool
   }
 }
 
+/**
+ * The plain step line for an MCP tool call, read from its model-facing name
+ * (`mcp__<server>__<tool>`, the name the harness's `mcp-client` gives every MCP
+ * tool). Undefined for anything else, so a provider's own title for its built-in
+ * tools stays as it is. Only a bare hostname is ever taken from the arguments
+ * (see `mcpToolStepLabel`); no path, query or value leaves them.
+ */
+function mcpStepLabelForAcpTitle(title: string | undefined, rawInput: unknown): string | undefined {
+  if (title === undefined || !title.toLowerCase().startsWith("mcp__")) return undefined;
+  return mcpToolStepLabel({
+    tool: title,
+    ...(isRecord(rawInput) ? { arguments: rawInput } : {}),
+  });
+}
+
 function makeToolCallState(
   input: {
     readonly toolCallId: string;
@@ -495,9 +511,17 @@ function makeToolCallState(
   const command = extractToolCallCommand(input.rawInput, title);
   const extractedContent = extractTextContentFromToolCallContent(input.content);
   const textContent = extractedContent.text;
+  // ACP agents title an MCP tool call with its model-facing name
+  // (`mcp__<server>__<tool>`, e.g. the DeepSeek Harness's `dsh-mcp-client`).
+  // Read it the same way the Claude and Codex adapters do, so the step says what
+  // the bot is doing instead of the raw name. A provider's own title for its
+  // built-in tools ("Running start_subagent", "Read file") is kept as it is.
+  const displayTitle = mcpStepLabelForAcpTitle(title, input.rawInput) ?? title;
   const normalizedTitle =
-    title && title.toLowerCase() !== "terminal" && title.toLowerCase() !== "tool call"
-      ? title
+    displayTitle &&
+    displayTitle.toLowerCase() !== "terminal" &&
+    displayTitle.toLowerCase() !== "tool call"
+      ? displayTitle
       : undefined;
   const data: Record<string, unknown> = { toolCallId };
   const kind = normalizeToolKind(input.kind);
@@ -529,17 +553,24 @@ function makeToolCallState(
   const presentation = hasPresentationSeed
     ? deriveToolActivityPresentation({
         itemType: canonicalItemTypeFromAcpToolKind(kind),
-        title,
+        title: displayTitle,
         detail: fallbackDetail,
         data,
-        fallbackSummary: title ?? "Tool",
+        fallbackSummary: displayTitle ?? "Tool",
       })
     : undefined;
+  // A `tool_call_update` that only carries result content names nothing (no
+  // title, no kind), so the presentation's generic fallback ("Tool") used to
+  // replace the title the call was announced with, and every ACP step that
+  // finished with output ended up reading "Tool". Only a call that names itself
+  // may set the title; `mergeToolCallState` then keeps the earlier one.
+  const presentationTitle =
+    title !== undefined || kind !== undefined ? presentation?.summary : undefined;
   const status = normalizeToolCallStatus(input.status, options?.fallbackStatus);
   return {
     toolCallId,
     ...(kind ? { kind } : {}),
-    ...(presentation?.summary ? { title: presentation.summary } : {}),
+    ...(presentationTitle ? { title: presentationTitle } : {}),
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(presentation?.detail ? { detail: presentation.detail } : {}),
