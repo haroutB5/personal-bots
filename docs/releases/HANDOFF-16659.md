@@ -11,9 +11,9 @@ Frontend's call summary ships in this same release and adds its own section belo
 3. **Task-chat auto-archive** (Backend, server) - a delegated-task chat that
    later had routine runs posted into it stayed protected from auto-archive.
 4. **dsh drain busy loop** (Backend, server; merged from
-   `fix/hbots-dsh-drain-spin` commit `6b67e5742e`) - a message held behind a
-   running dsh turn was retried about 7,000 times a second until the turn
-   ended, which held the live server at 112% of a core.
+   `fix/hbots-dsh-drain-spin`, commits `6b67e5742e` and `6084b10c41`) - a
+   message held behind a running dsh turn was retried about 7,000 times a
+   second until the turn ended, which held the live server at 112% of a core.
 
 ## 1. Empty Tasks page
 
@@ -96,21 +96,45 @@ turn that ends while the loop is closing cannot strand a message.
 
 New test `waits for the running turn without retrying a held message in a loop`:
 at most 5 `attemptTurn` calls in 300 ms (the old code made 10,840), and the held
-messages run in order once the running turn ends. Backend's ACP step-title change
-does not touch this file, so both edits stand.
+messages run in order once the running turn ends.
+
+Astra's review of that commit (verdict SHIP) found two pre-existing gaps, fixed
+in the follow-up commit `6084b10c41`, which is merged here too:
+
+- A held message whose start failed (for example the bot-edit restart failed)
+  was only logged: it never completed, and a failure after the turn was marked
+  active left stale state that held every later message. The drain now settles
+  it the way `sendTurn` does (`finishTurn`, failed, translated text) and carries
+  on; an interrupt just stops the loop. Test: `fails a held message that cannot
+start, and still runs the ones behind it`.
+- A fresh send arriving between a turn ending and the drain it scheduled could
+  start ahead of the held messages (Astra reproduced C, A, B). A fresh send now
+  queues while anything is held or the drain is running. Test: `starts a send
+that arrives as a turn ends behind the messages already held` (order A, B, C).
+
+Backend's ACP step-title change does not touch this file, so both edits stand.
 
 ## Proof
 
-Unit, on the merged head `76b61735ab5c` (worktree `_wt/hbots-16659`, clean tree,
-16 Oct 2026). Logs: `C:/Claude/AI/dev-team/qa/hbots-16659-backend/gate2-*.log`.
+Unit, on the code head `8209fbbb0b` (worktree `_wt/hbots-16659`, clean tree,
+16 Oct 2026; `8209fbbb0b` is the merge of the review follow-up `6084b10c41`, and
+only this notes file changed afterwards). Logs:
+`C:/Claude/AI/dev-team/qa/hbots-16659-backend/gate3-*.log`.
 
-| Gate         | Command                                                                                    | Exit | Result                                                       |
-| ------------ | ------------------------------------------------------------------------------------------ | ---- | ------------------------------------------------------------ |
-| server-tests | `vp test run src/personal src/mcp src/provider/Layers src/provider/acp` (in `apps/server`) | 0    | 4106 tests passed, 0 failed, 17 skipped, in 252 files; 396 s |
-| server-tsc   | `tsc --noEmit` (in `apps/server`)                                                          | 0    | clean (Effect suggestions only)                              |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps/web`)                         | 0    | 2827 tests passed, 0 failed, in 252 files; 35 s              |
-| web-tsc      | `tsc --noEmit` (in `apps/web`)                                                             | 0    | clean                                                        |
-| lint         | `vp lint --report-unused-disable-directives` on the 11 changed files                       | 0    | 0 errors, 4 warnings                                         |
+| Gate         | Command                                                                                    | Exit | Result                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------ | ---- | ----------------------------------------------------------------------------------------------------- |
+| server-tests | `vp test run src/personal src/mcp src/provider/Layers src/provider/acp` (in `apps/server`) | 0    | 4107 tests passed, 17 skipped, in 258 files; one 120 s timeout, re-ran alone green (see below); 507 s |
+| server-tsc   | `tsc --noEmit` (in `apps/server`)                                                          | 0    | clean (Effect suggestions only)                                                                       |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps/web`)                         | 0    | 2827 tests passed, 0 failed, in 252 files; 40 s                                                       |
+| web-tsc      | `tsc --noEmit` (in `apps/web`)                                                             | 0    | clean                                                                                                 |
+| lint         | `vp lint --report-unused-disable-directives` on the 11 changed files                       | 0    | 0 errors, 4 warnings                                                                                  |
+
+The one timeout was `src/provider/Layers/ProviderRegistry.test.ts` >
+`re-probes when settings change the codex binaryPath` (120 s), a file neither
+merged commit touches and which passed in the same gate 20 minutes earlier. It
+re-ran alone in 6 s: 54 tests passed, exit 0
+(`gate3-registry-rerun.log`). Frontend's own suite was running at the time, so
+this was load, not code.
 
 Note on the gate environment: the Bots app injects its own live environment into
 every bot shell (`T3CODE_ENVIRONMENT_LABEL=Bots`, `T3CODE_PERSONAL_STALL_DIR`,
