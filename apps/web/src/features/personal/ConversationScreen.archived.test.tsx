@@ -266,6 +266,9 @@ vi.mock("./conversationModel", () => ({
   placeLeadBotChangeCards: (items: unknown) => items,
   placeMemoryCards: (items: unknown) => items,
   placeCallCards: (items: unknown) => items,
+  // The pending-summary window only starts the 15-second refresh loop; these
+  // tests have no call cards at all, so it is always false.
+  voiceCallSummaryPending: () => false,
   resolveConversationHeaderName: ({ botName }: { botName: string | null }) =>
     botName === null ? { status: "loading" } : { status: "ready", name: botName },
   // A final failed turn: Retry would show on an open chat.
