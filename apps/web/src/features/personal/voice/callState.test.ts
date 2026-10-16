@@ -5,6 +5,7 @@ import {
   VOICE_GOODBYE_SPOKEN_LINE,
   VOICE_QUIET_SPOKEN_LINE,
   callHint,
+  callEverConnected,
   callMetaLine,
   contrastRatio,
   endReasonLine,
@@ -46,6 +47,16 @@ describe("call duration", () => {
     expect(callMetaLine({ status: "error", elapsedMs: 400_000, everConnected: true })).toBe(
       "Call dropped · 6:40",
     );
+  });
+
+  it("treats only an ended call as one that ever connected", () => {
+    // Harout's 16 Oct 2026 report: a call refused at the microphone showed
+    // "Call dropped · 0:01" above "The call never connected."
+    expect(callEverConnected("ended")).toBe(true);
+    expect(callEverConnected("error")).toBe(false);
+    expect(callEverConnected("connecting")).toBe(false);
+    expect(callEverConnected("live")).toBe(false);
+    expect(callEverConnected("reconnecting")).toBe(false);
   });
 });
 

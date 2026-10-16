@@ -22,6 +22,7 @@ import { CallWorkCard } from "./CallWorkCard";
 import {
   type VoiceCallState,
   type VoiceEndReason,
+  callEverConnected,
   callMetaLine,
   endReasonLine,
   limitBannerText,
@@ -199,7 +200,7 @@ export function VoiceCallScreen({
           {callMetaLine({
             status: state.status,
             elapsedMs,
-            everConnected: state.endReason !== null || state.status === "ended",
+            everConnected: callEverConnected(state.status),
           })}
         </p>
 

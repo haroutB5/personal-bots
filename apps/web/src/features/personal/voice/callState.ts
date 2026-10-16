@@ -239,6 +239,17 @@ export function callMetaLine(input: {
   return `Voice call · ${formatCallDuration(input.elapsedMs)}`;
 }
 
+/**
+ * Did this call ever reach Gemini? Only a call that did ends as "ended"; the
+ * engine publishes "error" for a call that never connected (a live call that
+ * drops reconnects, then ends). The failed screen used to read the end reason
+ * instead, so a refused start printed "Call dropped · 0:01" above "The call
+ * never connected." (Harout's 16 Oct 2026 report).
+ */
+export function callEverConnected(status: VoiceCallStatus): boolean {
+  return status === "ended";
+}
+
 /** The sentence the ended screen and the call card both print. */
 export function endReasonLine(reason: VoiceEndReason, quietMinutes: number): string {
   switch (reason) {
