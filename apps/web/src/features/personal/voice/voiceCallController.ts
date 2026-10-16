@@ -38,7 +38,12 @@
 import type { CallAudioPort } from "./callAudio";
 import type { CreateLiveSocket, LiveClient, LiveToolCall } from "./liveClient";
 import { connectLive } from "./liveClient";
-import { MessageId, ThreadId, VoiceCallTranscriptEntry } from "@t3tools/contracts";
+import {
+  MessageId,
+  ThreadId,
+  VOICE_CALL_SEARCH_INPUT_CHARS,
+  VoiceCallTranscriptEntry,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
@@ -790,7 +795,10 @@ export function createVoiceCallController(
         // The voice's own search, for a session that has no Google Search. The
         // server runs the keyless web search; the pill says so meanwhile and
         // nothing is posted into the chat.
-        const query = typeof call.args.query === "string" ? call.args.query.trim() : "";
+        const query =
+          typeof call.args.query === "string"
+            ? call.args.query.trim().slice(0, VOICE_CALL_SEARCH_INPUT_CHARS)
+            : "";
         if (query.length === 0) {
           answerTool(
             call.id,

@@ -1122,6 +1122,61 @@ describe("PersonalVoiceCallService Google Search out of quota", () => {
     );
   });
 
+  it.effect("refuses to renew once the chat has had a sensitive site open mid-call", () => {
+    const calls: Array<HttpCall> = [];
+    const sensitive: Array<string> = [];
+    return withService({ calls, dispatched: [], sensitive }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        sensitive.push("https://bank.example");
+        const error = yield* Effect.flip(
+          service.renewPass({
+            threadId: CTO_CHAT,
+            callId: started.callId,
+            reason: "search_quota",
+          }),
+        );
+        expect(error.code).toBe("sensitive_chat");
+        // Fail closed: no second pass was minted and nothing was remembered.
+        expect(calls).toHaveLength(1);
+        expect(yield* searchQuotaRow()).toBeNull();
+      }),
+    );
+  });
+
+  it.effect("does not mark Search as out of quota when the fresh pass cannot be minted", () => {
+    const calls: Array<HttpCall> = [];
+    let mints = 0;
+    return withService(
+      {
+        calls,
+        dispatched: [],
+        mint: () => {
+          mints += 1;
+          // Only the renewal (the second mint) fails.
+          return mints === 2
+            ? { status: 503, token: null, body: "unavailable" }
+            : { status: 200, token: "auth_tokens/test-single-use", body: "{}" };
+        },
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const started = yield* service.start({ threadId: CTO_CHAT });
+          const error = yield* Effect.flip(
+            service.renewPass({
+              threadId: CTO_CHAT,
+              callId: started.callId,
+              reason: "search_quota",
+            }),
+          );
+          expect(error.code).toBe("google_unavailable");
+          // The mint failed, so the next call still tries Search.
+          expect(yield* searchQuotaRow()).toBeNull();
+          expect((yield* service.start({ threadId: CTO_CHAT })).googleSearch).toBe(true);
+        }),
+    );
+  });
+
   it.effect("refuses to renew a call this process never opened", () =>
     withService({ calls: [], dispatched: [] }, (service) =>
       Effect.gen(function* () {

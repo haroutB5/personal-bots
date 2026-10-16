@@ -284,10 +284,17 @@ export const VOICE_CALL_SEARCH_TIMEOUT_MS = 6_000;
 /** Searches one call may run per minute. */
 export const VOICE_CALL_SEARCHES_PER_MINUTE = 10;
 
+/**
+ * Longest query the phone may send. The server redacts secrets from it first and
+ * only then cuts it to `VOICE_CALL_SEARCH_QUERY_CHARS`, so a secret cannot
+ * straddle the cut; this bound only keeps the request itself small.
+ */
+export const VOICE_CALL_SEARCH_INPUT_CHARS = 2_000;
+
 export const VoiceCallSearchWebInput = Schema.Struct({
   threadId: ThreadId,
   callId: TrimmedNonEmptyString,
-  query: TrimmedNonEmptyString,
+  query: TrimmedNonEmptyString.check(Schema.isMaxLength(VOICE_CALL_SEARCH_INPUT_CHARS)),
 });
 export type VoiceCallSearchWebInput = typeof VoiceCallSearchWebInput.Type;
 

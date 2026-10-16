@@ -328,7 +328,11 @@ export const make = Effect.gen(function* () {
 
   const pruneActiveCalls = (atMs: number): void => {
     for (const [callId, lease] of activeCalls) {
-      if (lease.expiresAtMs <= atMs) activeCalls.delete(callId);
+      if (lease.expiresAtMs > atMs) continue;
+      activeCalls.delete(callId);
+      // A call that expired without `finish` leaves nothing behind.
+      renewedCalls.delete(callId);
+      searchLimiters.delete(callId);
     }
   };
 
@@ -1103,12 +1107,13 @@ export const make = Effect.gen(function* () {
         // Marked before the mint: one retry per call, whatever Google answers.
         renewedCalls.add(input.callId);
         const startedAt = yield* DateTime.now;
-        // Google closed the session with a quota error after a setup that had
-        // Search in it: remember that until its daily reset, so the next call
-        // does not spend a second connection finding out.
-        yield* writeSearchQuotaAt(DateTime.formatIso(startedAt));
         const ttlSeconds = Math.max(VOICE_CALL_TOKEN_TTL_SECONDS, VOICE_CALL_MAX_MINUTES * 60);
         const token = yield* mint(key, ttlSeconds);
+        // Google closed the session with a quota error after a setup that had
+        // Search in it: remember that until its daily reset, so the next call
+        // does not spend a second connection finding out. Written only once the
+        // fresh pass exists, so a failed mint does not mark Search as out.
+        yield* writeSearchQuotaAt(DateTime.formatIso(startedAt));
         yield* Effect.logInfo("personal voice call pass renewed without Google Search", {
           threadId: chat.threadId,
           callId: input.callId,

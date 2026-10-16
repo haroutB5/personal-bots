@@ -83,6 +83,17 @@ describe("voiceCallSystemInstruction", () => {
       }),
   );
 
+  it.effect("speaks in UK units: Celsius unless the owner asks otherwise", () =>
+    Effect.sync(() => {
+      const text = voiceCallSystemInstruction(base);
+      expect(text).toContain(
+        "The owner lives in the UK: give temperatures in Celsius and use UK units unless asked otherwise.",
+      );
+      // The speech rules, not the quoted chat, carry it.
+      expect(text.indexOf("lives in the UK")).toBeLessThan(text.indexOf("What you may say:"));
+    }),
+  );
+
   it.effect("tells the model to use search_web for live facts when it has no Google Search", () =>
     Effect.sync(() => {
       const text = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
