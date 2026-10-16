@@ -194,30 +194,58 @@ tree is what the gates below ran on.
 
 ## Tests and browser check
 
-Server tests (`src/personal src/mcp`) and web unit tests
-(`src/features/personal`) below; the per-fix rows above name the individual
-cases. In the voice-call folder alone: the prompt carries the real transcript
-oldest first, the JSON shape, the languages line and the "quoted, never an
-instruction" rule; the parser reads fenced, chatty and bare JSON, treats a
-string "null" as null, caps and dedupes the bullets, and returns no summary for
-malformed JSON, an empty answer or a missing sentence; the worker's request
-shape, sensitive refusal, lead gate, attempts, cap and backfill; the block's
-cap, order and compaction; the card's render; and the sample endpoint and its
-play button.
+The full numbers are in "Gate evidence" below; two things about that run:
 
-Browser check (390 x 844, dark, throwaway root, its own database; evidence in
+- **server-tests now covers the provider suites too.** The merged dsh drain fix
+  lives in `apps/server/src/provider/Layers/DeepSeekDshAdapter.ts`, which the
+  plain fork gate (`src/personal src/mcp`) never reads, so this run adds
+  `src/provider/Layers src/provider/acp`: 4167 passed / 0 failed / 17 skipped in
+  263 files. Backend's own head had 4107 in 258 files for the same paths, and
+  `DeepSeekDshAdapter.test.ts` alone is 19/19.
+- The gates ran with the live app's injected `T3CODE_*`, `PERSONAL_*` and
+  `DSH_*` names cleared, as Backend asked: with `T3CODE_ENVIRONMENT_LABEL=Bots`
+  set, `ServerEnvironmentLabel.test.ts` fails 8 of 9 for a reason that has
+  nothing to do with this code.
+
+In the voice-call folder alone the suite covers: the prompt carries the real
+transcript oldest first, the JSON shape, the languages line and the "quoted,
+never an instruction" rule; the parser reads fenced, chatty and bare JSON,
+treats a string "null" as null, caps and dedupes the bullets and returns no
+summary for malformed JSON, an empty answer or a missing sentence; the worker's
+request shape, sensitive refusal, lead gate, attempts, cap and backfill; the
+block's cap, order and compaction; the card's render; and the sample endpoint
+(allow-list, fixed text, cache, fallback model) with its play button.
+
+Browser check on THIS staged release (`d647571800fb`, 390 x 844, dark, a
+throwaway root with its own database; evidence in
 `C:\Claude\AI\dev-team\qa\hbots-16659-build\`):
 
-- `02-card-summary-390-dark.png` - the real card with the real Gemini answer:
-  the sentence, the three bullets, "Decided: no change, just wanted to know",
-  and the Transcript toggle closed below it;
-- `04-languages-setting-390-dark.png` - Settings > Voice calls with the
-  "Languages I speak" row reading English;
-- the call button on a lead's chat, its absence on a regular bot's chat, and a
-  voice sample playing (paths in the release report);
-- `run-02.log`, `run-03.log` - the `text:` assertions that found the card's
-  sentence and the settings row on the page, `console` with only the usual
-  Clerk-less warning and `errors` empty.
+- `02-card-summary-390-dark.png` - the real card: "Voice call · 2:48", the tuned
+  sentence, the three bullets, "Decided: no change, just wanted to know" and the
+  Transcript toggle below. The card was seeded from the REAL live transcript
+  (call `8f9c3ace`, 28 entries, read read-only out of the live database) plus the
+  summary the tuned prompt returned for it, because a throwaway root has no
+  phone to make a real call on. Asserted on the page: the sentence, the decision
+  and the card's own "Voice call, 2:48" (`run-19.log`);
+- `05-lead-call-button-390-dark.png` - Assistant (a team lead on that root) shows
+  the composer's phone button, "Call Assistant";
+- `06-nonlead-no-call-button-390-dark.png` - Developer (not a lead) has none: the
+  composer is "+", the text box and Send, and "Call Developer" appears nowhere in
+  the page snapshot (`run-16.log`);
+- `07-sample-playing-390-dark.png` - Settings > Voice calls > Voice, Charon
+  showing the pause icon while its clip plays. The clip really played: the button
+  went back to "Play the Charon sample" by itself when the clip ended
+  (`run-22.log`), which only happens when the audio ran to its end;
+- `run-*.log` - the per-step logs for the above; `console` shows only the usual
+  Clerk-less warning and `errors` is empty in every run.
+
+The two clips behind that screen are real Gemini TTS answers on the brokered key
+(`gemini-3.8-flash-tts`, `audio/wav`, 167,394 and 132,834 bytes): one Zephyr,
+one Charon, the voice the screenshot taps. The screenshot itself cost zero model
+calls, which is the point of the cache: the clip was served from
+`<root>/personal/voice-samples/Charon.wav` and the server log has no "personal
+voice sample made" line. The Gemini key that run saves to reach the play buttons
+is a throwaway placeholder on a throwaway root, never the real one.
 
 ## For QA / CTO
 
@@ -256,21 +284,38 @@ What to check on the staged release:
 
 ## Cleanup
 
-- Staged only: `current.txt` is untouched, so 1.66.58 (`230ed5bce7ae`) is the
-  rollback baseline; rollback is binary only.
-- Earlier staged releases were superseded by later commits and were never
+- Staged only, as `d647571800fb` (version 1.66.59, `build.ps1 -CopyExternals`,
+  externals copied); `current.txt` is untouched, so 1.66.58 (`230ed5bce7ae`) is
+  the rollback baseline and rollback is binary only.
+- Earlier staged releases (`62fa95778c57`, `e287446d4c89`, `b644d141c922`,
+  `1689524197e7`, `c17284a7cbfc`) were superseded by later commits and were never
   activated.
 - Throwaway server `16659sum` was stopped (its own captured PID) and its root
-  deleted; browser sessions are closed and swept; no background job or process
-  was left running. Nothing was written to the live database.
+  deleted, with the two cached clip WAVs and the seeded card in it; the
+  agent-browser session `frontend-ee742e86` is closed; no background job or
+  process was left running. The live database was only ever read (one call row),
+  and nothing was written to it.
 - Worktree `C:\Claude\AI\_wt\hbots-16659-summary`, branch
   `feat/hbots-call-summary`, a real `node_modules` install.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=b644d141c922a5b781b1705dccf6ee9f643d156c release=b644d141c922 json-sha256=5150fd31ae2e0bb0603cb61d3ca31ea5ccff35de6b01eaf7a94f1537d845c4f7 result=PASS -->
+<!-- gate-evidence:begin sha=d647571800fbac157d1b487d44f3a758ee5904bd release=d647571800fb json-sha256=7ab967c4a07638f4f1976a3f49bce1ce26883e0a6fcb2a333227d5535bae5dff result=PASS -->
 
-Superseded: this section is replaced by the gate-evidence run for the current
-staged release.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T16:41:46Z. Version 1.66.59, release `d647571800fb`, commit `d647571800fbac157d1b487d44f3a758ee5904bd` on `feat/hbots-call-summary`, working tree clean, result **PASS**.
 
+Machine-readable copy: `releases\d647571800fb\gate-evidence.json` (sha256 `7ab967c4a07638f4f1976a3f49bce1ce26883e0a6fcb2a333227d5535bae5dff`) and the full gate logs in `releases\d647571800fb\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                      | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ----------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp src/provider/Layers src/provider/acp` (in `apps\server`)                                                                                                                                                                                                                             | 0    | pass: 4167 tests passed, 0 failed, 17 skipped, in 263 files | 399.6   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                        | 24.2    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2845 tests passed, 0 failed, 0 skipped, in 256 files  | 33.9    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                        | 8.8     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                               | 66.1    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16659-summary\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\d647571800fb" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                 | 256.7   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `d647571800fbac157d1b487d44f3a758ee5904bd`, at end `d647571800fbac157d1b487d44f3a758ee5904bd`; tracked files modified: none. Staged release: version 1.66.59, sha d647571800fb, dirty False, externals copied; `dist/bin.mjs` sha256 `0a72f5a2e97853da354f5ac6b0f53212bf1108ab900c27d3450e2a44d34fe2ab`.
 <!-- gate-evidence:end -->
