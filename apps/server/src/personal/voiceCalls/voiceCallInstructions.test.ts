@@ -148,6 +148,31 @@ describe("voiceCallSystemInstruction", () => {
     }),
   );
 
+  it.effect("relays the owner's answers and decisions to the bot as they say them", () =>
+    Effect.sync(() => {
+      const flat = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
+      expect(flat).toContain("Their answers and decisions are work:");
+      expect(flat).toContain('they answer or decide on this call ("don\'t book it"');
+      expect(flat).toContain("send that answer with send_to_bot at once, in their own words");
+      expect(flat).toContain("The chat's 3-second undo still gives them the chance");
+      // Before the call ends, anything they decided still has to reach the bot.
+      expect(flat).toContain("Before the call ends, send anything they decided");
+      expect(flat).toContain("Never decide for them and never answer on their behalf");
+    }),
+  );
+
+  it.effect("says each work update once, in its own words, and never over the owner", () =>
+    Effect.sync(() => {
+      const flat = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
+      expect(flat).toContain("Work updates during a call:");
+      expect(flat).toContain("A line marked as an update is the app telling you what the bot");
+      expect(flat).toContain("Say it once, in one short spoken sentence, in your own words");
+      expect(flat).toContain("claim no more than it says");
+      expect(flat).toContain("Say each update once.");
+      expect(flat).toContain("Never talk over them");
+    }),
+  );
+
   it.effect("names the status, the step and the waiting cards, never their contents", () =>
     Effect.sync(() => {
       const text = voiceCallSystemInstruction({
