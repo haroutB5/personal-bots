@@ -38,6 +38,8 @@ import {
   VOICE_CALL_MAX_TRANSCRIPT_ENTRIES,
   VOICE_CALL_MODEL,
   VOICE_CALL_NEW_SESSION_TTL_SECONDS,
+  VOICE_CALL_SEARCHES_PER_MINUTE,
+  VOICE_CALL_SEARCH_TIMEOUT_MS,
   VOICE_CALL_SECRET_NAME,
   VOICE_CALL_SECRET_ORIGIN,
   VOICE_CALL_SNAPSHOT_REPLY_CHARS,
@@ -55,6 +57,8 @@ import {
   type VoiceCallLookupMemoryResult,
   type VoiceCallMemoryEntry,
   type VoiceCallRecord,
+  type VoiceCallRenewPassResult,
+  type VoiceCallSearchWebResult,
   type VoiceCallSendResult,
   type VoiceCallSnapshotResult,
   type VoiceCallStartResult,
@@ -87,6 +91,17 @@ import * as PersonalVoiceCallRepository from "./PersonalVoiceCallRepository.ts";
 import { createVoiceCallRateLimiter } from "./voiceCallRateLimit.ts";
 import * as VoiceCallGemini from "./voiceCallGemini.ts";
 import { voiceCallSystemInstruction } from "./voiceCallInstructions.ts";
+import {
+  layerLive as VoiceCallSearchLive,
+  VOICE_SEARCH_QUOTA_META_KEY,
+  VoiceCallWebSearch,
+  cleanSearchQuery,
+  searchQuotaStillHolds,
+  shapeSearchResults,
+} from "./voiceCallSearch.ts";
+
+/** The saved key the keyless search can fall back to, when its owner added one. */
+const TAVILY_SECRET_NAME = "TAVILY_API_KEY";
 
 /** At most this many cards are returned for one chat. */
 export const VOICE_CALL_LIST_LIMIT = 50;
@@ -167,6 +182,26 @@ export class PersonalVoiceCallService extends Context.Service<
       readonly callId: string;
       readonly query: string;
     }) => Effect.Effect<VoiceCallLookupMemoryResult, PersonalVoiceCallsError>;
+    /**
+     * A fresh single-use pass for a call that is already open, after Google's
+     * own Search ran out of quota. The server remembers that (until the next
+     * midnight Pacific) so later calls start without it. Once per call.
+     */
+    readonly renewPass: (input: {
+      readonly threadId: ThreadId;
+      readonly callId: string;
+      readonly reason: "search_quota";
+    }) => Effect.Effect<VoiceCallRenewPassResult, PersonalVoiceCallsError>;
+    /**
+     * The voice's `search_web`: a few short results from the same keyless web
+     * search the bots use, for a call that has no Google Search. Always
+     * answers: a refusal or a failure comes back as an empty list and a note.
+     */
+    readonly searchWeb: (input: {
+      readonly threadId: ThreadId;
+      readonly callId: string;
+      readonly query: string;
+    }) => Effect.Effect<VoiceCallSearchWebResult, PersonalVoiceCallsError>;
   }
 >()("t3/personal/voiceCalls/PersonalVoiceCallService") {}
 
@@ -190,6 +225,7 @@ export const make = Effect.gen(function* () {
   const memory = yield* PersonalMemoryService.PersonalMemoryService;
   const browser = yield* PersonalBrowser.PersonalBrowser;
   const http = yield* VoiceCallGemini.VoiceCallHttp;
+  const webSearch = yield* VoiceCallWebSearch;
   const sql = yield* SqlClient.SqlClient;
 
   const startLimiter = createVoiceCallRateLimiter({
@@ -244,6 +280,51 @@ export const make = Effect.gen(function* () {
   );
 
   const nowMs = Effect.map(DateTime.now, DateTime.toEpochMillis);
+
+  /**
+   * Calls that got their one fresh pass (Google Search out of quota). Read by
+   * `renewPass` to refuse a second one, and by `finish`: a renewed call that
+   * still failed on quota proves the voice model itself is out, not Search, so
+   * the Search memory is dropped again.
+   */
+  const renewedCalls = new Set<string>();
+  /** One search limiter per open call, dropped with the call's lease. */
+  const searchLimiters = new Map<string, ReturnType<typeof createVoiceCallRateLimiter>>();
+
+  /** When Google Search was last seen out of quota (ISO), or null. */
+  const readSearchQuotaAt = sql<{ readonly value: string }>`
+    SELECT value AS "value" FROM personal_meta WHERE key = ${VOICE_SEARCH_QUOTA_META_KEY}
+  `.pipe(
+    Effect.map((rows) => rows[0]?.value ?? null),
+    Effect.orElseSucceed(() => null as string | null),
+  );
+
+  const writeSearchQuotaAt = (iso: string) =>
+    sql`
+      INSERT INTO personal_meta (key, value)
+      VALUES (${VOICE_SEARCH_QUOTA_META_KEY}, ${iso})
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `.pipe(
+      Effect.asVoid,
+      Effect.catch((cause) =>
+        Effect.logWarning("personal voice call search quota was not remembered", { cause }),
+      ),
+    );
+
+  const clearSearchQuota = sql`
+    DELETE FROM personal_meta WHERE key = ${VOICE_SEARCH_QUOTA_META_KEY}
+  `.pipe(
+    Effect.asVoid,
+    Effect.catch((cause) =>
+      Effect.logWarning("personal voice call search quota was not cleared", { cause }),
+    ),
+  );
+
+  /** True while the remembered "Search is out of quota" still holds. */
+  const googleSearchAvailable = Effect.gen(function* () {
+    const notedAt = yield* readSearchQuotaAt;
+    return !searchQuotaStillHolds(notedAt, yield* nowMs);
+  });
 
   const pruneActiveCalls = (atMs: number): void => {
     for (const [callId, lease] of activeCalls) {
@@ -423,7 +504,7 @@ export const make = Effect.gen(function* () {
         code === "key_rejected"
           ? "Google did not accept the Gemini key."
           : code === "key_quota"
-            ? "Gemini is out of quota for this key. Try again later."
+            ? "The Gemini voice model is out of quota for this key. Try again later."
             : "Google could not be reached right now.",
       );
     });
@@ -589,6 +670,7 @@ export const make = Effect.gen(function* () {
             ),
           ),
         );
+        const googleSearch = yield* googleSearchAvailable;
         const systemInstruction = voiceCallSystemInstruction({
           botName: chat.bot.name,
           botTitle: chat.bot.title,
@@ -609,6 +691,7 @@ export const make = Effect.gen(function* () {
           model: VOICE_CALL_MODEL,
           voice: name,
           contextMessages: context.length,
+          googleSearch,
         });
         return {
           callId,
@@ -624,6 +707,7 @@ export const make = Effect.gen(function* () {
           maxCallMinutes: VOICE_CALL_MAX_MINUTES,
           botName: chat.bot.name,
           systemInstruction,
+          googleSearch,
           context: {
             botId: chat.botId,
             botName: chat.bot.name,
@@ -748,6 +832,8 @@ export const make = Effect.gen(function* () {
   const releaseCallLease = (callId: string) =>
     Effect.gen(function* () {
       activeCalls.delete(callId);
+      renewedCalls.delete(callId);
+      searchLimiters.delete(callId);
       yield* calls
         .closeLease(callId)
         .pipe(
@@ -759,6 +845,15 @@ export const make = Effect.gen(function* () {
 
   const finish: PersonalVoiceCallService["Service"]["finish"] = (input) =>
     Effect.gen(function* () {
+      // A call that was renewed without Search and still died on quota: the
+      // voice model is what ran out, so Search was not proven to be the cause.
+      if (
+        renewedCalls.has(input.callId) &&
+        input.endReason === "failed" &&
+        /quota/i.test(input.detail ?? "")
+      ) {
+        yield* clearSearchQuota;
+      }
       const existing = yield* calls
         .get(input.callId)
         .pipe(
@@ -994,6 +1089,100 @@ export const make = Effect.gen(function* () {
       } satisfies VoiceCallLookupMemoryResult;
     });
 
+  const renewPass: PersonalVoiceCallService["Service"]["renewPass"] = (input) =>
+    startLock.withPermit(
+      Effect.gen(function* () {
+        const chat = yield* callableChat(input.threadId);
+        yield* requireCall(input.callId, chat.threadId);
+        yield* refuseSensitiveChat(chat.threadId);
+        if (renewedCalls.has(input.callId)) {
+          return yield* fail("rate_limited", "This call already has a fresh pass.");
+        }
+        const saved = yield* sessions.secretsForThread(chat.threadId);
+        const key = yield* requireKey(saved);
+        // Marked before the mint: one retry per call, whatever Google answers.
+        renewedCalls.add(input.callId);
+        const startedAt = yield* DateTime.now;
+        // Google closed the session with a quota error after a setup that had
+        // Search in it: remember that until its daily reset, so the next call
+        // does not spend a second connection finding out.
+        yield* writeSearchQuotaAt(DateTime.formatIso(startedAt));
+        const ttlSeconds = Math.max(VOICE_CALL_TOKEN_TTL_SECONDS, VOICE_CALL_MAX_MINUTES * 60);
+        const token = yield* mint(key, ttlSeconds);
+        yield* Effect.logInfo("personal voice call pass renewed without Google Search", {
+          threadId: chat.threadId,
+          callId: input.callId,
+          reason: input.reason,
+        });
+        return {
+          token,
+          tokenExpiresAt: DateTime.add(startedAt, { seconds: ttlSeconds }),
+          newSessionExpiresAt: DateTime.add(startedAt, {
+            seconds: VOICE_CALL_NEW_SESSION_TTL_SECONDS,
+          }),
+          googleSearch: false,
+        } satisfies VoiceCallRenewPassResult;
+      }),
+    );
+
+  const searchNote = (note: string): VoiceCallSearchWebResult => ({ results: [], note });
+
+  const searchWeb: PersonalVoiceCallService["Service"]["searchWeb"] = (input) =>
+    Effect.gen(function* () {
+      const chat = yield* callableChat(input.threadId);
+      yield* requireCall(input.callId, chat.threadId);
+      const query = cleanSearchQuery(redactSecrets(input.query));
+      if (query.length === 0) return searchNote("No question to search for.");
+      // The same rule the bots' research tools follow: a chat that has had a
+      // site the owner marked sensitive open sends nothing to a search provider.
+      const exposed = yield* sensitiveExposure(chat.threadId);
+      if (exposed.length > 0) {
+        return searchNote(
+          "This chat has had a site the owner marked sensitive open, so nothing can be searched here.",
+        );
+      }
+      let limiter = searchLimiters.get(input.callId);
+      if (limiter === undefined) {
+        limiter = createVoiceCallRateLimiter({
+          limit: VOICE_CALL_SEARCHES_PER_MINUTE,
+          windowMs: VOICE_CALL_START_WINDOW_MS,
+        });
+        searchLimiters.set(input.callId, limiter);
+      }
+      if (!limiter.take(yield* nowMs)) {
+        return searchNote("Too many searches just now. Say you will look again in a moment.");
+      }
+      const saved = yield* sessions.secretsForThread(chat.threadId);
+      const key = saved.find((entry) => entry.name === TAVILY_SECRET_NAME)?.value || undefined;
+      if (key === undefined && webSearch.providerMode() === "tavily") {
+        return searchNote("Web search is not set up on this laptop.");
+      }
+      const answer = yield* Effect.tryPromise({
+        // The signal is the fiber's, and the deadline is the voice's: a search
+        // slower than this is worth less than saying "I could not find it".
+        try: (signal) =>
+          webSearch.search({
+            scope: chat.botId,
+            key,
+            query,
+            signal: AbortSignal.any([signal, AbortSignal.timeout(VOICE_CALL_SEARCH_TIMEOUT_MS)]),
+          }),
+        catch: () => null,
+      }).pipe(Effect.orElseSucceed(() => null));
+      if (answer === null || answer.error !== null) {
+        return searchNote("The search did not come back in time. Say you could not find it.");
+      }
+      const results = shapeSearchResults(answer.sources);
+      yield* Effect.logInfo("personal voice call web search", {
+        threadId: chat.threadId,
+        callId: input.callId,
+        results: results.length,
+      });
+      return results.length === 0
+        ? searchNote("Nothing found for that. Say you could not find it.")
+        : ({ results, note: "" } satisfies VoiceCallSearchWebResult);
+    });
+
   return {
     start,
     checkKey,
@@ -1003,6 +1192,8 @@ export const make = Effect.gen(function* () {
     snapshot,
     transcript,
     lookupMemory,
+    renewPass,
+    searchWeb,
   } satisfies PersonalVoiceCallService["Service"];
 });
 
@@ -1014,4 +1205,5 @@ export const layerLive = layer.pipe(
   Layer.provideMerge(PersonalSecretRepository.layer),
   Layer.provideMerge(PersonalLoginRequestRepository.layer),
   Layer.provideMerge(VoiceCallGemini.layerLive),
+  Layer.provideMerge(VoiceCallSearchLive),
 );

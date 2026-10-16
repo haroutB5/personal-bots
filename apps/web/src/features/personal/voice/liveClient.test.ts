@@ -92,6 +92,62 @@ describe("liveSetupMessage", () => {
   });
 });
 
+describe("liveSetupMessage without Google Search", () => {
+  const withoutSearch = () =>
+    liveSetupMessage({
+      model: "gemini-3.8-live",
+      voiceName: "Charon",
+      systemInstruction: "Speak as the bot.",
+      context: "",
+      googleSearch: false,
+    }).setup as { tools: ReadonlyArray<Record<string, unknown>> };
+
+  it("leaves googleSearch out and declares search_web in its place", () => {
+    const setup = withoutSearch();
+    expect(setup.tools.some((tool) => "googleSearch" in tool)).toBe(false);
+    const declarations = setup.tools.find((tool) => "functionDeclarations" in tool) as {
+      functionDeclarations: ReadonlyArray<{
+        name: string;
+        parameters?: { required?: ReadonlyArray<string> };
+      }>;
+    };
+    expect(declarations.functionDeclarations.map((row) => row.name)).toEqual([
+      "lookup_memory",
+      "search_web",
+      "send_to_bot",
+      "bot_status",
+      "latest_reply",
+      "end_call",
+    ]);
+    expect(
+      declarations.functionDeclarations.find((row) => row.name === "search_web")?.parameters
+        ?.required,
+    ).toEqual(["query"]);
+  });
+
+  it("keeps Google Search, and no search_web, by default", () => {
+    const setup = liveSetupMessage({
+      model: "gemini-3.8-live",
+      voiceName: "Charon",
+      systemInstruction: "",
+      context: "",
+    }).setup as { tools: ReadonlyArray<Record<string, unknown>> };
+    expect(setup.tools).toContainEqual({ googleSearch: {} });
+    expect(JSON.stringify(setup.tools)).not.toContain("search_web");
+  });
+
+  it("sends the setup the option asked for", () => {
+    connectLive({ ...options({}), googleSearch: false });
+    const socket = latestSocket();
+    socket.open();
+    const sent = socket.sentOf("setup")[0]!.setup as {
+      tools: ReadonlyArray<Record<string, unknown>>;
+    };
+    expect(sent.tools.some((tool) => "googleSearch" in tool)).toBe(false);
+    expect(JSON.stringify(sent.tools)).toContain("search_web");
+  });
+});
+
 describe("connectLive", () => {
   it("sends the setup once the socket opens and reports setupComplete", () => {
     const onSetupComplete = vi.fn();

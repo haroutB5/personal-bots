@@ -133,6 +133,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalVoiceCallsSnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.personalVoiceCallsTranscript]: AuthOrchestrationReadScope,
   [WS_METHODS.personalVoiceCallsLookupMemory]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalVoiceCallsRenewPass]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalVoiceCallsSearchWeb]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLeadBotChangesList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalLeadBotChangesDecide]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalFilesDelete]: AuthOrchestrationOperateScope,

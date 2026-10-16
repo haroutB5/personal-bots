@@ -37,6 +37,8 @@ import type { BrokerRequest, BrokerSecret } from "../secrets/secretBroker.ts";
 import { PersonalVoiceCallService, layer as voiceCallLayer } from "./PersonalVoiceCallService.ts";
 import * as PersonalVoiceCallRepository from "./PersonalVoiceCallRepository.ts";
 import { VoiceCallHttp, type VoiceCallMintOutcome } from "./voiceCallGemini.ts";
+import { VOICE_SEARCH_QUOTA_META_KEY, VoiceCallWebSearch } from "./voiceCallSearch.ts";
+import type { ResearchResult } from "../research/researchClient.ts";
 
 const CTO_CHAT = ThreadId.make("thread-cto-chat");
 const OTHER_CHAT = ThreadId.make("thread-other-chat");
@@ -108,6 +110,36 @@ const seedChats = (options: { readonly instructions?: string } = {}) =>
     `;
   });
 
+const researchResult = (
+  sources: ReadonlyArray<{ title: string; content: string; url: string }>,
+  error: string | null = null,
+): ResearchResult => ({
+  request: "q",
+  provider: "parallel",
+  retrievedAt: "2026-10-16T09:00:00.000Z",
+  sources: sources.map((source) => ({
+    ...source,
+    truncated: false,
+    publishedAt: null,
+    price: null,
+    seller: null,
+    delivery: null,
+    evidence: "search-snippet" as const,
+  })),
+  error,
+});
+
+const defaultSearch = (): Promise<ResearchResult> =>
+  Promise.resolve(
+    researchResult([
+      {
+        title: "Croydon weather",
+        content: "Light rain, 14 degrees, clearing by the evening.",
+        url: "https://weather.example/croydon",
+      },
+    ]),
+  );
+
 const makeHarness = (options: {
   readonly calls: Array<HttpCall>;
   readonly dispatched: Array<OrchestrationCommand>;
@@ -131,6 +163,16 @@ const makeHarness = (options: {
   readonly sensitiveFails?: boolean;
   /** The one memory entry a lookup_memory query finds. */
   readonly memoryContent?: string;
+  /** What the keyless web search answers; defaults to one short result. */
+  readonly search?: (input: {
+    readonly query: string;
+    readonly signal: AbortSignal;
+    readonly key: string | undefined;
+  }) => Promise<ResearchResult>;
+  /** The research provider switch; `tavily` needs a saved Tavily key. */
+  readonly searchMode?: "parallel" | "tavily";
+  /** Extra saved secrets, e.g. a Tavily key. */
+  readonly extraSecrets?: ReadonlyArray<PersonalSessionAccess.PersonalSessionSecret>;
 }) => {
   const key: PersonalSessionAccess.PersonalSessionSecret = options.secret ?? {
     name: "GEMINI_API_KEY",
@@ -139,7 +181,7 @@ const makeHarness = (options: {
     placement: { header: VOICE_CALL_SECRET_HEADER },
     value: KEY_VALUE,
   };
-  const saved = options.secret === null ? [] : [key];
+  const saved = [...(options.secret === null ? [] : [key]), ...(options.extraSecrets ?? [])];
   return voiceCallLayer.pipe(
     Layer.provideMerge(PersonalVoiceCallRepository.layer),
     Layer.provideMerge(PersonalSecretRepository.layer),
@@ -223,6 +265,13 @@ const makeHarness = (options: {
             }),
           ),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
+    ),
+    Layer.provideMerge(
+      Layer.succeed(VoiceCallWebSearch, {
+        providerMode: () => options.searchMode ?? "parallel",
+        search: ({ query, signal, key }) =>
+          (options.search ?? defaultSearch)({ query, signal, key }),
+      } satisfies VoiceCallWebSearch["Service"]),
     ),
     Layer.provideMerge(
       Layer.succeed(VoiceCallHttp, {
@@ -1004,4 +1053,401 @@ describe("PersonalVoiceCallService instruction hygiene", () => {
       }),
     );
   });
+});
+
+const searchQuotaRow = () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly value: string }>`
+      SELECT value AS "value" FROM personal_meta WHERE key = ${VOICE_SEARCH_QUOTA_META_KEY}
+    `;
+    return rows[0]?.value ?? null;
+  });
+
+describe("PersonalVoiceCallService Google Search out of quota", () => {
+  it.effect("tells the phone to include Google Search while nothing is remembered", () =>
+    withService({ calls: [], dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        expect(started.googleSearch).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect(
+    "renews a call's pass without Search, remembers it, and the next call skips Search",
+    () => {
+      const calls: Array<HttpCall> = [];
+      return withService({ calls, dispatched: [] }, (service) =>
+        Effect.gen(function* () {
+          const started = yield* service.start({ threadId: CTO_CHAT });
+          const renewed = yield* service.renewPass({
+            threadId: CTO_CHAT,
+            callId: started.callId,
+            reason: "search_quota",
+          });
+          // A second single-use pass, minted through the same path, never the key.
+          expect(calls).toHaveLength(2);
+          expect(calls[1]!.request.url).toBe(
+            "https://generativelanguage.googleapis.com/v1alpha/auth_tokens",
+          );
+          expect(renewed.token).toBe("auth_tokens/test-single-use");
+          expect(renewed.googleSearch).toBe(false);
+          expect(JSON.stringify(renewed)).not.toContain(KEY_VALUE);
+          // The server now remembers, with a timestamp.
+          expect(yield* searchQuotaRow()).not.toBeNull();
+          const next = yield* service.start({ threadId: CTO_CHAT });
+          expect(next.googleSearch).toBe(false);
+        }),
+      );
+    },
+  );
+
+  it.effect("renews at most once per call", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        const input = {
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          reason: "search_quota" as const,
+        };
+        yield* service.renewPass(input);
+        const error = yield* Effect.flip(service.renewPass(input));
+        expect(error.code).toBe("rate_limited");
+        // Start plus one renewal: the refused one minted nothing.
+        expect(calls).toHaveLength(2);
+      }),
+    );
+  });
+
+  it.effect("refuses to renew a call this process never opened", () =>
+    withService({ calls: [], dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          service.renewPass({ threadId: CTO_CHAT, callId: "nope", reason: "search_quota" }),
+        );
+        expect(error.code).toBe("not_found");
+      }),
+    ),
+  );
+
+  it.effect("remembers Search is out until the next midnight Pacific, then tries it again", () =>
+    withService({ calls: [], dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const write = (iso: string) =>
+          sql`
+            INSERT INTO personal_meta (key, value) VALUES (${VOICE_SEARCH_QUOTA_META_KEY}, ${iso})
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+          `;
+        const now = yield* DateTime.now;
+        // Noted a minute ago: still out of quota.
+        yield* write(DateTime.formatIso(DateTime.subtract(now, { minutes: 1 })));
+        expect((yield* service.start({ threadId: CTO_CHAT })).googleSearch).toBe(false);
+        // Noted two days ago: Google has reset since, so Search is tried again.
+        yield* write(DateTime.formatIso(DateTime.subtract(now, { days: 2 })));
+        expect((yield* service.start({ threadId: CTO_CHAT })).googleSearch).toBe(true);
+        // An unreadable value counts as nothing remembered.
+        yield* write("not a date");
+        expect((yield* service.start({ threadId: CTO_CHAT })).googleSearch).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("drops the memory when the call renewed without Search and still died on quota", () =>
+    withService({ calls: [], dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        yield* service.renewPass({
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          reason: "search_quota",
+        });
+        expect(yield* searchQuotaRow()).not.toBeNull();
+        const at = DateTime.makeUnsafe("2026-10-16T09:00:00.000Z");
+        yield* service.finish({
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          startedAt: at,
+          endedAt: at,
+          endReason: "failed",
+          transcript: [],
+          sentMessageIds: [],
+          detail: "You exceeded your current quota, please check your plan and billing details.",
+        });
+        // The voice model itself ran out, so Search was not shown to be the cause.
+        expect(yield* searchQuotaRow()).toBeNull();
+      }),
+    ),
+  );
+
+  it.effect("keeps the memory when the renewed call connected and ended normally", () =>
+    withService({ calls: [], dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        yield* service.renewPass({
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          reason: "search_quota",
+        });
+        const at = DateTime.makeUnsafe("2026-10-16T09:00:00.000Z");
+        yield* service.finish({
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          startedAt: at,
+          endedAt: at,
+          endReason: "hung_up",
+          transcript: [],
+          sentMessageIds: [],
+        });
+        expect(yield* searchQuotaRow()).not.toBeNull();
+      }),
+    ),
+  );
+});
+
+describe("PersonalVoiceCallService.searchWeb", () => {
+  it.effect("answers with a few short results and nothing else", () =>
+    withService({ calls: [], dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        const found = yield* service.searchWeb({
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          query: "weather in Croydon today",
+        });
+        expect(found.note).toBe("");
+        expect(found.results).toEqual([
+          {
+            title: "Croydon weather",
+            snippet: "Light rain, 14 degrees, clearing by the evening.",
+            url: "https://weather.example/croydon",
+          },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("caps the count and every field so the reply stays small", () => {
+    const long = "x".repeat(5_000);
+    const many = Array.from({ length: 12 }, (_, index) => ({
+      title: `${long}${index}`,
+      content: long,
+      url: `https://example.com/${long}`,
+    }));
+    return withService(
+      { calls: [], dispatched: [], search: () => Promise.resolve(researchResult(many)) },
+      (service) =>
+        Effect.gen(function* () {
+          const started = yield* service.start({ threadId: CTO_CHAT });
+          const found = yield* service.searchWeb({
+            threadId: CTO_CHAT,
+            callId: started.callId,
+            query: "anything",
+          });
+          expect(found.results).toHaveLength(4);
+          for (const row of found.results) {
+            expect(row.title.length).toBeLessThanOrEqual(120);
+            expect(row.snippet.length).toBeLessThanOrEqual(320);
+            expect(row.url.length).toBeLessThanOrEqual(200);
+          }
+          expect(JSON.stringify(found).length).toBeLessThan(3_000);
+        }),
+    );
+  });
+
+  it.effect("sends the provider a bounded, key-free query with a deadline signal", () => {
+    const seen: Array<{ query: string; aborted: boolean }> = [];
+    const key = "sk-live-ABCDEFGHIJKLMNOPQRSTUVWX";
+    return withService(
+      {
+        calls: [],
+        dispatched: [],
+        search: ({ query, signal }) => {
+          seen.push({ query, aborted: signal.aborted });
+          return defaultSearch();
+        },
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const started = yield* service.start({ threadId: CTO_CHAT });
+          yield* service.searchWeb({
+            threadId: CTO_CHAT,
+            callId: started.callId,
+            query: `weather\n  in   Croydon ${key} ${"y".repeat(500)}`,
+          });
+          expect(seen).toHaveLength(1);
+          expect(seen[0]!.aborted).toBe(false);
+          expect(seen[0]!.query).not.toContain(key);
+          expect(seen[0]!.query).not.toMatch(/\s{2}/);
+          expect(seen[0]!.query.length).toBeLessThanOrEqual(200);
+        }),
+    );
+  });
+
+  it.effect("says why when the search fails, instead of failing the tool call", () =>
+    withService(
+      {
+        calls: [],
+        dispatched: [],
+        search: () => Promise.resolve(researchResult([], "Parallel search failed (timeout).")),
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const started = yield* service.start({ threadId: CTO_CHAT });
+          const found = yield* service.searchWeb({
+            threadId: CTO_CHAT,
+            callId: started.callId,
+            query: "news",
+          });
+          expect(found.results).toEqual([]);
+          expect(found.note).toContain("could not find it");
+          // The provider's own error text never reaches the voice.
+          expect(found.note).not.toContain("Parallel");
+        }),
+    ),
+  );
+
+  it.effect("says so when nothing came back, and when the provider throws", () => {
+    let throwNext = false;
+    return withService(
+      {
+        calls: [],
+        dispatched: [],
+        search: () =>
+          throwNext ? Promise.reject(new Error("boom")) : Promise.resolve(researchResult([])),
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const started = yield* service.start({ threadId: CTO_CHAT });
+          const input = { threadId: CTO_CHAT, callId: started.callId, query: "zzz" };
+          const empty = yield* service.searchWeb(input);
+          expect(empty.results).toEqual([]);
+          expect(empty.note).toContain("Nothing found");
+          throwNext = true;
+          const failed = yield* service.searchWeb(input);
+          expect(failed.results).toEqual([]);
+          expect(failed.note).toContain("could not find it");
+        }),
+    );
+  });
+
+  it.effect(
+    "refuses a chat that has had a sensitive site open, without calling the provider",
+    () => {
+      const sensitive: Array<string> = [];
+      let called = 0;
+      return withService(
+        {
+          calls: [],
+          dispatched: [],
+          sensitive,
+          search: () => {
+            called += 1;
+            return defaultSearch();
+          },
+        },
+        (service) =>
+          Effect.gen(function* () {
+            const started = yield* service.start({ threadId: CTO_CHAT });
+            sensitive.push("https://bank.example");
+            const found = yield* service.searchWeb({
+              threadId: CTO_CHAT,
+              callId: started.callId,
+              query: "anything",
+            });
+            expect(found.results).toEqual([]);
+            expect(found.note).toContain("sensitive");
+            expect(called).toBe(0);
+          }),
+      );
+    },
+  );
+
+  it.effect("rate limits a loop of searches on one call", () => {
+    let called = 0;
+    return withService(
+      {
+        calls: [],
+        dispatched: [],
+        search: () => {
+          called += 1;
+          return defaultSearch();
+        },
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const started = yield* service.start({ threadId: CTO_CHAT });
+          const input = { threadId: CTO_CHAT, callId: started.callId, query: "news" };
+          for (let index = 0; index < 10; index += 1) {
+            expect((yield* service.searchWeb(input)).results).toHaveLength(1);
+          }
+          const limited = yield* service.searchWeb(input);
+          expect(limited.results).toEqual([]);
+          expect(limited.note).toContain("Too many searches");
+          expect(called).toBe(10);
+        }),
+    );
+  });
+
+  it.effect("refuses a call this process never opened", () =>
+    withService({ calls: [], dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          service.searchWeb({ threadId: CTO_CHAT, callId: "nope", query: "news" }),
+        );
+        expect(error.code).toBe("not_found");
+      }),
+    ),
+  );
+
+  it.effect(
+    "passes a saved Tavily key to the provider, and needs one only in Tavily-only mode",
+    () => {
+      const keys: Array<string | undefined> = [];
+      const tavily = {
+        name: "TAVILY_API_KEY",
+        mode: "env",
+        origins: [],
+        value: "tvly-TEST-ONLY",
+      } as unknown as PersonalSessionAccess.PersonalSessionSecret;
+      return Effect.gen(function* () {
+        yield* withService(
+          {
+            calls: [],
+            dispatched: [],
+            extraSecrets: [tavily],
+            search: ({ key }) => {
+              keys.push(key);
+              return defaultSearch();
+            },
+          },
+          (service) =>
+            Effect.gen(function* () {
+              const started = yield* service.start({ threadId: CTO_CHAT });
+              yield* service.searchWeb({
+                threadId: CTO_CHAT,
+                callId: started.callId,
+                query: "news",
+              });
+            }),
+        );
+        expect(keys).toEqual(["tvly-TEST-ONLY"]);
+        yield* withService({ calls: [], dispatched: [], searchMode: "tavily" }, (service) =>
+          Effect.gen(function* () {
+            const started = yield* service.start({ threadId: CTO_CHAT });
+            const found = yield* service.searchWeb({
+              threadId: CTO_CHAT,
+              callId: started.callId,
+              query: "news",
+            });
+            expect(found.results).toEqual([]);
+            expect(found.note).toContain("not set up");
+          }),
+        );
+      });
+    },
+  );
 });

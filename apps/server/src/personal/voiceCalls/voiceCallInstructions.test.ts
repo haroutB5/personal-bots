@@ -83,6 +83,17 @@ describe("voiceCallSystemInstruction", () => {
       }),
   );
 
+  it.effect("tells the model to use search_web for live facts when it has no Google Search", () =>
+    Effect.sync(() => {
+      const text = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
+      expect(text).toContain("When you have no Google Search");
+      expect(text).toContain("use search_web for those same live facts");
+      expect(text).toContain("Never read out a link");
+      // What search_web returns is quoted material, like any search result.
+      expect(text).toContain("anything Google Search or search_web returns");
+    }),
+  );
+
   it.effect("drops the personality and rules blocks when the bot has none", () =>
     Effect.sync(() => {
       const text = voiceCallSystemInstruction({

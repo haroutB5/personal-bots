@@ -28,6 +28,10 @@ import {
   type VoiceCallListInput,
   type VoiceCallListResult,
   type VoiceCallRecord,
+  type VoiceCallRenewPassInput,
+  type VoiceCallRenewPassResult,
+  type VoiceCallSearchWebInput,
+  type VoiceCallSearchWebResult,
   type VoiceCallSendInput,
   type VoiceCallSendResult,
   type VoiceCallSnapshotInput,
@@ -140,8 +144,27 @@ export const personalVoiceCallLookupMemory = createEnvironmentRpcCommand(connect
   tag: WS_METHODS.personalVoiceCallsLookupMemory,
 });
 
+/**
+ * A fresh pass for a call that is already open, after Google's own Search ran
+ * out of quota. The server remembers it for later calls.
+ */
+export const personalVoiceCallRenewPass = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-voice-calls:renew-pass",
+  tag: WS_METHODS.personalVoiceCallsRenewPass,
+});
+
+/** The voice's own web search, used when the session has no Google Search. */
+export const personalVoiceCallSearchWeb = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-voice-calls:search-web",
+  tag: WS_METHODS.personalVoiceCallsSearchWeb,
+});
+
 export type {
   VoiceCallErrorCode,
+  VoiceCallRenewPassInput,
+  VoiceCallRenewPassResult,
+  VoiceCallSearchWebInput,
+  VoiceCallSearchWebResult,
   VoiceCallLookupMemoryInput,
   VoiceCallLookupMemoryResult,
   VoiceCallMemoryEntry,

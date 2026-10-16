@@ -38,6 +38,8 @@ import * as DateTime from "effect/DateTime";
 import { PersonalBotId } from "@t3tools/contracts";
 import type {
   VoiceCallFinishInput,
+  VoiceCallRenewPassResult,
+  VoiceCallSearchWebResult,
   VoiceCallSession,
   VoiceCallTranscriptEntry,
 } from "./voiceCallApi";
@@ -61,6 +63,7 @@ const SESSION: VoiceCallSession = {
   maxCallMinutes: 30,
   botName: "CTO",
   systemInstruction: "Speak as CTO.",
+  googleSearch: true,
   context: {
     botId: PersonalBotId.make("bot-cto"),
     botName: "CTO",
@@ -86,6 +89,12 @@ interface HarnessOverrides {
   readonly mic?: () => Promise<void>;
   /** What the server is asked when the voice wants the bot's state. */
   readonly refreshBotStatus?: () => Promise<void>;
+  /** The server remembered Google Search is out of quota: the start says so. */
+  readonly googleSearch?: boolean;
+  /** What `renewPass` answers; the default hands over a second pass. */
+  readonly renewResult?: () => VoiceApiResult<VoiceCallRenewPassResult>;
+  /** What `searchWeb` answers; the default is one short result. */
+  readonly searchResult?: () => Promise<VoiceApiResult<VoiceCallSearchWebResult>>;
 }
 
 interface Harness {
@@ -94,6 +103,8 @@ interface Harness {
     readonly finishes: VoiceCallFinishInput[];
     readonly finishAttempts: number;
     startCalls: number;
+    readonly renews: { callId: string; reason: string }[];
+    readonly searches: { callId: string; query: string }[];
   };
   readonly audio: CallAudioPort & {
     readonly cues: VoiceCue[];
@@ -122,14 +133,20 @@ function harness(overrides: HarnessOverrides = {}): Harness {
     } as BotStatusPort,
   };
   const counters = { startCalls: 0, finishAttempts: 0 };
+  const renews: { callId: string; reason: string }[] = [];
+  const searches: { callId: string; query: string }[] = [];
   const api: VoiceCallPort & {
     readonly sent: { text: string }[];
     readonly finishes: VoiceCallFinishInput[];
     readonly finishAttempts: number;
     readonly startCalls: number;
+    readonly renews: { callId: string; reason: string }[];
+    readonly searches: { callId: string; query: string }[];
   } = {
     sent,
     finishes,
+    renews,
+    searches,
     get startCalls() {
       return counters.startCalls;
     },
@@ -140,7 +157,44 @@ function harness(overrides: HarnessOverrides = {}): Harness {
       counters.startCalls += 1;
       return overrides.startFails === true
         ? ({ ok: false, code: "no_key", detail: "no key" } as const)
-        : ({ ok: true, value: SESSION } as const);
+        : ({
+            ok: true,
+            value: { ...SESSION, googleSearch: overrides.googleSearch ?? true },
+          } as const);
+    },
+    async renewPass(input: { callId: string; reason: "search_quota" }) {
+      renews.push({ callId: input.callId, reason: input.reason });
+      return (
+        overrides.renewResult?.() ??
+        ({
+          ok: true,
+          value: {
+            token: "pass-renewed",
+            tokenExpiresAt: DateTime.makeUnsafe("2026-10-15T18:30:00.000Z"),
+            newSessionExpiresAt: DateTime.makeUnsafe("2026-10-15T18:01:00.000Z"),
+            googleSearch: false,
+          },
+        } as const)
+      );
+    },
+    async searchWeb(input: { callId: string; query: string }) {
+      searches.push({ callId: input.callId, query: input.query });
+      return (
+        (await overrides.searchResult?.()) ??
+        ({
+          ok: true,
+          value: {
+            results: [
+              {
+                title: "Croydon weather",
+                snippet: "Light rain, 14 degrees.",
+                url: "https://weather.example/croydon",
+              },
+            ],
+            note: "",
+          },
+        } as const)
+      );
     },
     async send(input: { text: string }) {
       sent.push({ text: input.text });
@@ -291,7 +345,9 @@ describe("starting a call", () => {
   });
 
   it("names a spent free tier as out of quota, not as an unreachable Google", async () => {
-    const test = harness();
+    // No Google Search in this session, so there is nothing to drop and retry:
+    // a quota close here is the voice model's own.
+    const test = harness({ googleSearch: false });
     await test.controller.start();
     const socket = latestSocket();
     socket.open();
@@ -1065,5 +1121,316 @@ describe("the ring", () => {
     });
     test.controller.readLevel();
     expect(test.audio.levels).toEqual(["mic", "voice"]);
+  });
+});
+
+describe("Google Search out of quota", () => {
+  const QUOTA_REASON =
+    "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: h";
+
+  /** The tools the setup frame declared, by kind. */
+  const setupTools = (socket: FakeLiveSocket) => {
+    const setup = socket.sentOf("setup")[0]!.setup as {
+      tools: ReadonlyArray<Record<string, unknown>>;
+    };
+    const declarations = setup.tools.find((tool) => "functionDeclarations" in tool) as {
+      functionDeclarations: ReadonlyArray<{ name: string }>;
+    };
+    return {
+      googleSearch: setup.tools.some((tool) => "googleSearch" in tool),
+      functions: declarations.functionDeclarations.map((row) => row.name),
+    };
+  };
+
+  it("reconnects at once without Google Search and with search_web, showing no error", async () => {
+    const test = harness();
+    await test.controller.start();
+    const first = latestSocket();
+    first.open();
+    expect(setupTools(first).googleSearch).toBe(true);
+    expect(setupTools(first).functions).not.toContain("search_web");
+
+    // What the live key really answers: 1011 and Google's own words, 0.6 s in,
+    // before setupComplete.
+    first.close(1011, QUOTA_REASON);
+    // No error card, no ending: the call is just still connecting.
+    expect(test.last().state.status).toBe("connecting");
+    expect(test.last().state.errorCode).toBeNull();
+    expect(test.controller.ended).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(0);
+    // A fresh pass through the server's renewal, asked for once.
+    expect(test.api.renews).toEqual([{ callId: "call-1", reason: "search_quota" }]);
+    expect(test.api.startCalls).toBe(1);
+    const second = latestSocket();
+    expect(second).not.toBe(first);
+    expect(second.url).toContain("access_token=pass-renewed");
+    second.open();
+    const tools = setupTools(second);
+    expect(tools.googleSearch).toBe(false);
+    expect(tools.functions).toEqual([
+      "lookup_memory",
+      "search_web",
+      "send_to_bot",
+      "bot_status",
+      "latest_reply",
+      "end_call",
+    ]);
+
+    second.setupComplete();
+    expect(test.last().state.status).toBe("live");
+    expect(test.last().state.errorCode).toBeNull();
+    expect(test.audio.cues).toContain("connected");
+    // The call that worked leaves no failure behind it.
+    test.controller.end("hung_up");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.endReason).toBe("hung_up");
+    expect(test.api.finishes[0]!.detail).toBeUndefined();
+  });
+
+  it("retries after setup too, as long as the model has not said anything", async () => {
+    const test = harness();
+    const first = await connected(test);
+    expect(test.last().state.status).toBe("live");
+    first.close(1011, QUOTA_REASON);
+    expect(test.last().state.status).toBe("connecting");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.renews).toHaveLength(1);
+    const second = latestSocket();
+    second.open();
+    second.setupComplete();
+    expect(test.last().state.status).toBe("live");
+    expect(test.last().state.errorCode).toBeNull();
+  });
+
+  it("does not retry once the model has spoken: that is the ordinary reconnect", async () => {
+    const test = harness();
+    const first = await connected(test);
+    first.receive({
+      serverContent: {
+        modelTurn: { parts: [{ inlineData: { data: "AAAA", mimeType: "audio/pcm;rate=24000" } }] },
+      },
+    });
+    first.close(1011, QUOTA_REASON);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.renews).toHaveLength(0);
+    // The reconnect path opens a replacement with the same pass.
+    expect(latestSocket().url).toContain("access_token=pass-abc");
+  });
+
+  it("retries exactly once: a second quota close shows the out-of-quota card", async () => {
+    const test = harness();
+    await test.controller.start();
+    latestSocket().open();
+    latestSocket().close(1011, QUOTA_REASON);
+    await vi.advanceTimersByTimeAsync(0);
+    const second = latestSocket();
+    expect(second.url).toContain("pass-renewed");
+    second.open();
+    second.close(1011, QUOTA_REASON);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.renews).toHaveLength(1);
+    expect(test.last().state.status).toBe("error");
+    expect(test.last().state.errorCode).toBe("key_quota");
+    // The card carries Google's words, which tells the server the voice model
+    // itself ran out (it forgets that Search was blamed).
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.endReason).toBe("failed");
+    expect(test.api.finishes[0]!.detail).toContain("quota");
+  });
+
+  it("starts without Google Search when the server remembers it ran out, and does not retry", async () => {
+    const test = harness({ googleSearch: false });
+    await test.controller.start();
+    const first = latestSocket();
+    first.open();
+    const tools = setupTools(first);
+    expect(tools.googleSearch).toBe(false);
+    expect(tools.functions).toContain("search_web");
+    // With nothing to drop, a quota close is the voice model's own.
+    first.close(1011, QUOTA_REASON);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.renews).toHaveLength(0);
+    expect(test.last().state.errorCode).toBe("key_quota");
+  });
+
+  it("does not retry a bare 1011 with no quota words", async () => {
+    const test = harness();
+    await test.controller.start();
+    latestSocket().open();
+    latestSocket().close(1011, "");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.renews).toHaveLength(0);
+    expect(test.last().state.status).toBe("error");
+  });
+
+  it("does not retry a refused pass", async () => {
+    const test = harness();
+    await test.controller.start();
+    latestSocket().open();
+    latestSocket().close(1007, "Missing or malformed auth token");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.renews).toHaveLength(0);
+    expect(test.last().state.errorCode).toBe("key_rejected");
+  });
+
+  it("shows the card with the server's code when the fresh pass cannot be minted", async () => {
+    const test = harness({
+      renewResult: () => ({ ok: false, code: "key_quota", detail: "Gemini is out of quota" }),
+    });
+    await test.controller.start();
+    latestSocket().open();
+    latestSocket().close(1011, QUOTA_REASON);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.last().state.status).toBe("error");
+    expect(test.last().state.errorCode).toBe("key_quota");
+    expect(test.api.finishes).toHaveLength(1);
+  });
+
+  it("hanging up while the fresh pass is on its way opens nothing further", async () => {
+    const test = harness();
+    await test.controller.start();
+    latestSocket().open();
+    const sockets = FakeLiveSocket.instances.length;
+    latestSocket().close(1011, QUOTA_REASON);
+    test.controller.end("hung_up");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeLiveSocket.instances).toHaveLength(sockets);
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.endReason).toBe("hung_up");
+  });
+
+  it("gives the retry a full allowance of time to connect", async () => {
+    const test = harness({ connectTimeoutMs: 5_000 });
+    await test.controller.start();
+    latestSocket().open();
+    await vi.advanceTimersByTimeAsync(4_000);
+    latestSocket().close(1011, QUOTA_REASON);
+    await vi.advanceTimersByTimeAsync(0);
+    const second = latestSocket();
+    second.open();
+    // 4 s in, the first allowance would end in 1 s; the retry restarted it.
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(test.last().state.status).not.toBe("error");
+    second.setupComplete();
+    expect(test.last().state.status).toBe("live");
+  });
+});
+
+describe("search_web", () => {
+  const searchTool = (socket: FakeLiveSocket, id: string, query: unknown) =>
+    socket.receive({ toolCall: { functionCalls: [{ id, name: "search_web", args: { query } }] } });
+
+  /** A call that already runs without Google Search, with the pill on listening. */
+  async function withoutSearch(overrides: HarnessOverrides = {}) {
+    const test = harness({ googleSearch: false, ...overrides });
+    const socket = await connected(test);
+    return { test, socket };
+  }
+
+  it("shows the Searching pill, asks the server, and answers the voice with the results", async () => {
+    const { test, socket } = await withoutSearch();
+    searchTool(socket, "s1", "weather in Croydon today");
+    expect(test.last().state.pill).toBe("searching");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.searches).toEqual([{ callId: "call-1", query: "weather in Croydon today" }]);
+    expect(toolAnswers(socket)).toEqual([
+      {
+        id: "s1",
+        name: "search_web",
+        response: {
+          results: [
+            {
+              title: "Croydon weather",
+              snippet: "Light rain, 14 degrees.",
+              url: "https://weather.example/croydon",
+            },
+          ],
+        },
+        scheduling: "INTERRUPT",
+      },
+    ]);
+    expect(test.last().state.pill).toBe("listening");
+    // Nothing went into the chat.
+    expect(test.api.sent).toHaveLength(0);
+  });
+
+  it("passes the server's note along when there was nothing to find", async () => {
+    const { test, socket } = await withoutSearch({
+      searchResult: async () => ({
+        ok: true,
+        value: { results: [], note: "Nothing found for that. Say you could not find it." },
+      }),
+    });
+    searchTool(socket, "s1", "zzzz");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(toolAnswers(socket)[0]!.response).toEqual({
+      results: [],
+      note: "Nothing found for that. Say you could not find it.",
+    });
+  });
+
+  it("tells the voice there was no answer when the server call fails", async () => {
+    const { test, socket } = await withoutSearch({
+      searchResult: async () => ({ ok: false, code: "google_unavailable", detail: "offline" }),
+    });
+    searchTool(socket, "s1", "news");
+    await vi.advanceTimersByTimeAsync(0);
+    const answer = toolAnswers(socket)[0]!;
+    expect(answer.response.results).toEqual([]);
+    expect(String(answer.response.note)).toContain("could not find it");
+    expect(test.last().state.pill).toBe("listening");
+  });
+
+  it("never leaves the voice hanging: an answer that never comes is replaced after 8 s", async () => {
+    const { test, socket } = await withoutSearch({
+      searchResult: () => new Promise(() => undefined),
+    });
+    searchTool(socket, "s1", "news");
+    await vi.advanceTimersByTimeAsync(7_900);
+    expect(toolAnswers(socket)).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(toolAnswers(socket)).toHaveLength(1);
+    expect(String(toolAnswers(socket)[0]!.response.note)).toContain("could not find it");
+    expect(test.last().state.pill).toBe("listening");
+  });
+
+  it("answers once even if the late server answer arrives after the deadline", async () => {
+    let release: (value: VoiceApiResult<VoiceCallSearchWebResult>) => void = () => undefined;
+    const { socket } = await withoutSearch({
+      searchResult: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    });
+    searchTool(socket, "s1", "news");
+    await vi.advanceTimersByTimeAsync(8_100);
+    release({ ok: true, value: { results: [], note: "late" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(toolAnswers(socket)).toHaveLength(1);
+  });
+
+  it("answers an empty query without asking the server", async () => {
+    const { test, socket } = await withoutSearch();
+    searchTool(socket, "s1", "   ");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.searches).toHaveLength(0);
+    expect(toolAnswers(socket)[0]!.response).toEqual({
+      results: [],
+      note: "No question to search for.",
+    });
+  });
+
+  it("does not answer after the call has ended", async () => {
+    const { test, socket } = await withoutSearch({
+      searchResult: async () => {
+        return { ok: true, value: { results: [], note: "" } };
+      },
+    });
+    searchTool(socket, "s1", "news");
+    test.controller.end("hung_up");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(toolAnswers(socket)).toHaveLength(0);
   });
 });

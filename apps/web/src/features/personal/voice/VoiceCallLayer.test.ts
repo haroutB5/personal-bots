@@ -20,8 +20,19 @@ describe("errorCopyFor", () => {
     expect(copy?.body).toContain("stay on your laptop");
   });
 
-  it("names a spent free tier as out of quota", () => {
-    expect(errorCopyFor("key_quota", actions)?.title).toBe("Gemini is out of quota");
+  it("names the voice model as the part that ran out, and says search is not the cause", () => {
+    const copy = errorCopyFor("key_quota", actions);
+    expect(copy?.title).toBe("The Gemini voice is out of quota");
+    expect(copy?.body).toContain("voice model");
+    expect(copy?.body).toContain("Searching is not the problem");
+    // The old, vaguer wording is gone.
+    expect(`${copy?.title} ${copy?.body}`).not.toContain("paused this key");
+  });
+
+  it("does not blame Google for our own start limit", () => {
+    const copy = errorCopyFor("rate_limited", actions);
+    expect(copy?.title).toBe("Calls are busy right now");
+    expect(`${copy?.title} ${copy?.body}`).not.toContain("paused this key");
   });
 
   it("covers every code the call screen can render", () => {
