@@ -7,9 +7,13 @@ import { PersonalSettingsScreen } from "./PersonalSettingsScreen";
 const state = vi.hoisted(() => ({
   result: { _tag: "Success", value: { displayName: "Harout" } } as {
     readonly _tag: string;
-    readonly value?: { readonly displayName: string };
+    readonly value?: Record<string, unknown>;
     readonly cause?: unknown;
   },
+  /** What the profile query answers, so a test can set a saved wait. */
+  profile: { displayName: "Harout" } as Record<string, unknown>,
+  /** Every input the screen sent to the profile command, in order. */
+  calls: [] as unknown[],
   reload: vi.fn(),
   removedCount: 0,
   memoryWaiting: 0,
@@ -28,7 +32,12 @@ vi.mock("~/state/server", () => ({
   primaryServerProvidersAtom: {},
   serverEnvironment: { updateProvider: {} },
 }));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => state.result }));
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: () => async (payload: { readonly input: unknown }) => {
+    state.calls.push(payload.input);
+    return state.result;
+  },
+}));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to }: { children: React.ReactNode; to?: string }) => (
     <a href={to}>{children}</a>
@@ -43,7 +52,7 @@ vi.mock("./usePersonalBots", () => ({
   personalProviderRecheck: {},
   usePersonalEnvironmentId: () => "env-1",
   usePersonalBotsList: () => ({ data: { bots: [] } }),
-  usePersonalProfile: () => ({ data: { displayName: "Harout" } }),
+  usePersonalProfile: () => ({ data: state.profile }),
 }));
 vi.mock("./voice/voiceCallApi", () => ({
   // The voice section's own row: no key saved, so it draws its empty state.
@@ -87,6 +96,8 @@ afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
   state.result = { _tag: "Success", value: { displayName: "Harout" } };
+  state.profile = { displayName: "Harout" };
+  state.calls = [];
   state.reload.mockClear();
   state.removedCount = 0;
   state.memoryWaiting = 0;
@@ -339,6 +350,113 @@ describe("Settings auto-archive finished task chats", () => {
     });
     expect(findRow().props["aria-pressed"]).toBe(false);
     expect(stateLabel()).toBe("Off");
+  });
+});
+
+describe("Settings auto-archive wait", () => {
+  const findRow = () =>
+    renderer!.root
+      .findAllByType("button")
+      .find((button) =>
+        button
+          .findAllByType("span")
+          .some((span) => span.props.children === "Auto-archive finished task and routine chats"),
+      )!;
+  const field = () => renderer!.root.findByProps({ id: "personal-auto-archive-after" });
+  const fields = () => renderer!.root.findAllByProps({ id: "personal-auto-archive-after" });
+  const errorText = () =>
+    renderer!.root.findByProps({ id: "personal-auto-archive-after-error" }).props.children;
+  const hint = () =>
+    renderer!.root
+      .findAllByType("span")
+      .map((span) => span.props.children)
+      .find(
+        (child) =>
+          typeof child === "string" &&
+          child.startsWith("Finished task and routine-run chats archive after"),
+      );
+
+  const open = async (profile: Record<string, unknown>) => {
+    state.profile = { displayName: "Harout", ...profile };
+    stubWindow();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+  };
+
+  it("shows the saved wait while the toggle is On, and hides the row while Off", async () => {
+    await open({ autoArchiveTaskChatsAfterMinutes: 90 });
+    expect(field().props.value).toBe("90m");
+    expect(hint()).toContain("90 minutes");
+    expect(field().props.inputMode).toBe("text");
+    expect(field().props.autoCapitalize).toBe("off");
+    // 16px (text-base), or iOS zooms the page when the field is focused.
+    expect(String(field().props.className)).toContain("text-base");
+
+    state.result = {
+      _tag: "Success",
+      value: { displayName: "Harout", autoArchiveTaskChats: false },
+    };
+    await act(async () => {
+      findRow().props.onClick();
+    });
+    expect(fields()).toHaveLength(0);
+  });
+
+  it("shows 48h on a fresh root, and saves a typed wait on Enter, normalised", async () => {
+    await open({});
+    expect(field().props.value).toBe("48h");
+    expect(hint()).toContain("48 hours");
+
+    await act(async () => {
+      field().props.onChange({ target: { value: "120m" } });
+    });
+    expect(field().props.value).toBe("120m");
+
+    state.result = {
+      _tag: "Success",
+      value: { displayName: "Harout", autoArchiveTaskChatsAfterMinutes: 120 },
+    };
+    await act(async () => {
+      field().props.onKeyDown({ key: "Enter", preventDefault: () => undefined });
+    });
+    expect(state.calls).toContainEqual({ autoArchiveTaskChatsAfterMinutes: 120 });
+    expect(field().props.value).toBe("2h");
+    expect(hint()).toContain("2 hours");
+  });
+
+  it("shows the inline error for a bad value, saves nothing, and restores on blur", async () => {
+    await open({ autoArchiveTaskChatsAfterMinutes: 30 });
+    await act(async () => {
+      field().props.onChange({ target: { value: "10d" } });
+    });
+    await act(async () => {
+      field().props.onKeyDown({ key: "Enter", preventDefault: () => undefined });
+    });
+    expect(state.calls).toEqual([]);
+    expect(field().props.value).toBe("10d");
+    expect(field().props["aria-invalid"]).toBe(true);
+    expect(errorText()).toContain("5m to 720h");
+
+    // A blur puts the saved value back and keeps the error to explain why.
+    await act(async () => {
+      await field().props.onBlur();
+    });
+    expect(field().props.value).toBe("30m");
+    expect(errorText()).toContain("5m to 720h");
+  });
+
+  it("puts the saved value back on Escape, without saving", async () => {
+    await open({ autoArchiveTaskChatsAfterMinutes: 90 });
+    await act(async () => {
+      field().props.onChange({ target: { value: "3h" } });
+    });
+    await act(async () => {
+      field().props.onKeyDown({ key: "Escape" });
+    });
+    expect(field().props.value).toBe("90m");
+    expect(state.calls).toEqual([]);
   });
 });
 
