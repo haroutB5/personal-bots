@@ -677,16 +677,23 @@ export function ConversationScreen({
     step: null as string | null,
     elapsedMs: null as number | null,
     latestReply: null as string | null,
+    latestReplyMessageId: null as string | null,
+    latestReplyAtMs: null as number | null,
   });
   useEffect(() => {
     const latestReply = messages.findLast(
       (message) => message.role === "assistant" && message.text.trim().length > 0,
     );
+    const repliedAtMs = latestReply === undefined ? Number.NaN : Date.parse(latestReply.createdAt);
     voiceBotStatus.current = {
       state: conversationState,
       step: progressNote,
       elapsedMs: null,
       latestReply: latestReply?.text ?? null,
+      // The reply's identity, so a call can tell a new answer from the last
+      // turn's reply still sitting in the chat (Fable's re-check).
+      latestReplyMessageId: latestReply?.id ?? null,
+      latestReplyAtMs: Number.isFinite(repliedAtMs) ? repliedAtMs : null,
     };
   }, [conversationState, progressNote, messages]);
   useEffect(() => {

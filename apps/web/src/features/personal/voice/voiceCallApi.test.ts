@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
+import { ThreadId } from "@t3tools/contracts";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as Cause from "effect/Cause";
 
 import {
   CURATED_VOICES,
   MORE_VOICES,
   VOICE_CALL_SECRET_NAME,
+  finishedCallListInput,
   hasVoiceCallKey,
   isVoiceCallErrorCode,
   voiceApiKeyCheckLine,
@@ -21,6 +25,25 @@ describe("the error the server sent", () => {
     expect(voiceCallFailureCode({ error: { code: "key_quota" } })).toBe("key_quota");
     expect(voiceCallFailureCode({ cause: { error: { code: "rate_limited" } } })).toBe(
       "rate_limited",
+    );
+  });
+
+  it("reads the code out of the real AsyncResult failure the RPC client makes", () => {
+    // The exact shape the call screen is handed (QA bug 1, bug1-cause-probe):
+    // AsyncResult.failure(Cause) with the typed error in `cause.reasons[]`.
+    for (const code of [
+      "no_key",
+      "key_rejected",
+      "key_quota",
+      "sensitive_chat",
+      "not_found",
+    ] as const) {
+      const result = AsyncResult.failure(Cause.fail({ _tag: "PersonalVoiceCallsError", code }));
+      expect(voiceCallFailureCode(result)).toBe(code);
+    }
+    // A real transport defect with no typed error still reads as unreachable.
+    expect(voiceCallFailureCode(AsyncResult.failure(Cause.die(new Error("socket closed"))))).toBe(
+      "google_unavailable",
     );
   });
 
@@ -72,6 +95,19 @@ describe("the settings row's key line", () => {
       tone: "quiet",
       text: "Could not check the key right now",
     });
+  });
+});
+
+describe("the list a stored card refreshes", () => {
+  it("uses the chat key every screen reads, never the whole finish input", () => {
+    // QA bug 3: the whole finish input keyed a different atom, so nothing on
+    // screen refreshed and the new card only appeared after a reload.
+    const threadId = ThreadId.make("chat-1");
+    const finish = { threadId, callId: "call-1" } as unknown as Parameters<
+      typeof finishedCallListInput
+    >[0];
+    expect(finishedCallListInput(finish)).toEqual({ threadId });
+    expect(Object.keys(finishedCallListInput(finish))).toEqual(["threadId"]);
   });
 });
 

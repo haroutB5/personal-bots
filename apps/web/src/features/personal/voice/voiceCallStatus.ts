@@ -17,6 +17,8 @@
  *
  * @module features/personal/voice/voiceCallStatus
  */
+import * as DateTime from "effect/DateTime";
+
 import type { VoiceCallSnapshotResult } from "./voiceCallApi";
 import type { BotStatusPort } from "./voiceCallController";
 
@@ -111,11 +113,17 @@ export function observeCallTurn(input: {
  * the voice says "Working" rather than an internal code.
  */
 export function botStatusFromSnapshot(snapshot: VoiceCallSnapshotResult): BotStatusPort {
+  const replyAt = snapshot.latestReplyAt;
   return {
     state: snapshot.turnRunning ? "working" : "idle",
     label: snapshot.status.trim() === "" ? null : snapshot.status,
     step: snapshot.stepNote.trim() === "" ? null : snapshot.stepNote,
     elapsedMs: null,
     latestReply: snapshot.latestReply.trim() === "" ? null : snapshot.latestReply,
+    // The reply's own identity, so a turn that ends with no new text is not
+    // handed to the voice as this send's answer (Fable's re-check).
+    latestReplyMessageId:
+      snapshot.latestReplyMessageId.trim() === "" ? null : snapshot.latestReplyMessageId,
+    latestReplyAtMs: replyAt === null ? null : DateTime.toEpochMillis(replyAt),
   };
 }

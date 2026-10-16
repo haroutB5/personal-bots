@@ -303,11 +303,15 @@ describe("starting a call", () => {
     );
     expect(test.last().state.status).toBe("error");
     expect(test.last().state.errorCode).toBe("key_quota");
-    vi.advanceTimersByTime(60_000);
-    expect(test.api.finishes).toHaveLength(0);
+    // QA bug 2: the lease closes even though the call never connected, or its
+    // row holds both restart gates until it expires.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.callId).toBe("call-1");
+    expect(test.api.finishes[0]!.endReason).toBe("failed");
   });
 
-  it("leaves no card when the call never connects", async () => {
+  it("closes the lease for a call Google refused, instead of leaking it", async () => {
     const test = harness();
     await test.controller.start();
     const socket = latestSocket();
@@ -315,8 +319,10 @@ describe("starting a call", () => {
     socket.close(1007, "Missing or malformed auth token");
     expect(test.last().state.status).toBe("error");
     expect(test.last().state.errorCode).toBe("key_rejected");
-    vi.advanceTimersByTime(60_000);
-    expect(test.api.finishes).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.callId).toBe("call-1");
+    expect(test.api.finishes[0]!.endReason).toBe("failed");
   });
 
   it("gives up as google_unavailable when the session never answers in time", async () => {
@@ -327,7 +333,9 @@ describe("starting a call", () => {
     vi.advanceTimersByTime(5_100);
     expect(test.last().state.status).toBe("error");
     expect(test.last().state.errorCode).toBe("google_unavailable");
-    expect(test.api.finishes).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.callId).toBe("call-1");
   });
 });
 
@@ -452,6 +460,77 @@ describe("send_to_bot and the Undo card", () => {
           status: "sent",
           messageId: "m-1",
           reply: "Deployed. Matchday is on 1.67.",
+        },
+        scheduling: "WHEN_IDLE",
+      },
+    ]);
+  });
+
+  it("never hands over the previous turn's reply as this send's answer", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    // The chat already holds the last turn's reply when the send goes out.
+    test.status.current = {
+      state: "working",
+      step: "Deploying",
+      elapsedMs: 1_000,
+      latestReply: "Shipped 1.66.53.",
+      latestReplyMessageId: "m-old",
+      latestReplyAtMs: Date.parse("2026-10-15T17:00:00.000Z"),
+    };
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 10);
+    // The turn ends with no new text: the same message is still the newest.
+    test.status.current = {
+      state: "idle",
+      step: null,
+      elapsedMs: null,
+      latestReply: "Shipped 1.66.53.",
+      latestReplyMessageId: "m-old",
+      latestReplyAtMs: Date.parse("2026-10-15T17:00:00.000Z"),
+    };
+    test.controller.botTurnEnded();
+    expect(toolAnswers(socket)).toEqual([
+      {
+        id: "tc-1",
+        name: "send_to_bot",
+        response: { ok: true, status: "sent", messageId: "m-1" },
+        scheduling: "WHEN_IDLE",
+      },
+    ]);
+  });
+
+  it("hands over a reply whose own message is new", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.status.current = {
+      state: "working",
+      step: "Deploying",
+      elapsedMs: 1_000,
+      latestReply: "Shipped 1.66.53.",
+      latestReplyMessageId: "m-old",
+      latestReplyAtMs: Date.parse("2026-10-15T17:00:00.000Z"),
+    };
+    sendTool(socket, "tc-1", "Deploy it");
+    await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 10);
+    test.status.current = {
+      state: "idle",
+      step: null,
+      elapsedMs: null,
+      latestReply: "Shipped 1.66.54.",
+      latestReplyMessageId: "m-new",
+      latestReplyAtMs: Date.parse("2026-10-15T17:01:00.000Z"),
+    };
+    test.controller.botTurnEnded();
+    expect(toolAnswers(socket)).toEqual([
+      {
+        id: "tc-1",
+        name: "send_to_bot",
+        response: {
+          ok: true,
+          status: "sent",
+          messageId: "m-1",
+          reply: "Shipped 1.66.54.",
         },
         scheduling: "WHEN_IDLE",
       },
@@ -773,9 +852,13 @@ describe("lifecycle", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(test.controller.ended).toBe(true);
     expect(test.audio.closeCalls()).toBeGreaterThanOrEqual(1);
-    // Nothing was stored: the call never connected.
+    // The lease closes even though the call never connected: the card is
+    // stored and its row released, or it holds both restart gates until it
+    // expires (QA bug 2).
     expect(test.last().state.status).toBe("error");
-    expect(test.api.finishes).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.endReason).toBe("hung_up");
   });
 
   it("disposes the socket on unmount", async () => {

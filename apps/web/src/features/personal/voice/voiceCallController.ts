@@ -122,6 +122,14 @@ export interface BotStatusPort {
   readonly elapsedMs: number | null;
   /** The bot's latest reply text in the chat, or null. */
   readonly latestReply: string | null;
+  /**
+   * That reply's own message id and time, when the source knows them. A turn
+   * that ends with no new text leaves the previous reply in place, so the
+   * engine only hands the voice a reply whose message really is new (Fable's
+   * re-check): without this it replayed the last turn's answer.
+   */
+  readonly latestReplyMessageId?: string | null;
+  readonly latestReplyAtMs?: number | null;
 }
 
 export interface VoiceCallSnapshot {
@@ -220,6 +228,12 @@ interface OpenReply {
   readonly toolCallId: string;
   readonly messageId: string;
   readonly sentAtMs: number;
+  /**
+   * The chat's latest reply message when this send was posted, so a turn that
+   * ends with no new text is never handed over as this send's answer.
+   */
+  readonly replyMessageIdBefore: string | null;
+  readonly replyAtBeforeMs: number | null;
   /** True once the bot was really seen working on it. */
   sawWorking: boolean;
 }
@@ -317,6 +331,8 @@ export function createVoiceCallController(
       step: redactForVoice(status.step) || null,
       elapsedMs: status.elapsedMs,
       latestReply: redactForVoice(status.latestReply) || null,
+      latestReplyMessageId: status.latestReplyMessageId ?? null,
+      latestReplyAtMs: status.latestReplyAtMs ?? null,
     };
   };
 
@@ -331,11 +347,16 @@ export function createVoiceCallController(
   /**
    * One call card per call, with the reason, whatever ended it, retried until
    * the server acknowledges it: a brief offline or a locked phone must not cost
-   * the card (review finding 7). A call that never connected leaves nothing in
-   * the chat, so nothing is stored for it.
+   * the card (review finding 7).
+   *
+   * The lease is closed by `finish` alone, so this runs for a call that never
+   * connected too (cancelled while connecting, or refused by Google with
+   * 1007/1011): returning early left its row holding both restart gates until
+   * it expired (QA bug 2). `session` is the only hard requirement, because
+   * without a call id there is nothing on the server to close.
    */
   const finish = (reason: VoiceEndReason) => {
-    if (pendingFinish !== null || session === null || !everConnected) return;
+    if (pendingFinish !== null || session === null) return;
     pendingFinish = {
       threadId: decodeThreadId(options.threadId),
       callId: session.callId,
@@ -514,18 +535,43 @@ export function createVoiceCallController(
     options.onSent?.({ messageId: result.value.messageId, text: send.text });
     // The card in the chat counts what went, so the snapshot has to catch up.
     publish({});
+    // What the chat already held before this send: the reply handed over at the
+    // end of the turn must be a different message, or it is the last turn's.
+    const before = safeStatus();
     // The answer carries the real id, and waits for the bot's turn when there
     // is one to wait for, so the voice can read the reply the moment it lands.
     openReply = {
       toolCallId: send.toolCallId,
       messageId: result.value.messageId,
       sentAtMs: now(),
+      replyMessageIdBefore: before.latestReplyMessageId,
+      replyAtBeforeMs: before.latestReplyAtMs,
       sawWorking: false,
     };
-    if (safeStatus().state === "working") {
+    if (before.state === "working") {
       openReply.sawWorking = true;
       waitingSinceMs ??= now();
     }
+  };
+
+  /**
+   * True only when the chat holds a reply this send did not already have. A
+   * turn that ends with no new text leaves the previous reply in the chat, and
+   * handing that over claims work the bot never did (Fable's re-check).
+   */
+  const replyIsNew = (delivery: OpenReply, status: ReturnType<typeof safeStatus>): boolean => {
+    if (status.latestReply === null || status.latestReply.length === 0) return false;
+    const id = status.latestReplyMessageId;
+    if (id !== null && id.length > 0 && delivery.replyMessageIdBefore !== null) {
+      return id !== delivery.replyMessageIdBefore;
+    }
+    const atMs = status.latestReplyAtMs;
+    if (atMs !== null && delivery.replyAtBeforeMs !== null) {
+      return atMs > delivery.replyAtBeforeMs;
+    }
+    // A source that cannot name the reply: keep the old behaviour rather than
+    // swallow a real answer.
+    return true;
   };
 
   /** Hands the voice the send result, with the reply when there is one. */
@@ -534,7 +580,8 @@ export function createVoiceCallController(
     if (delivery === null) return;
     openReply = null;
     waitingSinceMs = null;
-    const reply = withReply ? safeStatus().latestReply : null;
+    const status = safeStatus();
+    const reply = withReply && replyIsNew(delivery, status) ? status.latestReply : null;
     answerTool(
       delivery.toolCallId,
       "send_to_bot",

@@ -269,11 +269,17 @@ export const make = Effect.gen(function* () {
    * A chat that has had a site the owner marked sensitive open sends nothing
    * to Google and reads nothing out: the call fails closed rather than pushing
    * the private things on that page through a voice session.
+   *
+   * An unreadable answer counts as exposed: a failed read must never let this
+   * chat's text reach Google, so every caller refuses exactly as it does for a
+   * real sensitive site. The real read's error channel is `never` (its failures
+   * arrive as defects), so this catches the whole cause: `orElseSucceed` would
+   * have recovered nothing and let the defect through.
    */
   const sensitiveExposure = (threadId: ThreadId) =>
     browser
       .sensitiveExposure(threadId)
-      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      .pipe(Effect.catchCause(() => Effect.succeed(["unreadable"] as ReadonlyArray<string>)));
 
   const refuseSensitiveChat = (threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -892,11 +898,18 @@ export const make = Effect.gen(function* () {
       // answered with the wrong chat's words.
       const atMs = yield* nowMs;
       pruneActiveCalls(atMs);
+      // The call must be one this process minted, for this very chat. Without
+      // the lease a restart would leave the phone polling with a call id the
+      // server no longer knows, and the old fallback answered it by reading
+      // whatever chat the client named.
       const lease = activeCalls.get(input.callId);
-      if (lease !== undefined && lease.threadId !== input.threadId) {
+      if (lease === undefined) {
+        return yield* fail("not_found", "That call is not open any more.");
+      }
+      if (lease.threadId !== input.threadId) {
         return yield* fail("not_found", "That call belongs to another chat.");
       }
-      const threadId = lease?.threadId ?? input.threadId;
+      const threadId = lease.threadId;
       const facts = yield* bots
         .getChatFacts({ threadId })
         .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -963,7 +976,9 @@ export const make = Effect.gen(function* () {
         .slice(0, VOICE_CALL_LOOKUP_MEMORY_MAX)
         .map((entry) => ({
           kind: String(entry.kind),
-          content: entry.content.slice(0, VOICE_CALL_LOOKUP_MEMORY_CHARS),
+          // The voice reads these aloud, and they leave the laptop for Google:
+          // the same redaction every other Google-bound string goes through.
+          content: redactSecrets(entry.content).slice(0, VOICE_CALL_LOOKUP_MEMORY_CHARS),
         }));
       yield* Effect.logInfo("personal voice call memory lookup", {
         threadId: chat.threadId,

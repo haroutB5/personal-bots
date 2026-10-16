@@ -4,6 +4,7 @@
  * bot finishing its turn.
  */
 import { describe, expect, it, vi } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 
 import type { VoiceCallSnapshotResult } from "./voiceCallApi";
 import type { BotStatusPort } from "./voiceCallController";
@@ -119,7 +120,7 @@ describe("createVoiceCallStatusWatch", () => {
 });
 
 describe("botStatusFromSnapshot", () => {
-  it("maps the server's own words and its turn flag", () => {
+  it("maps the server's own words, its turn flag and the reply's identity", () => {
     expect(
       botStatusFromSnapshot(
         snapshot({
@@ -127,6 +128,8 @@ describe("botStatusFromSnapshot", () => {
           stepNote: "Running the gates",
           turnRunning: true,
           latestReply: "Shipped 1.66.52.",
+          latestReplyMessageId: "m-9",
+          latestReplyAt: DateTime.makeUnsafe("2026-10-15T17:00:00.000Z"),
         }),
       ),
     ).toEqual({
@@ -135,6 +138,8 @@ describe("botStatusFromSnapshot", () => {
       step: "Running the gates",
       elapsedMs: null,
       latestReply: "Shipped 1.66.52.",
+      latestReplyMessageId: "m-9",
+      latestReplyAtMs: Date.parse("2026-10-15T17:00:00.000Z"),
     });
   });
 
@@ -145,6 +150,8 @@ describe("botStatusFromSnapshot", () => {
       step: null,
       elapsedMs: null,
       latestReply: null,
+      latestReplyMessageId: null,
+      latestReplyAtMs: null,
     });
   });
 

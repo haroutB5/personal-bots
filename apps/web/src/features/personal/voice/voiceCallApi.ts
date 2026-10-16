@@ -25,6 +25,7 @@ import {
   type VoiceCallLookupMemoryInput,
   type VoiceCallLookupMemoryResult,
   type VoiceCallMemoryEntry,
+  type VoiceCallListInput,
   type VoiceCallListResult,
   type VoiceCallRecord,
   type VoiceCallSendInput,
@@ -109,10 +110,23 @@ export const personalVoiceCallFinish = createEnvironmentRpcCommand(connectionAto
   onSuccess: (target, registry) =>
     Effect.sync(() =>
       registry.refresh(
-        personalVoiceCallsList({ environmentId: target.environmentId, input: target.input }),
+        personalVoiceCallsList({
+          environmentId: target.environmentId,
+          input: finishedCallListInput(target.input),
+        }),
       ),
     ),
 });
+
+/**
+ * The list query a stored card refreshes: the CHAT's card list, keyed by
+ * `{ threadId }` exactly as every screen reads it. The whole `finish` input
+ * would key a different atom, so the refresh landed on a query nothing reads
+ * and the new card only appeared after a reload (QA bug 3).
+ */
+export function finishedCallListInput(input: VoiceCallFinishInput): VoiceCallListInput {
+  return { threadId: input.threadId };
+}
 
 /** Proves the saved key can open a Live session (no audio billed). */
 export const personalVoiceCallCheckKey = createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -204,12 +218,23 @@ export function isVoiceCallErrorCode(value: unknown): value is VoiceCallAnyError
 export function voiceCallFailureCode(failure: unknown): VoiceCallAnyErrorCode {
   const seen = new Set<unknown>();
   const walk = (value: unknown, depth: number): VoiceCallAnyErrorCode | null => {
-    if (depth > 4 || value === null || typeof value !== "object" || seen.has(value)) return null;
+    if (depth > 6 || value === null || typeof value !== "object" || seen.has(value)) return null;
     seen.add(value);
+    // The RPC client hands the screen an AsyncResult failure whose Cause holds
+    // the typed error in `reasons[]`. The old walk never entered an array, so
+    // every code (no_key, key_rejected, key_quota, sensitive_chat, not_found)
+    // read as an unreachable Google (QA bug 1).
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const found = walk(entry, depth + 1);
+        if (found !== null) return found;
+      }
+      return null;
+    }
     const record = value as Record<string, unknown>;
     const code = record.code ?? record.errorCode;
     if (isVoiceCallErrorCode(code)) return code;
-    for (const key of ["error", "cause", "failure", "reason", "value"]) {
+    for (const key of ["error", "cause", "failure", "reason", "reasons", "value"]) {
       const found = walk(record[key], depth + 1);
       if (found !== null) return found;
     }

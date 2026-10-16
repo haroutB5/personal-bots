@@ -127,6 +127,10 @@ const makeHarness = (options: {
   readonly instructions?: string;
   /** The owner's standing rule for it, when a test wants to plant something in it. */
   readonly preference?: string;
+  /** Make the sensitive-site read die, as a broken browser service would. */
+  readonly sensitiveFails?: boolean;
+  /** The one memory entry a lookup_memory query finds. */
+  readonly memoryContent?: string;
 }) => {
   const key: PersonalSessionAccess.PersonalSessionSecret = options.secret ?? {
     name: "GEMINI_API_KEY",
@@ -163,13 +167,22 @@ const makeHarness = (options: {
               content: options.preference ?? "Talk plainly and lead with the outcome.",
             }),
           ]),
-        search: () => Effect.succeed([logOnlyEntry({ content: "Harout lives in north London." })]),
+        search: () =>
+          Effect.succeed([
+            logOnlyEntry({
+              content: options.memoryContent ?? "Harout lives in north London.",
+            }),
+          ]),
       }),
     ),
     Layer.provideMerge(
       Layer.mock(PersonalBrowser.PersonalBrowser)({
         // No sensitive site has been open in this chat unless the test says so.
-        sensitiveExposure: () => Effect.succeed(options.sensitive ?? []),
+        // A failed read is a die, as the real store can produce on a locked db.
+        sensitiveExposure: () =>
+          options.sensitiveFails === true
+            ? Effect.die(new Error("exposure read failed"))
+            : Effect.succeed(options.sensitive ?? []),
       }),
     ),
     Layer.provideMerge(
@@ -475,6 +488,28 @@ describe("PersonalVoiceCallService.lookupMemory", () => {
     );
   });
 
+  it.effect("redacts a key the saved note holds before the voice reads it out", () => {
+    const calls: Array<HttpCall> = [];
+    const key = "sk-live-ABCDEFGHIJKLMNOPQRSTUVWX";
+    return withService(
+      { calls, dispatched: [], memoryContent: `My login key is ${key}, keep it` },
+      (service) =>
+        Effect.gen(function* () {
+          const started = yield* service.start({ threadId: CTO_CHAT });
+          const found = yield* service.lookupMemory({
+            threadId: CTO_CHAT,
+            callId: started.callId,
+            query: "what is my key",
+          });
+          expect(found.entries).toHaveLength(1);
+          // The entry goes to Google and is spoken aloud: it goes through the
+          // same redaction as every other Google-bound string.
+          expect(found.entries[0]?.content).not.toContain(key);
+          expect(found.entries[0]?.content).toContain("[redacted]");
+        }),
+    );
+  });
+
   it.effect("refuses a chat that has had a sensitive site open", () => {
     const calls: Array<HttpCall> = [];
     const sensitive: Array<string> = [];
@@ -535,6 +570,18 @@ describe("PersonalVoiceCallService sensitive chats (Astra's probe, permanent)", 
         );
         expect(error.code).toBe("sensitive_chat");
         expect(turnStarts(dispatched)).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.effect("treats an exposure read that dies as exposed, never as clear", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [], sensitiveFails: true }, (service) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(service.start({ threadId: CTO_CHAT }));
+        expect(error.code).toBe("sensitive_chat");
+        // Fail closed: nothing was minted and nothing reached Google.
+        expect(calls).toHaveLength(0);
       }),
     );
   });
@@ -859,6 +906,21 @@ describe("PersonalVoiceCallService.snapshot", () => {
         const started = yield* service.start({ threadId: CTO_CHAT });
         const error = yield* Effect.flip(
           service.snapshot({ threadId: OTHER_CHAT, callId: started.callId }),
+        );
+        expect(error.code).toBe("not_found");
+      }),
+    );
+  });
+
+  it.effect("refuses a call this process never minted, so a restart ends the call", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        // This is the id the phone still holds after the laptop restarted: the
+        // in-memory lease (and with it the call) is gone, so the poll must be
+        // refused rather than answered from whatever chat the client named.
+        const error = yield* Effect.flip(
+          service.snapshot({ threadId: CTO_CHAT, callId: "call-from-before-the-restart" }),
         );
         expect(error.code).toBe("not_found");
       }),
