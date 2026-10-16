@@ -16,13 +16,25 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { BotAvatarShape } from "../BotAvatar";
 import { CallBar } from "./CallBar";
-import type { VoiceCallUiErrorCode } from "./callState";
+import type { VoiceCallStatus, VoiceCallUiErrorCode } from "./callState";
 import type { VoiceCallTranscriptEntry } from "./voiceCallApi";
 import { VoiceCallScreen, type VoiceCallErrorCopy } from "./VoiceCallScreen";
 import { useVoiceCall, useVoiceCallSnapshot } from "./VoiceCallProvider";
 
 /** How long the ended screen holds before it slides away (spec 10). */
 export const VOICE_ENDED_HOLD_MS = 1_200;
+
+/**
+ * What the top-left chevron does for one call state.
+ *
+ * A running call minimises to the bar. A call that has failed or ended has
+ * nothing to minimise to: the chevron leaves the call screen for the chat, the
+ * same as every error card's Close, so a dead call is never a screen the owner
+ * has to kill the app to escape (16 Oct 2026).
+ */
+export function chevronAction(status: VoiceCallStatus): "minimise" | "leave" {
+  return status === "error" || status === "ended" ? "leave" : "minimise";
+}
 
 export function VoiceCallLayer(): JSX.Element | null {
   const voice = useVoiceCall();
@@ -56,6 +68,23 @@ export function VoiceCallLayer(): JSX.Element | null {
     });
   };
 
+  /**
+   * Leaving a call that is over. Every error card's Close and the chevron on a
+   * failed or ended call land here: the call ends and the chat the call came
+   * from is in front of the owner again, never a screen he has to kill the app
+   * to escape (16 Oct 2026: the mic card offered "Try again" and nothing else).
+   */
+  const closeCall = () => {
+    const target = call;
+    voice.end();
+    if (target !== null) {
+      void navigate({
+        to: "/bots/$botId/$threadId",
+        params: { botId: target.botId, threadId: target.threadId },
+      });
+    }
+  };
+
   const error = errorCopyFor(snapshot.state.errorCode, {
     onSettings: () => {
       voice.end();
@@ -75,7 +104,7 @@ export function VoiceCallLayer(): JSX.Element | null {
         avatarColor: call.avatarColor,
       });
     },
-    onClose: () => voice.end(),
+    onClose: closeCall,
   });
 
   if (call.minimised && snapshot.state.status !== "error") {
@@ -110,7 +139,16 @@ export function VoiceCallLayer(): JSX.Element | null {
       quietMinutes={snapshot.quietMinutes}
       callSession={voice.session()}
       error={error}
-      onMinimise={() => voice.setMinimised(true)}
+      onMinimise={() => {
+        // A call that has already failed or ended has nothing to minimise to:
+        // the chevron leaves for the chat, exactly like Close. Anything else
+        // minimises to the bar with the call still running.
+        if (chevronAction(snapshot.state.status) === "leave") {
+          closeCall();
+          return;
+        }
+        voice.setMinimised(true);
+      }}
       onToggleCaptions={() => voice.setCaptionsOn(!voice.captionsOn)}
       onToggleMute={voice.toggleMute}
       onEnd={() => voice.end("hung_up")}
@@ -132,6 +170,25 @@ export function errorCopyFor(
   },
 ): VoiceCallErrorCopy | null {
   if (code === null) return null;
+  const copy = baseErrorCopyFor(code, actions);
+  // Every card can leave the call. A card's own best action stays primary
+  // (Settings, the bot's page, Try again) and Close rides second; where leaving
+  // is the only useful thing to do, Close is primary and needs no second
+  // button. This is structural on purpose: a failure added later cannot ship a
+  // screen the owner has to kill the app to escape (16 Oct 2026).
+  if (copy.primary === "Close") return copy;
+  return { ...copy, secondary: "Close", onSecondary: actions.onClose };
+}
+
+function baseErrorCopyFor(
+  code: VoiceCallUiErrorCode,
+  actions: {
+    readonly onSettings: () => void;
+    readonly onBotPage: () => void;
+    readonly onRetry: () => void;
+    readonly onClose: () => void;
+  },
+): VoiceCallErrorCopy {
   switch (code) {
     case "no_key":
       return {
@@ -190,6 +247,20 @@ export function errorCopyFor(
         body: "The voice model's free allowance on this key is used up for now. Searching is not the problem. Try again later, or check the plan at aistudio.google.com.",
         primary: "Close",
         onPrimary: actions.onClose,
+      };
+    case "mic_blocked":
+      // The browser refused the microphone itself (WebKit's NotAllowedError,
+      // the failure that killed every call on the iPhone on 16 Oct 2026). Only
+      // the owner can undo a denied permission, and only in iPhone Settings, so
+      // leaving is the primary action; Try again is there for the second
+      // attempt once it is allowed.
+      return {
+        title: "Microphone blocked",
+        body: "Allow the microphone for Bots in iPhone Settings, then try again.",
+        primary: "Close",
+        onPrimary: actions.onClose,
+        secondary: "Try again",
+        onSecondary: actions.onRetry,
       };
     case "google_unavailable":
       return {

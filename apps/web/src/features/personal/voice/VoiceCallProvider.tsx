@@ -44,6 +44,7 @@ import {
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { createCallAudioContext } from "./callAudioContext";
+import { type MicrophoneRequest, requestMicrophone } from "./callMicrophone";
 import type { CallAudio, CallAudioPort } from "./callAudio";
 import type { CreateLiveSocket } from "./liveClient";
 import type { BotStatusPort, VoiceCallController, VoiceCallSnapshot } from "./voiceCallController";
@@ -171,6 +172,36 @@ export function preloadVoiceCall(): void {
   void import("./voiceCallApi");
 }
 
+/** What a tap has already done for the call it is about to start. */
+export interface VoiceCallTap {
+  /** The call's AudioContext, or null on a device with no Web Audio. */
+  readonly context: AudioContext | null;
+  /** The microphone request, made in this very task. */
+  readonly mic: MicrophoneRequest;
+}
+
+/**
+ * Everything a call must do inside the tap, before the first `await`.
+ *
+ * Two iOS rules live here and both are load-bearing:
+ * - the AudioContext is created and resumed here, because a page may only make
+ *   sound from a gesture;
+ * - `getUserMedia` is called here too, because WebKit refuses it once the
+ *   gesture's task has ended (NotAllowedError, no prompt). The lazy chunks and
+ *   the pass mint both await, so asking later is exactly what killed every
+ *   call on the iPhone on 16 Oct 2026 (1.66.55).
+ *
+ * Nothing in this function may await. `existing` reuses a context a previous
+ * attempt already made, so a retry cannot leak contexts.
+ */
+export function openVoiceCallTap(existing: AudioContext | null = null): VoiceCallTap {
+  const context = existing ?? createCallAudioContext();
+  if (context !== null && context.state !== "running") {
+    void context.resume().catch(() => undefined);
+  }
+  return { context, mic: requestMicrophone() };
+}
+
 interface WakeLockSentinelLike {
   release(): Promise<void>;
   readonly released: boolean;
@@ -214,6 +245,8 @@ export function VoiceCallProvider({
   const activeRef = useRef<ActiveVoiceCall | null>(null);
   const audioRef = useRef<CallAudio | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
+  /** The tap's own microphone request, kept until the call is over. */
+  const micRef = useRef<MicrophoneRequest | null>(null);
   /**
    * One bot-status source per thread, registered by whichever chat screens are
    * mounted. The call reads only its own thread's, and keeps the last answer it
@@ -350,6 +383,11 @@ export function VoiceCallProvider({
       engineRef.current = null;
       audioRef.current = null;
       contextRef.current = null;
+      // The engine's dispose already closes the audio, which stops the tap's
+      // microphone request too. This covers the paths where no engine was ever
+      // built, so a closed call can never hold a live track.
+      micRef.current?.stop();
+      micRef.current = null;
       activeRef.current = null;
       startingRef.current = false;
       workingRef.current = false;
@@ -370,14 +408,13 @@ export function VoiceCallProvider({
       // two passes (review finding 4).
       if (engineRef.current !== null || startingRef.current) return;
       startingRef.current = true;
-      // iOS: the context must be made here, in the tap, before anything awaits.
-      if (contextRef.current === null) {
-        contextRef.current = createCallAudioContext();
-      }
-      const context = contextRef.current;
-      if (context !== null && context.state !== "running") {
-        void context.resume().catch(() => undefined);
-      }
+      // The whole tap: the AudioContext and the microphone request. Everything
+      // below this line awaits, and WebKit refuses a getUserMedia that runs
+      // after the gesture's task, so this must stay first (16 Oct 2026).
+      const tap = openVoiceCallTap(contextRef.current);
+      contextRef.current = tap.context;
+      const context = tap.context;
+      micRef.current = tap.mic;
       const startedAtMs = Date.now();
       const active: ActiveVoiceCall = { ...input, startedAtMs, minimised: false };
       activeRef.current = active;
@@ -389,6 +426,10 @@ export function VoiceCallProvider({
       } catch {
         startingRef.current = false;
         activeRef.current = null;
+        micRef.current = null;
+        // Nothing will ever use this stream: stop it rather than leave a live
+        // microphone behind a screen that closed itself.
+        tap.mic.stop();
         setCall(null);
         return;
       }
@@ -396,15 +437,29 @@ export function VoiceCallProvider({
       // Kept for the call's own status poll: the snapshot RPC is the only thing
       // the voice reads the bot from.
       voiceApiRef.current = voiceApi;
-      const [{ createCallAudio }, { createVoiceCallController }] = await Promise.all([
-        import("./callAudio"),
-        import("./voiceCallController"),
-      ]);
+      let createCallAudio: (typeof import("./callAudio"))["createCallAudio"];
+      let createVoiceCallController: (typeof import("./voiceCallController"))["createVoiceCallController"];
+      try {
+        [{ createCallAudio }, { createVoiceCallController }] = await Promise.all([
+          import("./callAudio"),
+          import("./voiceCallController"),
+        ]);
+      } catch {
+        // A chunk that will not load is a call that cannot start: the tap's
+        // microphone still has to be let go.
+        startingRef.current = false;
+        activeRef.current = null;
+        micRef.current = null;
+        tap.mic.stop();
+        setCall(null);
+        return;
+      }
       if (!startingRef.current) return;
 
       const audio = createCallAudio({
         context,
         onFrame: (pcm) => engineRef.current?.sendAudio(pcm),
+        mic: tap.mic,
       });
       audioRef.current = audio;
       /** Every server call: silent on failure, the engine renders the code. */
@@ -674,6 +729,8 @@ export function VoiceCallProvider({
       engineRef.current = null;
       audioRef.current = null;
       contextRef.current = null;
+      micRef.current?.stop();
+      micRef.current = null;
       activeRef.current = null;
       startingRef.current = false;
       serverStatusRef.current = null;

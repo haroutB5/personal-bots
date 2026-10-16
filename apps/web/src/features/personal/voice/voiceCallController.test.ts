@@ -1434,3 +1434,104 @@ describe("search_web", () => {
     expect(toolAnswers(socket)).toHaveLength(0);
   });
 });
+
+/**
+ * The microphone, on iOS (16 Oct 2026).
+ *
+ * The tap handler asks the browser for the microphone itself, in the very task
+ * that handled the tap, because WebKit refuses a `getUserMedia` that runs after
+ * an `await`. These cases hold the engine to the rest of it: the microphone is
+ * started in parallel with the pass, a refusal is named as its own failure, and
+ * a call that never happens leaves no live track behind.
+ */
+describe("the microphone", () => {
+  /** The error WebKit raises when the gesture is over, or permission was denied. */
+  const refusal = () =>
+    Object.assign(
+      new Error(
+        "The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.",
+      ),
+      { name: "NotAllowedError" },
+    );
+
+  it("starts the microphone in parallel with the pass, not after it", async () => {
+    // The tap handler asked the browser for the microphone itself; the engine
+    // must consume that request while the pass is still in flight, so the
+    // permission prompt is already up and the capture is running the moment
+    // Google answers.
+    const gate: { release: () => void } = { release: () => undefined };
+    const mic = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    let micAsked = false;
+    let releaseMint: () => void = () => undefined;
+    const test = harness({
+      mic: () => {
+        micAsked = true;
+        return mic;
+      },
+    });
+    const minted = new Promise<VoiceApiResult<VoiceCallSession>>((resolve) => {
+      releaseMint = () => resolve({ ok: true, value: SESSION });
+    });
+    test.api.start = () => minted;
+
+    void test.controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(micAsked).toBe(true);
+    expect(test.audio.closeCalls()).toBe(0);
+    releaseMint();
+    gate.release();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("names a refused microphone, and closes the audio", async () => {
+    const test = harness({ mic: () => Promise.reject(refusal()) });
+    await test.controller.start();
+
+    expect(test.last().state.errorCode).toBe("mic_blocked");
+    expect(test.last().state.status).toBe("error");
+    expect(test.audio.closeCalls()).toBeGreaterThanOrEqual(1);
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.endReason).toBe("failed");
+  });
+
+  it("keeps 'unknown' for a microphone that is missing or busy, not refused", async () => {
+    const notFound = Object.assign(new Error("Requested device not found"), {
+      name: "NotFoundError",
+    });
+    const test = harness({ mic: () => Promise.reject(notFound) });
+    await test.controller.start();
+
+    expect(test.last().state.errorCode).toBe("unknown");
+    expect(test.last().state.status).toBe("error");
+  });
+
+  it("names a refused microphone even when the pass also failed", async () => {
+    // Nothing can work until the owner allows the microphone, so that is what
+    // the card says; the pass's own failure is not lost, it is just second.
+    const refused = harness({ startFails: true, mic: () => Promise.reject(refusal()) });
+    await refused.controller.start();
+
+    expect(refused.last().state.errorCode).toBe("mic_blocked");
+    expect(refused.audio.closeCalls()).toBeGreaterThanOrEqual(1);
+  });
+
+  it("says the pass failed when the microphone prompt is still open", async () => {
+    // A missing key must not wait behind a permission prompt nobody has
+    // answered: the pass's own answer is the card.
+    const test = harness({ startFails: true, mic: () => new Promise<void>(() => undefined) });
+    await test.controller.start();
+
+    expect(test.last().state.errorCode).toBe("no_key");
+  });
+
+  it("stops the tap's microphone when the pass fails", async () => {
+    const test = harness({ startFails: true, mic: () => Promise.resolve() });
+    await test.controller.start();
+
+    expect(test.last().state.errorCode).toBe("no_key");
+    expect(test.audio.closeCalls()).toBeGreaterThanOrEqual(1);
+  });
+});

@@ -76,6 +76,7 @@ import {
   type VoiceWorkCard,
   callHint,
   endReasonLine,
+  isMicrophoneBlocked,
   isVoiceCancelPhrase,
   limitPointsMs,
   quietDeadlineMs,
@@ -1186,11 +1187,39 @@ export function createVoiceCallController(
     // two passes (finding 4).
     if (started) return;
     started = true;
+    // The microphone was asked for in the tap handler and is started here, so
+    // the prompt and the capture are already under way while the pass is
+    // minted. Its own promise never rejects: the outcome is kept aside and read
+    // once the call knows what the server said.
+    const mic: { settled: boolean; error: unknown } = { settled: false, error: null };
+    const micStarted = options.audio.startMic().then(
+      () => {
+        mic.settled = true;
+        mic.error = null;
+      },
+      (error: unknown) => {
+        mic.settled = true;
+        mic.error = error;
+      },
+    );
     const result = await options.api.start(options.threadId);
     if (disposed) return;
     if (!result.ok) {
+      // A browser that has already refused the microphone is the first thing
+      // the owner must fix, and nothing else can work until he has: name it
+      // even though the pass failed too. A prompt that is still open is never
+      // waited for here, so a missing key still says so at once.
+      if (mic.settled && isMicrophoneBlocked(mic.error)) {
+        errorDetail = mic.error instanceof Error ? mic.error.message : "Microphone blocked.";
+        publish({ status: "error", errorCode: "mic_blocked", pill: "none", hint: null });
+        end("failed");
+        return;
+      }
       errorDetail = result.detail;
       publish({ status: "error", errorCode: result.code, pill: "none", hint: null });
+      // The tap already asked for the microphone: this call will never use it,
+      // so the stream is stopped and no live track is left behind the card.
+      closeAudio();
       return;
     }
     if (ended) return;
@@ -1205,12 +1234,18 @@ export function createVoiceCallController(
         publish({ hint: callHint({ state, waitingMs: 400 }) });
       }
     }, 400);
-    try {
-      await options.audio.startMic();
-    } catch (error) {
-      if (disposed) return;
-      errorDetail = error instanceof Error ? error.message : "Microphone unavailable.";
-      publish({ status: "error", errorCode: "unknown", pill: "none", hint: null });
+    await micStarted;
+    if (disposed) return;
+    if (mic.settled && mic.error !== null) {
+      errorDetail = mic.error instanceof Error ? mic.error.message : "Microphone unavailable.";
+      // A refused permission is its own card; a device that is missing or busy
+      // stays "unknown" and keeps the generic wording.
+      publish({
+        status: "error",
+        errorCode: isMicrophoneBlocked(mic.error) ? "mic_blocked" : "unknown",
+        pill: "none",
+        hint: null,
+      });
       end("failed");
       return;
     }

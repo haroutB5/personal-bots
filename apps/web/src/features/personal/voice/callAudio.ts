@@ -8,6 +8,12 @@
  * - iOS only starts audio from a tap. `createCallAudio()` therefore builds the
  *   AudioContext synchronously in the tap handler, before any lazy import
  *   resolves, and `startMic()` resumes it.
+ * - WebKit only honours `getUserMedia` while the user's gesture is still being
+ *   handled. Asking for the microphone after an `await` (the lazy chunks, the
+ *   pass mint) is refused on the spot with NotAllowedError and no prompt, which
+ *   is what every call did on the iPhone on 16 Oct 2026 (1.66.55). The tap
+ *   handler therefore calls `requestMicrophone()` itself and hands the promise
+ *   here through `CallAudioOptions.mic`.
  * - `navigator.audioSession.type = "play-and-record"` is the call category.
  *   Guarded: the API is recent and absent on desktop Safari.
  * - Mute disables the track instead of stopping it, so unmute is instant.
@@ -20,6 +26,7 @@
 import workletUrl from "./pcm16kCapture.js?url";
 
 import { createCallAudioContext } from "./callAudioContext";
+import { type MicrophoneRequest, micConstraints, stopStreamTracks } from "./callMicrophone";
 
 export { createCallAudioContext };
 
@@ -142,6 +149,14 @@ export interface CallAudioOptions {
    * the context itself and hands it over here.
    */
   readonly context?: AudioContext | null;
+  /**
+   * The microphone the tap handler already asked for. WebKit refuses a
+   * `getUserMedia` that runs after the gesture's task, so the request cannot
+   * wait for this module's lazy chunk; the button makes it and hands it here.
+   * When it is absent `startMic()` asks for the microphone itself (desktop and
+   * tests).
+   */
+  readonly mic?: MicrophoneRequest | null;
 }
 
 /**
@@ -151,6 +166,8 @@ export interface CallAudioOptions {
  */
 export function createCallAudio(options: CallAudioOptions): CallAudio {
   const echo = options.echoCancellation ?? true;
+  /** The tap's own microphone request, when there is one. */
+  const requested: MicrophoneRequest | null = options.mic ?? null;
   let context: AudioContext | null = null;
   let destination: AudioNode | null = null;
   let voiceAnalyser: AnalyserNode | null = null;
@@ -238,21 +255,24 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
     stopPlayback,
     async startMic() {
       if (context === null || destination === null || closed) return;
-      const media = navigator.mediaDevices;
-      if (media === undefined) throw new Error("This browser has no microphone access.");
-      const pending = await media.getUserMedia({
-        audio: {
-          echoCancellation: echo,
-          noiseSuppression: echo,
-          autoGainControl: echo,
-          channelCount: 1,
-        },
-      });
+      // The tap's own request when there is one (the only form iOS accepts);
+      // otherwise ask now. Either way the browser's error is passed on as it is,
+      // so the caller can tell a refused permission from a missing device.
+      const pending =
+        requested !== null
+          ? await requested.stream
+          : await (() => {
+              const media = navigator.mediaDevices;
+              if (media === undefined) {
+                throw new Error("This browser has no microphone access.");
+              }
+              return media.getUserMedia(micConstraints(echo));
+            })();
       // The call can end while the permission prompt is up (the owner taps End,
       // or leaves the app). The stream then arrives with nobody to use it, so it
       // is stopped here rather than left live behind a closed screen.
       if (closed) {
-        for (const track of pending.getTracks()) track.stop();
+        stopStreamTracks(pending);
         return;
       }
       stream = pending;
@@ -264,7 +284,7 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
         }
       }
       if (closed) {
-        for (const track of pending.getTracks()) track.stop();
+        stopStreamTracks(pending);
         stream = null;
         return;
       }
@@ -272,7 +292,7 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
         await context.audioWorklet.addModule(workletUrl);
         // The module load is another await, so the call may be over by now.
         if (closed) {
-          for (const track of pending.getTracks()) track.stop();
+          stopStreamTracks(pending);
           stream = null;
           return;
         }
@@ -324,6 +344,10 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
     close() {
       closed = true;
       stopPlayback();
+      // The tap's microphone request may still be waiting on the permission
+      // prompt, or on a call that never started: stop the tracks the moment
+      // they arrive. A closed call never holds a live microphone.
+      requested?.stop();
       try {
         worklet?.port.close();
       } catch {
@@ -333,7 +357,7 @@ export function createCallAudio(options: CallAudioOptions): CallAudio {
       worklet = null;
       micSource?.disconnect();
       micSource = null;
-      for (const track of stream?.getTracks() ?? []) track.stop();
+      if (stream !== null) stopStreamTracks(stream);
       stream = null;
       micLevel = 0;
       voiceLevel = 0;

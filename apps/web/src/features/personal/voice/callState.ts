@@ -18,9 +18,35 @@ import type { VoiceCallAnyErrorCode } from "./voiceCallApi";
 /**
  * A failure code the call screen can render. The server's own codes come from
  * the contract; "unknown" is a local failure (the microphone, usually) that
- * never reached the laptop at all.
+ * never reached the laptop at all, and "mic_blocked" is the browser refusing
+ * the microphone itself (WebKit's NotAllowedError), which the owner fixes in
+ * Settings rather than by trying again.
  */
-export type VoiceCallUiErrorCode = VoiceCallAnyErrorCode | "unknown";
+export type VoiceCallUiErrorCode = VoiceCallAnyErrorCode | "unknown" | "mic_blocked";
+
+/** The name a browser puts on an error it raised itself. */
+function errorName(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const name = (error as { readonly name?: unknown }).name;
+  return typeof name === "string" ? name : null;
+}
+
+/**
+ * True when the *browser* refused the microphone, rather than the device being
+ * missing or busy.
+ *
+ * WebKit raises NotAllowedError both for a denied permission and for a
+ * `getUserMedia` called after the user's gesture has ended (what every call hit
+ * on the iPhone on 16 Oct 2026), and it names the same thing in its message.
+ * That is the one microphone failure the owner has to fix in iPhone Settings,
+ * so it gets its own code and its own card, distinct from "unknown".
+ */
+export function isMicrophoneBlocked(error: unknown): boolean {
+  const name = errorName(error);
+  if (name === "NotAllowedError" || name === "SecurityError") return true;
+  const message = error instanceof Error ? error.message : "";
+  return /not allowed|permission denied|denied permission/i.test(message);
+}
 
 /** The work card: what the real bot is doing for the voice. */
 export type VoiceWorkKind = "sending" | "working" | "replied" | "asking" | "login";
