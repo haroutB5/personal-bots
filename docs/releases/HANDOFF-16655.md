@@ -184,3 +184,62 @@ E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `cha
 
 Tree: HEAD at start `071d7890b1b4a8cd1eaf9ef3bc374b3ed3e3be7f`, at end `071d7890b1b4a8cd1eaf9ef3bc374b3ed3e3be7f`; tracked files modified: none. Staged release: version 1.66.55, sha 071d7890b1b4, dirty False, externals copied; `dist/bin.mjs` sha256 `09c3960ac6094c0d78852d295be2255fbffe2bffc02a984f47b9cc79f1d77a7d`.
 <!-- gate-evidence:end -->
+
+## QA
+
+**SHIP**, QA task `6022eaaa-10c5-478f-a92b-2121052b6cc3`, 16 October 2026.
+Focused checks used staged release `071d7890b1b4` on one isolated
+`throwaway-server.ps1 -Name qa16655` server, with the reviewed `ab.cmd` runner,
+dark mode and a 390x844 viewport. No live server, real browser profile or Gemini
+key was used. Repository implementation code was unchanged.
+
+Evidence folder: `C:/Users/Ht/.personal-bots/qa/qa16655-6022eaaa/`.
+
+- **Part 1 PASS:** a Sonnet test through `fakelimit` displayed
+  `Update test waits for the usage limit (retries 11:19)` and no `Update broke`.
+  The server recorded no broken-provider notification while waiting. A second
+  check with a simulated internal-server-error 500 response from the throwaway
+  root's fake CLI displayed `Update broke Home (limited)` and produced exactly
+  one broken-provider notification. See `smoke-retry.log`, `nonlimit.log`,
+  `provider-events.txt`, `provider-notification-assertion.txt`,
+  `provider-waiting.png` and `provider-nonlimit-broke.png`. The fake-error flag
+  was added only to the disposable CLI copy. Targeted provider-update tests:
+  **28 passed**, including no notification for all-limit failures, mixed real
+  failures, retry at reset plus one minute and restart re-arming
+  (`provider-server.log`). The builder's timed restart proof was reviewed rather
+  than repeated.
+- **Part 2 PASS:** default `48h`; `10d` reports an accessible validation error;
+  `30m` saves and survives a reload; switching auto-archive off removes the field;
+  switching it back on restores `30m`. See `archive.log` and
+  `01-archive-on-48h.png` through `05-archive-off-hidden.png`.
+- **Part 3 PASS:** three named chat tabs were present. Agent-browser evaluation
+  dispatched edge TouchEvents into the real app handlers with standalone mode
+  emulated. Frames at 25/50/75 percent show root, header, chat chips, plus button
+  and composer all displaced by 97.5/195/292.5 px respectively. The sibling list
+  underlay starts at x=-87.75/-58.5/-29.25, with a full-width 390 px bottom nav;
+  screenshots show list content at the left edge without an empty black strip.
+  Releasing at 75 percent lands on `/bots`. See `swipe-retry.log`,
+  `swipe-geometry.json`, `swipe-assertions.txt`, `swipe-25.png`, `swipe-50.png`,
+  `swipe-75.png` and `swipe-landed.png`. This checks rendered browser behavior;
+  native iPhone gesture handling was not exercised.
+- **Part 4 PASS:** on the staged source commit, server voice tests **90 passed**,
+  with the real-key manual test skipped; web voice tests **140 passed**. Reviewed
+  assertions cover 1011 quota before audio, exactly one renewal, the fresh-pass
+  reconnect without `googleSearch` and with `search_web`, a second quota refusal,
+  no retry after audio, and Search memory expiring at midnight Pacific. Server
+  assertions also cover sensitive-site refusal and failed mint leaving the flag
+  unwritten. See `voice-server.log` and `voice-web.log`. No real-key session was
+  run and no additional fake call-screen socket was needed.
+- **Quick regression PASS:** opened and sent messages in three distinct Sonnet
+  chats; the fake answered `Got it.`; Tasks and Settings loaded. See
+  `smoke-retry.log`, `chat-smoke.png` and `tasks-smoke.png`. All completed browser
+  runs checked both `console` and `errors`: **zero page errors**. Console output
+  contained a Clerk `api_response_error` warning on the isolated origin. The
+  first message-text assertion used too shallow a snapshot; depth 12 confirmed
+  the reply, with no product change.
+
+Cleanup completed: runner session `qa-6022eaaa` closed; the script stopped its
+captured wrapper PID 21132 and deleted the throwaway root. No QA server or
+browser remains running. The release branch was fast-forwarded from
+`6ed892bcb3` to the supplied notes commit `a7f7aaaed0` before this docs-only QA
+commit; the staged artifact was not rebuilt.
