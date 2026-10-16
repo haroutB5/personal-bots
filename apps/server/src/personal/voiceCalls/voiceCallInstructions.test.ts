@@ -148,6 +148,28 @@ describe("voiceCallSystemInstruction", () => {
     }),
   );
 
+  it.effect("answers a greeting as a greeting, never with a volunteered status claim", () =>
+    Effect.sync(() => {
+      const flat = voiceCallSystemInstruction(base).replace(/\s+/g, " ");
+      // Harout, 16 Oct 2026: "Hello, how are you?" was answered "Everything is
+      // ready for you" on a 10-second call that had reported nothing.
+      expect(flat).toContain("A greeting is answered as a greeting");
+      expect(flat).toContain(
+        'Never volunteer a status claim like "everything is ready" or "all done"',
+      );
+      expect(flat).toContain("unless they asked and what the bot actually reported says so");
+      expect(flat).toContain("When they only said hello, report nothing.");
+      // It sits with the honesty rules, before the "never read out a password"
+      // line, so it is part of what the voice may say rather than an aside.
+      expect(flat.indexOf("A greeting is answered as a greeting")).toBeLessThan(
+        flat.indexOf("Never read out a password"),
+      );
+      expect(flat.indexOf("A greeting is answered as a greeting")).toBeGreaterThan(
+        flat.indexOf("Never invent work"),
+      );
+    }),
+  );
+
   it.effect("relays the owner's answers and decisions to the bot as they say them", () =>
     Effect.sync(() => {
       const flat = voiceCallSystemInstruction(base).replace(/\s+/g, " ");

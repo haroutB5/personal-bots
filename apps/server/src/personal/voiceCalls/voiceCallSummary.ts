@@ -16,6 +16,13 @@
  * 2. **A bad answer is no answer.** Malformed JSON, an empty sentence, a
  *    blocked candidate: every one of them returns null and the card falls back
  *    to the transcript it already has. Nothing here throws.
+ * 3. **A greeting is not a finding** (Harout, 16 Oct 2026, the second half of
+ *    the same fix). His 10-second call was only "Hello, how are you?" and the
+ *    stored summary said "The owner checked in with the CTO, who confirmed that
+ *    all preparations are complete." Nothing had been checked. Small talk and
+ *    the voice's own reassurance are never facts about the work, and a call
+ *    with no request and no decision gets one fixed line:
+ *    {@link VOICE_CALL_GREETING_SUMMARY}.
  */
 import {
   VOICE_CALL_SUMMARY_FIELD_CHARS,
@@ -23,6 +30,19 @@ import {
   type VoiceCallSummary,
   type VoiceCallTranscriptEntry,
 } from "@t3tools/contracts";
+
+/**
+ * The one summary a call gets when the owner asked nothing and decided
+ * nothing: a greeting, a "how are you", small talk, a hang-up.
+ *
+ * Fixed text, not a description of it. The prompt asks for this sentence word
+ * for word and the answer's own `shortCall` flag says the call had no request;
+ * {@link parseVoiceCallSummary} writes exactly this line, with no points and
+ * both `decision` and `open` null, whatever the model padded around it. So a
+ * greeting can never be dressed up as a finding, and a model that paraphrases
+ * still cannot change the stored words.
+ */
+export const VOICE_CALL_GREETING_SUMMARY = "Short call: just a greeting, nothing asked or decided.";
 
 /** One relaying line the voice posted into the chat during the call. */
 export interface VoiceCallSummaryRelay {
@@ -67,7 +87,7 @@ export const buildVoiceCallSummaryPrompt = (input: VoiceCallSummaryPromptInput):
     `the voice of his assistant "${input.botName}". The owner will read it in the chat afterwards.`,
     "",
     "Answer with JSON only, no markdown and no commentary, exactly this shape:",
-    '{"summary": "...", "points": ["..."], "decision": "..." | null, "open": "..." | null}',
+    '{"summary": "...", "points": ["..."], "decision": "..." | null, "open": "..." | null, "shortCall": false}',
     "",
     "- summary: ONE plain sentence of at most 30 words: what was asked, and what was found or agreed.",
     `- points: up to ${String(VOICE_CALL_SUMMARY_MAX_POINTS)} bullets. Each one is a complete short fact that stands on its`,
@@ -79,6 +99,19 @@ export const buildVoiceCallSummaryPrompt = (input: VoiceCallSummaryPromptInput):
     "- decision: the owner's LAST decision on this call, short and in his own terms (for example",
     '  "no change, just wanted to know"). null when he decided nothing.',
     "- open: anything left undecided or still to be done, short. null when nothing is.",
+    "- shortCall: true ONLY for a call where the owner asked for nothing and decided nothing: a",
+    "  greeting, a how-are-you, small talk, a wrong number, a hang-up. Then the summary is exactly",
+    `  "${VOICE_CALL_GREETING_SUMMARY}" and points is [], and decision and open are`,
+    "  both null. Anything asked, answered, found or agreed on the call makes shortCall false.",
+    "",
+    "What may become a finding, and what may not:",
+    "- Report only what the owner asked, what the bot actually found (from the bot's own replies, or",
+    "  from a result the voice relayed), and what the owner decided. That is the whole call.",
+    "- A greeting, small talk, and the voice's own filler, apology or reassurance are not findings.",
+    "  Never turn one of those into a point, a decision, or a claim that something is ready, finished,",
+    "  prepared or complete. If nothing on the call says the work is done, the summary must not either.",
+    "- When the voice said something and nothing on the call confirms it, attribute it to the voice:",
+    '  write "the voice said Court 3 is free", not "Court 3 is free".',
     "- Write in English, unless the call was mostly in another language, in which case write that one.",
     "- Keep the call's own times and prices as they were said, even if they are vague in the transcript.",
     "- Use only what the call says. Never invent a time, a price, a court, a name or a promise.",
@@ -136,9 +169,35 @@ const pointList = (value: unknown): ReadonlyArray<string> => {
 };
 
 /**
+ * The fixed greeting-only summary, with nothing beside it. `points` is emptied
+ * on purpose: the only "facts" a call with no request can produce are the
+ * voice's own greeting and reassurance, which is exactly what must not be
+ * stored as a finding.
+ */
+const greetingSummary = (): VoiceCallSummary => ({
+  summary: VOICE_CALL_GREETING_SUMMARY,
+  points: [],
+  decision: null,
+  open: null,
+});
+
+/** Case, spacing and punctuation removed, so a repunctuated fixed line still matches. */
+const sentenceKey = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const GREETING_SUMMARY_KEY = sentenceKey(VOICE_CALL_GREETING_SUMMARY);
+
+/**
  * One answer as a summary, or null when it cannot be used. Every failure path
  * is the same answer: the card shows its transcript, exactly as before this
  * feature existed.
+ *
+ * The one answer that is rewritten rather than trusted is the short call: a
+ * greeting must never leave the fixed line (Harout, 16 Oct 2026), whatever
+ * sentence or bullet the model wrapped around it.
  */
 export const parseVoiceCallSummary = (answer: string | null): VoiceCallSummary | null => {
   if (answer === null) return null;
@@ -153,14 +212,26 @@ export const parseVoiceCallSummary = (answer: string | null): VoiceCallSummary |
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const summary = shortText(record["summary"]);
+  const decision = shortText(record["decision"]);
+  const open = shortText(record["open"]);
+  const points = pointList(record["points"]);
+  // Two independent ways to recognise the short call: the model's own
+  // `shortCall` flag on an answer that claims nothing else, or the fixed line
+  // itself, however it was punctuated. Both store the same words, with no
+  // points and no decision: the voice's own "everything is ready" is not a
+  // finding, so a stray bullet carrying it is dropped.
+  if (
+    sentenceKey(summary) === GREETING_SUMMARY_KEY ||
+    (record["shortCall"] === true && points.length === 0 && decision === "" && open === "")
+  ) {
+    return greetingSummary();
+  }
   // A summary with no sentence is not a summary: the sentence is the card's
   // first line and the thing the owner actually reads.
   if (summary === "") return null;
-  const decision = shortText(record["decision"]);
-  const open = shortText(record["open"]);
   return {
     summary,
-    points: pointList(record["points"]),
+    points,
     decision: decision === "" ? null : decision,
     open: open === "" ? null : open,
   };

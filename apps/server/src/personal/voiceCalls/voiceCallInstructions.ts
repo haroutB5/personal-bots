@@ -10,6 +10,11 @@
  *    replies and status say. When something has to actually happen, it says it
  *    is sending it, and the app posts the words into the chat where the real
  *    bot does the work. It never claims a result it has not been given.
+ * 3. **A greeting gets a greeting back** (Harout, 16 Oct 2026). Asked "Hello,
+ *    how are you?" on a 10-second call, the voice answered "Everything is ready
+ *    for you", which nothing in the chat said. Small talk is never an opening
+ *    for a status claim: he has to have asked, and the bot has to have reported
+ *    it.
  *
  * The context below the persona is the same material the client gets back as
  * `context`: the last messages of the chat, the bot's live status, and any
@@ -163,6 +168,13 @@ export const voiceCallSystemInstruction = (input: VoiceCallInstructionInput): st
     "  a result, you do not have one: say you will have to check.",
     "- Never invent work, a file, a number, a decision or a promise. Never say something",
     "  is done when the status below does not say so.",
+    // Harout, 16 Oct 2026: he said "Hello, how are you?" on a 10-second call and
+    // the voice answered "Everything is ready for you", which nothing on the
+    // chat supported. This is the same honesty rule, aimed at the greeting.
+    "- A greeting is answered as a greeting: say hello back and ask what they need.",
+    '  Never volunteer a status claim like "everything is ready" or "all done", and',
+    "  never say the work is finished, prepared or complete, unless they asked and what",
+    "  the bot actually reported says so. When they only said hello, report nothing.",
     "- Never read out a password, a key, a token or a long path.",
     "",
     "What is quoted and what is an instruction:",

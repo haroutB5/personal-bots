@@ -9,6 +9,12 @@
  * and the decision "just wanted to know". It also carries the mishearing that
  * started the languages setting: "Barev" came back as "pare 20 pesos" and the
  * voice answered in Spanish.
+ *
+ * `GREETING_CALL` is the second real fixture, from the same live table: call
+ * 9a6e8901-f51f-4de0-925b-46196f37a985, ten seconds, two lines, no request and
+ * no decision. Its stored summary was the bug this file now pins: the voice had
+ * said "Everything is ready for you", and the summary turned that into "the
+ * CTO confirmed that all preparations are complete".
  */
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +24,7 @@ import { VOICE_CALL_SUMMARY_MAX_POINTS, type VoiceCallTranscriptEntry } from "@t
 import {
   buildVoiceCallSummaryPrompt,
   parseVoiceCallSummary,
+  VOICE_CALL_GREETING_SUMMARY,
   voiceCallHasSummarisableTranscript,
 } from "./voiceCallSummary.ts";
 
@@ -72,6 +79,19 @@ const prompt = (overrides: Partial<Parameters<typeof buildVoiceCallSummaryPrompt
     relayed: [],
     languages: "English, French, Arabic and Armenian",
     ...overrides,
+  });
+
+/** The real greeting-only call, both lines, exactly as the live table holds them. */
+const GREETING_CALL: ReadonlyArray<VoiceCallTranscriptEntry> = [
+  entry("you", "Hello, how are you?", "2026-10-16T21:05:54.742Z"),
+  entry("voice", "Hello, I'm doing well. Everything is ready for you.", "2026-10-16T21:05:54.749Z"),
+];
+
+const greetingPrompt = () =>
+  prompt({
+    startedAt: "2026-10-16T21:05:48.195Z",
+    durationSeconds: 10,
+    transcript: GREETING_CALL,
   });
 
 describe("buildVoiceCallSummaryPrompt", () => {
@@ -140,6 +160,31 @@ describe("buildVoiceCallSummaryPrompt", () => {
     });
     expect(text).toContain("Owner: two lines");
     expect(text.includes("Voice:   ")).toBe(false);
+  });
+
+  it("says a greeting is not a finding, and asks for the fixed short-call line", () => {
+    const text = greetingPrompt().replace(/\s+/g, " ");
+    // The real call, still carried: the voice's own reassurance is what the
+    // summary must not turn into a fact.
+    expect(text).toContain("Everything is ready for you.");
+    expect(text).toContain("A greeting, small talk, and the voice's own filler");
+    expect(text).toContain("Never turn one of those into a point, a decision, or a claim");
+    expect(text).toContain(
+      "If nothing on the call says the work is done, the summary must not either",
+    );
+    // The exact sentence, word for word, and the exact empty answer around it.
+    expect(text).toContain(`"${VOICE_CALL_GREETING_SUMMARY}"`);
+    expect(text).toContain("shortCall: true ONLY for a call where the owner asked for nothing");
+    expect(text).toContain("points is [], and decision and open are both null");
+  });
+
+  it("reports only what was asked, found or decided, and attributes what is only said", () => {
+    const text = prompt().replace(/\s+/g, " ");
+    expect(text).toContain("Report only what the owner asked, what the bot actually found");
+    expect(text).toContain("from the bot's own replies, or from a result the voice relayed");
+    expect(text).toContain("and what the owner decided");
+    expect(text).toContain("When the voice said something and nothing on the call confirms it");
+    expect(text).toContain('write "the voice said Court 3 is free", not "Court 3 is free"');
   });
 });
 
@@ -216,5 +261,122 @@ describe("parseVoiceCallSummary", () => {
     expect(parsed!.points).toEqual(["a", "b", "c", "d", "e"]);
     expect(parsed!.decision).toBeNull();
     expect(parsed!.open).toBe("still to check");
+  });
+
+  it("stores the greeting call as the fixed line, with nothing claimed around it", () => {
+    // The answer the prompt now asks for. The stored words are the constant's,
+    // so a paraphrase on a real call cannot change what the card shows.
+    const asked = JSON.stringify({
+      summary: VOICE_CALL_GREETING_SUMMARY,
+      points: [],
+      decision: null,
+      open: null,
+      shortCall: true,
+    });
+    expect(parseVoiceCallSummary(asked)).toEqual({
+      summary: VOICE_CALL_GREETING_SUMMARY,
+      points: [],
+      decision: null,
+      open: null,
+    });
+  });
+
+  it("honours the shortCall flag even when the sentence was reworded", () => {
+    const parsed = parseVoiceCallSummary(
+      JSON.stringify({
+        summary: "A quick hello.",
+        points: [],
+        decision: "",
+        open: "null",
+        shortCall: true,
+      }),
+    );
+    expect(parsed).toEqual({
+      summary: VOICE_CALL_GREETING_SUMMARY,
+      points: [],
+      decision: null,
+      open: null,
+    });
+  });
+
+  it("drops a stray bullet or decision from a greeting-only answer", () => {
+    // The old failure, in miniature: the model keeps the voice's reassurance as
+    // a point and invents a decision for a call that only said hello.
+    const parsed = parseVoiceCallSummary(
+      JSON.stringify({
+        summary: "Short call, just a greeting - nothing asked or decided",
+        points: ["Everything is ready for him"],
+        decision: "No change needed",
+        open: null,
+      }),
+    );
+    expect(parsed).toEqual({
+      summary: VOICE_CALL_GREETING_SUMMARY,
+      points: [],
+      decision: null,
+      open: null,
+    });
+  });
+
+  it("keeps a real summary that carries findings, flag or no flag", () => {
+    // A call with an answer in it is never collapsed to the greeting line: the
+    // flag only counts when the answer claims nothing else.
+    const withPoints = parseVoiceCallSummary(
+      JSON.stringify({
+        summary: "Court 3 is free 11:00-12:00, nothing was changed.",
+        points: ["Court 3 free 11:00-12:00 Saturday"],
+        decision: null,
+        open: null,
+        shortCall: true,
+      }),
+    );
+    expect(withPoints!.summary).toBe("Court 3 is free 11:00-12:00, nothing was changed.");
+    expect(withPoints!.points).toEqual(["Court 3 free 11:00-12:00 Saturday"]);
+    expect(
+      parseVoiceCallSummary(
+        JSON.stringify({
+          summary: "He asked about the slot before his booking.",
+          points: [],
+          decision: "Just wanted to know",
+          open: null,
+        }),
+      )!.summary,
+    ).toBe("He asked about the slot before his booking.");
+  });
+
+  it("reads the two real Gemini answers from the 1.66.61 proof, verbatim", () => {
+    // gemini-3.1-flash-lite, 16 Oct 2026 21:18:47Z and 21:19:07Z UTC, through
+    // the brokered key, against the exact prompts built from the two fixtures
+    // above. Kept here so the prompt's real behaviour stays a test and not only
+    // a line in the release notes.
+    const greetingAnswer =
+      '{"summary": "Short call: just a greeting, nothing asked or decided.", "points": [], "decision": null, "open": null, "shortCall": true}';
+    expect(parseVoiceCallSummary(greetingAnswer)).toEqual({
+      summary: VOICE_CALL_GREETING_SUMMARY,
+      points: [],
+      decision: null,
+      open: null,
+    });
+
+    const tennisAnswer = `{
+  "summary": "The owner asked about tennis court availability before his existing booking, and the assistant identified an alternative slot on Court 3.",
+  "points": [
+    "Existing booking is Court 2 on Saturday, October 17th, 12:00 PM-3:00 PM",
+    "Court 2 is busy 11:00 AM-12:00 PM",
+    "Court 3 is free 11:00 AM-12:00 PM, requiring a move to Court 2 at 12:00 PM"
+  ],
+  "decision": "no change, just wanted to know",
+  "open": null,
+  "shortCall": false
+}`;
+    const parsed = parseVoiceCallSummary(tennisAnswer);
+    expect(parsed!.summary).toContain("Court 3");
+    expect(parsed!.points).toEqual([
+      "Existing booking is Court 2 on Saturday, October 17th, 12:00 PM-3:00 PM",
+      "Court 2 is busy 11:00 AM-12:00 PM",
+      "Court 3 is free 11:00 AM-12:00 PM, requiring a move to Court 2 at 12:00 PM",
+    ]);
+    expect(parsed!.decision).toBe("no change, just wanted to know");
+    expect(parsed!.open).toBeNull();
   });
 });

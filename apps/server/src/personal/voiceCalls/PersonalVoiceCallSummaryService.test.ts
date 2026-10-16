@@ -45,6 +45,7 @@ import {
   layer as summaryLayer,
 } from "./PersonalVoiceCallSummaryService.ts";
 import { VoiceCallHttp, type VoiceCallMintOutcome } from "./voiceCallGemini.ts";
+import { VOICE_CALL_GREETING_SUMMARY } from "./voiceCallSummary.ts";
 
 const CTO_CHAT = ThreadId.make("thread-call-summary");
 const CTO_BOT = PersonalBotId.make("bot-cto");
@@ -94,6 +95,21 @@ const GOOD_ANSWER = JSON.stringify({
   decision: "No change, he just wanted to know",
   open: null,
 });
+
+/**
+ * The real greeting-only call, both lines: 9a6e8901-f51f-4de0-925b-46196f37a985,
+ * ten seconds, 16 Oct 2026, copied read-only out of the live table. It is the
+ * call whose summary claimed "the CTO confirmed that all preparations are
+ * complete" when all he had said was hello.
+ */
+const GREETING_TRANSCRIPT = JSON.stringify([
+  { speaker: "you", text: "Hello, how are you?", at: "2026-10-16T21:05:54.742Z" },
+  {
+    speaker: "voice",
+    text: "Hello, I'm doing well. Everything is ready for you.",
+    at: "2026-10-16T21:05:54.749Z",
+  },
+]);
 
 interface HttpCall {
   readonly request: BrokerRequest;
@@ -357,6 +373,59 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
         const again = yield* service.summarise(CALL_ID);
         expect(again?.summary).toContain("Court 3");
         expect(calls).toHaveLength(1);
+      }),
+    );
+  });
+
+  it.effect("stores the fixed short-call line for the greeting-only call", () => {
+    const calls: Array<HttpCall> = [];
+    // The stub is the model: it answers with the fixed sentence, and (as the
+    // real one did on 16 Oct) also tries to keep the voice's own reassurance as
+    // a point and invents a decision. The worker must store neither.
+    const answer = (): VoiceCallMintOutcome => ({
+      status: 200,
+      token: null,
+      body: JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    summary: VOICE_CALL_GREETING_SUMMARY,
+                    points: ["Everything is ready for him"],
+                    decision: "No change needed",
+                    open: null,
+                    shortCall: true,
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    return withService({ calls, transcriptJson: GREETING_TRANSCRIPT, answer }, (service, sql) =>
+      Effect.gen(function* () {
+        const summary = yield* service.summarise(CALL_ID);
+        expect(summary).toEqual({
+          summary: VOICE_CALL_GREETING_SUMMARY,
+          points: [],
+          decision: null,
+          open: null,
+        });
+        // The real two lines went out, with the new rule and the fixed sentence.
+        const body = calls[0]!.request.body ?? "";
+        expect(body).toContain("Everything is ready for you.");
+        expect(body).toContain("A greeting, small talk, and the voice's own filler");
+        expect(body).toContain(VOICE_CALL_GREETING_SUMMARY);
+        expect(JSON.parse(yield* storedSummary(sql))).toEqual({
+          summary: VOICE_CALL_GREETING_SUMMARY,
+          points: [],
+          decision: null,
+          open: null,
+        });
+        expect(yield* storedAttempts(sql)).toBe(1);
       }),
     );
   });
