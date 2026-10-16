@@ -93,13 +93,14 @@ import {
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
-import type { DshReplyStripper } from "../acp/DshAcpSupport.ts";
+import type { DshColonStubber, DshReplyStripper } from "../acp/DshAcpSupport.ts";
 import {
   buildDshEnvironment,
   buildDshPersona,
   dshAgentModeFromSelection,
   DSH_RESUME_ENGINE,
   makeDshAcpRuntime,
+  makeDshColonStubber,
   makeDshReplyStripper,
   parseDshResumeCursor,
   resolveDshDenyPlugin,
@@ -250,6 +251,13 @@ interface SessionContext {
    * deltas, so one instance carries the turn's state.
    */
   replyStripper: DshReplyStripper;
+  /**
+   * The turn's stub-line settler: a short reply step that ends with `:` and is
+   * closed by a tool call reads as an unfinished sentence, so that trailing
+   * colon becomes `.` (see `makeDshColonStubber`). It reads the text the
+   * stripper let through, so leaked markup never reaches it.
+   */
+  replyColonStubber: DshColonStubber;
   /** Tools a stripped block named, so each one is warned about once. */
   strippedTools: Set<string>;
   /** The turn's thinking text has already started, so a later step joins onto it. */
@@ -642,16 +650,20 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
   /** The turn's last visible text: whatever the stripper was holding back. */
   const flushReplyStripper = (context: SessionContext, turnId: TurnId) =>
     Effect.gen(function* () {
+      // The stub line's held colon sits inside text the stripper already let
+      // through, so it comes before the stripper's own held tail (blanks only).
+      const stub = context.replyColonStubber.flush();
       const stripped = context.replyStripper.flush();
       yield* warnStrippedTools(context, stripped.tools);
-      if (stripped.text.length === 0) return;
+      const text = `${stub}${stripped.text}`;
+      if (text.length === 0) return;
       yield* emit(
         makeAcpContentDeltaEvent({
           stamp: yield* stamp,
           provider: PROVIDER,
           threadId: context.threadId,
           turnId,
-          text: stripped.text,
+          text,
           // Held text has no frame of its own: it is the tail of the deltas
           // that came before it.
           rawPayload: undefined,
@@ -731,7 +743,10 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         // (leaked protocol, 2026-10-15). Strip it before the chat sees it.
         const stripped = context.replyStripper.push(event.text);
         yield* warnStrippedTools(context, stripped.tools);
-        if (stripped.text.length === 0) return;
+        // A short step that ends with `:` is settled by whatever closes it
+        // (a tool call), so the stubber may hold that one character back.
+        const text = context.replyColonStubber.push(stripped.text);
+        if (text.length === 0) return;
         yield* emit(
           makeAcpContentDeltaEvent({
             stamp: yield* stamp,
@@ -739,14 +754,29 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
             threadId: context.threadId,
             turnId: context.activeTurnId,
             ...(event.itemId ? { itemId: event.itemId } : {}),
-            text: stripped.text,
+            text,
             rawPayload: event.rawPayload,
           }),
         );
         return;
       }
-      case "ToolCallUpdated":
+      case "ToolCallUpdated": {
         context.toolCallSinceThought = true;
+        // The tool call closes the text step before it: a held stub colon
+        // becomes `.` now, so the sentence reads finished above the call.
+        const stub = context.replyColonStubber.closeByToolCall();
+        if (stub.length > 0) {
+          yield* emit(
+            makeAcpContentDeltaEvent({
+              stamp: yield* stamp,
+              provider: PROVIDER,
+              threadId: context.threadId,
+              turnId: context.activeTurnId,
+              text: stub,
+              rawPayload: undefined,
+            }),
+          );
+        }
         yield* emit(
           makeAcpToolCallEvent({
             stamp: yield* stamp,
@@ -758,6 +788,7 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
           }),
         );
         return;
+      }
     }
   });
 
@@ -1140,6 +1171,7 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
           },
           activeTurnId: undefined,
           replyStripper: makeDshReplyStripper(),
+          replyColonStubber: makeDshColonStubber(),
           strippedTools: new Set<string>(),
           thoughtTextStarted: false,
           toolCallSinceThought: false,
@@ -1293,6 +1325,7 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
     const generation = ++context.generation;
     context.activeTurnId = turn.turnId;
     context.replyStripper = makeDshReplyStripper();
+    context.replyColonStubber = makeDshColonStubber();
     context.strippedTools.clear();
     context.thoughtTextStarted = false;
     context.toolCallSinceThought = false;

@@ -434,6 +434,39 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
     }).pipe(Effect.provide(logs.layer));
   });
 
+  it.effect("settles a stub line's colon with a full stop, before the tool call", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      const harness = yield* makeHarness(cwd);
+      yield* harness.adapter.startSession(startInput({ cwd }));
+      const beforeTurn = (yield* harness.seen()).length;
+      yield* harness.adapter.sendTurn({
+        threadId,
+        input: "colon-probe",
+        modelSelection: { instanceId, model: "deepseek-flash" },
+      });
+      const events = (yield* harness.seen()).slice(beforeTurn);
+      const visible = (sample: ReadonlyArray<ProviderRuntimeEvent>) =>
+        sample
+          .filter((event) => event.type === "content.delta")
+          .filter((event) => event.payload.streamKind === "assistant_text")
+          .map((event) => event.payload.delta);
+      // The real frame order: "Now the provider", ":" on its own, the tool call,
+      // then the rest of the reply.
+      expect(visible(events).join("")).toBe("Now the provider.Done.");
+      // The full stop belongs to the tool call, not to the turn's tail.
+      const stopAt = events.findIndex(
+        (event) => event.type === "content.delta" && event.payload.delta === ".",
+      );
+      const callAt = events.findIndex((event) => String(event.itemId) === "dsh-colon-probe-call");
+      expect(stopAt).toBeGreaterThanOrEqual(0);
+      expect(callAt).toBeGreaterThan(stopAt);
+      yield* harness.adapter.stopSession(threadId);
+      resetBotProviderProcesses();
+    }),
+  );
+
   it.effect("holds a steer until the running turn ends, and never cancels that turn", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
