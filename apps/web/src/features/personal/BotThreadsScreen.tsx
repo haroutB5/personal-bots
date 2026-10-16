@@ -46,6 +46,7 @@ import {
 import { useBulkChatActions, type BulkChatOptions } from "./useBulkChatActions";
 import { isChatPinned, wakeLabel } from "./chatState";
 import { PinMark } from "./PinMark";
+import { isOwnerChat, taskChatThreadIds } from "./ownerChats";
 import { SnoozeSheet } from "./SnoozeSheet";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
 import { useLongPress } from "./useLongPress";
@@ -372,20 +373,25 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   );
   // Unread dots for every bot's chats, from the same list; archived rows never get one. The chat
   // chips mark a chat unread for any bot, so the list must too (only the Bots home list keeps its
-  // count badges for team leads, `showsUnreadChats`).
+  // count badges for team leads, `showsUnreadChats`). They mark only the chats the chips show
+  // (`isOwnerChat`), so a routine chat the owner never used draws no dot here either and the
+  // bot's own count cannot disagree with this list (2026-10-16).
   const chatSeen = useChatSeenState();
   const showsUnread = bot !== null;
-  const unreadThreadIds = useMemo(
-    () =>
-      new Set(
-        showsUnread
-          ? rows.active
-              .filter((row) => isChatUnread(row.link, chatSeen, row.shell))
-              .map((row) => row.link.threadId as string)
-          : [],
-      ),
-    [chatSeen, rows.active, showsUnread],
-  );
+  const unreadThreadIds = useMemo(() => {
+    if (!showsUnread) return new Set<string>();
+    const taskChats = taskChatThreadIds(
+      rows.active.map((row) => row.link),
+      tasks,
+    );
+    return new Set(
+      rows.active
+        .filter(
+          (row) => isOwnerChat(row.link, taskChats) && isChatUnread(row.link, chatSeen, row.shell),
+        )
+        .map((row) => row.link.threadId as string),
+    );
+  }, [chatSeen, rows.active, showsUnread, tasks]);
   // The list refetches when one of these chats finishes a turn, so a reply
   // that lands while this screen is open lights its dot (the Bots list does
   // the same through its preview key). Trailing, like the Bots list.

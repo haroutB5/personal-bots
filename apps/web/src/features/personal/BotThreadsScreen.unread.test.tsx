@@ -9,6 +9,15 @@ const state = vi.hoisted(() => ({
   otherCommand: (() => {}) as (...args: unknown[]) => unknown,
   deleteChat: (() => {}) as (...args: unknown[]) => unknown,
   lead: true,
+  /** The task feed the screen reads: a chat a task made needs its task here. */
+  tasks: null as Map<string, { threadId: string; createdAt: Date }> | null,
+  /** Active rows beside the mock's two, for the chats a task or routine made. */
+  extraRows: [] as ReadonlyArray<{
+    threadId: string;
+    title: string;
+    createdAt: Date;
+    markedUnread?: boolean;
+  }>,
 }));
 
 const ARCHIVE_COMMAND = vi.hoisted(() => ({ name: "personalBotArchiveThread" }));
@@ -62,11 +71,20 @@ vi.mock("./botModelLabel", () => ({
 const makeReply = vi.hoisted(() => () => new Date(Date.UTC(2026, 9, 2, 10, 5)));
 vi.mock("effect/DateTime", () => ({ toEpochMillis: (value: Date) => value.getTime() }));
 vi.mock("./botThreadRows", () => {
-  const row = (threadId: string, title: string, archivedAt: string | null, unread = true) => ({
+  const row = (
+    threadId: string,
+    title: string,
+    archivedAt: string | null,
+    unread = true,
+    createdAt = new Date(Date.UTC(2026, 8, 30, 9)),
+    markedUnread = false,
+  ) => ({
     link: {
       botId: "bot-a",
       threadId,
+      createdAt,
       archivedAt,
+      ...(markedUnread ? { markedUnread: true } : {}),
       ...(unread ? { unread: true, lastReplyAt: makeReply() } : {}),
     },
     shell: { id: threadId, title, archivedAt, environmentId: "env-1" },
@@ -74,7 +92,20 @@ vi.mock("./botThreadRows", () => {
   });
   return {
     botThreadRows: () => ({
-      active: [row("thread-open", "Open chat", null), row("thread-read", "Read chat", null, false)],
+      active: [
+        row("thread-open", "Open chat", null),
+        row("thread-read", "Read chat", null, false),
+        ...state.extraRows.map((extra) =>
+          row(
+            extra.threadId,
+            extra.title,
+            null,
+            true,
+            extra.createdAt,
+            extra.markedUnread === true,
+          ),
+        ),
+      ],
       archived: [row("thread-archived", "Old plans", "2026-09-30T10:00:00.000Z")],
       snoozed: [],
     }),
@@ -93,7 +124,7 @@ vi.mock("./startBotChat", () => ({
   useStartBotChat: () => ({ start: async () => undefined, starting: false }),
 }));
 vi.mock("./PersonalOfflineBanner", () => ({ useLaptopOffline: () => false }));
-vi.mock("./usePersonalAutomation", () => ({ usePersonalTasks: () => ({ tasks: null }) }));
+vi.mock("./usePersonalAutomation", () => ({ usePersonalTasks: () => ({ tasks: state.tasks }) }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./usePersonalBots", () => ({
   personalBotArchiveThread: ARCHIVE_COMMAND,
@@ -137,6 +168,8 @@ beforeEach(() => {
   state.otherCommand = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   state.deleteChat = vi.fn(async () => ({ status: "cancelled" }));
   state.lead = true;
+  state.tasks = null;
+  state.extraRows = [];
 });
 
 afterEach(async () => {
@@ -185,4 +218,31 @@ it("the dot clears once the chat has been opened on this device, without a refet
     markChatOpen("thread-open", false, Date.UTC(2026, 9, 2, 10, 6));
   });
   expect(dottedThreads()).toEqual([]);
+});
+
+it("a routine chat the owner never used is listed without a dot, the way the chips hide it", async () => {
+  // The real case (2026-10-16): CTO's routine chat was unread, in no chip, and
+  // still drew a dot here and on the bot's row.
+  const createdAt = new Date(Date.UTC(2026, 8, 30, 9));
+  state.tasks = new Map([["thread-task", { threadId: "thread-task", createdAt }]]);
+  state.extraRows = [{ threadId: "thread-task", title: "Routine run", createdAt }];
+  await act(async () => {
+    renderer = create(<BotThreadsScreen botId="bot-a" />);
+  });
+  // The row is still on the list: only its unread marker goes.
+  expect(JSON.stringify(renderer!.toJSON())).toContain("Routine run");
+  expect(dottedThreads()).toEqual(["thread-open"]);
+  expect(JSON.stringify(renderer!.toJSON())).toContain(", unread");
+});
+
+it("a routine chat the owner marked unread keeps its dot, as the chips show it", async () => {
+  const createdAt = new Date(Date.UTC(2026, 8, 30, 9));
+  state.tasks = new Map([["thread-task", { threadId: "thread-task", createdAt }]]);
+  state.extraRows = [
+    { threadId: "thread-task", title: "Routine run", createdAt, markedUnread: true },
+  ];
+  await act(async () => {
+    renderer = create(<BotThreadsScreen botId="bot-a" />);
+  });
+  expect(dottedThreads()).toEqual(["thread-open", "thread-task"]);
 });

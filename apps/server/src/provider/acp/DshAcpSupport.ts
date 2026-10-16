@@ -865,6 +865,128 @@ export function makeDshReplyStripper(): DshReplyStripper {
   };
 }
 
+/**
+ * The longest visible segment that still counts as a short stub line. A reply
+ * step that writes a whole paragraph before a tool call is prose, not a stub,
+ * and keeps its own punctuation.
+ */
+export const DSH_COLON_STUB_MAX_LENGTH = 120;
+
+export interface DshColonStubber {
+  /** Feeds visible reply text; returns the part that is settled and shown. */
+  push(text: string): string;
+  /** A tool call starts: what the held tail becomes, or `""` when it held none. */
+  closeByToolCall(): string;
+  /** The turn ends: the held tail is shown unchanged. */
+  flush(): string;
+}
+
+/**
+ * Rewrites the `:` a short reply step ends with when a tool call follows it.
+ *
+ * dsh separates a tool call with a stub line ("Now the provider:"), and the
+ * persona asks for a full stop instead; it still writes the colon sometimes
+ * (20 of 129 segments on 2026-10-16, 17 of them under 80 characters), so the
+ * adapter settles it. The rule is narrow on purpose: only a segment that a tool
+ * call *starts* after, whose trimmed text ends with `:`, and which is at most
+ * {@link DSH_COLON_STUB_MAX_LENGTH} characters, becomes `.`. A colon inside a
+ * line, a turn that ends on the colon, a fenced code block and a longer segment
+ * all pass through byte for byte.
+ *
+ * A `:` can arrive in its own delta and the tool call can follow at once, so the
+ * trailing `:` (with any blanks after it) is held until the next event decides
+ * it: another text delta shows it unchanged, a tool call settles it, and the
+ * turn's end shows it unchanged. Nothing else is ever held, so no other text
+ * waits.
+ */
+export function makeDshColonStubber(): DshColonStubber {
+  /** The provisional tail: a `:` plus the blanks that followed it. */
+  let held = "";
+  /** Visible characters since the last tool call (the segment the rule reads). */
+  let segmentLength = 0;
+  /** Where that segment's last non-blank character is, counting from its start. */
+  let segmentTrimmedLength = 0;
+  /** Inside an open ``` or ~~~ code fence: a colon there is code, not a stub. */
+  let inFence = false;
+  /** The fence run being read on this line, and whether it already toggled. */
+  let fenceRun = "";
+  let fenceRunLength = 0;
+  let fenceRunToggled = false;
+  /** Only blanks have been seen since the last newline. */
+  let atLineStart = true;
+
+  const trackFence = (text: string): void => {
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index] ?? "";
+      if (char === "\n") {
+        atLineStart = true;
+        fenceRun = "";
+        fenceRunLength = 0;
+        fenceRunToggled = false;
+        continue;
+      }
+      if (!atLineStart) continue;
+      if (char === " " || char === "\t") continue;
+      if (char === "`" || char === "~") {
+        if (fenceRun === char) fenceRunLength += 1;
+        else if (fenceRun === "") {
+          fenceRun = char;
+          fenceRunLength = 1;
+        } else {
+          // A mixed run is not a fence marker.
+          atLineStart = false;
+          continue;
+        }
+        if (fenceRunLength >= 3 && !fenceRunToggled) {
+          inFence = !inFence;
+          fenceRunToggled = true;
+        }
+        continue;
+      }
+      atLineStart = false;
+    }
+  };
+
+  return {
+    push: (text: string) => {
+      if (text.length === 0) return "";
+      // The held tail is provisional, so it is shown now and the new end of the
+      // segment is read again below.
+      let settled = held;
+      held = "";
+      trackFence(text);
+      for (let index = 0; index < text.length; index += 1) {
+        if (!isDshMarkupBlank(text[index] ?? "")) segmentTrimmedLength = segmentLength + index + 1;
+      }
+      segmentLength += text.length;
+      const blanks = trailingWhitespaceLength(text);
+      const colonAt = text.length - blanks - 1;
+      if (text[colonAt] === ":" && !inFence && segmentTrimmedLength <= DSH_COLON_STUB_MAX_LENGTH) {
+        held = text.slice(colonAt);
+        return settled + text.slice(0, colonAt);
+      }
+      return settled + text;
+    },
+    closeByToolCall: () => {
+      const tail = held;
+      // The tool call closes the segment whether or not a colon was held.
+      held = "";
+      segmentLength = 0;
+      segmentTrimmedLength = 0;
+      // Only a `:` that passed the rule's own test was ever held, so it can
+      // only be settled one way here.
+      return tail.length === 0 ? "" : `.${tail.slice(1)}`;
+    },
+    flush: () => {
+      const tail = held;
+      held = "";
+      segmentLength = 0;
+      segmentTrimmedLength = 0;
+      return tail;
+    },
+  };
+}
+
 export interface DshAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   "authMethodId" | "cancelBehavior" | "clientCapabilities" | "clientInfo" | "resumeMethod"

@@ -15,6 +15,7 @@ import {
   buildDshEnvironment,
   buildDshLaunchPatch,
   buildDshPersona,
+  makeDshColonStubber,
   makeDshReplyStripper,
   parseDshResumeCursor,
   resolveDshDenyPlugin,
@@ -23,6 +24,7 @@ import {
   resolveDshSkillDirs,
   serializeDshLaunchPatch,
   escapeDshPersonaText,
+  DSH_COLON_STUB_MAX_LENGTH,
   DSH_PLUGIN_INVENTORY_ROW_ID,
   DSH_SESSION_LOG_ROW_ID,
   DSH_TELEMETRY_ROW_ID,
@@ -549,5 +551,114 @@ it.layer(layer)("DshAcpSupport", (it) => {
     expect(stripReply(["a <"]).text).toBe("a <");
     expect(stripReply(["a </"]).text).toBe("a </");
     expect(stripReply([`a <${DSML_MARKER}`]).text).toBe("a ");
+  });
+
+  /* ---------------------------------------------------------------------- */
+  /* The stub colon a tool call closes                                       */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Feeds visible reply text to one stubber the way the adapter does, with a
+   * tool call settling the step after the chunk at `toolCallAfter` (after every
+   * chunk by default). The turn's own end shows whatever is still held.
+   */
+  const stubReply = (
+    chunks: ReadonlyArray<string>,
+    toolCallAfter: number | "every" | "none" = "every",
+  ): { readonly shown: string; readonly atTurnEnd: string } => {
+    const stubber = makeDshColonStubber();
+    let shown = "";
+    chunks.forEach((chunk, index) => {
+      shown += stubber.push(chunk);
+      const settles =
+        toolCallAfter === "every" || (toolCallAfter !== "none" && index === toolCallAfter);
+      if (settles) shown += stubber.closeByToolCall();
+    });
+    return { shown, atTurnEnd: shown + stubber.flush() };
+  };
+
+  it("turns a stub line's colon into a full stop when a tool call closes the step", () => {
+    // The live shapes from the 2026-10-16 re-measure: a short step that ends
+    // with `:` immediately before a call ("Now the provider:").
+    for (const stub of ["Now the provider:", "Let me read the file:", "Checking the tests:"]) {
+      expect(stubReply([stub]).shown).toBe(`${stub.slice(0, -1)}.`);
+    }
+    // Only the step's last colon goes, and the blanks after it stay put.
+    expect(stubReply(["Wait: really:"]).shown).toBe("Wait: really.");
+    expect(stubReply(["Now the provider:\n"]).shown).toBe("Now the provider.\n");
+  });
+
+  it("settles a colon that arrives alone in its own delta, at any boundary", () => {
+    const whole = "Now the provider:";
+    expect(stubReply(["Now the provider", ":"]).shown).toBe("Now the provider.");
+    for (let cut = 1; cut < whole.length; cut += 1) {
+      expect(stubReply([whole.slice(0, cut), whole.slice(cut)], 1).shown).toBe("Now the provider.");
+    }
+    // The colon can be the whole delta, one character on its own.
+    expect(stubReply([...whole], whole.length - 1).shown).toBe("Now the provider.");
+  });
+
+  it("keeps the colon when the turn ends on it, or when more text follows", () => {
+    // A list intro or a line that ends the turn keeps its colon.
+    expect(stubReply(["Options:"], "none")).toEqual({
+      shown: "Options",
+      atTurnEnd: "Options:",
+    });
+    // A colon with text after it was never a stub line's ending.
+    expect(stubReply(["Options:", " a, b"], "none").shown).toBe("Options: a, b");
+  });
+
+  it("leaves a colon that is not a stub line's ending alone", () => {
+    // A colon inside the line: a time, a URL, an ordinary intro.
+    for (const line of ["Started at 10:30", "See https://example.com/x", "Options: a, b"]) {
+      expect(stubReply([line]).shown).toBe(line);
+    }
+    // A step too long to be a stub keeps its own punctuation; one character
+    // shorter is still a stub.
+    const tooLong = `${"x".repeat(DSH_COLON_STUB_MAX_LENGTH)}:`;
+    expect(stubReply([tooLong]).shown).toBe(tooLong);
+    const atLimit = `${"x".repeat(DSH_COLON_STUB_MAX_LENGTH - 1)}:`;
+    expect(atLimit).toHaveLength(DSH_COLON_STUB_MAX_LENGTH);
+    expect(stubReply([atLimit]).shown).toBe(`${"x".repeat(DSH_COLON_STUB_MAX_LENGTH - 1)}.`);
+  });
+
+  it("leaves a colon inside a code fence alone, at any chunk boundary", () => {
+    for (const fence of ["```", "~~~"]) {
+      const reply = `${fence}yaml\nname:`;
+      expect(stubReply([reply]).shown).toBe(reply);
+      for (let cut = 1; cut < reply.length; cut += 1) {
+        expect(stubReply([reply.slice(0, cut), reply.slice(cut)], 1).shown).toBe(reply);
+      }
+    }
+    // A closed fence is not a fence any more: the stub line after it is settled.
+    expect(stubReply(["```\ncode\n```\nNow the provider:"]).shown).toBe(
+      "```\ncode\n```\nNow the provider.",
+    );
+    // One or two backticks, or a run that is not at the line's start, open
+    // nothing.
+    expect(stubReply(["`a` and ``b``\nNow the provider:"]).shown).toBe(
+      "`a` and ``b``\nNow the provider.",
+    );
+    expect(stubReply(["text ```\nNow the provider:"]).shown).toBe("text ```\nNow the provider.");
+  });
+
+  it("holds only the one colon, and never delays any other text", () => {
+    const stubber = makeDshColonStubber();
+    expect(stubber.push("Now the provider:")).toBe("Now the provider");
+    // Everything after the held colon is shown straight away, on the next delta.
+    expect(stubber.push(" Running the test now.")).toBe(": Running the test now.");
+    expect(stubber.closeByToolCall()).toBe("");
+  });
+
+  it("ends the step at a tool call even when the colon was left alone", () => {
+    const tooLong = `${"x".repeat(DSH_COLON_STUB_MAX_LENGTH)}:`;
+    const stubber = makeDshColonStubber();
+    expect(stubber.push(tooLong)).toBe(tooLong);
+    expect(stubber.closeByToolCall()).toBe("");
+    // The next step is read on its own, from its own start.
+    expect(stubber.push("Short:")).toBe("Short");
+    expect(stubber.closeByToolCall()).toBe(".");
+    expect(stubber.push("Last part:")).toBe("Last part");
+    expect(stubber.flush()).toBe(":");
   });
 });

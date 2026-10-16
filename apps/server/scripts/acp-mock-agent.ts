@@ -880,6 +880,41 @@ const program = Effect.gen(function* () {
             });
             return { stopReason: "end_turn" };
           }
+          if (/colon-probe/i.test(promptText)) {
+            // The live stub shape from the 2026-10-16 re-measure ("Now the
+            // provider:" right before a call), with the colon arriving in its
+            // own delta and the two tool-call frames dsh really sends.
+            yield* update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "dsh-colon-probe-1",
+              content: { type: "text", text: "Now the provider" },
+            });
+            yield* update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "dsh-colon-probe-2",
+              content: { type: "text", text: ":" },
+            });
+            yield* update({
+              sessionUpdate: "tool_call",
+              toolCallId: "dsh-colon-probe-call",
+              title: "read_file",
+              kind: "other",
+              status: "in_progress",
+              rawInput: { path: promptText },
+            });
+            yield* update({
+              sessionUpdate: "tool_call_update",
+              toolCallId: "dsh-colon-probe-call",
+              status: "completed",
+              content: [{ type: "content", content: { type: "text", text: "ok" } }],
+            });
+            yield* update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "dsh-colon-probe-3",
+              content: { type: "text", text: "Done." },
+            });
+            return { stopReason: "end_turn" };
+          }
           if (/dsml-probe/i.test(promptText)) {
             // The leaked tool-call markup a dsh reply carried on 2026-10-15,
             // in the shape the live row holds it: an invoke block split across
