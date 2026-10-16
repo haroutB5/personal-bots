@@ -137,7 +137,11 @@ export function CallCard({
                     >
                       {row.speaker === "you" ? "You" : (model.voiceName ?? "Voice")}
                     </span>
-                    <span className="min-w-0 flex-1 text-[14px] leading-[19px] break-words text-[var(--personal-text)]">
+                    {/* dir="auto" so Arabic and Armenian lines lay out right-to-left. */}
+                    <span
+                      dir="auto"
+                      className="min-w-0 flex-1 text-[14px] leading-[19px] break-words text-[var(--personal-text)]"
+                    >
                       {row.text}
                     </span>
                   </div>

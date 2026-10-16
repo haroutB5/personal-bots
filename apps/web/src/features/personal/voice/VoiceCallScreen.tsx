@@ -256,7 +256,11 @@ export function VoiceCallScreen({
                 <p className="text-[13px] leading-[18px] font-semibold text-[var(--personal-text-tertiary)]">
                   {captionSpeaker}
                 </p>
-                <p className="text-[20px] leading-7 font-medium text-[var(--personal-text)]">
+                {/* dir="auto" so Arabic and Armenian lines lay out right-to-left. */}
+                <p
+                  dir="auto"
+                  className="text-[20px] leading-7 font-medium text-[var(--personal-text)]"
+                >
                   {caption.text}
                 </p>
               </>

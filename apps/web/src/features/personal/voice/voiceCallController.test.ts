@@ -420,6 +420,111 @@ describe("captions", () => {
       .transcript.filter((row: VoiceCallTranscriptEntry) => row.speaker === "you");
     expect(rows.map((row) => row.text)).toEqual(["how is it going"]);
   });
+
+  /**
+   * gemini-3.8-live streams transcription as text chunks and never sets
+   * `finished` (the CTO's live probe, 16 Oct 2026: two output chunks, then
+   * turnComplete, with no flag anywhere). Before this, every call stored an
+   * empty transcript and the caption showed only the newest fragment.
+   */
+  it("joins the chunks of one line and stores it at turnComplete", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    socket.receive({ serverContent: { outputTranscription: { text: "Hello Harout, the " } } });
+    // The caption is the whole line growing, never the last fragment.
+    expect(test.last().state.caption).toEqual({ who: "voice", text: "Hello Harout, the " });
+    socket.receive({ serverContent: { outputTranscription: { text: "test works." } } });
+    expect(test.last().state.caption).toEqual({
+      who: "voice",
+      text: "Hello Harout, the test works.",
+    });
+    expect(test.last().transcript).toHaveLength(0);
+    socket.receive({ serverContent: { turnComplete: true } });
+    expect(test.last().transcript.map((row) => [row.speaker, row.text])).toEqual([
+      ["voice", "Hello Harout, the test works."],
+    ]);
+  });
+
+  it("closes the line when the other speaker starts", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    socket.receive({ serverContent: { inputTranscription: { text: "what is the " } } });
+    socket.receive({ serverContent: { inputTranscription: { text: "weather" } } });
+    socket.receive({ serverContent: { outputTranscription: { text: "Light " } } });
+    socket.receive({ serverContent: { outputTranscription: { text: "rain." } } });
+    socket.receive({ serverContent: { turnComplete: true } });
+    expect(test.last().transcript.map((row) => [row.speaker, row.text])).toEqual([
+      ["you", "what is the weather"],
+      ["voice", "Light rain."],
+    ]);
+  });
+
+  it("closes the line on interrupted, generationComplete and a tool call", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    socket.receive({ serverContent: { inputTranscription: { text: "one" }, interrupted: true } });
+    socket.receive({
+      serverContent: { outputTranscription: { text: "two" }, generationComplete: true },
+    });
+    socket.receive({ serverContent: { outputTranscription: { text: "three" } } });
+    socket.receive({
+      toolCall: { functionCalls: [{ id: "m-1", name: "bot_status", args: {} }] },
+    });
+    expect(test.last().transcript.map((row) => [row.speaker, row.text])).toEqual([
+      ["you", "one"],
+      ["voice", "two"],
+      ["voice", "three"],
+    ]);
+  });
+
+  it("flushes the open line when the call ends with no turnComplete", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    socket.receive({ serverContent: { outputTranscription: { text: "half a " } } });
+    socket.receive({ serverContent: { outputTranscription: { text: "sentence" } } });
+    test.controller.end("hung_up");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.api.finishes).toHaveLength(1);
+    expect(test.api.finishes[0]!.transcript.map((row) => row.text)).toEqual(["half a sentence"]);
+  });
+
+  it("stores the time the line started, not the time it closed", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    const startedAt = Date.now();
+    socket.receive({ serverContent: { outputTranscription: { text: "first " } } });
+    await vi.advanceTimersByTimeAsync(4_000);
+    socket.receive({ serverContent: { outputTranscription: { text: "second" } } });
+    await vi.advanceTimersByTimeAsync(4_000);
+    socket.receive({ serverContent: { turnComplete: true } });
+    const row = test.last().transcript[0]!;
+    expect(row.text).toBe("first second");
+    expect(new Date(DateTime.toEpochMillis(row.at)).toISOString()).toBe(
+      new Date(startedAt).toISOString(),
+    );
+  });
+
+  it("round-trips an Arabic line and an Armenian line whole", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    // Both scripts arrive in pieces, as the chunks really do.
+    socket.receive({ serverContent: { outputTranscription: { text: "مرحبا" } } });
+    socket.receive({ serverContent: { outputTranscription: { text: " بك" } } });
+    socket.receive({ serverContent: { turnComplete: true } });
+    socket.receive({ serverContent: { inputTranscription: { text: "Բարեւ" } } });
+    socket.receive({ serverContent: { inputTranscription: { text: " Հարութ" } } });
+    socket.receive({ serverContent: { turnComplete: true } });
+    // A 4-byte character split across two chunks still pairs up, because chunks
+    // are only ever appended.
+    socket.receive({ serverContent: { outputTranscription: { text: "ok \uD83D" } } });
+    socket.receive({ serverContent: { outputTranscription: { text: "\uDCAC done" } } });
+    socket.receive({ serverContent: { turnComplete: true } });
+    expect(test.last().transcript.map((row) => row.text)).toEqual([
+      "مرحبا بك",
+      "Բարեւ Հարութ",
+      "ok \uD83D\uDCAC done",
+    ]);
+  });
 });
 
 describe("send_to_bot and the Undo card", () => {
@@ -727,6 +832,25 @@ describe("send_to_bot and the Undo card", () => {
     });
     await vi.advanceTimersByTimeAsync(VOICE_UNDO_MS + 50);
     expect(test.api.sent.map((row) => row.text)).toEqual(["Deploy it"]);
+  });
+
+  it("takes it back when no, wait is split across chunks, once", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    sendTool(socket, "tc-1", "Deploy it");
+    sendTool(socket, "tc-2", "And again");
+    // Gemini streams the phrase in pieces. The check runs on the line as it
+    // grows, so the undo still lands inside the 3 s window, and a line takes
+    // back one held send however many chunks it arrives in.
+    socket.receive({ serverContent: { inputTranscription: { text: "No," } } });
+    socket.receive({ serverContent: { inputTranscription: { text: " wait." } } });
+    socket.receive({ serverContent: { turnComplete: true } });
+    await vi.advanceTimersByTimeAsync(afterSend());
+    expect(test.api.sent.map((row) => row.text)).toEqual(["And again"]);
+    expect(
+      toolAnswers(socket).filter((answer) => answer.response.cancelled_by_user === true),
+    ).toHaveLength(1);
+    expect(test.last().transcript.map((row) => row.text)).toEqual(["No, wait."]);
   });
 
   it("reads his own saved notes for lookup_memory without posting anything", async () => {

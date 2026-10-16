@@ -307,6 +307,25 @@ export function createVoiceCallController(
   const connectTimeoutMs = options.connectTimeoutMs ?? VOICE_CONNECT_TIMEOUT_MS;
   let state: VoiceCallState = { ...INITIAL_VOICE_CALL_STATE };
   let transcript: VoiceCallTranscriptEntry[] = [];
+  /**
+   * The line being spoken right now, accumulated from Gemini's transcription
+   * chunks. gemini-3.8-live streams `inputTranscription` and
+   * `outputTranscription` as text chunks and never sets `finished` (the CTO's
+   * live probe, 16 Oct 2026: two output chunks then turnComplete, with no flag
+   * anywhere), so a line is ended by the next boundary instead: the other
+   * speaker, `finished: true` when Google does send it, a tool call,
+   * interrupted, generationComplete, turnComplete, or the end of the call.
+   */
+  let openLine: {
+    who: "you" | "voice";
+    /** The stream the chunks came from: a model text part never joins a transcription. */
+    source: "input" | "output" | "model";
+    text: string;
+    /** When the line's first chunk arrived: the transcript row's own time. */
+    startedAtMs: number;
+    /** "No, wait" fires once per line, however the phrase is chunked. */
+    undoFired: boolean;
+  } | null = null;
   const sentMessageIds: string[] = [];
   let session: VoiceCallSession | null = null;
   let live: LiveClient | null = null;
@@ -384,6 +403,32 @@ export function createVoiceCallController(
 
   const noteTranscript = (row: VoiceCallTranscriptEntry) => {
     transcript = [...transcript, row];
+  };
+
+  /**
+   * Ends the open line and stores it, one entry per line, in order, with the
+   * time the line started. A boundary with nothing said stores nothing.
+   *
+   * The line can close on a boundary that publishes nothing of its own (a tool
+   * call, or the end of the call), so the new row is published here: the live
+   * card's transcript is a snapshot, and it must never lag the stored one.
+   */
+  const closeOpenLine = () => {
+    const line = openLine;
+    if (line === null) return;
+    openLine = null;
+    const text = line.text.trim();
+    if (text.length === 0) return;
+    // Text is joined as whole chunks and trimmed here, never sliced, so a
+    // multi-byte character (Arabic, Armenian) is never cut in half.
+    noteTranscript(
+      decodeTranscriptEntry({
+        at: new Date(line.startedAtMs).toISOString(),
+        speaker: line.who,
+        text,
+      }),
+    );
+    publish({});
   };
 
   /** Reads the bot, redacted and capped, for anything the voice will hear. */
@@ -499,6 +544,9 @@ export function createVoiceCallController(
         // Audio is already down; the call still ends.
       }
     }
+    // Whatever was still being transcribed is part of this call: it is stored
+    // before `finish` builds the card's payload, or the last line is lost.
+    closeOpenLine();
     finish(reason);
     publish({
       status: everConnected ? "ended" : "error",
@@ -731,6 +779,8 @@ export function createVoiceCallController(
   };
 
   const onToolCall = (call: LiveToolCall) => {
+    // The voice is acting on what it just heard, so the line it heard ends here.
+    closeOpenLine();
     lastSpeechAtMs = now();
     switch (call.name) {
       case "lookup_memory": {
@@ -998,33 +1048,51 @@ export function createVoiceCallController(
           if (state.pill !== "speaking" && !state.muted) publish({ pill: "speaking" });
           options.audio.play(base64, rate);
         },
-        onCaption: ({ who, text, finished }) => {
+        onCaption: ({ who, text, finished, source }) => {
           if (myGeneration !== generation) return;
           if (text.length === 0) return;
           if (who === "voice") modelHeard = true;
           lastSpeechAtMs = now();
+          if (openLine === null || openLine.who !== who || openLine.source !== source) {
+            // The other speaker, or a different stream, started: the previous
+            // line ended with its last chunk.
+            closeOpenLine();
+            openLine = { who, source, text, startedAtMs: now(), undoFired: false };
+          } else {
+            // Whole chunks are appended, never re-sliced: Gemini may split a
+            // multi-byte character across two chunks and the join still pairs
+            // it up. The caption and the stored line both grow with the line.
+            openLine.text += text;
+          }
+          const line = openLine;
           // "No, wait" takes the held message back, exactly like tapping Undo.
-          if (who === "you" && finished && sendQueue.length > 0 && isVoiceCancelPhrase(text)) {
-            undoPendingSend();
+          // Checked on every chunk, because the line does not close the moment
+          // he says it: waiting for that would pass the 3 s window.
+          if (who === "you" && !line.undoFired && sendQueue.length > 0) {
+            if (isVoiceCancelPhrase(line.text)) {
+              line.undoFired = true;
+              undoPendingSend();
+            }
           }
-          // A finished line joins the transcript before the snapshot is built,
-          // so the stored transcript and the live caption never disagree.
-          if (finished) {
-            noteTranscript(
-              decodeTranscriptEntry({ at: new Date(now()).toISOString(), speaker: who, text }),
-            );
-          }
-          publish({ caption: { who, text } });
+          // Google's own finished flag still closes the line where it is sent.
+          if (finished) closeOpenLine();
+          publish({ caption: { who, text: line.text } });
         },
         onInterrupted: () => {
           if (myGeneration !== generation) return;
+          closeOpenLine();
           options.audio.stopPlayback();
           if (!ended) publish({ pill: state.muted ? "muted" : "listening" });
         },
         onTurnComplete: () => {
           if (myGeneration !== generation || ended) return;
+          closeOpenLine();
           modelHeard = true;
           publish({ pill: state.muted ? "muted" : "listening" });
+        },
+        onGenerationComplete: () => {
+          if (myGeneration !== generation || ended) return;
+          closeOpenLine();
         },
         onToolCall,
         onToolCallCancellation,

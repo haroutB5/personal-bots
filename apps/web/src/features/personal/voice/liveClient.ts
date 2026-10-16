@@ -202,11 +202,22 @@ export interface LiveEvents {
     readonly who: "you" | "voice";
     readonly text: string;
     readonly finished: boolean;
+    /**
+     * Which stream the chunk came from. A modelTurn text part and the output
+     * transcription of the same speech both say "voice", so the caller needs
+     * this to keep them in separate lines rather than joining them.
+     */
+    readonly source: "input" | "output" | "model";
   }) => void;
   /** The model was interrupted (the owner talked over it): drop queued audio. */
   readonly onInterrupted?: () => void;
   /** The bot finished its spoken turn. */
   readonly onTurnComplete?: () => void;
+  /**
+   * The model finished generating this turn. Gemini Live sends this beside
+   * turnComplete, and either one ends the transcription line being built.
+   */
+  readonly onGenerationComplete?: () => void;
   readonly onToolCall?: (call: LiveToolCall) => void;
   readonly onToolCallCancellation?: (ids: ReadonlyArray<string>) => void;
   /**
@@ -468,7 +479,12 @@ export function connectLive(options: LiveClientOptions): LiveClient {
         continue;
       }
       if (typeof part.text === "string" && part.text.length > 0) {
-        options.events.onCaption?.({ who: "voice", text: part.text, finished: false });
+        options.events.onCaption?.({
+          who: "voice",
+          text: part.text,
+          finished: false,
+          source: "model",
+        });
       }
     }
 
@@ -478,6 +494,7 @@ export function connectLive(options: LiveClientOptions): LiveClient {
         who: "you",
         text: input.text,
         finished: input.finished === true,
+        source: "input",
       });
     }
     const output = content.outputTranscription as Record<string, unknown> | undefined;
@@ -486,10 +503,12 @@ export function connectLive(options: LiveClientOptions): LiveClient {
         who: "voice",
         text: output.text,
         finished: output.finished === true,
+        source: "output",
       });
     }
 
     if (content.turnComplete === true) options.events.onTurnComplete?.();
+    if (content.generationComplete === true) options.events.onGenerationComplete?.();
   };
 
   const open = () => {

@@ -166,7 +166,8 @@ describe("connectLive", () => {
     const onCaption = vi.fn();
     const onAudio = vi.fn();
     const onInterrupted = vi.fn();
-    connectLive(options({ onCaption, onAudio, onInterrupted }));
+    const onGenerationComplete = vi.fn();
+    connectLive(options({ onCaption, onAudio, onInterrupted, onGenerationComplete }));
     const socket = latestSocket();
     socket.open();
     socket.setupComplete();
@@ -181,12 +182,32 @@ describe("connectLive", () => {
         inputTranscription: { text: "call the team", finished: true },
         outputTranscription: { text: "On it." },
         interrupted: true,
+        generationComplete: true,
       },
     });
     expect(onAudio).toHaveBeenCalledWith({ base64: "AAAA", rate: 24_000 });
-    expect(onCaption).toHaveBeenCalledWith({ who: "you", text: "call the team", finished: true });
-    expect(onCaption).toHaveBeenCalledWith({ who: "voice", text: "On it.", finished: false });
+    expect(onCaption).toHaveBeenCalledWith({
+      who: "you",
+      text: "call the team",
+      finished: true,
+      source: "input",
+    });
+    expect(onCaption).toHaveBeenCalledWith({
+      who: "voice",
+      text: "On it.",
+      finished: false,
+      source: "output",
+    });
+    // The model's own text part is a different stream: tagged so it never
+    // joins the output transcription of the same speech.
+    expect(onCaption).toHaveBeenCalledWith({
+      who: "voice",
+      text: "Sure.",
+      finished: false,
+      source: "model",
+    });
     expect(onInterrupted).toHaveBeenCalled();
+    expect(onGenerationComplete).toHaveBeenCalled();
   });
 
   it("hands tool calls to the caller with their args", () => {
