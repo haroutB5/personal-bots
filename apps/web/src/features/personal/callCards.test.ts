@@ -13,12 +13,16 @@ const message = (id: string, role: "user" | "assistant", at: string): Conversati
   message: { id, role, text: id, createdAt: at } as never,
 });
 
-const call = (callId: string, atMs: number): VoiceCallCardItem => ({
+const call = (
+  callId: string,
+  startedAtMs: number,
+  endedAtMs = startedAtMs + 252_000,
+): VoiceCallCardItem => ({
   callId,
-  atMs,
-  endedAtMs: atMs + 252_000,
+  startedAtMs,
+  endedAtMs,
   live: false,
-  durationMs: 252_000,
+  durationMs: endedAtMs - startedAtMs,
   endedLine: "You hung up.",
   sentCount: 1,
   voiceName: "Charon",
@@ -26,17 +30,43 @@ const call = (callId: string, atMs: number): VoiceCallCardItem => ({
 });
 
 describe("placeCallCards", () => {
-  it("puts a call where it started, not at the end of the chat", () => {
+  it("puts a finished call under the messages it relayed", () => {
+    // The real bug (Harout, 16 Oct, call e3a8c23c in chat 75c5ca85): his
+    // request, the bot's lines and the answer were written while the call ran,
+    // so a card placed at the call's START sat above all of them, and the
+    // summary stored 12 s after the call was hidden up the chat.
+    const items = [
+      message("m1", "user", "2026-10-15T10:00:05.000Z"),
+      message("m2", "assistant", "2026-10-15T10:00:40.000Z"),
+      message("m3", "user", "2026-10-15T10:03:00.000Z"),
+      message("m4", "assistant", "2026-10-15T12:00:00.000Z"),
+    ];
+    const placed = placeCallCards(items, [
+      call("c1", Date.parse("2026-10-15T10:00:00.000Z"), Date.parse("2026-10-15T10:04:12.000Z")),
+    ]);
+    expect(placed.map((item) => item.id)).toEqual(["m1", "m2", "m3", "call:c1", "m4"]);
+  });
+
+  it("sorts a card after a message created during the call", () => {
+    const items = [message("m1", "assistant", "2026-10-15T10:02:00.000Z")];
+    const placed = placeCallCards(items, [
+      call("c1", Date.parse("2026-10-15T10:00:00.000Z"), Date.parse("2026-10-15T10:04:12.000Z")),
+    ]);
+    expect(placed.map((item) => item.id)).toEqual(["m1", "call:c1"]);
+  });
+
+  it("keeps a live call at the bottom", () => {
     const items = [
       message("m1", "user", "2026-10-15T10:00:00.000Z"),
       message("m2", "assistant", "2026-10-15T10:00:30.000Z"),
-      message("m3", "assistant", "2026-10-15T12:00:00.000Z"),
     ];
-    const placed = placeCallCards(items, [call("c1", Date.parse("2026-10-15T11:00:00.000Z"))]);
-    expect(placed.map((item) => item.id)).toEqual(["m1", "m2", "call:c1", "m3"]);
+    const placed = placeCallCards(items, [
+      { ...call("c1", Date.parse("2026-10-15T09:00:00.000Z")), live: true },
+    ]);
+    expect(placed.map((item) => item.id)).toEqual(["m1", "m2", "call:c1"]);
   });
 
-  it("keeps two calls in the order they started", () => {
+  it("keeps two calls in the order they ended", () => {
     const items = [message("m1", "user", "2026-10-15T10:00:00.000Z")];
     const placed = placeCallCards(items, [
       call("late", Date.parse("2026-10-15T12:00:00.000Z")),
@@ -45,9 +75,11 @@ describe("placeCallCards", () => {
     expect(placed.map((item) => item.id)).toEqual(["m1", "call:early", "call:late"]);
   });
 
-  it("puts a call older than every loaded row first", () => {
+  it("puts a call that ended before every loaded row first", () => {
     const items = [message("m1", "user", "2026-10-15T10:00:00.000Z")];
-    const placed = placeCallCards(items, [call("c1", Date.parse("2026-10-15T09:00:00.000Z"))]);
+    const placed = placeCallCards(items, [
+      call("c1", Date.parse("2026-10-15T08:00:00.000Z"), Date.parse("2026-10-15T09:00:00.000Z")),
+    ]);
     expect(placed.map((item) => item.id)).toEqual(["call:c1", "m1"]);
   });
 
@@ -62,8 +94,7 @@ describe("placeCallCards", () => {
 // summary never refreshed.
 describe("voiceCallSummaryPending", () => {
   const ended = (endedAtMs: number): VoiceCallCardItem => ({
-    ...call("c1", endedAtMs - 30 * 60_000),
-    endedAtMs,
+    ...call("c1", endedAtMs - 30 * 60_000, endedAtMs),
   });
 
   it("keeps asking for a long call's summary after it ended", () => {

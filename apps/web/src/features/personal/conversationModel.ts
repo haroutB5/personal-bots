@@ -627,20 +627,25 @@ export type ConversationItem =
   /** A bot's save or forget of memory other bots see, waiting for the owner's OK. */
   | { readonly kind: "memory-change"; readonly id: string; readonly card: MemoryCardItem }
   /**
-   * A voice call's card, at the time the call started: the running one while
-   * the call is on, then the finished one with its duration, reason, Call back
-   * and transcript.
+   * A voice call's card, at the time the call ended (a live one stays at the
+   * bottom, see `callPlacementMs`): the finished card carries its duration,
+   * reason, Call back and transcript.
    */
   | { readonly kind: "call"; readonly id: string; readonly card: VoiceCallCardItem };
 
 /** One call card's own data, as the chat renders it. */
 export interface VoiceCallCardItem {
   readonly callId: string;
-  /** Epoch ms of the call's start: where the card sits in the timeline. */
-  readonly atMs: number;
   /**
-   * Epoch ms of the call's end. The summary arrives a few seconds after the
-   * card, so this, not `atMs`, decides how long a card without one is still
+   * Epoch ms of the call's start: the time the card shows and the origin its
+   * transcript offsets are measured from. It is NOT where the card sits (see
+   * `callPlacementMs`).
+   */
+  readonly startedAtMs: number;
+  /**
+   * Epoch ms of the call's end, and where a finished card sits in the timeline
+   * (Harout, 16 Oct, 1.66.61). The summary arrives a few seconds after the
+   * card, so this, not the start, decides how long a card without one is still
    * worth asking for again: a 30-minute call used to be past that window before
    * it had even ended (Astra re-check R4).
    */
@@ -658,6 +663,24 @@ export interface VoiceCallCardItem {
    * transcript alone.
    */
   readonly summary?: VoiceCallSummary | undefined;
+}
+
+/**
+ * Where a call card sits in the timeline.
+ *
+ * A finished call reads as the newest thing the moment it hangs up, so its card
+ * goes at the call's END: the messages the call relayed were written while it
+ * ran, and the card with its summary and decision belongs under all of them.
+ * Harout, 16 Oct (call e3a8c23c in chat 75c5ca85): the summary was stored 12 s
+ * after the call and was correct, but the card sat at the call's START, above
+ * his request, the bot's lines and the answer, so he never saw it up the chat.
+ *
+ * A live call is not history yet: it stays at the bottom (today the running card
+ * is rendered outside the timeline, see LiveVoiceCallCard), so the chat it is
+ * writing can never bury it.
+ */
+export function callPlacementMs(card: Pick<VoiceCallCardItem, "live" | "endedAtMs">): number {
+  return card.live ? Number.POSITIVE_INFINITY : card.endedAtMs;
 }
 
 /**
@@ -878,14 +901,15 @@ function itemTimeMs(item: ConversationItem): number {
     case "memory-change":
       return item.card.createdAtMs;
     case "call":
-      return item.card.atMs;
+      return callPlacementMs(item.card);
   }
 }
 
 /**
- * Puts each call card where the call started. A call is its own moment in the
- * chat (nothing else was written while it ran), so the card goes after the last
- * row at or before its start, never swept to the end of a later turn.
+ * Puts each call card where the call ended (`callPlacementMs`), so a finished
+ * call's card and its summary are the newest items, under the messages the call
+ * relayed. A live call goes last. Cards sort by that time then by id, so equal
+ * times never depend on query order.
  */
 export function placeCallCards(
   items: ReadonlyArray<ConversationItem>,
@@ -894,15 +918,24 @@ export function placeCallCards(
   if (calls.length === 0) return [...items];
   const placed = [...items];
   const times = items.map(itemTimeMs);
-  for (const call of [...calls].toSorted((left, right) => left.atMs - right.atMs)) {
+  const sorted = [...calls].sort((left, right) => {
+    const leftAt = callPlacementMs(left);
+    const rightAt = callPlacementMs(right);
+    // Both live cards rank Infinity: neither is earlier, so fall back to id
+    // rather than Infinity - Infinity (NaN, an unstable comparator).
+    return leftAt === rightAt ? left.callId.localeCompare(right.callId) : leftAt - rightAt;
+  });
+  for (const call of sorted) {
+    const at = callPlacementMs(call);
     let anchor = -1;
     for (let index = 0; index < placed.length; index += 1) {
-      const at = times[index]!;
-      if (Number.isFinite(at) && at <= call.atMs) anchor = index;
+      // `<=` also holds for Infinity, so a second live card lands after the
+      // first; NaN (an unparseable row) fails every comparison and is skipped.
+      if (times[index]! <= at) anchor = index;
     }
     const id = `call:${call.callId}`;
     placed.splice(anchor + 1, 0, { kind: "call", id, card: call });
-    times.splice(anchor + 1, 0, call.atMs);
+    times.splice(anchor + 1, 0, at);
   }
   return placed;
 }

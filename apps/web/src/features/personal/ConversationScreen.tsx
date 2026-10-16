@@ -543,9 +543,10 @@ export function ConversationScreen({
   // LiveVoiceCallCard), so a call never rebuilds the chat's items per second.
   const voice = useVoiceCall();
   // The chat's own call cards, from the server, placed at the time each call
-  // started. The running one ticks every second and lives outside the timeline
-  // (see LiveVoiceCallCard), so a call never rebuilds the chat's items per
-  // second.
+  // ENDED: the messages a call relayed were written while it ran, and its card
+  // with the summary belongs under them (Harout, 16 Oct, 1.66.61). The running
+  // one ticks every second and lives outside the timeline (see
+  // LiveVoiceCallCard), so a call never rebuilds the chat's items per second.
   //
   // Nothing is fetched for a bot whose voice calls are off, unless a call is
   // running on this very chat (which can happen the moment the switch is
@@ -571,7 +572,7 @@ export function ConversationScreen({
     () =>
       voiceCalls.data?.calls.map((row) => ({
         callId: row.callId,
-        atMs: DateTime.toEpochMillis(row.startedAt),
+        startedAtMs: DateTime.toEpochMillis(row.startedAt),
         endedAtMs: DateTime.toEpochMillis(row.endedAt),
         live: false,
         durationMs: row.durationSeconds * 1_000,
@@ -637,7 +638,7 @@ export function ConversationScreen({
       <CallCard
         model={{
           callId: card.callId,
-          startedAtMs: card.atMs,
+          startedAtMs: card.startedAtMs,
           durationMs: card.durationMs,
           endedLine: card.endedLine,
           sentCount: card.sentCount,
@@ -648,7 +649,11 @@ export function ConversationScreen({
         }}
         // Read only when the card is opened, and only this call's rows.
         transcript={
-          <CallTranscript callId={card.callId} startedAtMs={card.atMs} voiceName={card.voiceName} />
+          <CallTranscript
+            callId={card.callId}
+            startedAtMs={card.startedAtMs}
+            voiceName={card.voiceName}
+          />
         }
         onCallBack={startVoiceCall}
         onReturn={() => undefined}
