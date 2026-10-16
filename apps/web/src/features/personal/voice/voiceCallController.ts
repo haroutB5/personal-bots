@@ -63,6 +63,8 @@ import {
   VOICE_CONNECT_TIMEOUT_MS,
   VOICE_FINISH_RETRY_MS,
   VOICE_GOODBYE_SPOKEN_LINE,
+  VOICE_NARRATE_MIN_GAP_MS,
+  VOICE_NARRATE_PAUSE_MS,
   VOICE_QUIET_SPOKEN_LINE,
   VOICE_RECONNECT_GIVE_UP_MS,
   VOICE_RECONNECT_HIDDEN_MS,
@@ -70,6 +72,7 @@ import {
   VOICE_SEND_QUEUE_MAX,
   VOICE_UNDO_MS,
   VOICE_WAITING_CAP_MS,
+  VOICE_WORK_UPDATE_PREFIX,
   VOICE_CALL_LOST_LINE,
   type VoiceCallState,
   type VoiceEndReason,
@@ -326,6 +329,20 @@ export function createVoiceCallController(
     /** "No, wait" fires once per line, however the phrase is chunked. */
     undoFired: boolean;
   } | null = null;
+  /**
+   * The newest work update the voice has not been told yet. Only the latest is
+   * kept: a bot changing its step every second must not queue a backlog of
+   * sentences for the voice to read out.
+   */
+  let narratePending: string | null = null;
+  /** The last line really injected, so the same update is never said twice. */
+  let narrateLastSent: string | null = null;
+  let narrateSentAtMs = 0;
+  /** What the bot's own status looked like on the previous look. */
+  let narrateStep: string | null = null;
+  let narrateReplyId: string | null = null;
+  /** The first look only takes the baseline: the call's prompt already has it. */
+  let narrateSeeded = false;
   const sentMessageIds: string[] = [];
   let session: VoiceCallSession | null = null;
   let live: LiveClient | null = null;
@@ -450,6 +467,60 @@ export function createVoiceCallController(
       live?.speak(spokenInstruction(line));
     } catch {
       // A dead socket: the on-screen line is still there.
+    }
+  };
+
+  /**
+   * Tells the voice what the real bot is doing, while it does it.
+   *
+   * The source is the call's own status poll (the provider refreshes the call's
+   * chat about once a second): a work step that changed, or an assistant message
+   * the bot posted while its turn is still running (an interim line). Only the
+   * newest one is kept, it is said at the next pause and never more than once
+   * every `VOICE_NARRATE_MIN_GAP_MS`, and the same line is never repeated. The
+   * text is marked with `VOICE_WORK_UPDATE_PREFIX`, which is what the voice's
+   * own instructions look for; the final reply still goes through the tool
+   * answer, exactly as before.
+   */
+  const narrateWork = (at: number) => {
+    if (!everConnected || state.status !== "live") return;
+    const status = safeStatus();
+    if (!narrateSeeded) {
+      // The system instruction the session opened with already carries the
+      // state and the step as of the call's start: nothing to narrate yet.
+      narrateSeeded = true;
+      narrateStep = status.step;
+      narrateReplyId = status.latestReplyMessageId ?? null;
+      return;
+    }
+    let candidate: string | null = null;
+    const step = status.step?.trim() ?? "";
+    if (step.length > 0 && step !== narrateStep) {
+      narrateStep = step;
+      candidate = step;
+    } else if (
+      status.state === "working" &&
+      (status.latestReply ?? "").trim().length > 0 &&
+      (status.latestReplyMessageId ?? "").length > 0 &&
+      status.latestReplyMessageId !== narrateReplyId
+    ) {
+      // The bot posted a line and is still working: an interim update.
+      narrateReplyId = status.latestReplyMessageId ?? null;
+      candidate = (status.latestReply ?? "").trim();
+    }
+    if (candidate !== null && candidate !== narrateLastSent) narratePending = candidate;
+    if (narratePending === null) return;
+    // Never over the owner and never over the voice itself: only at a pause.
+    if (state.pill === "speaking" || at - lastSpeechAtMs < VOICE_NARRATE_PAUSE_MS) return;
+    if (narrateLastSent !== null && at - narrateSentAtMs < VOICE_NARRATE_MIN_GAP_MS) return;
+    const line = narratePending;
+    narratePending = null;
+    narrateLastSent = line;
+    narrateSentAtMs = at;
+    try {
+      live?.speak(VOICE_WORK_UPDATE_PREFIX + line);
+    } catch {
+      // A dead socket: the update is simply not said.
     }
   };
 
@@ -1219,6 +1290,9 @@ export function createVoiceCallController(
         }
       }
 
+      // What the real bot is doing, said out loud while it does it.
+      narrateWork(at);
+
       const quietInput = {
         nowMs: at,
         lastSpeechAtMs,
@@ -1363,9 +1437,16 @@ export function createVoiceCallController(
     end,
     callLost,
     get watchBot() {
-      // A message is held, or one has posted and its reply is still owed: the
-      // only times the server's snapshot is worth polling.
-      return sendQueue.length > 0 || openReply !== null;
+      // A message is held, or one has posted and its reply is still owed, or
+      // the real bot is working: the times the server's snapshot is worth
+      // polling. "Working" is one of them because the call narrates the step it
+      // changes to, so the poll is what lets the voice say what is happening.
+      return (
+        sendQueue.length > 0 ||
+        openReply !== null ||
+        narratePending !== null ||
+        safeStatus().state === "working"
+      );
     },
     retryFinish: () => {
       if (pendingFinish === null || finishInFlight) return;

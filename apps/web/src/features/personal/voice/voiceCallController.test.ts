@@ -29,9 +29,11 @@ import {
   resetFakeSockets,
 } from "./fakeLiveSocket.test-helper";
 import {
+  VOICE_NARRATE_MIN_GAP_MS,
   VOICE_REPLY_GRACE_MS,
   VOICE_UNDO_MS,
   VOICE_END_REASONS,
+  VOICE_WORK_UPDATE_PREFIX,
   type VoiceEndReason,
 } from "./callState";
 import * as DateTime from "effect/DateTime";
@@ -305,6 +307,25 @@ function toolAnswers(socket: FakeLiveSocket): ReadonlyArray<{
 /** Long enough for the Undo window and the reply grace to both pass. */
 const afterSend = () => VOICE_UNDO_MS + VOICE_REPLY_GRACE_MS + 2_500;
 
+/** Every line the client has made the voice say, in order. */
+function spokenLines(socket: FakeLiveSocket): ReadonlyArray<string> {
+  return (
+    socket.sentOf("clientContent") as unknown as ReadonlyArray<{
+      clientContent: { turns: ReadonlyArray<{ parts: ReadonlyArray<{ text: string }> }> };
+    }>
+  ).map((frame) => frame.clientContent.turns[0]!.parts[0]!.text);
+}
+
+/** The real bot, working, with the step the call's own status poll reports. */
+const workingAt = (step: string, extra: Partial<BotStatusPort> = {}): BotStatusPort => ({
+  state: "working",
+  step,
+  elapsedMs: 1_000,
+  latestReply: null,
+  latestReplyMessageId: null,
+  ...extra,
+});
+
 beforeEach(() => {
   resetFakeSockets();
   vi.useFakeTimers();
@@ -524,6 +545,121 @@ describe("captions", () => {
       "Բարեւ Հարութ",
       "ok \uD83D\uDCAC done",
     ]);
+  });
+});
+
+describe("work updates for the voice", () => {
+  it("tells the voice what the bot is doing when its step changes", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.status.current = workingAt("Reading the release notes");
+    // The first look is the baseline: the session's own prompt already carries
+    // the state and the step it opened with.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(spokenLines(socket)).toHaveLength(0);
+
+    test.status.current = workingAt("Opening clubspark.uk");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(spokenLines(socket)).toEqual([`${VOICE_WORK_UPDATE_PREFIX}Opening clubspark.uk`]);
+  });
+
+  it("keeps only the newest update, and waits out the gap", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.status.current = workingAt("Reading the release notes");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    test.status.current = workingAt("Opening clubspark.uk");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(spokenLines(socket)).toEqual([`${VOICE_WORK_UPDATE_PREFIX}Opening clubspark.uk`]);
+
+    // Two more changes inside the throttle window: neither is said yet, and
+    // only the last one is kept.
+    test.status.current = workingAt("Handing work to QA");
+    await vi.advanceTimersByTimeAsync(1_000);
+    test.status.current = workingAt("Writing the notes");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(spokenLines(socket)).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(VOICE_NARRATE_MIN_GAP_MS);
+    expect(spokenLines(socket)).toEqual([
+      `${VOICE_WORK_UPDATE_PREFIX}Opening clubspark.uk`,
+      `${VOICE_WORK_UPDATE_PREFIX}Writing the notes`,
+    ]);
+  });
+
+  it("never talks over the voice", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.status.current = workingAt("Reading the release notes");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // The model is mid-sentence.
+    socket.receive({
+      serverContent: {
+        modelTurn: { parts: [{ inlineData: { data: "AAAA", mimeType: "audio/pcm;rate=24000" } }] },
+      },
+    });
+    test.status.current = workingAt("Opening clubspark.uk");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(spokenLines(socket)).toHaveLength(0);
+
+    // The turn ends: the next pause is when the update may go in.
+    socket.receive({ serverContent: { turnComplete: true } });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(spokenLines(socket)).toEqual([`${VOICE_WORK_UPDATE_PREFIX}Opening clubspark.uk`]);
+  });
+
+  it("waits for the owner to stop before it speaks an update", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.status.current = workingAt("Reading the release notes");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    socket.receive({ serverContent: { inputTranscription: { text: "hang on a moment" } } });
+    test.status.current = workingAt("Opening clubspark.uk");
+    // Only 1 s since he spoke: still his turn to talk.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(spokenLines(socket)).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(spokenLines(socket)).toEqual([`${VOICE_WORK_UPDATE_PREFIX}Opening clubspark.uk`]);
+  });
+
+  it("says a line once, however long the status keeps reporting it", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.status.current = workingAt("Reading the release notes");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    test.status.current = workingAt("Thinking about it");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(spokenLines(socket)).toEqual([`${VOICE_WORK_UPDATE_PREFIX}Thinking about it`]);
+
+    // The same step, polled every second for half a minute.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(spokenLines(socket)).toEqual([`${VOICE_WORK_UPDATE_PREFIX}Thinking about it`]);
+  });
+
+  it("speaks an interim message the bot posted while it is still working", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.status.current = workingAt("Reading the release notes");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    test.status.current = workingAt("Reading the release notes", {
+      latestReply: "The booking is confirmed. Now checking the 15:00-16:00 hour, read-only.",
+      latestReplyMessageId: "m-9",
+      latestReplyAtMs: 2_000,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(spokenLines(socket)).toEqual([
+      `${VOICE_WORK_UPDATE_PREFIX}The booking is confirmed. Now checking the 15:00-16:00 hour, read-only.`,
+    ]);
+
+    // The same message, still the newest one: never said twice.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(spokenLines(socket)).toHaveLength(1);
   });
 });
 

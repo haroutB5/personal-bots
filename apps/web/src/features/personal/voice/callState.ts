@@ -139,6 +139,26 @@ export const VOICE_SEND_QUEUE_MAX = 3;
 export const VOICE_REPLY_GRACE_MS = 1_500;
 
 /**
+ * What a work update line starts with. The voice's own system instruction (the
+ * server's `voiceCallInstructions.ts`) tells it that a line marked as an update
+ * is the app saying what the bot has just done, to say once, in one short
+ * sentence of its own, and never over the owner. The wording here is the mark.
+ */
+export const VOICE_WORK_UPDATE_PREFIX = "[Work update] ";
+
+/**
+ * At most one spoken work update in this window. A busy bot changes its step
+ * every second; the voice still only says the newest one, this far apart.
+ */
+export const VOICE_NARRATE_MIN_GAP_MS = 8_000;
+
+/**
+ * Nobody has spoken (either side) for this long: the next update may go in.
+ * Shorter than any pause between sentences, longer than the gap inside one.
+ */
+export const VOICE_NARRATE_PAUSE_MS = 1_200;
+
+/**
  * The hard cap on reaching a live session. Past this the call is over as
  * `google_unavailable`, whatever the socket is still doing (spec 3.2).
  */
