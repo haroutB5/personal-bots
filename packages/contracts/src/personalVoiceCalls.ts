@@ -121,6 +121,13 @@ export const VoiceCallStartResult = Schema.Struct({
   botName: Schema.String,
   /** Built server-side: the persona, the honesty rule and the chat context. */
   systemInstruction: Schema.String,
+  /**
+   * Whether the setup should include Google's own live Search. False while the
+   * server remembers that Search is out of quota on this key (until the next
+   * midnight Pacific); the call then declares the `search_web` tool instead and
+   * the server answers searches itself.
+   */
+  googleSearch: Schema.Boolean,
   context: VoiceCallContext,
 });
 export type VoiceCallStartResult = typeof VoiceCallStartResult.Type;
@@ -232,6 +239,74 @@ export const VoiceCallLookupMemoryResult = Schema.Struct({
   note: Schema.String,
 });
 export type VoiceCallLookupMemoryResult = typeof VoiceCallLookupMemoryResult.Type;
+
+// ---------------------------------------------------------------------------
+// renewPass (Google Search out of quota: reconnect without it)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why the client wants a fresh pass for a call it already has. Only one reason
+ * exists today: the session closed with a quota error before the model said
+ * anything, and its setup had included Google Search.
+ */
+export const VoiceCallRenewReason = Schema.Literals(["search_quota"]);
+export type VoiceCallRenewReason = typeof VoiceCallRenewReason.Type;
+
+export const VoiceCallRenewPassInput = Schema.Struct({
+  threadId: ThreadId,
+  callId: TrimmedNonEmptyString,
+  reason: VoiceCallRenewReason,
+});
+export type VoiceCallRenewPassInput = typeof VoiceCallRenewPassInput.Type;
+
+export const VoiceCallRenewPassResult = Schema.Struct({
+  token: Schema.String,
+  tokenExpiresAt: Schema.DateTimeUtcFromString,
+  newSessionExpiresAt: Schema.DateTimeUtcFromString,
+  /** Always false: the renewed session runs without Google's Search. */
+  googleSearch: Schema.Boolean,
+});
+export type VoiceCallRenewPassResult = typeof VoiceCallRenewPassResult.Type;
+
+// ---------------------------------------------------------------------------
+// searchWeb (the voice's own search, when Google Search is not available)
+// ---------------------------------------------------------------------------
+
+/** At most this many results one voice search returns. */
+export const VOICE_CALL_SEARCH_RESULTS_MAX = 4;
+/** Per-field caps, so the whole reply stays well under 3 KB. */
+export const VOICE_CALL_SEARCH_TITLE_CHARS = 120;
+export const VOICE_CALL_SEARCH_SNIPPET_CHARS = 320;
+export const VOICE_CALL_SEARCH_URL_CHARS = 200;
+export const VOICE_CALL_SEARCH_QUERY_CHARS = 200;
+/** The server gives the search this long before it answers "no results". */
+export const VOICE_CALL_SEARCH_TIMEOUT_MS = 6_000;
+/** Searches one call may run per minute. */
+export const VOICE_CALL_SEARCHES_PER_MINUTE = 10;
+
+export const VoiceCallSearchWebInput = Schema.Struct({
+  threadId: ThreadId,
+  callId: TrimmedNonEmptyString,
+  query: TrimmedNonEmptyString,
+});
+export type VoiceCallSearchWebInput = typeof VoiceCallSearchWebInput.Type;
+
+export const VoiceCallSearchResult = Schema.Struct({
+  title: Schema.String,
+  snippet: Schema.String,
+  url: Schema.String,
+});
+export type VoiceCallSearchResult = typeof VoiceCallSearchResult.Type;
+
+export const VoiceCallSearchWebResult = Schema.Struct({
+  results: Schema.Array(VoiceCallSearchResult),
+  /**
+   * Empty when results came back. Otherwise the reason there are none, said
+   * plainly so the voice can repeat it instead of guessing.
+   */
+  note: Schema.String,
+});
+export type VoiceCallSearchWebResult = typeof VoiceCallSearchWebResult.Type;
 
 // ---------------------------------------------------------------------------
 // send

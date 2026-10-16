@@ -172,8 +172,8 @@ export function errorCopyFor(
       };
     case "rate_limited":
       return {
-        title: "Gemini is busy right now",
-        body: "Google paused this key for the moment. Try again in a few minutes.",
+        title: "Calls are busy right now",
+        body: "Too many calls were started in a row. Try again in a minute.",
         primary: "Try again",
         onPrimary: actions.onRetry,
       };
@@ -181,9 +181,13 @@ export function errorCopyFor(
       // Measured on the live key (15 Oct 2026): the pass is accepted and Google
       // closes the socket straight after setup with 1011 "You exceeded your
       // current quota". Saying so beats the generic "can't reach Google".
+      //
+      // This card only appears once the call has already been retried without
+      // Google Search (16 Oct): a spent Search quota never reaches the owner, so
+      // what ran out here is the voice model itself. It says which part.
       return {
-        title: "Gemini is out of quota",
-        body: "Google paused this key for now. Try again later, or check the plan at aistudio.google.com.",
+        title: "The Gemini voice is out of quota",
+        body: "The voice model's free allowance on this key is used up for now. Searching is not the problem. Try again later, or check the plan at aistudio.google.com.",
         primary: "Close",
         onPrimary: actions.onClose,
       };

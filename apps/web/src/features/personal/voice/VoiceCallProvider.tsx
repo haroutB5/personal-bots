@@ -480,6 +480,52 @@ export function VoiceCallProvider({
                   detail: voiceApi.voiceFailureDetail(result),
                 };
           },
+          renewPass: async (renewInput) => {
+            if (environmentId === null) return offline;
+            const result = await runAtomCommand(
+              registry,
+              voiceApi.personalVoiceCallRenewPass,
+              {
+                environmentId,
+                input: {
+                  threadId: ThreadId.make(renewInput.threadId),
+                  callId: renewInput.callId,
+                  reason: renewInput.reason,
+                },
+              },
+              commandOptions,
+            );
+            return result._tag === "Success"
+              ? { ok: true, value: result.value }
+              : {
+                  ok: false,
+                  code: voiceApi.voiceCallFailureCode(result),
+                  detail: voiceApi.voiceFailureDetail(result),
+                };
+          },
+          searchWeb: async (searchInput) => {
+            if (environmentId === null) return offline;
+            const result = await runAtomCommand(
+              registry,
+              voiceApi.personalVoiceCallSearchWeb,
+              {
+                environmentId,
+                input: {
+                  threadId: ThreadId.make(searchInput.threadId),
+                  callId: searchInput.callId,
+                  query: searchInput.query,
+                },
+              },
+              commandOptions,
+            );
+            return result._tag === "Success"
+              ? { ok: true, value: result.value }
+              : {
+                  ok: false,
+                  code: voiceApi.voiceCallFailureCode(result),
+                  detail: voiceApi.voiceFailureDetail(result),
+                };
+          },
           finish: async (finishInput) => {
             if (environmentId === null) return offline;
             const result = await runAtomCommand(

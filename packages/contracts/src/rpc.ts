@@ -311,6 +311,10 @@ import {
   VoiceCallListResult,
   VoiceCallLookupMemoryInput,
   VoiceCallLookupMemoryResult,
+  VoiceCallRenewPassInput,
+  VoiceCallRenewPassResult,
+  VoiceCallSearchWebInput,
+  VoiceCallSearchWebResult,
   VoiceCallSendInput,
   VoiceCallSendResult,
   VoiceCallSnapshotInput,
@@ -654,6 +658,8 @@ export const WS_METHODS = {
   personalVoiceCallsStart: "personalVoiceCalls.start",
   personalVoiceCallsCheckKey: "personalVoiceCalls.checkKey",
   personalVoiceCallsLookupMemory: "personalVoiceCalls.lookupMemory",
+  personalVoiceCallsRenewPass: "personalVoiceCalls.renewPass",
+  personalVoiceCallsSearchWeb: "personalVoiceCalls.searchWeb",
   personalVoiceCallsSend: "personalVoiceCalls.send",
   personalVoiceCallsFinish: "personalVoiceCalls.finish",
   personalVoiceCallsList: "personalVoiceCalls.list",
@@ -1475,6 +1481,20 @@ const WsPersonalVoiceCallsListRpc = Rpc.make(WS_METHODS.personalVoiceCallsList, 
 const WsPersonalVoiceCallsLookupMemoryRpc = Rpc.make(WS_METHODS.personalVoiceCallsLookupMemory, {
   payload: VoiceCallLookupMemoryInput,
   success: VoiceCallLookupMemoryResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+// A fresh pass for a call already open, without Google Search (quota), and the
+// voice's own web search that replaces it.
+const WsPersonalVoiceCallsRenewPassRpc = Rpc.make(WS_METHODS.personalVoiceCallsRenewPass, {
+  payload: VoiceCallRenewPassInput,
+  success: VoiceCallRenewPassResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+const WsPersonalVoiceCallsSearchWebRpc = Rpc.make(WS_METHODS.personalVoiceCallsSearchWeb, {
+  payload: VoiceCallSearchWebInput,
+  success: VoiceCallSearchWebResult,
   error: PersonalVoiceCallsRpcError,
 });
 
@@ -2727,6 +2747,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalVoiceCallsFinishRpc,
   WsPersonalVoiceCallsListRpc,
   WsPersonalVoiceCallsLookupMemoryRpc,
+  WsPersonalVoiceCallsRenewPassRpc,
+  WsPersonalVoiceCallsSearchWebRpc,
   WsPersonalVoiceCallsSnapshotRpc,
   WsPersonalVoiceCallsTranscriptRpc,
   WsPersonalLeadBotChangesListRpc,

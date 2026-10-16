@@ -3399,6 +3399,20 @@ const makeWsRpcLayer = (
             personalVoiceCalls.lookupMemory(input),
             { "rpc.aggregate": "server" },
           ),
+        // A fresh pass without Google Search when Search is out of quota, and
+        // the voice's own keyless web search that stands in for it.
+        [WS_METHODS.personalVoiceCallsRenewPass]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalVoiceCallsRenewPass,
+            personalVoiceCalls.renewPass(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalVoiceCallsSearchWeb]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalVoiceCallsSearchWeb,
+            personalVoiceCalls.searchWeb(input),
+            { "rpc.aggregate": "server" },
+          ),
         // The call's own chat state, keyed by the call's thread, and one card's
         // transcript on demand. Read-only, so a phone that navigated away
         // mid-call still gets the truth about the call's chat.

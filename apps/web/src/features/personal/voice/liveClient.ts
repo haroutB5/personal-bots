@@ -44,9 +44,13 @@ export const LIVE_ENDPOINTS: ReadonlyArray<{ readonly name: string; readonly pat
 
 export const LIVE_SOCKET_OPEN = 1;
 
-/** The four tools the client declares and answers (Backend owns the names). */
+/**
+ * The tools the client declares and answers (Backend owns the names).
+ * `search_web` is only declared when the session has no Google Search.
+ */
 export const LIVE_TOOLS = [
   "lookup_memory",
+  "search_web",
   "send_to_bot",
   "bot_status",
   "latest_reply",
@@ -58,13 +62,40 @@ export function liveSocketUrl(path: string, token: string): string {
   return `${LIVE_HOST}${path}?access_token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * The voice's own web search, declared when Google's built-in Search is not in
+ * the setup (it ran out of quota). The server answers it with a few short
+ * results from the keyless web search the bots use.
+ */
+const SEARCH_WEB_DECLARATION = {
+  name: "search_web",
+  description:
+    "Search the public web for a current fact: weather, news, sport, opening times, a quick definition. Pass the fact as a short query. Returns up to 4 short results, or nothing. Never read a link out.",
+  parameters: {
+    type: "OBJECT",
+    properties: {
+      query: {
+        type: "STRING",
+        description: "The fact to look up, as a few plain words.",
+      },
+    },
+    required: ["query"],
+  },
+} as const;
+
 /** The setup message for one session: persona, context, tools, transcriptions. */
 export function liveSetupMessage(input: {
   readonly model: string;
   readonly voiceName: string;
   readonly systemInstruction: string;
   readonly context: string;
+  /**
+   * Include Google's own live Search. Defaults to true. False when Search is
+   * out of quota: `search_web` is declared in its place.
+   */
+  readonly googleSearch?: boolean;
 }): Record<string, unknown> {
+  const googleSearch = input.googleSearch !== false;
   const instruction = [input.systemInstruction, input.context]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");
@@ -85,7 +116,9 @@ export function liveSetupMessage(input: {
         // opening times instantly, without waking the bot (Harout's spike:
         // "what's the weather in Croydon today" used to get a blank look).
         // Grounding metadata arrives in serverContent and is passed through.
-        { googleSearch: {} },
+        // Left out when the key's Search quota is spent: Google then closes
+        // every session at setup, so the call is set up without it.
+        ...(googleSearch ? [{ googleSearch: {} }] : []),
         {
           functionDeclarations: [
             {
@@ -103,6 +136,7 @@ export function liveSetupMessage(input: {
                 required: ["query"],
               },
             },
+            ...(googleSearch ? [] : [SEARCH_WEB_DECLARATION]),
             {
               name: "send_to_bot",
               // Non-blocking: the tool is answered only once the message really
@@ -211,6 +245,11 @@ export interface LiveClientOptions {
    * context into `systemInstruction`, so this is usually absent.
    */
   readonly context?: string;
+  /**
+   * Include Google's built-in Search in the setup (default true). The caller
+   * turns it off after Search ran out of quota; `search_web` replaces it.
+   */
+  readonly googleSearch?: boolean;
   readonly events: LiveEvents;
   /** Test seam: the real one is `(url) => new WebSocket(url)`. */
   readonly createSocket?: CreateLiveSocket;
@@ -316,6 +355,7 @@ export function connectLive(options: LiveClientOptions): LiveClient {
       voiceName: options.voiceName,
       systemInstruction: options.systemInstruction,
       context: options.context ?? "",
+      googleSearch: options.googleSearch !== false,
     });
     if (resumeHandle !== null) {
       (message.setup as Record<string, unknown>).sessionResumption = { handle: resumeHandle };

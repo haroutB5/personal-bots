@@ -23,6 +23,11 @@
  * - A call that never connected leaves nothing in the chat.
  * - `finish()` runs exactly once per call, whatever ended it.
  * - A user tapping Stop is not an error: it ends as `hung_up`, never as a drop.
+ * - Google's own Search can be out of quota while the voice model is fine; then
+ *   Google closes every session at setup with 1011. One such close, before the
+ *   model said anything, mints a fresh pass and reconnects at once without
+ *   Search, with `search_web` (answered by our own server) in its place. The
+ *   owner sees "Connecting" a moment longer and no error.
  *
  * Everything the voice is told about the chat goes through `redactForVoice`
  * and is length-capped first: the server redacts too, but the browser must not
@@ -41,7 +46,13 @@ const decodeThreadId = Schema.decodeUnknownSync(ThreadId);
 const decodeMessageId = Schema.decodeUnknownSync(MessageId);
 const decodeTranscriptEntry = Schema.decodeUnknownSync(VoiceCallTranscriptEntry);
 
-import type { VoiceCallAnyErrorCode, VoiceCallFinishInput, VoiceCallSession } from "./voiceCallApi";
+import type {
+  VoiceCallAnyErrorCode,
+  VoiceCallFinishInput,
+  VoiceCallRenewPassResult,
+  VoiceCallSearchWebResult,
+  VoiceCallSession,
+} from "./voiceCallApi";
 import {
   INITIAL_VOICE_CALL_STATE,
   VOICE_CONNECT_TIMEOUT_MS,
@@ -100,6 +111,25 @@ export interface VoiceCallPort {
       readonly note: string;
     }>
   >;
+  /**
+   * A fresh single-use pass for this call, after Google's Search ran out of
+   * quota. The server remembers that for later calls and mints through the
+   * same path as `start`; it allows one per call.
+   */
+  renewPass(input: {
+    readonly threadId: string;
+    readonly callId: string;
+    readonly reason: "search_quota";
+  }): Promise<VoiceApiResult<VoiceCallRenewPassResult>>;
+  /**
+   * The voice's own web search (`search_web`), answered by the server with a
+   * few short results. Used on a session that has no Google Search.
+   */
+  searchWeb(input: {
+    readonly threadId: string;
+    readonly callId: string;
+    readonly query: string;
+  }): Promise<VoiceApiResult<VoiceCallSearchWebResult>>;
 }
 
 /**
@@ -240,6 +270,28 @@ interface OpenReply {
 
 const RETRY_FINISH_FOREVER_MS = 60_000;
 
+/**
+ * How long the phone waits for the server's answer to `search_web` before the
+ * voice is told there was none. The server gives up at 6 s; this only covers a
+ * lost connection, so the voice is never left hanging on a tool call.
+ */
+const SEARCH_WEB_CLIENT_TIMEOUT_MS = 8_000;
+
+/** The note the voice gets when a search brings back nothing it can use. */
+const SEARCH_WEB_NO_ANSWER = {
+  results: [],
+  note: "The search did not come back in time. Say you could not find it.",
+} as const;
+
+/**
+ * Google closes a session at setup with 1011 and its own quota words when the
+ * live Search tool is out of quota (measured on the live key, 16 Oct 2026). A
+ * bare 1011 with no words is not that: it could be anything, so it is not
+ * retried.
+ */
+const isQuotaClose = (code: number, reason: string): boolean =>
+  code === 1011 && /quota|billing|exceeded/i.test(reason);
+
 export function createVoiceCallController(
   options: VoiceCallControllerOptions,
 ): VoiceCallController {
@@ -258,6 +310,12 @@ export function createVoiceCallController(
   let started = false;
   let disposed = false;
   let everConnected = false;
+  /** Google's built-in Search is in this session's setup (the server decides). */
+  let googleSearchOn = true;
+  /** The one retry without Search has been spent. */
+  let searchRetryUsed = false;
+  /** The model has said or finished something: a quota close after it is not at setup. */
+  let modelHeard = false;
   let errorDetail: string | null = null;
   let lastSpeechAtMs = startedAtMs;
   let quietWarned = false;
@@ -728,6 +786,48 @@ export function createVoiceCallController(
         else publish({ work: workFor() });
         return;
       }
+      case "search_web": {
+        // The voice's own search, for a session that has no Google Search. The
+        // server runs the keyless web search; the pill says so meanwhile and
+        // nothing is posted into the chat.
+        const query = typeof call.args.query === "string" ? call.args.query.trim() : "";
+        if (query.length === 0) {
+          answerTool(
+            call.id,
+            call.name,
+            { results: [], note: "No question to search for." },
+            "INTERRUPT",
+          );
+          return;
+        }
+        publish({ pill: "searching" });
+        let settled = false;
+        const settle = (response: Record<string, unknown>) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(deadline);
+          timeouts.delete(deadline);
+          if (ended) return;
+          answerTool(call.id, call.name, response, "INTERRUPT");
+          // The voice may already be talking again; only undo our own pill.
+          if (state.pill === "searching") publish({ pill: state.muted ? "muted" : "listening" });
+        };
+        const deadline = later(() => settle(SEARCH_WEB_NO_ANSWER), SEARCH_WEB_CLIENT_TIMEOUT_MS);
+        void options.api
+          .searchWeb({ threadId: options.threadId, callId: session?.callId ?? "", query })
+          .then((result) =>
+            settle(
+              result.ok
+                ? {
+                    results: result.value.results,
+                    ...(result.value.note.length > 0 ? { note: result.value.note } : {}),
+                  }
+                : SEARCH_WEB_NO_ANSWER,
+            ),
+          )
+          .catch(() => settle(SEARCH_WEB_NO_ANSWER));
+        return;
+      }
       case "bot_status": {
         // The voice asked, so the server is asked now: the snapshot is not
         // polled while nothing is waiting on the bot.
@@ -780,6 +880,76 @@ export function createVoiceCallController(
     if (sendQueue.length > 0) openWindow();
   };
 
+  /** The hard cap on reaching a live session; past it the call fails. */
+  const armConnectTimer = () => {
+    if (connectTimer !== null) clearTimeout(connectTimer);
+    connectTimer = setTimeout(() => {
+      connectTimer = null;
+      if (ended || promisedLive()) return;
+      errorDetail = "Google did not answer in time.";
+      publish({
+        status: "error",
+        errorCode: "google_unavailable",
+        pill: "none",
+        hint: null,
+      });
+      end("failed");
+    }, connectTimeoutMs);
+  };
+
+  /**
+   * Google closed the session with a quota error, before the model said a word,
+   * and the setup had Search in it. Mint a fresh pass (the first one is spent),
+   * leave Search out and reconnect at once. Nothing is shown but "Connecting".
+   * `errorDetail` stays empty on purpose: if this works, the card must not
+   * record a failure that never happened.
+   */
+  const retryWithoutSearch = async (): Promise<void> => {
+    if (session === null) return;
+    searchRetryUsed = true;
+    googleSearchOn = false;
+    // The old socket is gone; whatever it still says must not touch the call.
+    generation += 1;
+    try {
+      live?.stop();
+    } catch {
+      // Already closed.
+    }
+    // Back to the start of the connect, with a full allowance of time.
+    everConnected = false;
+    publish({ status: "connecting", pill: "none", hint: null });
+    armConnectTimer();
+    let result: VoiceApiResult<VoiceCallRenewPassResult>;
+    try {
+      result = await options.api.renewPass({
+        threadId: options.threadId,
+        callId: session.callId,
+        reason: "search_quota",
+      });
+    } catch (error) {
+      result = {
+        ok: false,
+        code: "google_unavailable",
+        detail: error instanceof Error ? error.message : "The fresh pass could not be minted.",
+      };
+    }
+    if (ended || disposed) return;
+    if (!result.ok) {
+      errorDetail = result.detail;
+      publish({ status: "error", errorCode: result.code, pill: "none", hint: null });
+      end("failed");
+      return;
+    }
+    session = {
+      ...session,
+      token: result.value.token,
+      tokenExpiresAt: result.value.tokenExpiresAt,
+      newSessionExpiresAt: result.value.newSessionExpiresAt,
+      googleSearch: false,
+    };
+    openSocket();
+  };
+
   const openSocket = () => {
     if (session === null || ended || disposed) return;
     // Read the handle before the old client is replaced: a goAway's handle is
@@ -795,6 +965,7 @@ export function createVoiceCallController(
       voiceName: session.voiceName,
       token: session.token,
       systemInstruction: session.systemInstruction,
+      googleSearch: googleSearchOn,
       resumeHandle: handle,
       ...(options.createSocket ? { createSocket: options.createSocket } : {}),
       ...(options.setupTimeoutMs === undefined ? {} : { setupTimeoutMs: options.setupTimeoutMs }),
@@ -813,6 +984,7 @@ export function createVoiceCallController(
         },
         onAudio: ({ base64, rate }) => {
           if (myGeneration !== generation) return;
+          modelHeard = true;
           lastSpeechAtMs = now();
           if (state.pill !== "speaking" && !state.muted) publish({ pill: "speaking" });
           options.audio.play(base64, rate);
@@ -820,6 +992,7 @@ export function createVoiceCallController(
         onCaption: ({ who, text, finished }) => {
           if (myGeneration !== generation) return;
           if (text.length === 0) return;
+          if (who === "voice") modelHeard = true;
           lastSpeechAtMs = now();
           // "No, wait" takes the held message back, exactly like tapping Undo.
           if (who === "you" && finished && sendQueue.length > 0 && isVoiceCancelPhrase(text)) {
@@ -841,6 +1014,7 @@ export function createVoiceCallController(
         },
         onTurnComplete: () => {
           if (myGeneration !== generation || ended) return;
+          modelHeard = true;
           publish({ pill: state.muted ? "muted" : "listening" });
         },
         onToolCall,
@@ -859,6 +1033,20 @@ export function createVoiceCallController(
         },
         onClosed: ({ refused, code, reason, quota }) => {
           if (myGeneration !== generation || ended) return;
+          // Google Search ran out of quota: the voice model is fine, so the
+          // call goes on without it instead of failing. Once per call, and only
+          // while the model has not said anything yet.
+          if (
+            quota &&
+            !refused &&
+            googleSearchOn &&
+            !searchRetryUsed &&
+            !modelHeard &&
+            isQuotaClose(code, reason)
+          ) {
+            void retryWithoutSearch();
+            return;
+          }
           if (!everConnected) {
             errorDetail = reason.length > 0 ? reason : `Gemini closed the call (${code}).`;
             // A pass that is fine but a key that is out of quota closes the
@@ -999,21 +1187,11 @@ export function createVoiceCallController(
     }
     if (ended) return;
     session = result.value;
+    googleSearchOn = session.googleSearch !== false;
     publish({ status: "connecting", pill: "none", hint: null });
     openSocket();
     // The hard cap: whatever the socket is doing, past this the call is over.
-    connectTimer = setTimeout(() => {
-      connectTimer = null;
-      if (ended || promisedLive()) return;
-      errorDetail = "Google did not answer in time.";
-      publish({
-        status: "error",
-        errorCode: "google_unavailable",
-        pill: "none",
-        hint: null,
-      });
-      end("failed");
-    }, connectTimeoutMs);
+    armConnectTimer();
     later(() => {
       if (!ended && !everConnected) {
         publish({ hint: callHint({ state, waitingMs: 400 }) });
