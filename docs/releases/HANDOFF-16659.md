@@ -1,10 +1,11 @@
 # HANDOFF 1.66.59
 
-Two lines of work in one release: the call summary, the voice languages and the
-voice samples (Frontend, `feat/hbots-call-summary`), and Backend's three fixes
-(merged from `release/hbots-16659` a7ea549230638ca0dd3d9f9bc5f21002ed47d426).
-Astra's read-only WIP review came back fix-first; every finding is fixed below
-with a test.
+Two lines of work in one release, both merged on `feat/hbots-call-summary`:
+Frontend's call summary, voice languages and voice samples, and Backend's four
+fixes from `release/hbots-16659`, merged here at 5174a8d97cc5 (Backend's three,
+a7ea549230638ca0dd3d9f9bc5f21002ed47d426, plus the dsh drain work 6b67e5742e /
+6084b10c41). Astra's read-only WIP review came back fix-first; every finding is
+fixed below with a test.
 
 1. **The card's call summary** (Frontend) - a finished call shows one sentence,
    up to five concrete bullets and his last decision; the bot's next turn in
@@ -14,6 +15,9 @@ with a test.
    longer hangs on "Loading..." with zero tasks, an ACP MCP tool call is
    labelled from its model-facing name, and a delegated-task chat raised by a
    routine run auto-archives once every task has finished.
+3. **dsh drain busy loop** (Backend, merged) - a message held behind a running
+   dsh turn was retried about 7,000 times a second until the turn ended, which
+   held the live server at 112% of a core.
 
 ## 1. The call card's summary
 
@@ -141,10 +145,11 @@ Astra found no blocker in migration 111, the archive SQL, the empty Tasks feed,
 the ACP labels, prompt-injection framing or the languages setting, and nothing
 in those areas changed after the review.
 
-## 2. Backend's three fixes
+## 2. Backend's four fixes
 
-Merged unchanged from `release/hbots-16659`
-(a7ea549230638ca0dd3d9f9bc5f21002ed47d426). Backend's own proof, from its
+Merged from `release/hbots-16659`: the three below
+(a7ea549230638ca0dd3d9f9bc5f21002ed47d426) and the dsh drain work (6b67e5742e,
+review follow-up 6084b10c41) at 5174a8d97cc5. Backend's own proof, from its
 result:
 
 - **Empty feeds load.** A subscription feed folded its replay with
@@ -162,11 +167,28 @@ result:
   treats routine runs posted into a delegated-task chat as another source, so
   those chats are candidates once every task has finished. A chat holding a
   user task, or any open task, stays excluded.
+- **dsh drain busy loop.** `turnInFlight`, `finishTurn` now schedules the drain,
+  `attemptTurn` takes a `requeue: "back" | "front"` argument, the drain loop
+  puts a held message back at the front and stops when a turn it did not start
+  is in flight, and `scheduleDrain`'s `Effect.ensuring` re-checks (inside an
+  interruptible fork) so a turn that ends while the loop is closing cannot
+  strand a message. New test "waits for the running turn without retrying a
+  held message in a loop": at most 5 `attemptTurn` calls in 300 ms (the old
+  code made 10,840), and the held messages run in order once the running turn
+  ends. Astra's review of that commit (verdict SHIP) found two pre-existing
+  gaps, fixed in `6084b10c41` and merged here too: a held message whose start
+  failed is now settled the way `sendTurn` does (`finishTurn`, failed,
+  translated text) instead of only being logged, and a fresh send arriving
+  between a turn ending and the drain it scheduled now queues behind the held
+  messages instead of starting first (Astra had reproduced C, A, B).
 
-Backend's gates on its own branch (before the merge): server tests
-`src/personal src/mcp src/provider/acp` 215 files / 3086 tests; web unit
-`src/features/personal` 252 files / 2827 tests; both typechecks clean; lint on
-the changed files 0 errors. The merged tree is what the gates below ran on.
+Backend's gates on its own heads: server tests
+`src/personal src/mcp src/provider/Layers src/provider/acp` 4107 passed / 17
+skipped in 258 files (one 120 s timeout in `ProviderRegistry.test.ts`, a file
+neither merged commit touches, re-ran alone green in 6 s), web unit
+`src/features/personal` 2827 passed in 252 files, both typechecks clean, lint on
+the 11 changed files 0 errors, `DeepSeekDshAdapter.test.ts` 19/19. The merged
+tree is what the gates below ran on.
 
 ## Tests and browser check
 
@@ -181,25 +203,24 @@ shape, sensitive refusal, lead gate, attempts, cap and backfill; the block's
 cap, order and compaction; the card's render; and the sample endpoint and its
 play button.
 
-Browser check on the previous staged release (390 x 844, dark, throwaway root,
-its own database; evidence in `C:\Claude\AI\dev-team\qa\hbots-16659-build\`):
+Browser check (390 x 844, dark, throwaway root, its own database; evidence in
+`C:\Claude\AI\dev-team\qa\hbots-16659-build\`):
 
 - `02-card-summary-390-dark.png` - the real card with the real Gemini answer:
   the sentence, the three bullets, "Decided: no change, just wanted to know",
   and the Transcript toggle closed below it;
 - `04-languages-setting-390-dark.png` - Settings > Voice calls with the
   "Languages I speak" row reading English;
+- the call button on a lead's chat, its absence on a regular bot's chat, and a
+  voice sample playing (paths in the release report);
 - `run-02.log`, `run-03.log` - the `text:` assertions that found the card's
   sentence and the settings row on the page, `console` with only the usual
   Clerk-less warning and `errors` empty.
 
-The sample play button is new since that check: QA should tap a voice on the
-staged release and hear it (first tap makes the clip, later taps are instant).
-
 ## For QA / CTO
 
 Risky tier: a database migration (111, additive, now three columns) and a model
-call on the finish path, on top of three unrelated Backend fixes.
+call on the finish path, on top of four unrelated Backend fixes.
 
 What to check on the staged release:
 
@@ -219,15 +240,24 @@ What to check on the staged release:
   names the languages; clear it and it reads English;
 - **samples**: tap play on two voices, hear both, and play a third while the
   second is still going;
+- **empty Tasks page** (Backend): a throwaway root with no tasks shows "Nothing
+  is running right now" within about 2 s instead of "Loading...";
+- **ACP step titles** (Backend): a DeepSeek bot on the dsh engine that calls an
+  MCP tool reads plainly, not `mcp__t3-code__...`, and does not become "Tool"
+  once output arrives;
+- **auto-archive** (Backend): the five 11 Oct DevOps chats are candidates again;
+  a chat that holds the owner's own task still is not;
+- **drain** (Backend): a message sent while a dsh turn runs must not push a core
+  to 100%, and the held message runs in order once the turn ends;
 - **quick regression**: a call still mints, transcripts still store, the Tasks
   feed loads with zero tasks, the Team and Settings screens are fine.
 
 ## Cleanup
 
-- Staged only: release `b644d141c922`, `current.txt` untouched, so 1.66.58
-  (`230ed5bce7ae`) is the rollback baseline; rollback is binary only.
-- Earlier staged releases `1689524197e7` and `c17284a7cbfc` were superseded by
-  later commits and were never activated.
+- Staged only: `current.txt` is untouched, so 1.66.58 (`230ed5bce7ae`) is the
+  rollback baseline; rollback is binary only.
+- Earlier staged releases were superseded by later commits and were never
+  activated.
 - Throwaway server `16659sum` was stopped (its own captured PID) and its root
   deleted; browser sessions are closed and swept; no background job or process
   was left running. Nothing was written to the live database.
@@ -238,20 +268,7 @@ What to check on the staged release:
 
 <!-- gate-evidence:begin sha=b644d141c922a5b781b1705dccf6ee9f643d156c release=b644d141c922 json-sha256=5150fd31ae2e0bb0603cb61d3ca31ea5ccff35de6b01eaf7a94f1537d845c4f7 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T16:17:47Z. Version 1.66.59, release `b644d141c922`, commit `b644d141c922a5b781b1705dccf6ee9f643d156c` on `feat/hbots-call-summary`, working tree clean, result **PASS**.
+Superseded: this section is replaced by the gate-evidence run for the current
+staged release.
 
-Machine-readable copy: `releases\b644d141c922\gate-evidence.json` (sha256 `5150fd31ae2e0bb0603cb61d3ca31ea5ccff35de6b01eaf7a94f1537d845c4f7`) and the full gate logs in `releases\b644d141c922\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
-
-| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2878 tests passed, 0 failed, 4 skipped, in 208 files | 262.3   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 30.1    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2845 tests passed, 0 failed, 0 skipped, in 256 files | 38.7    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 11.1    |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 64.4    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16659-summary\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\b644d141c922" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 265.1   |
-
-E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
-
-Tree: HEAD at start `b644d141c922a5b781b1705dccf6ee9f643d156c`, at end `b644d141c922a5b781b1705dccf6ee9f643d156c`; tracked files modified: none. Staged release: version 1.66.59, sha b644d141c922, dirty False, externals copied; `dist/bin.mjs` sha256 `22f72323ffc69d9c3f0aa9d1f50f799a7573a2920643b0149f771ac3b280e6ea`.
 <!-- gate-evidence:end -->

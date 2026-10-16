@@ -1226,6 +1226,10 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
   /* Turns                                                                   */
   /* ---------------------------------------------------------------------- */
 
+  /** A prompt is out to dsh and its turn has not settled yet. */
+  const turnInFlight = (context: SessionContext) =>
+    context.activeTurnId !== undefined && context.promptFiber !== undefined;
+
   const finishTurn = (context: SessionContext, turn: TurnId, payload: TurnCompletedPayload) =>
     Effect.gen(function* () {
       context.activeTurnId = undefined;
@@ -1247,6 +1251,9 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         turnId: turn,
         payload,
       });
+      // The drain stops while a turn runs instead of polling, so the end of
+      // every turn is what picks up a message held behind it.
+      yield* scheduleDrain(context);
     }).pipe(Effect.uninterruptible);
 
   /**
@@ -1371,12 +1378,18 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
   const attemptTurn = Effect.fn("DeepSeekDshAdapter.attemptTurn")(function* (
     context: SessionContext,
     turn: HeldTurn,
+    requeue: "back" | "front" = "back",
   ) {
     const outcome = yield* context.promptLock.withPermit(
       Effect.gen(function* () {
         if (context.stopped || context.process === undefined) return { kind: "closed" } as const;
-        if (context.activeTurnId !== undefined && context.promptFiber !== undefined) {
-          context.held.push(turn);
+        // A fresh send also queues behind messages already held or taken by
+        // the drain, so it cannot start ahead of them in the moment between
+        // a turn ending and the drain it scheduled taking this lock.
+        const queuedAhead = requeue === "back" && (context.held.length > 0 || context.draining);
+        if (turnInFlight(context) || queuedAhead) {
+          if (requeue === "front") context.held.unshift(turn);
+          else context.held.push(turn);
           return { kind: "held" } as const;
         }
         const plan = yield* beginTurnLocked(context, turn);
@@ -1393,6 +1406,12 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
    * Runs the held messages one after another, each as its own announced turn,
    * until the queue is empty. One loop at a time; a send that arrives while it
    * runs joins the same queue and is picked up by the same loop.
+   *
+   * When a turn the loop did not start is still in flight, the message goes
+   * back to the front of the queue and the loop ends: that turn's
+   * `finishTurn` schedules the next drain. Retrying at once instead spun
+   * thousands of times a second for the whole turn (16 Oct: two held chats
+   * held the live server at 112% of a core and wrote ~10 MB/s of trace).
    */
   const drainLoop: (context: SessionContext) => Effect.Effect<void> = (context) =>
     Effect.suspend(() => {
@@ -1402,28 +1421,51 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         context.held.length = 0;
         return Effect.void;
       }
-      return attemptTurn(context, next).pipe(
+      return attemptTurn(context, next, "front").pipe(
+        // A held turn that fails to start is settled like a direct send's
+        // (sendTurn): its state is cleared and the owner sees it fail, so a
+        // stale active turn cannot strand the messages queued behind it.
         Effect.catchCause((cause) =>
-          Effect.logWarning("A held DeepSeek Harness turn failed", {
-            threadId: context.threadId,
-            cause: Cause.pretty(cause),
-          }),
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.succeed("stopped" as const)
+            : Effect.gen(function* () {
+                yield* Effect.logWarning("A held DeepSeek Harness turn failed", {
+                  threadId: context.threadId,
+                  cause: Cause.pretty(cause),
+                });
+                yield* finishTurn(context, next.turnId, {
+                  state: "failed",
+                  errorMessage: translateDshFailure(Cause.pretty(cause)).text,
+                }).pipe(Effect.ignore);
+                return "failed" as const;
+              }),
         ),
-        Effect.andThen(Effect.suspend(() => drainLoop(context))),
+        Effect.flatMap((kind) =>
+          kind === "held" || kind === "stopped"
+            ? Effect.void
+            : Effect.suspend(() => drainLoop(context)),
+        ),
       );
     });
 
-  const scheduleDrain = (context: SessionContext) =>
+  const scheduleDrain = (context: SessionContext): Effect.Effect<void> =>
     Effect.suspend(() => {
       if (context.draining || context.stopped || context.held.length === 0) return Effect.void;
       context.draining = true;
       return drainLoop(context).pipe(
         Effect.ensuring(
-          Effect.sync(() => {
+          Effect.suspend(() => {
             context.draining = false;
+            // A turn that finished while this loop was ending saw `draining`
+            // still set and left its message for this loop: start it now.
+            return turnInFlight(context) ? Effect.void : scheduleDrain(context);
           }),
         ),
+        // `finishTurn` schedules from inside its uninterruptible region; the
+        // loop itself must still stop with its process scope.
+        Effect.interruptible,
         Effect.forkIn(context.process?.scope ?? ownerScope),
+        Effect.asVoid,
       );
     });
 
