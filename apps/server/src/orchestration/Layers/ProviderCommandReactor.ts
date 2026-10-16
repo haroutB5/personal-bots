@@ -57,7 +57,7 @@ import {
 } from "../../personal/personalThreadTitles.ts";
 import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
 import * as PersonalVoiceCallRepository from "../../personal/voiceCalls/PersonalVoiceCallRepository.ts";
-import { voiceCallSummaryContextBlock } from "../../personal/voiceCalls/voiceCallSummaryContext.ts";
+import { voiceCallSummaryContextPacked } from "../../personal/voiceCalls/voiceCallSummaryContext.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -1438,26 +1438,12 @@ const make = Effect.gen(function* () {
     const callSummaries = normalizedInput
       ? yield* voiceCallSummariesForTurn(input.threadId)
       : ([] as ReadonlyArray<VoiceCallRecord>);
-    const callContext = voiceCallSummaryContextBlock(callSummaries);
-    // The block is part of this turn's context from here on, so the calls are
-    // marked delivered now: it is the only honest answer to "did the bot see
-    // it", and a turn that fails later still saw it (Astra review, finding 3).
-    if (callSummaries.length > 0) {
-      yield* voiceCalls
-        .markSummariesDelivered({
-          callIds: callSummaries.map((record) => record.callId),
-          at: yield* DateTime.now,
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("personal voice call summaries could not be marked delivered", {
-              threadId: input.threadId,
-              count: callSummaries.length,
-              errorTag: errorTagOf(cause),
-            }),
-          ),
-        );
-    }
+    // The packer keeps within its own cap and reports which calls it actually
+    // carries: the ones it left out have NOT been shown to the bot, so they stay
+    // due for a later turn, and nothing is retired until the send really
+    // delivered this request's context (Astra re-check R2).
+    const packedCallContext = voiceCallSummaryContextPacked(callSummaries);
+    const callContext = packedCallContext.block;
     const withCallSummary = (text: string | undefined): string | undefined =>
       callContext === ""
         ? text
@@ -1539,18 +1525,22 @@ const make = Effect.gen(function* () {
         : input.modelSelection;
 
     return {
-      threadId: input.threadId,
-      ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
-      ...(normalizedInput ? { input: normalizedInput } : {}),
-      ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
-      ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
-      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
-      ...(input.followUp !== undefined ? { followUp: input.followUp } : {}),
-      ...(systemInstructions !== undefined ? { systemInstructions } : {}),
-      ...(turnContext !== undefined ? { turnContext } : {}),
-      ...(turnContext !== undefined && turnContextFallbacks.length > 0
-        ? { turnContextFallbacks }
-        : {}),
+      request: {
+        threadId: input.threadId,
+        ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
+        ...(normalizedInput ? { input: normalizedInput } : {}),
+        ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
+        ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
+        ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.followUp !== undefined ? { followUp: input.followUp } : {}),
+        ...(systemInstructions !== undefined ? { systemInstructions } : {}),
+        ...(turnContext !== undefined ? { turnContext } : {}),
+        ...(turnContext !== undefined && turnContextFallbacks.length > 0
+          ? { turnContextFallbacks }
+          : {}),
+      },
+      /** The calls this request's context really carries, for delivery. */
+      summaryCallIds: packedCallContext.callIds,
     };
   });
 
@@ -2320,14 +2310,16 @@ const make = Effect.gen(function* () {
         });
       }
       const modelSelection = providerSwitch?.modelSelection ?? event.payload.modelSelection;
-      const request = yield* buildSendTurnRequestForThread({
+      const built = yield* buildSendTurnRequestForThread({
         ...turnInput,
         ...(modelSelection !== undefined ? { modelSelection } : {}),
         ...(providerSwitch?.freshSession === true || taskFresh ? { freshSession: true } : {}),
         ...(taskFresh ? { handoffMaxChars: TASK_FRESH_HANDOFF_CHARS } : {}),
       });
       return {
-        request,
+        request: built.request,
+        /** Which calls this build put in the turn's context (may be none). */
+        summaryCallIds: built.summaryCallIds,
         modelSelection,
         fresh: providerSwitch?.freshSession === true || taskFresh,
       } as const;
@@ -2344,6 +2336,35 @@ const make = Effect.gen(function* () {
     // Claude transcript that is gone, a Codex thread it cannot find). Resuming
     // again cannot work, so start a fresh session once, carry the chat over,
     // and send the same message, attachments included, on it.
+    //
+    // Retiring a call summary happens at the send, never at the build, so the
+    // rebuilt request still finds the calls due and this retry carries them too
+    // (Astra re-check R2).
+    const confirmCallSummariesDelivered = (
+      turn: { readonly turnContextDelivery?: "full" | "reduced" | "none" | undefined },
+      callIds: ReadonlyArray<string>,
+    ) =>
+      Effect.gen(function* () {
+        // "none" means the provider had to leave the turn's context out: the
+        // bot never saw the block, so nothing may be retired.
+        if (turn.turnContextDelivery === "none" || callIds.length === 0) return;
+        yield* voiceCalls.markSummariesDelivered({ callIds, at: yield* DateTime.now }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("personal voice call summaries could not be marked delivered", {
+              threadId: event.payload.threadId,
+              count: callIds.length,
+              errorTag: errorTagOf(cause),
+            }),
+          ),
+        );
+      });
+    const sendBuilt = (built: {
+      readonly request: Parameters<typeof providerService.sendTurn>[0];
+      readonly summaryCallIds: ReadonlyArray<string>;
+    }) =>
+      providerService
+        .sendTurn(built.request)
+        .pipe(Effect.tap((turn) => confirmCallSummariesDelivered(turn, built.summaryCallIds)));
     const renewSessionAndSend = (cause: Cause.Cause<unknown>) =>
       Effect.gen(function* () {
         const current = yield* resolveThreadShell(event.payload.threadId);
@@ -2367,16 +2388,17 @@ const make = Effect.gen(function* () {
           auto: "pending",
         };
         const { modelSelection } = sendTurnRequest.value;
-        const request = yield* buildSendTurnRequestForThread({
+        // Rebuilt, so its own packer decides what the fresh session carries.
+        const rebuilt = yield* buildSendTurnRequestForThread({
           ...turnInput,
           ...(modelSelection !== undefined ? { modelSelection } : {}),
           freshSession: true,
           providerRetry,
         });
-        return yield* providerService.sendTurn(request);
+        return yield* sendBuilt(rebuilt);
       });
 
-    const send = providerService.sendTurn(sendTurnRequest.value.request).pipe(
+    const send = sendBuilt(sendTurnRequest.value).pipe(
       Effect.catchCause((cause) =>
         !sendTurnRequest.value.fresh &&
         !Cause.hasInterruptsOnly(cause) &&

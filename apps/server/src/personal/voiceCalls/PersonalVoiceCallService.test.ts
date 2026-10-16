@@ -1036,6 +1036,47 @@ describe("PersonalVoiceCallService.snapshot", () => {
       }),
     );
   });
+
+  // Astra re-check R5: `snapshot` checked the lease and the chat but not the
+  // CURRENT lead flag, so a bot demoted mid-call kept reading the chat's own
+  // words back to the phone. `finish` must keep working: it preserves the
+  // transcript of a call that really happened.
+  it.effect("refuses a live snapshot once the bot is no longer a team lead", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const started = yield* service.start({ threadId: CTO_CHAT });
+        yield* sql`
+          INSERT INTO projection_thread_messages (
+            message_id, thread_id, role, text, is_streaming, created_at, updated_at
+          ) VALUES (
+            'm-after-demotion', ${CTO_CHAT}, 'assistant', 'Gates are green', 0,
+            '2026-10-15T17:00:30.000Z', '2026-10-15T17:00:30.000Z'
+          )
+        `;
+        // Demoted after the call started: the lease is still open.
+        yield* setSwitch(CTO_BOT, false);
+        const error = yield* Effect.flip(
+          service.snapshot({ threadId: CTO_CHAT, callId: started.callId }),
+        );
+        expect(error.code).toBe("calls_not_allowed");
+
+        // The call still ends and its transcript is stored, demotion or not.
+        const startedAt = DateTime.makeUnsafe("2026-10-15T17:00:00.000Z");
+        const finished = yield* service.finish({
+          threadId: CTO_CHAT,
+          callId: started.callId,
+          startedAt,
+          endedAt: DateTime.makeUnsafe("2026-10-15T17:04:12.000Z"),
+          endReason: "hung_up",
+          transcript: [{ speaker: "you", text: "check the gates", at: startedAt }],
+          sentMessageIds: [],
+        });
+        expect(finished.call.transcript).toHaveLength(1);
+      }),
+    );
+  });
 });
 
 describe("PersonalVoiceCallService instruction hygiene", () => {

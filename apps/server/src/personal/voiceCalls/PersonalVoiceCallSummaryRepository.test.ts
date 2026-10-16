@@ -76,7 +76,9 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
       yield* insert({ callId: "n-silent", threadId: chat, transcript: [] });
 
       assert.deepEqual(
-        yield* repository.listNeedingSummary({ threadId: chat, limit: 10, maxAttempts: 3 }),
+        (yield* repository.listNeedingSummary({ threadId: chat, limit: 10, maxAttempts: 3 })).map(
+          (row) => row.callId,
+        ),
         ["n-spoken"],
       );
       // Once a summary is written the call drops out of the list for good.
@@ -102,7 +104,9 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
         });
       }
       assert.deepEqual(
-        yield* repository.listNeedingSummary({ threadId: chat, limit: 2, maxAttempts: 3 }),
+        (yield* repository.listNeedingSummary({ threadId: chat, limit: 2, maxAttempts: 3 })).map(
+          (row) => row.callId,
+        ),
         ["cap-4", "cap-3"],
       );
       assert.equal(
@@ -115,8 +119,51 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
       yield* repository.recordSummaryAttempt("cap-4");
       yield* repository.recordSummaryAttempt("cap-4");
       assert.deepEqual(
-        yield* repository.listNeedingSummary({ threadId: chat, limit: 50, maxAttempts: 3 }),
+        (yield* repository.listNeedingSummary({ threadId: chat, limit: 50, maxAttempts: 3 })).map(
+          (row) => row.callId,
+        ),
         ["cap-3", "cap-2", "cap-1", "cap-0"],
+      );
+    }),
+  );
+
+  // Astra re-check R3: a keyset cursor, not an offset, is what lets the sweep
+  // walk past rows it will never be able to write.
+  it.effect("pages older calls with the cursor, never skipping the row after a written one", () =>
+    Effect.gen(function* () {
+      const repository = yield* setup;
+      const chat = ThreadId.make("thread-cursor");
+      for (let index = 0; index < 4; index += 1) {
+        yield* insert({
+          callId: `cur-${String(index)}`,
+          threadId: chat,
+          transcript: spoken(`line ${String(index)}`),
+          startedAt: `2026-10-15T1${String(index)}:00:00.000Z`,
+          endedAt: `2026-10-15T1${String(index)}:04:12.000Z`,
+        });
+      }
+      const first = yield* repository.listNeedingSummary({
+        threadId: chat,
+        limit: 2,
+        maxAttempts: 3,
+      });
+      assert.deepEqual(
+        first.map((row) => row.callId),
+        ["cur-3", "cur-2"],
+      );
+      // The newest row is written and therefore leaves the result set; the
+      // cursor still points just past it, so the page after it is cur-1 and
+      // cur-0, exactly the rows an offset of 2 would have skipped.
+      assert.isTrue(yield* repository.setSummary({ callId: "cur-3", summary: SUMMARY }));
+      const last = first[first.length - 1]!;
+      assert.deepEqual(
+        (yield* repository.listNeedingSummary({
+          threadId: chat,
+          limit: 2,
+          maxAttempts: 3,
+          after: { startedAt: last.startedAt, rowId: last.rowId },
+        })).map((row) => row.callId),
+        ["cur-1", "cur-0"],
       );
     }),
   );

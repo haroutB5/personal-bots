@@ -16,6 +16,7 @@ import { classifyTurnFailure, isRefusedTurnInput } from "@t3tools/shared/turnFai
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 
 import type { VoiceCallTranscriptEntry } from "./voice/voiceCallApi";
+import { VOICE_SUMMARY_WAIT_MS } from "./voice/callState";
 import type { VoiceCallSummary } from "@t3tools/contracts";
 
 import type { ChatMessage, ProposedPlan } from "~/types";
@@ -637,6 +638,13 @@ export interface VoiceCallCardItem {
   readonly callId: string;
   /** Epoch ms of the call's start: where the card sits in the timeline. */
   readonly atMs: number;
+  /**
+   * Epoch ms of the call's end. The summary arrives a few seconds after the
+   * card, so this, not `atMs`, decides how long a card without one is still
+   * worth asking for again: a 30-minute call used to be past that window before
+   * it had even ended (Astra re-check R4).
+   */
+  readonly endedAtMs: number;
   readonly live: boolean;
   readonly durationMs: number;
   readonly endedLine: string | null;
@@ -651,6 +659,30 @@ export interface VoiceCallCardItem {
    */
   readonly summary?: VoiceCallSummary | undefined;
 }
+
+/**
+ * Is a call card still waiting for its summary, i.e. worth asking the server
+ * for again?
+ *
+ * Harout, 16 Oct: a call asked whether a court was free and the chat showed
+ * nothing of it. The summary is written on the server a few seconds after the
+ * card, so a card without one is polled for a while and then left alone.
+ *
+ * The window is measured from the call's END, never its start: a call may last
+ * 30 minutes, and starting the clock at its start meant every longer call was
+ * already stale when it ended and never refreshed, which was the original bug
+ * (Astra re-check R4).
+ */
+export const voiceCallSummaryPending = (
+  cards: ReadonlyArray<{
+    readonly summary?: VoiceCallSummary | undefined;
+    readonly endedAtMs: number;
+  }>,
+  nowMs: number,
+): boolean =>
+  cards.some(
+    (card) => card.summary === undefined && nowMs - card.endedAtMs < VOICE_SUMMARY_WAIT_MS,
+  );
 
 /**
  * Flattens the upstream timeline into chat rows: consecutive work entries

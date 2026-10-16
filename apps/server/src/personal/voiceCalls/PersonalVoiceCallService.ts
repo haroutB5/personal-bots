@@ -1016,6 +1016,20 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(facts)) {
         return yield* fail("not_found", "That chat is not here any more.");
       }
+      // A live snapshot reads this chat's own words back to the phone, so it
+      // needs the same CURRENT eligibility a call does: a bot demoted mid-call
+      // must stop feeding the voice fresh text. `finish` deliberately keeps the
+      // transcript of a call that really happened and is not gated here (Astra
+      // re-check R5).
+      const bot = yield* bots
+        .getBotById({ botId: facts.value.botId })
+        .pipe(Effect.mapError((cause) => fail("not_found", "Could not read that bot.", cause)));
+      if (Option.isNone(bot) || !botTakesVoiceCalls(bot.value)) {
+        return yield* fail(
+          "calls_not_allowed",
+          "Voice calls are for team leads. Make this bot a team lead on its page to call it.",
+        );
+      }
       const shell = yield* projections
         .getThreadShellById(threadId)
         .pipe(Effect.orElseSucceed(() => Option.none()));

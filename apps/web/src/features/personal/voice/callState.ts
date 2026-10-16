@@ -170,11 +170,15 @@ export const VOICE_FINISH_RETRY_MS: ReadonlyArray<number> = [
 ];
 
 /**
- * How long after a call started a card without a summary is still worth asking
+ * How long after a call ENDED a card without a summary is still worth asking
  * for again. The server writes the summary within about half a minute of the
  * card, and retries it about a minute later; past this window the chat stops
  * polling, because a call whose summary failed never gets one and a card that
  * keeps asking forever is a cost with no answer.
+ *
+ * It is measured from the end, not the start: a call may run for 30 minutes, so
+ * a window from the start would already be spent by the time it hung up (Astra
+ * re-check R4). See `voiceCallSummaryPending`.
  */
 export const VOICE_SUMMARY_WAIT_MS = 10 * 60_000;
 

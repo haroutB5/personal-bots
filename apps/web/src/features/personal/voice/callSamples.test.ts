@@ -131,4 +131,31 @@ describe("createVoiceSampleAudio", () => {
     expect(fakes.close).toHaveBeenCalledTimes(1);
     expect(fakes.create).toHaveBeenCalledTimes(1);
   });
+
+  // Astra re-check R6: a Stop (or a closed sheet) during the decode could not
+  // stop `next.start()`, which then played with nothing left to stop it.
+  it("never starts a clip that was cancelled while it was decoding", async () => {
+    const fakes = makeFakes();
+    const audio = createVoiceSampleAudio(fakes.create);
+    audio.unlock();
+    // Asked once after the resume and again after the decode: current the first
+    // time, cancelled the second.
+    let checks = 0;
+    await audio.play(new Uint8Array([1]), () => {
+      checks += 1;
+      return checks === 1;
+    });
+    expect(fakes.decodeAudioData).toHaveBeenCalledTimes(1);
+    // The source was never even created, let alone started.
+    expect(fakes.sources).toHaveLength(0);
+  });
+
+  it("does not touch the context when it was already cancelled before the decode", async () => {
+    const fakes = makeFakes();
+    const audio = createVoiceSampleAudio(fakes.create);
+    audio.unlock();
+    await audio.play(new Uint8Array([1]), () => false);
+    expect(fakes.decodeAudioData).not.toHaveBeenCalled();
+    expect(fakes.sources).toHaveLength(0);
+  });
 });

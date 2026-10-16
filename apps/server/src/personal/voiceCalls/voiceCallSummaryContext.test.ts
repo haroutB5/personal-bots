@@ -8,7 +8,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { VOICE_CALL_SUMMARY_CONTEXT_CHARS, type VoiceCallRecord } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { voiceCallContextStamp, voiceCallSummaryContextBlock } from "./voiceCallSummaryContext.ts";
+import {
+  voiceCallContextStamp,
+  voiceCallSummaryContextBlock,
+  voiceCallSummaryContextPacked,
+} from "./voiceCallSummaryContext.ts";
 
 const record = (overrides: Partial<VoiceCallRecord> = {}): VoiceCallRecord =>
   ({
@@ -160,5 +164,51 @@ describe("voiceCallSummaryContextBlock", () => {
     expect(block.length).toBeLessThanOrEqual(VOICE_CALL_SUMMARY_CONTEXT_CHARS);
     expect(block).toContain("book court three");
     expect(block).not.toContain("the older decision");
+  });
+
+  // Astra re-check R2: the block's own budget decides what the bot is shown, so
+  // only what it really carries may be retired. The call left out stays due.
+  it("reports exactly the calls it included, so an omitted one is never retired", () => {
+    const packed = voiceCallSummaryContextPacked([
+      record({
+        callId: "newest",
+        startedAt: DateTime.makeUnsafe("2026-10-16T14:00:00.000Z"),
+        summary: {
+          summary: "x".repeat(5_000),
+          points: [],
+          decision: "book court three",
+          open: null,
+        },
+      }),
+      record({
+        callId: "older",
+        startedAt: DateTime.makeUnsafe("2026-10-15T09:00:00.000Z"),
+        summary: {
+          summary: "the older sentence",
+          points: [],
+          decision: "the older decision",
+          open: null,
+        },
+      }),
+    ]);
+    // The newest call used the whole budget, so the older one is not in the
+    // block at all...
+    expect(packed.block).not.toContain("the older sentence");
+    // ...and is not reported as included either, so the reactor cannot retire it.
+    expect(packed.callIds).toEqual(["newest"]);
+  });
+
+  it("reports both calls when both fit", () => {
+    const packed = voiceCallSummaryContextPacked([
+      record({ callId: "newest" }),
+      record({ callId: "older", startedAt: DateTime.makeUnsafe("2026-10-15T09:00:00.000Z") }),
+    ]);
+    expect(packed.callIds).toEqual(["newest", "older"]);
+    expect(packed.block).toContain("Court 3 free 11:00-12:00 Saturday");
+  });
+
+  it("reports nothing when there is nothing to carry", () => {
+    expect(voiceCallSummaryContextPacked([]).callIds).toEqual([]);
+    expect(voiceCallSummaryContextPacked([record({ summary: undefined })]).callIds).toEqual([]);
   });
 });

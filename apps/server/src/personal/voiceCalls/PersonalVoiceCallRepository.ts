@@ -21,6 +21,29 @@ import { PersistenceDecodeError, PersistenceSqlError } from "../../persistence/E
 
 export type PersonalVoiceCallRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
+/**
+ * One row the summary sweep may look at, with the keyset cursor it was read at.
+ *
+ * The cursor is returned so the sweep can ask for the rows *after* this one
+ * instead of an offset: an offset drifts the moment a summary is written (a row
+ * leaves the result set and every later row moves up one), which would skip
+ * calls. Rows that stay ineligible forever are walked past rather than pinning
+ * the window (Astra re-check R3).
+ */
+export interface VoiceCallSummaryCandidate {
+  readonly callId: string;
+  /** `started_at` as stored: ISO-8601, so text order is time order. */
+  readonly startedAt: string;
+  /** The row's `rowid`, the tiebreaker inside one `started_at`. */
+  readonly rowId: number;
+}
+
+/** Continue strictly older than this row in `ORDER BY started_at DESC, rowid DESC`. */
+export interface VoiceCallSummaryCursor {
+  readonly startedAt: string;
+  readonly rowId: number;
+}
+
 /** The stored transcript, as JSON. A row that does not decode reads as empty. */
 const StoredTranscript = Schema.Array(
   Schema.Struct({
@@ -182,13 +205,17 @@ export class PersonalVoiceCallRepository extends Context.Service<
      * sweep ever sees, starving every older call for good (Astra review,
      * finding 5).
      *
-     * `threadId` narrows it to one chat.
+     * `threadId` narrows it to one chat. `after` continues from the last row a
+     * sweep saw, so a run of rows that are always ineligible (a sensitive chat,
+     * a bot that is not a team lead, a call with no key yet) cannot pin the
+     * sweep to the newest five and starve every older call (Astra re-check R3).
      */
     readonly listNeedingSummary: (input: {
       readonly threadId?: ThreadId | undefined;
       readonly limit: number;
       readonly maxAttempts: number;
-    }) => Effect.Effect<ReadonlyArray<string>, PersonalVoiceCallRepositoryError>;
+      readonly after?: VoiceCallSummaryCursor | undefined;
+    }) => Effect.Effect<ReadonlyArray<VoiceCallSummaryCandidate>, PersonalVoiceCallRepositoryError>;
     /** One more model attempt spent on this call, recorded before the request. */
     readonly recordSummaryAttempt: (
       callId: string,
@@ -203,10 +230,13 @@ export class PersonalVoiceCallRepository extends Context.Service<
       readonly limit: number;
     }) => Effect.Effect<ReadonlyArray<VoiceCallRecord>, PersonalVoiceCallRepositoryError>;
     /**
-     * These summaries have now been put into a turn's context, so the bot has
-     * been shown them and no later turn needs them again. Written when the turn
-     * request is built, which is the only moment that answers "did the bot see
-     * it" without guessing (Astra review, finding 3).
+     * These summaries have now reached a real turn, so the bot has been shown
+     * them and no later turn needs them again. Called only after the provider
+     * accepted the send AND reported that the turn's context was delivered, for
+     * exactly the calls the packer put in that request. Building a request is
+     * not delivery: a refused send, a context the provider had to drop and a
+     * summary the 900-character packer left out must all stay due (Astra
+     * re-check R2).
      */
     readonly markSummariesDelivered: (input: {
       readonly callIds: ReadonlyArray<string>;
@@ -381,17 +411,33 @@ export const make = Effect.gen(function* () {
   ) =>
     query(
       "listNeedingSummary",
-      sql<{ readonly callId: string }>`
-        SELECT call_id AS "callId"
+      sql<{ readonly callId: string; readonly startedAt: string; readonly rowId: number }>`
+        SELECT call_id AS "callId", started_at AS "startedAt", rowid AS "rowId"
         FROM personal_voice_calls
         WHERE summary_json = ''
           AND transcript_json NOT IN ('', '[]')
           AND summary_attempts < ${Math.max(1, Math.trunc(input.maxAttempts))}
           ${input.threadId === undefined ? sql`` : sql`AND thread_id = ${input.threadId}`}
+          ${
+            input.after === undefined
+              ? sql``
+              : sql`AND (
+                  started_at < ${input.after.startedAt}
+                  OR (started_at = ${input.after.startedAt} AND rowid < ${input.after.rowId})
+                )`
+          }
         ORDER BY started_at DESC, rowid DESC
         LIMIT ${Math.max(1, Math.trunc(input.limit))}
       `,
-    ).pipe(Effect.map((rows) => rows.map((row) => row.callId)));
+    ).pipe(
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          callId: row.callId,
+          startedAt: row.startedAt,
+          rowId: Number(row.rowId),
+        })),
+      ),
+    );
 
   /**
    * Counted in the row before the request goes out, so a crash or a restart

@@ -133,6 +133,7 @@ import {
   resolveConversationHeaderName,
   turnErrorNotice,
   type VoiceCallCardItem,
+  voiceCallSummaryPending,
 } from "./conversationModel";
 import { deriveLatestMessageReadStatus } from "./messageReadStatus";
 import { DelegationCard } from "./DelegationCard";
@@ -178,7 +179,6 @@ import { PersonalComposer } from "./PersonalComposer";
 import * as DateTime from "effect/DateTime";
 import { voiceCallEndReasonLabel } from "@t3tools/contracts";
 import { CallCard } from "./voice/CallCard";
-import { VOICE_SUMMARY_WAIT_MS } from "./voice/callState";
 import { CallTranscript } from "./voice/CallTranscript";
 import { personalVoiceCallsList } from "./voice/voiceCallApi";
 import { LiveVoiceCallCard } from "./voice/LiveVoiceCallCard";
@@ -572,6 +572,7 @@ export function ConversationScreen({
       voiceCalls.data?.calls.map((row) => ({
         callId: row.callId,
         atMs: DateTime.toEpochMillis(row.startedAt),
+        endedAtMs: DateTime.toEpochMillis(row.endedAt),
         live: false,
         durationMs: row.durationSeconds * 1_000,
         endedLine: voiceCallEndReasonLabel(row.endReason),
@@ -584,20 +585,20 @@ export function ConversationScreen({
   );
   // A call's summary is written on the server a few seconds after the card is
   // stored (Harout, 16 Oct: he asked on a call whether a court was free and the
-  // chat showed nothing of it). While a fresh card has no summary yet the list
-  // is asked for again, so the summary appears on its own; older cards are left
-  // alone, since a call whose summary failed never gets one.
-  const voiceCallSummaryPending = voiceCallCards.some(
-    (card) => card.summary === undefined && Date.now() - card.atMs < VOICE_SUMMARY_WAIT_MS,
-  );
+  // chat showed nothing of it). While a card that ended recently has no summary
+  // yet the list is asked for again, so the summary appears on its own; older
+  // cards are left alone, since a call whose summary failed never gets one. The
+  // window runs from the call's END, so a long call still refreshes (Astra
+  // re-check R4).
+  const voiceCallSummaryPendingNow = voiceCallSummaryPending(voiceCallCards, Date.now());
   const refreshVoiceCalls = voiceCalls.refresh;
   const refreshVoiceCallsRef = useRef(refreshVoiceCalls);
   refreshVoiceCallsRef.current = refreshVoiceCalls;
   useEffect(() => {
-    if (!voiceCallSummaryPending) return;
+    if (!voiceCallSummaryPendingNow) return;
     const timer = window.setInterval(() => refreshVoiceCallsRef.current(), 15_000);
     return () => window.clearInterval(timer);
-  }, [voiceCallSummaryPending]);
+  }, [voiceCallSummaryPendingNow]);
   const items = useMemo(
     () =>
       placeCallCards(

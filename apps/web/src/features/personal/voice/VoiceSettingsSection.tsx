@@ -23,7 +23,7 @@
  * @module features/personal/voice/VoiceSettingsSection
  */
 import type { JSX } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   profileVoiceCallSettings,
@@ -59,8 +59,10 @@ import {
 } from "./voiceCallApi";
 import {
   createBrowserVoiceSampleAudio,
+  createVoiceSamplePlayer,
   type FetchVoiceSample,
   type VoiceSampleAudio,
+  voiceSampleProblemLine,
 } from "./callSamples";
 import { VoiceSampleButton } from "./VoiceSampleButton";
 
@@ -488,6 +490,16 @@ function VoiceSheet({
   readonly createAudio: () => VoiceSampleAudio;
 }): JSX.Element {
   const [showMore, setShowMore] = useState(false);
+  // One player for the whole sheet, so two voices can never play together and a
+  // Stop, a switch or closing the sheet cancels a clip that is still being
+  // fetched or decoded (Astra re-check R6).
+  const player = useMemo(
+    () => createVoiceSamplePlayer({ createAudio, fetchSample }),
+    [createAudio, fetchSample],
+  );
+  const [sample, setSample] = useState(() => player.state());
+  useEffect(() => player.subscribe(setSample), [player]);
+  useEffect(() => () => player.dispose(), [player]);
   const row = (name: string, note: string | null) => (
     <div key={name} className={`${ROW} justify-between gap-2`}>
       <button
@@ -511,7 +523,12 @@ function VoiceSheet({
         ) : null}
       </button>
       {samplePlaybackAvailable ? (
-        <VoiceSampleButton voiceName={name} fetchSample={fetchSample} createAudio={createAudio} />
+        <VoiceSampleButton
+          voiceName={name}
+          playing={sample.playingVoice === name}
+          problem={voiceSampleProblemLine(sample, name)}
+          onToggle={() => player.toggle(name)}
+        />
       ) : null}
     </div>
   );

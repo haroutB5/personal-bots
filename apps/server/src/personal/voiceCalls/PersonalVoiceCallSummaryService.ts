@@ -54,6 +54,10 @@ import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import { redactSecrets } from "../secretText.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
 import * as PersonalVoiceCallRepository from "./PersonalVoiceCallRepository.ts";
+import type {
+  VoiceCallSummaryCandidate,
+  VoiceCallSummaryCursor,
+} from "./PersonalVoiceCallRepository.ts";
 import * as VoiceCallGemini from "./voiceCallGemini.ts";
 import { buildVoiceCallSummaryPrompt, parseVoiceCallSummary } from "./voiceCallSummary.ts";
 
@@ -74,8 +78,17 @@ const errorTagOf = (cause: Cause.Cause<unknown>): string => {
  */
 export const VOICE_CALL_SUMMARY_SWEEP_MS = 30_000;
 
-/** At most this many calls are examined per sweep. */
+/** At most this many calls are examined per page of one sweep. */
 export const VOICE_CALL_SUMMARY_SWEEP_LIMIT = 5;
+
+/**
+ * How many pages one sweep may walk before it gives up and waits for the next.
+ * A row that can never be summarised (a sensitive chat, a bot that is not a
+ * team lead) is skipped rather than failed, so without paging a run of them
+ * would pin the sweep to the newest rows and starve every older call forever
+ * (Astra re-check R3). Bounded so an old ineligible backlog stays cheap.
+ */
+export const VOICE_CALL_SUMMARY_SWEEP_PAGES = 8;
 
 /** At most this many relaying lines are handed to the summariser. */
 export const VOICE_CALL_SUMMARY_RELAY_MAX = 10;
@@ -132,9 +145,11 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const store = makeSensitiveExposureStore(sql);
       const keys: Array<string> = [threadExposureKey(threadId)];
-      const task = yield* taskRepository
-        .latestTaskForThread(threadId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
+      // A task association that cannot be read is NOT "no task": its root key is
+      // one this call cannot rule out, so the failure is left to the handler
+      // below, which treats an unreadable read as exposed. Folding it to
+      // `Option.none()` here was fail-open (Astra re-check R1).
+      const task = yield* taskRepository.latestTaskForThread(threadId);
       if (Option.isSome(task)) keys.push(rootExposureKey(task.value.rootTaskId));
       const exposure = yield* store.read(keys);
       return [...exposure.sources].toSorted();
@@ -204,6 +219,17 @@ export const make = Effect.gen(function* () {
     );
 
   /**
+   * Whether this chat must not reach Google at all, answered right now.
+   *
+   * The gate is not a one-off check at the top of the job: a sensitive site can
+   * be opened while the worker is between steps (the primary request alone may
+   * take 30 seconds), so it is asked again before the transcript's relays are
+   * read and again immediately before each model request (Astra re-check R1).
+   */
+  const exposedNow = (threadId: ThreadId) =>
+    sensitiveExposure(threadId).pipe(Effect.map((sources) => sources.length > 0));
+
+  /**
    * Writes one call's summary, or answers null with nothing to write.
    *
    * Null is not one thing, and the difference matters to the worker: a call
@@ -230,24 +256,33 @@ export const make = Effect.gen(function* () {
       // has no call to summarise, and a bot that cannot be read is skipped
       // rather than guessed at.
       if (Option.isNone(bot) || !botTakesVoiceCalls(bot.value)) return null;
-      const exposed = yield* sensitiveExposure(record.threadId);
-      if (exposed.length > 0) {
-        // Deliberate: this chat must not reach Google at all, so this is not a
-        // failed attempt and is never retried.
-        yield* Effect.logInfo("personal voice call summary skipped for a sensitive chat", {
+      const skipSensitive = () =>
+        // Ids only, never a word of the chat.
+        Effect.logInfo("personal voice call summary skipped for a sensitive chat", {
           callId,
           threadId: record.threadId,
         });
+      if (yield* exposedNow(record.threadId)) {
+        // Deliberate: this chat must not reach Google at all, so this is not a
+        // failed attempt and is never retried.
+        yield* skipSensitive();
         return null;
       }
       const key = yield* summaryKey(record.threadId);
       // No key: not an attempt. Adding the key later must still get these
       // calls summarised (Astra review, finding 5).
       if (key === undefined) return null;
-      yield* calls.recordSummaryAttempt(callId).pipe(Effect.orElseSucceed(() => undefined));
       const profile = yield* botService
         .getProfile()
         .pipe(Effect.orElseSucceed(() => ({ displayName: "", voiceCalls: undefined })));
+      // The gate runs again here, after the key and profile reads and before the
+      // attempt is charged, so a chat that turned sensitive in between costs
+      // nothing (Astra re-check R1).
+      if (yield* exposedNow(record.threadId)) {
+        yield* skipSensitive();
+        return null;
+      }
+      yield* calls.recordSummaryAttempt(callId).pipe(Effect.orElseSucceed(() => undefined));
       const relayed = yield* relayedMessages(record);
       const prompt = buildVoiceCallSummaryPrompt({
         botName: bot.value.name,
@@ -259,11 +294,28 @@ export const make = Effect.gen(function* () {
       });
       // Parse each model's answer on its own: a primary that answers with
       // something unusable must still leave the fallback model a chance
-      // (Astra review, finding 8).
-      const primary = parseVoiceCallSummary(yield* askModel(VOICE_CALL_SUMMARY_MODEL, prompt, key));
-      const summary =
-        primary ??
-        parseVoiceCallSummary(yield* askModel(VOICE_CALL_SUMMARY_FALLBACK_MODEL, prompt, key));
+      // (Astra review, finding 8). Each request passes the gate first, so a chat
+      // that turns sensitive during the primary never reaches Google again
+      // (Astra re-check R1).
+      const askGuarded = (model: string) =>
+        Effect.gen(function* () {
+          if (yield* exposedNow(record.threadId)) return { exposed: true, text: null } as const;
+          return { exposed: false, text: yield* askModel(model, prompt, key) } as const;
+        });
+      const primary = yield* askGuarded(VOICE_CALL_SUMMARY_MODEL);
+      if (primary.exposed) {
+        yield* skipSensitive();
+        return null;
+      }
+      let summary = parseVoiceCallSummary(primary.text);
+      if (summary === null) {
+        const fallback = yield* askGuarded(VOICE_CALL_SUMMARY_FALLBACK_MODEL);
+        if (fallback.exposed) {
+          yield* skipSensitive();
+          return null;
+        }
+        summary = parseVoiceCallSummary(fallback.text);
+      }
       if (summary === null) {
         // Ids and counts only: the answer is the owner's own words.
         yield* Effect.logInfo("personal voice call summary was not usable", { callId });
@@ -297,29 +349,50 @@ export const make = Effect.gen(function* () {
     lock
       .withPermit(
         Effect.gen(function* () {
-          // The attempt cap is in the query, so a call that is out of attempts
-          // can no longer push the older calls out of the window (Astra review,
-          // finding 5).
-          const ids = yield* calls
-            .listNeedingSummary({
-              limit: VOICE_CALL_SUMMARY_SWEEP_LIMIT,
-              maxAttempts: VOICE_CALL_SUMMARY_MAX_ATTEMPTS,
-            })
-            .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
           const nowMs = yield* Effect.map(DateTime.now, DateTime.toEpochMillis);
           let attempted = 0;
-          for (const callId of ids) {
-            const last = lastAttemptAtMs.get(callId);
-            // A first attempt runs at once; a retry waits its minute, so the
-            // attempts are spread out and then the call is left alone.
-            if (last !== undefined && nowMs - last < VOICE_CALL_SUMMARY_RETRY_MS) continue;
-            lastAttemptAtMs.set(callId, nowMs);
-            attempted += 1;
-            const written = yield* summarise(callId);
-            // A written call is forgotten. One that was only skipped (no key,
-            // sensitive chat, not a lead) keeps its place in the map so the
-            // wait applies to it too, and its attempt count is untouched.
-            if (written !== null) lastAttemptAtMs.delete(callId);
+          // The attempt cap is in the query, so a call that is out of attempts
+          // can no longer push the older calls out of the window (Astra review,
+          // finding 5). What the cap cannot do is move past a row that will
+          // never be eligible at all: a sensitive chat, a bot that is not a
+          // team lead, a missing bot, or a call with no key yet. Those are
+          // skipped, not failed, so they used to sit in the newest five forever
+          // and every older call waited behind them (Astra re-check R3).
+          //
+          // So the sweep walks pages, oldest-last, with a keyset cursor rather
+          // than an offset: writing a summary removes its row from the result
+          // set, which would shift an offset and skip the row after it. The
+          // page count is bounded so a long run of ineligible rows cannot turn
+          // one sweep into a table scan; 8 pages of 5 covers a backlog of 40.
+          let cursor: VoiceCallSummaryCursor | undefined;
+          for (let page = 0; page < VOICE_CALL_SUMMARY_SWEEP_PAGES; page += 1) {
+            const rows = yield* calls
+              .listNeedingSummary({
+                limit: VOICE_CALL_SUMMARY_SWEEP_LIMIT,
+                maxAttempts: VOICE_CALL_SUMMARY_MAX_ATTEMPTS,
+                ...(cursor === undefined ? {} : { after: cursor }),
+              })
+              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<VoiceCallSummaryCandidate>));
+            if (rows.length === 0) break;
+            const last = rows[rows.length - 1]!;
+            cursor = { startedAt: last.startedAt, rowId: last.rowId };
+            for (const row of rows) {
+              const lastAttempt = lastAttemptAtMs.get(row.callId);
+              // A first attempt runs at once; a retry waits its minute, so the
+              // attempts are spread out and then the call is left alone.
+              if (lastAttempt !== undefined && nowMs - lastAttempt < VOICE_CALL_SUMMARY_RETRY_MS) {
+                continue;
+              }
+              lastAttemptAtMs.set(row.callId, nowMs);
+              attempted += 1;
+              const written = yield* summarise(row.callId);
+              // A written call is forgotten. One that was only skipped (no key,
+              // sensitive chat, not a lead) keeps its place in the map so the
+              // wait applies to it too, and its attempt count is untouched.
+              if (written !== null) lastAttemptAtMs.delete(row.callId);
+            }
+            // A short page is the end of the queue: no point asking again.
+            if (rows.length < VOICE_CALL_SUMMARY_SWEEP_LIMIT) break;
           }
           return attempted;
         }),

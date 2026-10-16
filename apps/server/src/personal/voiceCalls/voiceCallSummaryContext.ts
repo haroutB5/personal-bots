@@ -107,6 +107,18 @@ export const VOICE_CALL_SUMMARY_CONTEXT_HEADER = [
   "Newest call first:",
 ].join("\n");
 
+/** The block and the calls it actually carries: only those may be retired. */
+export interface PackedVoiceCallSummaryContext {
+  readonly block: string;
+  /**
+   * The `callId` of every call whose text is in the block, in block order.
+   * Delivery is recorded for these and no others: a call the 900-character
+   * budget left out has not been shown to the bot and must stay due (Astra
+   * re-check R2).
+   */
+  readonly callIds: ReadonlyArray<string>;
+}
+
 /**
  * The whole block, or "" when there is nothing to say (the normal case: most
  * turns follow no call at all).
@@ -122,13 +134,17 @@ export const VOICE_CALL_SUMMARY_CONTEXT_HEADER = [
  * - and if even that does not fit, as much of its sentence as the budget allows
  *   is kept, because half a decision still beats silence about the call.
  */
-export const voiceCallSummaryContextBlock = (records: ReadonlyArray<VoiceCallRecord>): string => {
-  if (records.length === 0) return "";
+export const voiceCallSummaryContextPacked = (
+  records: ReadonlyArray<VoiceCallRecord>,
+): PackedVoiceCallSummaryContext => {
+  if (records.length === 0) return { block: "", callIds: [] };
   // Room for the calls and the newlines that separate them, with the header
   // already taken out of the cap.
   const budget = VOICE_CALL_SUMMARY_CONTEXT_CHARS - VOICE_CALL_SUMMARY_CONTEXT_HEADER.length - 1;
-  if (budget <= 0) return "";
+  if (budget <= 0) return { block: "", callIds: [] };
   const kept: Array<string> = [];
+  /** The calls behind `kept`, so the caller retires exactly what was included. */
+  const keptIds: Array<string> = [];
   /** Characters of the tail as it would be joined, separators included. */
   let used = 0;
   const separator = () => (kept.length === 0 ? 0 : 1);
@@ -139,12 +155,14 @@ export const voiceCallSummaryContextBlock = (records: ReadonlyArray<VoiceCallRec
     if (fits(whole)) {
       used += separator() + whole.length;
       kept.push(whole);
+      keptIds.push(record.callId);
       continue;
     }
     const compact = voiceCallSummaryCompactLines(record);
     if (compact !== "" && fits(compact)) {
       used += separator() + compact.length;
       kept.push(compact);
+      keptIds.push(record.callId);
       continue;
     }
     // The last resort: the call's own line, then as much of its sentence as is
@@ -155,8 +173,16 @@ export const voiceCallSummaryContextBlock = (records: ReadonlyArray<VoiceCallRec
     if (room <= 40) break;
     const sentence = record.summary === undefined ? "" : clean(record.summary.summary);
     kept.push(`${head}\n  ${sentence.slice(0, room).trimEnd()}...`);
+    keptIds.push(record.callId);
     break;
   }
-  if (kept.length === 0) return "";
-  return [VOICE_CALL_SUMMARY_CONTEXT_HEADER, ...kept].join("\n");
+  if (kept.length === 0) return { block: "", callIds: [] };
+  return {
+    block: [VOICE_CALL_SUMMARY_CONTEXT_HEADER, ...kept].join("\n"),
+    callIds: keptIds,
+  };
 };
+
+/** The block alone, for callers that do not record delivery. */
+export const voiceCallSummaryContextBlock = (records: ReadonlyArray<VoiceCallRecord>): string =>
+  voiceCallSummaryContextPacked(records).block;

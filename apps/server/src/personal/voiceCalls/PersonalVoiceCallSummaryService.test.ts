@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlError from "effect/unstable/sql/SqlError";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -115,6 +116,15 @@ interface HarnessOptions {
   readonly exposed?: ReadonlyArray<string>;
   /** A task row whose ROOT key is tainted instead of the chat's own key. */
   readonly exposedRootTaskId?: string | null;
+  /** The task association lookup itself fails (Astra re-check R1). */
+  readonly taskLookupFails?: boolean;
+  /** Runs while the key is read, i.e. between the first and second gate. */
+  readonly onSecrets?: (sql: SqlClient.SqlClient) => Effect.Effect<void, SqlError.SqlError>;
+  /** Runs just before one model is asked, as a slow primary request would. */
+  readonly onAnswer?: (
+    model: string,
+    sql: SqlClient.SqlClient,
+  ) => Effect.Effect<void, SqlError.SqlError>;
 }
 
 const good = (): VoiceCallMintOutcome => ({
@@ -144,11 +154,16 @@ const makeHarness = (options: HarnessOptions) => {
     value: KEY_VALUE,
   };
   const saved = options.withKey === false ? [] : [key];
+  const taskLayer =
+    options.taskLookupFails === true
+      ? Layer.mock(PersonalTaskRepository.PersonalTaskRepository)({
+          latestTaskForThread: () => Effect.die(new Error("task lookup failed")),
+        })
+      : PersonalTaskRepository.layer;
   return summaryLayer.pipe(
     Layer.provideMerge(PersonalVoiceCallRepository.layer),
     Layer.provideMerge(PersonalBotRepository.layer),
-    Layer.provideMerge(PersonalTaskRepository.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(taskLayer),
     Layer.provideMerge(
       Layer.mock(PersonalBotService.PersonalBotService)({
         getProfile: () =>
@@ -163,29 +178,58 @@ const makeHarness = (options: HarnessOptions) => {
           }),
       }),
     ),
+    // `Layer.effect`, not `Layer.succeed`: these two stand-ins need the
+    // database so a test can write a sensitive-exposure row while the worker is
+    // between steps, which is exactly the window R1 is about. They are built on
+    // the same SQL client as everything else, never a second one, which is why
+    // the in-memory database is provided last: every layer above it can see it.
     Layer.provideMerge(
-      Layer.succeed(PersonalSessionAccess.PersonalSessionAccess, {
-        forThread: () => Effect.succeed({ botId: null, environment: {}, systemInstructions: null }),
-        secretsForThread: () => Effect.succeed(saved),
-        sharedSecrets: () => Effect.succeed(saved),
-        instructionsForThread: () => Effect.succeed(null),
-      } satisfies PersonalSessionAccess.PersonalSessionAccess["Service"]),
+      Layer.effect(
+        PersonalSessionAccess.PersonalSessionAccess,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return {
+            forThread: () =>
+              Effect.succeed({ botId: null, environment: {}, systemInstructions: null }),
+            secretsForThread: () =>
+              Effect.gen(function* () {
+                if (options.onSecrets !== undefined) {
+                  yield* Effect.orDie(options.onSecrets(sql));
+                }
+                return saved;
+              }),
+            sharedSecrets: () => Effect.succeed(saved),
+            instructionsForThread: () => Effect.succeed(null),
+          } satisfies PersonalSessionAccess.PersonalSessionAccess["Service"];
+        }),
+      ),
     ),
     Layer.provideMerge(
-      Layer.succeed(VoiceCallHttp, {
-        call: (request: BrokerRequest, secrets: ReadonlyArray<BrokerSecret>) =>
-          options.throws === true
-            ? Effect.fail({
-                _tag: "SecretBrokerError",
-                message: "no saved key named",
-              } as unknown as SecretBrokerError)
-            : Effect.sync(() => {
+      Layer.effect(
+        VoiceCallHttp,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return {
+            call: (request: BrokerRequest, secrets: ReadonlyArray<BrokerSecret>) =>
+              Effect.gen(function* () {
+                if (options.throws === true) {
+                  return yield* Effect.fail({
+                    _tag: "SecretBrokerError",
+                    message: "no saved key named",
+                  } as unknown as SecretBrokerError);
+                }
                 options.calls.push({ request, secrets });
                 const model = /models\/([^:]+):/.exec(request.url)?.[1] ?? "";
+                if (options.onAnswer !== undefined) {
+                  yield* Effect.orDie(options.onAnswer(model, sql));
+                }
                 return options.answer?.(model) ?? good();
               }),
-      } satisfies VoiceCallHttp["Service"]),
+          } satisfies VoiceCallHttp["Service"];
+        }),
+      ),
     ),
+    Layer.provideMerge(SqlitePersistenceMemory),
   );
 };
 
@@ -468,6 +512,68 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
     );
   });
 
+  // Astra re-check R1: the task association was folded to "no task" when the
+  // lookup failed, so an unreadable root key went unchecked. Fail closed.
+  it.effect("treats an unreadable task association as exposed and sends nothing", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, taskLookupFails: true }, (service, sql) =>
+      Effect.gen(function* () {
+        expect(yield* service.summarise(CALL_ID)).toBeNull();
+        expect(calls).toHaveLength(0);
+        expect(yield* storedSummary(sql)).toBe("");
+        expect(yield* storedAttempts(sql)).toBe(0);
+      }),
+    );
+  });
+
+  // Astra re-check R1: the gate ran once at the start, so a chat that turned
+  // sensitive while the worker waited still reached Google on the next request.
+  it.effect("rechecks exposure before the fallback request and never sends it", () => {
+    const calls: Array<HttpCall> = [];
+    const expose = (sql: SqlClient.SqlClient) =>
+      sql`
+        INSERT INTO personal_sensitive_exposures (exposure_key, kind, value, created_at)
+        VALUES (${`thread:${CTO_CHAT}`}, 'source', 'the bank', '2026-10-16T14:02:06.000Z')
+      `.pipe(Effect.asVoid);
+    return withService(
+      {
+        calls,
+        // The primary answers with something unusable, so the code wants the
+        // fallback: the recheck must stop it.
+        answer: (model) => (model === VOICE_CALL_SUMMARY_MODEL ? unusable() : good()),
+        onAnswer: (model, sql) => (model === VOICE_CALL_SUMMARY_MODEL ? expose(sql) : Effect.void),
+      },
+      (service, sql) =>
+        Effect.gen(function* () {
+          expect(yield* service.summarise(CALL_ID)).toBeNull();
+          // Exactly one request: the primary. The fallback was never asked.
+          expect(calls).toHaveLength(1);
+          expect(yield* storedSummary(sql)).toBe("");
+        }),
+    );
+  });
+
+  it.effect(
+    "rechecks exposure before reading the relays, and a late refusal costs no attempt",
+    () => {
+      const calls: Array<HttpCall> = [];
+      const expose = (sql: SqlClient.SqlClient) =>
+        sql`
+        INSERT INTO personal_sensitive_exposures (exposure_key, kind, value, created_at)
+        VALUES (${`thread:${CTO_CHAT}`}, 'source', 'the bank', '2026-10-16T14:02:06.000Z')
+      `.pipe(Effect.asVoid);
+      return withService({ calls, onSecrets: expose }, (service, sql) =>
+        Effect.gen(function* () {
+          expect(yield* service.summarise(CALL_ID)).toBeNull();
+          expect(calls).toHaveLength(0);
+          expect(yield* storedSummary(sql)).toBe("");
+          // Refused between the two gates, before the row was charged an attempt.
+          expect(yield* storedAttempts(sql)).toBe(0);
+        }),
+      );
+    },
+  );
+
   // Finding 1: the relay query used a time window, so a typed message during
   // the call was sent to Google as if the call had said it.
   it.effect("carries only the messages the voice relayed for THIS call", () => {
@@ -575,10 +681,10 @@ describe("PersonalVoiceCallSummaryService.sweep", () => {
         const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
         // The exhausted five are not offered at all; the real call still is.
         expect(
-          yield* repository.listNeedingSummary({
+          (yield* repository.listNeedingSummary({
             limit: 5,
             maxAttempts: VOICE_CALL_SUMMARY_MAX_ATTEMPTS,
-          }),
+          })).map((row) => row.callId),
         ).toEqual([CALL_ID]);
         expect(yield* service.sweep()).toBe(1);
         expect(calls).toHaveLength(2);
@@ -608,6 +714,52 @@ describe("PersonalVoiceCallSummaryService.sweep", () => {
         yield* service.sweep();
         expect(calls).toHaveLength(0);
         expect(yield* storedAttempts(sql)).toBe(0);
+      }),
+    );
+  });
+
+  // Astra re-check R3: rows that can never be summarised (a sensitive chat here)
+  // are skipped, not failed, so without paging five of them would sit in the
+  // newest-five window forever and every older eligible call would wait behind
+  // them. The sweep must walk past them and still summarise the real call.
+  it.effect("pages past permanently ineligible newer calls and reaches the older one", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls }, (service, sql) =>
+      Effect.gen(function* () {
+        // Five newer calls in a chat that had a sensitive site open: newer than
+        // CALL_ID, so they fill the whole first page.
+        for (const index of [0, 1, 2, 3, 4]) {
+          yield* sql`
+            INSERT INTO personal_voice_calls (
+              call_id, thread_id, bot_id, started_at, ended_at, duration_seconds,
+              end_reason, message_count, voice_name, model, detail, transcript_json,
+              created_at, summary_attempts
+            )
+            VALUES (
+              ${`sensitive-${String(index)}`}, 'thread-sensitive', ${CTO_BOT},
+              ${`2026-10-16T15:0${String(index)}:00.000Z`},
+              ${`2026-10-16T15:0${String(index)}:05.000Z`},
+              5, 'hung_up', 0, 'Charon', 'gemini-3.8-live', '',
+              '[{"speaker":"you","text":"the bank account","at":"2026-10-16T15:00:00.000Z"}]',
+              '2026-10-16T15:01:00.000Z', 0
+            )
+          `;
+        }
+        yield* sql`
+          INSERT INTO personal_sensitive_exposures (exposure_key, kind, value, created_at)
+          VALUES ('thread:thread-sensitive', 'source', 'the bank', '2026-10-16T15:02:00.000Z')
+        `;
+        yield* service.sweep();
+        // The real, eligible call was reached and summarised on that one sweep.
+        expect(yield* storedSummary(sql)).toContain("Court 3 is free 11:00-12:00");
+        expect(calls).toHaveLength(1);
+        // The sensitive rows were refused, not failed: no attempt was spent on
+        // any of them, so they can still be summarised if the taint is cleared.
+        const refused = yield* sql<{ readonly attempts: number }>`
+          SELECT summary_attempts AS "attempts" FROM personal_voice_calls
+          WHERE call_id LIKE 'sensitive-%'
+        `;
+        expect(refused.map((row) => Number(row.attempts))).toEqual([0, 0, 0, 0, 0]);
       }),
     );
   });

@@ -3276,23 +3276,121 @@ describe("ProviderCommandReactor", () => {
       // model is given the lines the owner has already read, not the call.
       expect(first.turnContext).not.toContain("Owner: court three");
 
-      // Delivery is recorded against the call row, so the next turn has
-      // nothing to carry, reply or no reply.
-      await harness.runSql(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          const rows = yield* sql<{ readonly delivered: string }>`
-            SELECT summary_delivered_at AS "delivered" FROM personal_voice_calls
-            WHERE call_id = 'call-turn'
-          `;
-          expect(rows[0]?.delivered).not.toBe("");
-        }),
-      );
+      // Delivery is recorded against the call row once the provider accepted
+      // the send with its context, so the next turn has nothing to carry, reply
+      // or no reply.
+      await waitForDelivered(harness, "call-turn");
       await startTurn(harness, asMessageId("user-message-after-delivery"));
       await waitFor(() => harness.sendTurn.mock.calls.length === 2);
       await harness.drain();
       const second = harness.sendTurn.mock.calls[1]?.[0] as { readonly turnContext?: string };
       expect(second.turnContext ?? "").not.toContain("Voice call summary");
+    });
+
+    // Astra re-check R2: the calls are retired only after the provider accepted
+    // the send AND reported the context was delivered, for exactly the calls the
+    // packer carried. Building a request is not delivery.
+    const seedCallSummary = (harness: Awaited<ReturnType<typeof createHarness>>, callId: string) =>
+      harness.runSql(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO personal_voice_calls (
+              call_id, thread_id, bot_id, started_at, ended_at, duration_seconds, end_reason,
+              message_count, voice_name, model, detail, transcript_json, summary_json, created_at
+            ) VALUES (
+              ${callId}, 'thread-1', 'bot-1', '2026-01-02T10:00:00.000Z',
+              '2026-01-02T10:02:48.000Z', 168, 'said_bye', 3, 'Charon', 'gemini-3.8-live', '',
+              '[{"speaker":"you","text":"court three","at":"2026-01-02T10:00:05.000Z"}]',
+              '{"summary":"He asked whether a court was free before his Saturday booking.","points":["Court 3 is free 11:00-12:00 on Saturday"],"decision":"No change, just wanted to know","open":null}',
+              '2026-01-02T10:02:49.000Z'
+            )
+          `;
+        }),
+      );
+    const deliveredAt = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      callId: string,
+    ): Promise<string> =>
+      harness.runSql(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const rows = yield* sql<{ readonly delivered: string }>`
+            SELECT summary_delivered_at AS "delivered" FROM personal_voice_calls
+            WHERE call_id = ${callId}
+          `;
+          return rows[0]?.delivered ?? "";
+        }),
+      );
+    const waitForDelivered = async (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      callId: string,
+    ): Promise<void> => {
+      // Retiring a summary now happens after the provider accepted the send, so
+      // it lands a moment after the send itself. Poll for it, don't race it.
+      await waitFor(async () => (await deliveredAt(harness, callId)) !== "");
+    };
+    const turnContextAt = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      call: number,
+    ): string =>
+      (harness.sendTurn.mock.calls[call - 1]?.[0] as { readonly turnContext?: string } | undefined)
+        ?.turnContext ?? "";
+
+    it("a send the provider refused does not retire the call summary", async () => {
+      const harness = await createHarness({
+        personalBotThread: true,
+        personalMemory: true,
+        sendTurnEffect: (call) =>
+          call === 1
+            ? Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "claudeAgent",
+                  method: "turn/start",
+                  detail: "Claude usage limit reached.",
+                }),
+              )
+            : undefined,
+      });
+      await seedCallSummary(harness, "call-refused");
+      await startTurn(harness, asMessageId("user-message-call-refused"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      expect(turnContextAt(harness, 1)).toContain("Voice call summary");
+      expect(await deliveredAt(harness, "call-refused")).toBe("");
+      // The refused send never showed it to the bot, so the next turn carries it.
+      await startTurn(harness, asMessageId("user-message-call-refused-again"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+      expect(turnContextAt(harness, 2)).toContain("Voice call summary");
+      await waitForDelivered(harness, "call-refused");
+    });
+
+    it("a send that had to leave the call summary out does not retire it either", async () => {
+      const harness = await createHarness({
+        personalBotThread: true,
+        personalMemory: true,
+        sendTurnEffect: (call) =>
+          call === 1
+            ? Effect.succeed({
+                threadId: ThreadId.make("thread-1"),
+                turnId: asTurnId("turn-1"),
+                turnContextDelivery: "none" as const,
+              })
+            : undefined,
+      });
+      await seedCallSummary(harness, "call-dropped");
+      await startTurn(harness, asMessageId("user-message-call-dropped"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      expect(turnContextAt(harness, 1)).toContain("Voice call summary");
+      // The provider dropped the turn's context, so the bot never saw the block.
+      expect(await deliveredAt(harness, "call-dropped")).toBe("");
+      await startTurn(harness, asMessageId("user-message-call-dropped-again"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+      expect(turnContextAt(harness, 2)).toContain("Voice call summary");
+      await waitForDelivered(harness, "call-dropped");
     });
 
     it("a send the provider refused leaves the full preference list due for the next turn", async () => {
