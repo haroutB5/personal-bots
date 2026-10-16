@@ -89,8 +89,15 @@ describe("buildVoiceCallSummaryPrompt", () => {
   it("asks for exactly the JSON shape the parser reads", () => {
     const text = prompt();
     expect(text).toContain('{"summary": "...", "points": ["..."], "decision": "..." | null');
-    expect(text).toContain(`up to ${VOICE_CALL_SUMMARY_MAX_POINTS} short bullets`);
-    expect(text).toContain("concrete fact");
+    expect(text).toContain(`up to ${VOICE_CALL_SUMMARY_MAX_POINTS} bullets`);
+    // Each bullet must stand on its own. The first version of this prompt
+    // produced "Court 3" and "Saturday" as separate bare fragments on the real
+    // call, which is what the example and the "never" line below prevent.
+    expect(text).toContain("complete short fact");
+    expect(text).toContain(
+      '"Court 3 is free 11:00-12:00 on Saturday", never "Court 3" or "Saturday"',
+    );
+    expect(text).toContain('"moving to Court 2 at 12:00"');
     expect(text).toContain("Write in English");
   });
 
