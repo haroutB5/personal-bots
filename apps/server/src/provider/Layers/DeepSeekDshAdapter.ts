@@ -1383,7 +1383,11 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
     const outcome = yield* context.promptLock.withPermit(
       Effect.gen(function* () {
         if (context.stopped || context.process === undefined) return { kind: "closed" } as const;
-        if (turnInFlight(context)) {
+        // A fresh send also queues behind messages already held or taken by
+        // the drain, so it cannot start ahead of them in the moment between
+        // a turn ending and the drain it scheduled taking this lock.
+        const queuedAhead = requeue === "back" && (context.held.length > 0 || context.draining);
+        if (turnInFlight(context) || queuedAhead) {
           if (requeue === "front") context.held.unshift(turn);
           else context.held.push(turn);
           return { kind: "held" } as const;
@@ -1418,17 +1422,28 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         return Effect.void;
       }
       return attemptTurn(context, next, "front").pipe(
+        // A held turn that fails to start is settled like a direct send's
+        // (sendTurn): its state is cleared and the owner sees it fail, so a
+        // stale active turn cannot strand the messages queued behind it.
         Effect.catchCause((cause) =>
-          Effect.as(
-            Effect.logWarning("A held DeepSeek Harness turn failed", {
-              threadId: context.threadId,
-              cause: Cause.pretty(cause),
-            }),
-            "failed" as const,
-          ),
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.succeed("stopped" as const)
+            : Effect.gen(function* () {
+                yield* Effect.logWarning("A held DeepSeek Harness turn failed", {
+                  threadId: context.threadId,
+                  cause: Cause.pretty(cause),
+                });
+                yield* finishTurn(context, next.turnId, {
+                  state: "failed",
+                  errorMessage: translateDshFailure(Cause.pretty(cause)).text,
+                }).pipe(Effect.ignore);
+                return "failed" as const;
+              }),
         ),
         Effect.flatMap((kind) =>
-          kind === "held" ? Effect.void : Effect.suspend(() => drainLoop(context)),
+          kind === "held" || kind === "stopped"
+            ? Effect.void
+            : Effect.suspend(() => drainLoop(context)),
         ),
       );
     });
