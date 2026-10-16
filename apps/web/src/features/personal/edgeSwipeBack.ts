@@ -22,6 +22,40 @@ const COMPLETE_SHARE = 0.35;
 /** A flick faster than this (px/ms, rightwards) completes it from anywhere. */
 const FLICK_PX_PER_MS = 0.5;
 
+/** How far left the list under the swiping chat starts, as iOS navigation does (share of the width). */
+export const PARALLAX = 0.3;
+/** The dimming over the list at the start of the swipe; it fades out as the chat leaves. */
+const SHADE_OPACITY = 0.12;
+
+/**
+ * Where the two layers of a swipe are, from how far the chat has been dragged.
+ * `chatX` is the chat's left edge in px; `underlayX` is the list's left edge in
+ * px, from the viewport (the layers sit beside the chat's root, never inside it,
+ * so both are viewport coordinates); `shade` is the dimming's opacity. The list
+ * is wider than the strip it fills (`underlayX <= 0`, and it reaches
+ * past the chat's left edge), so no gap shows at the left at any point.
+ */
+export function swipeLayerGeometry(
+  offset: number,
+  width: number,
+): {
+  readonly progress: number;
+  readonly chatX: number;
+  readonly underlayX: number;
+  readonly underlayShiftPercent: number;
+  readonly shade: number;
+} {
+  const progress = width > 0 ? Math.min(1, Math.max(0, offset / width)) : 0;
+  const underlayShiftPercent = -(1 - progress) * PARALLAX * 100;
+  return {
+    progress,
+    chatX: progress * width,
+    underlayX: (underlayShiftPercent / 100) * width,
+    underlayShiftPercent,
+    shade: SHADE_OPACITY * (1 - progress),
+  };
+}
+
 /** `localStorage.setItem("bots:native-swipe", "1")` puts the iOS swipe back on one device. */
 export const NATIVE_SWIPE_STORAGE_KEY = "bots:native-swipe";
 
