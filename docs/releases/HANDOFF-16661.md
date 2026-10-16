@@ -2,9 +2,10 @@
 
 Three voice-call changes on top of the live 1.66.60: a greeting is never a finding, the call voice
 never volunteers a status claim it was not given, and the summary is now written by Claude Haiku 5.5
-with the Gemini Flash Lite path behind it. Staged only (nothing is activated). Branch
-`release/hbots-16661`, built from the live notes commit `acd9685574` (`personal-bots/main`); the code
-and the version bump to 1.66.61 are commit `780d31500b`. No migration: the maximum stays 111.
+at medium effort with the Gemini Flash Lite path behind it. Staged only (nothing is activated).
+Branch `release/hbots-16661`, built from the live notes commit `acd9685574` (`personal-bots/main`);
+the version bump and the Claude path are commit `780d31500b`, and the release commit is
+`38fe02394b` (medium effort for the summary). No migration: the maximum stays 111.
 `PERSONAL_TASKS_CONCURRENCY` stays 5.
 
 1. **A greeting is not a finding** (`apps/server/src/personal/voiceCalls/voiceCallSummary.ts`,
@@ -14,12 +15,13 @@ and the version bump to 1.66.61 are commit `780d31500b`. No migration: the maxim
 2. **The voice never volunteers status** (`apps/server/src/personal/voiceCalls/voiceCallInstructions.ts`,
    Backend) - the call voice answers a greeting as a greeting and never claims the work is ready,
    done or complete unless the owner asked and the bot's own report says so.
-3. **Claude Haiku 5.5 writes the summary, Gemini behind it**
+3. **Claude Haiku 5.5 writes the summary at medium effort, Gemini behind it**
    (`apps/server/src/personal/voiceCalls/voiceCallSummaryClaude.ts`,
    `PersonalVoiceCallSummaryService.ts`, `PersonalVoiceCallRepository.ts`,
    `packages/contracts/src/personalVoiceCalls.ts`, Backend) - the summary is written on the owner's
-   own Claude Code subscription through the text-generation path the app already uses, and the
-   Gemini Flash Lite path is the fallback. Which model wrote it is stored on the summary.
+   own Claude Code subscription through the text-generation path the app already uses, at medium
+   effort, and the Gemini Flash Lite path is the fallback. Which model wrote it is stored on the
+   summary, and the effort is logged beside the model.
 
 ## 1. A greeting is not a finding
 
@@ -88,18 +90,21 @@ reading the transcript, not by Gemini Flash Lite.
 The worker now asks the text-generation path the app already uses for chat titles, branch names and
 the memory tidy-up (`ClaudeTextGeneration.generateStructured`: `claude -p --output-format json
 --json-schema ... --tools "" --disable-slash-commands --strict-mcp-config`, prompt on stdin, a temp
-working directory), on the `claude-haiku-5-5` text-generation default at the background effort
-(`low`), through the owner's own Claude Code subscription. No API key is added and no provider is
-configured: `PERSONAL_TEXTGEN_MODEL` and `PERSONAL_TEXTGEN_EFFORT` keep working exactly as they do
-for a title, and the Claude layer's tag (`VoiceCallSummaryClaude`) is one small service tag so the
-worker's own tests can prove the order without a CLI, a subscription or a network.
+working directory), on the `claude-haiku-5-5` text-generation default, through the owner's own
+Claude Code subscription. It names `effort: medium` on its model selection (Harout's decision, 16
+Oct 2026): a summary is a background job, so its latency does not matter but its judgement does, and
+naming the effort is also what stops the text-generation path folding in the low background effort
+it uses for a title. No API key is added and no provider is configured; `PERSONAL_TEXTGEN_MODEL`
+still picks the model exactly as it does for a title, while the summary's own effort stays medium.
+The Claude layer's tag (`VoiceCallSummaryClaude`) is one small service tag so the worker's own tests
+can prove the order without a CLI, a subscription or a network.
 
 The order, and what did not change:
 
-- **Claude Haiku 5.5 first.** Its answer arrives as the CLI's structured output and goes to the same
-  parser as every other answer, so the caps, the duplicate check and the fixed short-call line stay
-  in one place. The model that wrote the summary is stored on it as `model` and logged by id, never
-  by text.
+- **Claude Haiku 5.5 first, at medium effort.** Its answer arrives as the CLI's structured output and
+  goes to the same parser as every other answer, so the caps, the duplicate check and the fixed
+  short-call line stay in one place. The model that wrote the summary is stored on it as `model`, and
+  the model id and the effort are logged beside each other, never the text.
 - **Gemini Flash Lite only when Claude cannot answer**: a usage limit, a CLI error, the CLI's own
   180 s timeout, or an answer the parser will not take. The two Gemini models
   (`gemini-3.1-flash-lite`, then `gemini-flash-lite-latest`) and that whole path are unchanged. Its
@@ -114,9 +119,10 @@ The order, and what did not change:
 - **The `model` field is optional** in `VoiceCallSummary`, so a summary written by an older build
   reads back without it and nothing is migrated.
 
-Proof on both real fixtures through Haiku 5.5, on the owner's own subscription (CLI 2.1.301, the
-exact prompt and `--json-schema` the app builds, `--model claude-haiku-5-5 --effort low --tools ""`,
-16 Oct 2026 21:44Z, 7.7 s and 6.6 s, exit 0). The replies, verbatim:
+Proof on both real fixtures through Haiku 5.5 at the shipped medium effort, on the owner's own
+subscription (CLI 2.1.301, the exact prompt and `--json-schema` the app builds,
+`--model claude-haiku-5-5 --effort medium --tools ""`, 16 Oct 2026 22:02-22:03Z, 4.1 s and 6.6 s,
+exit 0, thinking tokens 439 and 1014). The replies, verbatim:
 
 ```text
 --- 9a6e8901 (the greeting call)
@@ -124,25 +130,27 @@ exact prompt and `--json-schema` the app builds, `--model claude-haiku-5-5 --eff
 
 --- 8f9c3ace (the Court 3 call)
 {
-  "summary": "Owner asked whether a slot is free before his Saturday tennis booking; the voice reported Court 3 is free 11:00-12:00 with a move to Court 2 at 12:00.",
+  "summary": "Owner asked whether a free tennis slot exists before his Saturday booking; the voice found Court 3 free 11:00-12:00 but he would need to move to Court 2 at 12:00.",
   "points": [
-    "The voice said the confirmed booking is Court 2 on Saturday 17 October, 12:00 PM to 3:00 PM.",
-    "The voice said Court 2 is busy 11:00-12:00 on Saturday 17 October, so the slot before the booking is taken.",
-    "The voice said Court 3 is free 11:00-12:00 on Saturday 17 October, but you would need to move to Court 2 at 12:00.",
-    "The voice said the original booking was not changed."
+    "The voice said his confirmed booking is Court 2, Saturday October 17, 12:00 PM to 3:00 PM.",
+    "The voice said Court 2 is busy 11:00-12:00 on Saturday, so the slot before his booking is not available there.",
+    "The voice said Court 3 is free 11:00-12:00 on Saturday, but he would have to move to Court 2 at 12:00.",
+    "The voice said his original booking was not changed."
   ],
-  "decision": "no change, just wanted to know",
+  "decision": "No change, just wanted to know.",
   "open": null,
   "shortCall": false
 }
 ```
 
-So the greeting call gives the fixed line on the first attempt, and the Court 3 call keeps Court 3
-free 11:00-12:00 with the move to Court 2 at 12:00, the confirmed Court 2 booking and the decision,
-attributing to the voice what only the voice said. Two Claude calls were spent in total. The full
-CLI envelopes, the schema, the prompts and both answers are in
-`C:\Claude\AI\dev-team\qa\hbots-16661-voice\`; both Haiku answers are pinned verbatim in
-`voiceCallSummary.test.ts`, beside the two real Gemini answers below.
+So the greeting call gives the fixed line on the first attempt, and the Court 3 call names Court 3
+free 11:00-12:00 with the move to Court 2 at 12:00, keeps the confirmed Court 2 booking and records
+the decision, attributing to the voice what only the voice said. Two Claude calls were spent in
+total. An earlier run at `--effort low` (21:44Z, 7.7 s and 6.6 s) came first and is superseded by
+this one; its answers stay in the bundle as history. The full CLI envelopes, the schema, the prompts
+and both answers are in `C:\Claude\AI\dev-team\qa\hbots-16661-voice\` (the medium files are prefixed
+`medium-`); both medium answers are pinned verbatim in `voiceCallSummary.test.ts`, beside the two
+real Gemini answers below.
 
 ### The Gemini fallback, proved before this change and kept
 
@@ -181,10 +189,11 @@ live database - nothing on this laptop was written. The replies, verbatim:
   findings, flag or no flag", "reads the two real Gemini answers from the 1.66.61 proof, verbatim"
   and "reads the two real Claude Haiku 5.5 answers from the 1.66.61 proof, verbatim".
 - `apps/server/src/personal/voiceCalls/voiceCallSummaryClaude.test.ts` (new), 6 passed: the Claude
-  agent instance, the Haiku 5.5 default with no effort option of its own (the text-generation path
-  adds the low background effort for exactly that model), the shared parser including the short-call
-  line, `null` for an answer with nothing usable, "unavailable" when no Claude provider instance is
-  registered, and the error's class only, never the words it carried.
+  agent instance on the Haiku 5.5 default at medium effort (the effort is named on the model
+  selection, which is what stops the text-generation path adding its low background effort for that
+  model), the shared parser including the short-call line, `null` for an answer with nothing usable,
+  "unavailable" when no Claude provider instance is registered, and the error's class only, never the
+  words it carried.
 - `apps/server/src/personal/voiceCalls/PersonalVoiceCallSummaryService.test.ts`, 29 passed,
   including "asks Claude first, and never reaches Google" (one Claude prompt carrying the real
   transcript and the new rules, and zero Google requests), "falls back to Gemini when Claude answers
@@ -214,8 +223,9 @@ and the repository and migration tests still pass unchanged (the new field is op
 
 ## How to verify (QA)
 
-The staged release is `C:\Users\Ht\.personal-bots\releases\780d31500b6a` (version 1.66.61, branch
-`release/hbots-16661`, externals copied, built from `780d31500b6af1263cc8df43c7cbdef95f940285`).
+The staged release is `C:\Users\Ht\.personal-bots\releases\38fe02394bc6` (version 1.66.61, branch
+`release/hbots-16661`, externals copied, built from `38fe02394bc61637eca68b44a3d07a23a02fc038`).
+The earlier staging `780d31500b6a` is superseded and left in place.
 
 - `cd apps\server; ..\..\node_modules\.bin\vp.cmd test run src/personal/voiceCalls` (179 tests, all
   passing here) covers both prompt rules, the parser, the Claude layer and the worker's order, with
@@ -227,27 +237,29 @@ The staged release is `C:\Users\Ht\.personal-bots\releases\780d31500b6a` (versio
   for this small tier.
 - Nothing to click in dark mode.
 
-Left running: nothing. The two scratch proof-generator test files were deleted from the worktree
-before the gates ran, and no background job, waiter or server process was started by this work.
+Left running: nothing. The scratch proof-generator test files were deleted from the worktree before
+the gates ran; the medium runner and its builder live outside the repo in
+`%TEMP%\hbots-16661-medium\` and were never added to it. No background job, waiter or server process
+was started by this work.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=780d31500b6af1263cc8df43c7cbdef95f940285 release=780d31500b6a json-sha256=f30c5cc2e3859dc3ecd0088b6694abcf6a9db486ef95934f8400058b6b26a2e5 result=PASS -->
+<!-- gate-evidence:begin sha=38fe02394bc61637eca68b44a3d07a23a02fc038 release=38fe02394bc6 json-sha256=64b84035188dd41afc48c33a243a824d964c19e5565a0597e14d334e3f2f2eab result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T21:58:28Z. Version 1.66.61, release `780d31500b6a`, commit `780d31500b6af1263cc8df43c7cbdef95f940285` on `release/hbots-16661`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T22:16:56Z. Version 1.66.61, release `38fe02394bc6`, commit `38fe02394bc61637eca68b44a3d07a23a02fc038` on `release/hbots-16661`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\780d31500b6a\gate-evidence.json` (sha256 `f30c5cc2e3859dc3ecd0088b6694abcf6a9db486ef95934f8400058b6b26a2e5`) and the full gate logs in `releases\780d31500b6a\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\38fe02394bc6\gate-evidence.json` (sha256 `64b84035188dd41afc48c33a243a824d964c19e5565a0597e14d334e3f2f2eab`) and the full gate logs in `releases\38fe02394bc6\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2908 tests passed, 0 failed, 4 skipped, in 209 files | 219.4   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 18.4    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2861 tests passed, 0 failed, 0 skipped, in 256 files | 32      |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 7.7     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 64.4    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16661\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\780d31500b6a" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 255.4   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2908 tests passed, 0 failed, 4 skipped, in 209 files | 220.4   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 20.6    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2861 tests passed, 0 failed, 0 skipped, in 256 files | 31.3    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 6.7     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 63.5    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16661\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\38fe02394bc6" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 257.2   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `780d31500b6af1263cc8df43c7cbdef95f940285`, at end `780d31500b6af1263cc8df43c7cbdef95f940285`; tracked files modified: none. Staged release: version 1.66.61, sha 780d31500b6a, dirty False, externals copied; `dist/bin.mjs` sha256 `df552a8689c4e85b54ad47274b0d676628ce49233287823c385199c9989c87bb`.
+Tree: HEAD at start `38fe02394bc61637eca68b44a3d07a23a02fc038`, at end `38fe02394bc61637eca68b44a3d07a23a02fc038`; tracked files modified: none. Staged release: version 1.66.61, sha 38fe02394bc6, dirty False, externals copied; `dist/bin.mjs` sha256 `db89886ce92fea1a5281b08a7c4a16c5b8d6d2364186e68af4b558d1dbb31f76`.
 <!-- gate-evidence:end -->
