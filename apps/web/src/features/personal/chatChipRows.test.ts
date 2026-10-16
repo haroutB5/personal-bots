@@ -409,6 +409,21 @@ describe("chat chip list: a task chat the owner made his own", () => {
     expect(open.ownerChips.map((chip) => chip.threadId)).toEqual(["owner"]);
   });
 
+  it("brings an untouched task chat the owner marked unread into the chips", () => {
+    // His own "remind me" makes the chat his, so one predicate (`isOwnerChat`)
+    // decides both the chips and the unread dot: neither can name a chat the
+    // other hides.
+    const links = [link("owner", 10), link("task-chat", 20, { markedUnread: true })];
+    const model = build({
+      links,
+      shells: [activeAt("owner", 15), taskOwnTurn],
+      tasks: ownTask,
+      current: "owner",
+    });
+    expect(model.chips.map((chip) => chip.threadId).toSorted()).toEqual(["owner", "task-chat"]);
+    expect(model.temporary).toBeNull();
+  });
+
   // The bug this rule replaced: every delegation result, steer, auto-continue
   // and release notice is a user turn, so a chat that reads only the thread's
   // newest user message made CTO and QA task chats permanent chips. The server

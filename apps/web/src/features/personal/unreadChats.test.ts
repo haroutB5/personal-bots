@@ -1,4 +1,4 @@
-import type { PersonalBotThread } from "@t3tools/contracts";
+import type { PersonalBotThread, PersonalTask } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -92,7 +92,7 @@ describe("unreadChatsByBot", () => {
       link("t4", {}, "bot-cfo"),
       link("t5", {}, "bot-dev"),
     ];
-    const out = unreadChatsByBot({ bots, links, seen: NO_CHAT_SEEN });
+    const out = unreadChatsByBot({ bots, links, tasks: [], seen: NO_CHAT_SEEN });
     expect([...(out.get("bot-cto") ?? [])]).toEqual(["t1", "t2"]);
     expect([...(out.get("bot-cfo") ?? [])]).toEqual(["t4"]);
     // Not a lead: never counted, whatever the server says.
@@ -104,6 +104,7 @@ describe("unreadChatsByBot", () => {
     const out = unreadChatsByBot({
       bots,
       links,
+      tasks: [],
       shells: [shell("t1"), shell("t-relay"), shell("t-archived", "2026-10-02T11:00:00.000Z")],
       relayThreadIds: new Set(["t-relay"]),
       seen: NO_CHAT_SEEN,
@@ -119,7 +120,7 @@ describe("unreadChatsByBot", () => {
       link("t4"),
       link("t5", { markedUnread: true, unread: undefined }, "bot-dev"),
     ];
-    const out = unreadChatsByBot({ bots, links, seen: NO_CHAT_SEEN });
+    const out = unreadChatsByBot({ bots, links, tasks: [], seen: NO_CHAT_SEEN });
     // A bot that is not a lead: only the marked chat, not its plain reply.
     expect([...(out.get("bot-dev") ?? [])]).toEqual(["t1"]);
     // A lead keeps counting both kinds.
@@ -135,6 +136,7 @@ describe("unreadChatsByBot", () => {
     const out = unreadChatsByBot({
       bots,
       links,
+      tasks: [],
       shells: [shell("t-open"), shell("t-relay"), shell("t-ok")],
       relayThreadIds: new Set(["t-relay"]),
       seen: seen({ openThreadId: "t-open" }),
@@ -146,9 +148,78 @@ describe("unreadChatsByBot", () => {
     const out = unreadChatsByBot({
       bots: [{ botId: "bot-cto", lead: false }] as never,
       links: [link("t1")],
+      tasks: [],
       seen: NO_CHAT_SEEN,
     });
     expect(out.size).toBe(0);
+  });
+
+  /* ---------------------------------------------------------------------- */
+  /* Only chats the owner can see count (the chips' own rule)                 */
+  /* ---------------------------------------------------------------------- */
+
+  const TASK_AT = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
+  /** A chat a task or a routine run made: the link and its task share one moment. */
+  const taskChat = (
+    threadId: string,
+    createdAt = TASK_AT,
+  ): Pick<PersonalTask, "threadId" | "createdAt"> => ({
+    threadId: threadId as PersonalTask["threadId"],
+    createdAt,
+  });
+
+  it("gives no dot for an unread routine chat the owner never used", () => {
+    // The real case: CTO's routine chat 0125bbfc was unread and in no chip, yet
+    // it lit the row's dot.
+    const out = unreadChatsByBot({
+      bots,
+      links: [link("t-owner"), link("t-routine", { createdAt: TASK_AT })],
+      tasks: [taskChat("t-routine")],
+      seen: NO_CHAT_SEEN,
+    });
+    expect([...(out.get("bot-cto") ?? [])]).toEqual(["t-owner"]);
+  });
+
+  it("gives a dot for an unread owner chat", () => {
+    const out = unreadChatsByBot({
+      bots,
+      links: [link("t-owner")],
+      tasks: [],
+      seen: NO_CHAT_SEEN,
+    });
+    expect([...(out.get("bot-cto") ?? [])]).toEqual(["t-owner"]);
+  });
+
+  it("counts a routine chat the owner made his own: he wrote in it, pinned it or marked it", () => {
+    const links = [
+      // He wrote in it after the task's own first turn.
+      link("t-wrote", {
+        createdAt: TASK_AT,
+        lastOwnerMessageAt: DateTime.makeUnsafe("2026-10-01T01:00:00.000Z"),
+      }),
+      link("t-pinned", {
+        createdAt: TASK_AT,
+        pinnedAt: DateTime.makeUnsafe("2026-10-01T01:00:00.000Z"),
+      }),
+      link("t-marked", { createdAt: TASK_AT, markedUnread: true }, "bot-dev"),
+      // Never touched: still hidden, and still no dot.
+      link("t-hidden", { createdAt: TASK_AT }),
+    ];
+    const tasks = ["t-wrote", "t-pinned", "t-marked", "t-hidden"].map((id) => taskChat(id));
+    const out = unreadChatsByBot({ bots, links, tasks, seen: NO_CHAT_SEEN });
+    expect([...(out.get("bot-cto") ?? [])]).toEqual(["t-wrote", "t-pinned"]);
+    // A marked chat counts for a bot that does not show unread chats at all.
+    expect([...(out.get("bot-dev") ?? [])]).toEqual(["t-marked"]);
+  });
+
+  it("still counts an ordinary chat marked unread for a bot that is not a lead", () => {
+    const out = unreadChatsByBot({
+      bots,
+      links: [link("t1", { markedUnread: true }, "bot-dev")],
+      tasks: [],
+      seen: NO_CHAT_SEEN,
+    });
+    expect([...(out.get("bot-dev") ?? [])]).toEqual(["t1"]);
   });
 });
 

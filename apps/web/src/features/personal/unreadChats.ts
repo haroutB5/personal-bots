@@ -1,10 +1,16 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { isTeamLead, type PersonalBot, type PersonalBotThread } from "@t3tools/contracts";
+import {
+  isTeamLead,
+  type PersonalBot,
+  type PersonalBotThread,
+  type PersonalTask,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { isGroupRelayLink } from "./groupModel";
+import { isOwnerChat, taskChatThreadIds } from "./ownerChats";
 
 /**
  * Unread chats: the bot replied after the owner last had the chat open.
@@ -58,10 +64,16 @@ export function isChatUnread(
  * bot counts only the chats the owner marked unread (or that woke from a
  * snooze), `markedUnread`, which show for every bot. Reads only the list the
  * Bots screen already has: no request per row.
+ *
+ * Only a chat the owner can see counts: {@link isOwnerChat}, the very predicate
+ * the chat chips draw, so a task or routine chat he never used cannot light the
+ * dot while it is in no chip (2026-10-16).
  */
 export function unreadChatsByBot(input: {
   readonly bots: ReadonlyArray<Pick<PersonalBot, "botId" | "lead">>;
   readonly links: ReadonlyArray<PersonalBotThread>;
+  /** The task feed, for the chats a task or a routine run made (`taskChatThreadIds`). */
+  readonly tasks: ReadonlyArray<Pick<PersonalTask, "threadId" | "createdAt">>;
   readonly shells?: ReadonlyArray<EnvironmentThreadShell>;
   readonly relayThreadIds?: ReadonlySet<string>;
   readonly seen: ChatSeenState;
@@ -71,6 +83,7 @@ export function unreadChatsByBot(input: {
   );
   const out = new Map<string, Set<string>>();
   const relays = input.relayThreadIds ?? new Set<string>();
+  const taskChats = taskChatThreadIds(input.links, input.tasks);
   const shellsById =
     input.shells === undefined
       ? null
@@ -78,6 +91,9 @@ export function unreadChatsByBot(input: {
   for (const link of input.links) {
     if (!shown.has(link.botId) && link.markedUnread !== true) continue;
     if (isGroupRelayLink(link, relays)) continue;
+    // A chat the chips hide is not one the owner can reach from the bot's
+    // header: it never counts towards the bot's dot.
+    if (!isOwnerChat(link, taskChats)) continue;
     // A chat whose shell has not arrived yet is not listed anywhere either.
     const shell = shellsById === null ? null : shellsById.get(link.threadId);
     if (shell === undefined) continue;

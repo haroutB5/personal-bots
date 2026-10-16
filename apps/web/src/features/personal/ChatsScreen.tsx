@@ -562,11 +562,12 @@ export function ChatsScreen({
         : unreadChatsByBot({
             bots: list.data.bots,
             links: list.data.threads,
+            tasks,
             shells,
             relayThreadIds: memberThreadIds,
             seen: chatSeen,
           }),
-    [chatSeen, list.data, memberThreadIds, shells],
+    [chatSeen, list.data, memberThreadIds, shells, tasks],
   );
   const listedWithUnread = useMemo(
     () =>
