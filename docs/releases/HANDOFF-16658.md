@@ -214,3 +214,19 @@ The useful real-device check is one ordinary call on the phone:
   `_wt/hbots-16658`, branch `release/hbots-16658`; its `node_modules` is a real
   install (made with another worktree's `vp` shim), not a junction.
 - No live data was written: each throwaway's own database held the proof rows.
+
+## QA (task f1bad624, 16 Oct 2026)
+
+Focused check on the staged release 230ed5bce7ae with a fresh throwaway root, a fake Live socket and a synthetic mic (no live app, no real key). Evidence: `C:/Claude/AI/dev-team/qa/hbots-16658-qa-f1bad624/RESULT.md`.
+
+- (a) PASS: "no, wait" split across two input chunks cancelled the pending send at 366 ms; nothing posted.
+- (b) PASS: a burst of three work updates injected only the latest; the next burst came 8,008 ms later; no duplicates.
+- (c) PASS: no injection while the voice was speaking; the pending update was sent after turnComplete.
+- (d) PASS: the transcript (probe line, Arabic, Armenian, hang-up flush) survived a reload, with dir=auto on every row.
+- (e) PASS: preview_navigate with a path, query and fragment is titled with the hostname only.
+- (f) PASS: the system instruction carries the relay, before-end and update rules (server tests 20/20).
+- Regression: chat send and reply PASS, Settings PASS, 0 page errors. The Tasks page stays on Loading when the root has zero tasks.
+
+## CTO decision on the Tasks finding
+
+QA marked NO-SHIP for the Tasks empty state. CTO checked that 1.66.58 does not change any Tasks or task-feed code (`git diff edfe1b74ef..060f70b2f6` touches only voice, provider step labels and voice instructions), so the bug predates this release. It shows only on a root with no tasks at all, which the live install never has. Shipping 1.66.58; the empty Tasks feed (suspected `usePersonalAutomation.ts:40` and `taskQueries.ts:152`: an empty replay emits no first value) is a follow-up for the next release.
