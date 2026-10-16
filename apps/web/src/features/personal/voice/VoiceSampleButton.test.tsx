@@ -138,6 +138,6 @@ describe("VoiceSampleButton", () => {
       (node) => node.props.role === "alert" && typeof node.children[0] === "string",
     );
     expect(alerts.length).toBeGreaterThanOrEqual(1);
-    expect(JSON.stringify(alerts[0]!.children)).toContain("Could not play that sample");
+    expect(JSON.stringify(alerts[0]!.children)).toContain("Sample unavailable right now");
   });
 });

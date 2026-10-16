@@ -974,7 +974,7 @@ function BotForm({
           Voice calls
           <span className="block text-sm text-[var(--personal-text-secondary)]">
             {draft.lead === true
-              ? "On: this bot is a team lead, so its chats show a call button."
+              ? "On for team leads: this bot is one, so its chats show a call button."
               : "Off: only team leads can take calls. Make this bot a team lead to turn calls on."}
           </span>
         </span>

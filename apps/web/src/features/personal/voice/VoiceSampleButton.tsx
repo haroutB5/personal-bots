@@ -66,7 +66,7 @@ export function VoiceSampleButton({
       .then((sample) => player.play(base64ToBytes(sample.base64)))
       .catch(() => {
         setPlaying(false);
-        setProblem("Could not play that sample. Try again.");
+        setProblem("Sample unavailable right now");
       });
   };
 
