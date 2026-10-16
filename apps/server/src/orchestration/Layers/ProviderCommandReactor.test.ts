@@ -3240,6 +3240,62 @@ describe("ProviderCommandReactor", () => {
       );
     });
 
+    it("a turn after a phone call carries the call summary until the bot has replied", async () => {
+      // Harout, 16 Oct: the call card is not a chat message and its transcript
+      // never reaches a model, so the summary is the one thing that crosses
+      // from a call into the bot's next turn - once, and not after the bot has
+      // answered it.
+      const harness = await createHarness({ personalBotThread: true, personalMemory: true });
+      await harness.runSql(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO personal_voice_calls (
+              call_id, thread_id, bot_id, started_at, ended_at, duration_seconds, end_reason,
+              message_count, voice_name, model, detail, transcript_json, summary_json, created_at
+            ) VALUES (
+              'call-turn', 'thread-1', 'bot-1', '2026-01-02T10:00:00.000Z',
+              '2026-01-02T10:02:48.000Z', 168, 'said_bye', 3, 'Charon', 'gemini-3.8-live', '',
+              '[{"speaker":"you","text":"court three","at":"2026-01-02T10:00:05.000Z"}]',
+              '{"summary":"He asked whether a court was free before his Saturday booking.","points":["Court 3 is free 11:00-12:00 on Saturday"],"decision":"No change, just wanted to know","open":null}',
+              '2026-01-02T10:02:49.000Z'
+            )
+          `;
+        }),
+      );
+
+      await startTurn(harness, asMessageId("user-message-after-call"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      const first = harness.sendTurn.mock.calls[0]?.[0] as { readonly turnContext?: string };
+      expect(first.turnContext).toContain("Voice call summary");
+      expect(first.turnContext).toContain("Court 3 is free 11:00-12:00 on Saturday");
+      expect(first.turnContext).toContain("Decided: No change, just wanted to know");
+      // The transcript is quoted material for the summary, not context: the
+      // model is given the lines the owner has already read, not the call.
+      expect(first.turnContext).not.toContain("Owner: court three");
+
+      // The bot's own reply, written after the call ended, retires the block.
+      await harness.runSql(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO projection_thread_messages (
+              message_id, thread_id, role, text, is_streaming, created_at, updated_at
+            ) VALUES (
+              'm-call-reply', 'thread-1', 'assistant', 'Court three it is', 0,
+              '2026-01-02T10:03:30.000Z', '2026-01-02T10:03:30.000Z'
+            )
+          `;
+        }),
+      );
+      await startTurn(harness, asMessageId("user-message-after-reply"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+      const second = harness.sendTurn.mock.calls[1]?.[0] as { readonly turnContext?: string };
+      expect(second.turnContext ?? "").not.toContain("Voice call summary");
+    });
+
     it("a send the provider refused leaves the full preference list due for the next turn", async () => {
       // 1.60.21 (QA): the failure happens at the provider boundary, not in the
       // memory service. Before the fix the refused turn still marked the list
