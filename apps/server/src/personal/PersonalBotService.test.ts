@@ -505,28 +505,33 @@ it.effect("profile display name defaults to empty, trims on set, and rejects lon
       displayName: "",
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
+      autoArchiveTaskChatsAfterMinutes: 2880,
     });
 
     expect(yield* service.setProfile({ displayName: "  Harout  " })).toEqual({
       displayName: "Harout",
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
+      autoArchiveTaskChatsAfterMinutes: 2880,
     });
     expect(yield* service.getProfile()).toEqual({
       displayName: "Harout",
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
+      autoArchiveTaskChatsAfterMinutes: 2880,
     });
 
     expect(yield* service.setProfile({ displayName: "" })).toEqual({
       displayName: "",
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
+      autoArchiveTaskChatsAfterMinutes: 2880,
     });
     expect(yield* service.getProfile()).toEqual({
       displayName: "",
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
+      autoArchiveTaskChatsAfterMinutes: 2880,
     });
 
     const tooLong = yield* Effect.flip(service.setProfile({ displayName: "x".repeat(81) }));
@@ -585,6 +590,7 @@ it.effect("auto-archive of finished task chats is on by default and saved when t
       displayName: "Harout",
       autoArchiveTaskChats: false,
       ...DEFAULT_VOICE_CALLS,
+      autoArchiveTaskChatsAfterMinutes: 2880,
     });
     expect((yield* service.getProfile()).autoArchiveTaskChats).toBe(false);
     // A name change alone leaves the setting as it was.
@@ -594,6 +600,38 @@ it.effect("auto-archive of finished task chats is on by default and saved when t
     expect((yield* service.getProfile()).autoArchiveTaskChats).toBe(true);
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
+
+it.effect(
+  "the auto-archive wait is 48 hours by default, saved in minutes, and refuses out-of-range values",
+  () => {
+    const context = makeContext();
+    return Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      yield* service.setProfile({ displayName: "Harout" });
+      expect((yield* service.getProfile()).autoArchiveTaskChatsAfterMinutes).toBe(2880);
+
+      const saved = yield* service.setProfile({ autoArchiveTaskChatsAfterMinutes: 30 });
+      expect(saved.autoArchiveTaskChatsAfterMinutes).toBe(30);
+      expect((yield* service.getProfile()).autoArchiveTaskChatsAfterMinutes).toBe(30);
+      // A name change alone leaves the wait as it was.
+      yield* service.setProfile({ displayName: "Ht" });
+      expect((yield* service.getProfile()).autoArchiveTaskChatsAfterMinutes).toBe(30);
+      yield* service.setProfile({ autoArchiveTaskChatsAfterMinutes: 43200 });
+      expect((yield* service.getProfile()).autoArchiveTaskChatsAfterMinutes).toBe(43200);
+
+      // Refused, never clamped: both edges, and a fractional value that the
+      // RPC schema rejects before the service even sees it.
+      for (const bad of [0, 4, 43201, -60, 1.5]) {
+        const failure = yield* Effect.flip(
+          service.setProfile({ autoArchiveTaskChatsAfterMinutes: bad }),
+        );
+        expect(failure.message).toContain("5m to 720h");
+      }
+      // A refused value changes nothing.
+      expect((yield* service.getProfile()).autoArchiveTaskChatsAfterMinutes).toBe(43200);
+    }).pipe(Effect.provide(makeTestLayer(context)));
+  },
+);
 
 it.effect(
   "custom teams persist empty, accept bots and leads, and can be removed when empty",
@@ -609,6 +647,7 @@ it.effect(
         customTeams: ["Research"],
         autoArchiveTaskChats: true,
         ...DEFAULT_VOICE_CALLS,
+        autoArchiveTaskChatsAfterMinutes: 2880,
       });
       yield* service.setProfile({ displayName: "Ht" });
       expect((yield* service.getProfile()).customTeams).toEqual(["Research"]);
@@ -637,6 +676,7 @@ it.effect(
         displayName: "Ht",
         autoArchiveTaskChats: true,
         ...DEFAULT_VOICE_CALLS,
+        autoArchiveTaskChatsAfterMinutes: 2880,
       });
     }).pipe(Effect.provide(makeTestLayer(context)));
   },
@@ -739,6 +779,7 @@ it.effect("an undecodable customTeams row still serves the profile", () => {
       displayName: "Harout",
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
+      autoArchiveTaskChatsAfterMinutes: 2880,
     });
 
     // And the user can register a team again, which rewrites the bad row.
@@ -748,6 +789,7 @@ it.effect("an undecodable customTeams row still serves the profile", () => {
       customTeams: ["Research"],
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
+      autoArchiveTaskChatsAfterMinutes: 2880,
     });
   }).pipe(Effect.provide(makeTestLayer(context)));
 });

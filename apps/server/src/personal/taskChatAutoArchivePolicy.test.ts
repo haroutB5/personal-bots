@@ -6,11 +6,13 @@ import { PERSONAL_TASK_TERMINAL_STATUSES } from "@t3tools/contracts";
 import {
   decideTaskChatArchive,
   ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS,
+  TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
   TASK_CHAT_AUTO_ARCHIVE_IDLE_MS,
   TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL,
   TASK_CHAT_OPEN_WORK_SQL,
   TASK_TERMINAL_STATUSES,
   taskChatAutoArchiveEnabled,
+  taskChatAutoArchiveIdleMs,
   type TaskChatArchiveCandidate,
 } from "./taskChatAutoArchivePolicy.ts";
 
@@ -95,6 +97,42 @@ describe("decideTaskChatArchive", () => {
     expect(taskChatAutoArchiveEnabled(null)).toBe(true);
     expect(taskChatAutoArchiveEnabled("on")).toBe(true);
     expect(taskChatAutoArchiveEnabled("off")).toBe(false);
+  });
+
+  it("uses the saved wait for both waits, and keeps 48 hours when none is set", () => {
+    expect(TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY).toBe("taskChatAutoArchiveAfterMinutes");
+    // The stored minutes, and the default when the row is absent or unusable.
+    expect(taskChatAutoArchiveIdleMs(null)).toBe(TASK_CHAT_AUTO_ARCHIVE_IDLE_MS);
+    expect(taskChatAutoArchiveIdleMs("30")).toBe(30 * 60_000);
+    expect(taskChatAutoArchiveIdleMs("2880")).toBe(48 * 60 * 60_000);
+    expect(taskChatAutoArchiveIdleMs("not a number")).toBe(TASK_CHAT_AUTO_ARCHIVE_IDLE_MS);
+    expect(taskChatAutoArchiveIdleMs("0")).toBe(TASK_CHAT_AUTO_ARCHIVE_IDLE_MS);
+
+    const short = 30 * 60_000;
+    // A finished delegated task: not due one minute before 30, due at exactly 30.
+    const task = candidate();
+    expect(decideTaskChatArchive(task, DONE + short - 1, undefined, short)).toEqual({
+      kind: "keep",
+      reason: "recent",
+      dueAtMs: DONE + short,
+    });
+    expect(decideTaskChatArchive(task, DONE + short, undefined, short)).toEqual({
+      kind: "archive",
+      idleSinceMs: DONE,
+    });
+
+    // An unread routine report: the same wait, from the chat's creation.
+    const run = candidate({ chatKind: "routine", createdAt: at(DONE) });
+    expect(decideTaskChatArchive(run, DONE + short - 1, undefined, short)).toEqual({
+      kind: "keep",
+      reason: "recent",
+      dueAtMs: DONE + short,
+    });
+    expect(decideTaskChatArchive(run, DONE + short, undefined, short).kind).toBe("archive");
+
+    // No fourth argument is the old behaviour: 30 minutes is far too soon.
+    expect(decideTaskChatArchive(task, DONE + short).kind).toBe("keep");
+    expect(decideTaskChatArchive(task, DONE + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS).kind).toBe("archive");
   });
 });
 
