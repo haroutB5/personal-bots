@@ -23,6 +23,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as AcpError from "effect-acp/errors";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -70,6 +71,8 @@ const captureWarnLines = () => {
 interface HarnessOptions {
   /** The error text a prompt fails with, as dsh reports it. */
   readonly promptError?: string;
+  /** From this launch on (1 = the first), starting a dsh process fails. */
+  readonly launchFailsFrom?: number;
 }
 
 /** One recorded request the mock agent received. */
@@ -86,6 +89,7 @@ const makeHarness = Effect.fn("makeDshHarness")(function* (cwd: string, options?
   const dshHome = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-home-" });
   const requestLog = path.join(dshHome, "requests.ndjson");
   const seen = yield* Ref.make<ReadonlyArray<ProviderRuntimeEvent>>([]);
+  let launches = 0;
   const adapter = yield* makeDeepSeekDshAdapter({
     instanceId,
     runtime: {
@@ -97,25 +101,27 @@ const makeHarness = Effect.fn("makeDshHarness")(function* (cwd: string, options?
     environment: {},
     childProcessSpawner: spawner,
     makeRuntime: (input) =>
-      makeDshAcpRuntime({
-        ...input,
-        childProcessSpawner: spawner,
-        spawn: {
-          command: process.execPath,
-          args: [mockAgentPath],
-          cwd: input.cwd,
-          env: {
-            ...process.env,
-            ...input.spawn.env,
-            T3_ACP_DSH_PROFILE: "1",
-            T3_ACP_REQUEST_LOG_PATH: requestLog,
-            ...(options?.promptError === undefined
-              ? {}
-              : { T3_ACP_DSH_PROMPT_ERROR: options.promptError }),
-          },
-          extendEnv: false,
-        },
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+      ++launches >= (options?.launchFailsFrom ?? Number.POSITIVE_INFINITY)
+        ? Effect.fail(AcpError.AcpRequestError.internalError("Mock launch failure"))
+        : makeDshAcpRuntime({
+            ...input,
+            childProcessSpawner: spawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: {
+                ...process.env,
+                ...input.spawn.env,
+                T3_ACP_DSH_PROFILE: "1",
+                T3_ACP_REQUEST_LOG_PATH: requestLog,
+                ...(options?.promptError === undefined
+                  ? {}
+                  : { T3_ACP_DSH_PROMPT_ERROR: options.promptError }),
+              },
+              extendEnv: false,
+            },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
   });
   yield* adapter.streamEvents.pipe(
     Stream.runForEach((event) => Ref.update(seen, (current) => [...current, event])),
@@ -523,6 +529,92 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       resetBotProviderProcesses();
     }).pipe(Effect.withTracer(tracer));
   });
+
+  it.effect("starts a send that arrives as a turn ends behind the messages already held", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      const harness = yield* makeHarness(cwd);
+      yield* harness.adapter.startSession(startInput({ cwd }));
+      const send = (input: string) =>
+        harness.adapter.sendTurn({
+          threadId,
+          input,
+          modelSelection: { instanceId, model: "deepseek-flash" },
+        });
+      const owner = yield* send("Run this exact PowerShell command: Start-Sleep -Seconds 60").pipe(
+        Effect.forkScoped,
+      );
+      yield* harness.waitForPromptCount(1);
+      yield* send("Held first: say APPLE.");
+      yield* send("Held second: say PEAR.");
+      yield* harness.adapter.interruptTurn(threadId);
+      yield* Fiber.join(owner).pipe(Effect.ignore);
+      // Sent as the turn ends. Whether it lands before the drain that turn
+      // scheduled is timing (Astra reproduced C, A, B with a probe); either way
+      // it must start behind the held messages.
+      yield* send("Fresh: say PLUM.").pipe(Effect.forkScoped);
+      yield* harness.waitForPromptCount(4);
+      yield* harness.waitForTurnCompletions(4);
+      const prompts = harness
+        .requests()
+        .filter((request) => request.method === "session/prompt")
+        .map((request) => JSON.stringify(request.params));
+      expect(prompts.slice(1).map((text) => text.match(/APPLE|PEAR|PLUM/)?.[0])).toEqual([
+        "APPLE",
+        "PEAR",
+        "PLUM",
+      ]);
+      yield* harness.adapter.stopSession(threadId);
+      resetBotProviderProcesses();
+    }),
+  );
+
+  it.effect("fails a held message that cannot start, and still runs the ones behind it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      // The first launch is the session; the bot-edit restart is the second.
+      const harness = yield* makeHarness(cwd, { launchFailsFrom: 2 });
+      yield* harness.adapter.startSession(startInput({ cwd }));
+      const owner = yield* harness.adapter
+        .sendTurn({
+          threadId,
+          input: "Run this exact PowerShell command: Start-Sleep -Seconds 60",
+          modelSelection: { instanceId, model: "deepseek-flash" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* harness.waitForPromptCount(1);
+      // A bot edit rides this held message, so starting it restarts dsh.
+      const edited = yield* harness.adapter.sendTurn({
+        threadId,
+        input: "After the edit: say APPLE.",
+        systemInstructions: "You are an edited test bot.",
+        modelSelection: { instanceId, model: "deepseek-flash" },
+      });
+      yield* harness.adapter.sendTurn({
+        threadId,
+        input: "Behind it: say PEAR.",
+        modelSelection: { instanceId, model: "deepseek-flash" },
+      });
+      yield* harness.adapter.interruptTurn(threadId);
+      yield* Fiber.join(owner).pipe(Effect.ignore);
+      yield* harness.waitForPromptCount(2);
+      const events = yield* harness.waitForTurnCompletions(3);
+      const failed = events.find(
+        (event) => event.type === "turn.completed" && event.turnId === edited.turnId,
+      );
+      expect(failed?.payload).toMatchObject({ state: "failed" });
+      const prompts = harness
+        .requests()
+        .filter((request) => request.method === "session/prompt")
+        .map((request) => JSON.stringify(request.params));
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain("PEAR");
+      yield* harness.adapter.stopSession(threadId);
+      resetBotProviderProcesses();
+    }),
+  );
 
   it.effect("settles a cancelled turn with the aborted tool, never a second prompt", () =>
     Effect.gen(function* () {
