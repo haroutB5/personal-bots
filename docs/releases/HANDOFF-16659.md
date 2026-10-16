@@ -1,13 +1,15 @@
 # HANDOFF 1.66.59
 
-Two lines of work in one release: the call summary and the voice languages
-(Frontend, `feat/hbots-call-summary`), and Backend's three fixes (merged from
-`release/hbots-16659` a7ea549230638ca0dd3d9f9bc5f21002ed47d426).
+Two lines of work in one release: the call summary, the voice languages and the
+voice samples (Frontend, `feat/hbots-call-summary`), and Backend's three fixes
+(merged from `release/hbots-16659` a7ea549230638ca0dd3d9f9bc5f21002ed47d426).
+Astra's read-only WIP review came back fix-first; every finding is fixed below
+with a test.
 
 1. **The card's call summary** (Frontend) - a finished call shows one sentence,
    up to five concrete bullets and his last decision; the bot's next turn in
-   that chat is given the same lines; Settings > Voice calls gains
-   "Languages I speak".
+   that chat is given the same lines exactly once; Settings > Voice calls gains
+   "Languages I speak" and a play button that samples each voice.
 2. **Empty feeds, ACP step labels, auto-archive** (Backend) - the Tasks feed no
    longer hangs on "Loading..." with zero tasks, an ACP MCP tool call is
    labelled from its model-facing name, and a delegated-task chat raised by a
@@ -30,10 +32,20 @@ What it does:
 - the card shows it on the collapsed card, above the transcript, with the
   decision in its own block ("Decided: ...") and "Show transcript" as before;
 - the bot's next turn in that chat is given a short block with the call's time,
-  the points and the decision - once, and then retired;
+  the points and the decision - once;
 - **Settings > Voice calls** gains "Languages I speak" (free text, default
   English), which the call's system instruction uses so a misheard word is read
-  as one of his languages and the voice never drifts into another.
+  as one of his languages and the voice never drifts into another, and a
+  **play button** on every voice that hears it before he picks it.
+
+Who can be called (Harout, 16 Oct):
+
+- **Only team leads.** "Any team lead should have this enabled for them. If
+  it's a regular bot or agent then it doesn't get it." The authority is the
+  bot's own lead flag: start, list, the summary worker, the chat's call button
+  and the refusal copy all read that, and the old per-bot "Allow voice calls"
+  switch is gone from the bot form (the stored column stays for rollback and
+  decides nothing).
 
 Design notes:
 
@@ -42,30 +54,51 @@ Design notes:
   transcript and no summary, so the boot sweep is also the backfill for calls
   stored before this existed. A failure, a missing key or a quota error leaves
   the card with its transcript, exactly as before this release.
-- **A failed summary is retried about a minute later**, at most twice, then the
-  card is left alone.
+- **A failed summary is retried about a minute later**, at most three attempts
+  in total, and the count is a database column, so a restart cannot start over.
+  A call with no key spends no attempt at all, so it is picked up the moment a
+  key exists.
 - **Model:** `gemini-3.1-flash-lite`, falling back to
   `gemini-flash-lite-latest`, through the same brokered `GEMINI_API_KEY` and
-  the same broker path a call mints its token with. While tuning, the primary
-  answered `503` twice (high demand) and the fallback answered correctly both
-  times, so the degradation path is proven on the real key.
-- **Retirement needs no state.** A summary is carried while the call ended
-  after the bot's last finished reply in that chat (`summariesForTurn`); the
-  bot's reply to that turn is what retires it. A restart or a failed turn can
-  therefore only re-offer a summary the bot has not answered yet.
-- **Privacy unchanged.** The transcript still goes only to Google, through the
-  brokered key, and no log line holds a transcript or a summary - only ids and
-  counts. What the bot is given is the lines the owner has already read on the
-  card, never the transcript.
-- **Migration 111 is additive**: `ALTER TABLE personal_voice_calls ADD COLUMN
-summary_json TEXT NOT NULL DEFAULT ''`, so a rollback stays binary-only. An
-  empty or hand-edited value reads as "no summary" and the card still renders.
+  the same broker path a call mints its token with. Each model's answer is
+  parsed on its own, so a primary that answers with unusable JSON leaves the
+  fallback its chance. While tuning, the primary answered `503` twice (high
+  demand) and the fallback answered correctly both times, so the degradation
+  path is proven on the real key.
+- **Delivery is recorded, not inferred.** `summary_delivered_at` is written
+  when the block actually goes into a turn's context; no later turn carries it
+  again. Nothing relies on message timestamps, so a reply that lands before the
+  summary is written can no longer retire a summary the bot never saw.
+- **Privacy.** The transcript and the relayed messages go only to Google,
+  through the brokered key. The relay query picks a call's own messages by the
+  `personal-voice-call` marker and that call's id, never by a time window, so a
+  message the owner typed during a call is not sent by this path. A chat that
+  has had a site he marked sensitive open is refused outright (fail closed on
+  an unreadable taint record), and so is a chat whose task root is tainted. No
+  log line holds a transcript or a summary: the repository, the worker and the
+  turn builder log an error's class, never its payload. What the bot is given
+  is the lines the owner has already read on the card, never the transcript.
+- **Migration 111 is additive**: three `ALTER TABLE ... ADD COLUMN`s
+  (`summary_json`, `summary_attempts`, `summary_delivered_at`), no table
+  rebuilt and nothing dropped, so a rollback stays binary-only. An empty or
+  hand-edited `summary_json` reads as "no summary" and the card still renders.
+
+### Voice samples (Settings > Voice calls)
+
+- **One clip per voice, made once.** `gemini-3.8-flash-tts` speaks one fixed
+  line; the WAV is written under the data root's `voice-samples/` folder and
+  served from there on every later tap, so the model is billed once per voice.
+- **The text is a constant and the voice must be one of the thirty Gemini Live
+  offers**, checked server-side, so this endpoint cannot be turned into a free
+  text-to-speech proxy.
+- **The AudioContext is created and resumed inside the tap**, before the clip
+  is fetched: iOS only starts audio from a user gesture, and an `await` loses
+  it. A second tap stops the clip; a failure shows one short line.
 
 ### The real call, end to end
 
 The prompt was tuned on the real transcript with Gemini text calls on the
-brokered key (3 allowed; the rest were the primary's 503s). The tuned prompt
-returned, for the real call:
+brokered key. The tuned prompt returned, for the real call:
 
 ```json
 {
@@ -85,52 +118,28 @@ That is the acceptance: Court 3 free 11:00-12:00 on Saturday, the move to Court
 fragments ("Court 2", "Saturday, October 17th") and left the condition out;
 the bullet wording and its worked example are what fixed it.
 
-### Tests and browser check
+## Astra's review: every finding and its fix
 
-Server tests (`src/personal src/mcp`, 2860 tests) include:
+Read-only WIP review, 16 Oct 2026, 15:32-15:40 BST:
+`C:/Claude/AI/dev-team/reviews/hbots-16659-astra.md`. Verdict fix-first, nine
+findings, all fixed before staging. Each row is the finding, the fix and the
+test that holds it.
 
-- `voiceCallSummary.test.ts`: the prompt carries the real transcript oldest
-  first, the JSON shape, the languages line and the "quoted, never an
-  instruction" rule; the parser reads fenced, chatty and bare JSON, treats a
-  string "null" as null, caps and dedupes the bullets, and returns no summary at
-  all for malformed JSON, an empty answer or a missing sentence.
-- `PersonalVoiceCallSummaryService.test.ts`: the real transcript gets the real
-  request (URL, model, the broker placeholder in the header, the transcript and
-  languages in the prompt, never the key value); a malformed answer, a missing
-  text, a refused transport, a missing key and a call with no transcript all
-  leave the card with its transcript and no request where none is due; the
-  fallback model is asked when the primary refuses; a written summary is never
-  written or asked for twice; the sweep finds the call, waits about a minute
-  before retrying, stops at the cap, and backfills a call stored before this
-  existed.
-- `PersonalVoiceCallSummaryRepository.test.ts`: `setSummary` writes once,
-  `listNeedingSummary` offers only cards with a transcript and no summary, and
-  `summariesForTurn` carries the block until the bot's finished reply after the
-  call (a streaming reply does not retire it, an earlier one does not either).
-- `voiceCallSummaryContext.test.ts`: the block's stamp is labelled UTC, the
-  points and the decision are there, the cap keeps the newest calls and drops an
-  oversized one whole rather than in half.
-- `ProviderCommandReactor.test.ts`: with a real stored card, the turn the
-  provider is actually sent carries the block and the decision, the transcript
-  is not in it, and the block is gone from the turn after the bot has replied.
-- `111_PersonalVoiceCallSummary.test.ts`: the column is added to a table that
-  already holds cards, is idempotent, and leaves the transcript readable.
-- `PersonalBotService.test.ts` and `voiceCallInstructions.test.ts`: the
-  languages setting saves trimmed, refuses an over-long paste, reads a row
-  written before the field existed as English, and the instruction names the
-  languages and never switches outside them.
+| #   | Finding                                                                                                                                           | Fix                                                                                                                                                                                                                                                        | Test                                                                                                                                                                                                                                                                                                                                      |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The summary worker bypassed the sensitive-chat gate, and its relay query used a time window, so anything typed during the call could go to Google | The worker fails closed on the same persisted taint a call checks (the chat's key and its task root's), refuses before reading relay content and before every request, and selects relayed messages by this call's `personal-voice-call` marker and callId | `PersonalVoiceCallSummaryService.test.ts`: "sends nothing to Google once the chat is sensitive", "sees taint that lives on the chat's task root", "carries only the messages the voice relayed for THIS call"                                                                                                                             |
+| 2   | Lead-only authorisation not implemented                                                                                                           | `botTakesVoiceCalls` is the lead flag and nothing else; start, list and the summary worker read it; the bot form's switch is gone; the refusal copy says to make the bot a lead                                                                            | `PersonalVoiceCallService.test.ts`: "refuses a bot that is not a team lead", "a bot's old Allow voice calls column no longer decides anything"; `botVoiceCalls.test.ts`; `PersonalVoiceCallSummaryService.test.ts`: "asks for nothing when the bot is not a team lead"                                                                    |
+| 3   | A reply before the summary was generated retired it forever                                                                                       | Eligibility is the new `summary_delivered_at`, written when the block goes into a turn's context                                                                                                                                                           | `PersonalVoiceCallSummaryRepository.test.ts`: "gives the bot a call summary until it has been delivered to a turn" (a reply written earlier changes nothing); `ProviderCommandReactor.test.ts`: "a turn after a phone call carries the call summary exactly once"                                                                         |
+| 4   | A finished summary did not update the open card                                                                                                   | Bounded polling while a fresh card has no summary (every 15 s for ten minutes, `VOICE_SUMMARY_WAIT_MS`), plus the existing refresh on `finish`                                                                                                             | Web tests cover the card render; the polling window is the change (reviewed by reading `ConversationScreen.tsx`)                                                                                                                                                                                                                          |
+| 5   | Five failing summaries could starve the whole older backfill                                                                                      | `summary_attempts` is a column, the cap is part of the SQL, no attempt is spent while the key is missing                                                                                                                                                   | `PersonalVoiceCallSummaryService.test.ts`: "waits about a minute before retrying, and stops at the cap", "reaches older calls after newer ones have used up their attempts", "does not spend an attempt while the key is missing"; `PersonalVoiceCallSummaryRepository.test.ts`: the cap in "caps how many calls one sweep may be handed" |
+| 6   | Context packing kept the older call and dropped the newest                                                                                        | The header is inside the cap, calls are taken newest first, the first call that does not fit whole is compacted (sentence and decision) and then trimmed, never dropped while older text survives                                                          | `voiceCallSummaryContext.test.ts`: "compacts the newest call rather than dropping it", "keeps the newest call and its decision when two calls cannot both fit", "keeps at most the newest calls and caps the whole block"                                                                                                                 |
+| 7   | A decode error logged the whole row, `summaryJson` included                                                                                       | `errorTagOf` everywhere a cause would have been logged (repository, worker, turn builder); only the error's class reaches a log                                                                                                                            | `PersonalVoiceCallSummaryService.test.ts`: "never logs the owner's own words when a stored row cannot be decoded", with a logger that captures every line                                                                                                                                                                                 |
+| 8   | Malformed primary JSON never tried the fallback model                                                                                             | Each model's answer is parsed on its own; an unusable primary leaves the fallback its chance                                                                                                                                                               | `PersonalVoiceCallSummaryService.test.ts`: "tries the fallback model when the primary's answer is unusable"                                                                                                                                                                                                                               |
+| 9   | Voice samples were absent                                                                                                                         | The fixed-text, allow-listed, cached sample endpoint and tap-time audio unlock described above                                                                                                                                                             | `PersonalVoiceSampleService.test.ts` (8 tests: allow-list, fixed text, cache, no key, refused transport, non-audio answers, tiny cached file); web `callSamples.test.ts` and `VoiceSampleButton.test.tsx` (the unlock happens first, inside the tap)                                                                                      |
 
-Browser check on the staged release, 390 x 844, dark (throwaway root, its own
-database; evidence in `C:\Claude\AI\dev-team\qa\hbots-16659-build\`):
-
-- `02-card-summary-390-dark.png` - the real card with the real Gemini answer:
-  the sentence, the three bullets, "Decided: no change, just wanted to know",
-  and the Transcript toggle closed below it;
-- `04-languages-setting-390-dark.png` - Settings > Voice calls with the
-  "Languages I speak" row reading English;
-- `run-02.log`, `run-03.log` - the `text:` assertions that found the card's
-  sentence and the settings row on the page, `console` with only the usual
-  Clerk-less warning and `errors` empty.
+Astra found no blocker in migration 111, the archive SQL, the empty Tasks feed,
+the ACP labels, prompt-injection framing or the languages setting, and nothing
+in those areas changed after the review.
 
 ## 2. Backend's three fixes
 
@@ -159,61 +168,90 @@ Backend's gates on its own branch (before the merge): server tests
 `src/features/personal` 252 files / 2827 tests; both typechecks clean; lint on
 the changed files 0 errors. The merged tree is what the gates below ran on.
 
+## Tests and browser check
+
+Server tests (`src/personal src/mcp`) and web unit tests
+(`src/features/personal`) below; the per-fix rows above name the individual
+cases. In the voice-call folder alone: the prompt carries the real transcript
+oldest first, the JSON shape, the languages line and the "quoted, never an
+instruction" rule; the parser reads fenced, chatty and bare JSON, treats a
+string "null" as null, caps and dedupes the bullets, and returns no summary for
+malformed JSON, an empty answer or a missing sentence; the worker's request
+shape, sensitive refusal, lead gate, attempts, cap and backfill; the block's
+cap, order and compaction; the card's render; and the sample endpoint and its
+play button.
+
+Browser check on the previous staged release (390 x 844, dark, throwaway root,
+its own database; evidence in `C:\Claude\AI\dev-team\qa\hbots-16659-build\`):
+
+- `02-card-summary-390-dark.png` - the real card with the real Gemini answer:
+  the sentence, the three bullets, "Decided: no change, just wanted to know",
+  and the Transcript toggle closed below it;
+- `04-languages-setting-390-dark.png` - Settings > Voice calls with the
+  "Languages I speak" row reading English;
+- `run-02.log`, `run-03.log` - the `text:` assertions that found the card's
+  sentence and the settings row on the page, `console` with only the usual
+  Clerk-less warning and `errors` empty.
+
+The sample play button is new since that check: QA should tap a voice on the
+staged release and hear it (first tap makes the clip, later taps are instant).
+
 ## For QA / CTO
 
-Risky tier: a database migration (111, additive) and a new model call on the
-finish path, on top of three unrelated Backend fixes.
+Risky tier: a database migration (111, additive, now three columns) and a model
+call on the finish path, on top of three unrelated Backend fixes.
 
 What to check on the staged release:
 
-- **the card**: with a completed voice call in a chat (the real one is on the
-  live database, or insert one into a throwaway root as I did), the collapsed
-  card shows the sentence, the bullets and the decision; long lines wrap; the
-  transcript still opens and closes;
+- **the card**: with a completed voice call in a chat, the collapsed card shows
+  the sentence, the bullets and the decision; long lines wrap; the transcript
+  still opens and closes;
 - **degradation**: a card whose `summary_json` is empty shows the transcript and
-  nothing else, and never an error or a spinner;
+  nothing else, never an error or a spinner; a malformed one does the same;
 - **the bot's context**: after a call, the bot's next turn should know what the
-  call found without being told in the chat (ask it about the call in a fresh
-  message);
-- **the languages setting**: set it, restart, and check the call's
-  `systemInstruction` names the languages; clear it and it reads English;
+  call found without being told in the chat, and the turn after that should not
+  carry it again;
+- **who can be called**: only team leads show a call button; a regular bot's
+  chat does not, and the refusal on an old chat says to make the bot a lead;
+- **sensitive chats**: open a site he marked sensitive in a chat, then let a
+  call end there, and no summary should be written and nothing new sent;
+- **languages**: set it, restart, and check the call's `systemInstruction`
+  names the languages; clear it and it reads English;
+- **samples**: tap play on two voices, hear both, and play a third while the
+  second is still going;
 - **quick regression**: a call still mints, transcripts still store, the Tasks
   feed loads with zero tasks, the Team and Settings screens are fine.
 
-The primary summariser model was answering 503 during this work; if a summary
-does not appear within a minute of a call, that is the fallback path, and a card
-that never gets one is behaving as designed (transcript only).
-
 ## Cleanup
 
-- Staged only: release `c17284a7cbfc`, `current.txt` untouched, so 1.66.58
+- Staged only: release `b644d141c922`, `current.txt` untouched, so 1.66.58
   (`230ed5bce7ae`) is the rollback baseline; rollback is binary only.
-- The earlier staged release `1689524197e7` (superseded by a test-only commit)
-  was left in `releases\`; it was never activated.
+- Earlier staged releases `1689524197e7` and `c17284a7cbfc` were superseded by
+  later commits and were never activated.
 - Throwaway server `16659sum` was stopped (its own captured PID) and its root
-  deleted; the browser session `frontend-ee742e86` is closed; no background job
-  or process was left running. Nothing was written to the live database.
+  deleted; browser sessions are closed and swept; no background job or process
+  was left running. Nothing was written to the live database.
 - Worktree `C:\Claude\AI\_wt\hbots-16659-summary`, branch
   `feat/hbots-call-summary`, a real `node_modules` install.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=c17284a7cbfc605f4806a88088fefd3e99301e82 release=c17284a7cbfc json-sha256=ca5ab4132089d135bda7514466280891ef14fbde80e3b7c19514936e50b8c814 result=PASS -->
+<!-- gate-evidence:begin sha=b644d141c922a5b781b1705dccf6ee9f643d156c release=b644d141c922 json-sha256=5150fd31ae2e0bb0603cb61d3ca31ea5ccff35de6b01eaf7a94f1537d845c4f7 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T15:26:55Z. Version 1.66.59, release `c17284a7cbfc`, commit `c17284a7cbfc605f4806a88088fefd3e99301e82` on `feat/hbots-call-summary`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T16:17:47Z. Version 1.66.59, release `b644d141c922`, commit `b644d141c922a5b781b1705dccf6ee9f643d156c` on `feat/hbots-call-summary`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\c17284a7cbfc\gate-evidence.json` (sha256 `ca5ab4132089d135bda7514466280891ef14fbde80e3b7c19514936e50b8c814`) and the full gate logs in `releases\c17284a7cbfc\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\b644d141c922\gate-evidence.json` (sha256 `5150fd31ae2e0bb0603cb61d3ca31ea5ccff35de6b01eaf7a94f1537d845c4f7`) and the full gate logs in `releases\b644d141c922\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2860 tests passed, 0 failed, 4 skipped, in 207 files | 244.7   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 23.8    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2831 tests passed, 0 failed, 0 skipped, in 253 files | 37.7    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 6.6     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 71.2    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16659-summary\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\c17284a7cbfc" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 264.3   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2878 tests passed, 0 failed, 4 skipped, in 208 files | 262.3   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 30.1    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2845 tests passed, 0 failed, 0 skipped, in 256 files | 38.7    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 11.1    |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 64.4    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16659-summary\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\b644d141c922" -Json` (in `.`)                                                                                                             | 0    | pass: 12/12 journeys passed                                | 265.1   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `c17284a7cbfc605f4806a88088fefd3e99301e82`, at end `c17284a7cbfc605f4806a88088fefd3e99301e82`; tracked files modified: none. Staged release: version 1.66.59, sha c17284a7cbfc, dirty False, externals copied; `dist/bin.mjs` sha256 `18b287842e90f16bb3e3bd57fc07fab3a02d98267f962b87a8e3c6285f86cc32`.
+Tree: HEAD at start `b644d141c922a5b781b1705dccf6ee9f643d156c`, at end `b644d141c922a5b781b1705dccf6ee9f643d156c`; tracked files modified: none. Staged release: version 1.66.59, sha b644d141c922, dirty False, externals copied; `dist/bin.mjs` sha256 `22f72323ffc69d9c3f0aa9d1f50f799a7573a2920643b0149f771ac3b280e6ea`.
 <!-- gate-evidence:end -->
