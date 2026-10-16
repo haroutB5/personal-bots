@@ -608,6 +608,263 @@ export function buildDshPersona(
     : `${base}\n\n<bot_instructions>${extra}</bot_instructions>`;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Leaked tool-call markup                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * DeepSeek's "DSML" tool-call markup, as dsh leaks it into reply text: tags
+ * fenced with the full-width bar `｜` (U+FF5C), the closing form carrying a
+ * space before the tag name (`</｜｜DSML｜｜ calls>`).
+ *
+ * The harness normally parses a tool call out of the model's own text and never
+ * shows it, but on 2026-10-15 a Security bot's reply reached the chat with
+ * three stray closing tags (`parameter`, `invoke`, `calls`) at its end: the
+ * opening tags and the arguments had been consumed, the strays had not. The
+ * adapter strips this markup from the visible reply instead of showing the
+ * owner raw protocol.
+ */
+const DSH_MARKUP_BAR = "\uFF5C";
+const DSH_MARKUP_MARKER = `${DSH_MARKUP_BAR}${DSH_MARKUP_BAR}DSML${DSH_MARKUP_BAR}${DSH_MARKUP_BAR}`;
+
+/** A tag name as dsh spells one: `tool_calls`, `invoke`, `parameter`. */
+const DSH_MARKUP_TAG_NAME = /^[A-Za-z_][A-Za-z0-9_.:-]*/;
+
+/** The `name="…"` attribute of an `invoke` tag, the tool's own name. */
+const DSH_MARKUP_NAME_ATTRIBUTE = /\bname\s*=\s*(?:"([^"]*)"|'([^']*)')/;
+
+/**
+ * How much text an unfinished tag may hold back before it is let through as
+ * ordinary text. A chunk boundary splits a tag, so a possible prefix is held;
+ * anything bigger than this is not a tag, whatever it looks like.
+ */
+const DSH_MARKUP_MAX_HELD = 4096;
+
+/** The closing form of a tag, matched against the open ones. */
+type DshMarkupTag =
+  | { readonly kind: "none" }
+  | { readonly kind: "partial" }
+  | {
+      readonly kind: "tag";
+      readonly name: string;
+      readonly closing: boolean;
+      /** An `invoke` tag's tool name. The only fact a log line ever carries. */
+      readonly tool: string | undefined;
+      /** Index just past the tag's `>`. */
+      readonly end: number;
+    };
+
+/**
+ * Reads one tag at `start` (which must be a `<`). "partial" means the buffer
+ * ends inside a tag that is still possible, so the caller has to wait for the
+ * next chunk; "none" means this `<` is ordinary text.
+ */
+function readDshMarkupTag(text: string, start: number): DshMarkupTag {
+  let index = start + 1;
+  let closing = false;
+  if (text[index] === "/") {
+    closing = true;
+    index += 1;
+  }
+  // `<`, `<｜`, `<｜｜DSML` at a chunk boundary are all prefixes of the marker.
+  const rest = text.slice(index, index + DSH_MARKUP_MARKER.length);
+  if (rest !== DSH_MARKUP_MARKER) {
+    return text.length - index < DSH_MARKUP_MARKER.length && DSH_MARKUP_MARKER.startsWith(rest)
+      ? { kind: "partial" }
+      : { kind: "none" };
+  }
+  index += DSH_MARKUP_MARKER.length;
+  while (text[index] === " " || text[index] === "\t") index += 1;
+  if (index >= text.length) return { kind: "partial" };
+  const name = DSH_MARKUP_TAG_NAME.exec(text.slice(index))?.[0] ?? "";
+  const end = findDshMarkupTagEnd(text, index + name.length);
+  if (end < 0) return { kind: "partial" };
+  const attributes = text.slice(index + name.length, end);
+  return {
+    kind: "tag",
+    name,
+    closing,
+    tool: !closing && name === "invoke" ? readDshMarkupNameAttribute(attributes) : undefined,
+    end: end + 1,
+  };
+}
+
+/**
+ * The `>` that closes a tag, skipping any inside a quoted attribute value.
+ * A value is an attribute's business, not the reply's, so it must not be read
+ * as the end of the tag.
+ */
+function findDshMarkupTagEnd(text: string, from: number): number {
+  let quote: string | undefined;
+  for (let index = from; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote !== undefined) {
+      if (char === quote) quote = undefined;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === ">") return index;
+    // A `<` before the tag closes means this is not a tag after all.
+    if (char === "<") return -1;
+  }
+  return -1;
+}
+
+function readDshMarkupNameAttribute(attributes: string): string | undefined {
+  const match = DSH_MARKUP_NAME_ATTRIBUTE.exec(attributes);
+  const value = (match?.[1] ?? match?.[2] ?? "").trim();
+  return value.length > 0 ? value : undefined;
+}
+
+/** The length of the whitespace run that ends `text`. */
+function trailingWhitespaceLength(text: string): number {
+  let index = text.length;
+  while (index > 0) {
+    if (!isDshMarkupBlank(text[index - 1] ?? "")) break;
+    index -= 1;
+  }
+  return text.length - index;
+}
+
+function isDshMarkupBlank(char: string): boolean {
+  return char === " " || char === "\t" || char === "\r" || char === "\n";
+}
+
+/**
+ * One chunk of a reply the stripper let through: the text to show, and the tool
+ * names of any calls it removed (never their arguments, which can hold secrets).
+ */
+export interface DshReplyStripChunk {
+  readonly text: string;
+  readonly tools: ReadonlyArray<string>;
+}
+
+export interface DshReplyStripper {
+  /** Feeds one assistant text delta; returns the visible text it completes. */
+  push(chunk: string): DshReplyStripChunk;
+  /** Ends the turn: lets held text through and drops an unfinished block. */
+  flush(): DshReplyStripChunk;
+}
+
+/**
+ * A streaming stripper for dsh's leaked tool-call markup.
+ *
+ * * Whole blocks go: an opening tag starts a dropped region that ends with its
+ *   matching closing tag, so a leaked `parameter`'s value never reaches the
+ *   chat. Nested tags (`tool_calls` > `invoke` > `parameter`) are matched by
+ *   name. An opening tag with no closing tag drops the rest of the turn.
+ * * Stray closing tags (the leaked sample) are removed, and a tag that sat
+ *   alone on its line takes that line's whitespace with it, so a stripped
+ *   reply does not end in blank lines.
+ * * Nothing else changes: only text from a `<` that really starts a marker is
+ *   touched, so code blocks, `<reply_style>` and ordinary angle brackets pass
+ *   through byte for byte.
+ *
+ * The only things held back are a possible tag prefix (never more than
+ * {@link DSH_MARKUP_MAX_HELD} characters) and a whitespace-only tail, so the
+ * chat never waits on ordinary text. Both are let through by `flush`.
+ */
+export function makeDshReplyStripper(): DshReplyStripper {
+  let buffer = "";
+  /** Tags being dropped, innermost last: `tool_calls`, `invoke`, `parameter`. */
+  const open: Array<string> = [];
+
+  const process = (final: boolean): DshReplyStripChunk => {
+    const out: Array<string> = [];
+    const tools: Array<string> = [];
+    let index = 0;
+    let emitted = 0;
+    while (index < buffer.length) {
+      const start = buffer.indexOf("<", index);
+      if (start < 0) {
+        index = buffer.length;
+        break;
+      }
+      const tag = readDshMarkupTag(buffer, start);
+      if (tag.kind === "none") {
+        index = start + 1;
+        continue;
+      }
+      if (tag.kind === "partial") {
+        // A marker too long to still be one is ordinary text.
+        if (buffer.length - start > DSH_MARKUP_MAX_HELD) {
+          index = start + 1;
+          continue;
+        }
+        // Inside a dropped block the whole region goes, tag or not.
+        if (open.length > 0) {
+          index = buffer.length;
+          break;
+        }
+        if (final) {
+          // A marker cut short at the end of the turn is still leaked markup;
+          // a bare `<` (or `</`) is ordinary text and is shown.
+          if (buffer.slice(start).includes(DSH_MARKUP_BAR)) {
+            index = start;
+            break;
+          }
+          index = start + 1;
+          continue;
+        }
+        index = start;
+        break;
+      }
+      // A complete tag. Only the text before it can be shown, and only when no
+      // block is open; a stray closing tag takes its own line's blanks with it.
+      if (open.length === 0) {
+        let cut = start;
+        if (tag.closing) {
+          let blanks = start;
+          while (blanks > emitted && isDshMarkupBlank(buffer[blanks - 1] ?? "")) blanks -= 1;
+          if (buffer.slice(blanks, start).includes("\n")) cut = blanks;
+        }
+        out.push(buffer.slice(emitted, cut));
+      }
+      if (tag.closing) {
+        const at = open.lastIndexOf(tag.name);
+        if (at >= 0) open.length = at;
+      } else {
+        if (tag.tool !== undefined) tools.push(tag.tool);
+        open.push(tag.name);
+      }
+      index = tag.end;
+      if (open.length === 0) emitted = tag.end;
+    }
+    if (open.length > 0) {
+      // An unfinished block is dropped, not shown; a closing tag may still be
+      // split across the next chunk, so hold from the last `<`.
+      if (final) buffer = "";
+      else {
+        const lastStart = buffer.lastIndexOf("<");
+        buffer = lastStart >= emitted ? buffer.slice(lastStart) : "";
+      }
+    } else {
+      const tail = buffer.slice(emitted, index);
+      if (final) {
+        out.push(tail);
+        buffer = "";
+      } else {
+        const blanks = trailingWhitespaceLength(tail);
+        const held = blanks > 0 && blanks <= DSH_MARKUP_MAX_HELD ? blanks : 0;
+        out.push(buffer.slice(emitted, index - held));
+        buffer = buffer.slice(index - held);
+      }
+    }
+    return { text: out.join(""), tools };
+  };
+
+  return {
+    push: (chunk: string) => {
+      buffer += chunk;
+      return process(false);
+    },
+    flush: () => process(true),
+  };
+}
+
 export interface DshAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   "authMethodId" | "cancelBehavior" | "clientCapabilities" | "clientInfo" | "resumeMethod"

@@ -93,12 +93,14 @@ import {
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import type { DshReplyStripper } from "../acp/DshAcpSupport.ts";
 import {
   buildDshEnvironment,
   buildDshPersona,
   dshAgentModeFromSelection,
   DSH_RESUME_ENGINE,
   makeDshAcpRuntime,
+  makeDshReplyStripper,
   parseDshResumeCursor,
   resolveDshDenyPlugin,
   resolveDshEffort,
@@ -242,6 +244,14 @@ interface SessionContext {
   pendingEffort: string | undefined;
   session: ProviderSession;
   activeTurnId: TurnId | undefined;
+  /**
+   * The turn's reply stripper: dsh can stream its own tool-call markup into the
+   * visible text (see `makeDshReplyStripper`), and a tag can be split across
+   * deltas, so one instance carries the turn's state.
+   */
+  replyStripper: DshReplyStripper;
+  /** Tools a stripped block named, so each one is warned about once. */
+  strippedTools: Set<string>;
   /** The turn's thinking text has already started, so a later step joins onto it. */
   thoughtTextStarted: boolean;
   /** A tool call happened since the last thought chunk (paragraph-break bookkeeping). */
@@ -611,6 +621,44 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
   /* Event mapping                                                           */
   /* ---------------------------------------------------------------------- */
 
+  /**
+   * Says once per tool that leaked tool-call markup was removed, naming the
+   * bot, the chat and the tool: a real call in that markup must never be lost
+   * silently. The arguments are never logged; they can hold secrets.
+   */
+  const warnStrippedTools = (context: SessionContext, tools: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      for (const tool of tools) {
+        if (context.strippedTools.has(tool)) continue;
+        context.strippedTools.add(tool);
+        yield* Effect.logWarning("Removed DeepSeek tool-call markup from a bot reply", {
+          threadId: context.threadId,
+          tool,
+          ...(context.botId === undefined ? {} : { botId: context.botId }),
+        });
+      }
+    });
+
+  /** The turn's last visible text: whatever the stripper was holding back. */
+  const flushReplyStripper = (context: SessionContext, turnId: TurnId) =>
+    Effect.gen(function* () {
+      const stripped = context.replyStripper.flush();
+      yield* warnStrippedTools(context, stripped.tools);
+      if (stripped.text.length === 0) return;
+      yield* emit(
+        makeAcpContentDeltaEvent({
+          stamp: yield* stamp,
+          provider: PROVIDER,
+          threadId: context.threadId,
+          turnId,
+          text: stripped.text,
+          // Held text has no frame of its own: it is the tail of the deltas
+          // that came before it.
+          rawPayload: undefined,
+        }),
+      );
+    }).pipe(Effect.ignore);
+
   const handleEvent = Effect.fn("DeepSeekDshAdapter.handleEvent")(function* (
     context: SessionContext,
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
@@ -678,7 +726,12 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
         );
         return;
       }
-      case "ContentDelta":
+      case "ContentDelta": {
+        // dsh sometimes streams its own tool-call markup into the reply text
+        // (leaked protocol, 2026-10-15). Strip it before the chat sees it.
+        const stripped = context.replyStripper.push(event.text);
+        yield* warnStrippedTools(context, stripped.tools);
+        if (stripped.text.length === 0) return;
         yield* emit(
           makeAcpContentDeltaEvent({
             stamp: yield* stamp,
@@ -686,11 +739,12 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
             threadId: context.threadId,
             turnId: context.activeTurnId,
             ...(event.itemId ? { itemId: event.itemId } : {}),
-            text: event.text,
+            text: stripped.text,
             rawPayload: event.rawPayload,
           }),
         );
         return;
+      }
       case "ToolCallUpdated":
         context.toolCallSinceThought = true;
         yield* emit(
@@ -1085,6 +1139,8 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
             updatedAt: createdAt,
           },
           activeTurnId: undefined,
+          replyStripper: makeDshReplyStripper(),
+          strippedTools: new Set<string>(),
           thoughtTextStarted: false,
           toolCallSinceThought: false,
           promptFiber: undefined,
@@ -1229,6 +1285,8 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
     }
     const generation = ++context.generation;
     context.activeTurnId = turn.turnId;
+    context.replyStripper = makeDshReplyStripper();
+    context.strippedTools.clear();
     context.thoughtTextStarted = false;
     context.toolCallSinceThought = false;
     context.session = {
@@ -1275,6 +1333,7 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
     const settled = yield* Fiber.await(plan.fiber).pipe(Effect.orElseSucceed(() => undefined));
     if (context.stopped || context.generation !== plan.generation) return;
     yield* plan.process.runtime.drainEvents;
+    yield* flushReplyStripper(context, plan.turnId);
     yield* flushLedger(context);
     yield* context.promptLock.withPermit(
       Effect.gen(function* () {

@@ -880,6 +880,46 @@ const program = Effect.gen(function* () {
             });
             return { stopReason: "end_turn" };
           }
+          if (/dsml-probe/i.test(promptText)) {
+            // The leaked tool-call markup a dsh reply carried on 2026-10-15,
+            // in the shape the live row holds it: an invoke block split across
+            // chunks (so a tag really is cut in two), then the three stray
+            // closing tags. `\uFF5C` is the full-width bar dsh fences with.
+            const bar = "\uFF5C";
+            const marker = `${bar}${bar}DSML${bar}${bar}`;
+            yield* update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "dsh-dsml-probe-1",
+              content: { type: "text", text: "Before." },
+            });
+            yield* update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "dsh-dsml-probe-2",
+              content: {
+                type: "text",
+                text: `<${marker} tool_calls>\n<${marker} invoke name="web_search">\n<${marker} param`,
+              },
+            });
+            yield* update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "dsh-dsml-probe-3",
+              content: {
+                type: "text",
+                text:
+                  `eter name="query">tennis scores</${marker} parameter>\n` +
+                  `</${marker} invoke>\n</${marker} tool_calls>`,
+              },
+            });
+            yield* update({
+              sessionUpdate: "agent_message_chunk",
+              messageId: "dsh-dsml-probe-4",
+              content: {
+                type: "text",
+                text: `After.\n\n</${marker} parameter>\n</${marker} invoke>\n</${marker} calls>`,
+              },
+            });
+            return { stopReason: "end_turn" };
+          }
           // The recorded turn in `events-run1.jsonl`: three committed model
           // steps, one `usage_update` each, an MCP call and a skill.
           yield* update({

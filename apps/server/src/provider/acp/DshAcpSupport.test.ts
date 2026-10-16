@@ -15,6 +15,7 @@ import {
   buildDshEnvironment,
   buildDshLaunchPatch,
   buildDshPersona,
+  makeDshReplyStripper,
   parseDshResumeCursor,
   resolveDshDenyPlugin,
   resolveDshRuntime,
@@ -400,4 +401,153 @@ it.layer(layer)("DshAcpSupport", (it) => {
       ]);
     }),
   );
+
+  /* ---------------------------------------------------------------------- */
+  /* Leaked tool-call markup                                                 */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * dsh fences its tool-call tags with the full-width bar U+FF5C. The sample
+   * below is the live one: `projection_thread_messages`, thread `f32abe85`
+   * (Security's dsh bot), 2026-10-15T23:32:59Z, a normal reply followed by the
+   * three stray closing tags. The opening tags and the arguments were already
+   * consumed by the harness, so no arguments leaked in the DB row.
+   */
+  const DSML_MARKER = "\uFF5C\uFF5CDSML\uFF5C\uFF5C";
+  const leakedMarkup = [
+    `</${DSML_MARKER} parameter>`,
+    `</${DSML_MARKER} invoke>`,
+    `</${DSML_MARKER} calls>`,
+  ].join("\n");
+  const leakedBody = [
+    "I could not place a real call or open a live Gemini socket.",
+    "",
+    "```choices",
+    "Fold S1-S3 into 1.66.54 before ship",
+    "Carry S1-S3 into the next release",
+    "Give me S1's one-line fix in the notes",
+    "```",
+  ].join("\n");
+  const leakedReply = `${leakedBody}\n\n${leakedMarkup}\n`;
+
+  const openTag = (name: string): string => `<${DSML_MARKER} ${name}>`;
+  const closeTag = (name: string): string => `</${DSML_MARKER} ${name}>`;
+
+  /** Feeds a reply to one stripper and collects what a chat would have seen. */
+  const stripReply = (
+    chunks: ReadonlyArray<string>,
+  ): { readonly text: string; readonly tools: ReadonlyArray<string> } => {
+    const stripper = makeDshReplyStripper();
+    let text = "";
+    const tools: string[] = [];
+    for (const chunk of chunks) {
+      const piece = stripper.push(chunk);
+      text += piece.text;
+      tools.push(...piece.tools);
+    }
+    const rest = stripper.flush();
+    return { text: text + rest.text, tools: [...tools, ...rest.tools] };
+  };
+
+  it("strips the leaked sample, and leaves the reply it was hiding behind", () => {
+    // The sample really is the DB row's string: `<`, `/`, then the bars.
+    expect(leakedMarkup.split("\n")[0]).toBe(
+      "\u003C\u002F\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter\u003E",
+    );
+    const { text, tools } = stripReply([leakedReply]);
+    expect(text).toBe(`${leakedBody}\n`);
+    expect(text).not.toContain("DSML");
+    expect(text).toContain("```choices");
+    // Stray closing tags named no tool.
+    expect(tools).toEqual([]);
+  });
+
+  it("strips a tag split across two or three deltas, whatever the boundary", () => {
+    const whole = stripReply([leakedReply]).text;
+    for (let cut = 1; cut < leakedReply.length; cut += 1) {
+      expect(stripReply([leakedReply.slice(0, cut), leakedReply.slice(cut)]).text).toBe(whole);
+    }
+    const compact = `Done.\n\n${leakedMarkup}\n`;
+    const compactWhole = stripReply([compact]).text;
+    for (let first = 1; first < compact.length; first += 1) {
+      for (let second = first + 1; second < compact.length; second += 1) {
+        const chunks = [
+          compact.slice(0, first),
+          compact.slice(first, second),
+          compact.slice(second),
+        ];
+        expect(stripReply(chunks).text).toBe(compactWhole);
+      }
+    }
+  });
+
+  it("removes a whole block, keeps the text around it and reports the tool", () => {
+    const reply =
+      `Before.${openTag("tool_calls")}\n` +
+      `${openTag('invoke name="web_search"')}\n` +
+      `${openTag('parameter name="query"')}tennis scores${closeTag("parameter")}\n` +
+      `${closeTag("invoke")}\n${closeTag("tool_calls")}After.`;
+    const inline = stripReply([reply]);
+    expect(inline.text).toBe("Before.After.");
+    // The tool the block carried is named; its arguments never are.
+    expect(inline.tools).toEqual(["web_search"]);
+    expect(inline.text).not.toContain("tennis scores");
+    expect(inline.text).not.toContain("DSML");
+
+    const multiline = stripReply([
+      `Before.\n${openTag("tool_calls")}\n${openTag('invoke name="read_file"')}\n` +
+        `${openTag('parameter name="path"')}C:/secrets/key.txt${closeTag("parameter")}\n` +
+        `${closeTag("invoke")}\n${closeTag("tool_calls")}\nAfter.\n`,
+    ]);
+    expect(multiline.text).not.toContain("DSML");
+    expect(multiline.text).not.toContain("secrets/key.txt");
+    expect(multiline.text).toContain("Before.");
+    expect(multiline.text).toContain("After.");
+  });
+
+  it("drops an opening tag whose block never closed, and still names its tool", () => {
+    const reply =
+      `Before.\n${openTag("tool_calls")}\n${openTag('invoke name="read_file"')}\n` +
+      `${openTag('parameter name="path"')}C:/secrets/key.txt\n`;
+    const { text, tools } = stripReply([reply]);
+    expect(text).toBe("Before.\n");
+    expect(tools).toEqual(["read_file"]);
+    expect(text).not.toContain("key.txt");
+  });
+
+  it("leaves code fences, lookalikes and the bot's own angle brackets alone", () => {
+    const reply = [
+      "The adapter strips DSML tags out of a dsh reply (see `DeepSeekDshAdapter`).",
+      "",
+      "```text",
+      "<||DSML|| parameter>",
+      "<| DSML | parameter>",
+      `<${"\uFF5C\uFF5C"}DSML parameter>`,
+      "a < b and a > b, <bot_instructions>x</bot_instructions>",
+      "```",
+      "",
+      "Done.",
+    ].join("\n");
+    const { text, tools } = stripReply([reply]);
+    expect(text).toBe(reply);
+    expect(tools).toEqual([]);
+  });
+
+  it("passes a reply with no markup through byte for byte, at any chunk size", () => {
+    const reply =
+      'Line one.\n\n```ts\nconst small = 1 < 2;\nconst tag = "<reply_style>";\n```\n\n' +
+      "<reply_style>Done.</reply_style>\n";
+    expect(stripReply([reply]).text).toBe(reply);
+    for (const size of [1, 2, 3, 5, 7, 13, 64]) {
+      const chunks: string[] = [];
+      for (let at = 0; at < reply.length; at += size) chunks.push(reply.slice(at, at + size));
+      expect(stripReply(chunks).text).toBe(reply);
+    }
+  });
+
+  it("lets a trailing `<` through, and drops a marker cut short at the turn's end", () => {
+    expect(stripReply(["a <"]).text).toBe("a <");
+    expect(stripReply(["a </"]).text).toBe("a </");
+    expect(stripReply([`a <${DSML_MARKER}`]).text).toBe("a ");
+  });
 });

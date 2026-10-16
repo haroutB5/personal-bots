@@ -389,6 +389,44 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
     }),
   );
 
+  it.effect("strips leaked tool-call markup from a reply, and warns about its tool", () => {
+    const logs = captureWarnLines();
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      const harness = yield* makeHarness(cwd);
+      yield* harness.adapter.startSession(
+        startInput({ cwd, personalBot: true, personalBotId: "bot-one" }),
+      );
+      const beforeTurn = (yield* harness.seen()).length;
+      yield* harness.adapter.sendTurn({
+        threadId,
+        input: "dsml-probe",
+        modelSelection: { instanceId, model: "deepseek-flash" },
+      });
+      const events = (yield* harness.seen()).slice(beforeTurn);
+      const visible = events
+        .filter((event) => event.type === "content.delta")
+        .filter((event) => event.payload.streamKind === "assistant_text")
+        .map((event) => event.payload.delta)
+        .join("");
+      // The invoke block (split across two deltas by the mock) and the three
+      // stray closing tags are gone; the reply around them is untouched.
+      expect(visible).toBe("Before.After.");
+      expect(visible).not.toContain("DSML");
+      expect(visible).not.toContain("tennis scores");
+      const warnings = logs.lines.filter(
+        (line) => line.text === "Removed DeepSeek tool-call markup from a bot reply",
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        fields: { threadId, botId: "bot-one", tool: "web_search" },
+      });
+      yield* harness.adapter.stopSession(threadId);
+      resetBotProviderProcesses();
+    }).pipe(Effect.provide(logs.layer));
+  });
+
   it.effect("holds a steer until the running turn ends, and never cancels that turn", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
