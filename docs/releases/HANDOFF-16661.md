@@ -1,12 +1,14 @@
 # HANDOFF 1.66.61
 
-Three voice-call changes on top of the live 1.66.60: a greeting is never a finding, the call voice
-never volunteers a status claim it was not given, and the summary is now written by Claude Haiku 5.5
-at medium effort with the Gemini Flash Lite path behind it. Staged only (nothing is activated).
+Four voice-call changes on top of the live 1.66.60: a greeting is never a finding, the call voice
+never volunteers a status claim it was not given, the summary is now written by Claude Haiku 5.5
+at medium effort with the Gemini Flash Lite path behind it, and a finished call's card now sits at
+the call's **end**, so the summary it just wrote is the newest thing in the chat instead of being
+hidden above the messages the call relayed. Staged only (nothing is activated).
 Branch `release/hbots-16661`, built from the live notes commit `acd9685574` (`personal-bots/main`);
-the version bump and the Claude path are commit `780d31500b`, and the release commit is
-`7bbeff2ab9` (medium effort for the summary, stored on it beside the model). No migration: the
-maximum stays 111.
+the version bump and the Claude path are commit `780d31500b`, the medium effort and the effort
+stored on the summary are commit `7bbeff2ab9`, and the release commit is `8e6b60183d` (the call card
+placed at the call's end). No migration: the maximum stays 111.
 `PERSONAL_TASKS_CONCURRENCY` stays 5.
 
 1. **A greeting is not a finding** (`apps/server/src/personal/voiceCalls/voiceCallSummary.ts`,
@@ -23,6 +25,10 @@ maximum stays 111.
    own Claude Code subscription through the text-generation path the app already uses, at medium
    effort, and the Gemini Flash Lite path is the fallback. Which model wrote it and at what effort
    are stored on the summary, and logged beside each other.
+4. **The call card sits where the call ended** (`apps/web/src/features/personal/conversationModel.ts`,
+   `ConversationScreen.tsx`, Backend) - a finished call's card is placed at `endedAt`, not at its
+   start, so it reads as the newest item under the messages the call relayed; a live call stays at
+   the bottom.
 
 ## 1. A greeting is not a finding
 
@@ -211,13 +217,55 @@ live database - nothing on this laptop was written. The replies, verbatim:
 Both fixtures are the real calls; the Court 3 fixture and its summary are reproduced by both models,
 and the repository and migration tests still pass unchanged (the new field is optional).
 
+## 4. The call card sits where the call ended
+
+Harout's real call `e3a8c23c` (chat `75c5ca85`, 16 Oct 2026 22:32-22:33Z): the summary was stored
+12 s after the call ended and was correct, but he never saw it. The card was placed in the chat
+timeline at the call's **start**, so it sat above the messages the call had relayed (his request,
+the bot's progress lines, the answer, "Leave it for now") and was hidden up the chat. Fable had
+flagged the same thing in 1.66.59 ("timeline placement still uses the start").
+
+`conversationModel.ts` gains `callPlacementMs(card)`: a **finished** card is placed at
+`endedAtMs`, a **live** one ranks last, so it can never be buried by the chat it is writing (today
+the running card is rendered outside the timeline, `LiveVoiceCallCard`, so that is the safety net
+rather than the normal path). `placeCallCards` sorts by that time, then by `callId` so equal times
+never depend on query order, and `itemTimeMs` reports the same time for a placed card. The item's
+`atMs` is renamed `startedAtMs`: it is the card's displayed time and the origin of its transcript
+offsets, and it is no longer its place in the timeline. The 1.66.59 pending-summary window is
+untouched and still runs from `endedAtMs`. Old cards move to their end time too, which is what
+Harout asked for.
+
+Tests (`apps/web/src/features/personal/callCards.test.ts`, 10 passed): "puts a finished call under
+the messages it relayed" (the real shape: a card whose window straddles the relayed messages),
+"sorts a card after a message created during the call", "keeps a live call at the bottom", the
+two-call order and the older-than-everything case.
+
+**Proved in the app**, not only in a unit test: a throwaway root served the staged release and the
+team's pinned test browser (agent-browser 0.39.1, fresh temp profile, dark, 390 x 844) opened the
+lead bot's chat. Voice calls follow the team-lead flag (Harout, 16 Oct), so the fixture used the
+seeded lead `Assistant`; its composer showed "Call Assistant". Four real messages were sent
+(`22:44:53.142Z` .. `22:44:56.891Z`), then one finished card was written whose window straddles
+them (`22:44:33.000Z` -> `22:45:01.000Z`, 29 s, "2 messages sent", the verbatim medium-effort
+Haiku tennis summary with `model` and `effort` stored beside it, written already set so the
+summary service never picked it up and no model was called). Under the old placement that card
+would have gone above the first message.
+
+The page's own document order after that reload is the messages, then
+`region "Voice call, 0:29"` with the summary, its four points and `Decided: No change, just wanted
+to know.`, then the composer: the card is the newest item. Screenshot and full write-up in
+`C:\Claude\AI\dev-team\qa\hbots-16661-callcard\` (`README.md`, `shot-callcard-390-dark.png`, the
+runner log `ab-run.log`, `insert-call.cjs`), with 0 uncaught page errors and one Clerk warning
+expected on a root with no Clerk keys. The fix is client-side: `dist/bin.mjs` is byte-identical to
+the superseded `7bbeff2ab973` staging, while `dist/client` differs (tree sha256
+`f6e90da4...` -> `59b66a69...`).
+
 ## What was checked, and what was left alone
 
 - No other place in the app writes a call summary: `voiceCallSummaryContext.ts` only renders an
   already-stored summary into a bot's next turn, and task and routine summaries are the bot's own
   reply text with no model call.
-- No UI changed, so there is nothing new to look at on the phone: the card already shows whatever
-  the summary holds.
+- The only UI change is where a finished call card sits (section 4). The card's own contents are
+  unchanged; the throwaway proof above is the check on the new position, in dark mode at 390 x 844.
 - The live row for `9a6e8901` still holds its old, wrong summary. It was **not** changed: that is a
   data change on the live database and CTO will ask Harout first. The fix applies to calls
   summarised after this ships.
@@ -226,43 +274,49 @@ and the repository and migration tests still pass unchanged (the new field is op
 
 ## How to verify (QA)
 
-The staged release is `C:\Users\Ht\.personal-bots\releases\7bbeff2ab973` (version 1.66.61, branch
-`release/hbots-16661`, externals copied, built from `7bbeff2ab9733a3d1d1f3c1b37144c07cd1e946a`).
-The earlier stagings `780d31500b6a` and `38fe02394bc6` are superseded and left in place.
+The staged release is `C:\Users\Ht\.personal-bots\releases\8e6b60183d3f` (version 1.66.61, branch
+`release/hbots-16661`, externals copied, built from `8e6b60183d3fb2f6cae84790b611ff6879eb3525`).
+The earlier stagings `7bbeff2ab973`, `38fe02394bc6`, `780d31500b6a` and `d6ee83cbf0bb` are
+superseded and left in place; DevOps must arm the waiter with `8e6b60183d3f`, not an older sha.
 
 - `cd apps\server; ..\..\node_modules\.bin\vp.cmd test run src/personal/voiceCalls` (179 tests, all
   passing here) covers both prompt rules, the parser, the Claude layer and the worker's order, with
   both real fixtures and the stubbed Claude writer.
+- `cd apps\web; ..\..\node_modules\.bin\vp.cmd test run --project unit src/features/personal/callCards.test.ts`
+  (10 tests) covers the card's new position, and the whole web personal suite is 2863 tests.
 - The scripted proof bundle (both prompts, both models' raw answers, the JSON schema and the CLI
   envelopes) sits in `C:\Claude\AI\dev-team\qa\hbots-16661-voice\`.
+- The visual proof of section 4 is `C:\Claude\AI\dev-team\qa\hbots-16661-callcard\` (README, the
+  390 px dark screenshot, the runner log and the fixture script that wrote the fake card).
 - The Claude path spends the owner's own subscription, and a live call can only be made with the
-  real Gemini Live key, which QA should not spend; the scripted checks above are the verification
-  for this small tier.
-- Nothing to click in dark mode.
+  real Gemini Live key, which QA should not spend; the scripted checks and the throwaway above are
+  the verification for this small tier.
 
 Left running: nothing. The scratch proof-generator test files were deleted from the worktree before
 the gates ran; the medium runner and its builder live outside the repo in
-`%TEMP%\hbots-16661-medium\` and were never added to it. No background job, waiter or server process
-was started by this work.
+`%TEMP%\hbots-16661-medium\` and were never added to it. The 1.66.61 call-card throwaway
+(`throwaway-server.ps1 -Name callcard`, root `%TEMP%\hbots-tw-callcard`) was stopped by its recorded
+PID and its root deleted before the gates ran. No background job, waiter or server process was
+started by this work.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=7bbeff2ab9733a3d1d1f3c1b37144c07cd1e946a release=7bbeff2ab973 json-sha256=e44a1b4cd5a5cecf978ec4928646fe9cd536eebfe46c54e8f70806d2955e9b6e result=PASS -->
+<!-- gate-evidence:begin sha=8e6b60183d3fb2f6cae84790b611ff6879eb3525 release=8e6b60183d3f json-sha256=698d9eed78055da1be2f3a59e6082e47060d1e1930265708d8968bfb83e2302e result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T22:33:30Z. Version 1.66.61, release `7bbeff2ab973`, commit `7bbeff2ab9733a3d1d1f3c1b37144c07cd1e946a` on `release/hbots-16661`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T22:56:15Z. Version 1.66.61, release `8e6b60183d3f`, commit `8e6b60183d3fb2f6cae84790b611ff6879eb3525` on `release/hbots-16661`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\7bbeff2ab973\gate-evidence.json` (sha256 `e44a1b4cd5a5cecf978ec4928646fe9cd536eebfe46c54e8f70806d2955e9b6e`) and the full gate logs in `releases\7bbeff2ab973\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\8e6b60183d3f\gate-evidence.json` (sha256 `698d9eed78055da1be2f3a59e6082e47060d1e1930265708d8968bfb83e2302e`) and the full gate logs in `releases\8e6b60183d3f\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2908 tests passed, 0 failed, 4 skipped, in 209 files | 218.7   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 20.6    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2861 tests passed, 0 failed, 0 skipped, in 256 files | 32.7    |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2908 tests passed, 0 failed, 4 skipped, in 209 files | 220.1   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 19.9    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2863 tests passed, 0 failed, 0 skipped, in 256 files | 38.1    |
 | web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 8       |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 63.1    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16661\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\7bbeff2ab973" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 257.4   |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 63.6    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16661\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\8e6b60183d3f" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 263.1   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `7bbeff2ab9733a3d1d1f3c1b37144c07cd1e946a`, at end `7bbeff2ab9733a3d1d1f3c1b37144c07cd1e946a`; tracked files modified: none. Staged release: version 1.66.61, sha 7bbeff2ab973, dirty False, externals copied; `dist/bin.mjs` sha256 `10a430c8fde3d91b059385a17d4b932fda0a6e69470da220818e57b4ecc2af7d`.
+Tree: HEAD at start `8e6b60183d3fb2f6cae84790b611ff6879eb3525`, at end `8e6b60183d3fb2f6cae84790b611ff6879eb3525`; tracked files modified: none. Staged release: version 1.66.61, sha 8e6b60183d3f, dirty False, externals copied; `dist/bin.mjs` sha256 `10a430c8fde3d91b059385a17d4b932fda0a6e69470da220818e57b4ecc2af7d`.
 <!-- gate-evidence:end -->
