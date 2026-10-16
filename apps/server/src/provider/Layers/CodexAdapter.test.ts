@@ -1655,7 +1655,8 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         return;
       }
       NodeAssert.equal(firstEvent.value.payload.itemType, "mcp_tool_call");
-      NodeAssert.equal(firstEvent.value.payload.title, "t3-code · preview_status");
+      // Plain words for the step, not "t3-code · preview_status" (Harout, 16 Oct).
+      NodeAssert.equal(firstEvent.value.payload.title, "Checking the browser");
       NodeAssert.deepStrictEqual(firstEvent.value.payload.data, {
         completedAtMs: 1_778_000_000_000,
         threadId: "thread-1",
@@ -1966,7 +1967,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         }
         NodeAssert.equal(firstEvent.value.payload.status, item.status);
         if (item.id.startsWith("failed-computer")) {
-          NodeAssert.equal(firstEvent.value.payload.title, "computer-use · click");
+          // A failed computer-use call has no plain computer-use line, so the
+          // shared label falls back to the tool name in words ("Click").
+          NodeAssert.equal(firstEvent.value.payload.title, "Click");
           const sourceKey = firstEvent.value.payload.toolSource?.key;
           NodeAssert.equal(sourceKey?.length, 512);
           if (sourceKey) longAppSourceKeys.push(sourceKey);

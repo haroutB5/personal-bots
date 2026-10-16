@@ -3493,6 +3493,80 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("labels an MCP tool step in plain words, never with its arguments", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "book the court",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-mcp-label",
+        uuid: "stream-mcp-label-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "mcp_tool_use",
+            id: "tool-mcp-label-1",
+            name: "mcp__t3-code__preview_navigate",
+            input: {
+              url: "https://www.clubspark.uk/booking/42?token=sk-live-SECRETSECRETSECRET",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        usage: {
+          input_tokens: 100,
+          cache_read_input_tokens: 40,
+          cache_creation_input_tokens: 10,
+          output_tokens: 20,
+        },
+        session_id: "sdk-session-mcp-label",
+        uuid: "result-mcp-label",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
+      assert.equal(toolStarted?.type, "item.started");
+      if (toolStarted?.type === "item.started") {
+        assert.equal(toolStarted.payload.itemType, "mcp_tool_call");
+        assert.equal(toolStarted.payload.title, "Opening clubspark.uk");
+        // The status line is what the owner reads: no path, no query, no key.
+        for (const leaked of ["booking", "42", "token", "SECRET"]) {
+          assert.ok(!(toolStarted.payload.title ?? "").includes(leaked));
+        }
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("treats user-aborted Claude results as interrupted without a runtime error", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

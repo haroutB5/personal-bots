@@ -117,6 +117,7 @@ import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
 import { exploreSubagentAgents } from "../claudeBackgroundModels.ts";
+import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
@@ -1606,7 +1607,20 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
   return `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
-function titleForTool(itemType: CanonicalItemType): string {
+/**
+ * The step's display title. An MCP tool step says what the bot is doing
+ * ("Opening clubspark.com") from {@link mcpToolStepLabel}; every other kind
+ * keeps its own plain word. Arguments never reach the title.
+ */
+function titleForTool(
+  itemType: CanonicalItemType,
+  toolName?: string,
+  input?: Record<string, unknown>,
+): string {
+  if (itemType === "mcp_tool_call" && toolName !== undefined) {
+    const label = mcpToolStepLabel({ tool: toolName, arguments: input });
+    if (label !== undefined) return label;
+  }
   switch (itemType) {
     case "command_execution":
       return "Command run";
@@ -3198,7 +3212,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         let nextTool: ToolInFlight = {
           ...tool,
           itemType,
-          title: titleForTool(itemType),
+          title: titleForTool(itemType, tool.toolName, parsedInput ?? tool.input),
           partialInputJson,
           ...(parsedInput ? { input: parsedInput } : {}),
           ...(detail ? { detail } : {}),
@@ -3325,7 +3339,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         itemId,
         itemType,
         toolName,
-        title: titleForTool(itemType),
+        title: titleForTool(itemType, toolName, toolInput),
         detail,
         input: toolInput,
         partialInputJson: "",

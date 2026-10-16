@@ -85,6 +85,7 @@ import {
 } from "./codexLaunchArgs.ts";
 import { logUnloadableBotPluginSkills } from "../botPluginSkillDiagnostics.ts";
 import { resolvePersonalBotPluginSkillDirs } from "../botPluginSkillRoots.ts";
+import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 import {
   type CodexRateLimitSnapshot,
   codexRateLimitsToUpdate,
@@ -757,7 +758,14 @@ function itemTitle(
     }
     const computerUseTitle = computerUseToolTitle(item, presentation);
     if (computerUseTitle) return computerUseTitle;
-    return `${item.server} · ${item.tool}`;
+    // Plain words for what the bot is doing; only a hostname is ever read out
+    // of the arguments. The old `${server} · ${tool}` stays as the fallback.
+    const label = mcpToolStepLabel({
+      server: item.server,
+      tool: item.tool,
+      arguments: asUnknownRecord(item.arguments),
+    });
+    return label ?? `${item.server} · ${item.tool}`;
   }
   switch (itemType) {
     case "assistant_message":
