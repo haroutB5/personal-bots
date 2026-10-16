@@ -98,6 +98,14 @@ export const VoiceCallSummary = Schema.Struct({
    * for the owner and for diagnosis, never a claim about the call.
    */
   model: Schema.optional(Schema.String),
+  /**
+   * The effort that model ran at, as the text-generation path names it
+   * (Harout, 16 Oct 2026: the summary runs at `medium`). Absent on summaries
+   * written by a path that names no effort, so a read never requires it. Like
+   * `model`, a label for the owner and for diagnosis, never a claim about the
+   * call.
+   */
+  effort: Schema.optional(Schema.String),
 });
 export type VoiceCallSummary = typeof VoiceCallSummary.Type;
 

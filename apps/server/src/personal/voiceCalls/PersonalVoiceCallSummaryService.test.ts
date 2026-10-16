@@ -375,8 +375,11 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
         expect(summary!.summary).toContain("Court 3 is free 11:00-12:00");
         expect(summary!.points).toHaveLength(3);
         expect(summary!.decision).toBe("No change, he just wanted to know");
-        // Which model wrote it, so the owner and a diagnosis can tell.
+        // Which model wrote it, so the owner and a diagnosis can tell. The
+        // Gemini path names no effort, so nothing is stored for it (the
+        // medium-effort label belongs to the Claude summary request alone).
         expect(summary!.model).toBe(VOICE_CALL_SUMMARY_MODEL);
+        expect(summary!.effort).toBeUndefined();
 
         // Exactly one request, to the summariser model, on the origin the key
         // is bound to, with the key as the broker placeholder and never as a
@@ -430,6 +433,7 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
             decision: null,
             open: null,
             model: CLAUDE_MODEL,
+            effort: "medium",
           });
           // One Claude prompt, carrying the real transcript and the new rules.
           expect(asked).toHaveLength(1);
@@ -444,6 +448,7 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
             decision: null,
             open: null,
             model: CLAUDE_MODEL,
+            effort: "medium",
           });
           expect(yield* storedAttempts(sql)).toBe(1);
         }),

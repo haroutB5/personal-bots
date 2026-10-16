@@ -113,10 +113,11 @@ export const encodeStoredSummary = (summary: VoiceCallSummary): string =>
     points: [...summary.points],
     decision: summary.decision,
     open: summary.open,
-    // Which model wrote it (1.66.61). Only written when it is known, so a
-    // summary from an older build, or one hand-built in a test, keeps the four
-    // fields it always had.
+    // Which model wrote it and at what effort (1.66.61). Only written when it
+    // is known, so a summary from an older build, or one hand-built in a test,
+    // keeps the four fields it always had.
     ...(summary.model === undefined ? {} : { model: summary.model }),
+    ...(summary.effort === undefined ? {} : { effort: summary.effort }),
   });
 
 const CALL_COLUMNS = `

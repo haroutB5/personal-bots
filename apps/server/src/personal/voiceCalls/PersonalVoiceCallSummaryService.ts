@@ -319,7 +319,13 @@ export const make = Effect.gen(function* () {
       }
       summary = yield* claude.ask(prompt).pipe(
         Effect.map((answer) =>
-          answer === null ? null : ({ ...answer, model: claude.model } satisfies VoiceCallSummary),
+          answer === null
+            ? null
+            : ({
+                ...answer,
+                model: claude.model,
+                effort: claude.effort,
+              } satisfies VoiceCallSummary),
         ),
         Effect.catch((reason) =>
           // The class only. Nothing here holds the owner's words.
