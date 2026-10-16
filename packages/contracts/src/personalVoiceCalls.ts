@@ -51,6 +51,50 @@ export const VOICE_CALL_MAX_TRANSCRIPT_CHARS = 2_000;
 export const VOICE_CALL_MAX_SENT_CHARS = 4_000;
 
 // ---------------------------------------------------------------------------
+// the call summary (Harout, 16 Oct 2026)
+// ---------------------------------------------------------------------------
+
+/**
+ * The model that writes a call's summary from its transcript. Gemini text, the
+ * same key and the same broker path as the call itself, on the free tier.
+ */
+export const VOICE_CALL_SUMMARY_MODEL = "gemini-3.1-flash-lite";
+/** Tried when the primary summariser model is unavailable to this key. */
+export const VOICE_CALL_SUMMARY_FALLBACK_MODEL = "gemini-flash-lite-latest";
+/** At most this many bullets survive, however many the model returns. */
+export const VOICE_CALL_SUMMARY_MAX_POINTS = 5;
+/** Longest one bullet, the sentence, the decision or the open question may be. */
+export const VOICE_CALL_SUMMARY_FIELD_CHARS = 300;
+/**
+ * How long after a failed summary the one retry runs, and how many times a
+ * call is tried in total. A call that still fails shows its transcript alone:
+ * the summary is a convenience and must never hold up or break a card.
+ */
+export const VOICE_CALL_SUMMARY_RETRY_MS = 60_000;
+export const VOICE_CALL_SUMMARY_MAX_ATTEMPTS = 3;
+/** Longest the summary's own block in a bot's turn context may get. */
+export const VOICE_CALL_SUMMARY_CONTEXT_CHARS = 900;
+/** How many past calls' summaries one turn context may carry. */
+export const VOICE_CALL_SUMMARY_CONTEXT_CALLS = 2;
+
+/**
+ * What one call was about, written once from its transcript and the messages
+ * the voice relayed during it. Every field is a short line the card can show
+ * as it stands; `decision` and `open` are null when the call had neither.
+ */
+export const VoiceCallSummary = Schema.Struct({
+  /** One sentence: what was asked and what came of it. */
+  summary: TrimmedNonEmptyString,
+  /** Up to five concrete facts (a court, a time, a price, a name). */
+  points: Schema.Array(Schema.String),
+  /** The owner's last decision on the call, or null when he made none. */
+  decision: Schema.NullOr(Schema.String),
+  /** Anything left undecided, or null when nothing was. */
+  open: Schema.NullOr(Schema.String),
+});
+export type VoiceCallSummary = typeof VoiceCallSummary.Type;
+
+// ---------------------------------------------------------------------------
 // start
 // ---------------------------------------------------------------------------
 
@@ -411,6 +455,13 @@ export const VoiceCallRecord = Schema.Struct({
   /** The detail given at finish, empty when none. */
   detail: Schema.String,
   transcript: Schema.Array(VoiceCallTranscriptEntry),
+  /**
+   * The one-line summary of the call, written on the server after the card was
+   * stored. Absent while it is still being written, or when it could not be:
+   * the card then shows the transcript alone. Optional so a client built before
+   * this feature still decodes a card.
+   */
+  summary: Schema.optional(VoiceCallSummary),
 });
 export type VoiceCallRecord = typeof VoiceCallRecord.Type;
 

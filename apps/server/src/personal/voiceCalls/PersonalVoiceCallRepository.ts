@@ -12,6 +12,7 @@ import {
   ThreadId,
   VoiceCallEndReason,
   VoiceCallSpeaker,
+  VoiceCallSummary,
   type VoiceCallRecord,
   type VoiceCallTranscriptEntry,
 } from "@t3tools/contracts";
@@ -42,6 +43,8 @@ export const PersonalVoiceCallDbRow = Schema.Struct({
   model: Schema.String,
   detail: Schema.String,
   transcript: Schema.String,
+  /** The stored `VoiceCallSummary` as JSON, or `''` when there is none. */
+  summaryJson: Schema.String,
 });
 
 const decodeRow = Schema.decodeUnknownEffect(PersonalVoiceCallDbRow);
@@ -65,6 +68,30 @@ const encodeTranscript = (entries: ReadonlyArray<VoiceCallTranscriptEntry>): str
     })),
   );
 
+/**
+ * The stored summary. Empty, malformed, or a hand-edited shape reads as "no
+ * summary": a card must still render from its transcript, never fail to load
+ * because the one convenience line on it is unreadable.
+ */
+export const parseStoredSummary = (json: string): VoiceCallSummary | null => {
+  if (json.trim() === "") return null;
+  try {
+    const decoded = Schema.decodeUnknownOption(Schema.fromJsonString(VoiceCallSummary))(json);
+    return Option.isSome(decoded) ? decoded.value : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Encodes a summary for storage. Never called with null: none is `''`. */
+export const encodeStoredSummary = (summary: VoiceCallSummary): string =>
+  JSON.stringify({
+    summary: summary.summary,
+    points: [...summary.points],
+    decision: summary.decision,
+    open: summary.open,
+  });
+
 const CALL_COLUMNS = `
   call_id AS "callId",
   thread_id AS "threadId",
@@ -77,7 +104,8 @@ const CALL_COLUMNS = `
   voice_name AS "voiceName",
   model AS "model",
   detail AS "detail",
-  transcript_json AS "transcript"
+  transcript_json AS "transcript",
+  summary_json AS "summaryJson"
 `;
 
 /**
@@ -124,6 +152,36 @@ export class PersonalVoiceCallRepository extends Context.Service<
       Option.Option<ReadonlyArray<VoiceCallTranscriptEntry>>,
       PersonalVoiceCallRepositoryError
     >;
+    /**
+     * Writes a call's summary, once. Returns whether it was written: a call
+     * that already carries a summary (or has since been deleted) is left alone,
+     * so an out-of-order retry can never overwrite a good summary with a later
+     * one, and `finish` staying idempotent stays true for the summary too.
+     */
+    readonly setSummary: (input: {
+      readonly callId: string;
+      readonly summary: VoiceCallSummary;
+    }) => Effect.Effect<boolean, PersonalVoiceCallRepositoryError>;
+    /**
+     * The calls that still need a summary: a stored transcript that is not
+     * empty, no summary yet. Ids only, and it never reads a transcript, so the
+     * boot scan and the lazy check on opening a chat are both cheap.
+     * `threadId` narrows it to one chat.
+     */
+    readonly listNeedingSummary: (input: {
+      readonly threadId?: ThreadId | undefined;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<string>, PersonalVoiceCallRepositoryError>;
+    /**
+     * The summaries a bot's next turn should be given, newest first: calls
+     * that ended after the bot's own last reply in this chat, so a summary is
+     * carried once and then drops out of the context by itself. Capped small;
+     * an empty list is the normal case.
+     */
+    readonly summariesForTurn: (input: {
+      readonly threadId: ThreadId;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<VoiceCallRecord>, PersonalVoiceCallRepositoryError>;
     /**
      * Removes every call card of one chat and reports how many went. Called
      * when the chat is deleted: the transcript is the owner's own words and
@@ -178,20 +236,24 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const toRecord = (row: typeof PersonalVoiceCallDbRow.Type): VoiceCallRecord => ({
-    callId: row.callId,
-    threadId: row.threadId,
-    botId: row.botId,
-    startedAt: row.startedAt,
-    endedAt: row.endedAt,
-    durationSeconds: Math.max(0, Math.trunc(row.durationSeconds)),
-    endReason: row.endReason,
-    messageCount: Math.max(0, Math.trunc(row.messageCount)),
-    voiceName: row.voiceName,
-    model: row.model,
-    detail: row.detail,
-    transcript: parseTranscript(row.transcript),
-  });
+  const toRecord = (row: typeof PersonalVoiceCallDbRow.Type): VoiceCallRecord => {
+    const summary = parseStoredSummary(row.summaryJson);
+    return {
+      callId: row.callId,
+      threadId: row.threadId,
+      botId: row.botId,
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+      durationSeconds: Math.max(0, Math.trunc(row.durationSeconds)),
+      endReason: row.endReason,
+      messageCount: Math.max(0, Math.trunc(row.messageCount)),
+      voiceName: row.voiceName,
+      model: row.model,
+      detail: row.detail,
+      transcript: parseTranscript(row.transcript),
+      ...(summary === null ? {} : { summary }),
+    };
+  };
 
   const insert: PersonalVoiceCallRepository["Service"]["insert"] = (input) =>
     query(
@@ -272,6 +334,74 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const setSummary: PersonalVoiceCallRepository["Service"]["setSummary"] = (input) =>
+    query(
+      "setSummary",
+      sql`
+        UPDATE personal_voice_calls
+        SET summary_json = ${encodeStoredSummary(input.summary)}
+        WHERE call_id = ${input.callId}
+          AND summary_json = ''
+        RETURNING call_id AS "callId"
+      `,
+    ).pipe(Effect.map((rows) => rows.length > 0));
+
+  const listNeedingSummary: PersonalVoiceCallRepository["Service"]["listNeedingSummary"] = (
+    input,
+  ) =>
+    query(
+      "listNeedingSummary",
+      sql<{ readonly callId: string }>`
+        SELECT call_id AS "callId"
+        FROM personal_voice_calls
+        WHERE summary_json = ''
+          AND transcript_json NOT IN ('', '[]')
+          ${input.threadId === undefined ? sql`` : sql`AND thread_id = ${input.threadId}`}
+        ORDER BY started_at DESC, rowid DESC
+        LIMIT ${Math.max(1, Math.trunc(input.limit))}
+      `,
+    ).pipe(Effect.map((rows) => rows.map((row) => row.callId)));
+
+  /**
+   * A summary belongs to the bot's next turn and to nothing after it: it is
+   * given while the call ended after the bot's own last reply in this chat, and
+   * the bot's reply to that turn is what retires it. Nothing is stored to track
+   * that, so a restart, a failed turn or a second look at the same chat can
+   * only ever re-offer a summary the bot has not answered yet.
+   */
+  const summariesForTurn: PersonalVoiceCallRepository["Service"]["summariesForTurn"] = (input) =>
+    query(
+      "summariesForTurn",
+      sql`
+        SELECT ${sql.literal(CALL_COLUMNS_WITHOUT_TRANSCRIPT)}
+        FROM personal_voice_calls
+        WHERE thread_id = ${input.threadId}
+          AND summary_json <> ''
+          AND ended_at > COALESCE((
+            SELECT MAX(created_at) FROM projection_thread_messages
+            WHERE thread_id = ${input.threadId}
+              AND role = 'assistant'
+              AND is_streaming = 0
+          ), '')
+        ORDER BY ended_at DESC, rowid DESC
+        LIMIT ${Math.max(1, Math.trunc(input.limit))}
+      `,
+    ).pipe(
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) =>
+          decodeCallRow("summariesForTurn", row).pipe(Effect.map(toRecord)),
+        ),
+      ),
+      // The projection table is another module's; a query that cannot run is
+      // the same as no summary at all, never a failed turn.
+      Effect.catch((cause) =>
+        Effect.logWarning("personal voice call summaries for a turn could not be read", {
+          threadId: input.threadId,
+          cause,
+        }).pipe(Effect.as([] as ReadonlyArray<VoiceCallRecord>)),
+      ),
+    );
+
   const deleteByThread: PersonalVoiceCallRepository["Service"]["deleteByThread"] = (threadId) =>
     query(
       "deleteByThread",
@@ -344,6 +474,9 @@ export const make = Effect.gen(function* () {
     get,
     listByThread,
     getTranscript,
+    setSummary,
+    listNeedingSummary,
+    summariesForTurn,
     deleteByThread,
     openLease,
     closeLease,

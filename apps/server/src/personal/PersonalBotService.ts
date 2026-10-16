@@ -51,8 +51,11 @@ import {
   type ServerProvider,
   VoiceCallSettings,
   DEFAULT_VOICE_CALL_SETTINGS,
+  VOICE_CALL_DEFAULT_LANGUAGES,
+  VOICE_CALL_LANGUAGES_MAX_CHARS,
   isVoiceCallVoice,
   profileVoiceCallSettings,
+  type ResolvedVoiceCallSettings,
 } from "@t3tools/contracts";
 
 import {
@@ -1017,9 +1020,14 @@ export const make = Effect.gen(function* () {
       const storedVoiceCalls = yield* repository.getMeta({ key: PERSONAL_META_VOICE_CALLS });
       // A row that does not decode reads as the defaults rather than failing the
       // whole profile: the greeting name is stored separately and must keep working.
+      // A row written before "Languages I speak" existed has no `languages`
+      // field, so it is read through `profileVoiceCallSettings`, which fills the
+      // default in: the profile a client sees always carries all three.
       const voiceCalls = Option.isSome(storedVoiceCalls)
         ? yield* decodeVoiceCallSettings(storedVoiceCalls.value).pipe(
-            Effect.map((decoded): VoiceCallSettings => decoded),
+            Effect.map((decoded): ResolvedVoiceCallSettings =>
+              profileVoiceCallSettings({ voiceCalls: decoded }),
+            ),
             Effect.catchCause(() => Effect.succeed(DEFAULT_VOICE_CALL_SETTINGS)),
           )
         : DEFAULT_VOICE_CALL_SETTINGS;
@@ -1092,12 +1100,26 @@ export const make = Effect.gen(function* () {
       }
       if (input.voiceCalls !== undefined) {
         const current = profileVoiceCallSettings(profile);
-        const next: VoiceCallSettings = {
+        const next: ResolvedVoiceCallSettings = {
           voiceName: input.voiceCalls.voiceName ?? current.voiceName,
           quietHangupMinutes: input.voiceCalls.quietHangupMinutes ?? current.quietHangupMinutes,
+          // "Languages I speak" is free text. Emptying the field is not an
+          // error and not a blank line in every call's instruction: it means
+          // the default. A paste longer than the cap is refused, not cut.
+          languages:
+            input.voiceCalls.languages === undefined
+              ? current.languages
+              : input.voiceCalls.languages.trim() === ""
+                ? VOICE_CALL_DEFAULT_LANGUAGES
+                : input.voiceCalls.languages.trim(),
         };
         if (!isVoiceCallVoice(next.voiceName)) {
           return yield* notFound("That is not a voice Gemini Live offers.");
+        }
+        if (next.languages.length > VOICE_CALL_LANGUAGES_MAX_CHARS) {
+          return yield* notFound(
+            `Languages must be at most ${VOICE_CALL_LANGUAGES_MAX_CHARS} characters.`,
+          );
         }
         const value = yield* encodeVoiceCallSettings(next).pipe(
           Effect.mapError(repositoryError("voice call settings encoding")),

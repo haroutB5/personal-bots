@@ -11,9 +11,14 @@
  * never reads a value back. The check mints one single-use Live token
  * server-side, so it proves Live access without billing any audio.
  *
- * The voice and the quiet time are the profile's `voiceCalls` field, written
- * with the ordinary profile command. There is no language setting, because the
- * live model follows the language the owner speaks.
+ * The voice, the quiet time and the languages are the profile's `voiceCalls`
+ * field, written with the ordinary profile command.
+ *
+ * **Languages I speak** (Harout, 16 Oct 2026) is free text, "English" by
+ * default. He said "Barev" on a call, the transcription heard "pare 20 pesos"
+ * and the voice answered in Spanish until he complained, so the call's system
+ * instruction now names the languages he actually speaks and tells the voice
+ * never to drift outside them.
  *
  * @module features/personal/voice/VoiceSettingsSection
  */
@@ -22,6 +27,8 @@ import { useEffect, useState } from "react";
 
 import {
   profileVoiceCallSettings,
+  VOICE_CALL_DEFAULT_LANGUAGES,
+  VOICE_CALL_LANGUAGES_MAX_CHARS,
   VOICE_CALL_QUIET_MINUTES,
   VOICE_CALL_SECRET_NAME,
   VOICE_CALL_SECRET_ORIGIN,
@@ -77,6 +84,8 @@ export function VoiceSettingsSection(): JSX.Element {
   const [check, setCheck] = useState<VoiceCallCheck | null>(null);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [quietOpen, setQuietOpen] = useState(false);
+  const [languagesOpen, setLanguagesOpen] = useState(false);
+  const [languagesDraft, setLanguagesDraft] = useState(settings.languages);
   const [problem, setProblem] = useState<string | null>(null);
 
   const runCheck = () => {
@@ -300,11 +309,38 @@ export function VoiceSettingsSection(): JSX.Element {
             />
           </button>
         </li>
+
+        <li>
+          <button
+            type="button"
+            onClick={() => {
+              setLanguagesDraft(settings.languages);
+              setLanguagesOpen(true);
+            }}
+            className={ROW}
+          >
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+                Languages I speak
+              </span>
+              <span className="text-[13px] text-[var(--personal-text-secondary)]">
+                The voice reads unclear words as one of these
+              </span>
+            </span>
+            <span className="max-w-[45%] truncate text-[15px] text-[var(--personal-text-secondary)]">
+              {settings.languages}
+            </span>
+            <ChevronRight
+              aria-hidden="true"
+              className="size-5 text-[var(--personal-text-tertiary)]"
+            />
+          </button>
+        </li>
       </ul>
 
       <p className="mt-2 px-1 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
         Calls run on Google Gemini Live. Google hears the call, including the replies it reads to
-        you. Calls follow the language you speak.
+        you. Calls follow the languages you list above.
       </p>
 
       {voiceOpen ? (
@@ -345,6 +381,60 @@ export function VoiceSettingsSection(): JSX.Element {
                   ) : null}
                 </button>
               ))}
+            </div>
+          </SheetPopup>
+        </Sheet>
+      ) : null}
+      {languagesOpen ? (
+        <Sheet open onOpenChange={(next) => (next ? undefined : setLanguagesOpen(false))}>
+          <SheetPopup
+            side="bottom"
+            role="dialog"
+            showCloseButton={false}
+            forceBackdrop
+            backdropClassName="bg-black/[0.55]"
+            className="personal-app mx-2 mb-[max(0.5rem,env(safe-area-inset-bottom))] w-auto rounded-[20px] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 pt-5 pb-3 text-[var(--personal-text)]"
+          >
+            <SheetTitle className="px-1 text-center text-[17px] leading-6 font-bold">
+              Languages I speak
+            </SheetTitle>
+            <p className="mt-2 px-1 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+              A call hears you better when it knows what to expect. List every language you might
+              speak on a call, separated by commas.
+            </p>
+            <input
+              autoFocus
+              value={languagesDraft}
+              onChange={(event) => setLanguagesDraft(event.target.value)}
+              maxLength={VOICE_CALL_LANGUAGES_MAX_CHARS}
+              placeholder={VOICE_CALL_DEFAULT_LANGUAGES}
+              aria-label="Languages I speak"
+              dir="auto"
+              className={`${FIELD} mt-3 font-sans`}
+            />
+            <div className="mt-3 flex gap-2 px-1">
+              <button
+                type="button"
+                onClick={() => setLanguagesOpen(false)}
+                className={`${ROW_BUTTON} flex-1 justify-center`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  // An emptied field is the default, never a blank line in the
+                  // instruction: the server applies the same rule.
+                  patch({
+                    languages:
+                      languagesDraft.trim() === "" ? VOICE_CALL_DEFAULT_LANGUAGES : languagesDraft,
+                  });
+                  setLanguagesOpen(false);
+                }}
+                className={`${ROW_BUTTON} flex-1 justify-center`}
+              >
+                Save
+              </button>
             </div>
           </SheetPopup>
         </Sheet>

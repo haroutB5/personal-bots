@@ -20,7 +20,9 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 
 /** Settings > Voice calls with nothing saved: the defaults every profile carries. */
-const DEFAULT_VOICE_CALLS = { voiceCalls: { voiceName: "Charon", quietHangupMinutes: 2 } } as const;
+const DEFAULT_VOICE_CALLS = {
+  voiceCalls: { voiceName: "Charon", quietHangupMinutes: 2, languages: "English" },
+} as const;
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
@@ -548,16 +550,43 @@ it.effect(
       expect((yield* service.getProfile()).voiceCalls).toEqual({
         voiceName: "Charon",
         quietHangupMinutes: 2,
+        languages: "English",
       });
 
       const saved = yield* service.setProfile({
         voiceCalls: { voiceName: "Kore", quietHangupMinutes: 5 },
       });
-      expect(saved.voiceCalls).toEqual({ voiceName: "Kore", quietHangupMinutes: 5 });
+      expect(saved.voiceCalls).toEqual({
+        voiceName: "Kore",
+        quietHangupMinutes: 5,
+        languages: "English",
+      });
 
       // A partial patch keeps the field it leaves out.
       const partial = yield* service.setProfile({ voiceCalls: { quietHangupMinutes: 1 } });
-      expect(partial.voiceCalls).toEqual({ voiceName: "Kore", quietHangupMinutes: 1 });
+      expect(partial.voiceCalls).toEqual({
+        voiceName: "Kore",
+        quietHangupMinutes: 1,
+        languages: "English",
+      });
+
+      // "Languages I speak" is free text, saved trimmed; an emptied field is
+      // the default rather than a blank line in every call's instruction.
+      const spoken = yield* service.setProfile({
+        voiceCalls: { languages: "  English, French, Arabic and Armenian  " },
+      });
+      expect(spoken.voiceCalls).toEqual({
+        voiceName: "Kore",
+        quietHangupMinutes: 1,
+        languages: "English, French, Arabic and Armenian",
+      });
+      const cleared = yield* service.setProfile({ voiceCalls: { languages: "   " } });
+      expect(cleared.voiceCalls?.languages).toBe("English");
+      const tooLong = yield* Effect.flip(
+        service.setProfile({ voiceCalls: { languages: "x".repeat(121) } }),
+      );
+      expect(tooLong.message).toContain("at most 120 characters");
+      expect((yield* service.getProfile()).voiceCalls?.languages).toBe("English");
 
       const bad = yield* Effect.flip(
         service.setProfile({ voiceCalls: { voiceName: "NotAVoice" } }),
@@ -567,6 +596,7 @@ it.effect(
       expect((yield* service.getProfile()).voiceCalls).toEqual({
         voiceName: "Kore",
         quietHangupMinutes: 1,
+        languages: "English",
       });
 
       // A name change alone leaves the voice settings alone.
@@ -574,10 +604,29 @@ it.effect(
       expect((yield* service.getProfile()).voiceCalls).toEqual({
         voiceName: "Kore",
         quietHangupMinutes: 1,
+        languages: "English",
       });
     }).pipe(Effect.provide(makeTestLayer(context)));
   },
 );
+
+it.effect("reads a voice-call row written before the languages field existed", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    // The live row on the laptop's own database is exactly this shape.
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    yield* repository.setMeta({
+      key: "voiceCalls",
+      value: '{"voiceName":"Kore","quietHangupMinutes":5}',
+    });
+    const service = yield* PersonalBotService.PersonalBotService;
+    expect((yield* service.getProfile()).voiceCalls).toEqual({
+      voiceName: "Kore",
+      quietHangupMinutes: 5,
+      languages: "English",
+    });
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
 
 it.effect("auto-archive of finished task chats is on by default and saved when turned off", () => {
   const context = makeContext();

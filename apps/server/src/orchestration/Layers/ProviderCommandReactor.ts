@@ -18,6 +18,7 @@ import {
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
+  VOICE_CALL_SUMMARY_CONTEXT_CALLS,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
@@ -54,6 +55,8 @@ import {
   PERSONAL_TITLE_SEED_COMMAND_TAG,
 } from "../../personal/personalThreadTitles.ts";
 import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
+import * as PersonalVoiceCallRepository from "../../personal/voiceCalls/PersonalVoiceCallRepository.ts";
+import { voiceCallSummaryContextBlock } from "../../personal/voiceCalls/voiceCallSummaryContext.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -288,6 +291,20 @@ const make = Effect.gen(function* () {
    * instructions rather than failing the turn.
    */
   const personalMemory = yield* Effect.serviceOption(PersonalMemoryService.PersonalMemoryService);
+  const voiceCalls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
+  /**
+   * The summary of a phone call the bot has not answered yet, as a short block
+   * in front of its next turn's context. A call card is never a chat message
+   * and its transcript never reaches a model, so this is the one thing that
+   * crosses from a call into the bot's context: the lines the owner has already
+   * read on the card. Empty for almost every turn; a lookup that fails is a
+   * turn without it, never a failed turn.
+   */
+  const voiceCallSummaryForTurn = (threadId: ThreadId) =>
+    voiceCalls.summariesForTurn({ threadId, limit: VOICE_CALL_SUMMARY_CONTEXT_CALLS }).pipe(
+      Effect.map(voiceCallSummaryContextBlock),
+      Effect.orElseSucceed(() => ""),
+    );
   const personalBotInstructions = (threadId: ThreadId) =>
     personalBots.getInstructionsForThread({ threadId }).pipe(
       Effect.map((instructions) =>
@@ -1399,6 +1416,18 @@ const make = Effect.gen(function* () {
         )
       : undefined;
     const memoryContext = memory?.block;
+    // A call the bot has not answered yet: its summary goes in front of the
+    // memory (the memory block's own rules open with "Known facts", so it reads
+    // correctly wherever it sits) and is dropped only by the usual input cap.
+    const callContext = normalizedInput ? yield* voiceCallSummaryForTurn(input.threadId) : "";
+    const withCallSummary = (text: string | undefined): string | undefined =>
+      callContext === ""
+        ? text
+        : text === undefined || text.length === 0
+          ? callContext
+          : `${callContext}\n\n${text}`;
+    /** The same, for a place that already knows it has text to send. */
+    const prependCallSummary = (text: string): string => withCallSummary(text) ?? text;
     // A fresh session knows nothing of the chat: its earlier messages go in
     // front of the memory, in whatever room the turn's input has left.
     const handoff =
@@ -1411,6 +1440,7 @@ const make = Effect.gen(function* () {
               PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
                 input.messageText.length -
                 (memoryContext?.length ?? 0) -
+                callContext.length -
                 HANDOFF_INPUT_MARGIN_CHARS,
             ),
           })
@@ -1419,32 +1449,29 @@ const make = Effect.gen(function* () {
       handoff !== undefined && memoryText !== undefined
         ? `${handoff}\n\n${memoryText}`
         : (handoff ?? memoryText);
-    const turnContext = withHandoff(memoryContext);
+    const turnContext = withHandoff(withCallSummary(memoryContext));
     // What the turn falls back to when the input leaves too little room, most
     // complete first: the preferences without the notes and task summaries,
     // then the memory without the chat handoff (the handoff is sized to the
-    // room that was left, so it is what a long input squeezes out first).
-    const turnContextFallbacks: Array<{ text: string; dropped: string }> = [
-      ...(memory?.preferencesBlock !== undefined
-        ? [
-            {
-              text: withHandoff(memory.preferencesBlock)!,
-              dropped: "notes and task summaries",
-            },
-          ]
-        : []),
-      ...(handoff !== undefined && memoryContext !== undefined
-        ? [
-            {
-              text: memory?.preferencesBlock ?? memoryContext,
-              dropped:
-                memory?.preferencesBlock !== undefined
-                  ? "notes, task summaries and the earlier-chat handoff"
-                  : "the earlier-chat handoff",
-            },
-          ]
-        : []),
-    ];
+    // room that was left, so it is what a long input squeezes out first). The
+    // call summary is small and is kept in every one of them: it is the only
+    // trace the bot has that the call happened.
+    const turnContextFallbacks: Array<{ text: string; dropped: string }> = [];
+    if (memory?.preferencesBlock !== undefined) {
+      const text = withHandoff(prependCallSummary(memory.preferencesBlock));
+      if (text !== undefined) {
+        turnContextFallbacks.push({ text, dropped: "notes and task summaries" });
+      }
+    }
+    if (handoff !== undefined && memoryContext !== undefined) {
+      turnContextFallbacks.push({
+        text: prependCallSummary(memory?.preferencesBlock ?? memoryContext),
+        dropped:
+          memory?.preferencesBlock !== undefined
+            ? "notes, task summaries and the earlier-chat handoff"
+            : "the earlier-chat handoff",
+      });
+    }
     const activeSession = yield* providerService
       .listSessions()
       .pipe(

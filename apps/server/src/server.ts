@@ -94,6 +94,7 @@ import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
+import * as PersonalVoiceCallSummaryService from "./personal/voiceCalls/PersonalVoiceCallSummaryService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
@@ -614,6 +615,9 @@ const PersonalReactorsLive = Layer.effectDiscard(
     // Posts the release waiter's "landed / rolled back" notice into the chat
     // that asked for the release (startup + every 5s; notify-release.ps1).
     yield* (yield* PersonalReleaseNotices.PersonalReleaseNotices).start();
+    // Writes the one-line summary onto finished call cards: the boot sweep
+    // doubles as the backfill, then it looks every 30 s (Harout, 16 Oct).
+    yield* (yield* PersonalVoiceCallSummaryService.PersonalVoiceCallSummaryService).start();
     // One-off: names old task/routine chats still on "New chat" after their
     // task, once the server is up. Marker in personal_meta; never blocks start.
     yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
@@ -664,6 +668,13 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalBotsSeedLive),
   Layer.provideMerge(PersonalBotService.layer),
   Layer.provideMerge(PersonalBotRepository.layer),
+);
+
+// The personal group with the call-summary worker provided to it, as ONE step:
+// the reactors in the group start that worker at boot (Harout, 16 Oct), and the
+// chain below is at its 20-step limit.
+const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
+  Layer.provideMerge(PersonalVoiceCallSummaryService.layerLive),
 );
 
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
@@ -740,7 +751,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     Layer.provideMerge(PersonalBotService.layer),
     Layer.provideMerge(PersonalBotRepository.layer),
     // consume the bot service and repository.
-    Layer.provideMerge(PersonalLayerLive),
+    Layer.provideMerge(PersonalLayerWithCallSummaryLive),
     // Two independent background sweeps share a step: a pipe takes at most 20.
     Layer.provideMerge(Layer.mergeAll(AntigravityInstallationRefreshLive, ReplayMarkers.layer)),
     Layer.provideMerge(ProviderAuthServiceLive),

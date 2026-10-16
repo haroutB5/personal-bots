@@ -682,6 +682,7 @@ export const make = Effect.gen(function* () {
           botInstructions: chat.bot.instructions,
           preferences,
           displayName: profile.displayName,
+          languages: settings.languages,
           statusLabel,
           statusDetail,
           recentMessages: context,

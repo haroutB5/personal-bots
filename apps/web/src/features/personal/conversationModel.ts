@@ -16,6 +16,7 @@ import { classifyTurnFailure, isRefusedTurnInput } from "@t3tools/shared/turnFai
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 
 import type { VoiceCallTranscriptEntry } from "./voice/voiceCallApi";
+import type { VoiceCallSummary } from "@t3tools/contracts";
 
 import type { ChatMessage, ProposedPlan } from "~/types";
 import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
@@ -642,6 +643,13 @@ export interface VoiceCallCardItem {
   readonly sentCount: number;
   readonly voiceName: string | null;
   readonly transcript: ReadonlyArray<VoiceCallTranscriptEntry>;
+  /**
+   * The server-written summary of the call (Harout, 16 Oct): what was asked,
+   * the concrete facts, and the last decision. Absent while it is still being
+   * written or when it could not be written, and the card then shows the
+   * transcript alone.
+   */
+  readonly summary?: VoiceCallSummary | undefined;
 }
 
 /**

@@ -3,6 +3,11 @@
  * started, with duration, how it ended, Call back and a collapsed transcript.
  * While the call is on, the same card is the way back to it.
  *
+ * From 1.66.59 (Harout, 16 Oct) the finished card also carries the call's
+ * **summary**: one sentence, up to five concrete facts and the last decision,
+ * written by the server from the transcript. It is what he reads a day later
+ * instead of opening the transcript, so it sits on the card, not inside it.
+ *
  * The transcript stays with the chat on the laptop and is never sent to the
  * bot. Free tier at launch: duration only, no cost line (Harout, 15 Oct).
  *
@@ -16,7 +21,7 @@ import { ChevronDown, Phone } from "lucide-react";
 import * as DateTime from "effect/DateTime";
 
 import { formatCallDuration } from "./callState";
-import type { VoiceCallTranscriptEntry } from "./voiceCallApi";
+import type { VoiceCallSummary, VoiceCallTranscriptEntry } from "./voiceCallApi";
 
 export interface VoiceCallCardModel {
   readonly callId: string;
@@ -26,6 +31,8 @@ export interface VoiceCallCardModel {
   readonly endedLine: string | null;
   readonly sentCount: number;
   readonly transcript: ReadonlyArray<VoiceCallTranscriptEntry>;
+  /** The server-written summary; absent while it is being written, or when it failed. */
+  readonly summary?: VoiceCallSummary | undefined;
   /** True while the call is still running: the card is the way back in. */
   readonly live: boolean;
   readonly voiceName: string | null;
@@ -35,6 +42,63 @@ export interface VoiceCallCardModel {
 export function transcriptOffset(startedAtMs: number, at: VoiceCallTranscriptEntry["at"]): string {
   const parsed = DateTime.toEpochMillis(at);
   return formatCallDuration(Math.max(0, parsed - startedAtMs));
+}
+
+/**
+ * The call's summary as the card shows it: the sentence, the concrete facts,
+ * then the decision, which is the line he actually comes back for and so is
+ * the only one given a surface of its own. Everything wraps and carries
+ * `dir="auto"`, because the languages on this call include Armenian and Arabic.
+ */
+export function CallSummary({ summary }: { readonly summary: VoiceCallSummary }): JSX.Element {
+  const points = summary.points.filter((point) => point.trim().length > 0);
+  return (
+    <div className="mt-2 border-t border-[var(--personal-border)] pt-2">
+      <p dir="auto" className="text-[14px] leading-[19px] break-words text-[var(--personal-text)]">
+        {summary.summary}
+      </p>
+      {points.length === 0 ? null : (
+        <ul className="mt-1.5 flex flex-col gap-1">
+          {points.map((point) => (
+            <li key={point} className="flex gap-2">
+              <span
+                aria-hidden="true"
+                className="mt-[7px] size-1 shrink-0 rounded-full bg-[var(--personal-text-tertiary)]"
+              />
+              <span
+                dir="auto"
+                className="min-w-0 flex-1 text-[13px] leading-[18px] break-words text-[var(--personal-text-secondary)]"
+              >
+                {point}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {summary.decision === null || summary.decision.trim().length === 0 ? null : (
+        <p
+          data-voice-call-decision="true"
+          className="mt-2 flex gap-1.5 rounded-[10px] bg-[var(--personal-fill-muted)] px-2.5 py-1.5"
+        >
+          <span className="shrink-0 text-[13px] leading-[18px] font-semibold text-[var(--personal-text)]">
+            Decided:
+          </span>
+          <span
+            dir="auto"
+            className="min-w-0 flex-1 text-[13px] leading-[18px] break-words text-[var(--personal-text-secondary)]"
+          >
+            {summary.decision}
+          </span>
+        </p>
+      )}
+      {summary.open === null || summary.open.trim().length === 0 ? null : (
+        <p dir="auto" className="mt-1.5 text-[13px] leading-[18px] break-words">
+          <span className="font-semibold text-[var(--personal-text-secondary)]">Still open: </span>
+          <span className="text-[var(--personal-text-tertiary)]">{summary.open}</span>
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function CallCard({
@@ -104,6 +168,8 @@ export function CallCard({
           </button>
         )}
       </div>
+
+      {model.live || model.summary === undefined ? null : <CallSummary summary={model.summary} />}
 
       {model.live ? null : (
         <>

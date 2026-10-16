@@ -59,6 +59,7 @@ import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceip
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import * as PersonalBotRepository from "../src/personal/PersonalBotRepository.ts";
+import * as PersonalVoiceCallRepository from "../src/personal/voiceCalls/PersonalVoiceCallRepository.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
@@ -346,6 +347,9 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provide(Layer.mock(TerminalManager.TerminalManager)({ closeIdle: () => Effect.void })),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(PersonalBotRepository.layer),
+      // The call summary a bot's next turn is given; no voice calls exist in
+      // this harness, so every turn's block is empty.
+      Layer.provideMerge(PersonalVoiceCallRepository.layer),
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),
       Layer.provideMerge(serverSettingsLayer),

@@ -83,6 +83,7 @@ import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
 import { personalTaskMessageId } from "../../personal/personalThreadTitles.ts";
 import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
+import * as PersonalVoiceCallRepository from "../../personal/voiceCalls/PersonalVoiceCallRepository.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -308,8 +309,8 @@ describe("ProviderCommandReactor", () => {
       );
     });
     const compactThread = vi.fn((_: ThreadId) => input?.compactThreadEffect?.() ?? Effect.void);
-    const validateTurn = vi.fn<ProviderServiceShape["validateTurn"]>(() =>
-      input?.validateTurnEffect?.() ?? Effect.void,
+    const validateTurn = vi.fn<ProviderServiceShape["validateTurn"]>(
+      () => input?.validateTurnEffect?.() ?? Effect.void,
     );
     const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
@@ -537,6 +538,9 @@ describe("ProviderCommandReactor", () => {
           ? Layer.merge(PersonalBotRepository.layer, PersonalMemoryService.layer)
           : PersonalBotRepository.layer,
       ),
+      // The call summary a bot's next turn is given after a phone call. The
+      // tables are empty in this harness, so every turn gets no block.
+      Layer.provideMerge(PersonalVoiceCallRepository.layer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -1837,9 +1841,12 @@ describe("ProviderCommandReactor", () => {
       yield* Effect.promise(() =>
         waitFor(async () => {
           const readModel = await harness.readModel();
-          return readModel.threads
-            .find((entry) => entry.id === ThreadId.make("thread-1"))
-            ?.activities.some((activity) => activity.kind === "provider.turn.start.failed") === true;
+          return (
+            readModel.threads
+              .find((entry) => entry.id === ThreadId.make("thread-1"))
+              ?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ===
+            true
+          );
         }),
       );
       const readModel = yield* Effect.promise(() => harness.readModel());

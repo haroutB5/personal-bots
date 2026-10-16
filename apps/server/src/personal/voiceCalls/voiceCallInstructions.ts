@@ -16,7 +16,7 @@
  * login or secret card said in one line and never in full.
  */
 import type { VoiceCallContextMessage } from "@t3tools/contracts";
-import { VOICE_CALL_CONTEXT_MESSAGES } from "@t3tools/contracts";
+import { VOICE_CALL_CONTEXT_MESSAGES, VOICE_CALL_DEFAULT_LANGUAGES } from "@t3tools/contracts";
 
 import { redactSecrets } from "../secretText.ts";
 
@@ -35,6 +35,12 @@ export interface VoiceCallInstructionInput {
   readonly preferences: ReadonlyArray<string>;
   /** The owner's display name; "the owner" when unset. */
   readonly displayName: string;
+  /**
+   * Which languages the owner speaks, from Settings > Voice calls. A free line
+   * he writes; absent or empty means "English", so the instruction always says
+   * what the voice may expect to hear.
+   */
+  readonly languages?: string | undefined;
   /** "Working", "Idle", "Waiting on you". */
   readonly statusLabel: string;
   /** The bot's current step line; empty when it is not working. */
@@ -116,6 +122,10 @@ export const voiceCallSystemInstruction = (input: VoiceCallInstructionInput): st
   const callouts = input.callouts.map(clean).filter((line) => line.length > 0);
   const persona = personaBlock(input);
   const rules = rulesBlock(input.preferences);
+  // A setting the owner emptied is the default, never a blank line in the
+  // instruction: the voice must always be told what it may expect to hear.
+  const spoken = clean(input.languages ?? "");
+  const languages = spoken === "" ? VOICE_CALL_DEFAULT_LANGUAGES : spoken;
 
   return [
     `You are on a live phone call with ${who}. You ARE ${self}, speaking in the first person:`,
@@ -139,6 +149,12 @@ export const voiceCallSystemInstruction = (input: VoiceCallInstructionInput): st
     "- No lists, no headings, no markdown, no code, no file paths, no links, no choices",
     "  blocks: everything you say is heard, not read.",
     "- Reply in the language they speak to you in.",
+    // Harout, 16 Oct: he said "Barev" on a call, the transcription heard "pare
+    // 20 pesos" and the voice answered in Spanish until he complained. Naming
+    // the languages he actually speaks is what stops that drift.
+    `- ${who} speaks these languages: ${languages}. A word that sounds like nonsense, or`,
+    "  like another language you were not told about, is almost certainly one of those: read it as one",
+    "  of them and carry on. Never switch to a language outside that list unless he asks you to.",
     "- The owner lives in the UK: give temperatures in Celsius and use UK units unless asked otherwise.",
     `- Your voice is ${input.voiceName}.`,
     "",

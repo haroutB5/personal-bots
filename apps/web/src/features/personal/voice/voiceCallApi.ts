@@ -47,6 +47,7 @@ import {
   type VoiceCallSettingsInput,
   type VoiceCallStartInput,
   type VoiceCallStartResult,
+  type VoiceCallSummary,
   type VoiceCallTranscriptEntry,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -181,6 +182,7 @@ export type {
   VoiceCallSnapshotResult,
   VoiceCallStartInput,
   VoiceCallStartResult,
+  VoiceCallSummary,
   VoiceCallTranscriptEntry,
   VoiceCallTranscriptInput,
   VoiceCallTranscriptResult,

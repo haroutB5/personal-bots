@@ -47,7 +47,7 @@ const layer = PersonalVoiceCallRepository.layer.pipe(
 
 it.layer(layer)("PersonalVoiceCallRepository", (it) => {
   const seed = Effect.gen(function* () {
-    yield* runMigrations({ toMigrationInclusive: 110 });
+    yield* runMigrations({ toMigrationInclusive: 111 });
     const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
     const createdAt = DateTime.makeUnsafe("2026-10-15T17:04:13.000Z");
     yield* repository.insert({ record: card("call-1", CHAT), createdAt });
@@ -78,6 +78,34 @@ it.layer(layer)("PersonalVoiceCallRepository", (it) => {
       );
       const missing = yield* repository.getTranscript("call-nowhere");
       assert.isTrue(Option.isNone(missing));
+    }),
+  );
+
+  const summary = {
+    summary: "He asked whether a court was free before his Saturday booking.",
+    points: ["Court 3 free 11:00-12:00 Saturday"],
+    decision: "No change, just wanted to know",
+    open: null,
+  } as const;
+
+  it.effect("writes one call's summary once, and reads it back on the card", () =>
+    Effect.gen(function* () {
+      const repository = yield* seed;
+      assert.isTrue(yield* repository.setSummary({ callId: "call-1", summary }));
+      // A second write is refused, so an out-of-order retry can never replace a
+      // good summary with a later one.
+      assert.isFalse(
+        yield* repository.setSummary({
+          callId: "call-1",
+          summary: { ...summary, summary: "Something else entirely." },
+        }),
+      );
+      const stored = yield* repository.get("call-1");
+      assert.deepEqual(Option.getOrNull(stored)?.summary, summary);
+      // The list carries it too, without reading the transcript.
+      const listed = yield* repository.listByThread(CHAT, 50);
+      assert.deepEqual(listed[0]!.summary, summary);
+      assert.deepEqual(listed[0]!.transcript, []);
     }),
   );
 

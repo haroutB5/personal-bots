@@ -62,6 +62,79 @@ export const voiceCallMintRequest = (input: {
 const MintResponse = Schema.Struct({ name: Schema.String });
 const decodeMintResponse = Schema.decodeUnknownOption(Schema.fromJsonString(MintResponse));
 
+// ---------------------------------------------------------------------------
+// the call summary (Harout, 16 Oct 2026)
+// ---------------------------------------------------------------------------
+
+/** Where one summary is written. Gemini text, the same origin and key as a call. */
+export const voiceCallSummaryUrl = (model: string): string =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+/**
+ * The one request a summary makes. Exported so a test can assert its exact
+ * shape (URL, the header the placeholder sits in, the JSON-only answer) with
+ * no network, exactly like the mint above.
+ *
+ * Nothing here logs the prompt: it carries the transcript, the owner's own
+ * words, which may leave the laptop for Google the same way a call's audio does
+ * and nowhere else.
+ */
+export const voiceCallSummaryRequest = (input: {
+  readonly model: string;
+  readonly prompt: string;
+}): BrokerRequest => ({
+  method: "POST",
+  url: voiceCallSummaryUrl(input.model),
+  headers: {
+    "content-type": "application/json",
+    [VOICE_CALL_SECRET_HEADER]: personalSecretPlaceholder(VOICE_CALL_SECRET_NAME),
+  },
+  body: JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: input.prompt }] }],
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+    },
+  }),
+  timeoutMs: 30_000,
+  maxResponseBytes: 65_536,
+});
+
+/** Gemini's answer to a summary request: every text part, joined. */
+const SummaryResponse = Schema.Struct({
+  candidates: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        content: Schema.optional(
+          Schema.Struct({
+            parts: Schema.optional(Schema.Array(Schema.Struct({ text: Schema.String }))),
+          }),
+        ),
+      }),
+    ),
+  ),
+});
+const decodeSummaryResponse = Schema.decodeUnknownOption(Schema.fromJsonString(SummaryResponse));
+
+/**
+ * The text of a successful generateContent answer, or null when Google sent a
+ * shape this app does not recognise (a safety block, an empty candidate).
+ * Never throws: an unusable answer is simply "no summary".
+ */
+export const voiceCallSummaryText = (outcome: VoiceCallMintOutcome): string | null => {
+  if (outcome.status !== 200) return null;
+  const decoded = decodeSummaryResponse(outcome.body);
+  if (Option.isNone(decoded)) return null;
+  const parts = (decoded.value.candidates ?? []).flatMap(
+    (candidate) => candidate.content?.parts ?? [],
+  );
+  const text = parts
+    .map((part) => part.text)
+    .join("")
+    .trim();
+  return text === "" ? null : text;
+};
+
 /** Google's answer, before it is turned into the app's own error codes. */
 export interface VoiceCallMintOutcome {
   readonly status: number;

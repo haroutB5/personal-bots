@@ -210,6 +210,32 @@ describe("voiceCallSystemInstruction", () => {
     }),
   );
 
+  it.effect("names the owner's languages, so a misheard word is read as one of them", () =>
+    Effect.sync(() => {
+      // Harout, 16 Oct: on a call he said "Barev", the transcription heard
+      // "pare 20 pesos" and the voice answered in Spanish until he complained.
+      const text = voiceCallSystemInstruction({
+        ...base,
+        languages: "English, French, Arabic and Armenian",
+      }).replace(/\s+/g, " ");
+      expect(text).toContain(
+        "Harout speaks these languages: English, French, Arabic and Armenian.",
+      );
+      expect(text).toContain("is almost certainly one of those");
+      expect(text).toContain("Never switch to a language outside that list unless he asks you to");
+      expect(text).toContain("Reply in the language they speak to you in.");
+    }),
+  );
+
+  it.effect("says 'English' when the setting is missing, empty or only spaces", () =>
+    Effect.sync(() => {
+      for (const languages of [undefined, "", "   "]) {
+        const text = voiceCallSystemInstruction({ ...base, languages }).replace(/\s+/g, " ");
+        expect(text).toContain("Harout speaks these languages: English.");
+      }
+    }),
+  );
+
   it.effect("states the trust boundary and keeps an adversarial message on the quoted side", () =>
     Effect.sync(() => {
       // A chat message (or a note, or a search result) is material to talk
