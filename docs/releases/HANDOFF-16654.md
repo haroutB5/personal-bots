@@ -15,7 +15,9 @@ must-fixes) is answered here on the server and on the same branch in the web
 client; the review's nine findings and the tests that now hold each of them are
 listed below. This same version also carries the DeepSeek dsh reply-style fix
 (its own short section below), which the CTO briefed and Harout chose to fold in
-here rather than start a new version.
+here rather than start a new version, plus the pre-ship follow-ups and the three
+web-client fixes QA asked for on the first staging of this version (both listed
+below).
 
 Staged release: see the Gate evidence section below (added by
 `scripts/personal/gate-evidence.ps1`). Branch `feat/hbots-voice-calls`, based on
@@ -234,24 +236,73 @@ thought follows a tool call`, over the real frame order through the real ACP
   load; it now writes the update first and settles about 20 ms later, as the
   recording shows.
 
+## Pre-ship follow-ups and QA's web fixes, folded into the same version
+
+Four low follow-ups from the pre-ship checks (Security CLEARED, Fable said
+SHIP) and the three web-client bugs QA found on the first 1.66.54 staging
+(`a445d8f5c57e`, NO-SHIP). Each has a test.
+
+- **S1 (Security).** `lookupMemory` entries skipped redaction
+  (`PersonalVoiceCallService.ts`): the content now goes through the same
+  `redactSecrets` choke point as every other Google-bound string before the
+  voice reads it out. Test: `lookupMemory` `redacts a key the saved note holds
+before the voice reads it out`.
+- **S2 (Security + Fable).** `snapshot` answered without a lease, falling back
+  to the client's `threadId`: it now requires the in-memory lease, so after a
+  restart the phone's poll gets `not_found` and the call ends cleanly instead of
+  reading a chat the call never owned. Test: `snapshot` `refuses a call this
+process never minted, so a restart ends the call`.
+- **S3 (Security).** `sensitiveExposure` was wrapped in `Effect.orElseSucceed`,
+  which recovers nothing when the error channel is `never` (defects pass
+  through): the read now catches the whole cause and treats an unreadable answer
+  as exposed, so every caller fails closed. Test: `treats an exposure read that
+dies as exposed, never as clear`.
+- **F1 (Fable re-check).** The reply read at the end of a turn was not checked
+  to be newer than the sent message, so a turn that ended with no new text
+  replayed the previous reply. The chat's latest reply now carries its own
+  message id and time (`BotStatusPort`, from the server snapshot in
+  `voiceCallStatus.ts` and from the chat screen in `ConversationScreen.tsx`),
+  and the engine only hands over a reply whose message is really new; a source
+  that cannot name the reply keeps the old behaviour rather than swallow a real
+  answer. Tests: `never hands over the previous turn's reply as this send's
+answer`, `hands over a reply whose own message is new`, and
+  `botStatusFromSnapshot maps the server's own words, its turn flag and the
+reply's identity`.
+- **QA bug 1 (blocker).** `voiceCallFailureCode` never entered an array, and the
+  RPC client hands the screen an `AsyncResult.failure(Cause)` with the typed
+  error in `cause.reasons[]`: every typed code (`no_key`, `key_rejected`,
+  `key_quota`, `sensitive_chat`, `not_found`) showed as "Can't reach Google",
+  and a lost call never ended. The walk now enters arrays and cause reasons.
+  Test: `reads the code out of the real AsyncResult failure the RPC client
+makes`, over `AsyncResult.failure(Cause.fail(...))`, not a hand-made shape.
+- **QA bug 2.** `finish` returned early when the call never connected, so its
+  lease held both restart gates for up to 35 minutes (cancel before connect,
+  Google 1007/1011, connect timeout). It now runs for every call with a call id,
+  so the card is stored and its lease row released. Tests: the refusal, timeout
+  and microphone-prompt lifecycle cases, which now assert exactly one `finish`.
+- **QA bug 3.** The stored card's list refresh was keyed by the whole `finish`
+  input instead of `{ threadId }`, so the new card only appeared after a reload.
+  `finishedCallListInput` now derives the key every screen reads. Test: `uses
+the chat key every screen reads, never the whole finish input`.
+
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=f8804ccaeea6f764bd09bafbc7294d737ee90189 release=f8804ccaeea6 json-sha256=943a97fef4ccdbb3f3199ca940e5220618128775e66b41da9869f17c9f85ebf4 result=PASS -->
+<!-- gate-evidence:begin sha=bb37d805f11b8267a19b7f7a2f469f9354656ea0 release=bb37d805f11b json-sha256=6beadf0fd99fe5a8b7fc35c42bca933bb57f38580f628b02296f5ebb252311b6 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-15T23:57:41Z. Version 1.66.54, release `f8804ccaeea6`, commit `f8804ccaeea6f764bd09bafbc7294d737ee90189` on `feat/hbots-voice-calls`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-16T00:26:24Z. Version 1.66.54, release `bb37d805f11b`, commit `bb37d805f11b8267a19b7f7a2f469f9354656ea0` on `feat/hbots-voice-calls`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\f8804ccaeea6\gate-evidence.json` (sha256 `943a97fef4ccdbb3f3199ca940e5220618128775e66b41da9869f17c9f85ebf4`) and the full gate logs in `releases\f8804ccaeea6\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\bb37d805f11b\gate-evidence.json` (sha256 `6beadf0fd99fe5a8b7fc35c42bca933bb57f38580f628b02296f5ebb252311b6`) and the full gate logs in `releases\bb37d805f11b\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2756 tests passed, 0 failed, 4 skipped, in 200 files | 274.7   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 47.7    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2748 tests passed, 0 failed, 0 skipped, in 248 files | 39.7    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 7.5     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 68.7    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-voice-server\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\f8804ccaeea6" -Json` (in `.`)                                                                                                              | 0    | pass: 12/12 journeys passed                                | 271.5   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2759 tests passed, 0 failed, 4 skipped, in 200 files | 274.4   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 45.1    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2752 tests passed, 0 failed, 0 skipped, in 248 files | 38      |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 6.8     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 68.8    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-voice-server\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\bb37d805f11b" -Json` (in `.`)                                                                                                              | 0    | pass: 12/12 journeys passed                                | 271.5   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `f8804ccaeea6f764bd09bafbc7294d737ee90189`, at end `f8804ccaeea6f764bd09bafbc7294d737ee90189`; tracked files modified: none. Staged release: version 1.66.54, sha f8804ccaeea6, dirty False, externals copied; `dist/bin.mjs` sha256 `8386ff2a997bf49de1a9dbe3a087f83a4155142bc0e422ecf58298974017797f`.
+Tree: HEAD at start `bb37d805f11b8267a19b7f7a2f469f9354656ea0`, at end `bb37d805f11b8267a19b7f7a2f469f9354656ea0`; tracked files modified: none. Staged release: version 1.66.54, sha bb37d805f11b, dirty False, externals copied; `dist/bin.mjs` sha256 `cce84586c2b72492586ee716958b13dfc4828dbd67a6f9e085ddb07d01f3c2db`.
 <!-- gate-evidence:end -->
