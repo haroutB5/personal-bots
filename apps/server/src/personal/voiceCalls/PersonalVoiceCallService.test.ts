@@ -64,10 +64,16 @@ interface HttpCall {
   readonly secrets: ReadonlyArray<BrokerSecret>;
 }
 
+/**
+ * Harout, 16 Oct 2026: only a team lead takes calls. The old per-bot
+ * `allow_voice_calls` switch still round-trips in the database (it is a stored
+ * column) but decides nothing, so this is what a test moves to make a bot
+ * callable or not.
+ */
 const setSwitch = (botId: PersonalBotId, allow: boolean) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`UPDATE personal_bots SET allow_voice_calls = ${allow ? 1 : 0} WHERE bot_id = ${botId}`;
+    yield* sql`UPDATE personal_bots SET is_lead = ${allow ? 1 : 0} WHERE bot_id = ${botId}`;
   });
 
 const seedChats = (options: { readonly instructions?: string } = {}) =>
@@ -87,11 +93,13 @@ const seedChats = (options: { readonly instructions?: string } = {}) =>
       yield* sql`
         INSERT INTO personal_bots (
           bot_id, name, description, instructions, avatar_shape, avatar_color,
-          model_selection_json, enabled, sort_order, created_at, updated_at, allow_voice_calls
+          model_selection_json, enabled, sort_order, created_at, updated_at,
+          is_lead, allow_voice_calls
         )
         VALUES (
           ${botId}, ${name}, ${description}, ${instructions}, 'blob', '#1A73E8',
-          ${JSON.stringify(modelSelection)}, 1, 0, ${now}, ${now}, ${allow ? 1 : 0}
+          ${JSON.stringify(modelSelection)}, 1, 0, ${now}, ${now},
+          ${allow ? 1 : 0}, ${allow ? 1 : 0}
         )
       `;
     }
@@ -366,14 +374,40 @@ describe("PersonalVoiceCallService.start", () => {
     );
   });
 
-  it.effect("refuses a bot whose Allow voice calls switch is off", () => {
+  it.effect("refuses a bot that is not a team lead (Harout, 16 Oct)", () => {
     const calls: Array<HttpCall> = [];
     return withService({ calls, dispatched: [] }, (service) =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(service.start({ threadId: OTHER_CHAT }));
         expect(error.code).toBe("calls_not_allowed");
+        expect(error.message).toContain("team lead");
         // Nothing was minted and nothing was spent.
         expect(calls).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.effect("a bot's old Allow voice calls column no longer decides anything", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, dispatched: [] }, (service) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // The column is on, the lead flag is off: refused.
+        yield* sql`
+          UPDATE personal_bots SET allow_voice_calls = 1, is_lead = 0
+          WHERE bot_id = ${PersonalBotId.make("bot-qa")}
+        `;
+        expect((yield* Effect.flip(service.start({ threadId: OTHER_CHAT }))).code).toBe(
+          "calls_not_allowed",
+        );
+        // The column is off, the lead flag is on: allowed.
+        yield* sql`
+          UPDATE personal_bots SET allow_voice_calls = 0, is_lead = 1
+          WHERE bot_id = ${PersonalBotId.make("bot-qa")}
+        `;
+        const started = yield* service.start({ threadId: OTHER_CHAT });
+        expect(started.botName).toBe("QA");
+        expect(calls).toHaveLength(1);
       }),
     );
   });

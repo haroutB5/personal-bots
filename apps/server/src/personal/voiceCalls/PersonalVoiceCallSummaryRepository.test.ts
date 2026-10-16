@@ -75,12 +75,16 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
       // A call that failed before anyone spoke: nothing to summarise.
       yield* insert({ callId: "n-silent", threadId: chat, transcript: [] });
 
-      assert.deepEqual(yield* repository.listNeedingSummary({ threadId: chat, limit: 10 }), [
-        "n-spoken",
-      ]);
+      assert.deepEqual(
+        yield* repository.listNeedingSummary({ threadId: chat, limit: 10, maxAttempts: 3 }),
+        ["n-spoken"],
+      );
       // Once a summary is written the call drops out of the list for good.
       assert.isTrue(yield* repository.setSummary({ callId: "n-spoken", summary: SUMMARY }));
-      assert.deepEqual(yield* repository.listNeedingSummary({ threadId: chat, limit: 10 }), []);
+      assert.deepEqual(
+        yield* repository.listNeedingSummary({ threadId: chat, limit: 10, maxAttempts: 3 }),
+        [],
+      );
     }),
   );
 
@@ -97,15 +101,30 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
           endedAt: `2026-10-15T1${String(index)}:04:12.000Z`,
         });
       }
-      assert.deepEqual(yield* repository.listNeedingSummary({ threadId: chat, limit: 2 }), [
-        "cap-4",
-        "cap-3",
-      ]);
-      assert.equal((yield* repository.listNeedingSummary({ threadId: chat, limit: 50 })).length, 5);
+      assert.deepEqual(
+        yield* repository.listNeedingSummary({ threadId: chat, limit: 2, maxAttempts: 3 }),
+        ["cap-4", "cap-3"],
+      );
+      assert.equal(
+        (yield* repository.listNeedingSummary({ threadId: chat, limit: 50, maxAttempts: 3 }))
+          .length,
+        5,
+      );
+      // A call that is out of attempts is not offered again, however new it is.
+      yield* repository.recordSummaryAttempt("cap-4");
+      yield* repository.recordSummaryAttempt("cap-4");
+      yield* repository.recordSummaryAttempt("cap-4");
+      assert.deepEqual(
+        yield* repository.listNeedingSummary({ threadId: chat, limit: 50, maxAttempts: 3 }),
+        ["cap-3", "cap-2", "cap-1", "cap-0"],
+      );
     }),
   );
 
-  it.effect("gives the bot a call summary until the bot has answered it", () =>
+  // Astra review, finding 3: a reply that lands before the summary is written
+  // must not retire a summary the bot never saw, so eligibility is "has this
+  // summary been put into a turn's context", not a timestamp.
+  it.effect("gives the bot a call summary until it has been delivered to a turn", () =>
     Effect.gen(function* () {
       const repository = yield* setup;
       const sql = yield* SqlClient.SqlClient;
@@ -113,7 +132,6 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
       yield* insert({ callId: "t-1", threadId: chat, transcript: spoken("court three") });
       yield* repository.setSummary({ callId: "t-1", summary: SUMMARY });
 
-      // The bot has not replied since the call: the summary is carried.
       const before = yield* repository.summariesForTurn({ threadId: chat, limit: 2 });
       assert.deepEqual(
         before.map((row) => row.callId),
@@ -125,8 +143,8 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
       yield* insert({ callId: "t-bare", threadId: bare, transcript: spoken("hello") });
       assert.deepEqual(yield* repository.summariesForTurn({ threadId: bare, limit: 2 }), []);
 
-      // An earlier assistant reply does not retire it: only one written after
-      // the call ended does.
+      // A reply written BEFORE the summary existed changes nothing: the bot
+      // never saw those lines.
       yield* sql`
         INSERT INTO projection_thread_messages (
           message_id, thread_id, role, text, is_streaming, created_at, updated_at
@@ -137,26 +155,22 @@ it.layer(layer)("PersonalVoiceCallRepository summaries", (it) => {
       `;
       assert.equal((yield* repository.summariesForTurn({ threadId: chat, limit: 2 })).length, 1);
 
-      // A reply still streaming is not a reply yet.
-      yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES (
-          'm-streaming', ${chat}, 'assistant', 'Court three', 1,
-          '2026-10-15T17:05:00.000Z', '2026-10-15T17:05:00.000Z'
-        )
-      `;
-      assert.equal((yield* repository.summariesForTurn({ threadId: chat, limit: 2 })).length, 1);
-
-      // The bot's own finished reply after the call retires it for good.
-      yield* sql`
-        INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, is_streaming, created_at, updated_at
-        ) VALUES (
-          'm-after', ${chat}, 'assistant', 'Court three it is', 0,
-          '2026-10-15T17:06:00.000Z', '2026-10-15T17:06:00.000Z'
-        )
-      `;
+      // Delivered: now it is retired, and stays retired.
+      yield* repository.markSummariesDelivered({
+        callIds: ["t-1"],
+        at: DateTime.makeUnsafe("2026-10-15T17:10:00.000Z"),
+      });
+      assert.deepEqual(yield* repository.summariesForTurn({ threadId: chat, limit: 2 }), []);
+      // A second marking is a no-op, and an unknown id is simply ignored.
+      yield* repository.markSummariesDelivered({
+        callIds: ["t-1", "no-such-call"],
+        at: DateTime.makeUnsafe("2026-10-15T17:11:00.000Z"),
+      });
+      // An empty list is a no-op too (it must not build an `IN ()`).
+      yield* repository.markSummariesDelivered({
+        callIds: [],
+        at: DateTime.makeUnsafe("2026-10-15T17:12:00.000Z"),
+      });
       assert.deepEqual(yield* repository.summariesForTurn({ threadId: chat, limit: 2 }), []);
     }),
   );

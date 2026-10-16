@@ -3,12 +3,21 @@
  * The call-summary worker, end to end except Google: the HTTP boundary is a
  * fake transport, so the test proves the exact request (URL, model, the broker
  * placeholder in the header, the transcript in the prompt) and the exact
- * behaviour when the answer is unusable, when Google refuses, when there is no
- * key and when the call has no transcript.
+ * behaviour of every path that matters, including every fix the Astra review
+ * asked for:
+ *
+ * - the sensitive-chat gate, which the worker must pass exactly like a call
+ *   (finding 1), with the relay query narrowed to this call's own messages;
+ * - team-lead-only eligibility (finding 2);
+ * - persisted, capped attempts that cannot starve older calls (finding 5);
+ * - the fallback model tried when the primary's answer is unusable
+ *   (finding 8);
+ * - and no log line carrying the owner's words (finding 7).
  */
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
@@ -28,6 +37,7 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
 import type { BrokerRequest, BrokerSecret, SecretBrokerError } from "../secrets/secretBroker.ts";
+import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalVoiceCallRepository from "./PersonalVoiceCallRepository.ts";
 import {
   PersonalVoiceCallSummaryService,
@@ -39,6 +49,8 @@ const CTO_CHAT = ThreadId.make("thread-call-summary");
 const CTO_BOT = PersonalBotId.make("bot-cto");
 const CALL_ID = "8f9c3ace-a17b-4086-aa8a-e53058b480a9";
 const KEY_VALUE = "AIza-TEST-ONLY-KEY-VALUE";
+/** Text that must never reach a log line or a block the bot is given. */
+const PRIVATE = "SECRET-OWNER-WORDS-7f3a91";
 
 /** The real call's own lines, the ones the acceptance criteria name. */
 const REAL_TRANSCRIPT = JSON.stringify([
@@ -89,20 +101,38 @@ interface HttpCall {
 
 interface HarnessOptions {
   readonly calls: Array<HttpCall>;
-  /** What the fake transport answers; `null` returns 200 with a body that has no text. */
+  /** What the fake transport answers; the default is a good summary. */
   readonly answer?: (model: string) => VoiceCallMintOutcome;
   /** Make the transport itself fail, as a broker refusal does. */
   readonly throws?: boolean;
-  /** The saved key; `null` means no Gemini key at all. */
+  /** The saved key; `false` means no Gemini key at all. */
   readonly withKey?: boolean;
-  /** The bot's own transcript; `null` seeds a call with no transcript lines. */
+  /** The call's own transcript; `null` seeds a call with no transcript lines. */
   readonly transcriptJson?: string | null;
+  /** The bot's team-lead flag (Harout, 16 Oct: only leads take calls). */
+  readonly botIsLead?: boolean;
+  /** Sensitive exposure rows written for the chat, as the browser would. */
+  readonly exposed?: ReadonlyArray<string>;
+  /** A task row whose ROOT key is tainted instead of the chat's own key. */
+  readonly exposedRootTaskId?: string | null;
 }
 
 const good = (): VoiceCallMintOutcome => ({
   status: 200,
   token: null,
   body: JSON.stringify({ candidates: [{ content: { parts: [{ text: GOOD_ANSWER }] } }] }),
+});
+
+const unusable = (): VoiceCallMintOutcome => ({
+  status: 200,
+  token: null,
+  body: JSON.stringify({ candidates: [{ content: { parts: [{ text: "{not json" }] } }] }),
+});
+
+const down = (): VoiceCallMintOutcome => ({
+  status: 500,
+  token: null,
+  body: '{"error":{"message":"down"}}',
 });
 
 const makeHarness = (options: HarnessOptions) => {
@@ -117,6 +147,7 @@ const makeHarness = (options: HarnessOptions) => {
   return summaryLayer.pipe(
     Layer.provideMerge(PersonalVoiceCallRepository.layer),
     Layer.provideMerge(PersonalBotRepository.layer),
+    Layer.provideMerge(PersonalTaskRepository.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(
       Layer.mock(PersonalBotService.PersonalBotService)({
@@ -158,7 +189,7 @@ const makeHarness = (options: HarnessOptions) => {
   );
 };
 
-/** The bot and one finished call card, exactly as the live database holds them. */
+/** The bot, one finished call card and whatever the case needs around it. */
 const seed = (options: HarnessOptions) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -168,11 +199,13 @@ const seed = (options: HarnessOptions) =>
     yield* sql`
       INSERT INTO personal_bots (
         bot_id, name, description, instructions, avatar_shape, avatar_color,
-        model_selection_json, enabled, sort_order, created_at, updated_at, allow_voice_calls
+        model_selection_json, enabled, sort_order, created_at, updated_at,
+        is_lead, allow_voice_calls
       )
       VALUES (
         ${CTO_BOT}, 'CTO', '', '', 'blob', '#1A73E8',
-        '{"instanceId":"claudeAgent","model":"claude-opus-5-5"}', 1, 0, ${now}, ${now}, 1
+        '{"instanceId":"claudeAgent","model":"claude-opus-5-5"}', 1, 0, ${now}, ${now},
+        ${options.botIsLead === false ? 0 : 1}, 0
       )
     `;
     yield* sql`
@@ -186,6 +219,32 @@ const seed = (options: HarnessOptions) =>
         ${transcript ?? "[]"}, ${now}
       )
     `;
+    for (const source of options.exposed ?? []) {
+      yield* sql`
+        INSERT INTO personal_sensitive_exposures (exposure_key, kind, value, created_at)
+        VALUES (${`thread:${CTO_CHAT}`}, 'source', ${source}, ${now})
+      `;
+    }
+    if (options.exposedRootTaskId != null) {
+      // The chat belongs to a task tree whose ROOT carries the taint: the same
+      // second key the browser writes and reads.
+      yield* sql`
+        INSERT INTO personal_tasks (
+          task_id, root_task_id, parent_task_id, bot_id, thread_id, title, objective,
+          acceptance_criteria, expected_output, status, source, idempotency_key,
+          depth, max_depth, max_children, created_at, updated_at
+        )
+        VALUES (
+          'task-summary', ${options.exposedRootTaskId}, NULL, ${CTO_BOT}, ${CTO_CHAT},
+          'A task', 'Do it', '', '', 'running', 'delegation', 'task-summary', 0, 1, 5,
+          ${now}, ${now}
+        )
+      `;
+      yield* sql`
+        INSERT INTO personal_sensitive_exposures (exposure_key, kind, value, created_at)
+        VALUES (${`root:${options.exposedRootTaskId}`}, 'source', 'the bank', ${now})
+      `;
+    }
   });
 
 const withService = <A, E, R>(
@@ -206,6 +265,11 @@ const storedSummary = (sql: SqlClient.SqlClient) =>
   sql<{ readonly summary: string }>`
     SELECT summary_json AS "summary" FROM personal_voice_calls WHERE call_id = ${CALL_ID}
   `.pipe(Effect.map((rows) => rows[0]?.summary ?? ""));
+
+const storedAttempts = (sql: SqlClient.SqlClient) =>
+  sql<{ readonly attempts: number }>`
+    SELECT summary_attempts AS "attempts" FROM personal_voice_calls WHERE call_id = ${CALL_ID}
+  `.pipe(Effect.map((rows) => Number(rows[0]?.attempts ?? 0)));
 
 describe("PersonalVoiceCallSummaryService.summarise", () => {
   it.effect("writes the summary for the real transcript, from one Gemini text call", () => {
@@ -235,9 +299,8 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
         expect(sent.request.body).toContain("Court three is free from eleven to twelve");
         expect(sent.request.body).toContain("English, French, Arabic and Armenian");
 
-        // Stored on the card, and readable back through the repository.
-        const raw = yield* storedSummary(sql);
-        expect(raw).toContain("Court 3 is free 11:00-12:00");
+        expect(yield* storedSummary(sql)).toContain("Court 3 is free 11:00-12:00");
+        expect(yield* storedAttempts(sql)).toBe(1);
       }),
     );
   });
@@ -251,6 +314,28 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
         expect(again?.summary).toContain("Court 3");
         expect(calls).toHaveLength(1);
       }),
+    );
+  });
+
+  // Finding 8: the primary answered, so the old code stopped there, even
+  // though its answer could not be parsed.
+  it.effect("tries the fallback model when the primary's answer is unusable", () => {
+    const calls: Array<HttpCall> = [];
+    const models: Array<string> = [];
+    return withService(
+      {
+        calls,
+        answer: (model) => {
+          models.push(model);
+          return model === VOICE_CALL_SUMMARY_MODEL ? unusable() : good();
+        },
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const summary = yield* service.summarise(CALL_ID);
+          expect(summary).not.toBeNull();
+          expect(models).toEqual([VOICE_CALL_SUMMARY_MODEL, VOICE_CALL_SUMMARY_FALLBACK_MODEL]);
+        }),
     );
   });
 
@@ -269,33 +354,22 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
       },
       (service) =>
         Effect.gen(function* () {
-          const summary = yield* service.summarise(CALL_ID);
-          expect(summary).not.toBeNull();
+          expect(yield* service.summarise(CALL_ID)).not.toBeNull();
           expect(models).toEqual([VOICE_CALL_SUMMARY_MODEL, VOICE_CALL_SUMMARY_FALLBACK_MODEL]);
         }),
     );
   });
 
-  it.effect("a malformed answer leaves the card with its transcript and does not crash", () => {
+  it.effect("a malformed answer from both models leaves the card with its transcript", () => {
     const calls: Array<HttpCall> = [];
-    return withService(
-      {
-        calls,
-        answer: () => ({
-          status: 200,
-          token: null,
-          body: JSON.stringify({ candidates: [{ content: { parts: [{ text: "{not json" }] } }] }),
-        }),
-      },
-      (service, sql) =>
-        Effect.gen(function* () {
-          expect(yield* service.summarise(CALL_ID)).toBeNull();
-          expect(yield* storedSummary(sql)).toBe("");
-          // The model answered; its answer just was not a summary. Asking the
-          // second model the same question would not help, so only the primary
-          // was asked, and the card keeps its transcript.
-          expect(calls).toHaveLength(1);
-        }),
+    return withService({ calls, answer: () => unusable() }, (service, sql) =>
+      Effect.gen(function* () {
+        expect(yield* service.summarise(CALL_ID)).toBeNull();
+        expect(yield* storedSummary(sql)).toBe("");
+        expect(calls).toHaveLength(2);
+        // An unusable answer IS an attempt: it is what the cap counts.
+        expect(yield* storedAttempts(sql)).toBe(1);
+      }),
     );
   });
 
@@ -321,13 +395,15 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
     );
   });
 
-  it.effect("asks for nothing at all when the key is missing or not brokered", () => {
+  // Finding 5: "do not spend model attempts while credentials are unavailable".
+  it.effect("asks for nothing and spends no attempt when the key is missing", () => {
     const calls: Array<HttpCall> = [];
     return withService({ calls, withKey: false }, (service, sql) =>
       Effect.gen(function* () {
         expect(yield* service.summarise(CALL_ID)).toBeNull();
         expect(calls).toHaveLength(0);
         expect(yield* storedSummary(sql)).toBe("");
+        expect(yield* storedAttempts(sql)).toBe(0);
       }),
     );
   });
@@ -339,6 +415,7 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
         expect(yield* service.summarise(CALL_ID)).toBeNull();
         expect(calls).toHaveLength(0);
         expect(yield* storedSummary(sql)).toBe("");
+        expect(yield* storedAttempts(sql)).toBe(0);
       }),
     );
   });
@@ -349,6 +426,86 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
       Effect.gen(function* () {
         expect(yield* service.summarise("no-such-call")).toBeNull();
         expect(calls).toHaveLength(0);
+      }),
+    );
+  });
+
+  // Finding 2: Harout, 16 Oct: only a team lead takes calls, so only a team
+  // lead has calls worth summarising.
+  it.effect("asks for nothing when the bot is not a team lead", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, botIsLead: false }, (service, sql) =>
+      Effect.gen(function* () {
+        expect(yield* service.summarise(CALL_ID)).toBeNull();
+        expect(calls).toHaveLength(0);
+        expect(yield* storedAttempts(sql)).toBe(0);
+      }),
+    );
+  });
+
+  // Finding 1: the chat had a site the owner marked sensitive open.
+  it.effect("sends nothing to Google once the chat is sensitive, and never retries it", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, exposed: ["the bank"] }, (service, sql) =>
+      Effect.gen(function* () {
+        expect(yield* service.summarise(CALL_ID)).toBeNull();
+        expect(calls).toHaveLength(0);
+        // Not an attempt: this is a refusal, not a failure, so the cap is not
+        // spent on it.
+        expect(yield* storedAttempts(sql)).toBe(0);
+        expect(yield* storedSummary(sql)).toBe("");
+      }),
+    );
+  });
+
+  it.effect("sees taint that lives on the chat's task root, not the chat itself", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, exposedRootTaskId: "root-task-1" }, (service) =>
+      Effect.gen(function* () {
+        expect(yield* service.summarise(CALL_ID)).toBeNull();
+        expect(calls).toHaveLength(0);
+      }),
+    );
+  });
+
+  // Finding 1: the relay query used a time window, so a typed message during
+  // the call was sent to Google as if the call had said it.
+  it.effect("carries only the messages the voice relayed for THIS call", () => {
+    const calls: Array<HttpCall> = [];
+    const relayContext = (callId: string) =>
+      JSON.stringify({
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: "personal-voice-call",
+            label: "From the call",
+            kind: "personal-voice-call",
+            payload: { callId, source: "voice_call" },
+          },
+        ],
+      });
+    return withService({ calls }, (service, sql) =>
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO projection_thread_messages (
+            message_id, thread_id, role, text, is_streaming, created_at, updated_at, context_json
+          ) VALUES
+            ('m-relayed', ${CTO_CHAT}, 'user', 'Relayed by this call', 0,
+             '2026-10-16T14:00:30.000Z', '2026-10-16T14:00:30.000Z', ${relayContext(CALL_ID)}),
+            ('m-other-call', ${CTO_CHAT}, 'user', ${`Other call ${PRIVATE}`}, 0,
+             '2026-10-16T14:00:31.000Z', '2026-10-16T14:00:31.000Z',
+             ${relayContext("another-call-id")}),
+            ('m-typed', ${CTO_CHAT}, 'user', ${`Typed during the call ${PRIVATE}`}, 0,
+             '2026-10-16T14:00:32.000Z', '2026-10-16T14:00:32.000Z', NULL)
+        `;
+        yield* service.summarise(CALL_ID);
+        expect(calls).toHaveLength(1);
+        const body = calls[0]!.request.body ?? "";
+        expect(body).toContain("Relayed by this call");
+        expect(body).not.toContain("Other call");
+        expect(body).not.toContain("Typed during the call");
+        expect(body).not.toContain(PRIVATE);
       }),
     );
   });
@@ -366,31 +523,67 @@ describe("PersonalVoiceCallSummaryService.sweep", () => {
     );
   });
 
-  it.effect("waits about a minute before retrying, and gives up after the cap", () => {
+  // Finding 5: the cap and the wait are both real, and the count survives the
+  // process (it is a column), so a restart cannot start over.
+  it.effect("waits about a minute before retrying, and stops at the cap", () => {
     const calls: Array<HttpCall> = [];
-    return withService(
-      {
-        calls,
-        answer: () => ({ status: 500, token: null, body: '{"error":{"message":"down"}}' }),
-      },
-      (service) =>
-        Effect.gen(function* () {
-          expect(yield* service.sweep()).toBe(1);
-          // Both models, once.
-          expect(calls).toHaveLength(2);
-          // Straight away again: inside the retry window, so nothing happens.
-          expect(yield* service.sweep()).toBe(0);
-          expect(calls).toHaveLength(2);
-          yield* TestClock.adjust(VOICE_CALL_SUMMARY_RETRY_MS + 1_000);
-          expect(yield* service.sweep()).toBe(1);
-          yield* TestClock.adjust(VOICE_CALL_SUMMARY_RETRY_MS + 1_000);
-          expect(yield* service.sweep()).toBe(1);
-          expect(calls).toHaveLength(2 * VOICE_CALL_SUMMARY_MAX_ATTEMPTS);
-          // The cap is reached: the card keeps its transcript for good.
-          yield* TestClock.adjust(VOICE_CALL_SUMMARY_RETRY_MS * 10);
-          expect(yield* service.sweep()).toBe(0);
-          expect(calls).toHaveLength(2 * VOICE_CALL_SUMMARY_MAX_ATTEMPTS);
-        }),
+    return withService({ calls, answer: () => down() }, (service, sql) =>
+      Effect.gen(function* () {
+        expect(yield* service.sweep()).toBe(1);
+        expect(calls).toHaveLength(2);
+        expect(yield* storedAttempts(sql)).toBe(1);
+        // Straight away again: inside the retry window, so nothing happens.
+        expect(yield* service.sweep()).toBe(0);
+        expect(calls).toHaveLength(2);
+        yield* TestClock.adjust(VOICE_CALL_SUMMARY_RETRY_MS + 1_000);
+        expect(yield* service.sweep()).toBe(1);
+        yield* TestClock.adjust(VOICE_CALL_SUMMARY_RETRY_MS + 1_000);
+        expect(yield* service.sweep()).toBe(1);
+        expect(calls).toHaveLength(2 * VOICE_CALL_SUMMARY_MAX_ATTEMPTS);
+        expect(yield* storedAttempts(sql)).toBe(VOICE_CALL_SUMMARY_MAX_ATTEMPTS);
+        // Out of attempts: it is not offered again, even much later.
+        yield* TestClock.adjust(VOICE_CALL_SUMMARY_RETRY_MS * 10);
+        expect(yield* service.sweep()).toBe(0);
+        expect(calls).toHaveLength(2 * VOICE_CALL_SUMMARY_MAX_ATTEMPTS);
+      }),
+    );
+  });
+
+  // Finding 5: five exhausted rows must not starve the calls behind them.
+  it.effect("reaches older calls after newer ones have used up their attempts", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, answer: () => down() }, (service, sql) =>
+      Effect.gen(function* () {
+        // Five newer calls, all out of attempts, in front of the real one.
+        for (const index of [0, 1, 2, 3, 4]) {
+          yield* sql`
+            INSERT INTO personal_voice_calls (
+              call_id, thread_id, bot_id, started_at, ended_at, duration_seconds,
+              end_reason, message_count, voice_name, model, detail, transcript_json,
+              created_at, summary_attempts
+            )
+            VALUES (
+              ${`exhausted-${String(index)}`}, ${CTO_CHAT}, ${CTO_BOT},
+              ${`2026-10-16T15:0${String(index)}:00.000Z`},
+              ${`2026-10-16T15:0${String(index)}:05.000Z`},
+              5, 'hung_up', 0, 'Charon', 'gemini-3.8-live', '',
+              '[{"speaker":"you","text":"older call","at":"2026-10-16T15:00:00.000Z"}]',
+              '2026-10-16T15:01:00.000Z', ${VOICE_CALL_SUMMARY_MAX_ATTEMPTS}
+            )
+          `;
+        }
+        const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
+        // The exhausted five are not offered at all; the real call still is.
+        expect(
+          yield* repository.listNeedingSummary({
+            limit: 5,
+            maxAttempts: VOICE_CALL_SUMMARY_MAX_ATTEMPTS,
+          }),
+        ).toEqual([CALL_ID]);
+        expect(yield* service.sweep()).toBe(1);
+        expect(calls).toHaveLength(2);
+        expect(yield* storedAttempts(sql)).toBe(1);
+      }),
     );
   });
 
@@ -398,13 +591,58 @@ describe("PersonalVoiceCallSummaryService.sweep", () => {
     const calls: Array<HttpCall> = [];
     return withService({ calls }, (service) =>
       Effect.gen(function* () {
-        // The seeded card is exactly that: transcript, no summary, older than
-        // the worker. One sweep is the backfill.
         expect(yield* service.sweep()).toBe(1);
-        const rows = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
-        const stored = yield* rows.get(CALL_ID);
+        const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
+        const stored = yield* repository.get(CALL_ID);
         expect(Option.isSome(stored)).toBe(true);
         expect(Option.getOrNull(stored)?.summary?.points).toHaveLength(3);
+      }),
+    );
+  });
+
+  it.effect("does not spend an attempt while the key is missing, so it recovers later", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, withKey: false }, (service, sql) =>
+      Effect.gen(function* () {
+        yield* service.sweep();
+        yield* service.sweep();
+        expect(calls).toHaveLength(0);
+        expect(yield* storedAttempts(sql)).toBe(0);
+      }),
+    );
+  });
+});
+
+// Finding 7: a decode error carries the row it rejected, and the row holds the
+// summary. Only the error's class may be logged.
+describe("PersonalVoiceCallSummaryService log hygiene", () => {
+  it.effect("never logs the owner's own words when a stored row cannot be decoded", () => {
+    const calls: Array<HttpCall> = [];
+    const written: Array<string> = [];
+    const capture = Logger.layer([
+      Logger.make((options) => written.push(JSON.stringify(options.message))),
+    ]);
+    return withService({ calls }, (_service, sql) =>
+      Effect.gen(function* () {
+        // A row whose summary is fine but whose sibling column is not: the
+        // decode error's payload carries the whole row, summary included.
+        yield* sql`
+          UPDATE personal_voice_calls
+          SET summary_json = ${JSON.stringify({
+            summary: PRIVATE,
+            points: [],
+            decision: null,
+            open: null,
+          })},
+          end_reason = 'not-a-real-reason'
+          WHERE call_id = ${CALL_ID}
+        `;
+        const repository = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
+        const rows = yield* repository
+          .summariesForTurn({ threadId: CTO_CHAT, limit: 2 })
+          .pipe(Effect.provide(capture));
+        expect(rows).toEqual([]);
+        expect(written.join("\n")).not.toContain(PRIVATE);
       }),
     );
   });

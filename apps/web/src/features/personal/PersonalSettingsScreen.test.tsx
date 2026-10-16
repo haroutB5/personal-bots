@@ -57,6 +57,9 @@ vi.mock("./usePersonalBots", () => ({
 vi.mock("./voice/voiceCallApi", () => ({
   // The voice section's own row: no key saved, so it draws its empty state.
   personalVoiceCallCheckKey: {},
+  // Samples need the saved key, which this root has none of, so the play
+  // buttons never appear; the command still has to exist for the section.
+  personalVoiceCallSample: {},
   VOICE_CALL_KEY_ORIGIN_LABEL: "generativelanguage.googleapis.com",
   VOICE_CALL_KEY_PLACEMENT: { header: "x-goog-api-key" },
   GEMINI_KEYS_URL: "https://aistudio.google.com/apikey",

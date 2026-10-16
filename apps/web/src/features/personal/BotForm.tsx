@@ -117,8 +117,6 @@ interface BotDraft {
   pinned: boolean;
   memoryAutoSave: boolean;
   hidePreviews: boolean;
-  /** Whether this bot shows the call button in its chats (default off). */
-  allowVoiceCalls: boolean;
   notifications: BotNotificationsChoice;
 }
 
@@ -213,7 +211,6 @@ function draftFromBot(bot: PersonalBot): BotDraft {
     pinned: isBotPinned(bot),
     memoryAutoSave: savesMemoryWithoutAsking(bot),
     hidePreviews: hidesBotPreviews(bot),
-    allowVoiceCalls: botVoiceCallsEnabled(bot),
     notifications: initialNotificationsChoice(bot, Date.now()),
     effort:
       EFFORT_OPTION_IDS.map((id) =>
@@ -343,7 +340,6 @@ function BotForm({
       pinned: false,
       memoryAutoSave: true,
       hidePreviews: false,
-      allowVoiceCalls: false,
       notifications: "on",
     };
   });
@@ -534,7 +530,6 @@ function BotForm({
               ...fields,
               ...(fallback === undefined ? {} : { fallback }),
               ...(schedule === undefined ? {} : { schedule }),
-              allowVoiceCalls: draft.allowVoiceCalls,
             },
           })
         : await updateBot({
@@ -545,7 +540,6 @@ function BotForm({
               ...(fallback === undefined ? {} : { fallback }),
               ...(schedule === undefined ? {} : { schedule }),
               hidePreviews: draft.hidePreviews,
-              allowVoiceCalls: draft.allowVoiceCalls,
               ...(notificationsMute === undefined ? {} : { notificationsMute }),
             },
           });
@@ -973,20 +967,18 @@ function BotForm({
         </span>
       </label>
 
-      <label className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
-        <input
-          type="checkbox"
-          checked={draft.allowVoiceCalls}
-          onChange={(event) => update({ allowVoiceCalls: event.target.checked })}
-          className="size-5 shrink-0"
-        />
+      {/* Voice calls follow the lead flag (Harout, 16 Oct): there is no switch
+          to set, so this is a read-only line about the bot itself. */}
+      <div className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
         <span className="min-w-0">
-          Allow voice calls
+          Voice calls
           <span className="block text-sm text-[var(--personal-text-secondary)]">
-            Shows a call button in this bot's chats.
+            {draft.lead === true
+              ? "On: this bot is a team lead, so its chats show a call button."
+              : "Off: only team leads can take calls. Make this bot a team lead to turn calls on."}
           </span>
         </span>
-      </label>
+      </div>
 
       <div>
         <label htmlFor="bot-notifications" className={LABEL_CLASS}>

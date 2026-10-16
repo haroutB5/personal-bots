@@ -108,8 +108,7 @@ const CALL_COLUMNS = `
   summary_json AS "summaryJson"
 `;
 
-/**
- * The same row, with the transcript replaced by an empty one: the list never
+/** The same row, with the transcript replaced by an empty one: the list never
  * reads `transcript_json`, so a chat's whole call history costs one small
  * query rather than every transcript of up to fifty calls.
  */
@@ -117,6 +116,16 @@ const CALL_COLUMNS_WITHOUT_TRANSCRIPT = CALL_COLUMNS.replace(
   'transcript_json AS "transcript"',
   `'[]' AS "transcript"`,
 );
+
+/**
+ * An error's own tag and nothing else. A decode error carries the row it
+ * rejected, and that row holds the call summary, so the payload must never
+ * reach a log line (Astra review, finding 7).
+ */
+const errorTagOf = (error: unknown): string => {
+  const tag = (error as { readonly _tag?: unknown } | null)?._tag;
+  return typeof tag === "string" ? tag : "unknown";
+};
 
 /**
  * The call cards. Deliberately their own table and never a chat message:
@@ -164,24 +173,45 @@ export class PersonalVoiceCallRepository extends Context.Service<
     }) => Effect.Effect<boolean, PersonalVoiceCallRepositoryError>;
     /**
      * The calls that still need a summary: a stored transcript that is not
-     * empty, no summary yet. Ids only, and it never reads a transcript, so the
-     * boot scan and the lazy check on opening a chat are both cheap.
+     * empty, no summary yet, and fewer than `maxAttempts` model attempts
+     * already spent. Ids only, and it never reads a transcript, so the boot
+     * scan and the lazy check on opening a chat are both cheap.
+     *
+     * The attempt cap is part of the query, not a filter after it: five calls
+     * that have each failed three times would otherwise be the only five rows a
+     * sweep ever sees, starving every older call for good (Astra review,
+     * finding 5).
+     *
      * `threadId` narrows it to one chat.
      */
     readonly listNeedingSummary: (input: {
       readonly threadId?: ThreadId | undefined;
       readonly limit: number;
+      readonly maxAttempts: number;
     }) => Effect.Effect<ReadonlyArray<string>, PersonalVoiceCallRepositoryError>;
+    /** One more model attempt spent on this call, recorded before the request. */
+    readonly recordSummaryAttempt: (
+      callId: string,
+    ) => Effect.Effect<void, PersonalVoiceCallRepositoryError>;
     /**
-     * The summaries a bot's next turn should be given, newest first: calls
-     * that ended after the bot's own last reply in this chat, so a summary is
-     * carried once and then drops out of the context by itself. Capped small;
-     * an empty list is the normal case.
+     * The summaries a bot's next turn should be given, newest first: calls that
+     * carry a summary the bot has never been shown. Capped small; an empty list
+     * is the normal case.
      */
     readonly summariesForTurn: (input: {
       readonly threadId: ThreadId;
       readonly limit: number;
     }) => Effect.Effect<ReadonlyArray<VoiceCallRecord>, PersonalVoiceCallRepositoryError>;
+    /**
+     * These summaries have now been put into a turn's context, so the bot has
+     * been shown them and no later turn needs them again. Written when the turn
+     * request is built, which is the only moment that answers "did the bot see
+     * it" without guessing (Astra review, finding 3).
+     */
+    readonly markSummariesDelivered: (input: {
+      readonly callIds: ReadonlyArray<string>;
+      readonly at: DateTime.Utc;
+    }) => Effect.Effect<void, PersonalVoiceCallRepositoryError>;
     /**
      * Removes every call card of one chat and reports how many went. Called
      * when the chat is deleted: the transcript is the owner's own words and
@@ -356,6 +386,7 @@ export const make = Effect.gen(function* () {
         FROM personal_voice_calls
         WHERE summary_json = ''
           AND transcript_json NOT IN ('', '[]')
+          AND summary_attempts < ${Math.max(1, Math.trunc(input.maxAttempts))}
           ${input.threadId === undefined ? sql`` : sql`AND thread_id = ${input.threadId}`}
         ORDER BY started_at DESC, rowid DESC
         LIMIT ${Math.max(1, Math.trunc(input.limit))}
@@ -363,11 +394,28 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.map((rows) => rows.map((row) => row.callId)));
 
   /**
-   * A summary belongs to the bot's next turn and to nothing after it: it is
-   * given while the call ended after the bot's own last reply in this chat, and
-   * the bot's reply to that turn is what retires it. Nothing is stored to track
-   * that, so a restart, a failed turn or a second look at the same chat can
-   * only ever re-offer a summary the bot has not answered yet.
+   * Counted in the row before the request goes out, so a crash or a restart
+   * cannot hand the same call unlimited attempts. A call with no transcript and
+   * a call that is already written are never touched.
+   */
+  const recordSummaryAttempt: PersonalVoiceCallRepository["Service"]["recordSummaryAttempt"] = (
+    callId,
+  ) =>
+    query(
+      "recordSummaryAttempt",
+      sql`
+        UPDATE personal_voice_calls
+        SET summary_attempts = summary_attempts + 1
+        WHERE call_id = ${callId}
+          AND summary_json = ''
+      `,
+    ).pipe(Effect.asVoid);
+
+  /**
+   * A summary belongs to the bot's first turn after it was written and to
+   * nothing after it: the marker is written when the block goes into a turn's
+   * context, so a reply that lands before the summary exists can no longer
+   * retire a summary the bot never saw (Astra review, finding 3).
    */
   const summariesForTurn: PersonalVoiceCallRepository["Service"]["summariesForTurn"] = (input) =>
     query(
@@ -377,12 +425,7 @@ export const make = Effect.gen(function* () {
         FROM personal_voice_calls
         WHERE thread_id = ${input.threadId}
           AND summary_json <> ''
-          AND ended_at > COALESCE((
-            SELECT MAX(created_at) FROM projection_thread_messages
-            WHERE thread_id = ${input.threadId}
-              AND role = 'assistant'
-              AND is_streaming = 0
-          ), '')
+          AND summary_delivered_at = ''
         ORDER BY ended_at DESC, rowid DESC
         LIMIT ${Math.max(1, Math.trunc(input.limit))}
       `,
@@ -393,14 +436,31 @@ export const make = Effect.gen(function* () {
         ),
       ),
       // The projection table is another module's; a query that cannot run is
-      // the same as no summary at all, never a failed turn.
+      // the same as no summary at all, never a failed turn. Only the error's
+      // class is logged: a decode error carries the row it rejected, and that
+      // row holds the summary text (Astra review, finding 7).
       Effect.catch((cause) =>
         Effect.logWarning("personal voice call summaries for a turn could not be read", {
           threadId: input.threadId,
-          cause,
+          errorTag: errorTagOf(cause),
         }).pipe(Effect.as([] as ReadonlyArray<VoiceCallRecord>)),
       ),
     );
+
+  const markSummariesDelivered: PersonalVoiceCallRepository["Service"]["markSummariesDelivered"] = (
+    input,
+  ) =>
+    input.callIds.length === 0
+      ? Effect.void
+      : query(
+          "markSummariesDelivered",
+          sql`
+              UPDATE personal_voice_calls
+              SET summary_delivered_at = ${DateTime.formatIso(input.at)}
+              WHERE ${sql.in("call_id", input.callIds)}
+                AND summary_delivered_at = ''
+            `,
+        ).pipe(Effect.asVoid);
 
   const deleteByThread: PersonalVoiceCallRepository["Service"]["deleteByThread"] = (threadId) =>
     query(
@@ -476,7 +536,9 @@ export const make = Effect.gen(function* () {
     getTranscript,
     setSummary,
     listNeedingSummary,
+    recordSummaryAttempt,
     summariesForTurn,
+    markSummariesDelivered,
     deleteByThread,
     openLease,
     closeLease,

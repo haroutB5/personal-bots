@@ -214,6 +214,7 @@ import {
 } from "./personal/sessionPrewarm.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
+import * as PersonalVoiceSampleService from "./personal/voiceCalls/PersonalVoiceSampleService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
@@ -774,6 +775,7 @@ const makeWsRpcLayer = (
       const personalGroups = yield* PersonalGroupService.PersonalGroupService;
       const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
       const personalVoiceCalls = yield* PersonalVoiceCallService.PersonalVoiceCallService;
+      const personalVoiceSamples = yield* PersonalVoiceSampleService.PersonalVoiceSampleService;
       const personalLogins = yield* PersonalLoginService.PersonalLoginService;
       const loginRequests = yield* PersonalLoginRequestService.PersonalLoginRequestService;
       const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
@@ -3427,6 +3429,14 @@ const makeWsRpcLayer = (
             WS_METHODS.personalVoiceCallsTranscript,
             personalVoiceCalls.transcript(input),
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalVoiceCallsSample]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalVoiceCallsSample,
+            personalVoiceSamples.sample(input),
+            {
+              "rpc.aggregate": "server",
+            },
           ),
         // A team lead's request to remove or rewrite a bot it did not create. `decide` is the
         // tap on the card and the only way to approve one.

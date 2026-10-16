@@ -22,6 +22,7 @@
  *   this file ever contains a transcript or a summary, only ids and counts.
  */
 import {
+  botTakesVoiceCalls,
   profileVoiceCallSettings,
   VOICE_CALL_SECRET_NAME,
   VOICE_CALL_SECRET_ORIGIN,
@@ -33,6 +34,7 @@ import {
   type VoiceCallRecord,
   type VoiceCallSummary,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -43,11 +45,27 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import {
+  makeSensitiveExposureStore,
+  rootExposureKey,
+  threadExposureKey,
+} from "../browser/sensitiveExposureStore.ts";
+import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import { redactSecrets } from "../secretText.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
 import * as PersonalVoiceCallRepository from "./PersonalVoiceCallRepository.ts";
 import * as VoiceCallGemini from "./voiceCallGemini.ts";
 import { buildVoiceCallSummaryPrompt, parseVoiceCallSummary } from "./voiceCallSummary.ts";
+
+/**
+ * An error's own class and nothing else: a decode error carries the row it
+ * rejected, and that row holds the summary text (Astra review, finding 7).
+ */
+const errorTagOf = (cause: Cause.Cause<unknown>): string => {
+  const error = Cause.squash(cause) as { readonly _tag?: unknown } | null;
+  const tag = error?._tag;
+  return typeof tag === "string" ? tag : "unknown";
+};
 
 /**
  * How often the worker looks for a call that still needs a summary. Short
@@ -86,17 +104,48 @@ export const make = Effect.gen(function* () {
   const sessions = yield* PersonalSessionAccess.PersonalSessionAccess;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const botService = yield* PersonalBotService.PersonalBotService;
+  const taskRepository = yield* PersonalTaskRepository.PersonalTaskRepository;
   const http = yield* VoiceCallGemini.VoiceCallHttp;
   const sql = yield* SqlClient.SqlClient;
 
   // One summary at a time: a sweep and a lazy nudge can overlap, and Google's
   // free tier does not need two of these in flight.
   const lock = yield* Semaphore.make(1);
-  /** When each call was last attempted, so a failure waits its minute. */
+  /**
+   * When each call was last tried in THIS process, so a failed attempt waits
+   * about a minute before the next. The count itself is in the database
+   * (`summary_attempts`), so a restart cannot hand a call unlimited tries.
+   */
   const lastAttemptAtMs = new Map<string, number>();
-  /** How many times each call has been attempted, in total. */
-  const attempts = new Map<string, number>();
   const started = { value: false };
+
+  /**
+   * A chat that has had a site the owner marked sensitive open sends nothing to
+   * Google from here, and the read fails closed: a lookup that cannot be
+   * answered counts as exposed. This is the same taint a call itself checks at
+   * `start` (Astra review, finding 1: the worker used to skip it entirely). It
+   * reads the same persisted store through the same key builders the browser
+   * writes, plus the task root's key when the chat belongs to a task tree, so
+   * the worker cannot be a quieter way round the browser's own gate.
+   */
+  const sensitiveExposure = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const store = makeSensitiveExposureStore(sql);
+      const keys: Array<string> = [threadExposureKey(threadId)];
+      const task = yield* taskRepository
+        .latestTaskForThread(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isSome(task)) keys.push(rootExposureKey(task.value.rootTaskId));
+      const exposure = yield* store.read(keys);
+      return [...exposure.sources].toSorted();
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("personal voice call summary exposure unreadable; treating as exposed", {
+          threadId,
+          errorTag: errorTagOf(cause),
+        }).pipe(Effect.as(["unreadable"] as ReadonlyArray<string>)),
+      ),
+    );
 
   /**
    * The key a summary runs on: the same saved brokered `GEMINI_API_KEY` bound
@@ -121,9 +170,11 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * The messages the voice posted into the chat while the call was on, in
-   * order. They are the call's own words and are bounded twice: by the call's
-   * own window, and by a cap here.
+   * The messages the voice itself posted into the chat during this call, in
+   * order. They are picked by the call's own marker (`context_json` carries
+   * `personal-voice-call` and this call's id), never by a time window: a
+   * message the owner typed during the call is his chat, not the call's, and
+   * must not be sent to Google by this path (Astra review, finding 1).
    */
   const relayedMessages = (record: VoiceCallRecord) =>
     sql<{ readonly text: string }>`
@@ -131,8 +182,8 @@ export const make = Effect.gen(function* () {
       FROM projection_thread_messages
       WHERE thread_id = ${record.threadId}
         AND role = 'user'
-        AND created_at >= ${DateTime.formatIso(record.startedAt)}
-        AND created_at <= ${DateTime.formatIso(record.endedAt)}
+        AND instr(context_json, '"personal-voice-call"') > 0
+        AND instr(context_json, ${`"callId":"${record.callId}"`}) > 0
         AND length(trim(text)) > 0
       ORDER BY created_at ASC, message_id ASC
       LIMIT ${VOICE_CALL_SUMMARY_RELAY_MAX}
@@ -152,6 +203,15 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
+  /**
+   * Writes one call's summary, or answers null with nothing to write.
+   *
+   * Null is not one thing, and the difference matters to the worker: a call
+   * that is missing, already summarised, without a transcript, not from a team
+   * lead, in a sensitive chat or without a key is *skipped* and costs no
+   * attempt; a call whose model answer was unusable costs one. Attempts are
+   * recorded in the row before the first request goes out.
+   */
   const summarise: PersonalVoiceCallSummaryService["Service"]["summarise"] = (callId) =>
     Effect.gen(function* () {
       const stored = yield* calls
@@ -163,26 +223,47 @@ export const make = Effect.gen(function* () {
       // was summarised while the worker was restarting): nothing to write.
       if (record.summary !== undefined) return record.summary;
       if (record.transcript.every((entry) => entry.text.trim().length === 0)) return null;
-      const key = yield* summaryKey(record.threadId);
-      if (key === undefined) return null;
-      const profile = yield* botService
-        .getProfile()
-        .pipe(Effect.orElseSucceed(() => ({ displayName: "", voiceCalls: undefined })));
       const bot = yield* bots
         .getBotById({ botId: record.botId })
         .pipe(Effect.orElseSucceed(() => Option.none()));
+      // Voice calls are for team leads (Harout, 16 Oct). A bot that is not one
+      // has no call to summarise, and a bot that cannot be read is skipped
+      // rather than guessed at.
+      if (Option.isNone(bot) || !botTakesVoiceCalls(bot.value)) return null;
+      const exposed = yield* sensitiveExposure(record.threadId);
+      if (exposed.length > 0) {
+        // Deliberate: this chat must not reach Google at all, so this is not a
+        // failed attempt and is never retried.
+        yield* Effect.logInfo("personal voice call summary skipped for a sensitive chat", {
+          callId,
+          threadId: record.threadId,
+        });
+        return null;
+      }
+      const key = yield* summaryKey(record.threadId);
+      // No key: not an attempt. Adding the key later must still get these
+      // calls summarised (Astra review, finding 5).
+      if (key === undefined) return null;
+      yield* calls.recordSummaryAttempt(callId).pipe(Effect.orElseSucceed(() => undefined));
+      const profile = yield* botService
+        .getProfile()
+        .pipe(Effect.orElseSucceed(() => ({ displayName: "", voiceCalls: undefined })));
       const relayed = yield* relayedMessages(record);
       const prompt = buildVoiceCallSummaryPrompt({
-        botName: Option.isSome(bot) ? bot.value.name : "your assistant",
+        botName: bot.value.name,
         startedAt: DateTime.formatIso(record.startedAt),
         durationSeconds: record.durationSeconds,
         transcript: record.transcript,
         relayed,
         languages: profileVoiceCallSettings(profile).languages,
       });
-      const primary = yield* askModel(VOICE_CALL_SUMMARY_MODEL, prompt, key);
-      const answer = primary ?? (yield* askModel(VOICE_CALL_SUMMARY_FALLBACK_MODEL, prompt, key));
-      const summary = parseVoiceCallSummary(answer);
+      // Parse each model's answer on its own: a primary that answers with
+      // something unusable must still leave the fallback model a chance
+      // (Astra review, finding 8).
+      const primary = parseVoiceCallSummary(yield* askModel(VOICE_CALL_SUMMARY_MODEL, prompt, key));
+      const summary =
+        primary ??
+        parseVoiceCallSummary(yield* askModel(VOICE_CALL_SUMMARY_FALLBACK_MODEL, prompt, key));
       if (summary === null) {
         // Ids and counts only: the answer is the owner's own words.
         yield* Effect.logInfo("personal voice call summary was not usable", { callId });
@@ -201,10 +282,13 @@ export const make = Effect.gen(function* () {
       });
       return summary;
     }).pipe(
+      // The class of the failure, never the cause: a decode error carries the
+      // row it rejected, and that row holds the summary text (Astra review,
+      // finding 7).
       Effect.catchCause((cause) =>
         Effect.logWarning("personal voice call summary failed; the card keeps its transcript", {
           callId,
-          cause,
+          errorTag: Cause.hasInterruptsOnly(cause) ? "interrupted" : errorTagOf(cause),
         }).pipe(Effect.as(null)),
       ),
     );
@@ -213,30 +297,29 @@ export const make = Effect.gen(function* () {
     lock
       .withPermit(
         Effect.gen(function* () {
+          // The attempt cap is in the query, so a call that is out of attempts
+          // can no longer push the older calls out of the window (Astra review,
+          // finding 5).
           const ids = yield* calls
-            .listNeedingSummary({ limit: VOICE_CALL_SUMMARY_SWEEP_LIMIT })
+            .listNeedingSummary({
+              limit: VOICE_CALL_SUMMARY_SWEEP_LIMIT,
+              maxAttempts: VOICE_CALL_SUMMARY_MAX_ATTEMPTS,
+            })
             .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
           const nowMs = yield* Effect.map(DateTime.now, DateTime.toEpochMillis);
           let attempted = 0;
           for (const callId of ids) {
-            const tries = attempts.get(callId) ?? 0;
-            if (tries >= VOICE_CALL_SUMMARY_MAX_ATTEMPTS) continue;
             const last = lastAttemptAtMs.get(callId);
             // A first attempt runs at once; a retry waits its minute, so the
             // attempts are spread out and then the call is left alone.
             if (last !== undefined && nowMs - last < VOICE_CALL_SUMMARY_RETRY_MS) continue;
-            attempts.set(callId, tries + 1);
             lastAttemptAtMs.set(callId, nowMs);
             attempted += 1;
             const written = yield* summarise(callId);
-            // A written call is forgotten (the maps stay the size of the work
-            // still to do). A call that is out of attempts keeps its count, so
-            // it is skipped from now on instead of starting over: the card
-            // shows its transcript, which is what it would have shown anyway.
-            if (written !== null) {
-              attempts.delete(callId);
-              lastAttemptAtMs.delete(callId);
-            }
+            // A written call is forgotten. One that was only skipped (no key,
+            // sensitive chat, not a lead) keeps its place in the map so the
+            // wait applies to it too, and its attempt count is untouched.
+            if (written !== null) lastAttemptAtMs.delete(callId);
           }
           return attempted;
         }),
@@ -256,7 +339,9 @@ export const make = Effect.gen(function* () {
         }),
       ).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("personal voice call summary worker stopped", { cause }),
+          Effect.logWarning("personal voice call summary worker stopped", {
+            errorTag: Cause.hasInterruptsOnly(cause) ? "interrupted" : errorTagOf(cause),
+          }),
         ),
       );
       return Effect.asVoid(Effect.forkDetach(worker));
@@ -276,6 +361,7 @@ export const layer = Layer.effect(PersonalVoiceCallSummaryService, make);
  */
 export const layerLive = layer.pipe(
   Layer.provideMerge(PersonalBotService.layer),
+  Layer.provideMerge(PersonalTaskRepository.layer),
   Layer.provideMerge(PersonalVoiceCallRepository.layer),
   Layer.provideMerge(PersonalSessionAccess.layerLive),
   Layer.provideMerge(VoiceCallGemini.layerLive),

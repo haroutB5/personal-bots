@@ -132,6 +132,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalVoiceCallsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalVoiceCallsSnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.personalVoiceCallsTranscript]: AuthOrchestrationReadScope,
+  // Makes one short clip with the saved key and caches it; no call, no chat.
+  [WS_METHODS.personalVoiceCallsSample]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalVoiceCallsLookupMemory]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalVoiceCallsRenewPass]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalVoiceCallsSearchWeb]: AuthOrchestrationOperateScope,

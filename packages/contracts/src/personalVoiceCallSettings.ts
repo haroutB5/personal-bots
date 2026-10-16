@@ -130,10 +130,19 @@ export const profileVoiceCallSettings = (profile: {
 };
 
 /**
- * Whether a bot may be called. Optional on the wire only so a client built
- * before this feature still decodes `personalBots.list`; read it through this,
- * which treats an older server's silence as off.
+ * Whether a bot may be called at all.
+ *
+ * Harout, 16 Oct 2026: "any team lead should have this enabled for them. If
+ * it's a regular bot or agent then it doesn't get it." The authority is the
+ * bot's own team-lead flag and nothing else. The older per-bot
+ * `allow_voice_calls` switch (migration 109) stays in the database for
+ * rollback only and no longer decides anything.
  */
-export const botAllowsVoiceCalls = (bot: {
-  readonly allowVoiceCalls?: boolean | undefined;
-}): boolean => bot.allowVoiceCalls === true;
+export const botTakesVoiceCalls = (bot: { readonly lead?: boolean | undefined }): boolean =>
+  bot.lead === true;
+
+/**
+ * The old name, for callers that still say "allows". It answers the same
+ * question, so a missed call site cannot quietly keep the old meaning.
+ */
+export const botAllowsVoiceCalls = botTakesVoiceCalls;

@@ -19,6 +19,7 @@ import {
   type RuntimeMode,
   type TurnId,
   VOICE_CALL_SUMMARY_CONTEXT_CALLS,
+  type VoiceCallRecord,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
@@ -253,6 +254,17 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 /** How much of a chat a fresh task session is given; the work record carries the rest. */
 const TASK_FRESH_HANDOFF_CHARS = 6_000;
 
+/**
+ * An error's own class and nothing else. A decode error carries the row it
+ * rejected, and a call row holds the summary text, so a cause must never be
+ * logged whole (Astra review, finding 7).
+ */
+const errorTagOf = (cause: Cause.Cause<unknown>): string => {
+  const error = Cause.squash(cause) as { readonly _tag?: unknown } | null;
+  const tag = error?._tag;
+  return typeof tag === "string" ? tag : "unknown";
+};
+
 /** Whether a turn message is a task continuation that asks for a fresh provider session. */
 export function isFreshTaskTurn(
   context:
@@ -293,18 +305,22 @@ const make = Effect.gen(function* () {
   const personalMemory = yield* Effect.serviceOption(PersonalMemoryService.PersonalMemoryService);
   const voiceCalls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
   /**
-   * The summary of a phone call the bot has not answered yet, as a short block
-   * in front of its next turn's context. A call card is never a chat message
-   * and its transcript never reaches a model, so this is the one thing that
-   * crosses from a call into the bot's context: the lines the owner has already
-   * read on the card. Empty for almost every turn; a lookup that fails is a
-   * turn without it, never a failed turn.
+   * The summaries of phone calls the bot has never been shown, as a short block
+   * in front of its next turn's context, newest call first. A call card is
+   * never a chat message and its transcript never reaches a model, so this is
+   * the one thing that crosses from a call into the bot's context: the lines
+   * the owner has already read on the card. Empty for almost every turn; a
+   * lookup that fails is a turn without it, never a failed turn.
+   *
+   * Delivery is recorded by the caller once the block is actually in a turn
+   * (`markSummariesDelivered`), which is what retires it. Nothing here guesses
+   * from message timestamps: a reply that lands before the summary exists must
+   * not consume it (Astra review, finding 3).
    */
-  const voiceCallSummaryForTurn = (threadId: ThreadId) =>
-    voiceCalls.summariesForTurn({ threadId, limit: VOICE_CALL_SUMMARY_CONTEXT_CALLS }).pipe(
-      Effect.map(voiceCallSummaryContextBlock),
-      Effect.orElseSucceed(() => ""),
-    );
+  const voiceCallSummariesForTurn = (threadId: ThreadId) =>
+    voiceCalls
+      .summariesForTurn({ threadId, limit: VOICE_CALL_SUMMARY_CONTEXT_CALLS })
+      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<VoiceCallRecord>));
   const personalBotInstructions = (threadId: ThreadId) =>
     personalBots.getInstructionsForThread({ threadId }).pipe(
       Effect.map((instructions) =>
@@ -1416,10 +1432,32 @@ const make = Effect.gen(function* () {
         )
       : undefined;
     const memoryContext = memory?.block;
-    // A call the bot has not answered yet: its summary goes in front of the
+    // Calls the bot has never been shown: their summaries go in front of the
     // memory (the memory block's own rules open with "Known facts", so it reads
-    // correctly wherever it sits) and is dropped only by the usual input cap.
-    const callContext = normalizedInput ? yield* voiceCallSummaryForTurn(input.threadId) : "";
+    // correctly wherever it sits) and are dropped only by the usual input cap.
+    const callSummaries = normalizedInput
+      ? yield* voiceCallSummariesForTurn(input.threadId)
+      : ([] as ReadonlyArray<VoiceCallRecord>);
+    const callContext = voiceCallSummaryContextBlock(callSummaries);
+    // The block is part of this turn's context from here on, so the calls are
+    // marked delivered now: it is the only honest answer to "did the bot see
+    // it", and a turn that fails later still saw it (Astra review, finding 3).
+    if (callSummaries.length > 0) {
+      yield* voiceCalls
+        .markSummariesDelivered({
+          callIds: callSummaries.map((record) => record.callId),
+          at: yield* DateTime.now,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("personal voice call summaries could not be marked delivered", {
+              threadId: input.threadId,
+              count: callSummaries.length,
+              errorTag: errorTagOf(cause),
+            }),
+          ),
+        );
+    }
     const withCallSummary = (text: string | undefined): string | undefined =>
       callContext === ""
         ? text

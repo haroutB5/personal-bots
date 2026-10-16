@@ -104,22 +104,61 @@ describe("voiceCallSummaryContextBlock", () => {
     expect(block).toContain("Call 4 summary");
     expect(block.includes("Call 0 summary")).toBe(false);
     expect(block.includes("Call 3 summary")).toBe(false);
-    expect(block.length).toBeLessThanOrEqual(VOICE_CALL_SUMMARY_CONTEXT_CHARS + 200);
+    // The whole block, header included, stays inside the cap (finding 6).
+    expect(block.length).toBeLessThanOrEqual(VOICE_CALL_SUMMARY_CONTEXT_CHARS);
   });
 
-  it("keeps the newest call when a huge one would overflow the cap", () => {
+  // Finding 6: the newest call must survive. Its bullets go first, then the
+  // sentence is trimmed, but something of the newest call always gets through.
+  it("compacts the newest call rather than dropping it when it cannot fit whole", () => {
     const block = voiceCallSummaryContextBlock([
       record({
         callId: "huge",
         summary: {
           summary: "x".repeat(5_000),
-          points: [],
-          decision: null,
+          points: ["a bullet that must be dropped"],
+          decision: "keep the booking as it is",
           open: null,
         },
       }),
     ]);
-    // Half a call is worse than none: an oversized summary is dropped whole.
-    expect(block).toBe("");
+    expect(block.length).toBeLessThanOrEqual(VOICE_CALL_SUMMARY_CONTEXT_CHARS);
+    expect(block).toContain("Voice call summary");
+    expect(block).toContain("xxxx");
+    // The bullets are what goes first, and the raw text is trimmed to the
+    // budget with an ellipsis rather than dropped whole.
+    expect(block).not.toContain("a bullet that must be dropped");
+    expect(block).toContain("...");
+  });
+
+  // Finding 6: the newest decision is what the next turn is about, so an older
+  // call can never push it out.
+  it("keeps the newest call and its decision when two calls cannot both fit", () => {
+    const half = "y".repeat(VOICE_CALL_SUMMARY_CONTEXT_CHARS / 2 - 60);
+    const block = voiceCallSummaryContextBlock([
+      record({
+        callId: "newest",
+        startedAt: DateTime.makeUnsafe("2026-10-16T14:00:00.000Z"),
+        summary: {
+          summary: half,
+          points: [],
+          decision: "book court three",
+          open: null,
+        },
+      }),
+      record({
+        callId: "older",
+        startedAt: DateTime.makeUnsafe("2026-10-15T09:00:00.000Z"),
+        summary: {
+          summary: half,
+          points: [],
+          decision: "the older decision",
+          open: null,
+        },
+      }),
+    ]);
+    expect(block.length).toBeLessThanOrEqual(VOICE_CALL_SUMMARY_CONTEXT_CHARS);
+    expect(block).toContain("book court three");
+    expect(block).not.toContain("the older decision");
   });
 });

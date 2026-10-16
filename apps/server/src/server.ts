@@ -95,6 +95,7 @@ import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalVoiceCallSummaryService from "./personal/voiceCalls/PersonalVoiceCallSummaryService.ts";
+import * as PersonalVoiceSampleService from "./personal/voiceCalls/PersonalVoiceSampleService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
@@ -670,11 +671,13 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalBotRepository.layer),
 );
 
-// The personal group with the call-summary worker provided to it, as ONE step:
-// the reactors in the group start that worker at boot (Harout, 16 Oct), and the
-// chain below is at its 20-step limit.
+// The personal group with the voice-call workers provided to it, as ONE step:
+// the reactors in the group start the summary worker at boot (Harout, 16 Oct),
+// and the chain below is at its 20-step limit. The sample service rides along:
+// it is reached only from Settings, but it is built from the same broker path.
 const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
   Layer.provideMerge(PersonalVoiceCallSummaryService.layerLive),
+  Layer.provideMerge(PersonalVoiceSampleService.layerLive),
 );
 
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(

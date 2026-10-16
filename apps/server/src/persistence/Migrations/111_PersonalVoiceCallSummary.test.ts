@@ -45,20 +45,31 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("111_PersonalVoiceCal
         readonly notnull: number;
         readonly dflt: string | null;
       }>`
-          SELECT name, type, "notnull" AS notnull, dflt_value AS dflt
+          SELECT name, type, "notnull" AS "notnull", dflt_value AS "dflt"
           FROM pragma_table_info('personal_voice_calls')
-          WHERE name = 'summary_json'
+          WHERE name IN ('summary_json', 'summary_attempts', 'summary_delivered_at')
+          ORDER BY name
         `;
-      assert.equal(after.length, 1);
-      assert.equal(after[0]!.type, "TEXT");
-      assert.equal(after[0]!.notnull, 1);
-      assert.equal(after[0]!.dflt, "''");
+      assert.deepEqual(
+        after.map((column) => [column.name, column.type, column.notnull, column.dflt]),
+        [
+          ["summary_attempts", "INTEGER", 1, "0"],
+          ["summary_delivered_at", "TEXT", 1, "''"],
+          ["summary_json", "TEXT", 1, "''"],
+        ],
+      );
 
-      const rows = yield* sql<{ readonly callId: string; readonly summary: string }>`
-          SELECT call_id AS "callId", summary_json AS "summary"
+      const rows = yield* sql<{
+        readonly callId: string;
+        readonly summary: string;
+        readonly attempts: number;
+        readonly delivered: string;
+      }>`
+          SELECT call_id AS "callId", summary_json AS "summary",
+                 summary_attempts AS "attempts", summary_delivered_at AS "delivered"
           FROM personal_voice_calls
         `;
-      assert.deepEqual(rows, [{ callId: "call-old", summary: "" }]);
+      assert.deepEqual(rows, [{ callId: "call-old", summary: "", attempts: 0, delivered: "" }]);
 
       // The transcript and the rest of the card survive the ALTER.
       const transcript = yield* sql<{ readonly transcript: string }>`
@@ -87,10 +98,12 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("111_PersonalVoiceCal
           UPDATE personal_voice_calls SET summary_json = '{"summary":"x","points":[],"decision":null,"open":null}'
           WHERE call_id = 'call-1'
         `;
-      const rows = yield* sql<{ readonly summary: string }>`
-          SELECT summary_json AS "summary" FROM personal_voice_calls
+      const rows = yield* sql<{ readonly summary: string; readonly attempts: number }>`
+          SELECT summary_json AS "summary", summary_attempts AS "attempts"
+          FROM personal_voice_calls WHERE call_id = 'call-1'
         `;
       assert.include(rows[0]!.summary, '"summary":"x"');
+      assert.equal(rows[0]!.attempts, 0);
     }),
   );
 });

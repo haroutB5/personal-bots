@@ -14,6 +14,7 @@
  */
 import {
   personalSecretPlaceholder,
+  VOICE_CALL_SAMPLE_MAX_BYTES,
   VOICE_CALL_SECRET_HEADER,
   VOICE_CALL_SECRET_NAME,
   type VoiceCallErrorCode,
@@ -133,6 +134,84 @@ export const voiceCallSummaryText = (outcome: VoiceCallMintOutcome): string | nu
     .join("")
     .trim();
   return text === "" ? null : text;
+};
+
+// ---------------------------------------------------------------------------
+// voice samples (Settings > Voice calls)
+// ---------------------------------------------------------------------------
+
+/**
+ * The one request a voice sample makes. The text is a constant that never comes
+ * from a caller, so this path cannot be used as a general text-to-speech proxy;
+ * the voice name is checked against the contract's allow-list before the
+ * request is built.
+ */
+export const voiceCallSampleRequest = (input: {
+  readonly model: string;
+  readonly voiceName: string;
+  readonly text: string;
+}): BrokerRequest => ({
+  method: "POST",
+  url: voiceCallSummaryUrl(input.model),
+  headers: {
+    "content-type": "application/json",
+    [VOICE_CALL_SECRET_HEADER]: personalSecretPlaceholder(VOICE_CALL_SECRET_NAME),
+  },
+  body: JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: input.text }] }],
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: input.voiceName } } },
+    },
+  }),
+  timeoutMs: 45_000,
+  maxResponseBytes: VOICE_CALL_SAMPLE_MAX_BYTES,
+});
+
+/** Gemini's answer to a sample request: one inline audio part. */
+const SampleResponse = Schema.Struct({
+  candidates: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        content: Schema.optional(
+          Schema.Struct({
+            parts: Schema.optional(
+              Schema.Array(
+                Schema.Struct({
+                  inlineData: Schema.optional(
+                    Schema.Struct({ mimeType: Schema.String, data: Schema.String }),
+                  ),
+                }),
+              ),
+            ),
+          }),
+        ),
+      }),
+    ),
+  ),
+});
+const decodeSampleResponse = Schema.decodeUnknownOption(Schema.fromJsonString(SampleResponse));
+
+/**
+ * The audio of a sample answer, or null when Google sent a shape this app does
+ * not recognise. A response that is not an audio type is refused here rather
+ * than handed to a browser.
+ */
+export const voiceCallSampleAudio = (
+  outcome: VoiceCallMintOutcome,
+): { readonly mimeType: string; readonly base64: string } | null => {
+  if (outcome.status !== 200) return null;
+  const decoded = decodeSampleResponse(outcome.body);
+  if (Option.isNone(decoded)) return null;
+  for (const candidate of decoded.value.candidates ?? []) {
+    for (const part of candidate.content?.parts ?? []) {
+      const inline = part.inlineData;
+      if (inline === undefined || inline.data === "") continue;
+      if (!inline.mimeType.toLowerCase().startsWith("audio/")) return null;
+      return { mimeType: inline.mimeType, base64: inline.data };
+    }
+  }
+  return null;
 };
 
 /** Google's answer, before it is turned into the app's own error codes. */

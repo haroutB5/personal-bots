@@ -207,7 +207,7 @@ function baseErrorCopyFor(
     case "calls_not_allowed":
       return {
         title: "This bot can't take calls",
-        body: "Turn on Allow voice calls on this bot's page.",
+        body: "Voice calls are for team leads. Make this bot a team lead on its page.",
         primary: "Open the bot's page",
         onPrimary: actions.onBotPage,
       };

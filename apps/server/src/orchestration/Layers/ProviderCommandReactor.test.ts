@@ -3240,11 +3240,12 @@ describe("ProviderCommandReactor", () => {
       );
     });
 
-    it("a turn after a phone call carries the call summary until the bot has replied", async () => {
+    it("a turn after a phone call carries the call summary exactly once", async () => {
       // Harout, 16 Oct: the call card is not a chat message and its transcript
       // never reaches a model, so the summary is the one thing that crosses
-      // from a call into the bot's next turn - once, and not after the bot has
-      // answered it.
+      // from a call into the bot's next turn. Astra's finding 3: what retires
+      // it is that the block WAS in a turn, not that a reply happened to land
+      // after the call, so this test needs no reply at all.
       const harness = await createHarness({ personalBotThread: true, personalMemory: true });
       await harness.runSql(
         Effect.gen(function* () {
@@ -3275,21 +3276,19 @@ describe("ProviderCommandReactor", () => {
       // model is given the lines the owner has already read, not the call.
       expect(first.turnContext).not.toContain("Owner: court three");
 
-      // The bot's own reply, written after the call ended, retires the block.
+      // Delivery is recorded against the call row, so the next turn has
+      // nothing to carry, reply or no reply.
       await harness.runSql(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* sql`
-            INSERT INTO projection_thread_messages (
-              message_id, thread_id, role, text, is_streaming, created_at, updated_at
-            ) VALUES (
-              'm-call-reply', 'thread-1', 'assistant', 'Court three it is', 0,
-              '2026-01-02T10:03:30.000Z', '2026-01-02T10:03:30.000Z'
-            )
+          const rows = yield* sql<{ readonly delivered: string }>`
+            SELECT summary_delivered_at AS "delivered" FROM personal_voice_calls
+            WHERE call_id = 'call-turn'
           `;
+          expect(rows[0]?.delivered).not.toBe("");
         }),
       );
-      await startTurn(harness, asMessageId("user-message-after-reply"));
+      await startTurn(harness, asMessageId("user-message-after-delivery"));
       await waitFor(() => harness.sendTurn.mock.calls.length === 2);
       await harness.drain();
       const second = harness.sendTurn.mock.calls[1]?.[0] as { readonly turnContext?: string };

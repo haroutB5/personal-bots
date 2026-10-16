@@ -321,6 +321,8 @@ import {
   VoiceCallSnapshotResult,
   VoiceCallStartInput,
   VoiceCallStartResult,
+  VoiceCallSampleInput,
+  VoiceCallSampleResult,
   VoiceCallTranscriptInput,
   VoiceCallTranscriptResult,
 } from "./personalVoiceCalls.ts";
@@ -665,6 +667,7 @@ export const WS_METHODS = {
   personalVoiceCallsList: "personalVoiceCalls.list",
   personalVoiceCallsSnapshot: "personalVoiceCalls.snapshot",
   personalVoiceCallsTranscript: "personalVoiceCalls.transcript",
+  personalVoiceCallsSample: "personalVoiceCalls.sample",
   personalLeadBotChangesList: "personalLeadBotChanges.list",
   personalLeadBotChangesDecide: "personalLeadBotChanges.decide",
   personalFilesDelete: "personalFiles.delete",
@@ -1509,6 +1512,13 @@ const WsPersonalVoiceCallsSnapshotRpc = Rpc.make(WS_METHODS.personalVoiceCallsSn
 const WsPersonalVoiceCallsTranscriptRpc = Rpc.make(WS_METHODS.personalVoiceCallsTranscript, {
   payload: VoiceCallTranscriptInput,
   success: VoiceCallTranscriptResult,
+  error: PersonalVoiceCallsRpcError,
+});
+
+// One voice's sample clip, made once with the saved key and cached after that.
+const WsPersonalVoiceCallsSampleRpc = Rpc.make(WS_METHODS.personalVoiceCallsSample, {
+  payload: VoiceCallSampleInput,
+  success: VoiceCallSampleResult,
   error: PersonalVoiceCallsRpcError,
 });
 
@@ -2751,6 +2761,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalVoiceCallsSearchWebRpc,
   WsPersonalVoiceCallsSnapshotRpc,
   WsPersonalVoiceCallsTranscriptRpc,
+  WsPersonalVoiceCallsSampleRpc,
   WsPersonalLeadBotChangesListRpc,
   WsPersonalLeadBotChangesDecideRpc,
   WsPersonalFilesDeleteRpc,

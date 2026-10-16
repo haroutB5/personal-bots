@@ -95,6 +95,42 @@ export const VoiceCallSummary = Schema.Struct({
 export type VoiceCallSummary = typeof VoiceCallSummary.Type;
 
 // ---------------------------------------------------------------------------
+// voice samples (Settings > Voice calls, spec section 8)
+// ---------------------------------------------------------------------------
+
+/**
+ * The TTS model a sample is made with. Same generation as the call voice, so a
+ * sample sounds like the voice he will actually get on a call.
+ */
+export const VOICE_CALL_SAMPLE_MODEL = "gemini-3.8-flash-tts";
+/**
+ * The one line every sample says. Fixed on purpose: the request must never
+ * carry text from a page, a chat or the owner, so this endpoint can never be
+ * turned into a free text-to-speech proxy.
+ */
+export const VOICE_CALL_SAMPLE_TEXT =
+  "Hi, this is how I sound on a call. Anything you need, just say.";
+/** The largest audio answer accepted: a four-second clip is about 200 KB. */
+export const VOICE_CALL_SAMPLE_MAX_BYTES = 1_500_000;
+
+export const VoiceCallSampleInput = Schema.Struct({
+  /** Must be one of {@link VOICE_CALL_VOICES}: the allow-list, checked server-side. */
+  voiceName: Schema.String,
+});
+export type VoiceCallSampleInput = typeof VoiceCallSampleInput.Type;
+
+export const VoiceCallSampleResult = Schema.Struct({
+  voiceName: Schema.String,
+  /** "audio/wav": Google returns a complete WAV file. */
+  mimeType: Schema.String,
+  /** The clip itself, base64. Made once per voice, then served from the laptop. */
+  base64: Schema.String,
+  /** True when this answer came from the cache and no model call was made. */
+  cached: Schema.Boolean,
+});
+export type VoiceCallSampleResult = typeof VoiceCallSampleResult.Type;
+
+// ---------------------------------------------------------------------------
 // start
 // ---------------------------------------------------------------------------
 
@@ -207,6 +243,7 @@ export const VoiceCallErrorCode = Schema.Literals([
   "google_unavailable",
   "rate_limited",
   "invalid_input",
+  "sample_unavailable",
   "not_found",
 ]);
 export type VoiceCallErrorCode = typeof VoiceCallErrorCode.Type;

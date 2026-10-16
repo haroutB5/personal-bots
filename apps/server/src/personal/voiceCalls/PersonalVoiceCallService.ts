@@ -13,14 +13,14 @@
  *   transcript.
  * - `list` hands the chat its cards, which the client places at `startedAt`.
  *
- * Owner chats only: a bot chat whose "Allow voice calls" switch is on, not
- * archived, not a group relay, not a task or routine chat. `start` is rate
- * limited so a loop cannot burn the quota.
+ * Owner chats only: a bot chat whose bot is a team lead, not archived, not a
+ * group relay, not a task or routine chat. `start` is rate limited so a loop
+ * cannot burn the quota.
  */
 import * as NodeCrypto from "node:crypto";
 
 import {
-  botAllowsVoiceCalls,
+  botTakesVoiceCalls,
   ComposerContextId,
   CommandId,
   MessageId,
@@ -407,10 +407,10 @@ export const make = Effect.gen(function* () {
       const bot = yield* bots
         .getBotById({ botId: chat.botId })
         .pipe(Effect.mapError((cause) => fail("not_found", "Could not read that bot.", cause)));
-      if (Option.isNone(bot) || !botAllowsVoiceCalls(bot.value)) {
+      if (Option.isNone(bot) || !botTakesVoiceCalls(bot.value)) {
         return yield* fail(
           "calls_not_allowed",
-          "This bot cannot take calls. Turn on Allow voice calls on its page.",
+          "Voice calls are for team leads. Make this bot a team lead on its page to call it.",
         );
       }
       const shell = yield* projections
@@ -939,7 +939,7 @@ export const make = Effect.gen(function* () {
       const bot = yield* bots
         .getBotById({ botId: facts.value.botId })
         .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isNone(bot) || !botAllowsVoiceCalls(bot.value)) {
+      if (Option.isNone(bot) || !botTakesVoiceCalls(bot.value)) {
         return { calls: [] } satisfies VoiceCallListResult;
       }
       const rows = yield* calls

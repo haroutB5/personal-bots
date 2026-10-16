@@ -23,7 +23,7 @@
  * @module features/personal/voice/VoiceSettingsSection
  */
 import type { JSX } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   profileVoiceCallSettings,
@@ -54,8 +54,15 @@ import {
   type VoiceCallCheck,
   hasVoiceCallKey,
   personalVoiceCallCheckKey,
+  personalVoiceCallSample,
   voiceApiKeyCheckLine,
 } from "./voiceCallApi";
+import {
+  createBrowserVoiceSampleAudio,
+  type FetchVoiceSample,
+  type VoiceSampleAudio,
+} from "./callSamples";
+import { VoiceSampleButton } from "./VoiceSampleButton";
 
 const ROW = "flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left";
 const ROW_BUTTON =
@@ -73,6 +80,23 @@ export function VoiceSettingsSection(): JSX.Element {
   const createSecret = useAtomCommand(personalSecretCreate, { reportFailure: false });
   const deleteSecret = useAtomCommand(personalSecretDelete, { reportFailure: false });
   const checkKey = useAtomCommand(personalVoiceCallCheckKey, { reportFailure: false });
+  const requestSample = useAtomCommand(personalVoiceCallSample, { reportFailure: false });
+
+  /**
+   * One clip, fetched on the tap. The play button unlocks audio first (inside
+   * the tap, for iOS) and only then awaits this.
+   */
+  const fetchSample = useCallback<FetchVoiceSample>(
+    async ({ voiceName }) => {
+      if (environmentId === null) throw new Error("no environment");
+      const result = await requestSample({ environmentId, input: { voiceName } });
+      if (result._tag !== "Success" || result.value === undefined) {
+        throw new Error("sample unavailable");
+      }
+      return result.value;
+    },
+    [environmentId, requestSample],
+  );
 
   const settings = profileVoiceCallSettings(profile.data ?? {});
   const hasKey = hasVoiceCallKey(savedSecrets.data?.secrets ?? null);
@@ -348,6 +372,9 @@ export function VoiceSettingsSection(): JSX.Element {
           selected={settings.voiceName}
           onPick={(name) => patch({ voiceName: name })}
           onClose={() => setVoiceOpen(false)}
+          samplePlaybackAvailable={hasKey}
+          fetchSample={fetchSample}
+          createAudio={createBrowserVoiceSampleAudio}
         />
       ) : null}
 
@@ -447,14 +474,22 @@ function VoiceSheet({
   selected,
   onPick,
   onClose,
+  samplePlaybackAvailable,
+  fetchSample,
+  createAudio,
 }: {
   readonly selected: string;
   readonly onPick: (name: string) => void;
   readonly onClose: () => void;
+  /** Samples need the saved key, so the play buttons appear only when there is one. */
+  readonly samplePlaybackAvailable: boolean;
+  /** The clip for one voice, from the server (cached there after the first tap). */
+  readonly fetchSample: FetchVoiceSample;
+  readonly createAudio: () => VoiceSampleAudio;
 }): JSX.Element {
   const [showMore, setShowMore] = useState(false);
   const row = (name: string, note: string | null) => (
-    <div key={name} className={`${ROW} justify-between`}>
+    <div key={name} className={`${ROW} justify-between gap-2`}>
       <button
         type="button"
         role="radio"
@@ -475,6 +510,9 @@ function VoiceSheet({
           <Check aria-hidden="true" className="size-5 shrink-0 text-[var(--personal-live)]" />
         ) : null}
       </button>
+      {samplePlaybackAvailable ? (
+        <VoiceSampleButton voiceName={name} fetchSample={fetchSample} createAudio={createAudio} />
+      ) : null}
     </div>
   );
 
@@ -490,7 +528,9 @@ function VoiceSheet({
       >
         <SheetTitle className="px-1 text-center text-[17px] leading-6 font-bold">Voice</SheetTitle>
         <p className="mt-1 px-1 text-center text-[13px] text-[var(--personal-text-secondary)]">
-          Tap a voice to use it on every call.
+          {samplePlaybackAvailable
+            ? "Tap play to hear a voice, or tap the name to use it on every call."
+            : "Tap a voice to use it on every call."}
         </p>
         <div role="radiogroup" aria-label="Voice" className="mt-3 flex flex-col">
           {CURATED_VOICES.map((voice) => row(voice.name, voice.note))}

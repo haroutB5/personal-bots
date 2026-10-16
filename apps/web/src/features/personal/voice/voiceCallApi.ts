@@ -45,6 +45,8 @@ import {
   VOICE_CALL_VOICES,
   type VoiceCallSettings,
   type VoiceCallSettingsInput,
+  type VoiceCallSampleInput,
+  type VoiceCallSampleResult,
   type VoiceCallStartInput,
   type VoiceCallStartResult,
   type VoiceCallSummary,
@@ -85,6 +87,16 @@ export const personalVoiceCallTranscript = createEnvironmentRpcQueryAtomFamily(
     staleTimeMs: 5 * 60_000,
   },
 );
+
+/**
+ * One voice's sample clip for Settings > Voice calls. A command, not a query:
+ * the server makes it once (a short Gemini TTS call) and caches it, and the
+ * owner expects the tap to play rather than to read a cache.
+ */
+export const personalVoiceCallSample = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-voice-calls:sample",
+  tag: WS_METHODS.personalVoiceCallsSample,
+});
 
 /**
  * The call's OWN chat while a call is running: the bot's status, whether its
@@ -174,6 +186,8 @@ export type {
   VoiceCallKeyCheckResult,
   VoiceCallListResult,
   VoiceCallRecord,
+  VoiceCallSampleInput,
+  VoiceCallSampleResult,
   VoiceCallSendInput,
   VoiceCallSendResult,
   VoiceCallSettings,
