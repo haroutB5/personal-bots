@@ -368,3 +368,17 @@ E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `cha
 
 Tree: HEAD at start `370f3dec73575655e1c704dd112cf4f0ce10729b`, at end `370f3dec73575655e1c704dd112cf4f0ce10729b`; tracked files modified: none. Staged release: version 1.66.59, sha 370f3dec7357, dirty False, externals copied; `dist/bin.mjs` sha256 `9a372aeb281848b324508ffba8249d9a49c20f05cd6b8166c4d8cd4d7c8351dd`.
 <!-- gate-evidence:end -->
+
+## QA delta re-test (staged 370f3dec7357): SHIP
+
+QA, 16 October 2026, about 17:44-18:00 BST. Re-tested Astra's R1-R6 and the voice samples on the staged release `370f3dec7357`, plus a quick regression. One throwaway server from the staged release, Gemini text and TTS answered by a test-only stub (no Google traffic, dummy key), fake Claude CLI, agent-browser in dark mode at 390x844. Evidence: `C:\Claude\AI\dev-team\qa\hbots-16659-qa2\REPORT.md`.
+
+- **R1** PASS. The chat turned sensitive while the primary summary request was pending (it answered unusable text): the stub got 1 request and no fallback, and no summary was stored. Task-lookup failure failing closed is covered by the unit test, not the browser.
+- **R2** PASS. A good send carried 2 of 5 due summaries and retired only those 2. The next send carried the 2 left out and not the first ones again, so each arrived once. The refused-send and context-left-out legs are covered by the two ProviderCommandReactor tests; a runtime refusal could not be forced safely.
+- **R3** PASS. Six newer calls in a sensitive chat did not block an older eligible call. It was summarised in the first sweep, and the six got 0 requests and 0 attempts.
+- **R4** PASS. For a 12-minute call, the open card picked up its summary on the same page without a reload.
+- **R5** PASS. After the lead was demoted mid-call, snapshot and renew were refused (calls_not_allowed) and finish stored the transcript.
+- **R6** PASS. Tapping voice A then B quickly played only B. Stop during the fetch played nothing. Closing the sheet during the fetch played nothing.
+- **Regression** PASS. Normal call card with summary, Tasks empty state, and chat send with a reply all worked. 0 page errors. The server log has 0 ERROR lines.
+- Unit tests run on this commit's code: server 204 passed (4 files), web 23 passed (3 files).
+- Not covered: real Gemini audio and iPhone playback.
