@@ -9,7 +9,6 @@
  * else).
  */
 import * as NodeCrypto from "node:crypto";
-import * as NodeURL from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -116,10 +115,13 @@ const withService = <A, E, R>(
     return yield* body(service, options.baseDir);
   }).pipe(Effect.provide(makeHarness(options)));
 
-/** A fresh data root per test, so one test's cache cannot answer another's. */
+/**
+ * A fresh data root per test, so one test's cache cannot answer another's. It
+ * lives in the machine's temp folder, never in the repo: a test that leaves a
+ * cache behind must not be able to commit it.
+ */
 const tempBaseDir = () =>
-  `${NodeURL.fileURLToPath(new URL("./.tmp-samples/", import.meta.url))}${NodeCrypto.randomUUID()}`;
-
+  `${process.env["TEMP"] ?? process.env["TMP"] ?? "."}/hbots-voice-sample-${NodeCrypto.randomUUID()}`;
 describe("PersonalVoiceSampleService", () => {
   it.effect("makes one clip for an allowed voice, with the fixed text only", () => {
     const calls: Array<HttpCall> = [];
