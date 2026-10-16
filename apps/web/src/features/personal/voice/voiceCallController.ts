@@ -509,6 +509,9 @@ export function createVoiceCallController(
       candidate = (status.latestReply ?? "").trim();
     }
     if (candidate !== null && candidate !== narrateLastSent) narratePending = candidate;
+    // The turn is over: a step it never got to say is stale, and the voice is
+    // about to be told the real reply instead.
+    if (narratePending !== null && status.state !== "working") narratePending = null;
     if (narratePending === null) return;
     // Never over the owner and never over the voice itself: only at a pause.
     if (state.pill === "speaking" || at - lastSpeechAtMs < VOICE_NARRATE_PAUSE_MS) return;

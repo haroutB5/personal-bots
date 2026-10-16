@@ -641,6 +641,31 @@ describe("work updates for the voice", () => {
     expect(spokenLines(socket)).toEqual([`${VOICE_WORK_UPDATE_PREFIX}Thinking about it`]);
   });
 
+  it("drops an update whose turn is already over", async () => {
+    const test = harness();
+    const socket = await connected(test);
+    test.status.current = workingAt("Reading the release notes");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // The step changes while the voice is mid-sentence, and the turn ends
+    // before any pause lets the update out: the reply is what matters now.
+    test.status.current = workingAt("Opening clubspark.uk");
+    socket.receive({
+      serverContent: {
+        modelTurn: { parts: [{ inlineData: { data: "AAAA", mimeType: "audio/pcm;rate=24000" } }] },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    test.status.current = {
+      state: "idle",
+      step: null,
+      elapsedMs: null,
+      latestReply: "Booked it.",
+    };
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(spokenLines(socket)).toHaveLength(0);
+  });
+
   it("speaks an interim message the bot posted while it is still working", async () => {
     const test = harness();
     const socket = await connected(test);
