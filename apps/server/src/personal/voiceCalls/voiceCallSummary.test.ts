@@ -382,9 +382,9 @@ describe("parseVoiceCallSummary", () => {
 
   it("reads the two real Claude Haiku 5.5 answers from the 1.66.61 proof, verbatim", () => {
     // `claude -p --output-format json --json-schema ... --model claude-haiku-5-5
-    // --effort low --tools ""`, 16 Oct 2026, 7.7 s and 6.6 s, on the owner's own
-    // Claude Code subscription, against the same two fixtures. This is the path
-    // 1.66.61 prefers; Gemini sits behind it.
+    // --effort medium --tools ""`, 16 Oct 2026, 4.1 s and 6.6 s, on the owner's
+    // own Claude Code subscription, against the same two fixtures. This is the
+    // path 1.66.61 prefers; Gemini sits behind it.
     const greetingAnswer = `{
   "summary": "Short call: just a greeting, nothing asked or decided.",
   "points": [],
@@ -400,24 +400,24 @@ describe("parseVoiceCallSummary", () => {
     });
 
     const tennisAnswer = `{
-  "summary": "Owner asked whether a slot is free before his Saturday tennis booking; the voice reported Court 3 is free 11:00-12:00 with a move to Court 2 at 12:00.",
+  "summary": "Owner asked whether a free tennis slot exists before his Saturday booking; the voice found Court 3 free 11:00-12:00 but he would need to move to Court 2 at 12:00.",
   "points": [
-    "The voice said the confirmed booking is Court 2 on Saturday 17 October, 12:00 PM to 3:00 PM.",
-    "The voice said Court 2 is busy 11:00-12:00 on Saturday 17 October, so the slot before the booking is taken.",
-    "The voice said Court 3 is free 11:00-12:00 on Saturday 17 October, but you would need to move to Court 2 at 12:00.",
-    "The voice said the original booking was not changed."
+    "The voice said his confirmed booking is Court 2, Saturday October 17, 12:00 PM to 3:00 PM.",
+    "The voice said Court 2 is busy 11:00-12:00 on Saturday, so the slot before his booking is not available there.",
+    "The voice said Court 3 is free 11:00-12:00 on Saturday, but he would have to move to Court 2 at 12:00.",
+    "The voice said his original booking was not changed."
   ],
-  "decision": "no change, just wanted to know",
+  "decision": "No change, just wanted to know.",
   "open": null,
   "shortCall": false
 }`;
     const parsed = parseVoiceCallSummary(tennisAnswer);
-    expect(parsed!.summary).toContain("Court 3 is free 11:00-12:00");
+    expect(parsed!.summary).toContain("Court 3 free 11:00-12:00");
     expect(parsed!.points).toHaveLength(4);
     expect(parsed!.points[0]).toBe(
-      "The voice said the confirmed booking is Court 2 on Saturday 17 October, 12:00 PM to 3:00 PM.",
+      "The voice said his confirmed booking is Court 2, Saturday October 17, 12:00 PM to 3:00 PM.",
     );
-    expect(parsed!.decision).toBe("no change, just wanted to know");
+    expect(parsed!.decision).toBe("No change, just wanted to know.");
     expect(parsed!.open).toBeNull();
   });
 });

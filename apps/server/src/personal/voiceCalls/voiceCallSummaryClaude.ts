@@ -6,9 +6,11 @@
  * chat titles, branch names and the memory tidy-up: the owner's own Claude Code
  * subscription through the Claude CLI (`claude -p --output-format json
  * --json-schema ... --tools ""`), on the Haiku 5.5 text-generation default at
- * the background effort (`low`), with no tools and no checkout. No API key is
- * added and nothing new is configured: `PERSONAL_TEXTGEN_MODEL` and
- * `PERSONAL_TEXTGEN_EFFORT` keep working exactly as they do for a title.
+ * **medium** effort (Harout's decision, 16 Oct 2026), with no tools and no
+ * checkout. No API key is added and nothing new is configured:
+ * `PERSONAL_TEXTGEN_MODEL` keeps working exactly as it does for a title, and
+ * naming the effort here is what stops the text-generation path adding its own
+ * low background effort for exactly this model.
  *
  * Two things about this file are load-bearing:
  *
@@ -36,6 +38,16 @@ import { VoiceCallSummaryAnswer, summaryFromAnswerObject } from "./voiceCallSumm
 /** The provider instance every Claude background text job in this app runs through. */
 export const VOICE_CALL_SUMMARY_CLAUDE_INSTANCE = ProviderInstanceId.make("claudeAgent");
 
+/**
+ * The effort the summary runs at (Harout's decision, 16 Oct 2026): **medium**,
+ * not the low a title uses. A summary is a background job, so its latency does
+ * not matter, but its judgement does: what counts as a finding or a decision is
+ * exactly the thing this model gets wrong at low. Naming it on the selection
+ * also stops the text-generation path folding in its own low background effort
+ * for the default model, so this is the effort that really reaches the CLI.
+ */
+export const VOICE_CALL_SUMMARY_CLAUDE_EFFORT = "medium";
+
 export class VoiceCallSummaryClaude extends Context.Service<
   VoiceCallSummaryClaude,
   {
@@ -44,6 +56,8 @@ export class VoiceCallSummaryClaude extends Context.Service<
      * kill switch: the id recorded on the summary as `model`.
      */
     readonly model: string;
+    /** The effort the request really names, for the proof and the stored log line. */
+    readonly effort: string;
     /**
      * One transcript prompt answered by Claude, or null when it answered
      * nothing the parser can use. Fails with a short reason (never the model's
@@ -58,10 +72,12 @@ export const claudeLayer = Layer.effect(
   Effect.gen(function* () {
     const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     // The same resolution the title path does: the default, or what the kill
-    // switch pins. Asking for the default is what earns the low effort.
+    // switch pins. The effort is named on the selection below, so the
+    // text-generation path keeps it instead of adding its low default.
     const model = resolveTextGenerationModel(CLAUDE_TEXT_GENERATION_DEFAULT_MODEL);
     return VoiceCallSummaryClaude.of({
       model,
+      effort: VOICE_CALL_SUMMARY_CLAUDE_EFFORT,
       ask: (prompt) =>
         Effect.gen(function* () {
           const instance = yield* registry.getInstance(VOICE_CALL_SUMMARY_CLAUDE_INSTANCE);
@@ -74,7 +90,11 @@ export const claudeLayer = Layer.effect(
           const answer = yield* generate({
             prompt,
             outputSchema: VoiceCallSummaryAnswer,
-            modelSelection: { instanceId: VOICE_CALL_SUMMARY_CLAUDE_INSTANCE, model },
+            modelSelection: {
+              instanceId: VOICE_CALL_SUMMARY_CLAUDE_INSTANCE,
+              model,
+              options: [{ id: "effort", value: VOICE_CALL_SUMMARY_CLAUDE_EFFORT }],
+            },
           }).pipe(
             // The class only. A TextGenerationError's detail can carry CLI
             // stderr, and this file never puts the owner's words in a log.

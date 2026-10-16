@@ -13,7 +13,8 @@
  * `voiceCallSummaryClaude.ts`), with the Gemini Flash Lite path behind it as
  * the fallback, so a summary still appears when Claude is on a usage limit, the
  * CLI errors or the call times out. The model that wrote it is stored on the
- * summary as `model` and logged by id, never by its text.
+ * summary as `model` and logged by id, never by its text; the effort it ran at
+ * (medium) is a fixed property of this path and is logged beside the model.
  *
  * How it behaves, and why:
  *
@@ -304,7 +305,7 @@ export const make = Effect.gen(function* () {
       });
       /**
        * Claude first (Harout, 16 Oct 2026): the owner's own Claude Code
-       * subscription, Haiku 5.5 at the background effort, no tools. Anything
+       * subscription, Haiku 5.5 at medium effort, no tools. Anything
        * that stops it answering (usage limit, CLI error, timeout, an answer the
        * parser will not take) falls through to Gemini below, so a card still
        * gets its summary. The gate runs again first, so a chat that turned
@@ -378,6 +379,7 @@ export const make = Effect.gen(function* () {
         callId,
         threadId: record.threadId,
         model: summary.model ?? "unknown",
+        effort: claude.effort,
         points: summary.points.length,
         hasDecision: summary.decision !== null,
         relayed: relayed.length,

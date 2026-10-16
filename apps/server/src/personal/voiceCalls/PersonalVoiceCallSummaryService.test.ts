@@ -207,6 +207,7 @@ const makeHarness = (options: HarnessOptions) => {
         VoiceCallSummaryClaude,
         VoiceCallSummaryClaude.of({
           model: CLAUDE_MODEL,
+          effort: "medium",
           ask: (prompt) =>
             options.claude?.(prompt) ??
             Effect.fail("the Claude CLI is at its usage limit or not installed"),
