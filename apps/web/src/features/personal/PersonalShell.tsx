@@ -133,13 +133,17 @@ export function PersonalShell(): JSX.Element {
           {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
           <InAppNotifications />
           <OutboxFlusher />
-          {swipeBack.layers}
           <ChunkLoadBoundary>
             <Suspense fallback={null}>
               <VoiceCallMount />
             </Suspense>
           </ChunkLoadBoundary>
         </div>
+        {/* Beside the root, not in it: while a swipe moves the root it has a
+            transform, which makes it the containing block of every fixed child,
+            so the list under the chat rode along with the chat and was clipped
+            by its overflow (useChatSwipeBack.tsx). */}
+        {swipeBack.layers}
       </VoiceCallProvider>
     );
   }

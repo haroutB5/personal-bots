@@ -6,6 +6,7 @@ import {
   EdgeSwipeTracker,
   NATIVE_SWIPE_STORAGE_KEY,
   nativeSwipeForced,
+  swipeLayerGeometry,
 } from "./edgeSwipeBack";
 
 const CHAT = "/bots/bot-planner/thread-1";
@@ -116,5 +117,42 @@ describe("EdgeSwipeTracker", () => {
     expect(tracker.move({ x: 7, y: 380, t: 16 })).toEqual({ kind: "scroll", dx: 2, dy: -20 });
     expect(tracker.move({ x: 60, y: 370, t: 32 })).toEqual({ kind: "scroll", dx: 53, dy: -10 });
     expect(tracker.end(48)).toEqual({ kind: "scroll" });
+  });
+});
+
+describe("swipeLayerGeometry", () => {
+  const WIDTH = 390;
+
+  // Harout's iPhone, 1.66.54: the list under the chat rode along with the chat
+  // and was clipped at the chat's left edge, leaving a black strip. The layers
+  // are viewport-fixed now, so the list's left edge is the parallax alone.
+  it("starts the list 30% to the left and settles it flush with the screen", () => {
+    expect(swipeLayerGeometry(0, WIDTH).underlayShiftPercent).toBeCloseTo(-30);
+    expect(swipeLayerGeometry(0, WIDTH).underlayX).toBeCloseTo(-117);
+    expect(swipeLayerGeometry(WIDTH / 2, WIDTH).underlayShiftPercent).toBeCloseTo(-15);
+    expect(swipeLayerGeometry(WIDTH, WIDTH).underlayX).toBeCloseTo(0);
+  });
+
+  it("moves the chat with the finger and clamps it to the screen", () => {
+    expect(swipeLayerGeometry(120, WIDTH).chatX).toBe(120);
+    expect(swipeLayerGeometry(-10, WIDTH).chatX).toBe(0);
+    expect(swipeLayerGeometry(WIDTH + 50, WIDTH).chatX).toBe(WIDTH);
+  });
+
+  it("always covers the screen from x = 0 up to the chat's left edge", () => {
+    for (let offset = 0; offset <= WIDTH; offset += 13) {
+      const layers = swipeLayerGeometry(offset, WIDTH);
+      expect(layers.underlayX).toBeLessThanOrEqual(0);
+      expect(layers.underlayX + WIDTH).toBeGreaterThanOrEqual(layers.chatX - 1e-9);
+    }
+  });
+
+  it("fades the dimming out as the chat leaves", () => {
+    expect(swipeLayerGeometry(0, WIDTH).shade).toBeCloseTo(0.12);
+    expect(swipeLayerGeometry(WIDTH, WIDTH).shade).toBe(0);
+  });
+
+  it("survives a zero width", () => {
+    expect(swipeLayerGeometry(10, 0)).toMatchObject({ progress: 0, chatX: 0, underlayX: -0 });
   });
 });

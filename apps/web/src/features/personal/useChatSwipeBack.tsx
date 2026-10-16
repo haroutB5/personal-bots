@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLocation, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 
@@ -12,6 +12,7 @@ import {
   EDGE_WIDTH_PX,
   EdgeSwipeTracker,
   nativeSwipeForced,
+  swipeLayerGeometry,
 } from "./edgeSwipeBack";
 import { keptBotsListScrollTop } from "./keptBotsList";
 import { PersonalTabBar } from "./PersonalTabBar";
@@ -24,13 +25,21 @@ const TeamScreen = lazy(() =>
   import("./TeamScreen").then((module) => ({ default: module.TeamScreen })),
 );
 const SETTLE_MS = 220;
-/** How far left the list starts, as iOS navigation does (share of the width). */
-const PARALLAX = 0.3;
 
 type Phase =
   | { readonly kind: "idle" }
   | { readonly kind: "drag"; readonly offset: number }
-  | { readonly kind: "settle"; readonly offset: number; readonly leaving: boolean };
+  | {
+      readonly kind: "settle";
+      readonly offset: number;
+      readonly leaving: boolean;
+      readonly ms: number;
+    };
+
+/** A settle is a jump, not a slide, for people who asked for less motion. */
+function settleMs(): number {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : SETTLE_MS;
+}
 
 function readStorage(): Storage | null {
   try {
@@ -204,19 +213,20 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
         return;
       }
       if (end.kind === "scroll") return;
+      const ms = settleMs();
       if (end.kind === "cancel") {
-        setPhase({ kind: "settle", offset: 0, leaving: false });
-        timer = window.setTimeout(() => setPhase({ kind: "idle" }), SETTLE_MS);
+        setPhase({ kind: "settle", offset: 0, leaving: false, ms });
+        timer = window.setTimeout(() => setPhase({ kind: "idle" }), ms);
         return;
       }
-      setPhase({ kind: "settle", offset: window.innerWidth, leaving: true });
+      setPhase({ kind: "settle", offset: window.innerWidth, leaving: true, ms });
       timer = window.setTimeout(() => {
         // The arrow's own path: the Bots list (or the Team screen) is right
         // behind, so this steps back.
         void navigate({ to: behindTeam ? "/bots/team" : "/bots" });
         window.clearTimeout(leaveFallback.current);
         leaveFallback.current = window.setTimeout(() => setPhase({ kind: "idle" }), 2000);
-      }, SETTLE_MS);
+      }, ms);
     };
     const onCancel = () => {
       tracker = null;
@@ -235,11 +245,38 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
     };
   }, [behindTeam, enabled, navigate]);
 
+  // The list and tab bar under the chat are one element for as long as the
+  // target stays the same, so the per-touchmove renders only restyle the layer
+  // and never walk the list again.
+  const behindBody = useMemo(
+    () => (
+      <>
+        <div
+          ref={behindTeam ? undefined : matchKeptListScroll}
+          className="min-h-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]"
+        >
+          {behindTeam ? (
+            <ChunkLoadBoundary>
+              <Suspense fallback={null}>
+                <TeamScreen />
+              </Suspense>
+            </ChunkLoadBoundary>
+          ) : (
+            <ChatsScreen />
+          )}
+        </div>
+        <PersonalTabBar active="chats" />
+      </>
+    ),
+    [behindTeam],
+  );
+
   const moving = shown.kind !== "idle";
   const offset = shown.kind === "idle" ? 0 : shown.offset;
   const width = typeof window === "undefined" ? 1 : window.innerWidth;
-  const progress = Math.min(1, offset / width);
-  const transition = shown.kind === "settle" ? `transform ${SETTLE_MS}ms ease-out` : "none";
+  const geometry = swipeLayerGeometry(offset, width);
+  const settleDuration = shown.kind === "settle" ? shown.ms : 0;
+  const transition = shown.kind === "settle" ? `transform ${settleDuration}ms ease-out` : "none";
   const chatStyle: CSSProperties | undefined = moving
     ? {
         position: "relative",
@@ -250,6 +287,10 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
       }
     : undefined;
 
+  // Rendered beside the chat's root (PersonalShell), never inside it: the
+  // root carries the transform while it moves, and a transformed element is the
+  // containing block of its fixed children, so a layer in it would ride along
+  // with the chat and be clipped by its overflow instead of filling the screen.
   const layers = (
     <>
       {moving ? (
@@ -259,30 +300,16 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
           inert
           className="personal-app fixed inset-0 flex flex-col overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
           style={{
-            transform: `translate3d(${-(1 - progress) * PARALLAX * 100}%, 0, 0)`,
+            transform: `translate3d(${geometry.underlayShiftPercent}%, 0, 0)`,
             transition,
           }}
         >
-          <div
-            ref={behindTeam ? undefined : matchKeptListScroll}
-            className="min-h-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]"
-          >
-            {behindTeam ? (
-              <ChunkLoadBoundary>
-                <Suspense fallback={null}>
-                  <TeamScreen />
-                </Suspense>
-              </ChunkLoadBoundary>
-            ) : (
-              <ChatsScreen />
-            )}
-          </div>
-          <PersonalTabBar active="chats" />
+          {behindBody}
           <div
             className="pointer-events-none absolute inset-0 bg-black"
             style={{
-              opacity: 0.12 * (1 - progress),
-              transition: shown.kind === "settle" ? `opacity ${SETTLE_MS}ms ease-out` : "none",
+              opacity: geometry.shade,
+              transition: shown.kind === "settle" ? `opacity ${settleDuration}ms ease-out` : "none",
             }}
           />
         </div>
