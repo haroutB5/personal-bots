@@ -91,6 +91,13 @@ export const VoiceCallSummary = Schema.Struct({
   decision: Schema.NullOr(Schema.String),
   /** Anything left undecided, or null when nothing was. */
   open: Schema.NullOr(Schema.String),
+  /**
+   * Which model wrote it, as its id (Harout, 16 Oct 2026: `claude-haiku-5-5`
+   * first, the Gemini Flash Lite path behind it). Absent on summaries written
+   * before the Claude path existed, so a read never requires it. It is a label
+   * for the owner and for diagnosis, never a claim about the call.
+   */
+  model: Schema.optional(Schema.String),
 });
 export type VoiceCallSummary = typeof VoiceCallSummary.Type;
 

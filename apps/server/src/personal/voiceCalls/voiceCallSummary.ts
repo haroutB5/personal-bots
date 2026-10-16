@@ -30,6 +30,23 @@ import {
   type VoiceCallSummary,
   type VoiceCallTranscriptEntry,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+/**
+ * The JSON the prompt asks for, as a schema: the Claude path hands it to the
+ * CLI as `--json-schema`, so the answer arrives as this object and then goes
+ * through {@link parseVoiceCallSummary} like every other answer. Every field is
+ * optional and nullable-tolerant on purpose: the parser, not the decoder, is
+ * where an odd value is forgiven, and a strict schema here would turn a
+ * harmless "none" into a lost summary (Harout, 16 Oct 2026).
+ */
+export const VoiceCallSummaryAnswer = Schema.Struct({
+  summary: Schema.optional(Schema.NullOr(Schema.String)),
+  points: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  decision: Schema.optional(Schema.NullOr(Schema.String)),
+  open: Schema.optional(Schema.NullOr(Schema.String)),
+  shortCall: Schema.optional(Schema.NullOr(Schema.Boolean)),
+});
 
 /**
  * The one summary a call gets when the owner asked nothing and decided
@@ -209,6 +226,16 @@ export const parseVoiceCallSummary = (answer: string | null): VoiceCallSummary |
   } catch {
     return null;
   }
+  return summaryFromAnswerObject(raw);
+};
+
+/**
+ * The same reading, for an answer that is already an object: the Claude path
+ * gets its JSON decoded by the CLI's schema, so it hands the object straight
+ * here rather than stringifying it back into the text parser. One function
+ * decides what an answer means, whichever model produced it.
+ */
+export const summaryFromAnswerObject = (raw: unknown): VoiceCallSummary | null => {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const summary = shortText(record["summary"]);

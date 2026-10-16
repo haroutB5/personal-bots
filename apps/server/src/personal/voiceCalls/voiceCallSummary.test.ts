@@ -379,4 +379,45 @@ describe("parseVoiceCallSummary", () => {
     expect(parsed!.decision).toBe("no change, just wanted to know");
     expect(parsed!.open).toBeNull();
   });
+
+  it("reads the two real Claude Haiku 5.5 answers from the 1.66.61 proof, verbatim", () => {
+    // `claude -p --output-format json --json-schema ... --model claude-haiku-5-5
+    // --effort low --tools ""`, 16 Oct 2026, 7.7 s and 6.6 s, on the owner's own
+    // Claude Code subscription, against the same two fixtures. This is the path
+    // 1.66.61 prefers; Gemini sits behind it.
+    const greetingAnswer = `{
+  "summary": "Short call: just a greeting, nothing asked or decided.",
+  "points": [],
+  "decision": null,
+  "open": null,
+  "shortCall": true
+}`;
+    expect(parseVoiceCallSummary(greetingAnswer)).toEqual({
+      summary: VOICE_CALL_GREETING_SUMMARY,
+      points: [],
+      decision: null,
+      open: null,
+    });
+
+    const tennisAnswer = `{
+  "summary": "Owner asked whether a slot is free before his Saturday tennis booking; the voice reported Court 3 is free 11:00-12:00 with a move to Court 2 at 12:00.",
+  "points": [
+    "The voice said the confirmed booking is Court 2 on Saturday 17 October, 12:00 PM to 3:00 PM.",
+    "The voice said Court 2 is busy 11:00-12:00 on Saturday 17 October, so the slot before the booking is taken.",
+    "The voice said Court 3 is free 11:00-12:00 on Saturday 17 October, but you would need to move to Court 2 at 12:00.",
+    "The voice said the original booking was not changed."
+  ],
+  "decision": "no change, just wanted to know",
+  "open": null,
+  "shortCall": false
+}`;
+    const parsed = parseVoiceCallSummary(tennisAnswer);
+    expect(parsed!.summary).toContain("Court 3 is free 11:00-12:00");
+    expect(parsed!.points).toHaveLength(4);
+    expect(parsed!.points[0]).toBe(
+      "The voice said the confirmed booking is Court 2 on Saturday 17 October, 12:00 PM to 3:00 PM.",
+    );
+    expect(parsed!.decision).toBe("no change, just wanted to know");
+    expect(parsed!.open).toBeNull();
+  });
 });

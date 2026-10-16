@@ -31,6 +31,7 @@ import {
   VOICE_CALL_SUMMARY_MAX_ATTEMPTS,
   VOICE_CALL_SUMMARY_MODEL,
   VOICE_CALL_SUMMARY_RETRY_MS,
+  type VoiceCallSummary,
 } from "@t3tools/contracts";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -45,12 +46,15 @@ import {
   layer as summaryLayer,
 } from "./PersonalVoiceCallSummaryService.ts";
 import { VoiceCallHttp, type VoiceCallMintOutcome } from "./voiceCallGemini.ts";
-import { VOICE_CALL_GREETING_SUMMARY } from "./voiceCallSummary.ts";
+import { VOICE_CALL_GREETING_SUMMARY, parseVoiceCallSummary } from "./voiceCallSummary.ts";
+import { VoiceCallSummaryClaude } from "./voiceCallSummaryClaude.ts";
 
 const CTO_CHAT = ThreadId.make("thread-call-summary");
 const CTO_BOT = PersonalBotId.make("bot-cto");
 const CALL_ID = "8f9c3ace-a17b-4086-aa8a-e53058b480a9";
 const KEY_VALUE = "AIza-TEST-ONLY-KEY-VALUE";
+/** What the Claude writer in these tests says it is (the real one resolves the same way). */
+const CLAUDE_MODEL = "claude-haiku-5-5";
 /** Text that must never reach a log line or a block the bot is given. */
 const PRIVATE = "SECRET-OWNER-WORDS-7f3a91";
 
@@ -111,15 +115,30 @@ const GREETING_TRANSCRIPT = JSON.stringify([
   },
 ]);
 
+/**
+ * What the real Claude writer answers for one decoded object: it is the same
+ * parser the Gemini answers go through, so a stub that means "Claude returned
+ * this JSON" is written once, here.
+ */
+const fromClaude = (answer: unknown): VoiceCallSummary | null =>
+  parseVoiceCallSummary(JSON.stringify(answer));
+
 interface HttpCall {
   readonly request: BrokerRequest;
   readonly secrets: ReadonlyArray<BrokerSecret>;
 }
-
 interface HarnessOptions {
   readonly calls: Array<HttpCall>;
   /** What the fake transport answers; the default is a good summary. */
   readonly answer?: (model: string) => VoiceCallMintOutcome;
+  /**
+   * The stubbed Claude writer. Left out, Claude is "unavailable" (a usage
+   * limit, a missing CLI): every Gemini test below runs on that default, which
+   * is exactly the fallback path the release has to keep working.
+   */
+  readonly claude?:
+    | ((prompt: string) => Effect.Effect<VoiceCallSummary | null, string>)
+    | undefined;
   /** Make the transport itself fail, as a broker refusal does. */
   readonly throws?: boolean;
   /** The saved key; `false` means no Gemini key at all. */
@@ -180,6 +199,20 @@ const makeHarness = (options: HarnessOptions) => {
     Layer.provideMerge(PersonalVoiceCallRepository.layer),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(taskLayer),
+    // The Claude writer, stubbed. The real layer resolves the provider
+    // instance registry and the CLI; here it is one function, which is what
+    // lets the tests prove the Claude-first order and the fallback on its own.
+    Layer.provideMerge(
+      Layer.succeed(
+        VoiceCallSummaryClaude,
+        VoiceCallSummaryClaude.of({
+          model: CLAUDE_MODEL,
+          ask: (prompt) =>
+            options.claude?.(prompt) ??
+            Effect.fail("the Claude CLI is at its usage limit or not installed"),
+        }),
+      ),
+    ),
     Layer.provideMerge(
       Layer.mock(PersonalBotService.PersonalBotService)({
         getProfile: () =>
@@ -332,7 +365,7 @@ const storedAttempts = (sql: SqlClient.SqlClient) =>
   `.pipe(Effect.map((rows) => Number(rows[0]?.attempts ?? 0)));
 
 describe("PersonalVoiceCallSummaryService.summarise", () => {
-  it.effect("writes the summary for the real transcript, from one Gemini text call", () => {
+  it.effect("falls back to one Gemini text call when Claude cannot answer", () => {
     const calls: Array<HttpCall> = [];
     return withService({ calls }, (service, sql) =>
       Effect.gen(function* () {
@@ -341,6 +374,8 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
         expect(summary!.summary).toContain("Court 3 is free 11:00-12:00");
         expect(summary!.points).toHaveLength(3);
         expect(summary!.decision).toBe("No change, he just wanted to know");
+        // Which model wrote it, so the owner and a diagnosis can tell.
+        expect(summary!.model).toBe(VOICE_CALL_SUMMARY_MODEL);
 
         // Exactly one request, to the summariser model, on the origin the key
         // is bound to, with the key as the broker placeholder and never as a
@@ -360,8 +395,83 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
         expect(sent.request.body).toContain("English, French, Arabic and Armenian");
 
         expect(yield* storedSummary(sql)).toContain("Court 3 is free 11:00-12:00");
+        expect(JSON.parse(yield* storedSummary(sql)).model).toBe(VOICE_CALL_SUMMARY_MODEL);
         expect(yield* storedAttempts(sql)).toBe(1);
       }),
+    );
+  });
+
+  it.effect("asks Claude first, and never reaches Google", () => {
+    const calls: Array<HttpCall> = [];
+    const asked: Array<string> = [];
+    return withService(
+      {
+        calls,
+        transcriptJson: GREETING_TRANSCRIPT,
+        claude: (prompt) =>
+          Effect.sync(() => {
+            asked.push(prompt);
+            return fromClaude({
+              summary: VOICE_CALL_GREETING_SUMMARY,
+              points: ["Everything is ready for him"],
+              decision: "No change needed",
+              open: null,
+              shortCall: true,
+            });
+          }),
+      },
+      (service, sql) =>
+        Effect.gen(function* () {
+          const summary = yield* service.summarise(CALL_ID);
+          expect(summary).toEqual({
+            summary: VOICE_CALL_GREETING_SUMMARY,
+            points: [],
+            decision: null,
+            open: null,
+            model: CLAUDE_MODEL,
+          });
+          // One Claude prompt, carrying the real transcript and the new rules.
+          expect(asked).toHaveLength(1);
+          expect(asked[0]).toContain("Everything is ready for you.");
+          expect(asked[0]).toContain("A greeting, small talk, and the voice's own filler");
+          expect(asked[0]).toContain(VOICE_CALL_GREETING_SUMMARY);
+          // Google is never asked, so no key is needed and no quota is spent.
+          expect(calls).toHaveLength(0);
+          expect(JSON.parse(yield* storedSummary(sql))).toEqual({
+            summary: VOICE_CALL_GREETING_SUMMARY,
+            points: [],
+            decision: null,
+            open: null,
+            model: CLAUDE_MODEL,
+          });
+          expect(yield* storedAttempts(sql)).toBe(1);
+        }),
+    );
+  });
+
+  it.effect("falls back to Gemini when Claude answers nothing usable", () => {
+    const calls: Array<HttpCall> = [];
+    return withService({ calls, claude: () => Effect.succeed(null) }, (service, sql) =>
+      Effect.gen(function* () {
+        const summary = yield* service.summarise(CALL_ID);
+        expect(summary!.summary).toContain("Court 3");
+        expect(summary!.model).toBe(VOICE_CALL_SUMMARY_MODEL);
+        expect(calls).toHaveLength(1);
+        expect(yield* storedAttempts(sql)).toBe(1);
+      }),
+    );
+  });
+
+  it.effect("falls back to Gemini when the Claude writer itself fails", () => {
+    const calls: Array<HttpCall> = [];
+    return withService(
+      { calls, claude: () => Effect.fail("TextGenerationError") },
+      (service, sql) =>
+        Effect.gen(function* () {
+          expect(yield* service.summarise(CALL_ID)).not.toBeNull();
+          expect(calls).toHaveLength(1);
+          expect(JSON.parse(yield* storedSummary(sql)).model).toBe(VOICE_CALL_SUMMARY_MODEL);
+        }),
     );
   });
 
@@ -377,11 +487,12 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
     );
   });
 
-  it.effect("stores the fixed short-call line for the greeting-only call", () => {
+  it.effect("stores the fixed short-call line when Gemini answers the greeting call", () => {
     const calls: Array<HttpCall> = [];
-    // The stub is the model: it answers with the fixed sentence, and (as the
-    // real one did on 16 Oct) also tries to keep the voice's own reassurance as
-    // a point and invents a decision. The worker must store neither.
+    // The stub is the Gemini fallback: it answers with the fixed sentence, and
+    // (as the real one did on 16 Oct) also tries to keep the voice's own
+    // reassurance as a point and invents a decision. The worker must store
+    // neither.
     const answer = (): VoiceCallMintOutcome => ({
       status: 200,
       token: null,
@@ -413,6 +524,7 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
           points: [],
           decision: null,
           open: null,
+          model: VOICE_CALL_SUMMARY_MODEL,
         });
         // The real two lines went out, with the new rule and the fixed sentence.
         const body = calls[0]!.request.body ?? "";
@@ -424,6 +536,7 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
           points: [],
           decision: null,
           open: null,
+          model: VOICE_CALL_SUMMARY_MODEL,
         });
         expect(yield* storedAttempts(sql)).toBe(1);
       }),
@@ -448,6 +561,7 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
           const summary = yield* service.summarise(CALL_ID);
           expect(summary).not.toBeNull();
           expect(models).toEqual([VOICE_CALL_SUMMARY_MODEL, VOICE_CALL_SUMMARY_FALLBACK_MODEL]);
+          expect(summary!.model).toBe(VOICE_CALL_SUMMARY_FALLBACK_MODEL);
         }),
     );
   });
@@ -467,8 +581,10 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
       },
       (service) =>
         Effect.gen(function* () {
-          expect(yield* service.summarise(CALL_ID)).not.toBeNull();
+          const summary = yield* service.summarise(CALL_ID);
+          expect(summary).not.toBeNull();
           expect(models).toEqual([VOICE_CALL_SUMMARY_MODEL, VOICE_CALL_SUMMARY_FALLBACK_MODEL]);
+          expect(summary!.model).toBe(VOICE_CALL_SUMMARY_FALLBACK_MODEL);
         }),
     );
   });
@@ -508,15 +624,51 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
     );
   });
 
-  // Finding 5: "do not spend model attempts while credentials are unavailable".
-  it.effect("asks for nothing and spends no attempt when the key is missing", () => {
+  // Finding 5, restated for the Claude-first order (1.66.61): the Gemini key is
+  // the *fallback's* credential, so its absence no longer blocks a summary at
+  // all. Claude answers, Google is never asked, and no key is read.
+  it.effect("summarises from Claude even when no Gemini key is saved", () => {
+    const calls: Array<HttpCall> = [];
+    return withService(
+      {
+        calls,
+        withKey: false,
+        claude: () =>
+          Effect.succeed(
+            fromClaude({
+              summary:
+                "He asked whether a court was free; the voice said Court 3 is free 11:00-12:00.",
+              points: ["The voice said Court 3 is free 11:00-12:00 on Saturday"],
+              decision: "No change, he just wanted to know",
+              open: null,
+              shortCall: false,
+            }),
+          ),
+      },
+      (service, sql) =>
+        Effect.gen(function* () {
+          const summary = yield* service.summarise(CALL_ID);
+          expect(summary!.model).toBe(CLAUDE_MODEL);
+          expect(summary!.points).toHaveLength(1);
+          expect(calls).toHaveLength(0);
+          expect(JSON.parse(yield* storedSummary(sql)).model).toBe(CLAUDE_MODEL);
+          expect(yield* storedAttempts(sql)).toBe(1);
+        }),
+    );
+  });
+
+  // The broken-configuration corner: Claude cannot answer and Google has no
+  // key. Nothing is written, and the attempt is the Claude one that went out.
+  // (A stored call implies a Gemini key existed when it was made: the call
+  // itself cannot start without one.)
+  it.effect("writes nothing, and spends one attempt, when Claude fails and no key is saved", () => {
     const calls: Array<HttpCall> = [];
     return withService({ calls, withKey: false }, (service, sql) =>
       Effect.gen(function* () {
         expect(yield* service.summarise(CALL_ID)).toBeNull();
         expect(calls).toHaveLength(0);
         expect(yield* storedSummary(sql)).toBe("");
-        expect(yield* storedAttempts(sql)).toBe(0);
+        expect(yield* storedAttempts(sql)).toBe(1);
       }),
     );
   });
@@ -556,18 +708,32 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
     );
   });
 
-  // Finding 1: the chat had a site the owner marked sensitive open.
-  it.effect("sends nothing to Google once the chat is sensitive, and never retries it", () => {
+  // Finding 1: the chat had a site the owner marked sensitive open. From
+  // 1.66.61 the transcript would otherwise have gone to Claude first, so the
+  // same gate has to stop that too: nothing leaves the laptop, Claude included.
+  it.effect("sends nothing anywhere once the chat is sensitive, and never retries it", () => {
     const calls: Array<HttpCall> = [];
-    return withService({ calls, exposed: ["the bank"] }, (service, sql) =>
-      Effect.gen(function* () {
-        expect(yield* service.summarise(CALL_ID)).toBeNull();
-        expect(calls).toHaveLength(0);
-        // Not an attempt: this is a refusal, not a failure, so the cap is not
-        // spent on it.
-        expect(yield* storedAttempts(sql)).toBe(0);
-        expect(yield* storedSummary(sql)).toBe("");
-      }),
+    let claudeAsked = 0;
+    return withService(
+      {
+        calls,
+        exposed: ["the bank"],
+        claude: () =>
+          Effect.sync(() => {
+            claudeAsked += 1;
+            return null;
+          }),
+      },
+      (service, sql) =>
+        Effect.gen(function* () {
+          expect(yield* service.summarise(CALL_ID)).toBeNull();
+          expect(calls).toHaveLength(0);
+          expect(claudeAsked).toBe(0);
+          // Not an attempt: this is a refusal, not a failure, so the cap is not
+          // spent on it.
+          expect(yield* storedAttempts(sql)).toBe(0);
+          expect(yield* storedSummary(sql)).toBe("");
+        }),
     );
   });
 
@@ -623,7 +789,7 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
   });
 
   it.effect(
-    "rechecks exposure before reading the relays, and a late refusal costs no attempt",
+    "rechecks exposure before the fallback, and the late refusal sends nothing to Google",
     () => {
       const calls: Array<HttpCall> = [];
       const expose = (sql: SqlClient.SqlClient) =>
@@ -634,10 +800,12 @@ describe("PersonalVoiceCallSummaryService.summarise", () => {
       return withService({ calls, onSecrets: expose }, (service, sql) =>
         Effect.gen(function* () {
           expect(yield* service.summarise(CALL_ID)).toBeNull();
+          // The chat turned sensitive while the fallback's key was being read,
+          // after Claude had already been asked (and had failed). Google is
+          // never reached, nothing is written, and the one attempt is Claude's.
           expect(calls).toHaveLength(0);
           expect(yield* storedSummary(sql)).toBe("");
-          // Refused between the two gates, before the row was charged an attempt.
-          expect(yield* storedAttempts(sql)).toBe(0);
+          expect(yield* storedAttempts(sql)).toBe(1);
         }),
       );
     },
@@ -775,14 +943,18 @@ describe("PersonalVoiceCallSummaryService.sweep", () => {
     );
   });
 
-  it.effect("does not spend an attempt while the key is missing, so it recovers later", () => {
+  // The sweep's own account of a broken configuration: Claude cannot answer and
+  // no Gemini key is saved, so the first sweep spends its one attempt and the
+  // minute wait holds the second one off. The service never turns that into a
+  // failed task or a broken card, it just writes nothing.
+  it.effect("spends one attempt on the first sweep while Claude and a key are both missing", () => {
     const calls: Array<HttpCall> = [];
     return withService({ calls, withKey: false }, (service, sql) =>
       Effect.gen(function* () {
         yield* service.sweep();
         yield* service.sweep();
         expect(calls).toHaveLength(0);
-        expect(yield* storedAttempts(sql)).toBe(0);
+        expect(yield* storedAttempts(sql)).toBe(1);
       }),
     );
   });
