@@ -1,9 +1,6 @@
 # hbots 1.66.54: voice calls with a bot (Gemini Live)
 
-**QA: PROOF_PLACEHOLDER** (the builder's line: QA replaces this whole paragraph
-with the real proof, per pass, before the release waiter can be armed. The
-waiter's `check-release-notes.ps1` refuses these notes while the word
-`PROOF_PLACEHOLDER` is on this line, so nothing ships on unfinished proof.)
+**QA: SHIP** (2026-10-16, QA re-test on a throwaway root from bb37d805f11b, 390 px dark, Gemini Live and the mint faked, live 1.66.53 untouched): main 59/59 reviewed (two harness corrections), rest 15/15, regression 3/3, fake dsh 6/6, timeout/smoke 8/8; BUG1-3 from the first pass fixed; migration 108 -> 110 PASS on backup 20261015-235714 (first pass, unchanged); zero browser errors or overflow; throwaways cleaned. Also: Fable re-check SHIP (all 9 review must-fixes fixed, dev-team/reviews/hbots-voice-calls-review.md), Security CLEARED (dev-team/reviews/hbots-voice-calls-security.md; S1-S3 folded in). Evidence: C:/Users/Ht/.personal-bots/qa/hbots-16654/evidence/retest-bb37d805f11b/SUMMARY.md
 
 Voice calls ship in this release: from a bot's chat the owner taps Call, the
 laptop mints a single-use Gemini Live pass from the Gemini key saved in Settings
