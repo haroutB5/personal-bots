@@ -9,8 +9,9 @@
  *   Live offers, so this endpoint can never be turned into a free
  *   text-to-speech proxy for arbitrary words.
  * - **Each clip is made once.** The WAV is written under the data root's
- *   `voice-samples/` folder and served from there after that, so the model is
- *   billed once per voice, not once per tap, and a restart keeps the cache.
+ *   `personal/voice-samples/` folder and served from there after that, so the
+ *   model is billed once per voice, not once per tap, and a restart keeps the
+ *   cache.
  *
  * The clip is one voice, not a call: it never touches a chat, a transcript or
  * the sensitive-chat gate. Only the shared `GEMINI_API_KEY` is read, through
@@ -18,6 +19,7 @@
  */
 import {
   isVoiceCallVoice,
+  VOICE_CALL_SAMPLE_FALLBACK_MODEL,
   VOICE_CALL_SAMPLE_MAX_BYTES,
   VOICE_CALL_SAMPLE_MODEL,
   VOICE_CALL_SAMPLE_TEXT,
@@ -70,7 +72,7 @@ export const make = Effect.gen(function* () {
   // One clip at a time: a double tap must not make the same voice twice.
   const lock = yield* Semaphore.make(1);
   const samplePath = (voiceName: string) =>
-    path.join(config.stateDir, VOICE_CALL_SAMPLE_DIR, `${voiceName}.wav`);
+    path.join(config.baseDir, "personal", VOICE_CALL_SAMPLE_DIR, `${voiceName}.wav`);
 
   const readCached = (voiceName: string) =>
     Effect.gen(function* () {
@@ -126,24 +128,41 @@ export const make = Effect.gen(function* () {
             "Add a Gemini key to hear samples. Settings > Voice calls takes it once, and it stays on your laptop.",
           );
         }
-        const outcome = yield* http
-          .call(
-            VoiceCallGemini.voiceCallSampleRequest({
-              model: VOICE_CALL_SAMPLE_MODEL,
-              voiceName,
-              text: VOICE_CALL_SAMPLE_TEXT,
-            }),
-            [key],
-          )
-          .pipe(
-            Effect.catch(() =>
-              Effect.fail(fail("google_unavailable", "Google could not be reached for a sample.")),
-            ),
-          );
-        const audio = VoiceCallGemini.voiceCallSampleAudio(outcome);
+        // One model's answer: its audio, or why it had none. A model that
+        // cannot be reached is no audio either, and the error below decides
+        // between "out of quota" and "Google did not send a sample".
+        const askModel = (model: string) =>
+          Effect.gen(function* () {
+            const outcome = yield* http
+              .call(
+                VoiceCallGemini.voiceCallSampleRequest({
+                  model,
+                  voiceName,
+                  text: VOICE_CALL_SAMPLE_TEXT,
+                }),
+                [key],
+              )
+              .pipe(Effect.orElseSucceed(() => null));
+            if (outcome === null) return { reached: false, status: 0, audio: null };
+            return {
+              reached: true,
+              status: outcome.status,
+              audio: VoiceCallGemini.voiceCallSampleAudio(outcome),
+            };
+          });
+        // Each model's answer is read on its own, so a primary that answers
+        // without audio (or not at all) leaves the fallback model its chance.
+        const primary = yield* askModel(VOICE_CALL_SAMPLE_MODEL);
+        const fallback =
+          primary.audio === null ? yield* askModel(VOICE_CALL_SAMPLE_FALLBACK_MODEL) : null;
+        const audio = primary.audio ?? fallback?.audio ?? null;
         if (audio === null) {
+          if (!primary.reached && !(fallback?.reached ?? false)) {
+            return yield* fail("google_unavailable", "Google could not be reached for a sample.");
+          }
+          const answered = fallback ?? primary;
           return yield* fail(
-            outcome.status === 429 ? "key_quota" : "sample_unavailable",
+            answered.status === 429 ? "key_quota" : "sample_unavailable",
             "Google did not send a sample for that voice.",
           );
         }

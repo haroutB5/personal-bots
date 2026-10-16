@@ -90,9 +90,10 @@ Design notes:
 ### Voice samples (Settings > Voice calls)
 
 - **One clip per voice, made once.** `gemini-3.8-flash-tts` speaks one fixed
-  line ("Hi Harout, this is how I'll sound on our calls."); the WAV is written
-  under the data root's `voice-samples/` folder and served from there on every
-  later tap, so the model is billed once per voice.
+  line ("Hi Harout, this is how I'll sound on our calls."), falling back to
+  `gemini-2.5-flash-preview-tts` when the primary answers without audio; the WAV
+  is cached at `<data root>/personal/voice-samples/<voice>.wav` and served from
+  there on every later tap, so the model is billed once per voice.
 - **The text is a constant and the voice must be one of the thirty Gemini Live
   offers**, checked server-side, so this endpoint cannot be turned into a free
   text-to-speech proxy.

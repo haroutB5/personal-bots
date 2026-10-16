@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import {
+  VOICE_CALL_SAMPLE_FALLBACK_MODEL,
   VOICE_CALL_SAMPLE_MODEL,
   VOICE_CALL_SAMPLE_TEXT,
   VOICE_CALL_SECRET_HEADER,
@@ -146,7 +147,7 @@ describe("PersonalVoiceSampleService", () => {
         expect(body).toContain('"voiceName":"Kore"');
 
         // The clip is on disk under the data root, so the next tap is free.
-        const file = `${baseDir}/userdata/${VOICE_CALL_SAMPLE_DIR}/Kore.wav`;
+        const file = `${baseDir}/personal/${VOICE_CALL_SAMPLE_DIR}/Kore.wav`;
         const fs = yield* FileSystem.FileSystem;
         const written = yield* fs.readFile(file);
         expect(Buffer.from(written).equals(WAV_BYTES)).toBe(true);
@@ -286,7 +287,7 @@ describe("PersonalVoiceSampleService", () => {
       (service, baseDir) =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const dir = `${baseDir}/userdata/${VOICE_CALL_SAMPLE_DIR}`;
+          const dir = `${baseDir}/personal/${VOICE_CALL_SAMPLE_DIR}`;
           const file = `${dir}/Kore.wav`;
           // A tiny file that somehow exists is re-made, never played.
           yield* fs.makeDirectory(dir, { recursive: true });
@@ -295,6 +296,33 @@ describe("PersonalVoiceSampleService", () => {
             true,
           );
           expect(calls.length).toBeGreaterThanOrEqual(1);
+        }),
+    );
+  });
+
+  it.effect("tries the fallback model when the primary answers without audio", () => {
+    const calls: Array<HttpCall> = [];
+    return withService(
+      {
+        calls,
+        baseDir: tempBaseDir(),
+        // The first model answers with no audio at all; the fallback answers
+        // with the clip, and the clip the owner hears is that one.
+        answer: () =>
+          calls.length === 1
+            ? { status: 200, token: null, body: '{"candidates":[]}' }
+            : wavAnswer(),
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const result = yield* service.sample({ voiceName: "Kore" });
+          expect(result.cached).toBe(false);
+          expect(Buffer.from(result.base64, "base64").equals(WAV_BYTES)).toBe(true);
+          expect(calls).toHaveLength(2);
+          expect(calls[0]!.request.url).toContain(`${VOICE_CALL_SAMPLE_MODEL}:generateContent`);
+          expect(calls[1]!.request.url).toContain(
+            `${VOICE_CALL_SAMPLE_FALLBACK_MODEL}:generateContent`,
+          );
         }),
     );
   });

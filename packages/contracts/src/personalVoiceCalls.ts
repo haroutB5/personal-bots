@@ -104,6 +104,13 @@ export type VoiceCallSummary = typeof VoiceCallSummary.Type;
  */
 export const VOICE_CALL_SAMPLE_MODEL = "gemini-3.8-flash-tts";
 /**
+ * The model a sample falls back to when the primary answers without audio, or
+ * does not answer at all. Same shape as the call's own pair: the current
+ * generation first, a preview generation behind it, so one model's bad day is
+ * not a voice the owner cannot hear before he picks it.
+ */
+export const VOICE_CALL_SAMPLE_FALLBACK_MODEL = "gemini-2.5-flash-preview-tts";
+/**
  * The one line every sample says. Fixed on purpose: the request must never
  * carry text from a page, a chat or the owner, so this endpoint can never be
  * turned into a free text-to-speech proxy.
