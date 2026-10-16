@@ -108,8 +108,7 @@ export const VOICE_CALL_SAMPLE_MODEL = "gemini-3.8-flash-tts";
  * carry text from a page, a chat or the owner, so this endpoint can never be
  * turned into a free text-to-speech proxy.
  */
-export const VOICE_CALL_SAMPLE_TEXT =
-  "Hi, this is how I sound on a call. Anything you need, just say.";
+export const VOICE_CALL_SAMPLE_TEXT = "Hi Harout, this is how I'll sound on our calls.";
 /** The largest audio answer accepted: a four-second clip is about 200 KB. */
 export const VOICE_CALL_SAMPLE_MAX_BYTES = 1_500_000;
 
