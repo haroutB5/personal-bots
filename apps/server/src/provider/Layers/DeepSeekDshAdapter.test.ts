@@ -34,6 +34,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -470,6 +471,58 @@ it.layer(layer)("DeepSeekDshAdapter", (it) => {
       resetBotProviderProcesses();
     }),
   );
+
+  it.effect("waits for the running turn without retrying a held message in a loop", () => {
+    // 16 Oct: the drain retried a held message as fast as it could for the
+    // whole running turn, ~7,000 attempts a second per chat on the live server.
+    let attempts = 0;
+    const tracer = Tracer.make({
+      span: (options) => {
+        if (options.name === "DeepSeekDshAdapter.attemptTurn") attempts += 1;
+        return new Tracer.NativeSpan(options);
+      },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-dsh-cwd-" });
+      const harness = yield* makeHarness(cwd);
+      yield* harness.adapter.startSession(startInput({ cwd }));
+      const owner = yield* harness.adapter
+        .sendTurn({
+          threadId,
+          input: "Run this exact PowerShell command: Start-Sleep -Seconds 60",
+          modelSelection: { instanceId, model: "deepseek-flash" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* harness.waitForPromptCount(1);
+      const held = ["First held: say APPLE.", "Second held: say PEAR."];
+      for (const input of held) {
+        yield* harness.adapter.sendTurn({
+          threadId,
+          input,
+          modelSelection: { instanceId, model: "deepseek-flash" },
+        });
+      }
+      yield* realSleep(300);
+      // The owner's attempt, then per held send its own attempt plus one drain
+      // attempt that found the turn still running and stopped.
+      expect(attempts).toBeLessThanOrEqual(5);
+      // The end of the running turn starts the held messages, in order.
+      yield* harness.adapter.interruptTurn(threadId);
+      yield* Fiber.join(owner).pipe(Effect.ignore);
+      yield* harness.waitForPromptCount(3);
+      yield* harness.waitForTurnCompletions(3);
+      const prompts = harness
+        .requests()
+        .filter((request) => request.method === "session/prompt")
+        .map((request) => JSON.stringify(request.params));
+      expect(prompts[1]).toContain("APPLE");
+      expect(prompts[2]).toContain("PEAR");
+      expect(attempts).toBeLessThanOrEqual(8);
+      yield* harness.adapter.stopSession(threadId);
+      resetBotProviderProcesses();
+    }).pipe(Effect.withTracer(tracer));
+  });
 
   it.effect("settles a cancelled turn with the aborted tool, never a second prompt", () =>
     Effect.gen(function* () {
