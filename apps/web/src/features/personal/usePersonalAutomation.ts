@@ -21,7 +21,11 @@ import { useMemo, useRef } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
+import { feedStartsWith } from "./feedStartsWith";
 import { relatedTasksInBatches } from "./relatedTaskBatches";
+
+/** The empty fold, and so the feed's first value (see `feedStartsWith`). */
+const EMPTY_TASKS_FEED: ReadonlyMap<string, PersonalTask> = new Map();
 
 /**
  * Unfinished tasks and the newest finished ones, kept current by
@@ -30,26 +34,34 @@ import { relatedTasksInBatches } from "./relatedTaskBatches";
  * and only a result preview. Older finished tasks come from
  * `usePersonalRelatedTasks` and `personalTaskHistory`; full text from
  * `usePersonalTaskDetail`.
+ *
+ * The empty map goes first, so a root that has never run a task still produces
+ * a first value: the Tasks page reads `null` as "still loading" and used to sit
+ * there forever on an empty replay.
  */
-export const personalTasksFeed = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
-  label: "personal-tasks:feed",
-  tag: WS_METHODS.personalTasksSubscribe,
-  transform: (stream) =>
+export function foldPersonalTasksFeed<E, R>(
+  stream: Stream.Stream<{ readonly task: PersonalTask }, E, R>,
+): Stream.Stream<ReadonlyMap<string, PersonalTask>, E, R> {
+  return feedStartsWith(EMPTY_TASKS_FEED)(
     stream.pipe(
       // The replay arrives as one event per task; folding it per event would
       // copy the map n times (O(n^2)) and re-render every consumer n times.
       // Chunks bound that to one copy per batch while live upserts still
       // land within 50ms.
       Stream.groupedWithin(256, "50 millis"),
-      Stream.scan(
-        new Map<string, PersonalTask>() as ReadonlyMap<string, PersonalTask>,
-        (tasks, events) => {
-          const next = new Map(tasks);
-          for (const event of events) next.set(event.task.taskId, event.task);
-          return next;
-        },
-      ),
+      Stream.scan(EMPTY_TASKS_FEED, (tasks, events) => {
+        const next = new Map(tasks);
+        for (const event of events) next.set(event.task.taskId, event.task);
+        return next;
+      }),
     ),
+  );
+}
+
+export const personalTasksFeed = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
+  label: "personal-tasks:feed",
+  tag: WS_METHODS.personalTasksSubscribe,
+  transform: foldPersonalTasksFeed,
 });
 
 export const personalTaskDetail = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -385,7 +397,8 @@ export const IN_APP_FEED_KEEP = 5;
 /**
  * In-app notifications for this connection, newest last. A short list rather
  * than only the latest, so two arriving in one render are both seen (and
- * acknowledged) by id.
+ * acknowledged) by id. The empty list goes first: a connection that has had no
+ * notification yet still produces a first value.
  */
 export const personalPushInAppFeed = createEnvironmentRpcSubscriptionAtomFamily(
   connectionAtomRuntime,
@@ -393,9 +406,11 @@ export const personalPushInAppFeed = createEnvironmentRpcSubscriptionAtomFamily(
     label: "personal-push:in-app",
     tag: WS_METHODS.personalPushInApp,
     transform: (stream) =>
-      stream.pipe(
-        Stream.scan([] as ReadonlyArray<PersonalPushInAppNotification>, (recent, notification) =>
-          [...recent, notification].slice(-IN_APP_FEED_KEEP),
+      feedStartsWith([] as ReadonlyArray<PersonalPushInAppNotification>)(
+        stream.pipe(
+          Stream.scan([] as ReadonlyArray<PersonalPushInAppNotification>, (recent, notification) =>
+            [...recent, notification].slice(-IN_APP_FEED_KEEP),
+          ),
         ),
       ),
   },

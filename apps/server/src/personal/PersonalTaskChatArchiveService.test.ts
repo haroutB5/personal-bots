@@ -354,7 +354,24 @@ describe("PersonalTaskChatArchive", () => {
           id: "routine-child",
           tasks: [{ source: "routine", status: "completed", parentOf: "elsewhere" }],
         },
-        { id: "delegation-then-fixed-routine", existingChat: true, tasks: done },
+      ]);
+      harness.shells.get("routine-background")!.backgroundLiveness = { liveTaskIds: ["bg"] };
+      expect(yield* sweepAt(T0 + 96 * 60 * MIN)).toBe(0);
+      expect(yield* archivedIds).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("archives a delegation chat that later routine runs were posted into", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      // The chat was created for the delegation; a release re-check routine
+      // posted its runs into it afterwards (task created after the chat).
+      yield* seed(harness, [
+        {
+          id: "delegation-then-routine",
+          existingChat: true,
+          tasks: [{ source: "routine", status: "completed" }],
+        },
       ]);
       const sql = yield* SqlClient.SqlClient;
       yield* sql`
@@ -362,14 +379,16 @@ describe("PersonalTaskChatArchive", () => {
           task_id, root_task_id, bot_id, thread_id, title, objective, status, source,
           idempotency_key, depth, max_depth, max_children, created_at, updated_at, completed_at
         ) VALUES (
-          'original-delegation', 'original-delegation', ${BOT}, 'delegation-then-fixed-routine',
+          'original-delegation', 'original-delegation', ${BOT}, 'delegation-then-routine',
           'Task', 'Go', 'completed', 'delegation', 'original-delegation', 1, 3, 4,
           ${iso(T0 - 1_000)}, ${iso(TASK_DONE_MS)}, ${iso(TASK_DONE_MS)}
         )
       `;
-      harness.shells.get("routine-background")!.backgroundLiveness = { liveTaskIds: ["bg"] };
-      expect(yield* sweepAt(T0 + 96 * 60 * MIN)).toBe(0);
-      expect(yield* archivedIds).toEqual([]);
+      // Its routine runs make it a routine-kind chat, and it was never opened,
+      // so it goes 48 hours after creation rather than staying open forever.
+      expect(yield* sweepAt(T0 + 48 * 60 * MIN - 1)).toBe(0);
+      expect(yield* sweepAt(T0 + 48 * 60 * MIN)).toBe(1);
+      expect(yield* archivedIds).toEqual(["delegation-then-routine"]);
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 

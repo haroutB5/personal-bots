@@ -76,10 +76,12 @@ export const TASK_CHAT_OPEN_WORK_SQL = `
  * thread came after the task), every task on it finished, none of its child tasks still
  * open, and it is not archived (now or ever by this sweep), pinned, a
  * routine's chat, a group member's thread or a deleted bot's chat. A chat
- * holding a user task is never eligible. Delegated-task behaviour stays the
- * same. Relay runs always create their own chat, but record the task after
- * posting its deterministic personal-relay message. These existing markers
- * also identify runs of deleted one-off routines, without a migration.
+ * holding a user task is never eligible. A delegated-task chat that later had
+ * routine runs posted into it (a release re-check routine) stays eligible: the
+ * routine tasks are finished work of its own, not the owner's. Relay runs
+ * always create their own chat, but record the task after posting its
+ * deterministic personal-relay message. These existing markers also identify
+ * runs of deleted one-off routines, without a migration.
  *
  * Idle and liveness are decided per row by `decideTaskChatArchive`.
  */
@@ -132,7 +134,7 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
         AND (
           (d.source = 'delegation' AND d.created_at <= bt.created_at AND NOT EXISTS (
             SELECT 1 FROM personal_tasks other
-            WHERE other.thread_id = bt.thread_id AND other.source <> 'delegation'
+            WHERE other.thread_id = bt.thread_id AND other.source NOT IN ('delegation', 'routine')
           ))
           OR (d.source = 'routine' AND d.created_at <= bt.created_at)
           OR (d.source = 'routine' AND EXISTS (
