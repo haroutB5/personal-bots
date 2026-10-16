@@ -169,8 +169,8 @@ wording.
 
 The first gate run on the fixed commit failed on two things, both closed here:
 `ConversationScreen.archived.test.tsx` mocks `./conversationModel` by listing its
-exports, so the new `voiceCallSummaryPending` export had to be added to that mock
-(60 tests, all failing for that one missing export), and
+exports, so that mock needed the new `voiceCallSummaryPending` export (60 tests,
+all failing for that one missing export), and
 `ProviderRegistry.test.ts > re-probes when settings change the codex binaryPath`
 timed out at 120 s under the parallel gate and passed alone in 4 s, the same
 pre-existing flake Backend recorded on its own head.
