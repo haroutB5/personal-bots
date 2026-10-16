@@ -237,6 +237,9 @@ const finish = (text, isError) => {
     session_id: sessionId,
     uuid: NodeCrypto.randomUUID(),
   });
+  // The provider smoke test runs one turn (--max-turns=1) and the real CLI exits once it has
+  // answered; without this the fake sat until the server's 3 minute timeout.
+  if (args.includes("--max-turns=1")) setTimeout(() => process.exit(0), 300);
 };
 
 let askRequest = null;
