@@ -29,16 +29,17 @@ runtime package folder, the launch patch, the A/B rig path, and `pinMoveInstruct
    launch patch names (session log, telemetry, web search, DeepSeek web API, plugin inventory,
    `tool-working-directory`) must still exist, and a new tool row that can change the session cwd
    or reach bot state must be disabled there (the 1.66.66 `working_directory` lesson).
-3. Copy the A/B rig into the run folder, point it at the worktree and the old/new runtimes, and run
+3. Prepare the candidate before the A/B: regenerate `scripts/personal/dsh-runtime/package.json` and
+   `package-lock.json` with the exact version, bump `DSH_PINNED_VERSION` and the `install-dsh.ps1
+-Version` default, install the runtime side by side (which copies the deny plugin), and copy
+   `hbots-deny-plugin.mjs` beside both runtimes if its sha256 changed, reporting the hash.
+4. Copy the A/B rig into the run folder, point it at the worktree and the old/new runtimes, and run
    it once per runtime on the current live release with a throwaway root; T3b and T3c must pass on
    both.
-4. Rate it **risky** unless the A/B is 100% green on both runtimes; a risky proposal waits for
-   `approve P<n>` and the pin does not move.
-5. Only a green A/B (and preflight's `dependencyChangesAllowed`) may move the pin: regenerate
-   `scripts/personal/dsh-runtime/package.json` and `package-lock.json` with the exact version,
-   bump `DSH_PINNED_VERSION` and the `install-dsh.ps1 -Version` default, install the runtime side
-   by side, copy `hbots-deny-plugin.mjs` beside both runtimes if its sha256 changes and report the
-   hash, then implement it as a normal SAFE proposal with tests and one commit.
+5. Rate it **risky** unless the A/B is 100% green on both runtimes: the uncommitted worktree edits
+   are reverted, the installed runtime folder stays, and the pin does not move until
+   `approve P<n>`. Only a green A/B (and preflight's `dependencyChangesAllowed`) keeps the changes
+   and implements them as a normal SAFE proposal with tests and one commit.
 
 The steps live in the run data, not only in the routine prompt: the routine's stored prompt is the
 user's and an upgrade never rewrites it. The prompt source (`updatesNightlyPrompt`) carries the
