@@ -268,6 +268,7 @@ function saveMemory(input: {
       );
     return {
       encoded: encodeResult(result),
+      result,
       saved,
       forgotten,
       forgetReason,
@@ -1243,6 +1244,62 @@ describe("1.60.40: app scopes on save_memory and search_memory", () => {
       });
       expect(rulesForApps).toHaveBeenCalledWith([]);
     }),
+  );
+
+  it.effect(
+    "1.66.62: a big result is capped at about 6,000 chars, best matches first, with the note",
+    () =>
+      Effect.gen(function* () {
+        const many = Array.from({ length: 40 }, (_, index) => ({
+          ...entryFor({
+            scope: "shared" as const,
+            kind: "preference" as const,
+            content: `Rule ${index}: quote every coin price in USD. ${"x".repeat(400)}`,
+          }),
+          memoryId: PersonalMemoryId.make(`eeee${String(index).padStart(4, "0")}-rule`),
+        }));
+        const { encoded, result } = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          tool: "search_memory",
+          query: "the coin price rules",
+          found: many,
+        });
+        // The model reads the encoded form the MCP server sends, so that is what
+        // is measured; the note survives only because the result schema names it.
+        const payload = encodeResult(
+          (result as ReadonlyArray<{ readonly encodedResult?: unknown }>)[0]?.encodedResult,
+        );
+        expect(payload.length).toBeLessThanOrEqual(6_000);
+        expect(payload).toContain("more entries matched");
+        expect(payload).toContain("narrow the query or lower limit");
+        // The best match is kept, and the entries that stay are the leading ones.
+        expect(payload).toContain("eeee0000-rule");
+        const kept = [...payload.matchAll(/"memoryId":"(eeee\d+-rule)"/g)].map((match) => match[1]);
+        expect(kept.length).toBeGreaterThan(0);
+        expect(kept.length).toBeLessThan(40);
+        expect(kept).toEqual(many.slice(0, kept.length).map((entry) => entry.memoryId));
+        // The kill switch returns every match again.
+        process.env.PERSONAL_MEMORY_SEARCH_MAX_CHARS = "off";
+        try {
+          const uncapped = yield* saveMemory({
+            memoryAutoSave: false,
+            exposure: [],
+            tool: "search_memory",
+            query: "the coin price rules",
+            found: many,
+          });
+          const full = encodeResult(
+            (uncapped.result as ReadonlyArray<{ readonly encodedResult?: unknown }>)[0]
+              ?.encodedResult,
+          );
+          expect(full.match(/"memoryId":"eeee/g)).toHaveLength(40);
+          expect(full).not.toContain("more entries matched");
+        } finally {
+          delete process.env.PERSONAL_MEMORY_SEARCH_MAX_CHARS;
+        }
+        expect(encoded).toContain("more entries matched");
+      }),
   );
 });
 

@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { appsNamedIn, unknownApps } from "../../../personal/memory/memoryApps.ts";
+import { capByJsonChars, memorySearchMaxChars } from "../../../personal/memory/memoryShared.ts";
 import { quoteInMessage } from "../../../personal/memory/memoryQuote.ts";
 import { memoryAutoApplyEnabled } from "../../../personal/memory/memoryAutoApply.ts";
 import {
@@ -836,8 +837,11 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError((error) => refuse(error.message)));
         const seen = new Set(appRules.map((entry) => entry.memoryId));
         const entries = [...appRules, ...found.filter((entry) => !seen.has(entry.memoryId))];
-        return {
-          entries: entries.map((entry) => ({
+        // One call returned 21.7k chars into a fresh chat (17 Oct), so the
+        // result is capped: app-scoped rules come first and count against it,
+        // best matches first, and the bot is told how many were left out.
+        const capped = capByJsonChars(
+          entries.map((entry) => ({
             memoryId: entry.memoryId,
             kind: entry.kind,
             scope: entry.scope,
@@ -852,6 +856,15 @@ const make = Effect.gen(function* () {
             conflict: entry.conflict ?? null,
             ...(entry.apps == null ? {} : { apps: [...entry.apps] }),
           })),
+          memorySearchMaxChars(),
+        );
+        return {
+          entries: capped.entries,
+          ...(capped.dropped > 0
+            ? {
+                note: `${capped.dropped} more ${capped.dropped === 1 ? "entry" : "entries"} matched; narrow the query or lower limit.`,
+              }
+            : {}),
         };
       }),
     save_memory: (input) =>
