@@ -69,6 +69,9 @@ $env:PATH = "$vpRepoBin;$vpBin;$(Split-Path -Parent $nodeExe);$env:PATH"
 $keyCount = Import-RepoDotEnv
 Clear-DevOriginEnv
 Write-Host "Loaded $keyCount key(s) from .env (values not shown)."
+# Fail before a multi-minute build when the T3 Connect public config is empty (1.66.63
+# ea54da1ead84 was built in a worktree with no .env and could not pair or sign in).
+Assert-PbPublicBuildConfig
 
 $previous = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
@@ -98,6 +101,13 @@ foreach ($required in @('bin.mjs', 'client\index.html', 'claude-history-worker.m
     if (-not (Test-Path -LiteralPath (Join-Path $dist $required) -PathType Leaf)) {
         throw "Build output is missing apps\server\dist\$required."
     }
+}
+# The bundle vite just built must actually carry the public config, whatever the env said.
+# Checked on the build output before the release folder is touched; only names are printed.
+$missingBaked = @(Get-PbMissingBakedPublicConfig -BinPath (Join-Path $dist 'bin.mjs'))
+if ($missingBaked.Count -gt 0) {
+    throw (("Build refused: the server bundle is missing the T3 Connect public config ({0}). " -f ($missingBaked -join ', ')) +
+        ("It was built without the repo .env; copy it into {0} and rebuild. Nothing was staged or activated." -f $PbRepoRoot))
 }
 
 $releaseDir = Join-Path $paths.ReleasesDir $releaseName

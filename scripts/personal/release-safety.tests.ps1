@@ -45,6 +45,55 @@ Assert-Equal 'build.ps1 still accepts -NoActivate' $true ($buildText -match '\[s
 $restartText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'restart.ps1') -Raw
 Assert-Equal 'restart.ps1 (the rollback path) never calls the notes check' $false ($restartText -match 'check-release-notes')
 
+Write-Host 'T3 Connect public config guard (build.ps1)'
+$cfgNames = @($PbPublicConfigRequired + $PbPublicConfigOptional)
+$cfgSaved = @{}
+foreach ($name in $cfgNames) { $cfgSaved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+$cfgTmp = Join-Path ([System.IO.Path]::GetTempPath()) ('hbots-cfg-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Force -Path $cfgTmp | Out-Null
+try {
+    foreach ($name in $PbPublicConfigRequired) { [Environment]::SetEnvironmentVariable($name, "test-value-$name", 'Process') }
+    foreach ($name in $PbPublicConfigOptional) { [Environment]::SetEnvironmentVariable($name, $null, 'Process') }
+
+    $cfgRefused = $false
+    try { Assert-PbPublicBuildConfig } catch { $cfgRefused = $true }
+    Assert-Equal 'both required keys set: the up-front guard passes' $false $cfgRefused
+
+    [Environment]::SetEnvironmentVariable('T3CODE_CLERK_PUBLISHABLE_KEY', '   ', 'Process')
+    $cfgMessage = ''
+    try { Assert-PbPublicBuildConfig } catch { $cfgMessage = $_.Exception.Message }
+    Assert-Equal 'a blank Clerk key refuses the build' $true ($cfgMessage -match 'T3CODE_CLERK_PUBLISHABLE_KEY')
+    Assert-Equal 'the refusal names keys, never a value' $false ($cfgMessage -match 'test-value-')
+    [Environment]::SetEnvironmentVariable('T3CODE_CLERK_PUBLISHABLE_KEY', 'test-value-T3CODE_CLERK_PUBLISHABLE_KEY', 'Process')
+
+    $bin = Join-Path $cfgTmp 'bin.mjs'
+    $good = 'const relay="test-value-T3CODE_RELAY_URL";const clerk="test-value-T3CODE_CLERK_PUBLISHABLE_KEY";'
+    [System.IO.File]::WriteAllText($bin, $good)
+    Assert-Equal 'a bundle carrying both values passes' 0 (@(Get-PbMissingBakedPublicConfig -BinPath $bin)).Count
+
+    [System.IO.File]::WriteAllText($bin, 'const nothing="";')
+    Assert-Equal 'a bundle without them names both keys' 'T3CODE_RELAY_URL,T3CODE_CLERK_PUBLISHABLE_KEY' `
+        ((Get-PbMissingBakedPublicConfig -BinPath $bin) -join ',')
+
+    [Environment]::SetEnvironmentVariable('T3CODE_CLERK_CLI_OAUTH_CLIENT_ID', 'test-value-oauth', 'Process')
+    [System.IO.File]::WriteAllText($bin, $good)
+    Assert-Equal 'a set optional key missing from the bundle is reported too' 'T3CODE_CLERK_CLI_OAUTH_CLIENT_ID' `
+        ((Get-PbMissingBakedPublicConfig -BinPath $bin) -join ',')
+
+    [System.IO.File]::WriteAllText($bin, $good + 'const oauth="test-value-oauth";')
+    Assert-Equal 'a fully baked bundle passes' 0 (@(Get-PbMissingBakedPublicConfig -BinPath $bin)).Count
+} finally {
+    foreach ($name in $cfgNames) { [Environment]::SetEnvironmentVariable($name, $cfgSaved[$name], 'Process') }
+    Remove-Item -LiteralPath $cfgTmp -Recurse -Force -ErrorAction SilentlyContinue
+}
+$cfgGuard = $buildText.IndexOf('Assert-PbPublicBuildConfig')
+$cfgLoad = $buildText.IndexOf('Import-RepoDotEnv')
+$cfgBuild = $buildText.IndexOf("Invoke-PbNative -FilePath 'vp'")
+$cfgBaked = $buildText.IndexOf('Get-PbMissingBakedPublicConfig')
+$cfgStage = $buildText.IndexOf('Copy-Item -LiteralPath $dist -Destination $releaseDist')
+Assert-Equal 'build.ps1 checks the loaded env before it builds' $true ($cfgLoad -ge 0 -and $cfgGuard -gt $cfgLoad -and $cfgBuild -gt $cfgGuard)
+Assert-Equal 'build.ps1 checks the bundle before staging it' $true ($cfgBaked -gt $cfgBuild -and $cfgStage -gt $cfgBaked)
+
 Write-Host 'scheduler switch (T3CODE_PERSONAL_SCHEDULERS): restored copies off, live start never'
 $schedEnv = 'T3CODE_PERSONAL_SCHEDULERS'
 $schedBefore = [Environment]::GetEnvironmentVariable($schedEnv, 'Process')

@@ -94,6 +94,68 @@ function Clear-DevOriginEnv {
     }
 }
 
+# The T3 Connect public configuration is baked into the server bundle by
+# apps/server/vite.config.ts from loadRepoEnv(), which reads the repo .env/.env.local and
+# then the process env. A release built without it can neither pair nor sign in: 1.66.63
+# ea54da1ead84 was built in a worktree with no .env, its bundle held no relay URL, and
+# release smoke failed twice. build.ps1 refuses before the build and again on the build
+# output. Only key names are ever reported; values never leave this process.
+$PbPublicConfigRequired = @('T3CODE_RELAY_URL', 'T3CODE_CLERK_PUBLISHABLE_KEY')
+# Baked too when the env provides them; a bundle missing one of these is half-configured.
+$PbPublicConfigOptional = @(
+    'T3CODE_CLERK_CLI_OAUTH_CLIENT_ID',
+    'T3CODE_RELAY_CLIENT_OTLP_TRACES_URL',
+    'T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET',
+    'T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN'
+)
+
+function Get-PbPublicConfigValue {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $value = [Environment]::GetEnvironmentVariable($Name, 'Process')
+    if (-not $value) { return $null }
+    $value = $value.Trim()
+    if ($value.Length -eq 0) { return $null }
+    return $value
+}
+
+# Throws, naming only the empty keys, when the process env vite.config.ts will bake from
+# has no relay URL or no Clerk publishable key.
+function Assert-PbPublicBuildConfig {
+    $missing = @()
+    foreach ($name in $PbPublicConfigRequired) {
+        if (-not (Get-PbPublicConfigValue -Name $name)) { $missing += $name }
+    }
+    if ($missing.Count -gt 0) {
+        throw (("Build refused before it starts: the T3 Connect public config is empty ({0}). " -f ($missing -join ', ')) +
+            ("Copy the repo .env into {0} (gitignored; values are never printed) and rebuild." -f $PbRepoRoot))
+    }
+}
+
+# Names the keys whose value the process env provides but the built server bundle does not
+# contain. Empty means every required key, and every optional key that was set, is baked in.
+# Values are compared in memory only.
+function Get-PbMissingBakedPublicConfig {
+    param([Parameter(Mandatory = $true)][string]$BinPath)
+    if (-not (Test-Path -LiteralPath $BinPath -PathType Leaf)) {
+        throw "Cannot check the T3 Connect public config: $BinPath is missing."
+    }
+    $text = [System.IO.File]::ReadAllText($BinPath)
+    $missing = New-Object System.Collections.Generic.List[string]
+    foreach ($name in $PbPublicConfigRequired) {
+        $value = Get-PbPublicConfigValue -Name $name
+        if (-not $value -or $text.IndexOf($value, [System.StringComparison]::Ordinal) -lt 0) {
+            $missing.Add($name)
+        }
+    }
+    foreach ($name in $PbPublicConfigOptional) {
+        $value = Get-PbPublicConfigValue -Name $name
+        if ($value -and $text.IndexOf($value, [System.StringComparison]::Ordinal) -lt 0) {
+            $missing.Add($name)
+        }
+    }
+    return $missing.ToArray()
+}
+
 function Get-ProcessCommandLine {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
     $proc = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
