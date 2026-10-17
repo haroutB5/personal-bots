@@ -1,13 +1,26 @@
 # HANDOFF 1.66.66
 
-Pin move plus the DeepSeek card's refresh fix, on top of 1.66.65 (the bot settings Routines section
-and the "Today" next-run label). The DeepSeek Harness (`@deepseek-ai/dsh`) moves from 0.2.0-rc.2 to
-**0.2.1-rc.2** (the release DeepSeek recommends for V4.1-Flash-1017), and the card now shows a newly
-published harness as soon as npm has it while leaving the update action to a release. No migration
-(the maximum stays 111); `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged only; nothing is activated.
-Branch `release/hbots-16664`, built from the merge of `release/hbots-16665`s head `82e9f9ffbc`;
-code commits `ed54d852a9f0` (pin), `87a32d51e745` (card), merge `d771b8c2f1` and version/notes
-`1fde3530074a`; staged release `1fde3530074a`.
+Pin move, the DeepSeek card's refresh fix, and the Security fix that blocked the first 1.66.66
+staging, on top of 1.66.65 (the bot settings Routines section and the "Today" next-run label). The
+DeepSeek Harness (`@deepseek-ai/dsh`) moves from 0.2.0-rc.2 to **0.2.1-rc.2** (the release DeepSeek
+recommends for V4.1-Flash-1017), and the card now shows a newly published harness as soon as npm has
+it while leaving the update action to a release. No migration (the maximum stays 111);
+`PERSONAL_TASKS_CONCURRENCY` stays 5. Staged only; nothing is activated.
+
+**Security first: live 1.66.63 is already bypassable, and this release closes it.** A bot's
+provider cwd is `<data root>\personal-workspace`, so `..\userdata\secrets\<name>` resolved into the
+sealed secret store and the deny plugin's raw-string check did not see it. On a throwaway root with
+the live 0.2.0-rc.2 runtime and the old plugin, a relative read returned a canary file from the store
+and a relative write created a file inside it (section 5). 0.2.1 adds a `working_directory` tool that
+makes the same class easier (set cwd to `...\userdata`, then `secrets\...`), which is why the pin
+move must not ship without this fix. The new plugin is now installed beside the live 0.2.0-rc.2
+runtime too, so new DeepSeek chats on 1.66.63 load the fix without a restart; chats whose dsh
+process is already running keep the old module until this release restarts them.
+
+Branch `release/hbots-16664`, built from the merge of `release/hbots-16665`'s head `82e9f9ffbc`;
+code commits `ed54d852a9f0` (pin), `87a32d51e745` (card), merge `d771b8c2f1`, version/notes
+`1fde3530074a` and the security fix `0b438620b7d8`; staged release `0b438620b7d8`. Live is still
+1.66.63 (`current.txt` `9d0d33b46120`).
 
 ## 1. Why the pin moves
 
@@ -26,19 +39,19 @@ The runtime installed cleanly on the retry and reports `0.2.1-rc.2`.
 
 Read from the real release notes (`dsh-v0.2.1-alpha.4/5`, `rc.1`, `rc.2`).
 
-| Change                                                                                                                              | Touches hbots?                                                                                                                                                                                    |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| rc.2: support for DeepSeek-V4.1-Flash-1017                                                                                          | This is the reason for the move. No hbots code change.                                                                                                                                            |
-| rc.2: DeepSeek Search and Fetch APIs, enabled in Web Search settings                                                                | Watched. The new base row `web-deepseek-api` is not named by our patch; we still disable `web-search-deepseek` and set `tool-web` `search: false`, and the A/B shows `web_search` is not offered. |
-| rc.1: new `working_directory` tool and SDK APIs                                                                                     | Minimal mode: added to `MINIMAL_DISABLED_ROWS`. A/B: Minimal offers 79 tools and no `working_directory`. Standard/code may use it, which is a normal new tool.                                    |
-| rc.1: Minimal mode can read images and auto-compact; `/compact` in Web/Desktop                                                      | Feature gain, Minimal mode only. No regression in the 10-turn run.                                                                                                                                |
-| rc.1: optional plugins in Minimal mode; Claude Code/Codex bundles allowed in ACP profiles                                           | No. We still insert one plugin (the deny plugin) by file URL; the A/B proves it still denies.                                                                                                     |
-| rc.1: runtime utilities, MCP protocol integrations and image processing updated                                                     | Watched. The t3-code MCP server still mounts over ACP; images still pass.                                                                                                                         |
-| rc.1: headless API-key precedence env/.env first, saved credentials not read                                                        | Good for us: we pass `DEEPSEEK_API_KEY` in the child env; the stand-in saw the request and the key check passed.                                                                                  |
-| rc.1: removed the `both` tool-presentation mode; removed runtime invariant plugins; removed per-row `dshHome` in agent-instructions | No. We use `ptc`/default, load no invariant plugin and set no `dshHome`.                                                                                                                          |
-| rc.1: Agent Team direct Inbox, subagent notifications returning child ids, automation tool scoping                                  | Not part of our ACP profile/turn path. The A/B does not exercise dsh's own subagents.                                                                                                             |
-| rc.1: pi-ai 1.0.2, Azure provider rename                                                                                            | No.                                                                                                                                                                                               |
-| rc.1/rc.2: key/token masking in sent messages                                                                                       | Display only; the alpha.3 report proved it on the wire. The A/B reproduces the same result: the model and the tool see the raw key, and `{{secret:...}}` is untouched.                            |
+| Change                                                                                                                              | Touches hbots?                                                                                                                                                                                        |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| rc.2: support for DeepSeek-V4.1-Flash-1017                                                                                          | This is the reason for the move. No hbots code change.                                                                                                                                                |
+| rc.2: DeepSeek Search and Fetch APIs, enabled in Web Search settings                                                                | Handled. The new base row `web-deepseek-api` is now explicitly disabled in our patch (Security follow-up); `web-search-deepseek` stays disabled and `tool-web` keeps `search: false`.                 |
+| rc.1: new `working_directory` tool and SDK APIs                                                                                     | Handled. `tool-working-directory` is disabled in **every** mode, not only Minimal (Security blocker, section 5). The `working-directory` service row stays because dsh's fs tools resolve through it. |
+| rc.1: Minimal mode can read images and auto-compact; `/compact` in Web/Desktop                                                      | Feature gain, Minimal mode only. No regression in the 10-turn run.                                                                                                                                    |
+| rc.1: optional plugins in Minimal mode; Claude Code/Codex bundles allowed in ACP profiles                                           | No. We still insert one plugin (the deny plugin) by file URL; the A/B proves it still denies.                                                                                                         |
+| rc.1: runtime utilities, MCP protocol integrations and image processing updated                                                     | Watched. The t3-code MCP server still mounts over ACP; images still pass.                                                                                                                             |
+| rc.1: headless API-key precedence env/.env first, saved credentials not read                                                        | Good for us: we pass `DEEPSEEK_API_KEY` in the child env; the stand-in saw the request and the key check passed.                                                                                      |
+| rc.1: removed the `both` tool-presentation mode; removed runtime invariant plugins; removed per-row `dshHome` in agent-instructions | No. We use `ptc`/default, load no invariant plugin and set no `dshHome`.                                                                                                                              |
+| rc.1: Agent Team direct Inbox, subagent notifications returning child ids, automation tool scoping                                  | Not part of our ACP profile/turn path. The A/B does not exercise dsh's own subagents.                                                                                                                 |
+| rc.1: pi-ai 1.0.2, Azure provider rename                                                                                            | No.                                                                                                                                                                                                   |
+| rc.1/rc.2: key/token masking in sent messages                                                                                       | Display only; the alpha.3 report proved it on the wire. The A/B reproduces the same result: the model and the tool see the raw key, and `{{secret:...}}` is untouched.                                |
 
 ## 3. The pin move
 
@@ -47,11 +60,13 @@ Read from the real release notes (`dsh-v0.2.1-alpha.4/5`, `rc.1`, `rc.2`).
 - `scripts\personal\install-dsh.ps1`: `-Version` default and help line.
 - `apps\server\src\provider\Drivers\DeepSeekEngine.ts`: `DSH_PINNED_VERSION = "0.2.1-rc.2"`, so
   `DSH_RUNTIME_DIR_NAME` follows and the card does not say Unavailable.
-- `apps\server\src\provider\acp\DshAcpSupport.ts`: `tool-working-directory` added to
-  `MINIMAL_DISABLED_ROWS`; runtime-path doc comment.
+- `apps\server\src\provider\acp\DshAcpSupport.ts`: `tool-working-directory` is disabled by one
+  global row in every mode (removed from `MINIMAL_DISABLED_ROWS`); `web-deepseek-api` is disabled;
+  runtime-path doc comment.
 - `packages\contracts\src\settings.ts`: the Harness-path placeholder.
 - `scripts\personal\qa\dsh-live-smoke.mjs`: the runtime path it probes.
-- `apps\server\src\provider\acp\DshAcpSupport.test.ts`: the pinned-version/path expectations.
+- `apps\server\src\provider\acp\DshAcpSupport.test.ts`: the pinned-version/path and row
+  expectations.
 
 The rc.2 runtime is installed side by side at
 `%USERPROFILE%\.personal-bots\runtimes\dsh-0.2.1-rc.2`; `dsh-0.2.0-rc.2` is still installed for
@@ -86,40 +101,111 @@ cached version and stores the new one; `makeManagedServerProvider.test.ts` - a m
 passes the bypass flag, the background check does not; the Claude engine's advisory is unchanged;
 `ProviderInstanceCard`/`providerStatus` tests for the label and the detail.
 
-**Throwaway proof** on the final build: with Harness path pointed at the old `dsh-0.2.0-rc.2`
+**Throwaway proof** on both final builds: with Harness path pointed at the old `dsh-0.2.0-rc.2`
 runtime, the card reads `DeepSeek Harness v0.2.0-rc.2 Unavailable` **and** shows
 `Update available: v0.2.1-rc.2 is available.` (no update action). With the new runtime it reads
 `DeepSeek Harness v0.2.1-rc.2 Authenticated` and shows no advisory. Runs
-`qa\dsh-021-rc2\runs\old-2026-10-17T10-35-17\` and `...\new-2026-10-17T10-36-54\`.
+`qa\dsh-021-rc2\runs\old-2026-10-17T10-35-17\` and `...\new-2026-10-17T10-36-54\`, repeated on the
+final release by `old-2026-10-17T11-23-05` and `new-2026-10-17T11-26-06`.
 
-## 5. A/B on the staged release
+## 5. Security fix: relative paths and the cwd tool
 
-Throwaway roots under `%TEMP%` on the staged release `1fde3530074a` (read-only), the DeepSeek
+Security blocked the first 1.66.66 staging (task 49be2588). dsh 0.2.1 adds `working-directory` and
+`tool-working-directory` (dsh-base `cordis.patch.yml:166-170`). We disabled the tool only in
+Minimal, so Standard (the default) and Code offered it. It sets the session cwd, dsh-tool-fs
+resolves relative paths against that cwd (`dsh-tool-fs/lib/index.js:171-192`), and the deny plugin
+compared only the raw `file_path`/`path` strings (`norm`/`under`/`tailMatches`).
+
+**The live question, answered first.** Yes: live 1.66.63 (0.2.0-rc.2, no cwd tool) was already
+bypassable with a relative path from the bot's default session cwd. The provider cwd is
+`<data root>\personal-workspace`, so `..\userdata\secrets\qa-relative-canary-<R>.txt` read a canary
+file from the sealed store, and a relative write created a file inside it. The baseline used the old
+plugin and skipped the database write so it could not corrupt the throwaway. Evidence:
+`qa\dsh-021-rc2\runs\old-2026-10-17T11-10-51\` (T3b FAIL by design: all three relative reads
+ALLOWED with the canary content, relative write created the file).
+
+The fix, all in `0b438620b7d8`:
+
+1. **`tool-working-directory` is disabled in every mode** by one unconditional launch row. It was
+   removed from `MINIMAL_DISABLED_ROWS` so there is one owner. The `working-directory` **service**
+   row is deliberately kept: dsh-tool-fs 0.2.1 calls `ctx.workingDirectory.ensure` for every
+   relative fs path (`dsh-tool-fs/lib/index.js:172`) and dsh-tool-fs-search does the same
+   (`lib/index.js:168`), so disabling the service would break every read and write. The A/B shows
+   no `working_directory` in Standard (101 tools), Code (1 tool) or Minimal (79 tools), and the
+   launch patch carries the disabled row in all three.
+2. **The deny plugin resolves and canonicalizes every candidate path** before `under`/`tailMatches`.
+   It takes the cwd from `ctx.workingDirectory.get(session)` on 0.2.1, then falls back to
+   `session.header.cwd` (0.2.0). It normalizes `\`/`/`, `.` and `..`, strips the `\\?\`/`\\.\`
+   prefixes, resolves through `realpathSync.native` (8.3 short names, junctions, symlinks, trailing
+   dots) and canonicalizes a not-yet-existing write from its nearest existing ancestor. A relative
+   path with no visible cwd is denied when it names a protected folder or file. It covers
+   `read`/`read_image`/`edit`/`write`/`glob`/`grep`, the shell `workdir`/`cwd` arguments (a workdir
+   at or below the data root is denied, because `secrets\x` in command text would not name
+   `userdata/secrets`), and a `working_directory` call as defence in depth. The shell command text
+   also collapses `.` and duplicate separators before its tail match. This remains a tool-level
+   deny, not an OS boundary, exactly as before.
+3. **`web-deepseek-api` is explicitly disabled** in the privacy patch, so the DeepSeek Search/Fetch
+   API routes never register with the bot's credential, even though `tool-web` only fetches over
+   http. The A/B PATCH check now holds 6/6 privacy rows and 12 launch rows.
+4. **The plugin is installed beside both runtimes** (the same copy `install-dsh.ps1` performs):
+   `dsh-0.2.0-rc.2` and `dsh-0.2.1-rc.2` both hold sha256
+   `73BB568267ED2FD744C61C3C311BF39788DD0E3307F04CAD23E873C9E8958BBA`, identical to
+   `scripts\personal\dsh-runtime\hbots-deny-plugin.mjs` in the release. Because the live pin is
+   0.2.0-rc.2, the live runtime now loads the fixed plugin for new DeepSeek chats; no server restart
+   was performed. Chats with an already-running dsh process keep the old module until this release
+   restarts them.
+
+**Unit proof.** `DshDenyPlugin.test.ts` (8 tests, in the fork gate) drives the shipped `.mjs`
+through its own hook: relative from the workspace and from a data-root cwd, `./`, `..`, mixed and
+double separators, case, `\\?\`, 8.3 short names, no-cwd relative names, shell workdir, and the
+`working_directory` call, plus allowed paths (DB reads, ordinary workspace files, a folder named
+`secrets` deeper in the workspace). `DshAcpSupport.test.ts` asserts both new rows in Standard,
+Code and Minimal.
+
+**A/B T3b** (same rig, same throwaway cwd, both runtimes):
+
+| Attempt                                        | rc.2 old (0.2.0)          | rc.2 new (0.2.1)          |
+| ---------------------------------------------- | ------------------------- | ------------------------- |
+| read `..\userdata\secrets\<canary>`            | DENIED                    | DENIED                    |
+| read `..\userdata\secrets\..\secrets\<canary>` | DENIED                    | DENIED                    |
+| read `..\userdata\\secrets\\<canary>`          | DENIED                    | DENIED                    |
+| write `..\userdata\secrets\<new file>`         | DENIED (file not created) | DENIED (file not created) |
+| write `..\userdata\state.sqlite`               | DENIED                    | DENIED                    |
+| `working_directory` offered (standard/code)    | no (tool absent)          | no (disabled)             |
+| launch patch disables `tool-working-directory` | true/true                 | true/true                 |
+
+All denials carry `blocked: path is bot state protected by the hbots server`.
+
+## 6. A/B on the staged release
+
+Throwaway roots under `%TEMP%` on the staged release `0b438620b7d8` (read-only), the DeepSeek
 instance's **Harness path** pointed at each runtime, a stub DeepSeek API with a fake key, dark mode,
 390x844. Old = 0.2.0-rc.2, new = 0.2.1-rc.2. Same rig, fixtures and check order for both runs.
 
 | #     | Check                                                      | rc.2 old | rc.2 new | Evidence (identical unless stated)                                                                                                                                                                                    |
 | ----- | ---------------------------------------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | SETUP | DeepSeek on dsh with that runtime, 3 bots, 3 chats         | PASS     | PASS     | old card `DeepSeek Harness v0.2.0-rc.2 Unavailable` plus the advisory `Update available: v0.2.1-rc.2 is available.`; new card `DeepSeek Harness v0.2.1-rc.2 Authenticated`; 3 modes stored as deepseek/deepseek-flash |
-| PATCH | launch patch rows, privacy rows, mode, spawned runtime     | PASS     | PASS     | 11 rows; 5/5 privacy rows hold; all 15 disabled ids present; `hbots-deny` inserted; the dsh process runs the runtime under test                                                                                       |
+| PATCH | launch patch rows, privacy rows, mode, spawned runtime     | PASS     | PASS     | 12 rows; 6/6 privacy rows hold (including `web-deepseek-api`); `tool-working-directory` disabled in every mode; `hbots-deny` inserted; the dsh process runs the runtime under test                                    |
 | T1    | plain text turn (standard)                                 | PASS     | PASS     | reply carried the MK1 marker; 1 API request                                                                                                                                                                           |
 | T2    | tool call round trip (`pwsh`)                              | PASS     | PASS     | tool result `HELLOQA...` returned to the model                                                                                                                                                                        |
-| T3    | deny plugin denies a bot-state path                        | PASS     | PASS     | `Error: blocked: path is bot state protected by the hbots server`                                                                                                                                                     |
+| T3    | deny plugin denies a bot-state absolute path               | PASS     | PASS     | `Error: blocked: path is bot state protected by the hbots server`                                                                                                                                                     |
+| T3b   | relative paths from the session cwd; no cwd tool           | PASS     | PASS     | all relative reads/writes denied, canary not read, no file created; no `working_directory` offered (standard 101 tools, code 1, minimal 79)                                                                           |
 | T4    | steer into a running turn                                  | PASS     | PASS     | 2 turns completed, steer marker in the reply, 0 errors                                                                                                                                                                |
 | T5    | image under the cap                                        | PASS     | PASS     | stored 1064 B, sent `image/png 390x300 1064 B` byte-identical                                                                                                                                                         |
 | T6    | image over the cap (8,449,624 B source)                    | PASS     | PASS     | composer brought it to 219,854 B; sent `image/jpeg 872x1890 202,501 B` (cap 2,097,152)                                                                                                                                |
-| T7    | code + minimal each run a turn                             | PASS     | PASS     | both completed; Minimal offers **79 tools**, no `working_directory`, and disables `tool-working-directory`; code mode offers run_code (1 tool)                                                                        |
-| T8    | long chat (10 turns) + compaction signal                   | PASS     | PASS     | 10/10 completed, max 37 messages in one request, no compact request (the stub cannot force the real window)                                                                                                           |
+| T7    | code + minimal each run a turn                             | PASS     | PASS     | both completed; Minimal offers **79 tools**, no `working_directory`; Code offers 1 tool, no `working_directory`                                                                                                       |
+| T8    | long chat (10 turns) + compaction signal                   | PASS     | PASS     | 10/10 completed, max 57 messages in one request, 32 requests, no compact request (the stub cannot force the real window)                                                                                              |
 | T9    | session resumes after a server restart                     | PASS     | PASS     | same dsh session id before and after; 0 not-resumable lines; 0 errors                                                                                                                                                 |
 | T10   | key in a message + key and `{{secret:...}}` in a tool call | PASS     | PASS     | raw key reached the model and the tool; placeholder reached the tool intact; key stored raw in `state.sqlite`                                                                                                         |
-| T11   | usage ledger parsed                                        | PASS     | PASS     | 3 files, 25 lines, **$0.300807** on both, no unexpected fields                                                                                                                                                        |
+| T11   | usage ledger parsed                                        | PASS     | PASS     | 3 files, 36 lines, **$0.571071** on both, no unexpected fields                                                                                                                                                        |
 | T12   | 0 ERROR lines, 0 page errors, privacy rows on disk         | PASS     | PASS     | 0 ERROR/FATAL, 0 page errors, 0 session-log uploads, no credentials file, `web_search` not offered                                                                                                                    |
 
 Raw runs and the full report: `%USERPROFILE%\.personal-bots\qa\dsh-021-rc2\REPORT.md`,
-`runs\old-2026-10-17T10-35-17\` and `runs\new-2026-10-17T10-36-54\`. The earlier first pass on
-`ed54d852a9f0` was superseded by the card fix; its runs are kept in the same folder.
+`runs\old-2026-10-17T11-23-05\` and `runs\new-2026-10-17T11-26-06\`. The baseline that proved the
+live bypass is `runs\old-2026-10-17T11-10-51\`. The earlier `1fde3530074a` A/B (14 rows) is
+superseded and kept for the record.
 
-## 6. npm audit
+## 7. npm audit
 
 `npm audit --omit=dev` on the new lockfile: **8 moderate, 0 high, 0 critical**. All eight trace to
 `fflate` (infinite loop parsing a malformed ZIP64 archive) through `@deepseek-ai/libreoffice-kit`
@@ -127,70 +213,78 @@ Raw runs and the full report: `%USERPROFILE%\.personal-bots\qa\dsh-021-rc2\REPOR
 bump of the dsh packages. hbots never invokes dsh's Office/PDF skill, and the advisory needs a
 malformed archive to parse. Output: `qa\dsh-021-rc2\npm-audit-rc2.json`.
 
-## 7. Builder verification
+## 8. Builder verification
 
-- Targeted provider tests: 82 passed, 13 skipped (`DeepSeekDriver`, `providerMaintenance`,
-  `makeManagedServerProvider`, `DeepSeekProvider`, `DshAcpSupport`).
-- Web card tests: 22 passed (`ProviderInstanceCard` 4, `providerStatus` + settings panel 18).
-- `apps\server` and `apps\web` `tsc --noEmit`: exit 0.
-- Full fork gate and e2e: see Gate evidence below (server 2,920 tests, web 2,877 tests, PS 262
-  checks, e2e 12/12, all PASS).
+- Targeted provider tests: 34 passed in `DshDenyPlugin.test.ts` + `DshAcpSupport.test.ts`; the
+  whole provider tree was also run: 1,791 passed, 2 failed. The two failures are pre-existing
+  `ClaudeAdapter.test.ts` assertions about `skillOverrides` (the 1.66.62 skill trim is on by default
+  and the test expects the untrimmed settings). No file in this release touches the Claude adapter,
+  and the fork gate does not run that suite. Flagged for a separate fix.
+- Fork gate: server 2,920 passed (4 skipped), web 2,877 passed, PS 262 checks, e2e 12/12, all PASS
+  (see Gate evidence below). `apps\server` and `apps\web` `tsc --noEmit` exit 0.
+- Build: `build.ps1 -CopyExternals` staged `0b438620b7d8` with `dirty=False` and `externals=copied`;
+  `bin.mjs --version` answers `t3 v0.0.42`, and the bundle contains the new rows. The script printed
+  a nonzero process exit at the end after the staging lines (only chunk-size warnings in its output);
+  the staged VERSION, the bundle check and the gate (including e2e on that artifact) are all good.
 - Runtime: `node ...\dsh-0.2.1-rc.2\node_modules\@deepseek-ai\dsh\lib\bin.js --version` answers
-  `0.2.1-rc.2`; `dsh-0.2.0-rc.2` is still installed.
-- The card's harness label and the old-runtime advisory were also proved in the throwaway; see
-  section 4.
+  `0.2.1-rc.2`; `dsh-0.2.0-rc.2` is still installed. Both runtime plugin copies equal the release
+  file (sha256 `73BB568267ED2FD744C61C3C311BF39788DD0E3307F04CAD23E873C9E8958BBA`).
+- The card's harness label and the old-runtime advisory were proved in both throwaways; see section 4.
 - Test-time load: the dependency install and the test runs were heavy disk jobs and the live stall
-  recorder logged 8 pauses of 1.3-5.9 s between 09:11 and 09:19Z, all `process-paused` with the
-  live 1.66.63 process idle (disk starvation), not from this release. Nothing was activated; the
-  release waiter still has its idle gate.
+  recorder logged pauses up to 5.9 s between 09:11 and 09:19Z, all `process-paused` with the live
+  1.66.63 process idle (disk starvation), not from this release. Nothing was activated; the release
+  waiter still has its idle gate.
 
-## 8. What QA should focus on
+## 9. What QA should focus on
 
-1. A real DeepSeek turn on `deepseek-flash` (V4.1-Flash-1017) on a DeepSeek bot, standard mode.
-2. The DeepSeek settings card: `DeepSeek Harness v0.2.1-rc.2 Authenticated`, no Unavailable, no
-   update advisory (the pin is current).
-3. The new Refresh: with the card current, press Refresh; it must stay current. The advisory proof
-   against an older harness is in section 4 (throwaway). No Update button on a harness advisory.
-4. Minimal mode: a turn works, the persistent PowerShell works, and no `working_directory` tool is
+1. **Security (new):** on a DeepSeek bot in Standard mode, ask it to read
+   `..\userdata\secrets\data-encryption-key.json` (and the same with `.\`, `..\` and mixed
+   separators). It must be denied on live 1.66.66. Ask it to write `..\userdata\state.sqlite`; it
+   must be denied. Repeat once in Code mode.
+2. Standard and Code must offer no `working_directory` tool; Minimal keeps 79 tools and no
+   `working_directory`.
+3. A real DeepSeek turn on `deepseek-flash` (V4.1-Flash-1017) on a DeepSeek bot, standard mode.
+4. The DeepSeek settings card: `DeepSeek Harness v0.2.1-rc.2 Authenticated`, no Unavailable, no
+   update advisory (the pin is current). Press Refresh; it must stay current. No Update button on a
+   harness advisory.
+5. Minimal mode: a turn works, the persistent PowerShell works, and no `working_directory` tool is
    offered.
-5. Code mode: one plain turn.
 6. An image under and over 2 MiB, and a 10-turn chat.
 7. Session resume after a server restart (same dsh session id).
 8. Startup log since the restart: 0 ERROR, 0 `Token:`/`Pairing URL` lines.
 
-## 9. Rollback
+## 10. Rollback
 
-- Fastest: binary rollback to the previous live release, 1.66.65 (`7cdc928a7788`) once it is live,
-  or 1.66.63 (`9d0d33b46120`) before that, with `restart.ps1 -Release <sha> -NoPrune`; the pin and
-  the card fix go back with the binary and the rc.2 runtime stays installed.
-- Source rollback: revert the pin and card commits (`ed54d852a9f0`, `87a32d51e745`) on top of the
-  merged 1.66.65 tree (or set `DSH_PINNED_VERSION` and the `install-dsh.ps1` default back to
-  `0.2.0-rc.2` and regenerate the lockfile), rebuild, and re-stage. The `dsh-0.2.0-rc.2` runtime is
-  still installed, so no reinstall is needed.
+- **Do not roll back to 1.66.65 or 1.66.63 without the plugin.** Those binaries predate the security
+  fix and the bypass returns. Because the plugin is loaded from the runtime folder, the fixed plugin
+  is already beside `dsh-0.2.0-rc.2`, so new chats stay protected even on the older binary; a revert
+  of the plugin copy would reopen it.
+- Fastest safe rollback: a binary rollback to another 1.66.66 build that carries `0b438620b7d8`, or
+  to 1.66.65/1.66.63 with the fixed plugin still in place, with `restart.ps1 -Release <sha>
+-NoPrune`. The rc.2 runtime stays installed.
+- Source rollback: revert `0b438620b7d8` and the pin/card commits on top of the merged 1.66.65 tree
+  (or set `DSH_PINNED_VERSION` and the `install-dsh.ps1` default back to `0.2.0-rc.2` and
+  regenerate the lockfile), rebuild, and re-stage. Keep the plugin copy and the two launch rows.
 - No migration, so no data restore is involved.
 
 ## Gate evidence
 
-Written by `scripts/personal/gate-evidence.ps1` on the final build; see the markers below.
+<!-- gate-evidence:begin sha=0b438620b7d8bc4e5e86203c97198517916a0259 release=0b438620b7d8 json-sha256=2bbe6f6a734a834dd537855430d5eb5ddcbe06dbe316e2803c89e19b9fe43e0b result=PASS -->
 
-## Gate evidence
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T11:38:01Z. Version 1.66.66, release `0b438620b7d8`, commit `0b438620b7d8bc4e5e86203c97198517916a0259` on `release/hbots-16664`, working tree clean, result **PASS**.
 
-<!-- gate-evidence:begin sha=1fde3530074a7a6466d287545ee93d4c3db74922 release=1fde3530074a json-sha256=d9e85500f606f7bd4e7d922f3086223376425c2b69922c06076023088d7674d0 result=PASS -->
-
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T10:49:12Z. Version 1.66.66, release `1fde3530074a`, commit `1fde3530074a7a6466d287545ee93d4c3db74922` on `release/hbots-16664`, working tree clean, result **PASS**.
-
-Machine-readable copy: `releases\1fde3530074a\gate-evidence.json` (sha256 `d9e85500f606f7bd4e7d922f3086223376425c2b69922c06076023088d7674d0`) and the full gate logs in `releases\1fde3530074a\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\0b438620b7d8\gate-evidence.json` (sha256 `2bbe6f6a734a834dd537855430d5eb5ddcbe06dbe316e2803c89e19b9fe43e0b`) and the full gate logs in `releases\0b438620b7d8\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 247.8   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 23.1    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2877 tests passed, 0 failed, 0 skipped, in 257 files | 33.2    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 14.7    |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 262 checks ok, 0 failed                              | 65.1    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16664\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\1fde3530074a" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 257.7   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 219.9   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 20      |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2877 tests passed, 0 failed, 0 skipped, in 257 files | 32.1    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.5     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 262 checks ok, 0 failed                              | 65.6    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16664\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\0b438620b7d8" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 260     |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `1fde3530074a7a6466d287545ee93d4c3db74922`, at end `1fde3530074a7a6466d287545ee93d4c3db74922`; tracked files modified: none. Staged release: version 1.66.66, sha 1fde3530074a, dirty False, externals copied; `dist/bin.mjs` sha256 `90244454104f89a4c2a02ccd04e7f020030fd7ea55f583bb47321c7893724592`.
+Tree: HEAD at start `0b438620b7d8bc4e5e86203c97198517916a0259`, at end `0b438620b7d8bc4e5e86203c97198517916a0259`; tracked files modified: none. Staged release: version 1.66.66, sha 0b438620b7d8, dirty False, externals copied; `dist/bin.mjs` sha256 `25bdca5a5189779c106ae08fb0e863c6f1bbe831952fb1f04b4674e1bef5ce35`.
 <!-- gate-evidence:end -->
