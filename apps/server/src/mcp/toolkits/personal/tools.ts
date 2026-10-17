@@ -331,6 +331,43 @@ export const ForgetMemoryResult = Schema.Struct({
   summary: Schema.String,
 });
 
+const UsageWindowResult = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  usedPercent: Schema.Number,
+  resetsAt: Schema.NullOr(Schema.String),
+});
+
+export const UsageStatusResult = Schema.Struct({
+  readAt: Schema.String,
+  providers: Schema.Array(
+    Schema.Struct({
+      instanceId: Schema.String,
+      driver: Schema.String,
+      name: Schema.String,
+      status: Schema.String,
+      checkedAt: Schema.NullOr(Schema.String),
+      unavailable: Schema.NullOr(Schema.String),
+      session: Schema.NullOr(UsageWindowResult),
+      weekly: Schema.Array(UsageWindowResult),
+    }),
+  ),
+  fallbackBots: Schema.Array(
+    Schema.Struct({
+      botId: Schema.String,
+      botName: Schema.String,
+      homeModel: Schema.String,
+      activeModel: Schema.String,
+      activeModelLabel: Schema.String,
+      reason: Schema.String,
+      fromProvider: Schema.NullOr(Schema.String),
+      since: Schema.NullOr(Schema.String),
+      resetAt: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type UsageStatusResult = typeof UsageStatusResult.Type;
+
 export const SaveMemoryResult = Schema.Struct({
   memoryId: Schema.String,
   scope: Schema.String,
@@ -455,6 +492,19 @@ const ForgetMemoryTool = Tool.make("forget_memory", {
 })
   .annotate(Tool.Title, "Forget memory")
   .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const UsageStatusTool = Tool.make("usage_status", {
+  description:
+    "Read the live usage limits the Bots home header shows: for each enabled provider (Claude, Codex, DeepSeek, ...) its 5-hour session percent used, its weekly percent used with reset times, when the reading was taken, and any reason the provider gave for having no figures; plus every bot whose turns currently run on a fallback, DeepSeek-peak or scheduled model, with its home model and active model. Read-only: it returns the snapshots the app already published and never calls a provider. Call usage_status before stating usage limits; never quote them from memory. Say the readAt time with the numbers so the user knows how fresh they are.",
+  success: UsageStatusResult,
+  failure: PersonalToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Usage status")
+  .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
@@ -664,4 +714,5 @@ export const PersonalToolkit = Toolkit.make(
   SearchMemoryTool,
   SaveMemoryTool,
   ForgetMemoryTool,
+  UsageStatusTool,
 );

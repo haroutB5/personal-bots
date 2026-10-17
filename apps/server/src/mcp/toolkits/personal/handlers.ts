@@ -33,6 +33,7 @@ import {
 import { noteChangedLine, writeNoteNotice } from "../../../personal/memory/memoryNotice.ts";
 import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
+import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSessionAccess.ts";
 import {
@@ -56,6 +57,7 @@ import {
   type SaveMemoryInput,
   type UpdateRoutineInput,
 } from "./tools.ts";
+import { usageStatusReading } from "./usageStatus.ts";
 
 const encodeCreateRoutineInput = Schema.encodeSync(Schema.fromJsonString(CreateRoutineInput));
 
@@ -213,6 +215,9 @@ const make = Effect.gen(function* () {
     onEvent: (event) => void runFork(logResearch(event)),
   });
   const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
+  // The same published snapshots the Bots home header reads. Read-only: this
+  // never refreshes or probes a provider, so usage_status adds no fetch path.
+  const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
   // Tests give the broker a resolver, an address rule and a private CA; the server runs with none.
   const brokerConfig = yield* Effect.serviceOption(SecretBrokerConfig);
 
@@ -1172,6 +1177,19 @@ const make = Effect.gen(function* () {
             ? "Not forgotten yet: a card is in this chat. It is forgotten only when the user taps Forget there. Tell them briefly."
             : "Not forgotten yet: it is waiting for the user's OK on the Memory screen. Mention it in your result.",
         };
+      }),
+    usage_status: () =>
+      Effect.gen(function* () {
+        yield* requireBotThread;
+        if (Option.isNone(providerRegistry)) {
+          return yield* refuse("Usage data is not available on this server.");
+        }
+        const [providers, allBots] = yield* Effect.all([
+          providerRegistry.value.getProviders,
+          liveBots,
+        ]);
+        const readAt = DateTime.formatIso(yield* DateTime.now);
+        return usageStatusReading({ providers, bots: allBots, readAt });
       }),
   });
 });
