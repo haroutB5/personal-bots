@@ -26,6 +26,7 @@ import {
   nightlyRunId,
   NPM_AGENT_SDK_LATEST,
   NPM_CLAUDE_CODE_LATEST,
+  NPM_DSH_REGISTRY,
   npmLatestVersion,
   type PersonalClaudeCodeReviewDeps,
 } from "./PersonalClaudeCodeReview.ts";
@@ -98,6 +99,11 @@ const makeHarness = () => {
     npmCli: "2.1.281" as string | null,
     npmSdk: "0.3.281" as string | null,
     installed: "2.1.281" as string | null,
+    dshTags: {
+      latest: "0.2.0-rc.2",
+      next: "0.2.1-rc.2",
+      alpha: "0.2.1-alpha.5",
+    } as Record<string, string | null> | null,
     cliVersions: ["2.1.281", "2.1.280", "2.1.260"],
     sdkVersions: ["0.3.281", "0.3.280", "0.3.260"],
     bot: null as { instructions: string } | null,
@@ -115,6 +121,7 @@ const makeHarness = () => {
     excerptDir: "C:/state/claude-code-updates",
     updatesHome: HOME,
     pinnedSdk: "0.3.260",
+    pinnedDsh: "0.2.1-rc.2",
     fetchText: (url) =>
       Effect.suspend(() => {
         state.fetched.push(url);
@@ -124,6 +131,12 @@ const makeHarness = () => {
             : Effect.succeed(JSON.stringify({ version: value }));
         if (url === NPM_CLAUDE_CODE_LATEST) return reply(state.npmCli);
         if (url === NPM_AGENT_SDK_LATEST) return reply(state.npmSdk);
+        if (url === NPM_DSH_REGISTRY) {
+          const tags = state.dshTags;
+          return tags === null
+            ? Effect.fail({ message: "offline" })
+            : Effect.succeed(JSON.stringify({ "dist-tags": tags }));
+        }
         if (url === CLAUDE_CODE_CHANGELOG) return Effect.succeed(cliChangelog(state.cliVersions));
         if (url === AGENT_SDK_CHANGELOG) return Effect.succeed(sdkChangelog(state.sdkVersions));
         return Effect.fail({ message: `unexpected ${url}` });
@@ -478,7 +491,10 @@ it.effect("04:00 with no new release still runs the carried-over proposals", () 
     });
     const data = runData(prepared);
     assert.strictEqual(data.review, null);
-    assert.strictEqual(data.reviewSkipped, "no new Claude Code or Agent SDK release");
+    assert.strictEqual(
+      data.reviewSkipped,
+      "no new Claude Code, Agent SDK or DeepSeek Harness release",
+    );
     assert.strictEqual(data.proposals.actionable.length, 5);
     assert.ok(!data.commands.ship.includes("-ReviewLabel"));
     assert.strictEqual(prepared._tag === "Run" && prepared.onStarted === undefined, true);
@@ -527,7 +543,8 @@ it.effect("nothing new and nothing carried over: the slot is skipped, no task", 
     });
     assert.deepStrictEqual(prepared, {
       _tag: "Skip",
-      reason: "no new Claude Code or Agent SDK release, and no open or approved proposals",
+      reason:
+        "no new Claude Code, Agent SDK or DeepSeek Harness release, and no open or approved proposals",
     });
   }),
 );
@@ -592,6 +609,120 @@ it.effect("offline registry: the carried-over proposals still run; nothing is st
     );
     assert.strictEqual(data.reviewSkipped, "the npm registry was unreachable");
     assert.strictEqual(reviewState().lastCheckedAt, null);
+  }),
+);
+
+it.effect("a newer DeepSeek Harness next makes a pin-move proposal on its own", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(AT_0400);
+    const { state, deps, reviewState } = readyHarness();
+    // No carried-over proposal: the harness alone is what makes this a review.
+    state.files.delete(LEDGER);
+    state.dshTags = { latest: "0.2.0-rc.2", next: "0.2.2-rc.1", alpha: "0.3.0-alpha.1" };
+    const service = yield* makeWith(deps);
+    const prepared = yield* service.prepareRun({
+      routine: nightlyRoutine(),
+      localOccurrence: "2026-09-25T04:00",
+      manual: false,
+    });
+    const data = runData(prepared);
+    const harness = data.review.deepseekHarness;
+    assert.strictEqual(harness.moved, true);
+    assert.strictEqual(harness.pinned, "0.2.1-rc.2");
+    assert.strictEqual(harness.latest, "0.2.0-rc.2");
+    assert.strictEqual(harness.next, "0.2.2-rc.1");
+    assert.strictEqual(harness.candidate, "0.2.2-rc.1");
+    // Never the alpha tag, even though it is the highest version on npm.
+    assert.notStrictEqual(harness.candidate, "0.3.0-alpha.1");
+    assert.strictEqual(data.review.label, "dsh-0.2.2-rc.1");
+    assert.strictEqual(data.review.reportFile, "C:/notes/claude-code-updates/dsh-0.2.2-rc.1.md");
+    assert.strictEqual(data.review.claudeCode, null);
+    assert.ok(harness.pinMoveInstructions[0].includes("Move DeepSeek Harness pin to 0.2.2-rc.1"));
+    assert.ok(harness.pinMoveInstructions[0].includes("reuse it"));
+    assert.ok(harness.pinMoveInstructions.join("\n").includes("T3b and T3c"));
+    const excerpt = state.files.get(data.review.changelogExcerpt)!;
+    assert.ok(excerpt.includes("npm next: 0.2.2-rc.1"));
+    assert.ok(excerpt.includes("(no Claude Code changes)"));
+    // A harness-only review changes no Claude Code review state.
+    assert.strictEqual(reviewState().reviewedClaudeCode, "2.1.281");
+    if (prepared._tag === "Run") yield* prepared.onStarted!(fakeTask);
+    assert.strictEqual(reviewState().reviewedClaudeCode, "2.1.281");
+    assert.strictEqual(reviewState().lastCheckedAt, "2026-09-25T03:00:00.000Z");
+  }),
+);
+
+it.effect("alpha, and an equal or older harness candidate, make no proposal", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(AT_0400);
+    const skip = (tags: Record<string, string | null>) =>
+      Effect.gen(function* () {
+        const harness = readyHarness();
+        harness.state.files.delete(LEDGER);
+        harness.state.dshTags = tags;
+        const service = yield* makeWith(harness.deps);
+        const prepared = yield* service.prepareRun({
+          routine: nightlyRoutine(),
+          localOccurrence: "2026-09-25T04:00",
+          manual: false,
+        });
+        assert.strictEqual(prepared._tag, "Skip");
+        assert.ok(
+          prepared._tag === "Skip" && prepared.reason.includes("DeepSeek Harness"),
+          "the skip reason names the harness",
+        );
+      });
+    // Equal to the pin.
+    yield* skip({ latest: "0.2.0-rc.2", next: "0.2.1-rc.2", alpha: "0.3.0-alpha.1" });
+    // Older than the pin.
+    yield* skip({ latest: "0.2.0-rc.2", next: "0.2.0-rc.3", alpha: "0.3.0-alpha.1" });
+    // Only alpha is ahead: never read, so nothing moves.
+    yield* skip({ latest: "0.2.0-rc.2", next: "0.2.1-rc.2", alpha: "0.3.0-alpha.1" });
+  }),
+);
+
+it.effect("a failed harness registry fetch leaves the Claude Code review intact", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(AT_0400);
+    const { state, deps } = readyHarness();
+    state.files.delete(LEDGER);
+    state.dshTags = null;
+    state.npmCli = "2.1.282";
+    state.cliVersions = ["2.1.282", ...state.cliVersions];
+    const service = yield* makeWith(deps);
+    const data = runData(
+      yield* service.prepareRun({
+        routine: nightlyRoutine(),
+        localOccurrence: "2026-09-25T04:00",
+        manual: false,
+      }),
+    );
+    assert.strictEqual(data.review.claudeCode.upTo, "2.1.282");
+    assert.strictEqual(data.review.deepseekHarness, null);
+    assert.strictEqual(data.review.label, "2.1.282");
+  }),
+);
+
+it.effect("a Claude Code release and a newer harness are reviewed in one run", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(AT_0400);
+    const { state, deps } = readyHarness();
+    state.files.delete(LEDGER);
+    state.npmCli = "2.1.282";
+    state.cliVersions = ["2.1.282", ...state.cliVersions];
+    state.dshTags = { latest: "0.2.0-rc.2", next: "0.2.2-rc.1", alpha: "0.3.0-alpha.1" };
+    const service = yield* makeWith(deps);
+    const data = runData(
+      yield* service.prepareRun({
+        routine: nightlyRoutine(),
+        localOccurrence: "2026-09-25T04:00",
+        manual: false,
+      }),
+    );
+    assert.strictEqual(data.review.label, "2.1.282+dsh-0.2.2-rc.1");
+    assert.strictEqual(data.review.claudeCode.upTo, "2.1.282");
+    assert.strictEqual(data.review.deepseekHarness.moved, true);
+    assert.strictEqual(data.review.deepseekHarness.candidate, "0.2.2-rc.1");
+    assert.ok(data.commands.ship.includes("-ReviewLabel 2.1.282+dsh-0.2.2-rc.1"));
   }),
 );
 

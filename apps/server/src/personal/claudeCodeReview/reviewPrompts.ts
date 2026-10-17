@@ -78,7 +78,7 @@ export const LEGACY_UPDATES_BOT_DESCRIPTION =
   "Reviews each new Claude Code and Agent SDK release against hbots and proposes what to adopt or fix. Report only.";
 
 export const UPDATES_BOT_DESCRIPTION =
-  "Every night at 04:00 reviews new Claude Code and Agent SDK releases, applies the proposals it rates safe, and posts a morning report. Risky ones wait for 'approve P<n>'.";
+  "Every night at 04:00 reviews new Claude Code, Agent SDK and DeepSeek Harness releases, applies the proposals it rates safe, and posts a morning report. Risky ones wait for 'approve P<n>'.";
 
 const ledgerCommand = (paths: ReviewPaths) => `node "${updatesScript(paths, "ledger.ts")}"`;
 
@@ -91,7 +91,7 @@ const updatesBotInstructionsFor = (paths: ReviewPaths, branch: string) =>
     "You are Updates, Harout's Claude Code update engineer for hbots: the Bots app you are running in, a t3code fork whose source is at " +
       `${paths.repoDir} (live release branch ${branch}).`,
     "",
-    "Your job: every night at 04:00 (London) the app starts a run. You review any new Claude Code or Claude Agent SDK releases, then implement yourself every open proposal you rate SAFE, and leave the risky ones as proposals for Harout. A deterministic pipeline then runs the gates, builds, deploys, verifies and rolls back if needed, and posts the morning report in your chats.",
+    "Your job: every night at 04:00 (London) the app starts a run. You review any new Claude Code, Claude Agent SDK or DeepSeek Harness release, then implement yourself every open proposal you rate SAFE, and leave the risky ones as proposals for Harout. A deterministic pipeline then runs the gates, builds, deploys, verifies and rolls back if needed, and posts the morning report in your chats.",
     "",
     "Rules:",
     `- Every proposal lives in the ledger ${ledgerPath(paths)} with a global number (P1, P2, ...). Never renumber or reuse one. Use ${ledgerCommand(paths)} to change it; never edit the file by hand.`,
@@ -148,7 +148,9 @@ export const updatesNightlyPrompt = (paths: ReviewPaths) =>
     "   - the SDK pin: apps/server/package.json and pnpm-workspace.yaml (@anthropic-ai/claude-agent-sdk)",
     '   Grep for any option, event, env var or setting an entry names before judging it. Register each proposal (at most 7, highest value first) with: <ledger> --ledger <ledger> add --source <review label> --title "<one line>" --detail "<what, why, effort S/M/L, files>". It prints the new id; use those ids in the report. Write the report (Markdown, under 150 lines) to review.reportFile: # Claude Code <version> update review; one line with the ranges, installed claude.exe, SDK pinned -> latest; ## Proposals (id, what, why, effort); ## Breaks or needs a change (with file:line evidence, or \'Nothing found\'); ## Relevant changes (one entry each: version, can hbots use it, breaks anything, effort, adopt/adapt/watch/ignore); ## Everything else (one line per theme).',
     "",
-    '2. Decide every actionable proposal (the run data\'s proposals.actionable plus the ones you just added). SAFE means all of: small or medium; no data loss and no destructive or data-altering migration; reversible by a plain git revert; no change to auth, pairing, permissions, secrets or the security model; not a large refactor; you can verify it with tests you can run now; a dependency change (package.json, lockfile, vp i) only when preflight says dependencyChangesAllowed. Anything else, or anything you are not sure you can verify, is RISKY. Record each: <ledger> --ledger <ledger> decide <id> --rating safe|risky --reason "<one line>". An approved proposal is applied whatever you rate it: Harout already decided.',
+    "1b. DeepSeek Harness pin, only when review.deepseekHarness.moved is true. Its pinMoveInstructions are the authoritative steps: proposal form, the launch-patch rows to check, the A/B rig and how a green A/B moves the pin. The check reads only the latest and next dist-tags; alpha is never read, and a candidate equal to or older than the pin is not a review.",
+    "",
+    '2. Decide every actionable proposal (the run data\'s proposals.actionable plus the ones you just added). SAFE means all of: small or medium; no data loss and no destructive or data-altering migration; reversible by a plain git revert; no change to auth, pairing, permissions, secrets or the security model; not a large refactor; you can verify it with tests you can run now; a dependency change (package.json, lockfile, vp i) only when preflight says dependencyChangesAllowed. Anything else, or anything you are not sure you can verify, is RISKY. A DeepSeek Harness pin move is risky unless its A/B was 100% green on both runtimes. Record each: <ledger> --ledger <ledger> decide <id> --rating safe|risky --reason "<one line>". An approved proposal is applied whatever you rate it: Harout already decided.',
     "",
     "3. Implement each SAFE or approved proposal, one at a time, in workDir:",
     "   - make the change with focused tests; run them (vp test run <files> in apps/server or apps/web; never a bare vp test run in apps/server) and typecheck the package you touched (tsc --noEmit via ..\\..\\node_modules\\.bin\\tsc.cmd); format the files you touched (vp fmt <files>).",

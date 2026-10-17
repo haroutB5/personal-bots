@@ -28,7 +28,12 @@
  *
  * It is a tool-level deny, NOT an OS boundary, exactly like Claude's: the
  * shell rule matches command text, so a path built inside a script is not
- * stopped. A separate OS user for the server is the real fix.
+ * stopped. From 1.66.67 the same command-text rule also scans the PTC
+ * `run_code` program text, and the literal path strings inside it are
+ * resolved against the session cwd, so a plain `fs.readFileSync(
+ * '../userdata/secrets/x')` no longer reads the store. A path the program
+ * assembles at run time (a variable, a join, a template) is still not
+ * stopped: a separate OS user for the server is the real fix.
  *
  * The hook runs for every mode: PTC `run_code` sub-dispatch and subagents go
  * through the same tool scheduler.
@@ -61,6 +66,7 @@ const FILE_TOOLS = new Map([
 
 const SEARCH_TOOLS = new Set(["glob", "grep"]);
 const SHELL_TOOLS = new Set(["pwsh", "bash"]);
+const PTC_TOOLS = new Set(["run_code"]);
 const WORKING_DIRECTORY_TOOLS = new Set(["working_directory", "tool-working-directory"]);
 
 const DENY_REASON = "blocked: path is bot state protected by the hbots server";
@@ -106,6 +112,35 @@ function commandText(args) {
     if (typeof args[field] === "string") return args[field];
   }
   return "";
+}
+
+/**
+ * Program text a PTC tool would run. `run_code` carries a JavaScript program
+ * that calls the generated tool SDK, so the program text is the shell
+ * equivalent: its static path spellings are what the command-text rule can
+ * see. A path the program builds at run time is invisible here, the same
+ * limit the shell rule has.
+ */
+function programText(args) {
+  for (const field of ["code", "program"]) {
+    if (typeof args[field] === "string") return args[field];
+  }
+  return "";
+}
+
+/**
+ * The string literals in a program, bounded: the cheap static look for a
+ * literal path. Escapes are consumed, so a quoted quote does not split one.
+ */
+function literalStrings(code) {
+  const values = [];
+  const pattern = /([`'"])(?:\\.|(?!\1)[^\\\r\n]){0,400}\1/g;
+  let match;
+  while ((match = pattern.exec(code)) !== null) {
+    values.push(match[0].slice(1, -1));
+    if (values.length >= 200) break;
+  }
+  return values;
 }
 
 /** Windows long-path prefixes obscure a drive letter; strip them before resolving. */
@@ -312,6 +347,25 @@ export function apply(ctx, config) {
         }
         for (const candidate of shellWorkdirArguments(args)) {
           if (insideProtectedParent(candidate, cwd)) {
+            return { kind: "deny", reason: DENY_REASON };
+          }
+        }
+      }
+      if (PTC_TOOLS.has(exec?.name)) {
+        // Code mode: the program text is where the shell rule's spellings now
+        // appear, because a `run_code` call can read and write files directly.
+        const code = programText(args);
+        const folded = norm(code)
+          .replace(/\/+\.\//g, "/")
+          .replace(/\/{2,}/g, "/");
+        if (folded.length > 0 && commandForms.some((form) => folded.includes(form))) {
+          return { kind: "deny", reason: DENY_REASON };
+        }
+        // Resolve the literal path strings against the session cwd: a bare
+        // `secrets\x` from a data-root cwd never matches a command form.
+        for (const literal of literalStrings(code)) {
+          if (!/[\\/]/.test(literal)) continue;
+          if (pathDenied(literal, cwd, readRoots, readWriteTails)) {
             return { kind: "deny", reason: DENY_REASON };
           }
         }

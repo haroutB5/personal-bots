@@ -2,12 +2,16 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   buildExcerpt,
+  compareSemver,
   compareVersions,
   decideReview,
   EMPTY_REVIEW_STATE,
+  maxSemver,
   maxVersion,
+  normalizeSemver,
   normalizeVersion,
   parseChangelog,
+  parseDshRegistry,
   parseReviewState,
   reviewedThrough,
   sdkParityVersion,
@@ -180,6 +184,54 @@ describe("decideReview (once per version)", () => {
       parseReviewState(JSON.stringify({ reviewedClaudeCode: "2.1.281" })).reviewedClaudeCode,
       "2.1.281",
     );
+  });
+});
+
+describe("harness versions (semver with prereleases)", () => {
+  it("orders prereleases below their release and numerically inside a prerelease", () => {
+    assert.strictEqual(normalizeSemver("0.2.1-rc.2"), "0.2.1-rc.2");
+    assert.strictEqual(normalizeSemver("v0.2.2-rc.1+sha.abc"), "0.2.2-rc.1");
+    assert.strictEqual(normalizeSemver("latest"), null);
+    assert.strictEqual(compareSemver("0.2.1-rc.2", "0.2.1"), -1);
+    assert.strictEqual(compareSemver("0.2.1", "0.2.1-rc.2"), 1);
+    assert.strictEqual(compareSemver("0.2.1-rc.10", "0.2.1-rc.2"), 1);
+    assert.strictEqual(compareSemver("0.2.1-rc.2", "0.2.1-rc.2"), 0);
+    assert.strictEqual(compareSemver("0.2.1-alpha.1", "0.2.1-rc.1"), -1);
+    assert.strictEqual(maxSemver(null, "0.2.0-rc.2", "0.2.2-rc.1", null), "0.2.2-rc.1");
+    assert.strictEqual(maxSemver(null, null), null);
+  });
+
+  it("reads only latest and next from the registry, never alpha", () => {
+    const tags = parseDshRegistry(
+      JSON.stringify({
+        "dist-tags": {
+          latest: "0.2.0-rc.2",
+          next: "0.2.2-rc.1",
+          alpha: "0.4.0-alpha.1",
+        },
+      }),
+    );
+    assert.deepStrictEqual(tags, {
+      latest: "0.2.0-rc.2",
+      next: "0.2.2-rc.1",
+      candidate: "0.2.2-rc.1",
+    });
+    // A bare dist-tags document is accepted too.
+    assert.strictEqual(
+      parseDshRegistry('{"latest":"0.2.3","alpha":"9.0.0-alpha.1"}').candidate,
+      "0.2.3",
+    );
+    // Unreadable or odd bodies never throw and never invent a version.
+    assert.deepStrictEqual(parseDshRegistry("<html>"), {
+      latest: null,
+      next: null,
+      candidate: null,
+    });
+    assert.deepStrictEqual(parseDshRegistry('{"dist-tags":{"alpha":"1.0.0-alpha.1"}}'), {
+      latest: null,
+      next: null,
+      candidate: null,
+    });
   });
 });
 

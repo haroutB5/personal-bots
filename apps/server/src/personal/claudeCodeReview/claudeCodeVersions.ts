@@ -42,6 +42,104 @@ export function maxVersion(...versions: ReadonlyArray<string | null>): string | 
   return best;
 }
 
+// ── The DeepSeek Harness (semver with prereleases) ──────────────────────
+
+/**
+ * A semver version, prerelease allowed (`0.2.1-rc.2`); build metadata is
+ * dropped. The Claude Code helpers above only take numeric versions because
+ * neither package ships prereleases; dsh does (`next` is a `-rc.N`).
+ */
+export function normalizeSemver(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const match =
+    /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)(?:\+[0-9A-Za-z.-]+)?$/.exec(
+      raw.trim().replace(/^[\^~=v]+/, ""),
+    );
+  return match === null ? null : match[1]!;
+}
+
+const splitSemver = (version: string): { core: Array<number>; pre: ReadonlyArray<string> } => {
+  const [core = "", pre] = version.split("-", 2);
+  return {
+    core: core.split(".").map(Number),
+    pre: pre === undefined ? [] : pre.split("."),
+  };
+};
+
+/** Semver order: numeric core, then a prerelease sorts below its release. */
+export function compareSemver(left: string, right: string): number {
+  const a = splitSemver(left);
+  const b = splitSemver(right);
+  for (let index = 0; index < Math.max(a.core.length, b.core.length); index++) {
+    const difference = (a.core[index] ?? 0) - (b.core[index] ?? 0);
+    if (difference !== 0) return difference < 0 ? -1 : 1;
+  }
+  if (a.pre.length === 0 && b.pre.length === 0) return 0;
+  if (a.pre.length === 0) return 1;
+  if (b.pre.length === 0) return -1;
+  for (let index = 0; index < Math.max(a.pre.length, b.pre.length); index++) {
+    const one = a.pre[index];
+    const two = b.pre[index];
+    if (one === undefined) return -1;
+    if (two === undefined) return 1;
+    const oneNumeric = /^\d+$/.test(one);
+    const twoNumeric = /^\d+$/.test(two);
+    if (oneNumeric && twoNumeric) {
+      const difference = Number(one) - Number(two);
+      if (difference !== 0) return difference < 0 ? -1 : 1;
+    } else if (oneNumeric) {
+      return -1;
+    } else if (twoNumeric) {
+      return 1;
+    } else if (one !== two) {
+      return one < two ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/** The newest of the given semver versions, ignoring nulls. */
+export function maxSemver(...versions: ReadonlyArray<string | null>): string | null {
+  let best: string | null = null;
+  for (const version of versions) {
+    if (version === null) continue;
+    if (best === null || compareSemver(version, best) > 0) best = version;
+  }
+  return best;
+}
+
+/** The npm dist-tags the nightly review reads for `@deepseek-ai/dsh`. */
+export interface DshRegistry {
+  readonly latest: string | null;
+  readonly next: string | null;
+  /** The highest of latest and next: what a pin move may propose. */
+  readonly candidate: string | null;
+}
+
+/**
+ * Reads the two dist-tags hbots follows. `alpha` is deliberately never read:
+ * it is the bleeding-edge tag Harout does not run, so it can never propose a
+ * pin move. Accepts the full registry document or a bare dist-tags document.
+ */
+export function parseDshRegistry(body: string): DshRegistry {
+  let tags: Record<string, unknown> = {};
+  try {
+    const value = JSON.parse(body) as Record<string, unknown> | null;
+    if (value !== null && typeof value === "object") {
+      const nested = value["dist-tags"];
+      tags =
+        nested !== null && typeof nested === "object" ? (nested as Record<string, unknown>) : value;
+    }
+  } catch {
+    return { latest: null, next: null, candidate: null };
+  }
+  const read = (tag: string) =>
+    typeof tags[tag] === "string" ? normalizeSemver(tags[tag] as string) : null;
+  const latest = read("latest");
+  const next = read("next");
+  return { latest, next, candidate: maxSemver(latest, next) };
+}
+
 export interface ChangelogSection {
   readonly version: string;
   /** The section's lines after its heading, trimmed of blank edges. */
@@ -249,6 +347,9 @@ export interface ExcerptInput {
   readonly observed: ObservedVersions;
   readonly generatedAt: string;
   readonly fullTextBudget?: number;
+  /** The harness dist-tags read this night, when the registry answered. */
+  readonly dsh?: DshRegistry | null;
+  readonly pinnedDsh?: string | null;
 }
 
 export interface Excerpt {
@@ -301,6 +402,11 @@ export function buildExcerpt(input: ExcerptInput): Excerpt {
     `- Agent SDK: ${range(input.sdk)} (${sdk.length} release(s) with notes)`,
     `- Installed claude.exe: ${input.observed.installedClaudeCode ?? "unknown"}; npm latest: ${input.observed.latestClaudeCode ?? "unknown"}`,
     `- SDK pinned by hbots: ${input.observed.pinnedSdk ?? "unknown"}; npm latest: ${input.observed.latestSdk ?? "unknown"}`,
+    ...(input.dsh === undefined || input.dsh === null
+      ? []
+      : [
+          `- DeepSeek Harness pinned by hbots: ${input.pinnedDsh ?? "unknown"}; npm latest: ${input.dsh.latest ?? "unknown"}; npm next: ${input.dsh.next ?? "unknown"}; candidate: ${input.dsh.candidate ?? "none"}`,
+        ]),
     ...(condensedVersions.length > 0
       ? [
           `- The range is large: ${condensedVersions.length} older release(s) are condensed to their first entries (${condensedVersions.at(-1)} to ${condensedVersions[0]}). Cover them in summary only.`,

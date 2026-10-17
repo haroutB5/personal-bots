@@ -13,6 +13,11 @@
  * canonicalizes it first, so the spellings that used to slip past a raw string
  * comparison are part of the contract: relative, `./`, `..`, mixed slashes,
  * case, `\\?\`, duplicate separators and 8.3 short names.
+ *
+ * From 1.66.67 the PTC `run_code` program text is part of the contract too:
+ * the shell command-text rule and a cwd-resolved literal path scan run over
+ * its `code` argument (QA 1.66.66 finding 1: a literal
+ * `fs.readFileSync('../userdata/secrets/x')` read the store).
  */
 import * as NodeChild from "node:child_process";
 import * as NodeURL from "node:url";
@@ -139,10 +144,11 @@ it.effect("denies reading and writing the secret store, from every tool", () =>
         file_path: "//localhost/c$/Users/Ht/.personal-bots/dev/userdata/secrets/store.json",
       }).kind,
     ).toBe("deny");
-    // PTC reaches the same tools through the same pre-execute stage.
+    // PTC reaches the same tools through the same pre-execute stage, and from
+    // 1.66.67 its program text is scanned too.
     expect(
       run("run_code", { code: 'await tools.read({file_path: "C:/x/userdata/secrets/k"})' }).kind,
-    ).toBe("allow");
+    ).toBe("deny");
   }),
 );
 
@@ -262,6 +268,58 @@ it.effect("leaves the bot workspace usable as a shell workdir in the production 
     );
     expect(run("write", { file_path: "..\\userdata\\state.sqlite" }).kind).toBe("deny");
     expect(run("write", { file_path: "notes.md" }).kind).toBe("allow");
+  }),
+);
+
+it.effect("scans run_code program text and resolves its literal paths", () =>
+  Effect.promise(async () => {
+    // The QA 1.66.66 finding: in Code mode the plugin never inspected
+    // `run_code`'s `code`, so a literal relative path in the program read the
+    // canary. Production layout, workspace cwd.
+    const baseDir = "C:/Users/Ht/.personal-bots/dev";
+    const userdata = `${baseDir}/userdata`;
+    const workspace = `${baseDir}/personal-workspace`;
+    const config = {
+      denyReadWrite: [`${userdata}/secrets`],
+      denyWrite: [
+        `${userdata}/state.sqlite`,
+        `${userdata}/state.sqlite-wal`,
+        `${userdata}/state.sqlite-shm`,
+        `${userdata}/state.sqlite-journal`,
+        `${baseDir}/dsh`,
+      ],
+    };
+    const { run } = await makeExecutor({ cwd: workspace, config });
+    expect(
+      run("run_code", { code: "const x = fs.readFileSync('../userdata/secrets/canary.txt');" })
+        .kind,
+    ).toBe("deny");
+    expect(
+      run("run_code", { code: 'fs.writeFileSync("..\\\\userdata\\\\secrets\\\\x", "y")' }).kind,
+    ).toBe("deny");
+    expect(
+      run("run_code", { code: "fs.readFileSync('..\\\\USERDATA\\\\SECRETS\\\\x')" }).kind,
+    ).toBe("deny");
+    expect(run("run_code", { code: "fs.readFileSync('..//userdata//secrets//x')" }).kind).toBe(
+      "deny",
+    );
+    // A data-root cwd plus a bare relative name is resolved, not guessed.
+    const dataRoot = await makeExecutor({ cwd: userdata, config });
+    expect(
+      dataRoot.run("run_code", {
+        code: 'fs.readFileSync("secrets/data-encryption-key.bin", "utf8")',
+      }).kind,
+    ).toBe("deny");
+    // Ordinary workspace code, a database read and a bare payload still pass.
+    expect(
+      run("run_code", {
+        code: "const data = fs.readFileSync('src/app.json', 'utf8'); await tools.write({ file_path: 'notes.md', content: data });",
+      }).kind,
+    ).toBe("allow");
+    expect(run("run_code", { code: "fs.readFileSync('../userdata/state.sqlite')" }).kind).toBe(
+      "allow",
+    );
+    expect(run("run_code", { code: "" }).kind).toBe("allow");
   }),
 );
 

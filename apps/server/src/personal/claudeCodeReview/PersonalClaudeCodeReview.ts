@@ -52,6 +52,7 @@ import * as NodeOS from "node:os";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
+import { DSH_PINNED_VERSION } from "../../provider/Drivers/DeepSeekEngine.ts";
 import { runClaudeCommand } from "../../provider/Layers/ClaudeProvider.ts";
 import { parseGenericCliVersion } from "../../provider/providerSnapshot.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
@@ -64,9 +65,11 @@ import { localAt } from "../routines/zonedTime.ts";
 import {
   buildExcerpt,
   CLAUDE_CODE_REVIEW_STATE_KEY,
+  compareSemver,
   decideReview,
   normalizeVersion,
   parseChangelog,
+  parseDshRegistry,
   parseReviewState,
   reviewedThrough,
   sdkParityVersion,
@@ -102,6 +105,8 @@ export const CLAUDE_CODE_REVIEW_SETUP_VERSION = "2";
 export const NPM_CLAUDE_CODE_LATEST = "https://registry.npmjs.org/@anthropic-ai/claude-code/latest";
 export const NPM_AGENT_SDK_LATEST =
   "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/latest";
+/** The full registry document: its `dist-tags` carry `latest` and `next` together. */
+export const NPM_DSH_REGISTRY = "https://registry.npmjs.org/@deepseek-ai/dsh";
 export const CLAUDE_CODE_CHANGELOG =
   "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md";
 export const AGENT_SDK_CHANGELOG =
@@ -135,6 +140,8 @@ export interface PersonalClaudeCodeReviewDeps {
   readonly ownsReportTokenFile?: boolean;
   /** The SDK version hbots is built with. */
   readonly pinnedSdk: string | null;
+  /** The DeepSeek Harness version hbots is pinned to (`DSH_PINNED_VERSION`). */
+  readonly pinnedDsh: string | null;
   readonly fetchText: (url: string) => Effect.Effect<string, DepFailure>;
   readonly installedClaudeCode: Effect.Effect<string | null>;
   readonly getMeta: (key: string) => Effect.Effect<Option.Option<string>, DepFailure>;
@@ -276,6 +283,17 @@ export const makeWith = (deps: PersonalClaudeCodeReviewDeps) =>
         if (latestClaudeCode === null && latestSdk === null && installedClaudeCode === null) {
           return { _tag: "None", reason: "the npm registry was unreachable" } as ReviewPlan;
         }
+        // The harness is checked on every night, with the same bounded fetch:
+        // its failure is logged and leaves the Claude Code review untouched.
+        const dshRegistry = Option.getOrNull(
+          Option.map(yield* fetchOptional(NPM_DSH_REGISTRY), (body) => parseDshRegistry(body)),
+        );
+        const pinnedDsh = deps.pinnedDsh;
+        const dshNewer =
+          dshRegistry !== null &&
+          dshRegistry.candidate !== null &&
+          pinnedDsh !== null &&
+          compareSemver(dshRegistry.candidate, pinnedDsh) > 0;
         let sdkSections: ReadonlyArray<ChangelogSection> | null = null;
         const loadSdkSections = Effect.gen(function* () {
           if (sdkSections === null) {
@@ -297,9 +315,12 @@ export const makeWith = (deps: PersonalClaudeCodeReviewDeps) =>
         };
         const stamped: ClaudeCodeReviewState = { ...state, lastCheckedAt: options.nowIso };
         const decision = decideReview(state, observed);
-        if (decision._tag === "UpToDate") {
+        if (decision._tag === "UpToDate" && !dshNewer) {
           if (options.persist) yield* saveState(stamped);
-          return { _tag: "None", reason: "no new Claude Code or Agent SDK release" } as ReviewPlan;
+          return {
+            _tag: "None",
+            reason: "no new Claude Code, Agent SDK or DeepSeek Harness release",
+          } as ReviewPlan;
         }
         if (decision._tag === "Baseline") {
           if (options.persist) {
@@ -311,8 +332,10 @@ export const makeWith = (deps: PersonalClaudeCodeReviewDeps) =>
           }
           return { _tag: "None", reason: "recorded a first baseline" } as ReviewPlan;
         }
+        const claudeCodeRange = decision._tag === "Review" ? decision.claudeCode : null;
+        const sdkRange = decision._tag === "Review" ? decision.sdk : null;
         let claudeCodeSections: ReadonlyArray<ChangelogSection> = [];
-        if (decision.claudeCode !== null) {
+        if (claudeCodeRange !== null) {
           const body = yield* fetchOptional(CLAUDE_CODE_CHANGELOG);
           // Not stamped: the next night retries with the whole range.
           if (Option.isNone(body)) {
@@ -324,24 +347,39 @@ export const makeWith = (deps: PersonalClaudeCodeReviewDeps) =>
           claudeCodeSections = parseChangelog(body.value);
         }
         const excerpt = buildExcerpt({
-          claudeCode: decision.claudeCode,
-          sdk: decision.sdk,
+          claudeCode: claudeCodeRange,
+          sdk: sdkRange,
           claudeCodeSections,
-          sdkSections: decision.sdk === null ? [] : yield* loadSdkSections,
+          sdkSections: sdkRange === null ? [] : yield* loadSdkSections,
           observed,
           generatedAt: options.nowIso,
+          ...(dshRegistry === null ? {} : { dsh: dshRegistry, pinnedDsh }),
         });
-        if (excerpt.claudeCodeVersions.length === 0 && excerpt.sdkVersions.length === 0) {
+        // A harness-only night needs no Claude Code release notes: the review
+        // is about the pin, and the excerpt still carries the dist-tags.
+        if (
+          excerpt.claudeCodeVersions.length === 0 &&
+          excerpt.sdkVersions.length === 0 &&
+          !dshNewer
+        ) {
           if (options.persist) yield* saveState(stamped);
           return { _tag: "None", reason: "a new release has no release notes yet" } as ReviewPlan;
         }
         const reviewedClaudeCode = reviewedThrough(
           state.reviewedClaudeCode,
-          decision.claudeCode,
+          claudeCodeRange,
           excerpt.claudeCodeVersions,
         );
-        const reviewedSdk = reviewedThrough(state.reviewedSdk, decision.sdk, excerpt.sdkVersions);
-        const label = reviewedClaudeCode ?? reviewedSdk ?? "unknown";
+        const reviewedSdk = reviewedThrough(state.reviewedSdk, sdkRange, excerpt.sdkVersions);
+        const reviewedLabel = reviewedClaudeCode ?? reviewedSdk ?? "unknown";
+        const harnessLabel =
+          dshNewer && dshRegistry?.candidate ? `dsh-${dshRegistry.candidate}` : null;
+        const label =
+          harnessLabel === null
+            ? reviewedLabel
+            : claudeCodeRange !== null || sdkRange !== null
+              ? `${reviewedLabel}+${harnessLabel}`
+              : harnessLabel;
         const excerptPath = `${deps.excerptDir}/changelog-${label}.md`;
         yield* deps.writeFile(excerptPath, excerpt.markdown);
         return {
@@ -351,26 +389,56 @@ export const makeWith = (deps: PersonalClaudeCodeReviewDeps) =>
           data: {
             label,
             claudeCode:
-              decision.claudeCode === null
+              claudeCodeRange === null
                 ? null
                 : {
-                    after: decision.claudeCode.from,
-                    upTo: decision.claudeCode.to,
+                    after: claudeCodeRange.from,
+                    upTo: claudeCodeRange.to,
                     releasesWithNotes: excerpt.claudeCodeVersions.length,
                     condensedOlderReleases: excerpt.condensedVersions.length,
                   },
             agentSdk:
-              decision.sdk === null
+              sdkRange === null
                 ? null
                 : {
-                    after: decision.sdk.from,
-                    upTo: decision.sdk.to,
+                    after: sdkRange.from,
+                    upTo: sdkRange.to,
                     releasesWithNotes: excerpt.sdkVersions.length,
                   },
             installedClaudeCode,
             npmLatestClaudeCode: latestClaudeCode,
             pinnedAgentSdk: deps.pinnedSdk,
             npmLatestAgentSdk: latestSdk,
+            // The run data the bot acts on; `moved` is the pin-move trigger.
+            deepseekHarness:
+              dshRegistry === null || pinnedDsh === null
+                ? null
+                : {
+                    pinned: pinnedDsh,
+                    latest: dshRegistry.latest,
+                    next: dshRegistry.next,
+                    candidate: dshRegistry.candidate,
+                    moved: dshNewer,
+                    installScript: `${deps.paths.repoDir}/scripts/personal/install-dsh.ps1`,
+                    runtimePackageDir: `${deps.paths.repoDir}/scripts/personal/dsh-runtime`,
+                    launchPatch: "apps/server/src/provider/acp/DshAcpSupport.ts",
+                    abRig: "C:/Users/Ht/.personal-bots/qa/dsh-021-rc2/scripts/dsh-ab-rc2.mjs",
+                    // The steps live here, not only in the routine prompt: the
+                    // live routine's stored prompt is the user's and is never
+                    // rewritten by an upgrade.
+                    ...(dshNewer && dshRegistry.candidate
+                      ? {
+                          pinMoveInstructions: [
+                            `Run <ledger> --ledger <ledger> list first. Register ONE proposal with <ledger> --ledger <ledger> add --source "${label}" --title "Move DeepSeek Harness pin to ${dshRegistry.candidate}" --detail "found latest ${dshRegistry.latest ?? "unknown"}, next ${dshRegistry.next ?? "unknown"}, pinned ${pinnedDsh}; regenerate the runtime package files with the exact version, bump DSH_PINNED_VERSION and the install-dsh.ps1 default, install the runtime side by side, copy the deny plugin, run the A/B rig on both runtimes". If any proposal already names this candidate, whatever its status (open, approved, needs-approval, applied, shipped or rejected), reuse it or leave it alone: never add a duplicate, and a rejected move stays rejected until Harout says otherwise.`,
+                            "Read the dsh release notes and apps/server/src/provider/acp/DshAcpSupport.ts: every row the launch patch names must still exist in the new build, and a new tool row that can change the session cwd or reach bot state must be disabled there (the working_directory lesson).",
+                            "Copy the run data's abRig into this run's folder, point its REPO at the worktree and its runtime map at the old and the new runtime folders, then run it with DSH_AB_RELEASE set to the sha in %USERPROFILE%\\.personal-bots\\releases\\current.txt, once --runtime old and once --runtime new. T3b and T3c must pass on both.",
+                            'Rate it risky unless the A/B is 100% green on both runtimes; a risky proposal waits for "approve P<n>" and the pin does not move.',
+                            "If it is 100% green (and preflight allows dependency changes): regenerate scripts/personal/dsh-runtime/package.json and package-lock.json with the exact version, bump DSH_PINNED_VERSION in the worktree and the install-dsh.ps1 -Version default, run install-dsh.ps1 -Version <candidate>, copy hbots-deny-plugin.mjs beside BOTH runtime folders if its sha256 changes and report that sha256, then implement it as a normal SAFE proposal with tests and one commit.",
+                            "Write the review report (review.reportFile) with a DeepSeek Harness section: the dist-tags found, the pin, the A/B result on both runtimes, the launch-patch rows checked, and what was done.",
+                          ],
+                        }
+                      : {}),
+                  },
             changelogExcerpt: excerptPath,
             reportFile: `${options.reportDirectory}/${label}.md`,
           },
@@ -665,6 +733,7 @@ export const make = Effect.gen(function* () {
     updatesHome,
     ownsReportTokenFile,
     pinnedSdk: normalizeVersion(packageJson.dependencies["@anthropic-ai/claude-agent-sdk"]),
+    pinnedDsh: DSH_PINNED_VERSION,
     fetchText,
     installedClaudeCode: installedVersionWithFallback(
       providers.getProviders.pipe(
