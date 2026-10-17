@@ -132,6 +132,9 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
       ...provider,
       getSnapshot,
       refresh: provider.refresh.pipe(Effect.andThen(getSnapshot)),
+      ...(provider.refreshLatest === undefined
+        ? {}
+        : { refreshLatest: provider.refreshLatest.pipe(Effect.andThen(getSnapshot)) }),
       streamChanges: Stream.merge(
         provider.streamChanges.pipe(Stream.map(() => undefined)),
         SubscriptionRef.changes(workspaces).pipe(Stream.map(() => undefined)),

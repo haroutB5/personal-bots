@@ -845,6 +845,9 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
     /** Explicit user request from a usage view: re-read subscription limits
      * instead of reusing a cached probe. Cheaper than `refreshModels`. */
     refreshUsage: Schema.optional(Schema.Boolean),
+    /** The settings card's manual Refresh: bypass the registry version cache
+     * for this call only. Background probes and internal re-checks keep it. */
+    refreshLatestVersion: Schema.optional(Schema.Boolean),
   }),
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),

@@ -17,7 +17,16 @@ export interface ServerProviderShape {
     readonly fresh?: boolean;
   }) => Effect.Effect<ProviderMaintenanceCapabilities>;
   readonly getSnapshot: Effect.Effect<ServerProvider>;
+  /**
+   * The cached status refresh every background probe, fallback re-check and
+   * internal flow uses. The npm version lookup keeps its 1 h cache.
+   */
   readonly refresh: Effect.Effect<ServerProvider>;
+  /**
+   * A user's manual Refresh only. This one may bypass the registry version
+   * cache for the call; no timer, fallback probe or maintenance flow uses it.
+   */
+  readonly refreshLatest?: Effect.Effect<ServerProvider>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
   /**
    * Fold a runtime rate-limit update into the published snapshot without

@@ -144,6 +144,9 @@ export function isProviderUpdateCandidate(
     provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
     provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     provider.versionAdvisory?.status === "behind_latest" &&
+    // A provider with no update action (the dsh harness, which moves only in a
+    // release) must not be counted in "can be updated from provider settings".
+    provider.versionAdvisory.canUpdate === true &&
     provider.versionAdvisory.latestVersion !== null
   );
 }

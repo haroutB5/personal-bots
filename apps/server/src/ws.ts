@@ -2561,8 +2561,18 @@ const makeWsRpcLayer = (
                     cwd: input.cwd,
                   })
                 : input.instanceId !== undefined
-                  ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
+                  ? providerRegistry.refreshInstance(
+                      input.instanceId,
+                      input.refreshLatestVersion === true
+                        ? { refreshLatestVersion: true }
+                        : undefined,
+                    )
+                  : providerRegistry.refresh(
+                      undefined,
+                      input.refreshLatestVersion === true
+                        ? { refreshLatestVersion: true }
+                        : undefined,
+                    );
               if (input.refreshModels) {
                 const instances = yield* providerInstances.listInstances;
                 for (const instance of instances) {
@@ -2587,7 +2597,12 @@ const makeWsRpcLayer = (
                         }),
                     ),
                   );
-                  providers = yield* providerRegistry.refreshInstance(instance.instanceId);
+                  providers = yield* providerRegistry.refreshInstance(
+                    instance.instanceId,
+                    input.refreshLatestVersion === true
+                      ? { refreshLatestVersion: true }
+                      : undefined,
+                  );
                 }
               }
               return { providers };

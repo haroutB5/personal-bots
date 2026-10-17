@@ -361,7 +361,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-    refresh: refreshSnapshot({ refreshLatestVersion: true }).pipe(
+    refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    // Only the settings card's manual Refresh asks for the uncached registry
+    // lookup; every internal caller of `refresh` keeps the 1 h cache.
+    refreshLatest: refreshSnapshot({ refreshLatestVersion: true }).pipe(
       Effect.tapError(Effect.logError),
       Effect.orDie,
     ),

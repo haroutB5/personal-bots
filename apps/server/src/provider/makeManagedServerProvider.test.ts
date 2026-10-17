@@ -309,11 +309,12 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(AlwaysRunTestLayer, TestClock.layer()))),
   );
 
-  it.effect("a manual refresh bypasses the version cache; the background check does not", () =>
+  it.effect("a manual refresh bypasses the version cache; internal refreshes do not", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const refreshFlags = yield* Ref.make<Array<boolean>>([]);
         const initialEnriched = yield* Deferred.make<void>();
+        const cachedEnriched = yield* Deferred.make<void>();
         const manualEnriched = yield* Deferred.make<void>();
         const provider = yield* makeManagedServerProvider<TestSettings>({
           resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
@@ -327,7 +328,9 @@ describe("makeManagedServerProvider", () => {
               Effect.tap((flags) =>
                 flags.length === 1
                   ? Deferred.succeed(initialEnriched, undefined).pipe(Effect.ignore)
-                  : Deferred.succeed(manualEnriched, undefined).pipe(Effect.ignore),
+                  : flags.length === 2
+                    ? Deferred.succeed(cachedEnriched, undefined).pipe(Effect.ignore)
+                    : Deferred.succeed(manualEnriched, undefined).pipe(Effect.ignore),
               ),
               Effect.flatMap(() => publishSnapshot(snapshot)),
             ),
@@ -337,9 +340,16 @@ describe("makeManagedServerProvider", () => {
         yield* Deferred.await(initialEnriched);
         assert.deepStrictEqual(yield* Ref.get(refreshFlags), [false]);
 
+        // The fallback re-check, usage re-check and maintenance flows take this
+        // path: it keeps the registry version cache.
         yield* provider.refresh;
+        yield* Deferred.await(cachedEnriched);
+        assert.deepStrictEqual(yield* Ref.get(refreshFlags), [false, false]);
+
+        // Only the settings card's manual Refresh takes this one.
+        yield* provider.refreshLatest!;
         yield* Deferred.await(manualEnriched);
-        assert.deepStrictEqual(yield* Ref.get(refreshFlags), [false, true]);
+        assert.deepStrictEqual(yield* Ref.get(refreshFlags), [false, false, true]);
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );

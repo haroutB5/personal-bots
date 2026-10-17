@@ -654,7 +654,7 @@ export function EnvironmentProviderSettings({
     void (async () => {
       const result = await refreshServerProviders({
         environmentId,
-        input: { refreshModels: true },
+        input: { refreshModels: true, refreshLatestVersion: true },
       });
       refreshingRef.current = false;
       setIsRefreshingProviders(false);

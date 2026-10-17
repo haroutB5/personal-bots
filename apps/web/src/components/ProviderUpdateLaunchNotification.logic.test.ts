@@ -104,6 +104,26 @@ describe("provider update launch notification logic", () => {
     expect(
       isProviderUpdateCandidate(provider({ driver: driver("codex"), latestVersion: null })),
     ).toBe(false);
+    // A harness whose pin moves only in a release has no update action and
+    // must not be named in the "can be updated from provider settings" banner.
+    expect(isProviderUpdateCandidate(provider({ driver: driver("codex"), canUpdate: false }))).toBe(
+      false,
+    );
+  });
+
+  it("leaves a no-action dsh harness out of the banner but keeps Claude in it", () => {
+    const providers = [
+      provider({ driver: driver("claudeAgent"), latestVersion: "2.1.302" }),
+      provider({
+        driver: driver("deepseek"),
+        version: "0.2.1-rc.2",
+        latestVersion: "0.2.2-rc.1",
+        canUpdate: false,
+        updateCommand: null,
+      }),
+    ];
+    const candidates = collectProviderUpdateCandidates(providers);
+    expect(candidates.map((candidate) => candidate.driver)).toEqual([driver("claudeAgent")]);
   });
 
   it("deduplicates multi-instance provider candidates by driver", () => {

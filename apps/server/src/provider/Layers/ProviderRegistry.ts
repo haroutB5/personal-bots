@@ -279,6 +279,9 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   driverKind: instance.driverKind,
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
+  ...(instance.snapshot.refreshLatest === undefined
+    ? {}
+    : { refreshLatest: instance.snapshot.refreshLatest }),
   streamChanges: instance.snapshot.streamChanges,
 });
 
@@ -584,8 +587,13 @@ export const ProviderRegistryLive = Layer.effect(
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
+      options?: { readonly refreshLatestVersion?: boolean },
     ) {
-      return yield* providerSource.refresh.pipe(
+      const refresh =
+        options?.refreshLatestVersion === true && providerSource.refreshLatest !== undefined
+          ? providerSource.refreshLatest
+          : providerSource.refresh;
+      return yield* refresh.pipe(
         Effect.flatMap((nextProvider) =>
           correlateSnapshotWithSource(providerSource, nextProvider).pipe(
             Effect.flatMap(syncProvider),
@@ -594,17 +602,22 @@ export const ProviderRegistryLive = Layer.effect(
       );
     });
 
-    const refreshAll = Effect.fn("refreshAll")(function* () {
+    const refreshAll = Effect.fn("refreshAll")(function* (options?: {
+      readonly refreshLatestVersion?: boolean;
+    }) {
       const sources = yield* getLiveSources;
-      return yield* Effect.forEach(sources, (source) => refreshOneSource(source), {
+      return yield* Effect.forEach(sources, (source) => refreshOneSource(source, options), {
         concurrency: "unbounded",
         discard: true,
       }).pipe(Effect.andThen(Ref.get(providersRef)));
     });
 
-    const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
+    const refresh = Effect.fn("refresh")(function* (
+      provider?: ProviderDriverKind,
+      options?: { readonly refreshLatestVersion?: boolean },
+    ) {
       if (provider === undefined) {
-        return yield* refreshAll();
+        return yield* refreshAll(options);
       }
       // Kind-scoped refreshes target the default instance for that driver.
       const defaultInstanceId = defaultInstanceIdForDriver(provider);
@@ -615,18 +628,19 @@ export const ProviderRegistryLive = Layer.effect(
       if (!providerSource) {
         return yield* Ref.get(providersRef);
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(providerSource, options);
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
+      options?: { readonly refreshLatestVersion?: boolean },
     ) {
       const sources = yield* getLiveSources;
       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
       if (!providerSource) {
         return yield* Ref.get(providersRef);
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(providerSource, options);
     });
 
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
@@ -928,10 +942,14 @@ export const ProviderRegistryLive = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
-      refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
-      refreshInstance: (instanceId: ProviderInstanceId) =>
-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refresh: (
+        provider?: ProviderDriverKind,
+        options?: { readonly refreshLatestVersion?: boolean },
+      ) => refresh(provider, options).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshInstance: (
+        instanceId: ProviderInstanceId,
+        options?: { readonly refreshLatestVersion?: boolean },
+      ) => refreshInstance(instanceId, options).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,

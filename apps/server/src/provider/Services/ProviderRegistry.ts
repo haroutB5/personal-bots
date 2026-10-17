@@ -50,7 +50,10 @@ export interface ProviderRegistryShape {
    *
    * @deprecated prefer `refreshInstance` for new call sites.
    */
-  readonly refresh: (provider?: ProviderDriverKind) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+  readonly refresh: (
+    provider?: ProviderDriverKind,
+    options?: { readonly refreshLatestVersion?: boolean },
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
    * Refresh the specific configured instance. Returns the updated snapshot
@@ -60,6 +63,7 @@ export interface ProviderRegistryShape {
    */
   readonly refreshInstance: (
     instanceId: ProviderInstanceId,
+    options?: { readonly refreshLatestVersion?: boolean },
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   readonly refreshWorkspaceSnapshot: (input: {

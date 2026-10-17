@@ -1532,6 +1532,92 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("uses the uncached refresh only when the caller asks for it", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const provider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-10-17T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const refreshed = { ...provider, checkedAt: "2026-10-17T00:01:00.000Z" };
+          const cachedCalls = yield* Ref.make(0);
+          const latestCalls = yield* Ref.make(0);
+          const instance = {
+            instanceId: codexInstanceId,
+            driverKind: codexDriver,
+            continuationIdentity: {
+              driverKind: codexDriver,
+              continuationKey: "codex:instance:codex",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: codexDriver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Ref.update(cachedCalls, (count) => count + 1).pipe(Effect.as(refreshed)),
+              refreshLatest: Ref.update(latestCalls, (count) => count + 1).pipe(
+                Effect.as(refreshed),
+              ),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (id) => Effect.succeed(id === codexInstanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-refresh-latest-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            // The fallback re-check, usage re-check and maintenance flows call
+            // without the flag: the cached path, never the fresh lookup.
+            yield* registry.refreshInstance(codexInstanceId);
+            assert.strictEqual(yield* Ref.get(cachedCalls), 1);
+            assert.strictEqual(yield* Ref.get(latestCalls), 0);
+            // Only the settings card's manual Refresh passes the flag.
+            yield* registry.refreshInstance(codexInstanceId, { refreshLatestVersion: true });
+            assert.strictEqual(yield* Ref.get(cachedCalls), 1);
+            assert.strictEqual(yield* Ref.get(latestCalls), 1);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("deduplicates cwd probes and clears snapshots when an instance rebuilds", () =>
         Effect.gen(function* () {
           const driver = ProviderDriverKind.make("codex");
