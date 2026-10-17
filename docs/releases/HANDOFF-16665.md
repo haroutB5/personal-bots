@@ -89,3 +89,24 @@ existing format tests now pin `now` so they cannot flip on 14 Sep.
    the chat's routines strip and the Bots list; a run tomorrow still shows the weekday and date.
    Paused routines still say "Paused".
 3. The routines strip under a chat still caps at three and its "See all" still opens Scheduled.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=7cdc928a7788062dce532950ffaa70eadc246092 release=7cdc928a7788 json-sha256=2fc51349292918e63d2d7e58a941f3769363dba950a7bbf11942cd23bc298b4b result=PASS -->
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T10:19:26Z. Version 1.66.65, release `7cdc928a7788`, commit `7cdc928a7788062dce532950ffaa70eadc246092` on `release/hbots-16665`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\7cdc928a7788\gate-evidence.json` (sha256 `2fc51349292918e63d2d7e58a941f3769363dba950a7bbf11942cd23bc298b4b`) and the full gate logs in `releases\7cdc928a7788\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate | Commands | Exit | Result | Seconds |
+| --- | --- | --- | --- | --- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`) | 0 | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 252.4 |
+| server-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`) | 0 | pass: exit code only | 781.6 |
+| web-tests | `vp test run --project unit src/features/personal` (in `apps\web`) | 0 | pass: 2877 tests passed, 0 failed, 0 skipped, in 257 files | 53.3 |
+| web-tsc | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`) | 0 | pass: exit code only | 2.3 |
+| ps-tests | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0 | pass: 262 checks ok, 0 failed | 75.8 |
+| e2e | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16665\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\7cdc928a7788" -Json` (in `.`) | 0 | pass: 12/12 journeys passed | 276.7 |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `a62c94ec4ba862bcb820d7af279ab90969894028`, at end `a62c94ec4ba862bcb820d7af279ab90969894028`; tracked files modified: none. Staged release: version 1.66.65, sha 7cdc928a7788, dirty False, externals copied; `dist/bin.mjs` sha256 `672a8beb4734f6e46267596a3f33d7c0ea883efd021ca33befb36262a4130b4a`.
+<!-- gate-evidence:end -->
