@@ -206,11 +206,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
           ),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+        enrichSnapshot: ({ settings, snapshot, publishSnapshot, refreshLatestVersion }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>
               enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                forceLatestVersionRefresh: refreshLatestVersion === true,
               }),
             ),
             Effect.provideService(HttpClient.HttpClient, httpClient),

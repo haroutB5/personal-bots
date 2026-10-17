@@ -170,11 +170,9 @@ export function getProviderVersionAdvisoryPresentation(
 
   return {
     title: label,
-    detail:
-      advisory.message ??
-      (versionLabel
-        ? `${label}: install ${versionLabel}.`
-        : `${label}: install the latest provider version.`),
+    detail: versionLabel
+      ? `${label}: ${versionLabel} is available.`
+      : (advisory.message ?? `${label}: install the latest provider version.`),
     updateCommand: advisory.updateCommand,
     emphasis: "normal" as const,
     targetVersion: null,

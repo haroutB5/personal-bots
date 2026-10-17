@@ -76,6 +76,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly snapshot: ServerProvider;
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+    /** A manual Refresh: bypass the registry version cache for this enrichment. */
+    readonly refreshLatestVersion?: boolean;
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
@@ -131,6 +133,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     settings: Settings,
     snapshot: ServerProvider,
     generation: number,
+    options?: { readonly refreshLatestVersion?: boolean },
   ) {
     const previousFiber = yield* Ref.getAndSet(enrichmentFiberRef, null);
     if (previousFiber) {
@@ -147,6 +150,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         snapshot,
         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
         publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
+        ...(options?.refreshLatestVersion === true ? { refreshLatestVersion: true } : {}),
       })
       .pipe(ignoreCauseWithoutInterruptNoise, Effect.forkIn(scope));
 
@@ -155,7 +159,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean },
+    options?: {
+      readonly forceRefresh?: boolean;
+      readonly refreshLatestVersion?: boolean;
+    },
   ) {
     const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
@@ -175,7 +182,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         enrichmentGeneration: nextGeneration,
       });
       yield* Ref.set(settingsRef, nextSettings);
-      yield* restartSnapshotEnrichment(nextSettings, state.snapshot, nextGeneration);
+      yield* restartSnapshotEnrichment(nextSettings, state.snapshot, nextGeneration, {
+        refreshLatestVersion: options?.refreshLatestVersion === true,
+      });
       return state.snapshot;
     }
 
@@ -221,11 +230,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
     yield* Ref.set(settingsRef, nextSettings);
     yield* PubSub.publish(changesPubSub, nextSnapshot);
-    yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
+    yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration, {
+      refreshLatestVersion: options?.refreshLatestVersion === true,
+    });
     return nextSnapshot;
   });
-  const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
-    refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+  const applySnapshot = (
+    nextSettings: Settings,
+    options?: { readonly forceRefresh?: boolean; readonly refreshLatestVersion?: boolean },
+  ) => refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
   /**
    * Runtime usage updates arrive between probes. They patch only
@@ -253,9 +266,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       }
     });
 
-  const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
+  const refreshSnapshot = Effect.fn("refreshSnapshot")(function* (options?: {
+    readonly refreshLatestVersion?: boolean;
+  }) {
     const nextSettings = yield* input.getSettings;
-    return yield* applySnapshot(nextSettings, { forceRefresh: true });
+    return yield* applySnapshot(nextSettings, {
+      forceRefresh: true,
+      refreshLatestVersion: options?.refreshLatestVersion === true,
+    });
   });
 
   const hasProviderStatusDemand = Effect.gen(function* () {
@@ -343,7 +361,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-    refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    refresh: refreshSnapshot({ refreshLatestVersion: true }).pipe(
+      Effect.tapError(Effect.logError),
+      Effect.orDie,
+    ),
     applyUsageLimits,
     seedUsageLimits: applyUsageLimitsSeed,
     get streamChanges() {

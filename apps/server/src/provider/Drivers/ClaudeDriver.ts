@@ -294,11 +294,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.map(stampIdentity),
           ),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+        enrichSnapshot: ({ settings, snapshot, publishSnapshot, refreshLatestVersion }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>
               enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                forceLatestVersionRefresh: refreshLatestVersion === true,
               }),
             ),
             Effect.provideService(HttpClient.HttpClient, httpClient),

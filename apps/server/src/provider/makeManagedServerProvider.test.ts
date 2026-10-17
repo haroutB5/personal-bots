@@ -309,6 +309,41 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(AlwaysRunTestLayer, TestClock.layer()))),
   );
 
+  it.effect("a manual refresh bypasses the version cache; the background check does not", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshFlags = yield* Ref.make<Array<boolean>>([]);
+        const initialEnriched = yield* Deferred.make<void>();
+        const manualEnriched = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed(refreshedSnapshot),
+          enrichSnapshot: ({ snapshot, publishSnapshot, refreshLatestVersion }) =>
+            Ref.updateAndGet(refreshFlags, (all) => [...all, refreshLatestVersion === true]).pipe(
+              Effect.tap((flags) =>
+                flags.length === 1
+                  ? Deferred.succeed(initialEnriched, undefined).pipe(Effect.ignore)
+                  : Deferred.succeed(manualEnriched, undefined).pipe(Effect.ignore),
+              ),
+              Effect.flatMap(() => publishSnapshot(snapshot)),
+            ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Deferred.await(initialEnriched);
+        assert.deepStrictEqual(yield* Ref.get(refreshFlags), [false]);
+
+        yield* provider.refresh;
+        yield* Deferred.await(manualEnriched);
+        assert.deepStrictEqual(yield* Ref.get(refreshFlags), [false, true]);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect("wakes a sleeping provider refresh loop when its interval changes", () =>
     Effect.scoped(
       Effect.gen(function* () {

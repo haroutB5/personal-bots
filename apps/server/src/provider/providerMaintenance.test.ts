@@ -14,7 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createProviderVersionAdvisory,
@@ -165,6 +165,37 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
     ),
   );
+
+  it.effect("a forced lookup bypasses the cached version and stores the new one", () => {
+    let current = "0.2.0-rc.2";
+    const capabilities = {
+      ...manualPackageTool,
+      packageName: "@deepseek-ai/dsh",
+      latestVersionTags: ["latest", "next"],
+    } as const;
+    const cache = new Map();
+    const resolve = (options?: { readonly force?: boolean }) =>
+      resolveLatestProviderVersion(capabilities, options).pipe(
+        Effect.provideService(ProviderVersionCache, cache),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() =>
+              HttpClientResponse.fromWeb(request, Response.json({ version: current })),
+            ),
+          ),
+        ),
+      );
+    return Effect.gen(function* () {
+      expect(yield* resolve()).toBe("0.2.0-rc.2");
+      current = "0.2.1-rc.2";
+      // The background interval reads the hour-long cache.
+      expect(yield* resolve()).toBe("0.2.0-rc.2");
+      // A manual Refresh bypasses it for that call and refreshes the entry.
+      expect(yield* resolve({ force: true })).toBe("0.2.1-rc.2");
+      expect(yield* resolve()).toBe("0.2.1-rc.2");
+    });
+  });
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
     enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, manualPackageTool, {

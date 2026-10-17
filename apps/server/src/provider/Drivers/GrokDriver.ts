@@ -165,13 +165,19 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+        enrichSnapshot: ({
+          settings,
+          snapshot: currentSnapshot,
+          publishSnapshot,
+          refreshLatestVersion,
+        }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>
               enrichGrokSnapshot({
                 snapshot: currentSnapshot,
                 maintenanceCapabilities,
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                forceLatestVersionRefresh: refreshLatestVersion === true,
                 publishSnapshot,
                 httpClient,
               }),

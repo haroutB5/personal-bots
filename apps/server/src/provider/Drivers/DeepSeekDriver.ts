@@ -90,6 +90,8 @@ const DRIVER_KIND = ProviderDriverKind.make("deepseek");
 
 /** The npm package the Claude engine runs on, and looks up updates for. */
 const CLAUDE_CODE_PACKAGE_NAME = "@anthropic-ai/claude-code";
+/** The harness package; its release candidates land on `next` before `latest`. */
+const DSH_PACKAGE_NAME = "@deepseek-ai/dsh";
 
 /** How long the harness smoke test waits for its ACP handshake. */
 const DSH_SMOKE_TIMEOUT = Duration.seconds(90);
@@ -285,17 +287,19 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
         modelCatalog,
       );
 
-      // The update advisory compares the running version with the npm latest
-      // of `packageName`. Only the Claude engine has such a channel: the
-      // harness is pinned, and moves only with `install-dsh.ps1` and a new
-      // pin. On dsh the comparison was against the Claude CLI's latest, so
-      // the card read "Update available" beside the harness version as soon
-      // as that moved. No package means no lookup and no advisory.
+      // The update advisory compares the running version with the newest npm
+      // version of `packageName`. The Claude engine uses the Claude CLI's own
+      // package. The harness is pinned and moves only with `install-dsh.ps1`
+      // and a new pin, so it has no update action; but its card still says
+      // when a newer harness is published, so a harness move is visible the
+      // day it lands. The harness also publishes release candidates on `next`
+      // before `latest`, so both tags are considered (never `alpha`).
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({
             provider: DRIVER_KIND,
-            packageName: engine === "dsh" ? null : CLAUDE_CODE_PACKAGE_NAME,
+            packageName: engine === "dsh" ? DSH_PACKAGE_NAME : CLAUDE_CODE_PACKAGE_NAME,
+            ...(engine === "dsh" ? { latestVersionTags: ["latest", "next"] } : {}),
           }),
         ),
       );
@@ -328,11 +332,12 @@ export const DeepSeekDriver: ProviderDriver<DeepSeekSettings, DeepSeekDriverEnv>
               Effect.map(stampIdentity),
             ),
           checkProvider,
-          enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+          enrichSnapshot: ({ settings, snapshot, publishSnapshot, refreshLatestVersion }) =>
             resolveMaintenance().pipe(
               Effect.flatMap((maintenanceCapabilities) =>
                 enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
                   enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                  forceLatestVersionRefresh: refreshLatestVersion === true,
                 }),
               ),
               Effect.provideService(HttpClient.HttpClient, httpClient),

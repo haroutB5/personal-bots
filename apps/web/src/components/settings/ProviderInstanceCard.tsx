@@ -131,6 +131,18 @@ function readConfigCustomModels(config: unknown): ReadonlyArray<CustomModelDefin
 }
 
 /**
+ * DeepSeek on the harness reports the harness build in `version`, not a model
+ * version. Label it as such so the card cannot be read as the model's version.
+ * `dsh` is the default engine when the config does not name one.
+ */
+function isDeepSeekHarnessInstance(instance: { driver: string; config?: unknown }): boolean {
+  if (instance.driver !== "deepseek") return false;
+  const config = instance.config;
+  if (config === null || typeof config !== "object") return true;
+  return (config as Record<string, unknown>).engine !== "claude-code";
+}
+
+/**
  * Set `key` to an arbitrary value on the opaque config blob. Unlike
  * provider settings field updates, does not drop empty-looking values — the
  * caller is responsible for deciding whether an empty array / empty
@@ -474,6 +486,8 @@ export function ProviderInstanceCard({
       ? (liveProvider.auth.label ?? liveProvider.auth.type ?? null)
       : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
+  const versionLabelText =
+    versionLabel && isDeepSeekHarnessInstance(instance) ? `Harness ${versionLabel}` : versionLabel;
   const versionAdvisory = getProviderVersionAdvisoryPresentation(
     liveProvider?.versionAdvisory,
     liveProvider?.compatibilityAdvisory,
@@ -612,8 +626,8 @@ export function ProviderInstanceCard({
     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">{headerAction}</span>
   ) : null;
 
-  const versionCodeNode = versionLabel ? (
-    <code className="text-xs text-muted-foreground">{versionLabel}</code>
+  const versionCodeNode = versionLabelText ? (
+    <code className="text-xs text-muted-foreground">{versionLabelText}</code>
   ) : null;
 
   // Healthy and disabled rows read fine from their text; only trouble gets a dot.
@@ -682,9 +696,9 @@ export function ProviderInstanceCard({
                   {instanceId}
                 </code>
               ) : null}
-              {versionLabel ? (
-                <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
-                  {versionLabel}
+              {versionLabelText ? (
+                <code className="max-w-32 shrink-0 truncate text-xs text-muted-foreground">
+                  {versionLabelText}
                 </code>
               ) : null}
               {versionAdvisory ? (
@@ -725,7 +739,12 @@ export function ProviderInstanceCard({
                     <TooltipPopup side="top">Copy update command</TooltipPopup>
                   </Tooltip>
                 ) : (
-                  <span role="img" aria-label="Update available" className="inline-flex shrink-0">
+                  <span
+                    role="img"
+                    aria-label={`${versionAdvisory.title} — ${versionAdvisory.detail}`}
+                    title={versionAdvisory.detail}
+                    className="inline-flex shrink-0"
+                  >
                     <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
                   </span>
                 )
@@ -817,7 +836,7 @@ export function ProviderInstanceCard({
                     {versionAdvisory.detail}
                   </p>
                 </div>
-                {onRunVersionAction ? (
+                {onRunVersionAction && (versionAdvisory.targetVersion || updateCommand) ? (
                   <Button
                     type="button"
                     size="xs"

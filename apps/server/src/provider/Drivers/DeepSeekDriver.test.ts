@@ -1,13 +1,15 @@
 /**
  * The DeepSeek card's update advisory, on both engines.
  *
- * One provider, two engines with different update channels: the Claude CLI is
- * a published package whose latest version the advisory can look up, while the
- * harness is pinned and moves only with `install-dsh.ps1` and a new pin, so it
- * has nothing to compare against. The bug this covers: on dsh the card said
- * "Update available" beside the harness version (v0.2.0-rc.2), because the
- * lookup ran against `@anthropic-ai/claude-code` and the Claude CLI's latest
- * (2.1.296) is newer than any harness version.
+ * Both engines compare against a published package now: the Claude engine
+ * against `@anthropic-ai/claude-code` (`latest`), and the harness against
+ * `@deepseek-ai/dsh`, taking the newest of `latest` and `next` and never
+ * `alpha`. The harness has no update action because moving the pin needs a
+ * release, but the card still says when a newer harness is published.
+ *
+ * Two bugs this guards: dsh used to compare against the Claude CLI's latest
+ * and show a false "Update available", and then had no lookup at all, so a
+ * harness published on `next` was invisible until someone read the notes.
  *
  * The assertions drive the same two calls the driver's own `enrichSnapshot`
  * makes: `snapshot.resolveMaintenance()` for the capabilities, then
@@ -40,6 +42,8 @@ import { DeepSeekDriver } from "./DeepSeekDriver.ts";
 const CLAUDE_CLI_LATEST = "2.1.296";
 /** A Claude CLI old enough to be behind that. */
 const CLAUDE_CLI_RUNNING = "2.1.290";
+/** What npm publishes for the harness: rc on `next`, an older release on `latest`. */
+const DSH_REGISTRY = { latest: "0.2.0-rc.2", next: "0.2.1-rc.2", alpha: "0.3.0-alpha.1" } as const;
 
 const makeConfig = (overrides: Partial<DeepSeekSettings>): DeepSeekSettings => ({
   enabled: false,
@@ -62,7 +66,18 @@ const makeRegistryStub = () =>
     const client = HttpClient.make((request) =>
       Ref.update(requests, (all) => [...all, request.url]).pipe(
         Effect.as(
-          HttpClientResponse.fromWeb(request, Response.json({ version: CLAUDE_CLI_LATEST })),
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              version: request.url.includes("deepseek-ai")
+                ? request.url.endsWith("/next")
+                  ? DSH_REGISTRY.next
+                  : request.url.endsWith("/alpha")
+                    ? DSH_REGISTRY.alpha
+                    : DSH_REGISTRY.latest
+                : CLAUDE_CLI_LATEST,
+            }),
+          ),
         ),
       ),
     );
@@ -128,19 +143,22 @@ const availabilityShape = (snapshot: ServerProvider) => ({
 });
 
 it.layer(testLayer)("DeepSeekDriver version advisory", (it) => {
-  it.effect("dsh: no update lookup, and no advisory to show", () =>
+  it.effect("dsh: looks up latest and next, never alpha, and shows the newer harness", () =>
     Effect.gen(function* () {
       const { client, requests } = yield* makeRegistryStub();
       const instance = yield* createInstance("dsh");
       const capabilities = yield* instance.snapshot.resolveMaintenance();
 
-      // Nothing to look up: the harness is pinned, not published.
-      expect(capabilities.packageName).toBeNull();
+      // The harness is published, so its card can say a newer one exists; it
+      // has no update action because moving the pin needs a release.
+      expect(capabilities.packageName).toBe("@deepseek-ai/dsh");
+      expect(capabilities.latestVersionTags).toEqual(["latest", "next"]);
       expect(capabilities.update).toBeNull();
 
       const snapshot = yield* instance.snapshot.getSnapshot;
       const enriched = yield* enrichProviderSnapshotWithVersionAdvisory(
-        runningSnapshot(snapshot, DSH_PINNED_VERSION),
+        // A harness one release behind `next`.
+        runningSnapshot(snapshot, "0.2.1-rc.1"),
         capabilities,
         { enableProviderUpdateChecks: true },
       ).pipe(
@@ -148,11 +166,18 @@ it.layer(testLayer)("DeepSeekDriver version advisory", (it) => {
         Effect.provideService(ProviderVersionCache, new Map()),
       );
 
-      // `unknown` is what the card turns into "no advisory" (no arrow, no
-      // "Update available" line); `behind_latest` was the false one.
-      expect(enriched.versionAdvisory?.status).toBe("unknown");
-      expect(enriched.versionAdvisory?.message).toBeNull();
-      expect(yield* Ref.get(requests)).toEqual([]);
+      expect(enriched.versionAdvisory).toMatchObject({
+        status: "behind_latest",
+        currentVersion: "0.2.1-rc.1",
+        latestVersion: "0.2.1-rc.2",
+        canUpdate: false,
+      });
+      expect(enriched.versionAdvisory?.message).not.toBeNull();
+      const lookedUp = yield* Ref.get(requests);
+      expect(lookedUp.filter((url) => url.endsWith("/latest"))).toHaveLength(1);
+      expect(lookedUp.filter((url) => url.endsWith("/next"))).toHaveLength(1);
+      // `alpha` is never considered, even when it is higher than `next`.
+      expect(lookedUp.some((url) => url.includes("/alpha"))).toBe(false);
     }).pipe(Effect.scoped),
   );
 
@@ -231,7 +256,7 @@ it.layer(testLayer)("DeepSeekDriver version advisory", (it) => {
       expect(dshEnriched.enabled).toBe(true);
       expect(dshEnriched.availability).toBeUndefined();
       expect(dshEnriched.unavailableReason).toBeUndefined();
-      expect(dshEnriched.versionAdvisory?.status).toBe("unknown");
+      expect(dshEnriched.versionAdvisory?.status).toBe("current");
       expect(dshEnriched.versionAdvisory?.canUpdate).toBe(false);
       expect(claudeEnriched.versionAdvisory?.status).toBe("behind_latest");
     }).pipe(Effect.scoped),

@@ -559,6 +559,7 @@ export const enrichGrokSnapshot = (input: {
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
   readonly enableProviderUpdateChecks?: boolean;
+  readonly forceLatestVersionRefresh?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly httpClient: HttpClient.HttpClient;
 }): Effect.Effect<void> => {
@@ -566,6 +567,7 @@ export const enrichGrokSnapshot = (input: {
 
   return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
     enableProviderUpdateChecks: input.enableProviderUpdateChecks,
+    forceLatestVersionRefresh: input.forceLatestVersionRefresh === true,
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
     Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
