@@ -282,10 +282,12 @@ export function isCommittedEcho(
 }
 
 /** Reads the change event's input kind, for {@link isCommittedEcho}. */
-function inputKindOf(event: {
-  readonly nativeEvent?: { readonly inputType?: unknown; readonly isComposing?: unknown };
-}): ComposerInputKind {
-  const native = event.nativeEvent;
+function inputKindOf(event: { readonly nativeEvent?: Event | undefined }): ComposerInputKind {
+  // React types `nativeEvent` as the plain Event; an InputEvent carries these
+  // fields at runtime, and a composition event carries neither.
+  const native = event.nativeEvent as
+    | { readonly inputType?: unknown; readonly isComposing?: unknown }
+    | undefined;
   return {
     inputType: typeof native?.inputType === "string" ? native.inputType : undefined,
     composing: native?.isComposing === true,
