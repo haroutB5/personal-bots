@@ -18,7 +18,12 @@ Live:
      amend or force); the proposals go back to waiting for approval.
   3. Patch version bump, push, build.ps1 -NoActivate -CopyExternals (every
      nightly release carries its own externals, so a rollback onto it stays
-     valid after a later `vp i`). A failed build is reverted like red gates.
+     valid after a later `vp i`). The bump starts from the higher of the
+     checkout's and origin/main's app-version.txt, and a version a release in
+     flight is using (a staged release folder, the current release, an armed
+     waiter) is never taken: the run skips and reports instead (1.66.69). It
+     also never pushes main while a release waiter is armed. A failed build is
+     reverted like red gates.
   4. Waits until EVERY bot and task is idle (3 looks in a row, 20 s apart, the
      same check as the hbots idle waiter), so the restart never cuts any bot's
      turn off. Still busy after -WaitMinutes (120): nothing is restarted, the
@@ -111,14 +116,21 @@ function Get-RunCommits {
 }
 
 function Push-Run([string]$Why) {
-    if (-not $isLive) { Add-Step "push skipped (dry run): $Why"; return $true }
+    if (-not $isLive) { Add-Step "push skipped (dry run): $Why"; return 'skipped' }
+    # Never push main while a release waiter is armed or running: it would make
+    # main diverge from the release the team is installing (17 Oct).
+    $armed = Get-UpdatesArmedWaiter -RunDir ($paths.RunDir)
+    if ($armed) {
+        Add-Step "push to origin/$UpdatesBranch skipped: $armed"
+        return 'armed'
+    }
     $push = Invoke-UpdatesGit -Repo $workDir -GitArgs @('push', 'origin', "HEAD:refs/heads/$UpdatesBranch") -AllowFail
     if ($push.Code -ne 0) {
         Add-Step "push rejected ($Why): $($push.Err.Trim())"
-        return $false
+        return 'rejected'
     }
     Add-Step "pushed to origin/$UpdatesBranch ($Why)"
-    return $true
+    return 'ok'
 }
 
 # Every commit of the run, newest first, with new revert commits; then push.
@@ -128,7 +140,8 @@ function Undo-Run([string]$Reason) {
     $created = Invoke-UpdatesRevert -Repo $workDir -Commits $commits -Reason $Reason
     Add-Step ("reverted {0} commit(s) with {1} revert commit(s): {2}" -f $commits.Count, $created.Count, $Reason)
     if ($isLive) { [void](Invoke-Ledger @('run-reverted', '--reason', $Reason)) }
-    [void](Push-Run 'the reverts')
+    $pushResult = Push-Run 'the reverts'
+    if ($pushResult -eq 'armed') { Add-Step 'the reverts stay local: a release waiter is armed; nothing was pushed to main' }
 }
 
 function Get-VersionTxt([string]$Origin) {
@@ -267,10 +280,37 @@ function Invoke-Pipeline {
     }
     Add-Step 'gates green: server src/personal, web src/features/personal, typecheck (contracts, shared, client-runtime, server, web), lint'
 
-    # 3. Version, push, build.
+    # 3. Version, push, build. A release in flight owns its version number and
+    # main itself: never take either (17 Oct: a nightly published 1.66.62 while
+    # the real 1.66.62 waited to install, then reverted it and diverged main).
+    $armed = Get-UpdatesArmedWaiter -RunDir ($paths.RunDir)
+    if ($armed) {
+        $script:result = 'skipped-release-in-flight'
+        $script:summary = "Nothing was pushed, built or restarted: $armed. The run's commits stay local; the next run can push them once the release has landed."
+        Add-Step "skipped the version bump: $armed"
+        return
+    }
     $versionFile = Join-Path $workDir 'scripts\personal\app-version.txt'
     $oldVersion = (Get-Content -LiteralPath $versionFile -First 1).Trim()
+    # Base the bump on the newest version anyone published, not only this
+    # checkout's file, which lags while a builder stages a release.
+    $originRead = Invoke-UpdatesGit -Repo $workDir -GitArgs @('show', "origin/$($UpdatesBranch):scripts/personal/app-version.txt") -AllowFail
+    if ($originRead.Code -eq 0) {
+        $originVersion = $originRead.Out.Trim()
+        if ((Get-UpdatesVersionParts $originVersion) -and (Compare-UpdatesVersion $originVersion $oldVersion) -gt 0) {
+            Add-Step "origin/$UpdatesBranch already holds version $originVersion (checkout says $oldVersion); bumping past it"
+            $oldVersion = $originVersion
+        }
+    }
     $script:version = Get-UpdatesNextPatchVersion $oldVersion
+    $reserved = @(Get-UpdatesReservedVersions -ReleasesDir $paths.ReleasesDir -RunDir ($paths.RunDir) -CurrentFile $paths.CurrentFile)
+    $clash = Test-UpdatesVersionReserved -Version $script:version -Reserved $reserved
+    if ($clash) {
+        $script:result = 'skipped-version-in-use'
+        $script:summary = "Nothing was pushed, built or restarted: version $($script:version) is already staged or in use ($clash). The run's commits stay local."
+        Add-Step "skipped the version bump: $($script:version) is already reserved"
+        return
+    }
     Set-Content -LiteralPath $versionFile -Value $script:version -Encoding ASCII
     $ids = @()
     $applied = Invoke-Ledger @('run-commits')
@@ -280,7 +320,13 @@ function Invoke-Pipeline {
     [void](Invoke-UpdatesGit -Repo $workDir -GitArgs @('add', 'scripts/personal/app-version.txt'))
     [void](Invoke-UpdatesGit -Repo $workDir -GitArgs ($UpdatesGitIdentity + @('commit', '-m', "release $($script:version): nightly Claude Code update$idText", '-m', "Automated by scripts/personal/updates/nightly-pipeline.ps1 (run $RunId).")))
     Add-Step "version $oldVersion -> $($script:version)"
-    if (-not (Push-Run "release $($script:version)")) {
+    $pushResult = Push-Run "release $($script:version)"
+    if ($pushResult -eq 'armed') {
+        $script:result = 'skipped-release-in-flight'
+        $script:summary = "A release waiter armed while the gates ran, so nothing was pushed to $UpdatesBranch: version $($script:version) stays in a local commit. Nothing was built or restarted."
+        return
+    }
+    if ($pushResult -ne 'ok') {
         $script:result = 'push-rejected'
         $script:summary = "Gates were green but origin/$UpdatesBranch moved, so the push was rejected (never forced). Nothing was built or restarted; the commits are local in $workDir for a manual merge."
         return

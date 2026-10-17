@@ -14,8 +14,11 @@ pipeline: -Step preflight before it changes anything, -Step ship when it is done
      live release lacks (HANDOFF-*.md, other notes and the release tooling
      under scripts\personal\ may differ: they are not part of a release);
      in a live run its node_modules are brought in line with the lockfile;
-  3. a database backup (backup.ps1);
-  4. -Mode DryRun: a throwaway worktree at HEAD (vp i, .env copied) and a copy
+  3. no release is in flight (an armed waiter, a staged release folder) and the
+     next version number is free (1.66.69: never reuse a version a release is
+     using); otherwise it refuses the night and reports why;
+  4. a database backup (backup.ps1);
+  5. -Mode DryRun: a throwaway worktree at HEAD (vp i, .env copied) and a copy
      of the ledger, so a rehearsal changes nothing real.
   Prints one JSON line: ok, workDir, baseSha, ledger, dependencyChangesAllowed.
   When it refuses, it records the outcome, posts the report and prints ok=false.
@@ -125,6 +128,19 @@ function Invoke-Preflight {
     if (-not $state -or -not $state.release) { throw 'Bots is not running (no run\server.json); nothing to update' }
     $liveRelease = [string]$state.release
     if ($liveRelease -match '-dirty-') { throw "the live release $liveRelease was built from uncommitted changes" }
+    # A release in flight owns its version number and main itself: skip the
+    # night rather than race it. 17 Oct: a nightly bumped the checkout's 1.66.61
+    # to 1.66.62 and pushed it onto main while the real 1.66.62 was staged and
+    # waiting, then reverted it; main diverged and the version was reused.
+    $pbRunDir = $paths.RunDir
+    $armed = Get-UpdatesArmedWaiter -RunDir $pbRunDir
+    if ($armed) { throw "a release is in flight ($armed); not updating tonight" }
+    $appVersionFile = Join-Path $repo 'scripts\personal\app-version.txt'
+    $nextVersion = Get-UpdatesNextPatchVersion ((Get-Content -LiteralPath $appVersionFile -First 1).Trim())
+    $reserved = @(Get-UpdatesReservedVersions -ReleasesDir $paths.ReleasesDir -RunDir $pbRunDir -CurrentFile $paths.CurrentFile)
+    $clash = Test-UpdatesVersionReserved -Version $nextVersion -Reserved $reserved
+    if ($clash) { throw "version $nextVersion is already staged or in use ($clash); not updating tonight" }
+    & $log "version $nextVersion is free and no release is in flight"
     $liveCommit = Invoke-UpdatesGit -Repo $repo -GitArgs @('rev-parse', '--verify', '--quiet', "$liveRelease^{commit}") -AllowFail
     if ($liveCommit.Code -ne 0) { throw "the live release $liveRelease is not a commit in this checkout's history; nothing to compare HEAD with" }
     # Whole-tree equality is the wrong test: the team puts a HANDOFF-<n>.md notes

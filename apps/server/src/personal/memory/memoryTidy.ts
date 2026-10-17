@@ -7,9 +7,10 @@ import * as NodeCrypto from "node:crypto";
  *
  * The tidy-up reads shared and team entries (each reach on its own; bot and
  * project entries are never touched). On its own it only archives an
- * older entry in favour of a newer one whose text stays verbatim; merges
- * (new wording) and retiring an entry with no successor wait for the owner's
- * OK. It never deletes, and anything it is unsure of is left alone and listed.
+ * older entry in favour of a newer one whose text stays verbatim; a merge
+ * (new wording) waits for the owner's OK. Nothing is ever archived without a
+ * replacement entry saved in the same step: a rule with no successor is left
+ * as it is. It never deletes, and anything it is unsure of is left alone and listed.
  */
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -78,7 +79,10 @@ export type TidyDecision =
   | {
       readonly action: "supersede";
       readonly memoryIds: ReadonlyArray<string>;
-      /** The entry that now carries the fact; null retires the entries with no successor. */
+      /**
+       * The entry that now carries the fact. A supersede without one is left
+       * as it is: an entry is never archived with no replacement (1.66.69).
+       */
       readonly by: string | null;
       readonly reason: string;
     }
@@ -90,6 +94,20 @@ export type TidyDecision =
     };
 
 const normalised = (content: string) => content.trim().replace(/\s+/g, " ").toLowerCase();
+
+/**
+ * A model reason that is really a verdict to leave an entry alone: "Leave as
+ * is", "Keep both", "Leave them unchanged". Such a decision must never be made
+ * as a change; it is recorded as a leave, whatever action was named.
+ */
+export function reasonSaysLeave(reason: string): boolean {
+  const text = reason.trim().toLowerCase();
+  if (text.length === 0) return false;
+  return (
+    /^(?:please\s+)?(?:leave|keep)\b/.test(text) ||
+    /\b(?:leave|keep)\s+(?:it|them|these|this|both|all|as|alone|unchanged)\b/.test(text)
+  );
+}
 
 /** Newest first by when saved. */
 const newestFirst = (a: TidyEntry, b: TidyEntry) => b.createdAtMs - a.createdAtMs;
@@ -149,9 +167,9 @@ const SECRET_SHAPED =
 /**
  * The change that needs no judgement: an older entry archived in favour of
  * a newer one with exactly the same text (case and spacing aside), same kind
- * and scope. Words like "not" and every number count. Every other supersede,
- * merge and retirement is the model's judgement: with `autoAll` (the default)
- * it is made too, with an Undo; without it the owner's OK is waited for.
+ * and scope. Words like "not" and every number count. Every other supersede
+ * and every merge is the model's judgement: with `autoAll` (the default) it is
+ * made too, with an Undo; without it the owner's OK is waited for.
  */
 export function isAutoChange(
   decision: TidyDecision,
@@ -181,9 +199,11 @@ export function isAutoChange(
  * carries secret-shaped text, or goes past the nightly caps.
  *
  * `autoAll` (the default since 1.60.42) makes every valid change `auto`: the
- * model's merges and retirements are made too, each with an Undo in the log, and
+ * model's merges and supersedes are made too, each with an Undo in the log, and
  * the nightly cap on archived entries counts them all. Without it only an exact
- * duplicate is made on its own and the rest wait for the owner.
+ * duplicate is made on its own and the rest wait for the owner. Nothing is ever
+ * archived without a replacement: a supersede with `by = null`, and a change
+ * whose reason says leave or keep, is recorded as a leave (1.66.69).
  */
 export function validateDecisions(
   entries: ReadonlyArray<TidyEntry>,
@@ -250,7 +270,21 @@ export function validateDecisions(
       leave(decision, "No reason given");
       continue;
     }
+    // A reason that is a verdict to leave or keep is a leave, whatever action
+    // it was attached to (14 Oct: change 270 archived a rule whose own reason
+    // said "Leave as is").
+    if (reasonSaysLeave(decision.reason)) {
+      leave(decision, "The reason says to leave it as it is");
+      continue;
+    }
     const by = decision.action === "supersede" ? decision.by : null;
+    // A supersede always names the newer entry that now carries the fact. With
+    // none there is no replacement to archive into, so the entry is left as it is
+    // rather than retired with nothing standing in its place (1.66.69).
+    if (decision.action === "supersede" && by === null) {
+      leave(decision, "A supersede needs a replacement entry; nothing is archived without one");
+      continue;
+    }
     if (by !== null && (!byId.has(by) || ids.includes(by))) {
       leave(decision, "Replacement is not another entry in the list");
       continue;
@@ -410,8 +444,8 @@ export function buildTidyPrompt(input: {
     "ENTRIES>>>",
     "",
     "Propose operations on these entries only, by ref:",
-    '- "supersede" with by = a ref: preferences only, when a NEWER user instruction on the same subject replaces an older rule. The latest user instruction wins. Notes may only supersede exact duplicates with identical evidence and observation metadata.',
-    '- "supersede" with by = null: preferences only, when the rule itself explicitly says it stopped applying. Never retire a factual claim or historical event based on a newer saved date or the app version.',
+    '- "supersede" with by = a ref: when a NEWER user instruction on the same subject replaces an older rule. The latest user instruction wins. Notes may only supersede exact duplicates with identical evidence and observation metadata.',
+    '- A supersede always names the replacement entry. Never retire a rule with no successor: if a rule has simply stopped applying and no newer entry carries it, use "leave".',
     '- "merge": preferences only, keeping the user\'s own wording and all constraints. Never merge factual notes: preserve their individual evidence and observation dates.',
     '- "conflict": factual notes that disagree or might supersede one another. Name every involved ref, explain what source must be checked, and keep both claims and their evidence. A later saved date is not evidence of truth. Only a source-checked correction can resolve a factual conflict.',
     '- "leave": entries you looked at and are unsure about, with why.',

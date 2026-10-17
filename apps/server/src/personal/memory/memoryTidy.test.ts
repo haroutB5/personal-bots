@@ -93,15 +93,13 @@ describe("validateDecisions", () => {
       NOW,
     );
     expect(result.auto.map((decision) => decision.memoryIds)).toEqual([["t1"]]);
-    expect(result.pending.map((decision) => decision.memoryIds)).toEqual([
-      ["a"],
-      ["c", "d"],
-      ["f"],
-    ]);
-    expect(result.left).toEqual([]);
+    expect(result.pending.map((decision) => decision.memoryIds)).toEqual([["a"], ["c", "d"]]);
+    // No replacement entry, so nothing is archived: it is left and listed.
+    expect(result.left).toHaveLength(1);
+    expect(result.left[0]!.reason).toContain("replacement");
   });
 
-  it("with autoAll (the default mode) the model's merges and retirements are made too, within the nightly cap", () => {
+  it("with autoAll (the default mode) the model's merges and supersedes are made too, within the nightly cap", () => {
     const decisions = [
       { action: "supersede" as const, memoryIds: ["a"], by: "b", reason: "B restates A." },
       {
@@ -110,11 +108,10 @@ describe("validateDecisions", () => {
         content: "Rule C. Rule D.",
         reason: "Same rule.",
       },
-      { action: "supersede" as const, memoryIds: ["f"], by: null, reason: "Says it ended." },
     ];
     const result = validateDecisions(entries, decisions, NOW, undefined, { autoAll: true });
     expect(result.pending).toEqual([]);
-    expect(result.auto.map((decision) => decision.memoryIds)).toEqual([["a"], ["c", "d"], ["f"]]);
+    expect(result.auto.map((decision) => decision.memoryIds)).toEqual([["a"], ["c", "d"]]);
     // The cap on entries archived in a night counts them all.
     const many = Array.from({ length: MAX_AUTO_PER_NIGHT + 3 }, (_, index) =>
       entry(`m${index}`, `Model note ${index}.`),
@@ -135,6 +132,29 @@ describe("validateDecisions", () => {
     expect(
       capped.auto.reduce((sum, decision) => sum + decision.memoryIds.length, 0),
     ).toBeLessThanOrEqual(MAX_AUTO_PER_NIGHT);
+  });
+
+  it("never archives without a saved replacement, and records a leave verdict as a leave", () => {
+    const result = validateDecisions(
+      entries,
+      [
+        { action: "supersede", memoryIds: ["f"], by: null, reason: "Says it ended." },
+        { action: "supersede", memoryIds: ["a"], by: "missing-id", reason: "Newer." },
+        { action: "supersede", memoryIds: ["c"], by: "d", reason: "Leave as is." },
+        { action: "merge", memoryIds: ["c", "d"], content: "Rule C.", reason: "Keep both." },
+      ],
+      NOW,
+      undefined,
+      { autoAll: true },
+    );
+    expect(result.auto).toEqual([]);
+    expect(result.pending).toEqual([]);
+    expect(result.left.map((decision) => decision.reason)).toEqual([
+      "A supersede needs a replacement entry; nothing is archived without one (Says it ended.)",
+      "Replacement is not another entry in the list (Newer.)",
+      "The reason says to leave it as it is (Leave as is.)",
+      "The reason says to leave it as it is (Keep both.)",
+    ]);
   });
 
   it("leaves an older successor and changes of kind", () => {
@@ -224,7 +244,7 @@ describe("validateDecisions", () => {
     expect(result.left.map((decision) => decision.reason)).toEqual([
       "Overlaps an earlier change in this run (Overlaps.)",
       "Merged text looks like it carries a secret (Leaky.)",
-      "Too many changes for one night; left for the next run (Too many.)",
+      "A supersede needs a replacement entry; nothing is archived without one (Too many.)",
     ]);
   });
 

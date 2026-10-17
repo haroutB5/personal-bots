@@ -276,6 +276,141 @@ function Get-UpdatesNextPatchVersion([string]$Version) {
     return ('{0}.{1}.{2}' -f $Matches[1], $Matches[2], ([int]$Matches[3] + 1))
 }
 
+# "1.66.68" -> 1,66,68; $null for anything else.
+function Get-UpdatesVersionParts([string]$Version) {
+    if (-not $Version -or $Version.Trim() -notmatch '^(\d+)\.(\d+)\.(\d+)$') { return $null }
+    return , @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3])
+}
+
+# -1, 0 or 1. Throws on anything that is not x.y.z (never guess an order).
+function Compare-UpdatesVersion([string]$Left, [string]$Right) {
+    $a = Get-UpdatesVersionParts $Left
+    $b = Get-UpdatesVersionParts $Right
+    if (-not $a -or -not $b) { throw "cannot compare '$Left' with '$Right': both must be x.y.z" }
+    for ($i = 0; $i -lt 3; $i++) {
+        if ($a[$i] -lt $b[$i]) { return -1 }
+        if ($a[$i] -gt $b[$i]) { return 1 }
+    }
+    return 0
+}
+
+# The version a release folder was built as (its VERSION file), or $null.
+function Get-UpdatesReleaseFolderVersion([string]$ReleaseDir) {
+    $file = Join-Path $ReleaseDir 'VERSION'
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+    $map = ConvertFrom-UpdatesKeyValue ((Get-Content -LiteralPath $file) -join "`n")
+    $version = [string]$map['version']
+    if (Get-UpdatesVersionParts $version) { return $version.Trim() }
+    return $null
+}
+
+<#
+.SYNOPSIS
+Every version number a release in flight is using: a release folder with no
+waiter result yet (built and staged, not installed), the current release, and
+any run\restart-<ver>*.pid or result file whose waiter is still active. A
+release that finished (live_verified, rolled_back, failed, superseded) stops
+reserving its number; the next run bumps past origin/main, so it is never
+reused either. Pure file reads. 17 Oct: a nightly bumped the checkout's
+1.66.61 to 1.66.62 and pushed it while the real 1.66.62 was staged, because
+it only looked at app-version.txt.
+#>
+function Get-UpdatesReservedVersions {
+    param([string]$ReleasesDir, [string]$RunDir, [string]$CurrentFile)
+    $active = @('starting', 'guards', 'notes_check', 'evidence_check', 'preflight', 'waiting_for_idle', 'backing_up', 'activating', 'smoking')
+    $versions = New-Object System.Collections.Generic.List[string]
+    if ($CurrentFile -and (Test-Path -LiteralPath $CurrentFile -PathType Leaf)) {
+        $current = (Get-Content -LiteralPath $CurrentFile -Raw).Trim()
+        if ($current) {
+            $version = Get-UpdatesReleaseFolderVersion (Join-Path $ReleasesDir $current)
+            if ($version) { $versions.Add($version) }
+        }
+    }
+    if ($ReleasesDir -and (Test-Path -LiteralPath $ReleasesDir -PathType Container)) {
+        foreach ($dir in Get-ChildItem -LiteralPath $ReleasesDir -Directory) {
+            $version = Get-UpdatesReleaseFolderVersion $dir.FullName
+            if (-not $version) { continue }
+            # A main waiter result means this release was installed, failed, was
+            # superseded or is running now; a running one is reserved below.
+            $resultFile = $null
+            if ($RunDir) { $resultFile = Join-Path $RunDir ("restart-{0}-result.json" -f $version) }
+            if (-not $resultFile -or -not (Test-Path -LiteralPath $resultFile -PathType Leaf)) {
+                $versions.Add($version)
+                continue
+            }
+            try { $result = Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json } catch { $versions.Add($version); continue }
+            if ($active -contains [string]$result.status) { $versions.Add($version) }
+        }
+    }
+    if ($RunDir -and (Test-Path -LiteralPath $RunDir -PathType Container)) {
+        # A waiter is active only while its own result says so; a pid file is
+        # kept for ever, so its process must be alive and be the runner.
+        foreach ($file in Get-ChildItem -LiteralPath $RunDir -File) {
+            if ($file.Name -notmatch '^restart-(\d+\.\d+\.\d+)-result\.json$') { continue }
+            $version = $Matches[1]
+            try { $result = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json } catch { continue }
+            if ($active -contains [string]$result.status) { $versions.Add($version) }
+        }
+        foreach ($file in Get-ChildItem -LiteralPath $RunDir -Filter 'restart-*.pid' -File) {
+            if ($file.Name -notmatch '^restart-(\d+\.\d+\.\d+)') { continue }
+            $version = $Matches[1]
+            $ownerPid = 0
+            try { $ownerPid = [int]((Get-Content -LiteralPath $file.FullName -Raw).Trim()) } catch { continue }
+            if ($ownerPid -le 0 -or -not (Test-UpdatesPidAlive $ownerPid)) { continue }
+            $proc = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
+            if ($proc -and ([string]$proc.CommandLine) -match '(?i)hbots-release') { $versions.Add($version) }
+        }
+    }
+    return , @($versions | Sort-Object -Unique)
+}
+
+# Whether a candidate version is already spoken for; returns it, else $null.
+function Test-UpdatesVersionReserved {
+    param([string]$Version, [string[]]$Reserved)
+    foreach ($used in $Reserved) {
+        if ($used -eq $Version) { return $used }
+    }
+    return $null
+}
+
+<#
+.SYNOPSIS
+A release waiter that is armed or running right now, as a sentence, else
+$null. Reads run\restart-*-result.json (statuses before live_verified, plus a
+retry) and a run\restart-*.pid whose process is alive and is hbots-release.
+Old pid files are kept for ever, so a pid file alone is not proof: the process
+must be alive and be the runner. The nightly must never push main while this
+is set (17 Oct: it pushed a P12 commit onto main while 1.66.62 waited).
+#>
+function Get-UpdatesArmedWaiter {
+    param([string]$RunDir)
+    if (-not $RunDir -or -not (Test-Path -LiteralPath $RunDir -PathType Container)) { return $null }
+    $active = @('starting', 'guards', 'notes_check', 'evidence_check', 'preflight', 'waiting_for_idle', 'backing_up', 'activating', 'smoking', 'rate_limited')
+    foreach ($file in Get-ChildItem -LiteralPath $RunDir -Filter 'restart-*-result.json' -File) {
+        if ($file.Name -match '-(prepare|dryrun)-result\.json$') { continue }
+        try { $result = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json } catch { continue }
+        $status = [string]$result.status
+        if ($active -contains $status) {
+            $version = [string]$result.version
+            if (-not $version) { $version = ($file.BaseName -replace '^restart-', '') }
+            return "release $version is in flight (status $status, $($file.Name))"
+        }
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $RunDir -Filter 'restart-*.pid' -File) {
+        $ownerPid = 0
+        try { $ownerPid = [int]((Get-Content -LiteralPath $file.FullName -Raw).Trim()) } catch { continue }
+        if ($ownerPid -le 0) { continue }
+        if (-not (Test-UpdatesPidAlive $ownerPid)) { continue }
+        $proc = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
+        $commandLine = ''
+        if ($proc) { $commandLine = [string]$proc.CommandLine }
+        if ($commandLine -match '(?i)hbots-release') {
+            return "a release waiter is armed (pid $ownerPid, $($file.Name))"
+        }
+    }
+    return $null
+}
+
 # key=value lines (VERSION, /version.txt) into a hashtable.
 function ConvertFrom-UpdatesKeyValue([string]$Text) {
     $map = @{}

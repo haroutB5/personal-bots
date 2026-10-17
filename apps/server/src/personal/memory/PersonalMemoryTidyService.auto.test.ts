@@ -90,7 +90,6 @@ const answers = (ref: (needle: string) => string): TidyJudgeOutput["decisions"] 
     content: "At most 5 bots run at once in total.",
     reason: "Same rule, clarified.",
   },
-  { action: "supersede", memoryIds: [ref("being built")], by: null, reason: "1.47.3 shipped." },
   { action: "leave", memoryIds: [ref("Crypto")], reason: "Not sure it is still true." },
 ];
 
@@ -115,7 +114,7 @@ const currentIds = Effect.gen(function* () {
 });
 
 describe("the nightly run makes its changes itself", () => {
-  it.effect("merges and retirements are made, each applied with an Undo, nothing waits", () =>
+  it.effect("merges and supersedes are made, each applied with an Undo, nothing waits", () =>
     Effect.gen(function* () {
       const ids = yield* seedInstructions;
       const memory = yield* PersonalMemoryService;
@@ -124,14 +123,10 @@ describe("the nightly run makes its changes itself", () => {
       expect(run.status).toBe("done");
       expect(run.pending).toBe(0);
       expect(run.merged).toBe(1);
-      expect(run.superseded).toBe(2);
+      expect(run.superseded).toBe(1);
       const byStatus = Object.groupBy(run.changes, (change) => change.status);
       expect(byStatus.pending).toBeUndefined();
-      expect(byStatus.applied?.map((change) => change.action)).toEqual([
-        "supersede",
-        "merge",
-        "supersede",
-      ]);
+      expect(byStatus.applied?.map((change) => change.action)).toEqual(["supersede", "merge"]);
       expect(byStatus.applied?.every((change) => change.undoable === true)).toBe(true);
       expect(byStatus.left?.map((change) => change.reason)).toEqual(["Not sure it is still true."]);
 
@@ -139,7 +134,8 @@ describe("the nightly run makes its changes itself", () => {
       expect(current).not.toContain(ids.oldModels);
       expect(current).not.toContain(ids.capA);
       expect(current).not.toContain(ids.capB);
-      expect(current).not.toContain(ids.building);
+      // A rule with nothing replacing it stays: the retirement path is gone.
+      expect(current).toContain(ids.building);
       expect(current).toContain(ids.newModels);
       expect(current).toContain(ids.unsure);
       const merged = (yield* memory.list({})).find(
@@ -147,8 +143,87 @@ describe("the nightly run makes its changes itself", () => {
       );
       expect(merged?.kind).toBe("preference");
       // Never deletes: the archived ones are all still listed.
-      expect((yield* memory.list({ status: "superseded" })).length).toBe(4);
+      expect((yield* memory.list({ status: "superseded" })).length).toBe(3);
     }).pipe(Effect.provide(testLayer(fakeJudge(answers)))),
+  );
+
+  it.effect("a supersede with no replacement, or a reason saying leave, archives nothing", () =>
+    Effect.gen(function* () {
+      const ids = yield* seedInstructions;
+      const tidy = yield* PersonalMemoryTidy;
+      const run = yield* tidy.run({ dryRun: false });
+      expect(run.pending).toBe(0);
+      expect(run.changes.filter((change) => change.status === "applied")).toEqual([]);
+      expect(
+        run.changes.filter((change) => change.status === "left").map((change) => change.reason),
+      ).toEqual([
+        "The reason says to leave it as it is (Leave as is.)",
+        "Replacement is not another entry in the list (Newer.)",
+      ]);
+      expect(yield* currentIds).toEqual(expect.arrayContaining([ids.building, ids.oldModels]));
+      const memory = yield* PersonalMemoryService;
+      expect(yield* memory.list({ status: "superseded" })).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        testLayer(
+          fakeJudge((ref) => [
+            {
+              action: "supersede",
+              memoryIds: [ref("being built")],
+              by: null,
+              reason: "Leave as is.",
+            },
+            {
+              action: "supersede",
+              memoryIds: [ref("27 Sep")],
+              by: "E999",
+              reason: "Newer.",
+            },
+          ]),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("startup restores an entry a supersede archived with no replacement, once", () =>
+    Effect.gen(function* () {
+      const ids = yield* seedInstructions;
+      const sql = yield* SqlClient.SqlClient;
+      const tidy = yield* PersonalMemoryTidy;
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const runId = "tidy-orphan-repair";
+      yield* sql`
+        INSERT INTO personal_memory_tidy_runs (run_id, started_at, status, dry_run, nightly, model)
+        VALUES (${runId}, ${nowIso}, 'done', 0, 0, 'fake-model')
+      `;
+      yield* sql`
+        INSERT INTO personal_memory_tidy_changes (
+          run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id,
+          content, reason, created_at
+        )
+        VALUES (${runId}, 'applied', 'supersede', 'shared', NULL,
+          ${`["${ids.building}"]`}, NULL, NULL, 'Leave as is.', ${nowIso})
+      `;
+      yield* sql`
+        UPDATE personal_memory
+        SET superseded_at = ${nowIso}, superseded_by = NULL,
+            superseded_reason = 'Retired by the tidy-up: Leave as is.', version = version + 1
+        WHERE memory_id = ${ids.building}
+      `;
+      expect(yield* currentIds).not.toContain(ids.building);
+
+      expect(yield* tidy.repairOrphanedSupersedes).toBe(1);
+      expect(yield* currentIds).toContain(ids.building);
+      // Nothing left to do on the next boot.
+      expect(yield* tidy.repairOrphanedSupersedes).toBe(0);
+      const direct = yield* sql`
+        SELECT status, action FROM personal_memory_tidy_changes WHERE run_id = ${runId}
+      `;
+      expect(direct).toEqual([{ status: "undone", action: "supersede" }]);
+      const log = yield* tidy.log({ limit: 60 });
+      expect(log.runs.map((item) => item.runId)).toContain(runId);
+      expect(log.runs.find((item) => item.runId === runId)!.changes[0]!.status).toBe("undone");
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 
   it.effect("a preview lists what it would do and changes nothing", () =>
@@ -158,25 +233,21 @@ describe("the nightly run makes its changes itself", () => {
       const before = yield* currentIds;
       const run = yield* tidy.run({ dryRun: true });
       expect(run.dryRun).toBe(true);
-      expect(run.changes.filter((change) => change.status === "preview")).toHaveLength(3);
+      expect(run.changes.filter((change) => change.status === "preview")).toHaveLength(2);
       expect(run.changes.some((change) => change.status === "pending")).toBe(false);
       expect(yield* currentIds).toEqual(before);
     }).pipe(Effect.provide(testLayer(fakeJudge(answers)))),
   );
 
-  it.effect("Undo of a supersede, a merge and a retirement puts every entry back", () =>
+  it.effect("Undo of a supersede and a merge puts every entry back", () =>
     Effect.gen(function* () {
       const ids = yield* seedInstructions;
       const tidy = yield* PersonalMemoryTidy;
       const run = yield* tidy.run({ dryRun: false });
-      const [supersede, merge, retire] = run.changes.filter(
-        (change) => change.status === "applied",
-      );
+      const [supersede, merge] = run.changes.filter((change) => change.status === "applied");
 
       yield* undoWithHash(supersede!.changeId);
       expect(yield* currentIds).toEqual(expect.arrayContaining([ids.oldModels, ids.newModels]));
-      yield* undoWithHash(retire!.changeId);
-      expect(yield* currentIds).toContain(ids.building);
 
       yield* undoWithHash(merge!.changeId);
       const memory = yield* PersonalMemoryService;
@@ -187,7 +258,7 @@ describe("the nightly run makes its changes itself", () => {
       expect(archived.map((entry) => entry.content)).toEqual([
         "At most 5 bots run at once in total.",
       ]);
-      for (const change of [supersede!, retire!, merge!]) {
+      for (const change of [supersede!, merge!]) {
         const now = yield* changeOf(change.changeId);
         expect(now.status).toBe("undone");
         expect(now.undoable).toBe(false);

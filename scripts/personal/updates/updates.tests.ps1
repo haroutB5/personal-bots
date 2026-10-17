@@ -94,6 +94,31 @@ Assert-Equal 'no target at all is null' $null (Select-UpdatesRollbackTarget -Run
 $versionTxt = ConvertFrom-UpdatesKeyValue "version=1.35.1`r`nrelease=abc123def456`r`nclient=index-x.js"
 Assert-Equal 'reads version.txt' '1.35.1 abc123def456' ("$($versionTxt['version']) $($versionTxt['release'])")
 
+Write-Host 'A release in flight reserves its version and main'
+Assert-Equal 'version parts' '1,66,68' ((Get-UpdatesVersionParts '1.66.68') -join ',')
+Assert-Equal 'compares an older version' -1 (Compare-UpdatesVersion '1.66.68' '1.66.69')
+Assert-Equal 'compares past patch 9' -1 (Compare-UpdatesVersion '1.66.9' '1.66.10')
+Assert-Equal 'compares equal versions' 0 (Compare-UpdatesVersion '1.66.68' '1.66.68')
+Assert-Throws 'refuses a version it cannot compare' { Compare-UpdatesVersion '1.66' '1.66.68' }
+$relRoot = Join-Path $tempRoot 'reserve-releases'
+$runRoot = Join-Path $tempRoot 'reserve-run'
+New-Item -ItemType Directory -Force -Path (Join-Path $relRoot 'aaaa11112222'), $runRoot | Out-Null
+Set-Content -LiteralPath (Join-Path $relRoot 'aaaa11112222\VERSION') -Value "version=1.66.69`nrelease=aaaa11112222" -Encoding ASCII
+$currentFile = Join-Path $tempRoot 'reserve-current.txt'
+$reserved = @(Get-UpdatesReservedVersions -ReleasesDir $relRoot -RunDir $runRoot -CurrentFile $currentFile)
+# The 17 Oct bug: 1.66.69 was staged (a release folder, no waiter result yet)
+# while main's app-version.txt still said 1.66.68.
+Assert-Equal 'a staged release reserves its version' '1.66.69' (Test-UpdatesVersionReserved -Version '1.66.69' -Reserved $reserved)
+Assert-Equal 'a free version is not reserved' $null (Test-UpdatesVersionReserved -Version '1.66.70' -Reserved $reserved)
+Set-Content -LiteralPath (Join-Path $runRoot 'restart-1.66.69-result.json') -Value '{"status":"failed","version":"1.66.69"}' -Encoding ASCII
+Assert-Equal 'a failed release stops reserving its number' $null (Test-UpdatesVersionReserved -Version '1.66.69' -Reserved @(Get-UpdatesReservedVersions -ReleasesDir $relRoot -RunDir $runRoot -CurrentFile $currentFile))
+Set-Content -LiteralPath (Join-Path $runRoot 'restart-1.66.70-result.json') -Value '{"status":"waiting_for_idle","version":"1.66.70"}' -Encoding ASCII
+Assert-Equal 'an armed waiter reserves its version' '1.66.70' (Test-UpdatesVersionReserved -Version '1.66.70' -Reserved @(Get-UpdatesReservedVersions -ReleasesDir $relRoot -RunDir $runRoot -CurrentFile $currentFile))
+Assert-Equal 'the armed waiter is named' $true ((Get-UpdatesArmedWaiter -RunDir $runRoot) -like '*1.66.70*waiting_for_idle*')
+Set-Content -LiteralPath (Join-Path $runRoot 'restart-1.66.70-result.json') -Value '{"status":"live_verified","version":"1.66.70"}' -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $runRoot 'restart-1.66.70.pid') -Value '999999' -Encoding ASCII
+Assert-Equal 'a finished waiter with a stale pid file is not armed' $null (Get-UpdatesArmedWaiter -RunDir $runRoot)
+
 Write-Host 'What the bot may not touch'
 Assert-Equal 'forbidden paths' '.env,apps/server/.env.local,secrets/key,scripts/personal/app-version.txt' `
     (Get-UpdatesForbiddenPaths -ChangedPaths @('.env', 'apps/server/.env.local', 'secrets/key', 'scripts/personal/app-version.txt', 'apps/server/src/x.ts', 'docs/environment.md'))

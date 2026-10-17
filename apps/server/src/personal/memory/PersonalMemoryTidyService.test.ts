@@ -123,7 +123,6 @@ const answers = (ref: (needle: string) => string): TidyJudgeOutput["decisions"] 
     content: "At most 5 bots run at once in total, across all bots.",
     reason: "Same rule, clarified.",
   },
-  { action: "supersede", memoryIds: [ref("being built")], by: null, reason: "1.47.3 shipped." },
   { action: "leave", memoryIds: [ref("Crypto")], reason: "Not sure it is still true." },
   // A ref the model invented, e.g. for an entry it was never shown.
   { action: "supersede", memoryIds: ["E77"], by: ref("1 Oct"), reason: "Hallucinated." },
@@ -160,9 +159,9 @@ it.effect(
 
       const run = yield* tidy.run({ dryRun: false });
       expect(run.status).toBe("done");
-      // The model's judgement never applies itself: all three wait for Harout.
+      // The model's judgement never applies itself: both changes wait for Harout.
       expect(run.superseded).toBe(0);
-      expect(run.pending).toBe(3);
+      expect(run.pending).toBe(2);
       expect(yield* memory.list({ status: "superseded" })).toEqual([]);
       const current = (yield* memory.list({})).map((entry) => entry.memoryId);
       expect(current).toEqual(
@@ -170,11 +169,7 @@ it.effect(
       );
       const byStatus = Object.groupBy(run.changes, (change) => change.status);
       expect(byStatus.applied).toBeUndefined();
-      expect(byStatus.pending?.map((change) => change.action)).toEqual([
-        "supersede",
-        "merge",
-        "supersede",
-      ]);
+      expect(byStatus.pending?.map((change) => change.action)).toEqual(["supersede", "merge"]);
       // Left alone and listed: the unsure one and the invented ref.
       expect(byStatus.left?.map((change) => change.reason)).toEqual([
         "Not sure it is still true.",
@@ -199,7 +194,7 @@ it.effect("approving a merge makes one entry and archives both; rejecting is not
     const tidy = yield* PersonalMemoryTidy;
     const run = yield* tidy.run({ dryRun: false });
     const merge = run.changes.find((change) => change.action === "merge")!;
-    const retire = run.changes.find(
+    const supersede = run.changes.find(
       (change) => change.status === "pending" && change.action === "supersede",
     )!;
 
@@ -220,7 +215,7 @@ it.effect("approving a merge makes one entry and archives both; rejecting is not
     yield* memory.restore({ memoryId: ids.capA });
     expect((yield* memory.list({})).map((entry) => entry.memoryId)).toContain(ids.capA);
 
-    yield* decideWithHash(retire.changeId, false);
+    yield* decideWithHash(supersede.changeId, false);
     expect((yield* memory.list({})).map((entry) => entry.memoryId)).toContain(ids.building);
     const again = yield* tidy.run({ dryRun: false });
     expect(
@@ -228,7 +223,7 @@ it.effect("approving a merge makes one entry and archives both; rejecting is not
         (change) => change.status === "pending" && change.action === "supersede",
       ),
     ).toEqual([]);
-    const error = yield* Effect.flip(decideWithHash(retire.changeId, true));
+    const error = yield* Effect.flip(decideWithHash(supersede.changeId, true));
     expect(error.message).toContain("not waiting");
   }).pipe(Effect.provide(testLayer(fakeJudge(answers)))),
 );
@@ -244,7 +239,6 @@ it.effect("a preview lists everything and changes nothing", () =>
     expect(run.changes.map((change) => change.status).toSorted()).toEqual([
       "left",
       "left",
-      "pending",
       "pending",
       "pending",
     ]);

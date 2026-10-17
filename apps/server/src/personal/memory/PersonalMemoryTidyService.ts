@@ -65,7 +65,7 @@ import { withStallJob } from "../../observability/stallJobs.ts";
  * change is written to the changelog, including what it left alone.
  *
  * Mode "on" (the default since 1.60.42) makes every change it checked itself,
- * its merges and retirements too, each with an Undo in the changelog (see
+ * its merges and supersedes too, each with an Undo in the changelog (see
  * memoryAutoApply.ts). Mode "preview" does all of that but changes nothing, so
  * the owner can read what it would do first. Mode "off" skips the nightly run.
  */
@@ -135,6 +135,14 @@ export class PersonalMemoryTidy extends Context.Service<
      * how many were upgraded.
      */
     readonly snapshotPendingTexts: Effect.Effect<number, PersonalMemoryError>;
+    /**
+     * Startup repair (1.66.69): entries a supersede archived with no
+     * replacement are restored (the 14 Oct bug that archived rule 77a0035b
+     * under a reason saying "Leave as is"), and that change is marked undone so
+     * it is not proposed again. Additive and idempotent; returns how many
+     * entries it restored.
+     */
+    readonly repairOrphanedSupersedes: Effect.Effect<number, PersonalMemoryError>;
     /** Checks every 10 minutes whether tonight's run is due. Park-aware. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -619,6 +627,9 @@ export const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       if (decision.action === "leave") return null;
+      // Nothing is archived without a replacement saved in the same step: a
+      // supersede with no successor is never made (old pending rows included).
+      if (decision.action === "supersede" && decision.by === null) return null;
       const ids = decision.memoryIds;
       const by = decision.action === "supersede" ? decision.by : null;
       const touched =
@@ -918,8 +929,9 @@ export const make = Effect.gen(function* () {
           decision.action === "supersede" && decision.by !== null
             ? (byMemoryId.get(decision.by)?.content ?? null)
             : null;
-        // With the automatic mode on, merges and retirements are made like the rest (each
-        // with an Undo); with it off, a merge's new wording waits for the owner's OK.
+        // With the automatic mode on, merges and supersedes are made like the rest
+        // (each with an Undo); with it off, a merge's new wording waits for the
+        // owner's OK.
         let mergesProposed = 0;
         let merged = 0;
         let superseded = 0;
@@ -2075,11 +2087,85 @@ export const make = Effect.gen(function* () {
     },
   ).pipe(lock.withPermits(1), storageFailure("snapshot"));
 
+  /**
+   * Startup repair (1.66.69): a supersede recorded with no replacement is a bug,
+   * not a retirement. Every entry such a change archived is restored (unless an
+   * identical entry is already current), and the change is marked undone so the
+   * tidy-up never proposes it again. Additive, idempotent, one INFO line when it
+   * restores something.
+   */
+  const repairOrphanedSupersedes: PersonalMemoryTidy["Service"]["repairOrphanedSupersedes"] =
+    Effect.gen(function* () {
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const rows = yield* sql<{
+        readonly changeId: number;
+        readonly memoryIdsJson: string;
+      }>`
+        SELECT change_id AS "changeId", memory_ids_json AS "memoryIdsJson"
+        FROM personal_memory_tidy_changes
+        WHERE action = 'supersede' AND result_memory_id IS NULL
+          AND status IN ('applied', 'approved')
+      `;
+      let restored = 0;
+      let repairedChanges = 0;
+      const restoredIds: Array<string> = [];
+      for (const row of rows) {
+        let touched = 0;
+        for (const id of decodeIds(row.memoryIdsJson)) {
+          // Only what this bug archived: a retired supersede (superseded_by
+          // NULL, the tidy-up's own retirement reason) with no current copy.
+          const back = yield* sql<{ readonly memoryId: string }>`
+            UPDATE personal_memory AS entry
+            SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
+                updated_at = ${nowIso}, version = version + 1
+            WHERE entry.memory_id = ${id} AND entry.deleted_at IS NULL
+              AND entry.superseded_at IS NOT NULL AND entry.superseded_by IS NULL
+              AND entry.superseded_reason LIKE ${`${RETIRED_PREFIX}%`}
+              AND NOT EXISTS (
+                SELECT 1 FROM personal_memory AS current
+                WHERE current.deleted_at IS NULL AND current.superseded_at IS NULL
+                  AND current.scope = entry.scope
+                  AND current.scope_id IS entry.scope_id
+                  AND current.kind = entry.kind
+                  AND current.apps_json IS entry.apps_json
+                  AND current.content = entry.content
+              )
+            RETURNING memory_id AS "memoryId"
+          `;
+          if (back.length === 0) continue;
+          touched += 1;
+          restoredIds.push(id);
+        }
+        if (touched === 0) continue;
+        restored += touched;
+        repairedChanges += 1;
+        // Taken back: the tidy-up does not propose the same archive again.
+        yield* sql`
+          UPDATE personal_memory_tidy_changes
+          SET status = 'undone', decided_at = ${nowIso}
+          WHERE change_id = ${row.changeId} AND status IN ('applied', 'approved')
+        `;
+      }
+      if (restored > 0) {
+        yield* Effect.logInfo("personal memory orphaned supersedes restored", {
+          changes: repairedChanges,
+          entries: restored,
+          memoryIds: restoredIds.slice(0, 10),
+        });
+      }
+      return restored;
+    }).pipe(lock.withPermits(1), storageFailure("repair"));
+
   const start: PersonalMemoryTidy["Service"]["start"] = () =>
     process.env.PERSONAL_MEMORY_TIDY === "off"
-      ? forkParked(snapshotPendingTexts.pipe(Effect.ignore)).pipe(Effect.asVoid)
+      ? forkParked(
+          repairOrphanedSupersedes
+            .pipe(Effect.ignore)
+            .pipe(Effect.andThen(snapshotPendingTexts.pipe(Effect.ignore))),
+        ).pipe(Effect.asVoid)
       : forkParked(
           closeInterrupted.pipe(
+            Effect.andThen(repairOrphanedSupersedes.pipe(Effect.ignore)),
             Effect.andThen(snapshotPendingTexts.pipe(Effect.ignore)),
             Effect.andThen(
               applyWaiting.pipe(
@@ -2117,6 +2203,7 @@ export const make = Effect.gen(function* () {
     importProposals,
     importInbox,
     snapshotPendingTexts,
+    repairOrphanedSupersedes,
     log,
     setMode,
     start,
