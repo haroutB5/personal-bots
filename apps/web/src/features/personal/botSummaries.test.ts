@@ -140,12 +140,30 @@ describe("buildBotSummaries", () => {
     expect(summaries.every((summary) => summary.waitingFor === null)).toBe(true);
   });
 
-  it("orders by latest activity, bots without threads last", () => {
+  it("orders working bots first, then by latest activity, bots without threads last", () => {
     expect(summaries.map((summary) => summary.bot.name)).toEqual([
-      "Developer",
       "Assistant",
+      "Developer",
       "Planner",
     ]);
+  });
+
+  it("puts a working bot above a newer idle bot, and drops it back when it stops", () => {
+    const order = (assistantTurn: "running" | "completed") =>
+      buildBotSummaries({
+        bots,
+        links: [link("assistant", "t-new"), link("developer", "t-dev")],
+        shells: [
+          shell("t-new", "2026-09-13T09:00:00.000Z", { latestTurn: { state: assistantTurn } }),
+          shell("t-dev", "2026-09-13T12:00:00.000Z"),
+        ],
+        providers: [provider("codex")],
+      }).map((summary) => summary.bot.name);
+
+    // Assistant's chat is three hours older, but it is the one working now.
+    expect(order("running")).toEqual(["Assistant", "Developer", "Planner"]);
+    // Same bot, same chats, turn over: newest activity wins again.
+    expect(order("completed")).toEqual(["Developer", "Assistant", "Planner"]);
   });
 
   it("derives newest thread, live state and attention from real shells", () => {

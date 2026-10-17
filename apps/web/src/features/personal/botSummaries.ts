@@ -353,10 +353,19 @@ function newestFirst(
     .map((entry) => entry.shell);
 }
 
+/** Newest activity first, the chat-list convention; a bot with no chat goes last. */
+function compareActivity(left: BotSummary, right: BotSummary): number {
+  if (left.lastActivityMs === right.lastActivityMs) return 0;
+  if (left.lastActivityMs === null) return 1;
+  if (right.lastActivityMs === null) return -1;
+  return right.lastActivityMs - left.lastActivityMs;
+}
+
 /**
  * Join bots with their linked thread shells. Only real state feeds the row:
  * activity, attention and timestamps all come from the thread shells. Rows are
- * ordered by latest activity (chat-list convention), then the bots' own order.
+ * ordered working bots first (newest activity first among them), then the rest
+ * by latest activity (chat-list convention), then the bots' own order.
  */
 export function buildBotSummaries(input: {
   readonly bots: ReadonlyArray<PersonalBot>;
@@ -502,11 +511,12 @@ export function buildBotSummaries(input: {
   });
 
   return summaries.toSorted((left, right) => {
-    if (left.lastActivityMs !== right.lastActivityMs) {
-      if (left.lastActivityMs === null) return 1;
-      if (right.lastActivityMs === null) return -1;
-      return right.lastActivityMs - left.lastActivityMs;
-    }
+    // Harout's rule (17 Oct): a bot working right now is always above an idle
+    // one. `live` is the same flag the row's green dot and its "Working" label
+    // read (BotRow, `botStatus`), so the order cannot disagree with the row.
+    if (left.live !== right.live) return left.live ? -1 : 1;
+    const byActivity = compareActivity(left, right);
+    if (byActivity !== 0) return byActivity;
     if (left.bot.sortOrder !== right.bot.sortOrder) {
       return left.bot.sortOrder - right.bot.sortOrder;
     }
@@ -600,10 +610,12 @@ export function filterBotSummaries(
 }
 
 /**
- * Splits the chats list into the pinned box and the list under it. Leads come
- * first in the box — the dev lead, then the assistant's — and any other pinned
- * bot keeps the order it already had. Every bot lands in exactly one of the
- * two, so a pinned bot is never listed twice.
+ * Splits the chats list into the pinned box and the list under it. A working
+ * pin comes first, newest activity first among working pins, so the avatar
+ * strip at the top of the home follows the same rule as the rows under it
+ * (Harout, 17 Oct). The rest keep the box's own order: the dev lead, then the
+ * assistant's, then any other pinned bot in the order it already had. Every
+ * bot lands in exactly one of the two, so a pinned bot is never listed twice.
  */
 export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): {
   readonly pinned: ReadonlyArray<BotSummary>;
@@ -618,7 +630,14 @@ export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): 
     // toSorted is stable, so equal ranks keep the incoming order.
     pinned: summaries
       .filter((summary) => isBotPinned(summary.bot))
-      .toSorted((left, right) => rank(left) - rank(right)),
+      .toSorted((left, right) => {
+        if (left.live !== right.live) return left.live ? -1 : 1;
+        if (left.live) {
+          const byActivity = compareActivity(left, right);
+          if (byActivity !== 0) return byActivity;
+        }
+        return rank(left) - rank(right);
+      }),
     rest: summaries.filter((summary) => !isBotPinned(summary.bot)),
   };
 }

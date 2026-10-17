@@ -2,11 +2,17 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { partitionPinnedSummaries, type BotSummary } from "./botSummaries";
 
-/** `partitionPinnedSummaries` only reads the bot, so the rest of the summary is noise here. */
+/** `partitionPinnedSummaries` only reads the bot and the working flags, the rest of the summary is noise. */
 const summary = (
   botId: string,
   bot: { team?: "dev" | "assistant"; lead?: boolean; pinned?: boolean } = {},
-) => ({ bot: { botId, name: botId, ...bot } }) as unknown as BotSummary;
+  state: { live?: boolean; lastActivityMs?: number | null } = {},
+) =>
+  ({
+    bot: { botId, name: botId, ...bot },
+    live: state.live ?? false,
+    lastActivityMs: state.lastActivityMs ?? null,
+  }) as unknown as BotSummary;
 
 const idsOf = (summaries: ReadonlyArray<BotSummary>) =>
   summaries.map((entry) => entry.bot.botId as string);
@@ -21,6 +27,18 @@ describe("partitionPinnedSummaries", () => {
 
     // Leads by team order, then the rest in the order the list already had.
     expect(idsOf(pinned)).toEqual(["cto", "assistant", "musey"]);
+  });
+
+  it("puts a working pin above an idle lead, newest working first", () => {
+    const { pinned } = partitionPinnedSummaries([
+      summary("assistant", { lead: true, pinned: true }),
+      summary("musey", { pinned: true }, { live: true, lastActivityMs: 30 }),
+      summary("cto", { team: "dev", lead: true, pinned: true }),
+      summary("optimizer", { pinned: true }, { live: true, lastActivityMs: 50 }),
+    ]);
+
+    // Working pins first (newest activity first), then the idle pins by rank.
+    expect(idsOf(pinned)).toEqual(["optimizer", "musey", "cto", "assistant"]);
   });
 
   it("lists each bot on exactly one side of the split", () => {
