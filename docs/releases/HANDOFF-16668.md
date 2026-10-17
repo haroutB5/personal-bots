@@ -91,3 +91,25 @@ staged and waiting for idle) if that has landed first, otherwise `c29f265b50a9` 
 database change and no migration, so nothing to restore.
 
 ## Gate evidence
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=a2f48a233bf0068b6b345f9a5c312fc7f13f940c release=a2f48a233bf0 json-sha256=3d70f4c6b732b8a553d714c5ca4c1bb517d16881b01e72e06988fd4e6d0d520f result=PASS -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T18:54:25Z. Version 1.66.68, release `a2f48a233bf0`, commit `a2f48a233bf0068b6b345f9a5c312fc7f13f940c` on `release/hbots-16668`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\a2f48a233bf0\gate-evidence.json` (sha256 `3d70f4c6b732b8a553d714c5ca4c1bb517d16881b01e72e06988fd4e6d0d520f`) and the full gate logs in `releases\a2f48a233bf0\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2926 tests passed, 0 failed, 4 skipped, in 210 files | 233.3   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 20.8    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2879 tests passed, 0 failed, 0 skipped, in 257 files | 33.2    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.5     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 262 checks ok, 0 failed                              | 70.8    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16668\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\a2f48a233bf0" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 260.6   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `1f5704746747a0f1fd17a6c9f43044d0755190d4`, at end `1f5704746747a0f1fd17a6c9f43044d0755190d4`; tracked files modified: none. Staged release: version 1.66.68, sha a2f48a233bf0, dirty False, externals copied; `dist/bin.mjs` sha256 `d4b3788c3ad9974cb78a5dde3895b8fbff73fa53cb02770b44877fcf1e44886b`.
+<!-- gate-evidence:end -->
