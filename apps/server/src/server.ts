@@ -143,6 +143,7 @@ import { logPersonalSchedulersAtBoot } from "./personal/schedulersSwitch.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
+import * as StrandedTurnStarts from "./orchestration/strandedTurnStarts.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
@@ -622,6 +623,10 @@ const PersonalReactorsLive = Layer.effectDiscard(
     // One-off: names old task/routine chats still on "New chat" after their
     // task, once the server is up. Marker in personal_meta; never blocks start.
     yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
+    // Additive boot repair: a pending turn-start row left by the last process
+    // can never be consumed (no provider session is running at boot), and one
+    // would otherwise stay "pending" with no turn id for good (QA 1.66.28).
+    yield* forkParked(StrandedTurnStarts.clearStrandedTurnStartsSafely);
     // Tells the owner before a DeepSeek account runs dry: after each finished
     // DeepSeek turn (debounced) and on a light half-hour sweep. Silent while no
     // enabled DeepSeek instance has a key.

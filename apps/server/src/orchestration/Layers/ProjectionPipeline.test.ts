@@ -4435,6 +4435,183 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
         assert.deepEqual(pendingRows, [{ messageId: "message-late" }]);
       }),
     );
+
+    it.effect(
+      "clears a queued send's pending turn start when its turn ends without starting one",
+      () =>
+        Effect.gen(function* () {
+          // A provider that queues a mid-turn send as its own turn (DeepSeek,
+          // Codex) holds the pending row until that turn starts. When the
+          // running turn ends and the queued one never comes - a queue dropped
+          // or a process replaced - the row used to stay pending forever: the
+          // ready session-set only cleared it for a command id prefix nothing
+          // emits. The turn is over, so the row is stale by then.
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const threadId = ThreadId.make("thread-queued-orphan");
+
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make("evt-orphan-running"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-17T03:52:11.000Z",
+            commandId: CommandId.make("cmd-orphan-running"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-orphan-running"),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make("message-running"),
+              runtimeMode: "full-access",
+              createdAt: "2026-10-17T03:52:11.000Z",
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-orphan-running-set"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-17T03:52:13.000Z",
+            commandId: CommandId.make("cmd-orphan-running-set"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-orphan-running-set"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "deepseek",
+                runtimeMode: "full-access",
+                activeTurnId: TurnId.make("turn-orphan-running"),
+                lastError: null,
+                updatedAt: "2026-10-17T03:52:13.000Z",
+              },
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make("evt-orphan-queued"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-17T03:53:56.000Z",
+            commandId: CommandId.make("cmd-orphan-queued"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-orphan-queued"),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make("message-queued"),
+              runtimeMode: "full-access",
+              createdAt: "2026-10-17T03:53:56.000Z",
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-orphan-ready"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-10-17T03:59:00.000Z",
+            // The provider's own session-set, not a server-issued one.
+            commandId: CommandId.make("provider:evt-orphan-ready:thread-session-set:uuid"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("provider:evt-orphan-ready"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "ready",
+                providerName: "deepseek",
+                runtimeMode: "full-access",
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: "2026-10-17T03:59:00.000Z",
+              },
+            },
+          });
+
+          yield* projectionPipeline.bootstrap;
+
+          const pendingRows = yield* sql<{ readonly messageId: string }>`
+            SELECT pending_message_id AS "messageId"
+            FROM projection_turns
+            WHERE thread_id = ${threadId}
+              AND turn_id IS NULL
+              AND state = 'pending'
+          `;
+          assert.deepEqual(pendingRows, []);
+          const turnRows = yield* sql<{ readonly state: string }>`
+            SELECT state FROM projection_turns WHERE thread_id = ${threadId}
+          `;
+          assert.deepEqual(turnRows, [{ state: "completed" }]);
+        }),
+    );
+
+    it.effect("keeps a pending turn start while the session is still starting", () =>
+      Effect.gen(function* () {
+        // "starting" is the status whose turn is still ahead of it: the row must
+        // survive so the turn that follows keeps its requested-at and message.
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-still-starting");
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-starting-request"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-10-17T04:00:00.000Z",
+          commandId: CommandId.make("cmd-starting-request"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-starting-request"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-starting"),
+            runtimeMode: "full-access",
+            createdAt: "2026-10-17T04:00:00.000Z",
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-starting-set"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-10-17T04:00:01.000Z",
+          commandId: CommandId.make("cmd-starting-set"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-starting-set"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "starting",
+              providerName: "deepseek",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-10-17T04:00:01.000Z",
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const pendingRows = yield* sql<{ readonly messageId: string }>`
+          SELECT pending_message_id AS "messageId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id IS NULL
+            AND state = 'pending'
+        `;
+        assert.deepEqual(pendingRows, [{ messageId: "message-starting" }]);
+      }),
+    );
   },
 );
 

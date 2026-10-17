@@ -1492,13 +1492,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.session-set": {
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
-            if (
-              (event.payload.session.status === "ready" &&
-                event.commandId?.startsWith("server:provider-session-set:") === true) ||
-              event.payload.session.status === "error" ||
-              event.payload.session.status === "stopped" ||
-              event.payload.session.status === "interrupted"
-            ) {
+            // The thread is no longer running a turn, so a turn-start row still
+            // pending can never be consumed: a steered message was folded into
+            // the turn that just ended, and a queued send re-requests its own
+            // start when it is drained. Leaving it made the row a permanent
+            // "pending" turn with no turn id (QA 1.66.28's stranded rows), so it
+            // is cleared for every status that has no turn ahead of it -
+            // "starting" is the one that still does.
+            if (event.payload.session.status !== "starting") {
               yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
                 threadId: event.payload.threadId,
               });
