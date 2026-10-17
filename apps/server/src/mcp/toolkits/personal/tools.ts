@@ -250,6 +250,12 @@ export const SearchMemoryResult = Schema.Struct({
       apps: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
+  /**
+   * Present when the result was capped (1.66.62): how many matches were left
+   * out and how to see them. Declared here because the toolkit encodes the
+   * handler's return through this schema, which drops a key it does not name.
+   */
+  note: Schema.optional(Schema.String),
 });
 export type SearchMemoryResult = typeof SearchMemoryResult.Type;
 
