@@ -30,7 +30,7 @@ const runtimeDir = NodePath.join(
   process.env.USERPROFILE ?? "",
   ".personal-bots",
   "runtimes",
-  "dsh-0.2.0-rc.2",
+  "dsh-0.2.1-rc.2",
 );
 const binJs = NodePath.join(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
 const denyPlugin = NodePath.join(runtimeDir, "hbots-deny-plugin.mjs");

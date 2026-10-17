@@ -817,7 +817,7 @@ export const DeepSeekSettings = makeProviderSettingsSchema(
         description:
           "Where the DeepSeek Harness runtime is installed. Empty uses the pinned install under your home directory.",
         providerSettingsForm: {
-          placeholder: "~/.personal-bots/runtimes/dsh-0.2.0-rc.2",
+          placeholder: "~/.personal-bots/runtimes/dsh-0.2.1-rc.2",
           clearWhenEmpty: "omit",
         },
       }),

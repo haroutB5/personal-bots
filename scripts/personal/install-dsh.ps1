@@ -12,7 +12,7 @@ Never inside a release folder: the tree is about 509 MB with native addons, and 
 retained and never pruned. Idempotent: a version that already answers its own `--version` is skipped.
 
 Parameters:
-  -Version  the pinned dsh version (default 0.2.0-rc.2)
+  -Version  the pinned dsh version (default 0.2.1-rc.2)
   -Node     path to node.exe (default: Program Files\nodejs\node.exe, else the vite-plus runtime)
   -Force    reinstall even when the pin already answers
 
@@ -20,7 +20,7 @@ Exit codes: 0 installed or already present, 1 a failure (message on stderr).
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '0.2.0-rc.2',
+    [string]$Version = '0.2.1-rc.2',
     [string]$Node,
     [switch]$Force
 )

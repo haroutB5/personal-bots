@@ -87,7 +87,7 @@ export interface DshRuntime {
   readonly version: string;
 }
 
-/** `~/.personal-bots/runtimes/dsh-0.2.0-rc.2` — never inside a release folder. */
+/** `~/.personal-bots/runtimes/dsh-0.2.1-rc.2` — never inside a release folder. */
 export const defaultDshRuntimeDir = (): string =>
   [NodeOS.homedir(), ".personal-bots", "runtimes", DSH_RUNTIME_DIR_NAME].join("/");
 
@@ -224,6 +224,7 @@ const MINIMAL_DISABLED_ROWS: ReadonlyArray<string> = [
   "tool-goal",
   "tool-todo",
   "tool-web",
+  "tool-working-directory",
   "plan-mode",
 ];
 

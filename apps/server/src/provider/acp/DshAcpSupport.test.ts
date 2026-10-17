@@ -333,9 +333,9 @@ it.layer(layer)("DshAcpSupport", (it) => {
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const pinned = yield* resolveDshRuntime({ dshRuntimePath: "" });
-      expect(pinned.version).toBe("0.2.0-rc.2");
+      expect(pinned.version).toBe("0.2.1-rc.2");
       expect(pinned.runtimeDir.replace(/\\/g, "/")).toContain(
-        "/.personal-bots/runtimes/dsh-0.2.0-rc.2",
+        "/.personal-bots/runtimes/dsh-0.2.1-rc.2",
       );
       expect(
         pinned.binJs.replace(/\\/g, "/").endsWith("/node_modules/@deepseek-ai/dsh/lib/bin.js"),
