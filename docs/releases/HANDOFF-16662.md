@@ -8,7 +8,8 @@ list, the bundled skills list, the whole-file `Read` that pulled 54k chars in on
 cadence of the memory block. Staged only (nothing is activated).
 
 Branch `release/hbots-16662`, built from the live notes commit `03c3b288d1` (`personal-bots/main`);
-the code commit is `5dac500e05`. No migration: the maximum stays 111.
+the code commits are `5dac500e05` (the six trims) and `61bb9e14a9` (the `search_memory` result
+schema). No migration: the maximum stays 111.
 `PERSONAL_TASKS_CONCURRENCY` stays 5. Nothing about compaction changed: no `autoCompactWindow` was
 set and no compaction behaviour was touched.
 
@@ -18,7 +19,9 @@ set and no compaction behaviour was touched.
    query names counted against the cap, and a closing `N more entries matched; narrow the query or
 lower limit.` line. The first match is always returned, so a single oversized entry cannot blank
    the result. Kill switch `PERSONAL_MEMORY_SEARCH_MAX_CHARS` takes a character count, or `off` to
-   return every match again.
+   return every match again. The `note` key is declared on `SearchMemoryResult` (`tools.ts`): the
+   toolkit encodes a handler's return through that schema, so an undeclared key is dropped before
+   the model sees it, and the tool's advertised output schema carries it too.
 2. **A whole-file `Read` of a large text file is refused**
    (`apps/server/src/provider/Layers/ClaudeAdapter.ts`,
    `apps/server/src/personal/personalContextBudget.ts`, Backend) - a `Read` with no `offset` and no
@@ -82,6 +85,11 @@ The guard, against the real CLI:
 `ClaudeAdapter.botDeny.test.ts` proves what the CLI is told: `--disallowedTools=` with the four
 names, `skillOverrides` for the eight skills in the `--settings` JSON, and a `PreToolUse` hook with
 matcher `Read` in the `initialize` request, all only for a bot session.
+
+`memoryHandlers.test.ts` proves the cap at the tool boundary: 40 matching preferences come back as
+an encoded result of at most 6,000 characters, holding the leading matches in order and the
+"N more entries matched; narrow the query or lower limit." line, and with
+`PERSONAL_MEMORY_SEARCH_MAX_CHARS=off` all 40 come back with no note.
 
 ## 2. What was left out and why
 
