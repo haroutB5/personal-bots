@@ -4,11 +4,20 @@ Three fixes from QA's overnight bug hunt of 17 Oct and QA on 1.66.62, on top of 
 1.66.62. No live data is touched: nothing here edits the database by hand and there is no
 migration (the maximum stays 111). Staged only; nothing is activated.
 
+**This release was rebuilt after two failed smoke runs.** The first staging, `ea54da1ead84`, was
+built in this worktree with no `.env`, so `apps/server/vite.config.ts` baked an empty T3 Connect
+public config into its bundle: it could not pair or sign in, release smoke failed twice and rolled
+back, and live stayed 1.66.62. `ea54da1ead84` and its notes commit `998ee0d834` are left in place,
+unshipped. The release staged now is `9d0d33b46120` (display name 1.66.63): the same app code plus
+the build guard in section 5, built after the repo `.env` was copied into the worktree (gitignored;
+`git status` stayed clean; no value was printed or committed).
+
 Branch `release/hbots-16663`, based on the live notes commit `b32a929dd4`; `origin/personal-bots/main`
 (`9abfb8b4d1`, the merge of the 1.66.62 notes into main) is merged in as `8a4acc3ae4` with no content
 change, so main can fast-forward to the notes commit afterwards. Code commits: `8015bb6501` (the
 composer echo guard), `5eba7ba930` (the stranded pending turn-start row), `8517c42843` (three more
-hidden skills, plus the version bump).
+hidden skills, plus the version bump), `9d0d33b461` (the build-time T3 Connect config guard; tooling
+only, no app code).
 `PERSONAL_TASKS_CONCURRENCY` stays 5. Nothing about compaction changed: no `autoCompactWindow`, no
 compaction setting or cadence touched.
 
@@ -119,6 +128,47 @@ No fix: aborting the boot reads on unload would add code to hide a browser repor
 stale-release check its whole purpose. QA can confirm with request-level tracing on the next back-phase
 run, as its report asks.
 
+## 5. A build without the T3 Connect public config is refused
+
+**Cause of the two failed smoke runs**: `apps/server/vite.config.ts` defines
+`__T3CODE_BUILD_RELAY_URL__`, `__T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__`,
+`__T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__` and the relay OTLP values from `loadRepoEnv()`, which
+reads the repo `.env`/`.env.local` and then the process env. A worktree created without `.env` bakes
+empty strings silently; nothing in the build complained. `ea54da1ead84`'s `dist/bin.mjs` held **0**
+occurrences of the relay URL (the live `6344f5b8527e` holds it) and its `bin.mjs connect status
+--json` answered "T3 Connect is unavailable in builds without public configuration".
+
+**Guard**: `scripts/personal/build.ps1` now calls two helpers from `scripts/personal/common.ps1`:
+
+- `Assert-PbPublicBuildConfig`, before the build: refuses when `T3CODE_RELAY_URL` or
+  `T3CODE_CLERK_PUBLISHABLE_KEY` resolves empty after `.env` is loaded, so a no-`.env` worktree fails
+  in a second instead of after a 10-minute build.
+- `Get-PbMissingBakedPublicConfig`, on `apps\server\dist\bin.mjs` after the build and **before the
+  release folder is touched**: refuses when the bundle does not contain every value the env
+  provided - the two required keys, plus `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` and the three
+  `T3CODE_RELAY_CLIENT_OTLP_TRACES_*` values when they are set. A refused build stages and activates
+  nothing.
+
+Both print key **names** only, never values.
+
+**Tests**: `release-safety.tests.ps1` has 9 new checks: the up-front pass and a whitespace-only
+refusal, the refusal text naming no value, a bundle with both values (pass), a bundle without them
+(both keys named), an optional key missing from the bundle, a fully baked bundle (pass), and the
+wiring order (guard after `.env` loads and before `vp build`; bundle check before the release copy).
+The suite reports 262 checks, 0 failed.
+
+**Proof on the rebuilt release `9d0d33b46120`**: `dist/bin.mjs` sha256
+`66be3d65033a837055826b8c43c5024fdcabc0789c34d9504555d843b6f7c895` contains the relay URL, the Clerk
+publishable key and the CLI OAuth client id (compared in memory). From a shell with every
+`T3CODE_*`/`PERSONAL_*`/`DSH_*` variable cleared first (`VITE_*`/`EXPO_PUBLIC_*` aliases too;
+`env.remaining=0`), `node <release>\dist\bin.mjs connect status --json --base-dir ...\dev` exits 0
+with valid JSON: `linked: true`, `authenticated: true`, `relayUrl: https://relay.t3.codes`,
+`endpointUrl: https://prod-3b13e30646369ab7.t3coderelay.com/`. The failed `ea54da1ead84` answers the
+same command with the "unavailable" text and the help only. Evidence:
+`%USERPROFILE%\.personal-bots\qa\hbots-16663-connect-probe\rebuild-connect-proof.log`.
+
+The app code is unchanged from `ea54da1ead84`; only `scripts/personal` differs.
+
 ## Builder verification
 
 Run from the release worktree on the commit above, with `T3CODE_*`/`PERSONAL_*`/`DSH_*` cleared:
@@ -127,6 +177,8 @@ Run from the release worktree on the commit above, with `T3CODE_*`/`PERSONAL_*`/
   `vp test run src/orchestration/strandedTurnStarts.test.ts src/personal/personalContextBudget.test.ts`
   12/12.
 - `apps/web`: `vp test run --project unit src/features/personal/PersonalComposer.test.tsx` 60/60.
+- Build guard: `release-safety.tests.ps1` all passed (9 new checks); the rebuilt bundle's
+  `connect status --json` answer is proven in section 5.
 - `PERSONAL_TASKS_CONCURRENCY` is 5 at this commit; the idle classifier and its pin are unchanged; no
   migration; no compaction change.
 - The fork gate (server tests + tsc, web tests + tsc, PowerShell tests, e2e) and the staged release are
@@ -142,25 +194,28 @@ Run from the release worktree on the commit above, with `T3CODE_*`/`PERSONAL_*`/
    ends, `projection_turns` must hold no row with `turn_id` NULL and `state` 'pending'.
 3. The skill list on a fresh bot session (Settings > the bot's chat): 4 skills, and `/run` still
    expands.
+4. The new part in this rebuild: the phone pairs, signs in and reconnects through the relay on the
+   shipped release, which is what the two failed smoke attempts covered. The app code itself is
+   unchanged from the first staging.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=ea54da1ead848f2ede5ec0457ecb97223dfd8e13 release=ea54da1ead84 json-sha256=4eca82511fda48d1adb7d8b81beb42d3246f9acc5dfa08a240801b3ae522623e result=PASS -->
+<!-- gate-evidence:begin sha=9d0d33b461202491c7cc419af3139ba8d6c1b757 release=9d0d33b46120 json-sha256=5fcb9a505dc81660f9fde5a355db85e9f68063f540a580dbba5996e117d711be result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T04:33:25Z. Version 1.66.63, release `ea54da1ead84`, commit `ea54da1ead848f2ede5ec0457ecb97223dfd8e13` on `release/hbots-16663`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T05:37:39Z. Version 1.66.63, release `9d0d33b46120`, commit `9d0d33b461202491c7cc419af3139ba8d6c1b757` on `release/hbots-16663`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\ea54da1ead84\gate-evidence.json` (sha256 `4eca82511fda48d1adb7d8b81beb42d3246f9acc5dfa08a240801b3ae522623e`) and the full gate logs in `releases\ea54da1ead84\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\9d0d33b46120\gate-evidence.json` (sha256 `5fcb9a505dc81660f9fde5a355db85e9f68063f540a580dbba5996e117d711be`) and the full gate logs in `releases\9d0d33b46120\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 224.7   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 21.6    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2867 tests passed, 0 failed, 0 skipped, in 256 files | 31.9    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.1     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 65      |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16663\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\ea54da1ead84" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 263.7   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 222.1   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 21.2    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2867 tests passed, 0 failed, 0 skipped, in 256 files | 37.8    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.4     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 262 checks ok, 0 failed                              | 63.8    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16663\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\9d0d33b46120" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 257.3   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `ea54da1ead848f2ede5ec0457ecb97223dfd8e13`, at end `ea54da1ead848f2ede5ec0457ecb97223dfd8e13`; tracked files modified: none. Staged release: version 1.66.63, sha ea54da1ead84, dirty False, externals copied; `dist/bin.mjs` sha256 `e3b3012f0292a71e4b441e65eefc074745cf346b2b20e5c6cad003ec6b154409`.
+Tree: HEAD at start `9d0d33b461202491c7cc419af3139ba8d6c1b757`, at end `9d0d33b461202491c7cc419af3139ba8d6c1b757`; tracked files modified: none. Staged release: version 1.66.63, sha 9d0d33b46120, dirty False, externals copied; `dist/bin.mjs` sha256 `66be3d65033a837055826b8c43c5024fdcabc0789c34d9504555d843b6f7c895`.
 <!-- gate-evidence:end -->
