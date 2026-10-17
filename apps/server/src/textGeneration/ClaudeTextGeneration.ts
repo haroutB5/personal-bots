@@ -64,10 +64,14 @@ const CLAUDE_TIMEOUT_MS = 180_000;
  */
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
+  is_error: Schema.optionalKey(Schema.Boolean),
+  subtype: Schema.optionalKey(Schema.String),
 });
 const ClaudeOutputMessage = Schema.Struct({
   type: Schema.String,
   structured_output: Schema.optionalKey(Schema.Unknown),
+  is_error: Schema.optionalKey(Schema.Boolean),
+  subtype: Schema.optionalKey(Schema.String),
 });
 const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 
@@ -302,6 +306,16 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const envelope = isClaudeOutputEnvelope(output)
       ? output
       : output.findLast((message) => message.type === "result");
+
+    if (
+      envelope?.is_error === true ||
+      (envelope?.subtype !== undefined && envelope.subtype !== "success")
+    ) {
+      return yield* new TextGenerationError({
+        operation,
+        detail: "Claude reported a failed structured output result.",
+      });
+    }
 
     const decodeOutput = Schema.decodeEffect(outputSchemaJson);
     return yield* decodeOutput(envelope?.structured_output).pipe(
