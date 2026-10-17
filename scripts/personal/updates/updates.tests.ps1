@@ -118,6 +118,12 @@ Assert-Equal 'the armed waiter is named' $true ((Get-UpdatesArmedWaiter -RunDir 
 Set-Content -LiteralPath (Join-Path $runRoot 'restart-1.66.70-result.json') -Value '{"status":"live_verified","version":"1.66.70"}' -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $runRoot 'restart-1.66.70.pid') -Value '999999' -Encoding ASCII
 Assert-Equal 'a finished waiter with a stale pid file is not armed' $null (Get-UpdatesArmedWaiter -RunDir $runRoot)
+# run\restart-1.60.6-result.json on the live machine has said waiting_for_idle
+# since 30 Sep: an old active status with no live runner is not an armed waiter.
+Set-Content -LiteralPath (Join-Path $runRoot 'restart-1.66.71-result.json') -Value '{"status":"waiting_for_idle","version":"1.66.71"}' -Encoding ASCII
+(Get-Item -LiteralPath (Join-Path $runRoot 'restart-1.66.71-result.json')).LastWriteTime = (Get-Date).AddDays(-18)
+Assert-Equal 'an old active result with no live runner is not armed' $null (Get-UpdatesArmedWaiter -RunDir $runRoot)
+Assert-Equal '...and does not reserve its version' $null (Test-UpdatesVersionReserved -Version '1.66.71' -Reserved @(Get-UpdatesReservedVersions -ReleasesDir $relRoot -RunDir $runRoot -CurrentFile $currentFile))
 
 Write-Host 'What the bot may not touch'
 Assert-Equal 'forbidden paths' '.env,apps/server/.env.local,secrets/key,scripts/personal/app-version.txt' `

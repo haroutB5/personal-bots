@@ -304,6 +304,27 @@ function Get-UpdatesReleaseFolderVersion([string]$ReleaseDir) {
     return $null
 }
 
+# Whether a waiter whose result says an active status is really running now.
+# A result file can be left saying "waiting_for_idle" for ever when its process
+# died (run\restart-1.60.6-result.json has said so since 30 Sep), so an active
+# status alone is not proof. A pid file must name a live hbots-release process;
+# without a pid file (the moment between writing the result and the pid, or a
+# test) a result younger than 72 h is trusted. The idle gate itself waits up to
+# 48 h, so 72 h covers a real wait without trusting a dead run for ever.
+function Test-UpdatesWaiterActive {
+    param([string]$RunDir, [string]$Version, [datetime]$ResultWrittenAt)
+    if (-not $Version) { return $false }
+    $pidFile = Join-Path $RunDir ("restart-{0}.pid" -f $Version)
+    if (Test-Path -LiteralPath $pidFile -PathType Leaf) {
+        $ownerPid = 0
+        try { $ownerPid = [int]((Get-Content -LiteralPath $pidFile -Raw).Trim()) } catch { return $false }
+        if ($ownerPid -le 0 -or -not (Test-UpdatesPidAlive $ownerPid)) { return $false }
+        $proc = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
+        return [bool]($proc -and ([string]$proc.CommandLine) -match '(?i)hbots-release')
+    }
+    return (((Get-Date) - $ResultWrittenAt).TotalHours -lt 72)
+}
+
 <#
 .SYNOPSIS
 Every version number a release in flight is using: a release folder with no
@@ -335,11 +356,16 @@ function Get-UpdatesReservedVersions {
             $resultFile = $null
             if ($RunDir) { $resultFile = Join-Path $RunDir ("restart-{0}-result.json" -f $version) }
             if (-not $resultFile -or -not (Test-Path -LiteralPath $resultFile -PathType Leaf)) {
-                $versions.Add($version)
+                # Built and not yet installed. An abandoned build from another
+                # line (four 1.67.1 folders from 13 Oct) must not reserve its
+                # number for ever: only a folder from the last fortnight counts.
+                if ($dir.LastWriteTime -gt (Get-Date).AddDays(-14)) { $versions.Add($version) }
                 continue
             }
             try { $result = Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json } catch { $versions.Add($version); continue }
-            if ($active -contains [string]$result.status) { $versions.Add($version) }
+            if ($active -contains [string]$result.status -and (Test-UpdatesWaiterActive -RunDir $RunDir -Version $version -ResultWrittenAt (Get-Item -LiteralPath $resultFile).LastWriteTime)) {
+                $versions.Add($version)
+            }
         }
     }
     if ($RunDir -and (Test-Path -LiteralPath $RunDir -PathType Container)) {
@@ -349,7 +375,9 @@ function Get-UpdatesReservedVersions {
             if ($file.Name -notmatch '^restart-(\d+\.\d+\.\d+)-result\.json$') { continue }
             $version = $Matches[1]
             try { $result = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json } catch { continue }
-            if ($active -contains [string]$result.status) { $versions.Add($version) }
+            if ($active -contains [string]$result.status -and (Test-UpdatesWaiterActive -RunDir $RunDir -Version $version -ResultWrittenAt $file.LastWriteTime)) {
+                $versions.Add($version)
+            }
         }
         foreach ($file in Get-ChildItem -LiteralPath $RunDir -Filter 'restart-*.pid' -File) {
             if ($file.Name -notmatch '^restart-(\d+\.\d+\.\d+)') { continue }
@@ -361,7 +389,7 @@ function Get-UpdatesReservedVersions {
             if ($proc -and ([string]$proc.CommandLine) -match '(?i)hbots-release') { $versions.Add($version) }
         }
     }
-    return , @($versions | Sort-Object -Unique)
+    return @($versions | Sort-Object -Unique)
 }
 
 # Whether a candidate version is already spoken for; returns it, else $null.
@@ -392,8 +420,12 @@ function Get-UpdatesArmedWaiter {
         $status = [string]$result.status
         if ($active -contains $status) {
             $version = [string]$result.version
-            if (-not $version) { $version = ($file.BaseName -replace '^restart-', '') }
-            return "release $version is in flight (status $status, $($file.Name))"
+            if (-not (Get-UpdatesVersionParts $version)) {
+                $version = if ($file.Name -match '^restart-(\d+\.\d+\.\d+)-result\.json$') { $Matches[1] } else { '' }
+            }
+            if (Test-UpdatesWaiterActive -RunDir $RunDir -Version $version -ResultWrittenAt $file.LastWriteTime) {
+                return "release $version is in flight (status $status, $($file.Name))"
+            }
         }
     }
     foreach ($file in Get-ChildItem -LiteralPath $RunDir -Filter 'restart-*.pid' -File) {
