@@ -224,12 +224,17 @@ export function apply(ctx, config) {
       .map((root) => root.split("/").filter(Boolean).at(-1))
       .filter((segment) => segment !== undefined && segment.length > 0),
   );
-  // The parent of each protected root. A shell started in the data root could
-  // read `secrets\x` without its command text naming `userdata/secrets`, so a
-  // workdir at or below that parent is denied.
-  const protectedParents = [...readRoots, ...writeRoots]
-    .map((root) => norm(WIN.dirname(root)))
-    .filter(Boolean);
+  // The parent of each read-protected root. A shell started in the data root
+  // could read `secrets\x` without its command text naming `userdata/secrets`,
+  // so a workdir at or below that parent is denied. Write roots are guarded
+  // themselves, not their parent: in production the harness home
+  // (`<baseDir>\dsh`) sits beside the bot workspace
+  // (`<baseDir>\personal-workspace`), so its parent would deny every workdir
+  // in the workspace.
+  const protectedParents = [
+    ...readRoots.map((root) => norm(WIN.dirname(root))),
+    ...writeRoots.map((root) => norm(root)),
+  ].filter(Boolean);
 
   const canonicalHits = (candidate, cwd, roots, tails) => {
     const canonical = canonicalPath(candidate, cwd);
@@ -314,7 +319,9 @@ export function apply(ctx, config) {
       if (WORKING_DIRECTORY_TOOLS.has(exec?.name)) {
         // The launch patch disables this tool in every mode; the branch stays
         // so a runtime that still offers it cannot move the cwd into bot state.
-        for (const candidate of paths) {
+        // dsh's tool takes the target as `cd`; `path` is kept for other shapes.
+        const targets = typeof args.cd === "string" ? [...paths, args.cd] : paths;
+        for (const candidate of targets) {
           if (insideProtectedParent(candidate, cwd)) {
             return { kind: "deny", reason: DENY_REASON };
           }

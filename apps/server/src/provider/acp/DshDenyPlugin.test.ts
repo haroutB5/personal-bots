@@ -66,6 +66,8 @@ interface ExecutorOptions {
   readonly cwd?: string;
   /** 0.2.1 shape: the workingDirectory projection holds the current directory. */
   readonly projectedCwd?: string;
+  /** Replaces the default deny roots (the production layout test). */
+  readonly config?: { readonly denyReadWrite: string[]; readonly denyWrite: string[] };
 }
 
 const makeExecutor = async (options: ExecutorOptions = {}) => {
@@ -81,7 +83,7 @@ const makeExecutor = async (options: ExecutorOptions = {}) => {
           ? { get: () => options.projectedCwd }
           : undefined,
     },
-    {
+    options.config ?? {
       denyReadWrite: [`${STATE_DIR}/secrets`],
       denyWrite: [
         `${STATE_DIR}/state.sqlite`,
@@ -217,6 +219,49 @@ it.effect("denies a shell or worked cwd inside bot state", () =>
     expect(run("working_directory", { path: dataRoot }).kind).toBe("deny");
     expect(run("working_directory", { path: `${dataRoot}/secrets` }).kind).toBe("deny");
     expect(run("working_directory", { path: "C:/Claude/AI" }).kind).toBe("allow");
+    // dsh's own tool names the target `cd`.
+    expect(run("working_directory", { cd: dataRoot }).kind).toBe("deny");
+    expect(run("working_directory", { cd: "C:/Claude/AI" }).kind).toBe("allow");
+  }),
+);
+
+it.effect("leaves the bot workspace usable as a shell workdir in the production layout", () =>
+  Effect.promise(async () => {
+    // Production: the harness home and the bot workspace both sit directly
+    // under the base dir, beside userdata (live launch patch, 17 Oct).
+    const baseDir = "C:/Users/Ht/.personal-bots/dev";
+    const userdata = `${baseDir}/userdata`;
+    const workspace = `${baseDir}/personal-workspace`;
+    const { run } = await makeExecutor({
+      cwd: workspace,
+      config: {
+        denyReadWrite: [`${userdata}/secrets`],
+        denyWrite: [
+          `${userdata}/state.sqlite`,
+          `${userdata}/state.sqlite-wal`,
+          `${userdata}/state.sqlite-shm`,
+          `${userdata}/state.sqlite-journal`,
+          `${baseDir}/dsh`,
+        ],
+      },
+    });
+    expect(run("pwsh", { command: "Get-ChildItem", workdir: workspace }).kind).toBe("allow");
+    expect(run("pwsh", { command: "Get-ChildItem", workdir: "." }).kind).toBe("allow");
+    expect(run("pwsh", { command: "Get-ChildItem", workdir: "src" }).kind).toBe("allow");
+    expect(run("pwsh", { command: "Get-ChildItem" }).kind).toBe("allow");
+    // The data root, the secret store and the harness home stay closed.
+    expect(run("pwsh", { command: "Get-ChildItem", workdir: userdata }).kind).toBe("deny");
+    expect(run("pwsh", { command: "Get-ChildItem", workdir: "..\\userdata" }).kind).toBe("deny");
+    expect(run("pwsh", { command: "Get-ChildItem", workdir: `${userdata}/secrets` }).kind).toBe(
+      "deny",
+    );
+    expect(run("pwsh", { command: "Get-ChildItem", workdir: `${baseDir}/dsh` }).kind).toBe("deny");
+    expect(run("pwsh", { command: "Get-ChildItem", workdir: "..\\dsh\\usage" }).kind).toBe("deny");
+    expect(run("read", { file_path: "..\\userdata\\secrets\\data-encryption-key.bin" }).kind).toBe(
+      "deny",
+    );
+    expect(run("write", { file_path: "..\\userdata\\state.sqlite" }).kind).toBe("deny");
+    expect(run("write", { file_path: "notes.md" }).kind).toBe("allow");
   }),
 );
 
