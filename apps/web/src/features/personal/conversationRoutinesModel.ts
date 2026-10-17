@@ -15,3 +15,19 @@ export function routinesForBot(
   }
   return matching;
 }
+
+/**
+ * A bot's own routines for its settings page: every routine it runs, enabled
+ * ones first (both groups in the server's Scheduled order), so the ones that
+ * will actually fire are at the top and paused ones sink below them.
+ */
+export function botSettingsRoutines(
+  routines: ReadonlyArray<PersonalRoutine>,
+  botId: string,
+): ReadonlyArray<PersonalRoutine> {
+  const matching = routines.filter((routine) => routine.botId === botId);
+  return [
+    ...matching.filter((routine) => routine.enabled),
+    ...matching.filter((routine) => !routine.enabled),
+  ];
+}

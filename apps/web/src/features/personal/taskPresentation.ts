@@ -111,6 +111,7 @@ function localDateTimeFormat(timeZone: string): Intl.DateTimeFormat {
   if (format === undefined) {
     format = new Intl.DateTimeFormat("en-GB", {
       timeZone,
+      year: "numeric",
       weekday: "short",
       day: "numeric",
       month: "short",
@@ -123,30 +124,79 @@ function localDateTimeFormat(timeZone: string): Intl.DateTimeFormat {
   return format;
 }
 
+interface LocalDateTimeParts {
+  /** The calendar day in the zone, "2026-10-17"; equal strings are the same day. */
+  readonly dayKey: string;
+  readonly weekday: string;
+  readonly day: string;
+  readonly month: string;
+  readonly hour: string;
+  readonly minute: string;
+}
+
+function localDateTimeParts(instant: Date | number, timeZone: string): LocalDateTimeParts {
+  const parts = localDateTimeFormat(timeZone).formatToParts(instant);
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const year = pick("year");
+  const day = pick("day");
+  const monthText = pick("month");
+  return {
+    dayKey: `${year}-${monthText}-${day}`,
+    weekday: pick("weekday"),
+    day,
+    // ICU's en-GB short September is "Sept"; the app writes "Sep".
+    month: monthText.slice(0, 3),
+    hour: pick("hour"),
+    minute: pick("minute"),
+  };
+}
+
 /** "Mon 14 Sep, 09:00" in the given zone (Europe/London by default). */
 export function formatLocalDateTime(
   instant: Date | number,
   timeZone: string = PERSONAL_TIME_ZONE,
 ): string {
-  const parts = localDateTimeFormat(timeZone).formatToParts(instant);
-  const pick = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  // ICU's en-GB short September is "Sept"; the app writes "Sep".
-  const month = pick("month").slice(0, 3);
-  return `${pick("weekday")} ${pick("day")} ${month}, ${pick("hour")}:${pick("minute")}`;
+  const parts = localDateTimeParts(instant, timeZone);
+  return `${parts.weekday} ${parts.day} ${parts.month}, ${parts.hour}:${parts.minute}`;
+}
+
+/**
+ * A routine's next run: "Today, 14:30" when it falls on the calendar day it is
+ * read on in London, else the usual "Sat 17 Oct, 14:30". Same-day, not within
+ * 24 hours: a run at 00:20 tomorrow is not "Today" at 23:50.
+ */
+function formatNextRunDateTime(
+  instant: Date | number,
+  now: Date | number,
+  timeZone: string,
+): string {
+  const parts = localDateTimeParts(instant, timeZone);
+  if (parts.dayKey === localDateTimeParts(now, timeZone).dayKey) {
+    return `Today, ${parts.hour}:${parts.minute}`;
+  }
+  return `${parts.weekday} ${parts.day} ${parts.month}, ${parts.hour}:${parts.minute}`;
 }
 
 /**
  * Scheduled routines only: an event routine has no next run. See `routineHook`.
  * Shown in the user's zone like every other time in the app; the routine's own
- * zone decides when it fires, not how the instant reads.
+ * zone decides when it fires, not how the instant reads. A run on today's
+ * London date reads "Today, HH:MM" ("Next: Today, 14:30"); any other day keeps
+ * the weekday ("Next: Sat 17 Oct, 14:30").
  */
 export function routineNextRunLabel(
   routine: Pick<PersonalRoutine, "enabled" | "nextDueAt">,
+  now: Date | number = Date.now(),
 ): string {
   if (!routine.enabled) return "Paused";
   if (routine.nextDueAt === null) return "No more runs";
-  return `Next: ${formatLocalDateTime(DateTime.toEpochMillis(routine.nextDueAt))}`;
+  const nextRun = formatNextRunDateTime(
+    DateTime.toEpochMillis(routine.nextDueAt),
+    now,
+    PERSONAL_TIME_ZONE,
+  );
+  return `Next: ${nextRun}`;
 }
 
 /**

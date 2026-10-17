@@ -52,6 +52,9 @@ vi.mock("./usePersonalBackTarget", () => ({
   usePersonalBackTarget: () => ({ to: "/bots", label: "Back to Bots" }),
 }));
 vi.mock("./BotAvatarPicker", () => ({ BotAvatarPicker: () => null }));
+vi.mock("./usePersonalAutomation", () => ({
+  usePersonalRoutines: () => ({ data: { routines: [] }, error: null }),
+}));
 
 const model = (slug: string, optionDescriptors: ReadonlyArray<ReturnType<typeof select>> = []) => ({
   slug,

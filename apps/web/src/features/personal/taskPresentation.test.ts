@@ -81,7 +81,10 @@ describe("formatLocalDateTime", () => {
       nextDueAt: DateTime.makeUnsafe("2026-09-14T08:00:00Z"),
       timeZone: "Europe/London",
     } as PersonalRoutine;
-    expect(routineNextRunLabel(routine)).toBe("Next: Mon 14 Sep, 09:00");
+    // Not today (13 Sep), so the weekday stays.
+    expect(routineNextRunLabel(routine, Date.parse("2026-09-13T12:00:00Z"))).toBe(
+      "Next: Mon 14 Sep, 09:00",
+    );
     expect(routineNextRunLabel({ ...routine, enabled: false })).toBe("Paused");
     expect(routineNextRunLabel({ ...routine, nextDueAt: null })).toBe("No more runs");
   });
@@ -93,7 +96,54 @@ describe("formatLocalDateTime", () => {
       nextDueAt: DateTime.makeUnsafe("2026-09-17T23:00:00Z"),
       timeZone: "UTC",
     } as PersonalRoutine;
-    expect(routineNextRunLabel(utc)).toBe("Next: Fri 18 Sep, 00:00");
+    expect(routineNextRunLabel(utc, Date.parse("2026-09-16T12:00:00Z"))).toBe(
+      "Next: Fri 18 Sep, 00:00",
+    );
+  });
+});
+
+describe("routineNextRunLabel today", () => {
+  const due = (nextDueAt: string): PersonalRoutine =>
+    ({
+      enabled: true,
+      nextDueAt: DateTime.makeUnsafe(nextDueAt),
+      timeZone: "Europe/London",
+    }) as PersonalRoutine;
+
+  it("says Today for a run later on today's London date", () => {
+    expect(
+      routineNextRunLabel(due("2026-10-17T13:30:00Z"), Date.parse("2026-10-17T09:00:00Z")),
+    ).toBe("Next: Today, 14:30");
+  });
+
+  it("says Today just after London midnight, when the UTC date is still yesterday", () => {
+    // 00:05 Sun 18 Oct London is 23:05 Sat 17 Oct UTC; the run is 00:20 London.
+    expect(
+      routineNextRunLabel(due("2026-10-17T23:20:00Z"), Date.parse("2026-10-17T23:05:00Z")),
+    ).toBe("Next: Today, 00:20");
+  });
+
+  it("keeps the weekday for 23:30 on another London day, even within 24 hours", () => {
+    // 23:00 Sat 17 Oct London -> 23:30 Sun 18 Oct London.
+    expect(
+      routineNextRunLabel(due("2026-10-18T22:30:00Z"), Date.parse("2026-10-17T22:00:00Z")),
+    ).toBe("Next: Sun 18 Oct, 23:30");
+  });
+
+  it("does not call a run half an hour away Today when it falls after London midnight", () => {
+    // 23:50 Sat 17 Oct London -> 00:20 Sun 18 Oct London.
+    expect(
+      routineNextRunLabel(due("2026-10-17T23:20:00Z"), Date.parse("2026-10-17T22:50:00Z")),
+    ).toBe("Next: Sun 18 Oct, 00:20");
+  });
+
+  it("still says Paused for a paused routine whose next run is today", () => {
+    expect(
+      routineNextRunLabel(
+        { ...due("2026-10-17T13:30:00Z"), enabled: false },
+        Date.parse("2026-10-17T09:00:00Z"),
+      ),
+    ).toBe("Paused");
   });
 });
 

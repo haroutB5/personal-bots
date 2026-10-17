@@ -32,6 +32,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { BotAvatarPicker } from "./BotAvatarPicker";
 import { botVoiceCallsEnabled } from "./voice/botVoiceCalls";
 import { BotFallbackSection } from "./BotFallbackSection";
+import { BotRoutinesSection } from "./BotRoutinesSection";
 import { BotScheduleSection } from "./BotScheduleSection";
 import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
 import {
@@ -876,6 +877,9 @@ function BotForm({
         problem={scheduleProblem}
         modelLabel={scheduleSelection === null ? null : botModelLabel(scheduleSelection, providers)}
       />
+
+      {/* Read-only: routines live on their own page. A new bot has none yet. */}
+      {bot === null ? null : <BotRoutinesSection environmentId={environmentId} botId={botId} />}
 
       <div>
         <label htmlFor="bot-team" className={LABEL_CLASS}>
