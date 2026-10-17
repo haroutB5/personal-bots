@@ -6,8 +6,8 @@ and the "Today" next-run label). The DeepSeek Harness (`@deepseek-ai/dsh`) moves
 published harness as soon as npm has it while leaving the update action to a release. No migration
 (the maximum stays 111); `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged only; nothing is activated.
 Branch `release/hbots-16664`, built from the merge of `release/hbots-16665`s head `82e9f9ffbc`;
-code commits `ed54d852a9f0` (pin), `87a32d51e745` (card) and merge `d771b8c2f1`; the staged release
-sha is in the Gate evidence section.
+code commits `ed54d852a9f0` (pin), `87a32d51e745` (card), merge `d771b8c2f1` and version/notes
+`1fde3530074a`; staged release `1fde3530074a`.
 
 ## 1. Why the pin moves
 
@@ -90,11 +90,11 @@ passes the bypass flag, the background check does not; the Claude engine's advis
 runtime, the card reads `DeepSeek Harness v0.2.0-rc.2 Unavailable` **and** shows
 `Update available: v0.2.1-rc.2 is available.` (no update action). With the new runtime it reads
 `DeepSeek Harness v0.2.1-rc.2 Authenticated` and shows no advisory. Runs
-`qa\dsh-021-rc2\runs\old-2026-10-17T10-13-44\` and `...\new-2026-10-17T10-15-24\`.
+`qa\dsh-021-rc2\runs\old-2026-10-17T10-35-17\` and `...\new-2026-10-17T10-36-54\`.
 
 ## 5. A/B on the staged release
 
-Throwaway roots under `%TEMP%` on the staged release built from this commit (read-only), the DeepSeek
+Throwaway roots under `%TEMP%` on the staged release `1fde3530074a` (read-only), the DeepSeek
 instance's **Harness path** pointed at each runtime, a stub DeepSeek API with a fake key, dark mode,
 390x844. Old = 0.2.0-rc.2, new = 0.2.1-rc.2. Same rig, fixtures and check order for both runs.
 
@@ -116,7 +116,7 @@ instance's **Harness path** pointed at each runtime, a stub DeepSeek API with a 
 | T12   | 0 ERROR lines, 0 page errors, privacy rows on disk         | PASS     | PASS     | 0 ERROR/FATAL, 0 page errors, 0 session-log uploads, no credentials file, `web_search` not offered                                                                                                                    |
 
 Raw runs and the full report: `%USERPROFILE%\.personal-bots\qa\dsh-021-rc2\REPORT.md`,
-`runs\old-2026-10-17T10-13-44\` and `runs\new-2026-10-17T10-15-24\`. The earlier first pass on
+`runs\old-2026-10-17T10-35-17\` and `runs\new-2026-10-17T10-36-54\`. The earlier first pass on
 `ed54d852a9f0` was superseded by the card fix; its runs are kept in the same folder.
 
 ## 6. npm audit
@@ -133,7 +133,7 @@ malformed archive to parse. Output: `qa\dsh-021-rc2\npm-audit-rc2.json`.
   `makeManagedServerProvider`, `DeepSeekProvider`, `DshAcpSupport`).
 - Web card tests: 22 passed (`ProviderInstanceCard` 4, `providerStatus` + settings panel 18).
 - `apps\server` and `apps\web` `tsc --noEmit`: exit 0.
-- Full fork gate and e2e: see Gate evidence below (server 2,920 tests, web 2,867 tests, PS 262
+- Full fork gate and e2e: see Gate evidence below (server 2,920 tests, web 2,877 tests, PS 262
   checks, e2e 12/12, all PASS).
 - Runtime: `node ...\dsh-0.2.1-rc.2\node_modules\@deepseek-ai\dsh\lib\bin.js --version` answers
   `0.2.1-rc.2`; `dsh-0.2.0-rc.2` is still installed.
@@ -172,3 +172,25 @@ malformed archive to parse. Output: `qa\dsh-021-rc2\npm-audit-rc2.json`.
 ## Gate evidence
 
 Written by `scripts/personal/gate-evidence.ps1` on the final build; see the markers below.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=1fde3530074a7a6466d287545ee93d4c3db74922 release=1fde3530074a json-sha256=d9e85500f606f7bd4e7d922f3086223376425c2b69922c06076023088d7674d0 result=PASS -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T10:49:12Z. Version 1.66.66, release `1fde3530074a`, commit `1fde3530074a7a6466d287545ee93d4c3db74922` on `release/hbots-16664`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\1fde3530074a\gate-evidence.json` (sha256 `d9e85500f606f7bd4e7d922f3086223376425c2b69922c06076023088d7674d0`) and the full gate logs in `releases\1fde3530074a\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 247.8   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 23.1    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2877 tests passed, 0 failed, 0 skipped, in 257 files | 33.2    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 14.7    |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 262 checks ok, 0 failed                              | 65.1    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16664\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\1fde3530074a" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 257.7   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `1fde3530074a7a6466d287545ee93d4c3db74922`, at end `1fde3530074a7a6466d287545ee93d4c3db74922`; tracked files modified: none. Staged release: version 1.66.66, sha 1fde3530074a, dirty False, externals copied; `dist/bin.mjs` sha256 `90244454104f89a4c2a02ccd04e7f020030fd7ea55f583bb47321c7893724592`.
+<!-- gate-evidence:end -->
