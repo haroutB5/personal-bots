@@ -1,14 +1,15 @@
 # HANDOFF 1.66.69
 
-Two fixes on top of 1.66.68: the nightly memory tidy-up can no longer archive an entry without a
-replacement (and restores the rule that 14 Oct's change 270 archived with none), and the nightly
-Claude Code update can no longer take a version number or push `personal-bots/main` while a release
-is staged or waiting. No migration (the maximum stays 111); `PERSONAL_TASKS_CONCURRENCY` stays 5.
-Staged only; nothing is activated.
+Three changes on top of 1.66.68: the nightly memory tidy-up can no longer archive an entry without a
+replacement (and restores the rule that 14 Oct's change 270 archived with none), the nightly Claude
+Code update can no longer take a version number or push `personal-bots/main` while a release is
+staged or waiting, and a new read-only `usage_status` MCP tool gives bots the live usage limits the
+Bots home header shows (Harout's rule: stop assuming usage from memory). No migration (the maximum
+stays 111); `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged only; nothing is activated.
 
 Branch `release/hbots-16669`, cut from `personal-bots/main` `aa8de45d0f` (live 1.66.68). Code
-commits `a3dbac7877`, `214363c8d9` and `771da5dc50`; staged release `771da5dc50cd` (version
-1.66.69, externals copied). Gate evidence: below.
+commits `a3dbac7877`, `214363c8d9`, `771da5dc50` and `9bb580cc29`; staged release `9bb580cc2975`
+(version 1.66.69, externals copied). Gate evidence: below.
 
 ## 1. Memory tidy: a supersede never archives without a replacement
 
@@ -95,7 +96,54 @@ non-`x.y.z`; a staged release folder reserves its version; a failed release stop
 active waiter reserves its version and is seen as armed; a finished waiter with a stale pid file is
 not armed; an old active result with no live runner is neither armed nor reserved.
 
-## 3. Builder verification
+## 3. `usage_status`: the live limits, never quoted from memory
+
+Harout's new rule is "stop making assumptions from memory, always check live status data from our
+app". Bots had no way to read the usage figures the Bots home header shows, so the CTO quoted stale
+numbers from memory.
+
+**The tool** (`apps/server/src/mcp/toolkits/personal/`, `usage_status`): read-only, no parameters.
+It returns:
+
+- `readAt`: when the reading was taken (ISO 8601).
+- `providers`: one entry for each enabled, installed provider, as the header draws it:
+  `instanceId`, `driver`, `name`, `status`, `checkedAt` (when the provider last reported), a
+  `session` window (id, label, `usedPercent`, `resetsAt`), every `weekly` window, and `unavailable`
+  when the provider gave a reason for having no figures.
+- `fallbackBots`: every bot whose turns currently use another model, with `botName`, the saved
+  `homeModel`, the `activeModel` and its label, and why: `usage_limit`, `deepseek_peak` or
+  `schedule`, plus `fromProvider`, `since` and `resetAt` when the provider gave one.
+
+**One source, no second fetch.** The handler calls `ProviderRegistry.getProviders` (the published
+snapshots `server.getConfig` gives the header; no refresh or probe) and
+`PersonalBotRepository.listBots` (the same `fallbackActive` rows the home renders). The window
+choice (first `session`/`five_hour`, every `weekly`/`seven_day`) matches the header's own
+`usagePresentation`. The tool description says: "Call usage_status before stating usage limits;
+never quote them from memory."
+
+**Proof on a throwaway server** (`throwaway-server.ps1 -Name 16669-tool -Release
+9bb580cc2975`, fake Claude CLI with the `usage-weekly` flag, Chrome at 390 x 844, dark; the fake
+CLI's own `MCPTOOL` trigger called the tool through the real MCP endpoint):
+
+```
+MCPTOOL usage_status ok:
+{"readAt":"2026-10-17T23:39:14.904Z",
+ "providers":[
+   {"instanceId":"claudeAgent","driver":"claudeAgent","name":"Claude","status":"ready",
+    "checkedAt":"2026-10-17T23:38:46.691Z","unavailable":null,
+    "session":{"id":"five_hour","label":"Session","usedPercent":10,
+               "resetsAt":"2026-10-18T00:38:46.949Z"},
+    "weekly":[{"id":"seven_day","label":"Weekly","usedPercent":31,
+               "resetsAt":"2026-10-20T23:38:46.949Z"}]},
+   {"instanceId":"claudeLimited","driver":"claudeAgent","name":"Home (limited)", ...}],
+ "fallbackBots":[]}
+```
+
+No page errors. The fake root has no bot on a fallback, so `fallbackBots` was empty there; the unit
+tests cover the usage-limit, DeepSeek-peak and scheduled rows, with their active model, provider and
+reset time.
+
+## 4. Builder verification
 
 - Memory: `vp test run src/personal/memory` in `apps/server` -> **277 passed, 0 failed, 2 skipped**
   (the two skipped are the pre-existing measure tests).
@@ -110,12 +158,18 @@ not armed; an old active result with no live runner is neither armed nor reserve
 - Updates pipeline: `powershell -NoProfile -ExecutionPolicy Bypass -File
 scripts\personal\updates\updates.tests.ps1` -> **All passed** (including the new reservation and
   armed-waiter checks).
+- Usage status: `vp test run src/mcp/toolkits/personal/usageStatus.test.ts` in `apps/server` ->
+  **4 passed, 0 failed**: the session and every weekly window with reset times, the five-hour /
+  seven-day fallback when kinds are absent, duplicate weekly ids folded, disabled or uninstalled
+  providers left out, an unavailable reason carried through, and the fallback-bot rows for a usage
+  limit, DeepSeek peak and a model schedule.
+- Usage status end to end on a throwaway server: the fake CLI's `MCPTOOL usage_status {}` returned
+  the figures above (session 10%, weekly 31%, reset times, `readAt`) with no page errors.
 - Server typecheck: `tsc --noEmit` in `apps/server` -> exit 0, no `error TS`.
-- Lint on the five touched TypeScript files: 0 errors; the 4 warnings are pre-existing (unused
-  `normaliseApps`, an unused test variable, and the old control-character regex).
+- Lint and format on every touched TypeScript file: 0 errors; the only warnings are pre-existing.
 - No migration; `PERSONAL_TASKS_CONCURRENCY` stays 5.
 
-## 4. What QA should focus on
+## 5. What QA should focus on
 
 Memory is a risky area, so a focused check of the new parts on a throwaway root is worth it:
 
@@ -129,8 +183,12 @@ Memory is a risky area, so a focused check of the new parts on a throwaway root 
 4. For the nightly fix, no live run is needed: run `updates.tests.ps1`; optionally stage a fake
    release folder under a throwaway root and confirm the preflight refuses with the reservation
    message. The real nightly must skip, not publish, while a release is armed.
+5. For `usage_status`: on a throwaway root send `MCPTOOL usage_status {}` in a bot chat and compare
+   the session and weekly figures with the Bots home header (with the `usage-weekly` fake flag the
+   weekly row reads 31%). Then check a fallback bot appears in `fallbackBots` while it runs on its
+   fallback model.
 
-## 5. Rollback
+## 6. Rollback
 
 Binary only, to whichever release is live when this one ships: `aa8de45d0f0e` (1.66.68) if no later
 release has landed, otherwise that one. No database change and no migration, so nothing to restore.
