@@ -28,7 +28,9 @@ import {
   DSH_PLUGIN_INVENTORY_ROW_ID,
   DSH_SESSION_LOG_ROW_ID,
   DSH_TELEMETRY_ROW_ID,
+  DSH_WEB_DEEPSEEK_API_ROW_ID,
   DSH_WEB_SEARCH_ROW_ID,
+  DSH_WORKING_DIRECTORY_TOOL_ROW_ID,
 } from "./DshAcpSupport.ts";
 
 const decodeResumeCursor = Schema.decodeUnknownSync(Schema.Unknown);
@@ -52,12 +54,18 @@ it.layer(layer)("DshAcpSupport", (it) => {
       expect(ids).toContain(DSH_SESSION_LOG_ROW_ID);
       expect(ids).toContain(DSH_TELEMETRY_ROW_ID);
       expect(ids).toContain(DSH_WEB_SEARCH_ROW_ID);
+      expect(ids).toContain(DSH_WEB_DEEPSEEK_API_ROW_ID);
+      expect(ids).toContain(DSH_WORKING_DIRECTORY_TOOL_ROW_ID);
       // The plugin inventory dsh otherwise sends with every request.
       expect(ids).toContain(DSH_PLUGIN_INVENTORY_ROW_ID);
       const sessionLog = patch.find((row) => row.id === DSH_SESSION_LOG_ROW_ID);
       expect(sessionLog?.config).toEqual({ enabled: false });
       expect(patch.find((row) => row.id === DSH_TELEMETRY_ROW_ID)?.disabled).toBe(true);
       expect(patch.find((row) => row.id === DSH_WEB_SEARCH_ROW_ID)?.disabled).toBe(true);
+      expect(patch.find((row) => row.id === DSH_WEB_DEEPSEEK_API_ROW_ID)?.disabled).toBe(true);
+      expect(patch.find((row) => row.id === DSH_WORKING_DIRECTORY_TOOL_ROW_ID)?.disabled).toBe(
+        true,
+      );
       expect(patch.find((row) => row.id === DSH_PLUGIN_INVENTORY_ROW_ID)?.config).toEqual({
         enabled: false,
       });
@@ -149,6 +157,10 @@ it.layer(layer)("DshAcpSupport", (it) => {
       const minimal = buildDshLaunchPatch({ personaSuffix: "", skillDirs: [], mode: "minimal" });
       expect(minimal.find((row) => row.id === "tool-pwsh")?.disabled).toBe(true);
       expect(minimal.find((row) => row.id === "tool-skill")?.disabled).toBe(true);
+      // The cwd tool is off in every mode, Minimal included, not only there.
+      expect(minimal.find((row) => row.id === DSH_WORKING_DIRECTORY_TOOL_ROW_ID)?.disabled).toBe(
+        true,
+      );
       const inserted = minimal.find((row) => Array.isArray(row.insert))?.insert as Array<
         Record<string, unknown>
       >;
@@ -159,6 +171,10 @@ it.layer(layer)("DshAcpSupport", (it) => {
         mode: "standard",
       });
       expect(rowIds(standard)).not.toContain("tools");
+      expect(standard.find((row) => row.id === DSH_WORKING_DIRECTORY_TOOL_ROW_ID)?.disabled).toBe(
+        true,
+      );
+      expect(code.find((row) => row.id === DSH_WORKING_DIRECTORY_TOOL_ROW_ID)?.disabled).toBe(true);
     }),
   );
 

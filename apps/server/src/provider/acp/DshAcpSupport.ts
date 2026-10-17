@@ -72,8 +72,12 @@ export const DEEPSEEK_DSH_API_KEY_ENV = "DEEPSEEK_API_KEY";
 export const DSH_SESSION_LOG_ROW_ID = "session-log-deepseek";
 export const DSH_TELEMETRY_ROW_ID = "session-telemetry-otel";
 export const DSH_WEB_SEARCH_ROW_ID = "web-search-deepseek";
+/** dsh's DeepSeek web fetch/search API routes; disabled so only http fetch stays. */
+export const DSH_WEB_DEEPSEEK_API_ROW_ID = "web-deepseek-api";
 /** The plugin inventory dsh otherwise sends with every request. */
 export const DSH_PLUGIN_INVENTORY_ROW_ID = "plugin-package-inventory-deepseek";
+/** The cwd-changing tool dsh 0.2.1 adds; off in every mode (Security, 1.66.66). */
+export const DSH_WORKING_DIRECTORY_TOOL_ROW_ID = "tool-working-directory";
 
 /** The bot-state deny plugin, installed beside the runtime pin. */
 export const DSH_DENY_PLUGIN_FILE = "hbots-deny-plugin.mjs";
@@ -224,7 +228,6 @@ const MINIMAL_DISABLED_ROWS: ReadonlyArray<string> = [
   "tool-goal",
   "tool-todo",
   "tool-web",
-  "tool-working-directory",
   "plan-mode",
 ];
 
@@ -319,6 +322,17 @@ export function buildDshLaunchPatch(input: DshLaunchPatchInput): Array<Record<st
     // session log to DeepSeek inside every model request.
     { id: DSH_SESSION_LOG_ROW_ID, config: { enabled: false } },
     { id: DSH_WEB_SEARCH_ROW_ID, disabled: true },
+    // The DeepSeek Search/Fetch API routes register with the same credential
+    // even when the `web` row keeps http fetch; nothing in this profile uses
+    // them, so the whole route is off (Security, 1.66.66).
+    { id: DSH_WEB_DEEPSEEK_API_ROW_ID, disabled: true },
+    // 0.2.1 adds a cwd-changing tool. It is off in EVERY mode, not only
+    // Minimal: a cwd under the data root made a relative `secrets\...` path
+    // resolve into the sealed store, which the string deny could not see.
+    // The `working-directory` service row itself stays: dsh-tool-fs resolves
+    // every relative fs path through `ctx.workingDirectory.ensure`, so
+    // disabling the service would break every read and write.
+    { id: DSH_WORKING_DIRECTORY_TOOL_ROW_ID, disabled: true },
     // The inventory of every active plugin package, otherwise sent with each
     // request: no feature in this profile reads it.
     { id: DSH_PLUGIN_INVENTORY_ROW_ID, config: { enabled: false } },
