@@ -1,6 +1,6 @@
 ---
 name: speedoptimiser
-description: Optimise and enhance the performance of an app: measure, fix the biggest measured offender one change per commit with before/after numbers, then ratchet each win into a budget that can only go down. Use when asked to speed up a web app or PWA, find what makes it slow, or set performance budgets.
+description: "Optimise and enhance the performance of an app: measure, fix the biggest measured offender one change per commit with before/after numbers, then ratchet each win into a budget that can only go down. Use when asked to speed up a web app or PWA, find what makes it slow, or set performance budgets."
 ---
 
 # Speed optimiser: measure, optimize, ratchet
