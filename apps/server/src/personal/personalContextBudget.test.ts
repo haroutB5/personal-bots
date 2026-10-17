@@ -55,6 +55,12 @@ describe("personalContextBudget: built-in tools", () => {
     expect(Object.keys(overrides ?? {}).sort()).toEqual([...PERSONAL_BOT_HIDDEN_SKILLS].sort());
     expect(PERSONAL_BOT_HIDDEN_SKILLS).toContain("code-review");
     expect(PERSONAL_BOT_HIDDEN_SKILLS).toContain("schedule");
+    // 1.66.63: the three a bot's session still advertised after the 1.66.62 trim
+    // (QA counted 7 skills where 4 were promised). /run and /security-review
+    // still expand as slash commands.
+    for (const later of ["workflow-authoring", "run", "security-review"]) {
+      expect(PERSONAL_BOT_HIDDEN_SKILLS).toContain(later);
+    }
     // user-invocable-only keeps /name working, so nothing breaks hard.
     expect(new Set(Object.values(overrides ?? {}))).toEqual(new Set(["user-invocable-only"]));
     // hbots' own shared skill and the skills bots do use stay listed.

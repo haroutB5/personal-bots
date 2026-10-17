@@ -57,6 +57,11 @@ export const personalBotDisallowedTools = (
  * (`user-invocable-only`), so `/code-review` and any skill a bot's own
  * instructions name still work.
  *
+ * The second group (1.66.63) is what a bot's session still advertised after the
+ * first trim: `workflow-authoring`, `run` and `security-review` (QA 1.66.62
+ * counted 7 skills where the review promised 4). Same treatment, so `/run` and
+ * `/security-review` still expand as slash commands.
+ *
  * `statusline-setup` from the review's list is not a skill: it is a bundled
  * *agent type* offered to the Agent tool, and `skillOverrides` does not touch
  * agents, so it is left alone here.
@@ -70,6 +75,9 @@ export const PERSONAL_BOT_HIDDEN_SKILLS = [
   "loop",
   "schedule",
   "fewer-permission-prompts",
+  "workflow-authoring",
+  "run",
+  "security-review",
 ] as const;
 
 /** The `skills` override a bot session starts with, or undefined when switched off. */
