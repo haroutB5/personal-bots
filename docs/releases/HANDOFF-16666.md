@@ -19,8 +19,9 @@ process is already running keep the old module until this release restarts them.
 
 Branch `release/hbots-16664`, built from the merge of `release/hbots-16665`'s head `82e9f9ffbc`;
 code commits `ed54d852a9f0` (pin), `87a32d51e745` (card), merge `d771b8c2f1`, version/notes
-`1fde3530074a` and the security fix `0b438620b7d8`; staged release `0b438620b7d8`. Live is still
-1.66.63 (`current.txt` `9d0d33b46120`).
+`1fde3530074a`, the security fix `0b438620b7d8`, and the QA follow-ups `b08206786074` (cache
+bypass scoped to the manual Refresh, banner skips no-action providers); staged release
+`b08206786074`. Live is still 1.66.63 (`current.txt` `9d0d33b46120`).
 
 ## 1. Why the pin moves
 
@@ -106,7 +107,8 @@ runtime, the card reads `DeepSeek Harness v0.2.0-rc.2 Unavailable` **and** shows
 `Update available: v0.2.1-rc.2 is available.` (no update action). With the new runtime it reads
 `DeepSeek Harness v0.2.1-rc.2 Authenticated` and shows no advisory. Runs
 `qa\dsh-021-rc2\runs\old-2026-10-17T10-35-17\` and `...\new-2026-10-17T10-36-54\`, repeated on the
-final release by `old-2026-10-17T11-23-05` and `new-2026-10-17T11-26-06`.
+security build by `old-2026-10-17T11-23-05` / `new-2026-10-17T11-26-06` and on the final release
+by `old-2026-10-17T11-48-58` / `new-2026-10-17T11-51-06`.
 
 ## 5. Security fix: relative paths and the cwd tool
 
@@ -174,11 +176,38 @@ Code and Minimal.
 | `working_directory` offered (standard/code)    | no (tool absent)          | no (disabled)             |
 | launch patch disables `tool-working-directory` | true/true                 | true/true                 |
 
-All denials carry `blocked: path is bot state protected by the hbots server`.
+All denials carry `blocked: path is bot state protected by the hbots server`. QA's cache-scope and
+banner follow-ups are in the same final release (`b08206786074`, section 6).
 
-## 6. A/B on the staged release
+## 6. QA follow-ups in the same re-stage
 
-Throwaway roots under `%TEMP%` on the staged release `0b438620b7d8` (read-only), the DeepSeek
+QA's 1.66.66 report (task 832d15d4, `qa\hbots-16666\REPORT.md`) passed everything else and raised
+two low items. Both are in `b08206786074`.
+
+**A. The cache bypass was too wide.** `makeManagedServerProvider.refresh` forced the fresh npm
+lookup for every caller, so the 2-minute usage-limit fallback re-check (about 30 lookups an hour
+per fallen-back bot), Claude's usage re-check, Codex after a redeem and the
+maintenance/installation flows all skipped the 1 h cache. Fix: `refresh` is the cached path every
+background and internal caller uses; a new optional `refreshLatest` is the only uncached path. The
+registry forwards it only when the RPC asks: `server.refreshProviders` has a new
+`refreshLatestVersion` field, and only the settings card's manual Refresh button sends it
+(`{ refreshModels: true, refreshLatestVersion: true }`). The fallback, usage, redeem, maintenance,
+workspace and onboarding callers do not. Unit proof: `makeManagedServerProvider.test.ts` drives
+boot, `refresh` (cached) and `refreshLatest` (forced); `ProviderRegistry.test.ts` shows
+`refreshInstance(id)` uses `refresh` and `refreshInstance(id, { refreshLatestVersion: true })`
+uses `refreshLatest`; `ProviderSettingsPanel.environment.test.tsx` asserts the manual button
+sends the flag; `providerMaintenance.test.ts` keeps the TTL/forced-cache behavior.
+
+**B. The launch banner named DeepSeek as updatable.** `isProviderUpdateCandidate` accepted any
+enabled `behind_latest` provider, including the dsh harness whose card has `canUpdate: false` and
+no update action. Fix: the candidate now requires `versionAdvisory.canUpdate === true`, so the dsh
+harness is left out of "can be updated from provider settings" and the banner names only
+providers the user can update there. Unit proof: a no-action dsh provider is not a candidate, and
+a mixed Claude + dsh list collects only Claude.
+
+## 7. A/B on the staged release
+
+Throwaway roots under `%TEMP%` on the staged release `b08206786074` (read-only), the DeepSeek
 instance's **Harness path** pointed at each runtime, a stub DeepSeek API with a fake key, dark mode,
 390x844. Old = 0.2.0-rc.2, new = 0.2.1-rc.2. Same rig, fixtures and check order for both runs.
 
@@ -201,11 +230,14 @@ instance's **Harness path** pointed at each runtime, a stub DeepSeek API with a 
 | T12   | 0 ERROR lines, 0 page errors, privacy rows on disk         | PASS     | PASS     | 0 ERROR/FATAL, 0 page errors, 0 session-log uploads, no credentials file, `web_search` not offered                                                                                                                    |
 
 Raw runs and the full report: `%USERPROFILE%\.personal-bots\qa\dsh-021-rc2\REPORT.md`,
-`runs\old-2026-10-17T11-23-05\` and `runs\new-2026-10-17T11-26-06\`. The baseline that proved the
-live bypass is `runs\old-2026-10-17T11-10-51\`. The earlier `1fde3530074a` A/B (14 rows) is
-superseded and kept for the record.
+`runs\old-2026-10-17T11-48-58\` and `runs\new-2026-10-17T11-51-06\`. The security-only
+`0b438620b7d8` pair is `runs\old-2026-10-17T11-23-05\` / `runs\new-2026-10-17T11-26-06\`; the
+first QA-fix old run (`old-2026-10-17T11-45-59`) failed T12 only on the known throwaway Clerk CDN
+page error, and the clean re-run above is the evidence. The baseline that proved the live bypass
+is `runs\old-2026-10-17T11-10-51\`. The earlier `1fde3530074a` A/B (14 rows) is superseded and
+kept for the record.
 
-## 7. npm audit
+## 8. npm audit
 
 `npm audit --omit=dev` on the new lockfile: **8 moderate, 0 high, 0 critical**. All eight trace to
 `fflate` (infinite loop parsing a malformed ZIP64 archive) through `@deepseek-ai/libreoffice-kit`
@@ -213,29 +245,32 @@ superseded and kept for the record.
 bump of the dsh packages. hbots never invokes dsh's Office/PDF skill, and the advisory needs a
 malformed archive to parse. Output: `qa\dsh-021-rc2\npm-audit-rc2.json`.
 
-## 8. Builder verification
+## 9. Builder verification
 
-- Targeted provider tests: 34 passed in `DshDenyPlugin.test.ts` + `DshAcpSupport.test.ts`; the
-  whole provider tree was also run: 1,791 passed, 2 failed. The two failures are pre-existing
-  `ClaudeAdapter.test.ts` assertions about `skillOverrides` (the 1.66.62 skill trim is on by default
-  and the test expects the untrimmed settings). No file in this release touches the Claude adapter,
-  and the fork gate does not run that suite. Flagged for a separate fix.
+- Targeted tests: 34 passed in `DshDenyPlugin.test.ts` + `DshAcpSupport.test.ts`; 92 passed
+  (13 skipped) in `makeManagedServerProvider.test.ts`, `ProviderRegistry.test.ts` and
+  `providerMaintenance.test.ts` for the cache-scope fix; 56 passed in the web banner and settings
+  panel tests. The whole provider tree was also run: 1,791 passed, 2 failed. The two failures are
+  pre-existing `ClaudeAdapter.test.ts` assertions about `skillOverrides` (the 1.66.62 skill trim is
+  on by default and the test expects the untrimmed settings). No file in this release touches the
+  Claude adapter, and the fork gate does not run that suite. Flagged for a separate fix.
 - Fork gate: server 2,920 passed (4 skipped), web 2,877 passed, PS 262 checks, e2e 12/12, all PASS
   (see Gate evidence below). `apps\server` and `apps\web` `tsc --noEmit` exit 0.
-- Build: `build.ps1 -CopyExternals` staged `0b438620b7d8` with `dirty=False` and `externals=copied`;
-  `bin.mjs --version` answers `t3 v0.0.42`, and the bundle contains the new rows. The script printed
-  a nonzero process exit at the end after the staging lines (only chunk-size warnings in its output);
-  the staged VERSION, the bundle check and the gate (including e2e on that artifact) are all good.
+- Build: `build.ps1 -CopyExternals` staged `b08206786074` with `dirty=False` and
+  `externals=copied`; `bin.mjs --version` answers `t3 v0.0.42`, and the bundle contains the new
+  rows. The final build exited 0. (The earlier security-only build printed a nonzero process exit
+  after its staging lines; that artifact was superseded by this one in any case.)
 - Runtime: `node ...\dsh-0.2.1-rc.2\node_modules\@deepseek-ai\dsh\lib\bin.js --version` answers
   `0.2.1-rc.2`; `dsh-0.2.0-rc.2` is still installed. Both runtime plugin copies equal the release
   file (sha256 `73BB568267ED2FD744C61C3C311BF39788DD0E3307F04CAD23E873C9E8958BBA`).
-- The card's harness label and the old-runtime advisory were proved in both throwaways; see section 4.
+- The card's harness label, the old-runtime advisory, the manual-Refresh scope and the banner
+  wording were proved in the throwaways and unit tests; see sections 4 and 6.
 - Test-time load: the dependency install and the test runs were heavy disk jobs and the live stall
   recorder logged pauses up to 5.9 s between 09:11 and 09:19Z, all `process-paused` with the live
   1.66.63 process idle (disk starvation), not from this release. Nothing was activated; the release
   waiter still has its idle gate.
 
-## 9. What QA should focus on
+## 10. What QA should focus on
 
 1. **Security (new):** on a DeepSeek bot in Standard mode, ask it to read
    `..\userdata\secrets\data-encryption-key.json` (and the same with `.\`, `..\` and mixed
@@ -245,46 +280,48 @@ malformed archive to parse. Output: `qa\dsh-021-rc2\npm-audit-rc2.json`.
    `working_directory`.
 3. A real DeepSeek turn on `deepseek-flash` (V4.1-Flash-1017) on a DeepSeek bot, standard mode.
 4. The DeepSeek settings card: `DeepSeek Harness v0.2.1-rc.2 Authenticated`, no Unavailable, no
-   update advisory (the pin is current). Press Refresh; it must stay current. No Update button on a
-   harness advisory.
+   update advisory (the pin is current). Press Refresh; it must stay current, and no
+   `working_directory` or cache storm should follow. No Update button on a harness advisory, and
+   the launch banner must not say DeepSeek can be updated from provider settings.
 5. Minimal mode: a turn works, the persistent PowerShell works, and no `working_directory` tool is
    offered.
 6. An image under and over 2 MiB, and a 10-turn chat.
 7. Session resume after a server restart (same dsh session id).
 8. Startup log since the restart: 0 ERROR, 0 `Token:`/`Pairing URL` lines.
 
-## 10. Rollback
+## 11. Rollback
 
 - **Do not roll back to 1.66.65 or 1.66.63 without the plugin.** Those binaries predate the security
   fix and the bypass returns. Because the plugin is loaded from the runtime folder, the fixed plugin
   is already beside `dsh-0.2.0-rc.2`, so new chats stay protected even on the older binary; a revert
   of the plugin copy would reopen it.
-- Fastest safe rollback: a binary rollback to another 1.66.66 build that carries `0b438620b7d8`, or
-  to 1.66.65/1.66.63 with the fixed plugin still in place, with `restart.ps1 -Release <sha>
--NoPrune`. The rc.2 runtime stays installed.
-- Source rollback: revert `0b438620b7d8` and the pin/card commits on top of the merged 1.66.65 tree
-  (or set `DSH_PINNED_VERSION` and the `install-dsh.ps1` default back to `0.2.0-rc.2` and
-  regenerate the lockfile), rebuild, and re-stage. Keep the plugin copy and the two launch rows.
+- Fastest safe rollback: a binary rollback to another 1.66.66 build that carries `b08206786074`
+  (security fix plus the QA follow-ups), or to 1.66.65/1.66.63 with the fixed plugin still in
+  place, with `restart.ps1 -Release <sha> -NoPrune`. The rc.2 runtime stays installed.
+- Source rollback: revert `b08206786074` (and `0b438620b7d8`) and the pin/card commits on top of
+  the merged 1.66.65 tree (or set `DSH_PINNED_VERSION` and the `install-dsh.ps1` default back to
+  `0.2.0-rc.2` and regenerate the lockfile), rebuild, and re-stage. Keep the plugin copy and the
+  two launch rows.
 - No migration, so no data restore is involved.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=0b438620b7d8bc4e5e86203c97198517916a0259 release=0b438620b7d8 json-sha256=2bbe6f6a734a834dd537855430d5eb5ddcbe06dbe316e2803c89e19b9fe43e0b result=PASS -->
+<!-- gate-evidence:begin sha=b082067860741655cdd53d1fcece1b31620ced35 release=b08206786074 json-sha256=4963063a64c7702ceb5ad7a827a9a283ca3720c436afa8cc5dc49fb7e764c185 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T11:38:01Z. Version 1.66.66, release `0b438620b7d8`, commit `0b438620b7d8bc4e5e86203c97198517916a0259` on `release/hbots-16664`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T12:03:32Z. Version 1.66.66, release `b08206786074`, commit `b082067860741655cdd53d1fcece1b31620ced35` on `release/hbots-16664`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\0b438620b7d8\gate-evidence.json` (sha256 `2bbe6f6a734a834dd537855430d5eb5ddcbe06dbe316e2803c89e19b9fe43e0b`) and the full gate logs in `releases\0b438620b7d8\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\b08206786074\gate-evidence.json` (sha256 `4963063a64c7702ceb5ad7a827a9a283ca3720c436afa8cc5dc49fb7e764c185`) and the full gate logs in `releases\b08206786074\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 219.9   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 20      |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2877 tests passed, 0 failed, 0 skipped, in 257 files | 32.1    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.5     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 262 checks ok, 0 failed                              | 65.6    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16664\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\0b438620b7d8" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 260     |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 224.5   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 28.7    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2877 tests passed, 0 failed, 0 skipped, in 257 files | 34.5    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 5.1     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 262 checks ok, 0 failed                              | 66.2    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16664\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\b08206786074" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 260.2   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `0b438620b7d8bc4e5e86203c97198517916a0259`, at end `0b438620b7d8bc4e5e86203c97198517916a0259`; tracked files modified: none. Staged release: version 1.66.66, sha 0b438620b7d8, dirty False, externals copied; `dist/bin.mjs` sha256 `25bdca5a5189779c106ae08fb0e863c6f1bbe831952fb1f04b4674e1bef5ce35`.
+Tree: HEAD at start `b082067860741655cdd53d1fcece1b31620ced35`, at end `b082067860741655cdd53d1fcece1b31620ced35`; tracked files modified: none. Staged release: version 1.66.66, sha b08206786074, dirty False, externals copied; `dist/bin.mjs` sha256 `782b9eeb1ba431dc4e6f6974a5fd1d253755896efcc3761f10dcbf1b427b4186`.
 <!-- gate-evidence:end -->
