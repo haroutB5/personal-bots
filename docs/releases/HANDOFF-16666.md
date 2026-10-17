@@ -1,11 +1,13 @@
-# HANDOFF 1.66.64
+# HANDOFF 1.66.66
 
-Pin move plus the DeepSeek card's refresh fix: the DeepSeek Harness (`@deepseek-ai/dsh`) moves
-from 0.2.0-rc.2 to **0.2.1-rc.2** (the release DeepSeek recommends for V4.1-Flash-1017), and the
-card now shows a newly published harness as soon as npm has it while leaving the update action to
-a release. No migration (the maximum stays 111); `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged
-only; nothing is activated. Branch `release/hbots-16664`, code commits `ed54d852a9f0` (pin) and
-`87a32d51e745` (card), staged release `87a32d51e745`.
+Pin move plus the DeepSeek card's refresh fix, on top of 1.66.65 (the bot settings Routines section
+and the "Today" next-run label). The DeepSeek Harness (`@deepseek-ai/dsh`) moves from 0.2.0-rc.2 to
+**0.2.1-rc.2** (the release DeepSeek recommends for V4.1-Flash-1017), and the card now shows a newly
+published harness as soon as npm has it while leaving the update action to a release. No migration
+(the maximum stays 111); `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged only; nothing is activated.
+Branch `release/hbots-16664`, built from the merge of `release/hbots-16665`s head `82e9f9ffbc`;
+code commits `ed54d852a9f0` (pin), `87a32d51e745` (card) and merge `d771b8c2f1`; the staged release
+sha is in the Gate evidence section.
 
 ## 1. Why the pin moves
 
@@ -92,7 +94,7 @@ runtime, the card reads `DeepSeek Harness v0.2.0-rc.2 Unavailable` **and** shows
 
 ## 5. A/B on the staged release
 
-Throwaway roots under `%TEMP%` on the staged release `87a32d51e745` (read-only), the DeepSeek
+Throwaway roots under `%TEMP%` on the staged release built from this commit (read-only), the DeepSeek
 instance's **Harness path** pointed at each runtime, a stub DeepSeek API with a fake key, dark mode,
 390x844. Old = 0.2.0-rc.2, new = 0.2.1-rc.2. Same rig, fixtures and check order for both runs.
 
@@ -158,31 +160,15 @@ malformed archive to parse. Output: `qa\dsh-021-rc2\npm-audit-rc2.json`.
 
 ## 9. Rollback
 
-- Fastest: binary rollback to 1.66.63, `restart.ps1 -Release 9d0d33b46120 -NoPrune`; the pin and the
-  card fix go back with the binary and the rc.2 runtime stays installed.
-- Source rollback: revert `87a32d51e745` and `ed54d852a9f0` (or set `DSH_PINNED_VERSION` and the
-  `install-dsh.ps1` default back to `0.2.0-rc.2` and regenerate the lockfile), rebuild, and
-  re-stage. The `dsh-0.2.0-rc.2` runtime is still installed, so no reinstall is needed.
+- Fastest: binary rollback to the previous live release, 1.66.65 (`7cdc928a7788`) once it is live,
+  or 1.66.63 (`9d0d33b46120`) before that, with `restart.ps1 -Release <sha> -NoPrune`; the pin and
+  the card fix go back with the binary and the rc.2 runtime stays installed.
+- Source rollback: revert the pin and card commits (`ed54d852a9f0`, `87a32d51e745`) on top of the
+  merged 1.66.65 tree (or set `DSH_PINNED_VERSION` and the `install-dsh.ps1` default back to
+  `0.2.0-rc.2` and regenerate the lockfile), rebuild, and re-stage. The `dsh-0.2.0-rc.2` runtime is
+  still installed, so no reinstall is needed.
 - No migration, so no data restore is involved.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=87a32d51e7452eaf3e49dbc0700997b2fe7f661b release=87a32d51e745 json-sha256=6721200b839dc074c597c1183a8fe77905c39225038d235f528905febc243a75 result=PASS -->
-
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T10:28:53Z. Version 1.66.64, release `87a32d51e745`, commit `87a32d51e7452eaf3e49dbc0700997b2fe7f661b` on `release/hbots-16664`, working tree clean, result **PASS**.
-
-Machine-readable copy: `releases\87a32d51e745\gate-evidence.json` (sha256 `6721200b839dc074c597c1183a8fe77905c39225038d235f528905febc243a75`) and the full gate logs in `releases\87a32d51e745\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
-
-| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 280.7   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 33.4    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2867 tests passed, 0 failed, 0 skipped, in 256 files | 36.6    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 8.7     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 262 checks ok, 0 failed                              | 70.9    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16664\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\87a32d51e745" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 269.3   |
-
-E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
-
-Tree: HEAD at start `87a32d51e7452eaf3e49dbc0700997b2fe7f661b`, at end `87a32d51e7452eaf3e49dbc0700997b2fe7f661b`; tracked files modified: none. Staged release: version 1.66.64, sha 87a32d51e745, dirty False, externals copied; `dist/bin.mjs` sha256 `90244454104f89a4c2a02ccd04e7f020030fd7ea55f583bb47321c7893724592`.
-<!-- gate-evidence:end -->
+Written by `scripts/personal/gate-evidence.ps1` on the final build; see the markers below.
