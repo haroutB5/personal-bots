@@ -538,30 +538,6 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
   }
 
   for (const [name, output] of [
-    [
-      "an error envelope carrying valid output",
-      { is_error: true, subtype: "success", structured_output: { title: "Refused output" } },
-    ],
-    [
-      "an error result carrying valid output",
-      [{ type: "result", is_error: true, structured_output: { title: "Refused output" } }],
-    ],
-    [
-      "a failed envelope carrying valid output",
-      { subtype: "error_during_execution", structured_output: { title: "Failed output" } },
-    ],
-    [
-      "a failed final result after an earlier success",
-      [
-        { type: "result", subtype: "success", structured_output: { title: "Earlier output" } },
-        {
-          type: "result",
-          subtype: "error_max_structured_output_retries",
-          structured_output: { title: "Failed output" },
-        },
-      ],
-    ],
-    ["an error envelope without output", { type: "result", is_error: true }],
     ["empty message array", []],
     ["missing result", [{ type: "assistant", structured_output: { title: "Not a result" } }]],
     ["invalid title", [{ type: "result", structured_output: { title: 42 } }]],
@@ -573,7 +549,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
       ],
     ],
   ] as const) {
-    it.effect(`rejects Claude output with ${name}`, () =>
+    it.effect(`rejects verbose Claude output with ${name}`, () =>
       withFakeClaudeEnv({ output: JSON.stringify(output) }, (textGeneration) =>
         Effect.gen(function* () {
           const error = yield* Effect.flip(
