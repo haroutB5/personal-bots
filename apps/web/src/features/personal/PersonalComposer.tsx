@@ -208,6 +208,12 @@ const SENT_ECHO_WINDOW_MS = 1_500;
  * Whether `value` is the message just sent coming back from the keyboard: the
  * same text, or the same text with its last word committed differently
  * (predictive text, autocorrect). Anything else is new typing.
+ *
+ * This is only the content half of the test: a message that differs from the
+ * sent one is a genuinely new message unless the *event itself* says the
+ * keyboard committed it (see {@link isCommittedEcho}). A quick correction that
+ * shares the sent message's words - "Meet at 7" then "Meet at 8" - used to be
+ * dropped by the stem rule alone (QA 1.66.61, lost second send).
  */
 export function isSentTextEcho(value: string, sent: string): boolean {
   const typed = value.trim();
@@ -218,6 +224,72 @@ export function isSentTextEcho(value: string, sent: string): boolean {
   if (lastBreak <= 0) return false;
   const stem = message.slice(0, lastBreak + 1);
   return typed.startsWith(stem) && !/\s/.test(typed.slice(stem.length));
+}
+
+/**
+ * InputEvent types the keyboard produces on its own: a composition (iOS
+ * commits a predictive or dictated word inside one) and an autocorrect
+ * replacement. Only these can carry the sent message back with a different
+ * last word.
+ */
+const KEYBOARD_COMMIT_INPUT_TYPES: ReadonlySet<string> = new Set([
+  "insertCompositionText",
+  "insertFromComposition",
+  "insertReplacementText",
+]);
+
+/**
+ * InputEvent types a person drives. Even text that reads like the sent message
+ * is theirs to keep: a paste, a drop, a cut or an undo is never the keyboard
+ * repeating itself.
+ */
+const PERSON_INPUT_TYPES: ReadonlySet<string> = new Set([
+  "insertFromPaste",
+  "insertFromPasteAsQuotation",
+  "insertFromDrop",
+  "insertFromYank",
+  "deleteByCut",
+  "deleteByDrag",
+  "historyUndo",
+  "historyRedo",
+]);
+
+/** What the composer can tell about the event that changed the field. */
+export interface ComposerInputKind {
+  /** The InputEvent's `inputType`, when the browser reports one. */
+  readonly inputType?: string | undefined;
+  /** The InputEvent's `isComposing`: a keyboard composition is in progress. */
+  readonly composing?: boolean | undefined;
+}
+
+/**
+ * Whether a change that matches the sent text may be the keyboard putting it
+ * back, rather than a person's own input. A committed last word counts only
+ * with an explicit commit signal: a composition or a replacement. A plain
+ * insertion that happens to repeat the sent message is dropped (the field was
+ * empty, so this is the keyboard re-applying it), but a different message is
+ * only ever treated as an echo when the event says the keyboard committed it.
+ */
+export function isCommittedEcho(
+  value: string,
+  sent: string,
+  input: ComposerInputKind = {},
+): boolean {
+  if (!isSentTextEcho(value, sent)) return false;
+  if (input.inputType !== undefined && PERSON_INPUT_TYPES.has(input.inputType)) return false;
+  if (value.trim() === sent.trim()) return true;
+  return input.composing === true || KEYBOARD_COMMIT_INPUT_TYPES.has(input.inputType ?? "");
+}
+
+/** Reads the change event's input kind, for {@link isCommittedEcho}. */
+function inputKindOf(event: {
+  readonly nativeEvent?: { readonly inputType?: unknown; readonly isComposing?: unknown };
+}): ComposerInputKind {
+  const native = event.nativeEvent;
+  return {
+    inputType: typeof native?.inputType === "string" ? native.inputType : undefined,
+    composing: native?.isComposing === true,
+  };
 }
 
 /**
@@ -374,14 +446,17 @@ export function PersonalComposer({
   /**
    * True (and the field emptied) when `value` is the keyboard re-applying the
    * message that was just sent: iOS can commit a predictive-text word or end a
-   * composition after Send cleared the field.
+   * composition after Send cleared the field. A message that differs from the
+   * sent one only counts as an echo when the event says the keyboard committed
+   * it, and the first change that is not an echo ends the guard for good, so a
+   * quickly typed or pasted correction is never dropped (QA 1.66.61).
    */
-  const dropSentEcho = (value: string): boolean => {
+  const dropSentEcho = (value: string, input: ComposerInputKind): boolean => {
     const echo = sentEchoRef.current;
     if (echo === null) return false;
     // The field reading empty (React having put it back) is not new typing.
     if (value.trim().length === 0) return false;
-    if (Date.now() > echo.until || !isSentTextEcho(value, echo.text)) {
+    if (Date.now() > echo.until || !isCommittedEcho(value, echo.text, input)) {
       sentEchoRef.current = null;
       return false;
     }
@@ -1156,7 +1231,7 @@ export function PersonalComposer({
             value={prompt}
             onChange={(event) => {
               // React puts the field back to the (empty) draft on its own.
-              if (dropSentEcho(event.target.value)) return;
+              if (dropSentEcho(event.target.value, inputKindOf(event))) return;
               setPrompt(threadRef, event.target.value);
               setCaret(event.target.selectionStart ?? event.target.value.length);
             }}
@@ -1164,7 +1239,11 @@ export function PersonalComposer({
               // A composition that ends with no input event after it can leave
               // the sent text in the field while the draft is already empty.
               const field = event.currentTarget;
-              if (dropSentEcho(field.value) && prompt.length === 0) field.value = "";
+              if (
+                dropSentEcho(field.value, { ...inputKindOf(event), composing: true }) &&
+                prompt.length === 0
+              )
+                field.value = "";
             }}
             onKeyDown={onKeyDown}
             // The caret can move without the text changing (tap, arrow keys),

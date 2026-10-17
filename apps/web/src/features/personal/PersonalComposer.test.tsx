@@ -20,7 +20,7 @@ import {
   retryOutboxEntry,
 } from "./outbox";
 import { setOutboxBlobBackendForTesting } from "./outboxBlobs";
-import { isSentTextEcho, PersonalComposer } from "./PersonalComposer";
+import { isCommittedEcho, isSentTextEcho, PersonalComposer } from "./PersonalComposer";
 import { LONG_PRESS_MS } from "./useLongPress";
 
 vi.mock("./AttachmentPreview", () => ({
@@ -308,19 +308,67 @@ describe("personal composer sends", () => {
       void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
     });
     const field = () => renderer.root.findByType("textarea");
-    const type = (value: string) =>
-      act(async () => field().props.onChange({ target: { value, selectionStart: value.length } }));
+    const type = (value: string, nativeEvent?: Record<string, unknown>) =>
+      act(async () =>
+        field().props.onChange({
+          target: { value, selectionStart: value.length },
+          ...(nativeEvent === undefined ? {} : { nativeEvent }),
+        }),
+      );
     // iOS commits the predictive word after Send cleared the field; an event
     // reading the emptied field in between must not end the guard.
     await type("");
     await type("Send this ");
     expect(state.draft.prompt).toBe("");
-    await type("Send thisss");
+    // A carried-back word with the last one committed differently, as the
+    // keyboard reports it: still the echo.
+    await type("Send thisss", { inputType: "insertCompositionText", isComposing: true });
     expect(state.draft.prompt).toBe("");
     await type("A new message");
     expect(state.draft.prompt).toBe("A new message");
     await act(async () => land({ _tag: "Success" }));
     expect(state.draft.prompt).toBe("A new message");
+  });
+
+  it("keeps a paste of a new message that shares the sent one's words (QA hunt, lost second send)", async () => {
+    // The reported repro: send "Meet at 7", then paste "Meet at 8" inside the
+    // echo window. It shares the sent message's stem, so the content rule alone
+    // threw it away; a paste is the person's own input.
+    let land!: (value: { _tag: string }) => void;
+    state.start.mockReturnValue(new Promise((resolve) => (land = resolve)));
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+    });
+    expect(state.draft.prompt).toBe("");
+    await act(async () =>
+      renderer.root.findByType("textarea").props.onChange({
+        target: { value: "Send thisss", selectionStart: 11 },
+        nativeEvent: { inputType: "insertFromPaste" },
+      }),
+    );
+    expect(state.draft.prompt).toBe("Send thisss");
+    await act(async () => land({ _tag: "Success" }));
+    expect(state.draft.prompt).toBe("Send thisss");
+  });
+
+  it("keeps a second message whose only difference is its last word, with no commit signal", async () => {
+    // A whole-text insertion the browser reports as plain input (a test
+    // harness's fill, a keyboard that reports nothing) is not the keyboard
+    // repeating itself: it is the first change since Send cleared the field and
+    // it differs from the sent message, so it must be kept.
+    let land!: (value: { _tag: string }) => void;
+    state.start.mockReturnValue(new Promise((resolve) => (land = resolve)));
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+    });
+    await act(async () =>
+      renderer.root.findByType("textarea").props.onChange({
+        target: { value: "Send thisss", selectionStart: 11 },
+      }),
+    );
+    expect(state.draft.prompt).toBe("Send thisss");
+    await act(async () => land({ _tag: "Success" }));
+    expect(state.draft.prompt).toBe("Send thisss");
   });
 
   it("preserves edits made during upload and releases accepted attachments", async () => {
@@ -959,6 +1007,27 @@ describe("isSentTextEcho", () => {
     expect(isSentTextEcho("something else", "saying the issue")).toBe(false);
     expect(isSentTextEcho("", "saying the issue")).toBe(false);
     expect(isSentTextEcho("Hi", "Hello")).toBe(false);
+  });
+});
+
+describe("isCommittedEcho", () => {
+  it("takes a committed last word only from a keyboard commit, never from a paste or plain insert", () => {
+    // The content rule alone: "Meet at 8" shares "Meet at 7"'s stem.
+    expect(isCommittedEcho("Meet at 8", "Meet at 7")).toBe(false);
+    expect(isCommittedEcho("Meet at 8", "Meet at 7", { inputType: "insertFromPaste" })).toBe(false);
+    expect(isCommittedEcho("Meet at 8", "Meet at 7", { inputType: "insertText" })).toBe(false);
+    // A composition or a replacement is the keyboard committing the word.
+    expect(isCommittedEcho("Meet at 8", "Meet at 7", { composing: true })).toBe(true);
+    expect(isCommittedEcho("Meet at 8", "Meet at 7", { inputType: "insertReplacementText" })).toBe(
+      true,
+    );
+  });
+
+  it("drops the sent text itself even without a commit signal, except when the person pasted it", () => {
+    expect(isCommittedEcho("Meet at 7 ", "Meet at 7")).toBe(true);
+    expect(isCommittedEcho("Meet at 7", "Meet at 7", { inputType: "insertText" })).toBe(true);
+    expect(isCommittedEcho("Meet at 7", "Meet at 7", { inputType: "insertFromPaste" })).toBe(false);
+    expect(isCommittedEcho("", "Meet at 7")).toBe(false);
   });
 });
 
