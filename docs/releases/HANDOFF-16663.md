@@ -142,3 +142,25 @@ Run from the release worktree on the commit above, with `T3CODE_*`/`PERSONAL_*`/
    ends, `projection_turns` must hold no row with `turn_id` NULL and `state` 'pending'.
 3. The skill list on a fresh bot session (Settings > the bot's chat): 4 skills, and `/run` still
    expands.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=ea54da1ead848f2ede5ec0457ecb97223dfd8e13 release=ea54da1ead84 json-sha256=4eca82511fda48d1adb7d8b81beb42d3246f9acc5dfa08a240801b3ae522623e result=PASS -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-17T04:33:25Z. Version 1.66.63, release `ea54da1ead84`, commit `ea54da1ead848f2ede5ec0457ecb97223dfd8e13` on `release/hbots-16663`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\ea54da1ead84\gate-evidence.json` (sha256 `4eca82511fda48d1adb7d8b81beb42d3246f9acc5dfa08a240801b3ae522623e`) and the full gate logs in `releases\ea54da1ead84\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2920 tests passed, 0 failed, 4 skipped, in 210 files | 224.7   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 21.6    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2867 tests passed, 0 failed, 0 skipped, in 256 files | 31.9    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 4.1     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 253 checks ok, 0 failed                              | 65      |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16663\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\ea54da1ead84" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 263.7   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `ea54da1ead848f2ede5ec0457ecb97223dfd8e13`, at end `ea54da1ead848f2ede5ec0457ecb97223dfd8e13`; tracked files modified: none. Staged release: version 1.66.63, sha ea54da1ead84, dirty False, externals copied; `dist/bin.mjs` sha256 `e3b3012f0292a71e4b441e65eefc074745cf346b2b20e5c6cad003ec6b154409`.
+<!-- gate-evidence:end -->
