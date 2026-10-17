@@ -21,6 +21,7 @@ import {
   tracePruneDue,
 } from "./memoryAgeingPolicy.ts";
 import { carryActiveApps, preferenceSend, sessionHoldsRules } from "./memoryContextPolicy.ts";
+import { PERSONAL_MEMORY_RESEND_EVERY_TURNS } from "./memoryShared.ts";
 import type { SentPreferences } from "./memoryCore.ts";
 import {
   isOwnerMessageId,
@@ -261,7 +262,7 @@ describe("memoryContextPolicy", () => {
       session: { key: "s1", fresh: false },
       listedCount: 2,
       previous: previous(),
-      resendEvery: 12,
+      resendEvery: PERSONAL_MEMORY_RESEND_EVERY_TURNS,
     };
     expect(sessionHoldsRules(base)).toBe(true);
     expect(sessionHoldsRules({ ...base, session: undefined })).toBe(false);
@@ -269,9 +270,11 @@ describe("memoryContextPolicy", () => {
     expect(sessionHoldsRules({ ...base, session: { key: "s2", fresh: false } })).toBe(false);
     expect(sessionHoldsRules({ ...base, listedCount: 0 })).toBe(false);
     expect(sessionHoldsRules({ ...base, previous: undefined })).toBe(false);
-    // turns + 1 < resendEvery: turn 11 of 12 is the last reminder, the 12th resends in full.
-    expect(sessionHoldsRules({ ...base, previous: previous({ turns: 10 }) })).toBe(true);
-    expect(sessionHoldsRules({ ...base, previous: previous({ turns: 11 }) })).toBe(false);
+    // turns + 1 < resendEvery: turn 19 of 20 is the last reminder, the 20th resends in full.
+    expect(sessionHoldsRules({ ...base, previous: previous({ turns: 18 }) })).toBe(true);
+    expect(sessionHoldsRules({ ...base, previous: previous({ turns: 19 }) })).toBe(false);
+    // The list itself moved from 12 to 20 turns in 1.66.62.
+    expect(PERSONAL_MEMORY_RESEND_EVERY_TURNS).toBe(20);
   });
 
   const rule = (id: string, apps: ReadonlyArray<string> | null = null) => ({ memoryId: id, apps });

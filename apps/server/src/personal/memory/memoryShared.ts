@@ -34,8 +34,11 @@ export const PERSONAL_MEMORY_QUERY_MAX_CHARS = 8_000;
 /**
  * The full preference list goes to a session once, then again only when the
  * set changed, after the provider compacted the chat, or every this many turns.
+ * 20, was 12 until 1.66.62: a full re-send of the ~46 rules costs 10-12k chars,
+ * and the one-line reminder in between carries the same standing rules, so the
+ * extra eight turns of reminders are cheaper than eight more full lists.
  */
-export const PERSONAL_MEMORY_RESEND_EVERY_TURNS = 12;
+export const PERSONAL_MEMORY_RESEND_EVERY_TURNS = 20;
 /**
  * Standing preferences in one turn at most, newest first. Harout's rules live
  * as preferences, and a rule only picked when its words matched the message
@@ -44,8 +47,56 @@ export const PERSONAL_MEMORY_RESEND_EVERY_TURNS = 12;
  */
 export const PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES = 60;
 export const PERSONAL_MEMORY_PREFERENCE_MAX_CHARS = 15_000;
-export const BLOCK_ENTRY_MAX_CHARS = 500;
+/**
+ * How much of a note or a task summary one memory line carries, 300 since
+ * 1.66.62 (was 500). A preference is never clipped: cutting a rule short can
+ * drop the rule itself, so the cap is notes and summaries only (see
+ * `memoryLine` in `memoryBlock.ts`).
+ */
+export const BLOCK_ENTRY_MAX_CHARS = 300;
 export const SUMMARY_MAX_CHARS = 600;
+/**
+ * Most characters one `search_memory` result may carry, keeping the best
+ * matches first (app-scoped rules the query named come first and count against
+ * it). A CTO search returned 21.7k chars into a fresh chat on 17 Oct.
+ */
+export const PERSONAL_MEMORY_SEARCH_MAX_CHARS = 6_000;
+/**
+ * Kill switch for that cap: `T3CODE_PERSONAL_MEMORY_SEARCH_MAX_CHARS` (the
+ * `PERSONAL_` spelling works too) takes a positive whole number of characters,
+ * or `off` / `0` / `false` / `no` / `disabled` to return every match as before.
+ * Anything else falls back to the default. Read on every call.
+ */
+export const memorySearchMaxChars = (env: NodeJS.ProcessEnv = process.env): number => {
+  const raw = (env.T3CODE_PERSONAL_MEMORY_SEARCH_MAX_CHARS ?? env.PERSONAL_MEMORY_SEARCH_MAX_CHARS)
+    ?.trim()
+    .toLowerCase();
+  if (raw === undefined || raw.length === 0) return PERSONAL_MEMORY_SEARCH_MAX_CHARS;
+  if (["off", "0", "false", "no", "disabled"].includes(raw)) return 0;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : PERSONAL_MEMORY_SEARCH_MAX_CHARS;
+};
+
+/**
+ * Keeps the leading entries whose JSON fits `maxChars` and counts the rest.
+ * The first entry is always kept, so a single oversized match still reaches the
+ * bot. `maxChars` of 0 or less keeps everything (the kill switch).
+ */
+export function capByJsonChars<T>(
+  entries: ReadonlyArray<T>,
+  maxChars: number,
+): { readonly entries: ReadonlyArray<T>; readonly dropped: number } {
+  if (maxChars <= 0 || entries.length === 0) return { entries, dropped: 0 };
+  const kept: Array<T> = [];
+  let used = 2; // the surrounding []
+  for (const entry of entries) {
+    const size = JSON.stringify(entry)?.length ?? 0;
+    if (kept.length > 0 && used + size + 1 > maxChars) break;
+    kept.push(entry);
+    used += size + 1;
+  }
+  return { entries: kept, dropped: entries.length - kept.length };
+}
 
 /** Most apps one session's chat can have been about. */
 export const STICKY_APPS_MAX = 8;

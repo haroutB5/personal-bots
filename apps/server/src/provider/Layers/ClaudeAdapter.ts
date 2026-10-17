@@ -8,12 +8,15 @@
  * @module ClaudeAdapterLive
  */
 
+import * as NodeFs from "node:fs";
+import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import {
   type CanUseTool,
   query,
   getSessionMessages,
   forkSession,
+  type HookCallback,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
   type PermissionResult,
@@ -106,6 +109,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  largeFileReadGuardEnabled,
+  largeFileReadRefusalForSize,
+  personalBotDisallowedTools,
+  personalBotSkillOverrides,
+} from "../../personal/personalContextBudget.ts";
 import {
   botStateDenyEnabled,
   buildClaudeBotPermissionDeny,
@@ -1688,6 +1697,69 @@ export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
 export const CLAUDE_THREAD_DEFAULT_ENVIRONMENT = {
   CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
 } as const;
+
+/**
+ * The message a whole-file `Read` of a large text file is refused with, or
+ * undefined to let it through (1.66.62). A personal bot runs in
+ * `bypassPermissions`, where the SDK never calls `canUseTool`, so this rides a
+ * `PreToolUse` hook instead: hooks run in every permission mode and a `deny`
+ * decision is honoured there. The hook reads the file only when its byte size
+ * leaves the answer open, so the cost is one `stat` on a normal Read.
+ */
+export function largeFileReadRefusalMessage(input: {
+  readonly toolName: string;
+  readonly toolInput: unknown;
+  readonly cwd: string | undefined;
+}): string | undefined {
+  if (input.toolName !== "Read") return undefined;
+  const record =
+    typeof input.toolInput === "object" && input.toolInput !== null
+      ? (input.toolInput as Record<string, unknown>)
+      : undefined;
+  const rawPath = record?.file_path;
+  if (typeof rawPath !== "string" || rawPath.trim().length === 0) return undefined;
+  const resolved = NodePath.isAbsolute(rawPath)
+    ? rawPath
+    : NodePath.resolve(input.cwd ?? process.cwd(), rawPath);
+  let stats: NodeFs.Stats;
+  try {
+    stats = NodeFs.statSync(resolved);
+  } catch {
+    // A missing file or a directory is the Read tool's own error to report.
+    return undefined;
+  }
+  if (!stats.isFile()) return undefined;
+  return largeFileReadRefusalForSize({
+    toolName: input.toolName,
+    toolInput: input.toolInput,
+    statBytes: stats.size,
+    readText: () => {
+      try {
+        return NodeFs.readFileSync(resolved, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+  });
+}
+
+/** The `PreToolUse` hook a personal bot session registers for the Read guard. */
+export const PERSONAL_BOT_READ_GUARD_HOOK: HookCallback = (hookInput) => {
+  if (hookInput.hook_event_name !== "PreToolUse") return Promise.resolve({});
+  const message = largeFileReadRefusalMessage({
+    toolName: hookInput.tool_name,
+    toolInput: hookInput.tool_input,
+    cwd: hookInput.cwd,
+  });
+  if (message === undefined) return Promise.resolve({});
+  return Promise.resolve({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse" as const,
+      permissionDecision: "deny" as const,
+      permissionDecisionReason: message,
+    },
+  });
+};
 
 function buildPromptText(
   input: ProviderSendTurnInput,
@@ -5295,6 +5367,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? "bypassPermissions"
           : runtimeModeToPermission[input.runtimeMode]);
       const personalBot = input.personalBot === true;
+      // The fixed per-step context trims (1.66.62): the built-in tools no bot
+      // calls, the bundled skills bots never use, and the large whole-file Read
+      // guard. Each has its own env kill switch, read here at session start.
+      const botSkillOverrides = personalBot ? personalBotSkillOverrides() : undefined;
+      const botDisallowedTools = personalBot ? personalBotDisallowedTools() : undefined;
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
@@ -5304,6 +5381,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
           : {}),
         ...(personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
+        ...(botSkillOverrides === undefined ? {} : { skillOverrides: botSkillOverrides }),
         // Deny rules hold in every permission mode, bypassPermissions included.
         // Best effort: see botProtectedPaths for what they do and do not stop.
         ...(personalBot && botStateDenyEnabled()
@@ -5425,6 +5503,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(personalBot ? { snapshot: false } : {}),
         },
         settingSources,
+        ...(botDisallowedTools === undefined ? {} : { disallowedTools: botDisallowedTools }),
+        // A whole-file Read of a large text file is refused before it runs; see
+        // PERSONAL_BOT_READ_GUARD_HOOK. Off with PERSONAL_READ_LARGE_GUARD=off.
+        ...(personalBot && largeFileReadGuardEnabled()
+          ? {
+              hooks: {
+                PreToolUse: [{ matcher: "Read", hooks: [PERSONAL_BOT_READ_GUARD_HOOK] }],
+              },
+            }
+          : {}),
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
         ...(effectiveEffort

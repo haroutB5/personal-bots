@@ -282,7 +282,7 @@ export const SaveMemoryInput = Schema.Struct({
   ),
   kind: Schema.Literals(["note", "preference"]).annotate({
     description:
-      "Required. preference: a standing instruction or rule the user wants bots to follow (always / never / when X do Y, how to report, who does what). Every bot it reaches gets the full preference list when its session starts and again whenever the set changes, after a context compaction, or every 12 turns; the turns in between carry a one-line reminder that it still applies. note: a fact about the user, their things, a decision or an event; notes are looked up when relevant.",
+      "Required. preference: a standing instruction or rule the user wants bots to follow (always / never / when X do Y, how to report, who does what). Every bot it reaches gets the full preference list when its session starts and again whenever the set changes, after a context compaction, or every 20 turns; the turns in between carry a one-line reminder that it still applies. note: a fact about the user, their things, a decision or an event; notes are looked up when relevant.",
   }),
   scope: Schema.optional(
     Schema.Literals(["team", "shared", "bot"]).annotate({
@@ -427,7 +427,7 @@ const DeleteRoutineTool = Tool.make("delete_routine", {
 
 const SearchMemoryTool = Tool.make("search_memory", {
   description:
-    "Search saved memory: what the user asked bots to remember (entries for all bots, for your team, and your own) and summaries of past tasks. An entry matches when it contains any of the query's words (longer words also match their plurals and extensions; common words are ignored), best matches first. A message usually arrives with its most relevant entries already in front of it under 'Known facts (from memory)', so search for what those do not cover. Task summaries describe past work, not preferences. When the query names an app (matchday, hbots, caltrack ...), every rule scoped to that app comes first and on top of the limit, so a search can return more entries than limit.",
+    "Search saved memory: what the user asked bots to remember (entries for all bots, for your team, and your own) and summaries of past tasks. An entry matches when it contains any of the query's words (longer words also match their plurals and extensions; common words are ignored), best matches first. A message usually arrives with its most relevant entries already in front of it under 'Known facts (from memory)', so search for what those do not cover. Task summaries describe past work, not preferences. When the query names an app (matchday, hbots, caltrack ...), every rule scoped to that app comes first and on top of the limit. A big result is capped at about 6,000 characters, best matches first, with a closing note saying how many more entries matched; narrow the query or lower limit for the rest.",
   parameters: SearchMemoryInput,
   success: SearchMemoryResult,
   failure: PersonalToolFailure,

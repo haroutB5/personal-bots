@@ -1,6 +1,6 @@
 ---
 name: speedoptimiser
-description: Optimise and enhance the performance of an app: make a web app measurably faster with a measure, optimize and ratchet loop, based on how claude.ai was made faster. Use when asked to speed up a web app or PWA, find what makes it slow, set performance budgets, or add real-user timing. You define user journeys, take a baseline with a phone-sized headless Chrome harness, check which metrics track wall-clock, fix the biggest measured offender one change per commit with before/after numbers and a kill switch, then lock each win into a budget that can only go down.
+description: Optimise and enhance the performance of an app: measure, fix the biggest measured offender one change per commit with before/after numbers, then ratchet each win into a budget that can only go down. Use when asked to speed up a web app or PWA, find what makes it slow, or set performance budgets.
 ---
 
 # Speed optimiser: measure, optimize, ratchet
