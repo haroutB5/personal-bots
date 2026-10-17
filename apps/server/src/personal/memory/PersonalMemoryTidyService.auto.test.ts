@@ -210,19 +210,43 @@ describe("the nightly run makes its changes itself", () => {
             superseded_reason = 'Retired by the tidy-up: Leave as is.', version = version + 1
         WHERE memory_id = ${ids.building}
       `;
+      // A deliberate old retirement (an ordinary reason) is not the bug and
+      // must stay archived: the repair only undoes leave/keep verdicts.
+      yield* sql`
+        INSERT INTO personal_memory_tidy_changes (
+          run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id,
+          content, reason, created_at
+        )
+        VALUES (${runId}, 'applied', 'supersede', 'shared', NULL,
+          ${`["${ids.tea}"]`}, NULL, NULL, 'Old tea note; app is far past it.', ${nowIso})
+      `;
+      yield* sql`
+        UPDATE personal_memory
+        SET superseded_at = ${nowIso}, superseded_by = NULL,
+            superseded_reason = 'Retired by the tidy-up: Old tea note; app is far past it.',
+            version = version + 1
+        WHERE memory_id = ${ids.tea}
+      `;
       expect(yield* currentIds).not.toContain(ids.building);
+      expect(yield* currentIds).not.toContain(ids.tea);
 
       expect(yield* tidy.repairOrphanedSupersedes).toBe(1);
       expect(yield* currentIds).toContain(ids.building);
+      // A retirement with an ordinary reason stays archived.
+      expect(yield* currentIds).not.toContain(ids.tea);
       // Nothing left to do on the next boot.
       expect(yield* tidy.repairOrphanedSupersedes).toBe(0);
       const direct = yield* sql`
         SELECT status, action FROM personal_memory_tidy_changes WHERE run_id = ${runId}
       `;
-      expect(direct).toEqual([{ status: "undone", action: "supersede" }]);
+      expect(direct.map((row) => row.status).toSorted()).toEqual(["applied", "undone"]);
       const log = yield* tidy.log({ limit: 60 });
       expect(log.runs.map((item) => item.runId)).toContain(runId);
-      expect(log.runs.find((item) => item.runId === runId)!.changes[0]!.status).toBe("undone");
+      expect(
+        log.runs
+          .find((item) => item.runId === runId)!
+          .changes.some((item) => item.status === "undone"),
+      ).toBe(true);
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 

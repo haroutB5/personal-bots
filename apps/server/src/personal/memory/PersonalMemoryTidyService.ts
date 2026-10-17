@@ -45,6 +45,7 @@ import {
   entrySnapshotsJson,
   matchesSnapshot,
   readEntrySnapshots,
+  reasonSaysLeave,
   type EntrySnapshot,
   TIDY_MAX_ENTRIES_PER_CALL,
   TidyJudgeOutput,
@@ -2088,11 +2089,13 @@ export const make = Effect.gen(function* () {
   ).pipe(lock.withPermits(1), storageFailure("snapshot"));
 
   /**
-   * Startup repair (1.66.69): a supersede recorded with no replacement is a bug,
-   * not a retirement. Every entry such a change archived is restored (unless an
-   * identical entry is already current), and the change is marked undone so the
-   * tidy-up never proposes it again. Additive, idempotent, one INFO line when it
-   * restores something.
+   * Startup repair (1.66.69): a supersede recorded with no replacement **and a
+   * reason that says leave/keep** is the 14 Oct bug, not a retirement. Every
+   * entry that change archived is restored (unless an identical entry is
+   * already current), and the change is marked undone so the tidy-up never
+   * proposes it again. A by-null supersede with an ordinary reason (the old
+   * deliberate retirement of a stale note) is left archived. Additive,
+   * idempotent, one INFO line when it restores something.
    */
   const repairOrphanedSupersedes: PersonalMemoryTidy["Service"]["repairOrphanedSupersedes"] =
     Effect.gen(function* () {
@@ -2100,8 +2103,9 @@ export const make = Effect.gen(function* () {
       const rows = yield* sql<{
         readonly changeId: number;
         readonly memoryIdsJson: string;
+        readonly reason: string;
       }>`
-        SELECT change_id AS "changeId", memory_ids_json AS "memoryIdsJson"
+        SELECT change_id AS "changeId", memory_ids_json AS "memoryIdsJson", reason
         FROM personal_memory_tidy_changes
         WHERE action = 'supersede' AND result_memory_id IS NULL
           AND status IN ('applied', 'approved')
@@ -2110,6 +2114,11 @@ export const make = Effect.gen(function* () {
       let repairedChanges = 0;
       const restoredIds: Array<string> = [];
       for (const row of rows) {
+        // Only the bug's shape: the reason was a verdict to leave the entry as
+        // it is (change 270: "Leave as is; ..."). A deliberate retirement of an
+        // old note (stale release notes, a passed date) has its own reason and
+        // stays archived.
+        if (!reasonSaysLeave(row.reason)) continue;
         let touched = 0;
         for (const id of decodeIds(row.memoryIdsJson)) {
           // Only what this bug archived: a retired supersede (superseded_by
