@@ -26,6 +26,13 @@ import { SqlError, classifySqliteError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
 
 import { noteSlowOp } from "./stallContext.ts";
+import {
+  SQLITE_WORKER_ENV,
+  SqliteWorkerClient,
+  SqliteWorkerFailure,
+  sqliteWorkerEnabled,
+  type SqliteWorkerExecuteRequest,
+} from "./nodeSqliteWorker.ts";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
@@ -38,6 +45,12 @@ export interface SqliteClientConfig {
   readonly spanAttributes?: Record<string, unknown> | undefined;
   readonly transformResultNames?: ((str: string) => string) | undefined;
   readonly transformQueryNames?: ((str: string) => string) | undefined;
+  /**
+   * Run SQL on one serialized worker thread (the default). `false` keeps the
+   * statement on the calling thread, exactly as before the worker existed.
+   * Unset reads `T3CODE_SQLITE_WORKER` once, at layer construction.
+   */
+  readonly worker?: boolean | undefined;
 }
 
 export class UnsupportedNodeSqliteVersionError extends Schema.TaggedError<UnsupportedNodeSqliteVersionError>()(
@@ -101,6 +114,59 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
   return classifySqliteError(cause, { message, operation });
 };
 
+const STAGE_MESSAGES: Record<string, string> = {
+  open: "Failed to open database",
+  prepare: "Failed to prepare statement",
+  execute: "Failed to execute statement",
+  close: "Failed to close database",
+  resetResultMode: "Failed to reset statement result mode",
+  worker: "SQLite worker failed",
+};
+
+/**
+ * Rebuild the SQLite error a worker reported with the same fields the
+ * in-thread path classifies, so a constraint or lock keeps its typed reason.
+ * The operation and message stay the ones the in-thread path used.
+ */
+const workerFailureToSqlError = (
+  cause: unknown,
+  fallbackMessage: string,
+  fallbackOperation: string,
+): SqlError => {
+  if (!(cause instanceof SqliteWorkerFailure)) {
+    return new SqlError({ reason: classifyError(cause, fallbackMessage, fallbackOperation) });
+  }
+  const { payload } = cause;
+  const error = new Error(payload.message);
+  if (payload.code !== undefined) Object.assign(error, { code: payload.code });
+  if (payload.errcode !== undefined) Object.assign(error, { errcode: payload.errcode });
+  if (payload.errstr !== undefined) Object.assign(error, { errstr: payload.errstr });
+  if (payload.stack !== undefined) Object.assign(error, { stack: payload.stack });
+  const operation = payload.operation || fallbackOperation;
+  return new SqlError({
+    reason: classifyError(error, STAGE_MESSAGES[operation] ?? fallbackMessage, operation),
+  });
+};
+
+/**
+ * Send one statement to the worker. Interrupting the fiber only stops waiting:
+ * the worker still finishes the statement, so a following request keeps the
+ * order the in-thread call would have had.
+ */
+const workerRequest = <A>(
+  client: SqliteWorkerClient,
+  request: SqliteWorkerExecuteRequest,
+): Effect.Effect<A, SqlError> =>
+  Effect.tryPromise({
+    try: (signal) => {
+      const pending = client.send(request);
+      if (signal.aborted) client.abandon(pending.id);
+      else signal.addEventListener("abort", () => client.abandon(pending.id), { once: true });
+      return pending.promise as Promise<A>;
+    },
+    catch: (cause) => workerFailureToSqlError(cause, "Failed to execute statement", "execute"),
+  });
+
 const make = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
 ): Effect.fn.Return<Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
@@ -111,7 +177,8 @@ const make = Effect.fn("makeWithDatabase")(function* (
     ? Statement.defaultTransforms(options.transformResultNames).array
     : undefined;
 
-  const makeConnection = Effect.gen(function* () {
+  // The pre-worker path, kept byte-for-byte in behaviour for the kill switch.
+  const makeInlineConnection = Effect.gen(function* () {
     const scope = yield* Effect.scope;
     const db = yield* Effect.try({
       try: () =>
@@ -270,8 +337,104 @@ const make = Effect.fn("makeWithDatabase")(function* (
     });
   });
 
+  const makeWorkerConnection = Effect.gen(function* () {
+    const scope = yield* Effect.scope;
+    const client = yield* Effect.tryPromise({
+      try: () =>
+        SqliteWorkerClient.start({
+          filename: options.filename,
+          readonly: options.readonly ?? false,
+          allowExtension: options.allowExtension ?? false,
+          prepareCacheSize: options.prepareCacheSize ?? 200,
+          prepareCacheTtlMs: Duration.toMillis(options.prepareCacheTTL ?? Duration.minutes(10)),
+        }),
+      catch: (cause) => workerFailureToSqlError(cause, "Failed to open database", "open"),
+    });
+    yield* Scope.addFinalizer(
+      scope,
+      Effect.tryPromise({
+        try: () => client.close(),
+        catch: (cause) => workerFailureToSqlError(cause, "Failed to close database", "close"),
+      }).pipe(Effect.orDie),
+    );
+
+    const runOnWorker = (
+      sql: string,
+      params: ReadonlyArray<unknown>,
+      mode: "rows" | "values" | "raw",
+      unprepared: boolean,
+      safeIntegers: boolean,
+    ) => {
+      const startedAt = performance.now();
+      return Effect.map(
+        workerRequest<unknown>(client, { sql, params, mode, safeIntegers, unprepared }),
+        (rows) => {
+          // Round-trip time, not loop occupancy: the statement now runs on the
+          // worker. Still useful when the stall recorder names a slow query.
+          noteSlowOp("sql", startedAt, Array.isArray(rows) ? rows.length : 0, () => sql);
+          return rows;
+        },
+      );
+    };
+
+    return identity<Connection>({
+      execute(sql, params, rowTransform) {
+        const effect = Effect.withFiber<unknown, SqlError>((fiber) =>
+          runOnWorker(
+            sql,
+            params,
+            "rows",
+            false,
+            Boolean(Context.get(fiber.context, Client.SafeIntegers)),
+          ),
+        ).pipe(Effect.map((rows) => rows as ReadonlyArray<any>));
+        return rowTransform ? Effect.map(effect, rowTransform) : effect;
+      },
+      executeRaw(sql, params) {
+        return Effect.withFiber<unknown, SqlError>((fiber) =>
+          runOnWorker(
+            sql,
+            params,
+            "raw",
+            false,
+            Boolean(Context.get(fiber.context, Client.SafeIntegers)),
+          ),
+        );
+      },
+      executeValues(sql, params) {
+        // The in-thread path never switched values results to BigInts.
+        return runOnWorker(sql, params, "values", false, false) as Effect.Effect<
+          ReadonlyArray<ReadonlyArray<unknown>>,
+          SqlError
+        >;
+      },
+      executeValuesUnprepared(sql, params) {
+        return runOnWorker(sql, params ?? [], "values", true, false) as Effect.Effect<
+          ReadonlyArray<ReadonlyArray<unknown>>,
+          SqlError
+        >;
+      },
+      executeUnprepared(sql, params, rowTransform) {
+        const effect = Effect.withFiber<unknown, SqlError>((fiber) =>
+          runOnWorker(
+            sql,
+            params ?? [],
+            "rows",
+            true,
+            Boolean(Context.get(fiber.context, Client.SafeIntegers)),
+          ),
+        ).pipe(Effect.map((rows) => rows as ReadonlyArray<any>));
+        return rowTransform ? Effect.map(effect, rowTransform) : effect;
+      },
+      executeStream(_sql, _params) {
+        return Stream.die(new UnsupportedNodeSqliteOperationError());
+      },
+    });
+  });
+
   const semaphore = yield* Semaphore.make(1);
-  const connection = yield* makeConnection;
+  const useWorker = options.worker ?? sqliteWorkerEnabled(process.env[SQLITE_WORKER_ENV]);
+  const connection = yield* useWorker ? makeWorkerConnection : makeInlineConnection;
 
   const acquirer = semaphore.withPermits(1)(Effect.succeed(connection));
   const transactionAcquirer = Effect.uninterruptibleMask((restore) => {

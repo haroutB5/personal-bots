@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { sqliteWorkerEnabled } from "@t3tools/shared/nodeSqliteWorker";
 
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
@@ -16,14 +17,14 @@ import {
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
 /**
- * `PRAGMA synchronous` for the server's connection. SQLite runs on the main thread, so
- * the default (FULL: fsync the -wal file on every commit) stops the event loop for as
- * long as the disk takes, and a busy disk (an install, a build, a scan) makes that
- * seconds: 5 of 5 runs of a 30 s write test under disk load had a commit over 1 s,
- * median 5.9 s of the loop blocked. NORMAL (fsync only when a checkpoint runs) cut that
- * to 1 of 5 and a median of 1.7 s. A crash of the server loses nothing either way; only
- * a power cut or OS crash can lose the last commits, and the database stays consistent.
- * `T3CODE_SQLITE_SYNCHRONOUS=full` restores FULL.
+ * `PRAGMA synchronous` for the server's connection. Before 1.66.70 SQLite ran on the
+ * main thread, so the default (FULL: fsync the -wal file on every commit) stopped the
+ * event loop for as long as the disk takes, and a busy disk (an install, a build, a
+ * scan) makes that seconds: 5 of 5 runs of a 30 s write test under disk load had a
+ * commit over 1 s, median 5.9 s of the loop blocked. NORMAL (fsync only when a
+ * checkpoint runs) cut that to 1 of 5 and a median of 1.7 s. A crash of the server
+ * loses nothing either way; only a power cut or OS crash can lose the last commits, and
+ * the database stays consistent. `T3CODE_SQLITE_SYNCHRONOUS=full` restores FULL.
  */
 export const sqliteSynchronousFromEnv = (value: string | undefined): "NORMAL" | "FULL" => {
   const normalized = value?.trim().toLowerCase();
@@ -124,11 +125,18 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+  // Read once at startup: one serialized worker owns the connection unless the
+  // kill switch is set, and `off` restores the in-thread bridge exactly.
+  const worker = sqliteWorkerEnabled(process.env.T3CODE_SQLITE_WORKER);
+  yield* Effect.logInfo(
+    `SQLite connection mode: ${worker ? "worker" : "inline"} (${path.basename(dbPath)})`,
+  );
 
   return Layer.provideMerge(
     setup(dbPath),
     NodeSqliteClient.layer({
       filename: dbPath,
+      worker,
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",

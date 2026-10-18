@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import {
   PersonalBotId,
   PersonalBotTokenUsageResult,
@@ -122,10 +124,12 @@ const harness = (scanner: ReturnType<typeof fakeScanner>) =>
     Layer.provideMerge(SqlitePersistenceMemory),
   );
 
-/** Lets the detached refresh fiber run to its next suspension. */
-const settle = Effect.forEach(Array.from({ length: 30 }), () => Effect.yieldNow, {
-  discard: true,
-});
+/**
+ * Lets the detached refresh fiber run to its next suspension. SQLite now
+ * answers from a worker thread, so this has to wait for a real event-loop turn
+ * (yieldNow only drains microtasks) before the fiber can make progress.
+ */
+const settle = Effect.promise(() => delay(20));
 
 const input = { timeZone: "UTC" };
 

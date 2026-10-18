@@ -1,5 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - asserts the stored payload JSON verbatim.
 import * as NodeCrypto from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
@@ -172,8 +173,14 @@ const visiblePage = (connectionId: string) =>
     return received;
   });
 
+/** Waits for the SQLite worker's replies, which arrive on a real event-loop turn. */
+const flushIo = Effect.promise(() => delay(20));
+
 /** Lets every in-app wait run out (acknowledged or not), then drains the outbox. */
 const settle = Effect.gen(function* () {
+  // The outbox and the reactor's rows live on the SQLite worker now, so a
+  // microtask drain is not enough: wait for the worker's replies first.
+  yield* flushIo;
   yield* TestClock.adjust(`${PersonalPushService.IN_APP_ACK_TIMEOUT_MS + 1000} millis`);
   const push = yield* PersonalPushService.PersonalPushService;
   yield* push.drain;
@@ -579,6 +586,7 @@ it.effect("a chat turn that fails and stays failed notifies once, with a short r
     expect(yield* outbox).toEqual([]);
     yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
     yield* push.drain;
+    yield* flushIo;
 
     const rows = yield* outbox;
     expect(rows.length).toBe(1);
@@ -601,12 +609,14 @@ it.effect("a chat turn that fails and stays failed notifies once, with a short r
     );
     yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
     yield* push.drain;
+    yield* flushIo;
     expect((yield* outbox).length).toBe(1);
 
     // An error seen with no turn in flight (a session dying on its own) is silent.
     yield* push.ingestDomainEvent(failedSession(CHAT, "2026-09-18T09:10:00.000Z"));
     yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
     yield* push.drain;
+    yield* flushIo;
     expect((yield* outbox).length).toBe(1);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
@@ -1147,6 +1157,7 @@ it.effect("a bot with hidden previews: no reply text in the outbox, push body or
     yield* push.ingestDomainEvent(failedSession(CHAT, "2026-10-05T09:00:01.000Z"));
     yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
     yield* push.drain;
+    yield* flushIo;
 
     const payloads = yield* queuedPayloads;
     expect(payloads.length).toBe(4);
