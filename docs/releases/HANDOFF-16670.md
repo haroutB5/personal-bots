@@ -8,8 +8,10 @@ once at server start. No schema change and no migration (the maximum stays 111);
 `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged only; nothing is activated.
 
 Branch `release/hbots-16670`, cut from `personal-bots/main` `a99d8a68e9` (the
-docs commit after live 1.66.69 `9bb580cc2975`). Code commit `81165e135d`; staged
-release `81165e135d80` (version 1.66.70, externals copied).
+docs commit after live 1.66.69 `9bb580cc2975`). Code commits `81165e135d` (the
+worker) and `2e81b53101` (a test-timing fix only); staged release `2e81b53101ce`
+(version 1.66.70, externals copied). The measurement below ran on
+`81165e135d80`, the same server code without that test-file change.
 
 ## 1. One serialized worker
 
