@@ -9,9 +9,9 @@ once at server start. No schema change and no migration (the maximum stays 111);
 
 Branch `release/hbots-16670`, cut from `personal-bots/main` `a99d8a68e9` (the
 docs commit after live 1.66.69 `9bb580cc2975`). Code commits `81165e135d` (the
-worker) and `2e81b53101` (a test-timing fix only); staged release `2e81b53101ce`
-(version 1.66.70, externals copied). The measurement below ran on
-`81165e135d80`, the same server code without that test-file change.
+worker), `2e81b53101` (test timing) and `b141113faa` (lint only); staged release
+`b141113faa0d` (version 1.66.70, externals copied). The measurement below ran on
+`81165e135d80`, the same server code without those test and lint changes.
 
 ## 1. One serialized worker
 
@@ -103,25 +103,3 @@ their assertions are unchanged.
   separate processes; confirm the live DB opens, migrates nothing and stays
   `integrity_check ok`.
 - Kill switch: `T3CODE_SQLITE_WORKER=off` must boot and behave as 1.66.69 did.
-
-## Gate evidence
-
-<!-- gate-evidence:begin sha=2e81b53101cea9445fafad1da0cbb2abb05a95b9 release=2e81b53101ce json-sha256=d9a71dc6cc089444fcb1c5da052d053484ce0346c9da7e886926681a106f578c result=PASS -->
-
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-18T01:39:23Z. Version 1.66.70, release `2e81b53101ce`, commit `2e81b53101cea9445fafad1da0cbb2abb05a95b9` on `release/hbots-16670`, working tree clean, result **PASS**.
-
-Machine-readable copy: `releases\2e81b53101ce\gate-evidence.json` (sha256 `d9a71dc6cc089444fcb1c5da052d053484ce0346c9da7e886926681a106f578c`) and the full gate logs in `releases\2e81b53101ce\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
-
-| Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2933 tests passed, 0 failed, 4 skipped, in 211 files | 401.8   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 41.5    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2879 tests passed, 0 failed, 0 skipped, in 257 files | 36.4    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 7.6     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 275 checks ok, 0 failed                              | 69.1    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16670\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\2e81b53101ce" -Json` (in `.`)                                                                                                                     | 0    | pass: 12/12 journeys passed                                | 277.4   |
-
-E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
-
-Tree: HEAD at start `4803a0eb0cc6a0ecd7cdc23ce56c3a9115a96503`, at end `4803a0eb0cc6a0ecd7cdc23ce56c3a9115a96503`; tracked files modified: none. Staged release: version 1.66.70, sha 2e81b53101ce, dirty False, externals copied; `dist/bin.mjs` sha256 `77e50425a12ad20fe04f65220adb62807f480a60509104bfae9606623e204e27`.
-<!-- gate-evidence:end -->
