@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
+import { setTimeout as delay } from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -1422,6 +1423,9 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
+  /** The activity log is written through the SQLite worker; wait for its reply. */
+  const flushIo = Effect.promise(() => delay(20));
+
   const recentSummaries = (browser: PersonalBrowser.PersonalBrowser["Service"]) =>
     browser.activity("session-1").pipe(
       Stream.take(1),
@@ -1509,6 +1513,7 @@ describe("PersonalBrowser", () => {
       // The same end state an explicit close leaves, so a restart does not
       // resurrect the session and the phone's panel retires cleanly.
       expect(yield* lease.view).toMatchObject({ ownerId: null, lastUrl: null });
+      yield* flushIo;
       expect(yield* recentSummaries(browser)).toContain(
         "Browser closed after 10 minutes with nobody using it",
       );
@@ -1597,6 +1602,7 @@ describe("PersonalBrowser", () => {
         const view = yield* lease.view;
         expect(view.ownerType).toBe("agent");
         expect((yield* browser.status("session-1")).controller).toEqual({ _tag: "None" });
+        yield* flushIo;
         expect(yield* recentSummaries(browser)).toContain(
           "Control went back to the agent: the device that had it disconnected",
         );
