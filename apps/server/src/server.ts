@@ -132,6 +132,7 @@ import { personalPerformanceStreamRouteLayer } from "./personal/performance/rout
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
+import * as PersonalThreadLinkRepair from "./personal/personalThreadLinkRepair.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import * as PersonalChatResume from "./personal/PersonalChatResumeService.ts";
 import * as PersonalModelFallback from "./personal/PersonalModelFallbackService.ts";
@@ -627,6 +628,10 @@ const PersonalReactorsLive = Layer.effectDiscard(
     // can never be consumed (no provider session is running at boot), and one
     // would otherwise stay "pending" with no turn id for good (QA 1.66.28).
     yield* forkParked(StrandedTurnStarts.clearStrandedTurnStartsSafely);
+    // A chat creation interrupted between its thread and its bot link (a worker
+    // statement is an interruption point) leaves an intent row behind; link it
+    // now instead of leaving a chat no bot lists (QA 1.66.70).
+    yield* forkParked(PersonalThreadLinkRepair.repairPersonalThreadLinksSafely);
     // Tells the owner before a DeepSeek account runs dry: after each finished
     // DeepSeek turn (debounced) and on a light half-hour sweep. Silent while no
     // enabled DeepSeek instance has a key.

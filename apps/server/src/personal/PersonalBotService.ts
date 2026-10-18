@@ -84,6 +84,7 @@ import {
   PERSONAL_SNOOZE_MAX_MS,
 } from "./personalMessageSearch.ts";
 import { scheduleProblem } from "./personalModelSchedulePolicy.ts";
+import { personalThreadLinkIntentKey } from "./personalThreadLinkRepair.ts";
 import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
 import { PERSONAL_SEED_MODEL_ENV, seedModelFor } from "./seedModel.ts";
 import {
@@ -91,6 +92,7 @@ import {
   TASK_CHAT_AUTO_ARCHIVE_META_KEY,
   taskChatAutoArchiveEnabled,
 } from "./taskChatAutoArchivePolicy.ts";
+import { uninterruptibleWrite } from "./uninterruptibleWrite.ts";
 
 const PERSONAL_META_SEEDED = "seeded";
 const PERSONAL_META_PROJECT_ID = "personalProjectId";
@@ -586,38 +588,46 @@ export const make = Effect.gen(function* () {
       const lead = input.lead ?? false;
       const { fallback: fallbackInput, schedule: scheduleInput, ...createFields } = input;
       const schedule = yield* resolveSchedule(undefined, scheduleInput, input.modelSelection);
-      yield* repository
-        .createBot({
-          ...createFields,
-          ...(schedule === undefined ? {} : { schedule }),
-          ...(fallbackInput?.enabled === undefined
-            ? {}
-            : { fallbackEnabled: fallbackInput.enabled }),
-          ...(fallbackInput?.modelSelection === undefined
-            ? {}
-            : { fallbackModelSelection: fallbackInput.modelSelection }),
-          title: input.title?.trim() ?? "",
-          team,
-          lead,
-          pinned: input.pinned ?? false,
-          sortOrder,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .pipe(Effect.mapError(repositoryError("create")));
-      // One lead per team: the bot just made lead displaces the previous one.
-      if (lead) {
-        yield* repository
-          .clearTeamLead({ team, exceptBotId: input.botId, updatedAt: now })
-          .pipe(Effect.mapError(repositoryError("create")));
-      }
-      const inserted = yield* repository
-        .getBotById({ botId: input.botId })
-        .pipe(Effect.mapError(repositoryError("create")));
-      if (Option.isNone(inserted)) {
-        return yield* notFound(`Personal bot '${input.botId}' could not be read after creation.`);
-      }
-      return inserted.value;
+      // The row and the displaced lead land together: a disconnect between
+      // them used to leave two leads on one team.
+      return yield* uninterruptibleWrite(
+        Effect.gen(function* () {
+          yield* repository
+            .createBot({
+              ...createFields,
+              ...(schedule === undefined ? {} : { schedule }),
+              ...(fallbackInput?.enabled === undefined
+                ? {}
+                : { fallbackEnabled: fallbackInput.enabled }),
+              ...(fallbackInput?.modelSelection === undefined
+                ? {}
+                : { fallbackModelSelection: fallbackInput.modelSelection }),
+              title: input.title?.trim() ?? "",
+              team,
+              lead,
+              pinned: input.pinned ?? false,
+              sortOrder,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .pipe(Effect.mapError(repositoryError("create")));
+          // One lead per team: the bot just made lead displaces the previous one.
+          if (lead) {
+            yield* repository
+              .clearTeamLead({ team, exceptBotId: input.botId, updatedAt: now })
+              .pipe(Effect.mapError(repositoryError("create")));
+          }
+          const inserted = yield* repository
+            .getBotById({ botId: input.botId })
+            .pipe(Effect.mapError(repositoryError("create")));
+          if (Option.isNone(inserted)) {
+            return yield* notFound(
+              `Personal bot '${input.botId}' could not be read after creation.`,
+            );
+          }
+          return inserted.value;
+        }),
+      );
     });
 
   const update: PersonalBotService["Service"]["update"] = (input) =>
@@ -646,53 +656,60 @@ export const make = Effect.gen(function* () {
           input.modelSelection ?? current.value.modelSelection,
         );
       }
-      const updated = yield* repository
-        .updateBot({
-          ...fields,
-          ...(schedule === undefined ? {} : { schedule }),
-          ...(fallbackInput?.enabled === undefined
-            ? {}
-            : { fallbackEnabled: fallbackInput.enabled }),
-          ...(fallbackInput?.modelSelection === undefined
-            ? {}
-            : { fallbackModelSelection: fallbackInput.modelSelection }),
-          ...(notificationsMute === undefined
-            ? {}
-            : { notificationsMutedUntil: notificationsMutedUntilFor(notificationsMute, now) }),
-          ...(team === undefined ? {} : { team }),
-          ...(input.title === undefined ? {} : { title: input.title.trim() }),
-          updatedAt: now,
-        })
-        .pipe(Effect.mapError(repositoryError("update")));
-      if (Option.isNone(updated)) {
-        return yield* notFound(`Personal bot '${input.botId}' was not found.`);
-      }
-      // The owner picked a new main model: that is the bot's model now, so a
-      // fallback it was running on ends here (and returns on the next limit).
-      if (input.modelSelection !== undefined && updated.value.fallbackActive !== undefined) {
-        const ended = yield* repository
-          .endFallback(input.botId)
-          .pipe(Effect.mapError(repositoryError("update")));
-        if (ended) {
-          yield* Effect.logInfo("personal model fallback ended: the owner changed the model", {
-            botId: input.botId,
-          });
-          const { fallbackActive: _ended, ...plain } = updated.value;
-          return plain;
-        }
-      }
-      // One lead per team, read from the row as it now stands: a bot that
-      // changed team in this same call leads the team it landed on.
-      if (input.lead === true) {
-        yield* repository
-          .clearTeamLead({
-            team: botTeam(updated.value),
-            exceptBotId: input.botId,
-            updatedAt: now,
-          })
-          .pipe(Effect.mapError(repositoryError("update")));
-      }
-      return updated.value;
+      // The bot row, an ended fallback and the displaced lead are one change:
+      // under the worker a disconnect could stop between them and leave a bot
+      // on a fallback its model already replaced, or two leads on one team.
+      return yield* uninterruptibleWrite(
+        Effect.gen(function* () {
+          const updated = yield* repository
+            .updateBot({
+              ...fields,
+              ...(schedule === undefined ? {} : { schedule }),
+              ...(fallbackInput?.enabled === undefined
+                ? {}
+                : { fallbackEnabled: fallbackInput.enabled }),
+              ...(fallbackInput?.modelSelection === undefined
+                ? {}
+                : { fallbackModelSelection: fallbackInput.modelSelection }),
+              ...(notificationsMute === undefined
+                ? {}
+                : { notificationsMutedUntil: notificationsMutedUntilFor(notificationsMute, now) }),
+              ...(team === undefined ? {} : { team }),
+              ...(input.title === undefined ? {} : { title: input.title.trim() }),
+              updatedAt: now,
+            })
+            .pipe(Effect.mapError(repositoryError("update")));
+          if (Option.isNone(updated)) {
+            return yield* notFound(`Personal bot '${input.botId}' was not found.`);
+          }
+          // The owner picked a new main model: that is the bot's model now, so a
+          // fallback it was running on ends here (and returns on the next limit).
+          if (input.modelSelection !== undefined && updated.value.fallbackActive !== undefined) {
+            const ended = yield* repository
+              .endFallback(input.botId)
+              .pipe(Effect.mapError(repositoryError("update")));
+            if (ended) {
+              yield* Effect.logInfo("personal model fallback ended: the owner changed the model", {
+                botId: input.botId,
+              });
+              const { fallbackActive: _ended, ...plain } = updated.value;
+              return plain;
+            }
+          }
+          // One lead per team, read from the row as it now stands: a bot that
+          // changed team in this same call leads the team it landed on.
+          if (input.lead === true) {
+            yield* repository
+              .clearTeamLead({
+                team: botTeam(updated.value),
+                exceptBotId: input.botId,
+                updatedAt: now,
+              })
+              .pipe(Effect.mapError(repositoryError("update")));
+          }
+          return updated.value;
+        }),
+      );
     });
 
   const remove: PersonalBotService["Service"]["remove"] = (input) =>
@@ -722,63 +739,95 @@ export const make = Effect.gen(function* () {
       const lockTitle = named && (ownerTitle || input.lockTitle === true);
       // The bot's open chat names are read and the chat is linked in one step,
       // so two chats made at the same moment cannot take the same name.
+      //
+      // The whole sequence is one uninterruptible region: the chat's projection
+      // is written by the dispatch, the bot link by the repository, and a
+      // client that disconnects between them used to leave the chat with no
+      // bot (QA 1.66.70, 3/3 in worker mode). The intent row covers the window
+      // a process death still leaves: a boot repair links the projection to
+      // this bot (`personalThreadLinkRepair.ts`), and a retry does the same
+      // because the dispatch dedupes on the thread's command receipt.
       const stored = yield* withChatTitleLock(
-        Effect.gen(function* () {
-          if (ownerTitle) {
-            yield* requireFreeOwnerTitleForBot(repository, {
-              botId: input.botId,
-              title: wantedTitle,
-            });
-          }
-          const title = ownerTitle
-            ? wantedTitle
-            : yield* uniqueAutomaticTitleForBot(repository, {
+        uninterruptibleWrite(
+          Effect.gen(function* () {
+            if (ownerTitle) {
+              yield* requireFreeOwnerTitleForBot(repository, {
                 botId: input.botId,
                 title: wantedTitle,
               });
-          yield* engine
-            .dispatch({
-              type: "thread.create",
-              // Deterministic per thread: a retried createThread reuses the
-              // command receipt instead of creating the thread twice.
-              commandId: CommandId.make(`personal-bots:thread.create:${input.threadId}`),
-              threadId: input.threadId,
-              projectId,
-              title,
-              modelSelection: bot.modelSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: null,
-              createdAt,
-            })
-            .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")));
-          if (lockTitle) {
-            // A metadata title is manual, so the first message or an AI title
-            // never replaces it.
+            }
+            const title = ownerTitle
+              ? wantedTitle
+              : yield* uniqueAutomaticTitleForBot(repository, {
+                  botId: input.botId,
+                  title: wantedTitle,
+                });
+            const intentKey = personalThreadLinkIntentKey(input.threadId);
+            yield* repository
+              .setMeta({ key: intentKey, value: input.botId })
+              .pipe(Effect.mapError(repositoryError("thread link intent")));
             yield* engine
               .dispatch({
-                type: "thread.meta.update",
-                commandId: CommandId.make(`personal-bots:thread.title:${input.threadId}`),
+                type: "thread.create",
+                // Deterministic per thread: a retried createThread reuses the
+                // command receipt instead of creating the thread twice.
+                commandId: CommandId.make(`personal-bots:thread.create:${input.threadId}`),
                 threadId: input.threadId,
+                projectId,
                 title,
+                modelSelection: bot.modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt,
               })
               .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")));
-          }
-          return yield* repository
-            .insertThreadLink({ botId: input.botId, threadId: input.threadId, createdAt: now })
-            .pipe(
-              Effect.mapError(repositoryError("thread link")),
-              Effect.as(true),
-              // A concurrent createThread won the insert; the dispatch above
-              // deduped on the command receipt, so read back the winner's link.
-              Effect.catch(() =>
-                repository
-                  .getThreadLink({ threadId: input.threadId })
-                  .pipe(Effect.mapError(repositoryError("thread link")), Effect.map(Option.isSome)),
-              ),
-            );
-        }),
+            if (lockTitle) {
+              // A metadata title is manual, so the first message or an AI title
+              // never replaces it.
+              yield* engine
+                .dispatch({
+                  type: "thread.meta.update",
+                  commandId: CommandId.make(`personal-bots:thread.title:${input.threadId}`),
+                  threadId: input.threadId,
+                  title,
+                })
+                .pipe(
+                  Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")),
+                );
+            }
+            const linkedNow = yield* repository
+              .insertThreadLink({ botId: input.botId, threadId: input.threadId, createdAt: now })
+              .pipe(
+                Effect.mapError(repositoryError("thread link")),
+                Effect.as(true),
+                // A concurrent createThread won the insert; the dispatch above
+                // deduped on the command receipt, so read back the winner's link.
+                Effect.catch(() =>
+                  repository
+                    .getThreadLink({ threadId: input.threadId })
+                    .pipe(
+                      Effect.mapError(repositoryError("thread link")),
+                      Effect.map(Option.isSome),
+                    ),
+                ),
+              );
+            if (linkedNow) {
+              // If this delete fails, the next boot's repair clears it: the
+              // link above is the durable result.
+              yield* repository.deleteMeta({ key: intentKey }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("personal chat link intent could not be cleared", {
+                    threadId: input.threadId,
+                    cause: Cause.pretty(cause),
+                  }),
+                ),
+              );
+            }
+            return linkedNow;
+          }),
+        ),
       );
       if (!stored) {
         return yield* notFound(
@@ -838,50 +887,60 @@ export const make = Effect.gen(function* () {
       }
       const now = yield* DateTime.now;
       if (input.archived || linked.value.archivedAt === null) {
-        const updated = yield* repository
-          .setThreadArchived({ threadId: input.threadId, archivedAt: input.archived ? now : null })
-          .pipe(Effect.mapError(repositoryError("thread archive")));
-        if (Option.isNone(updated)) {
-          return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
-        }
-        if (input.archived) yield* stopArchivedSession(input.threadId, now);
-        return updated.value;
+        // The link row and the session stop belong to the same archive.
+        return yield* uninterruptibleWrite(
+          Effect.gen(function* () {
+            const updated = yield* repository
+              .setThreadArchived({
+                threadId: input.threadId,
+                archivedAt: input.archived ? now : null,
+              })
+              .pipe(Effect.mapError(repositoryError("thread archive")));
+            if (Option.isNone(updated)) {
+              return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
+            }
+            if (input.archived) yield* stopArchivedSession(input.threadId, now);
+            return updated.value;
+          }),
+        );
       }
       // Unarchive: another open chat of the bot may have taken the name since.
       // The chat comes back with the name plus the lowest free number.
       return yield* withChatTitleLock(
-        Effect.gen(function* () {
-          const shell = yield* snapshots
-            .getThreadShellById(input.threadId)
-            .pipe(Effect.mapError(repositoryError("thread lookup")));
-          const renamedTo = Option.isSome(shell)
-            ? yield* unarchivedChatTitle(repository, {
-                threadId: input.threadId,
-                title: shell.value.title,
-              })
-            : null;
-          if (renamedTo !== null) {
-            yield* engine
-              .dispatch({
-                type: "thread.meta.update",
-                commandId: CommandId.make(
-                  `personal-bots:thread.unarchive-title:${input.threadId}:${NodeCrypto.randomUUID()}`,
-                ),
-                threadId: input.threadId,
-                title: renamedTo,
-              })
-              .pipe(Effect.mapError(toPersonalBotsError("Personal bots chat rename failed.")));
-          }
-          const updated = yield* repository
-            .setThreadArchived({ threadId: input.threadId, archivedAt: null })
-            .pipe(Effect.mapError(repositoryError("thread archive")));
-          if (Option.isNone(updated)) {
-            return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
-          }
-          return renamedTo === null || Option.isNone(shell)
-            ? updated.value
-            : { ...updated.value, renamedTo, renamedFrom: shell.value.title };
-        }),
+        uninterruptibleWrite(
+          Effect.gen(function* () {
+            const shell = yield* snapshots
+              .getThreadShellById(input.threadId)
+              .pipe(Effect.mapError(repositoryError("thread lookup")));
+            const renamedTo = Option.isSome(shell)
+              ? yield* unarchivedChatTitle(repository, {
+                  threadId: input.threadId,
+                  title: shell.value.title,
+                })
+              : null;
+            if (renamedTo !== null) {
+              yield* engine
+                .dispatch({
+                  type: "thread.meta.update",
+                  commandId: CommandId.make(
+                    `personal-bots:thread.unarchive-title:${input.threadId}:${NodeCrypto.randomUUID()}`,
+                  ),
+                  threadId: input.threadId,
+                  title: renamedTo,
+                })
+                .pipe(Effect.mapError(toPersonalBotsError("Personal bots chat rename failed.")));
+            }
+            const updated = yield* repository
+              .setThreadArchived({ threadId: input.threadId, archivedAt: null })
+              .pipe(Effect.mapError(repositoryError("thread archive")));
+            if (Option.isNone(updated)) {
+              return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
+            }
+            return renamedTo === null || Option.isNone(shell)
+              ? updated.value
+              : { ...updated.value, renamedTo, renamedFrom: shell.value.title };
+          }),
+        ),
       );
     });
 
@@ -974,20 +1033,26 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(linked)) {
         return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
       }
-      yield* engine
-        .dispatch({
-          type: "thread.delete",
-          // Same deterministic id the bot purge uses, so a retried delete
-          // reuses the command receipt instead of deleting twice.
-          commandId: CommandId.make(`personal-bots:thread.delete:${input.threadId}`),
-          threadId: input.threadId,
-        })
-        .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread deletion failed.")));
-      // The link row goes only after the thread is gone: a dispatch failure
-      // keeps the chat listed so the user can retry.
-      yield* repository
-        .deleteThreadLink({ threadId: input.threadId })
-        .pipe(Effect.mapError(repositoryError("thread delete")));
+      // The thread and its link go together: under the worker a disconnect
+      // between the two left a deleted chat still listed for its bot.
+      yield* uninterruptibleWrite(
+        Effect.gen(function* () {
+          yield* engine
+            .dispatch({
+              type: "thread.delete",
+              // Same deterministic id the bot purge uses, so a retried delete
+              // reuses the command receipt instead of deleting twice.
+              commandId: CommandId.make(`personal-bots:thread.delete:${input.threadId}`),
+              threadId: input.threadId,
+            })
+            .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread deletion failed.")));
+          // The link row goes only after the thread is gone: a dispatch failure
+          // keeps the chat listed so the user can retry.
+          yield* repository
+            .deleteThreadLink({ threadId: input.threadId })
+            .pipe(Effect.mapError(repositoryError("thread delete")));
+        }),
+      );
     });
 
   // The Chats greeting name. Unset (no row yet) reads back as "" so the

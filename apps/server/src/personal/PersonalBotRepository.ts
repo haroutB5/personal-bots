@@ -426,6 +426,9 @@ export class PersonalBotRepository extends Context.Service<
     readonly setMeta: (
       input: SetPersonalMetaInput,
     ) => Effect.Effect<void, PersonalBotRepositoryError>;
+    readonly deleteMeta: (
+      input: GetPersonalMetaInput,
+    ) => Effect.Effect<void, PersonalBotRepositoryError>;
     /**
      * Messages with attachments in threads linked to live (not deleted) bots,
      * newest first. Rows whose ids or attachment JSON fail to decode are
@@ -1324,6 +1327,15 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const deleteMetaRow = SqlSchema.void({
+    Request: GetPersonalMetaInput,
+    execute: ({ key }) =>
+      sql`
+        DELETE FROM personal_meta
+        WHERE key = ${key}
+      `,
+  });
+
   const getInstructionsForThreadRow = SqlSchema.findOneOption({
     Request: GetPersonalBotThreadInput,
     Result: Schema.Struct({
@@ -2104,6 +2116,16 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const deleteMeta: PersonalBotRepository["Service"]["deleteMeta"] = (input) =>
+    deleteMetaRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "PersonalBotRepository.deleteMeta:query",
+          "PersonalBotRepository.deleteMeta:encodeRequest",
+        ),
+      ),
+    );
+
   const getInstructionsForThread: PersonalBotRepository["Service"]["getInstructionsForThread"] = (
     input,
   ) =>
@@ -2177,6 +2199,7 @@ export const make = Effect.gen(function* () {
     listGroupPresence,
     getMeta,
     setMeta,
+    deleteMeta,
     getInstructionsForThread,
     listThreadAttachments,
   } satisfies PersonalBotRepository["Service"];

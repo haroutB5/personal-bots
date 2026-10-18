@@ -72,22 +72,28 @@ export const writeNoteNotice = (
         },
       ],
     };
-    yield* engine.dispatch({
-      type: "thread.message.assistant.delta",
-      commandId: CommandId.make(`${key}:notice:delta`),
-      threadId: input.threadId,
-      messageId,
-      delta: input.line,
-      context,
-      createdAt,
-    });
-    yield* engine.dispatch({
-      type: "thread.message.assistant.complete",
-      commandId: CommandId.make(`${key}:notice:complete`),
-      threadId: input.threadId,
-      messageId,
-      createdAt,
-    });
+    // The two commands write one message: with the worker an interruption
+    // between them would leave it streaming forever.
+    yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        yield* engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`${key}:notice:delta`),
+          threadId: input.threadId,
+          messageId,
+          delta: input.line,
+          context,
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`${key}:notice:complete`),
+          threadId: input.threadId,
+          messageId,
+          createdAt,
+        });
+      }),
+    );
   }).pipe(
     Effect.catchCause((cause) =>
       Cause.hasInterruptsOnly(cause)

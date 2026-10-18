@@ -34,6 +34,7 @@ import {
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
+import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import { secretAccessLock, withSecretAccessLock } from "./secretAccessLock.ts";
 import { secretRedactor } from "./secretRedaction.ts";
@@ -830,11 +831,17 @@ export const make = Effect.gen(function* () {
     fulfill: (input) =>
       Effect.gen(function* () {
         const fulfilled = yield* withSecretAccessLock(saveFulfilment(input));
-        // Resuming restarts the task's session, which reads secrets: not under the lock.
-        yield* resumeTaskIfReady(fulfilled);
-        return fulfilled;
+        // Resuming restarts the task's session, which reads secrets: not under
+        // the lock, but still one step with the save, so a disconnect cannot
+        // leave the secret saved and its waiting task stuck.
+        return yield* uninterruptibleWrite(
+          Effect.gen(function* () {
+            yield* resumeTaskIfReady(fulfilled);
+            return fulfilled;
+          }),
+        );
       }),
-    cancel,
+    cancel: (input) => uninterruptibleWrite(cancel(input)),
     list,
     create: (input) => withSecretAccessLock(create(input)),
     remove: (input) => withSecretAccessLock(remove(input)),

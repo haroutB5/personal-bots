@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import { personalTaskSteerMessageId } from "../personalThreadTitles.ts";
+import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { type Changed, type WorkItem } from "./taskShared.ts";
 import { isTerminal, sessionIsBusy } from "./taskSessionPolicy.ts";
@@ -167,104 +168,109 @@ export const makeTaskSteering = (
   const steer: PersonalTaskService["Service"]["steer"] = (input) =>
     lock
       .withPermit(
-        Effect.gen(function* () {
-          const task = yield* requireTask(input.taskId);
-          if (input.message.trim().length === 0) {
-            return yield* fail("The update is empty; say what should change.");
-          }
-          if (input.fromThreadId !== undefined) {
-            yield* carryExposureFromSteerer(input.fromThreadId, task);
-          }
-          const now = yield* DateTime.now;
-          const steerId = NodeCrypto.randomUUID().replaceAll("-", "");
-          const noteId = `${PersonalTaskRepository.PERSONAL_TASK_STEER_NOTE_PREFIX}${steerId}`;
-          const text = steerText(input.fromName, input.message);
-          if (isTerminal(task.status)) {
-            const reopened = yield* reopen(task, noteId, steerId, text);
-            yield* recordWorkSteer(task, text);
-            return { outcome: "reopened" as const, task: reopened, text };
-          }
-          if (task.status !== "running") {
-            // Opens its next turn: for a queued task that is its first, so the
-            // update is part of the brief it starts with.
+        // The delivered turn and the task's resume note are one update: with
+        // the worker, a disconnect after the dispatch used to lose the note
+        // (and the work-record line) while the message had already gone out.
+        uninterruptibleWrite(
+          Effect.gen(function* () {
+            const task = yield* requireTask(input.taskId);
+            if (input.message.trim().length === 0) {
+              return yield* fail("The update is empty; say what should change.");
+            }
+            if (input.fromThreadId !== undefined) {
+              yield* carryExposureFromSteerer(input.fromThreadId, task);
+            }
+            const now = yield* DateTime.now;
+            const steerId = NodeCrypto.randomUUID().replaceAll("-", "");
+            const noteId = `${PersonalTaskRepository.PERSONAL_TASK_STEER_NOTE_PREFIX}${steerId}`;
+            const text = steerText(input.fromName, input.message);
+            if (isTerminal(task.status)) {
+              const reopened = yield* reopen(task, noteId, steerId, text);
+              yield* recordWorkSteer(task, text);
+              return { outcome: "reopened" as const, task: reopened, text };
+            }
+            if (task.status !== "running") {
+              // Opens its next turn: for a queued task that is its first, so the
+              // update is part of the brief it starts with.
+              yield* repository.insertResumeNote({
+                noteId,
+                taskId: task.taskId,
+                text,
+                restartSession: false,
+                createdAt: now,
+              });
+              yield* recordWorkSteer(task, text);
+              return { outcome: "queued" as const, task, text };
+            }
+            const attempt = (yield* repository.listActiveAttempts()).find(
+              (entry) => entry.taskId === task.taskId,
+            );
+            const shell =
+              attempt === undefined
+                ? Option.none()
+                : yield* snapshots
+                    .getThreadShellById(attempt.providerThreadId)
+                    .pipe(Effect.orElseSucceed(() => Option.none()));
+            const thread = Option.getOrUndefined(shell);
+            // A task waiting on background work it left running is between
+            // turns but still running: a turn started now is its turn.
+            if (
+              attempt === undefined ||
+              (!sessionIsBusy(thread?.session) && !waitingOnBackground(attempt))
+            ) {
+              // Its turn is starting or just ended. A turn started now would run
+              // outside the task, and a note could wait for a turn that never
+              // comes, so say so rather than guess.
+              return yield* fail(
+                "That task is between turns (just starting or just finishing). Check it with get_task and try again in a moment.",
+              );
+            }
+            // The selection the task's turn runs with. A different one restarts
+            // a Claude session, which would end the very turn this steers, so a
+            // bot edited mid-task keeps its running selection until its next turn.
+            const botSelection = yield* botModelSelectionForThread(
+              botRepository,
+              attempt.providerThreadId,
+              thread?.modelSelection,
+            );
+            const modelSelection =
+              thread?.modelSelection !== undefined &&
+              botSelection !== undefined &&
+              !Equal.equals(botSelection, thread.modelSelection)
+                ? thread.modelSelection
+                : botSelection;
+            // The normal turn path: a turn start on a thread whose turn is
+            // running steers that turn instead of starting another. The thread's
+            // own modes, since a changed runtime mode restarts the session.
+            yield* engine
+              .dispatch({
+                type: "thread.turn.start",
+                commandId: CommandId.make(`personal-task:${task.taskId}:steer:${steerId}`),
+                threadId: attempt.providerThreadId,
+                ...(modelSelection !== undefined ? { modelSelection } : {}),
+                message: {
+                  messageId: personalTaskSteerMessageId(steerId),
+                  role: "user",
+                  text,
+                  attachments: [],
+                },
+                runtimeMode: thread?.runtimeMode ?? "full-access",
+                interactionMode: thread?.interactionMode ?? "default",
+                createdAt: DateTime.formatIso(now),
+              })
+              .pipe(Effect.mapError((cause) => fail("Could not deliver the update.", cause)));
             yield* repository.insertResumeNote({
               noteId,
               taskId: task.taskId,
               text,
               restartSession: false,
               createdAt: now,
+              deliveredAt: now,
             });
             yield* recordWorkSteer(task, text);
-            return { outcome: "queued" as const, task, text };
-          }
-          const attempt = (yield* repository.listActiveAttempts()).find(
-            (entry) => entry.taskId === task.taskId,
-          );
-          const shell =
-            attempt === undefined
-              ? Option.none()
-              : yield* snapshots
-                  .getThreadShellById(attempt.providerThreadId)
-                  .pipe(Effect.orElseSucceed(() => Option.none()));
-          const thread = Option.getOrUndefined(shell);
-          // A task waiting on background work it left running is between
-          // turns but still running: a turn started now is its turn.
-          if (
-            attempt === undefined ||
-            (!sessionIsBusy(thread?.session) && !waitingOnBackground(attempt))
-          ) {
-            // Its turn is starting or just ended. A turn started now would run
-            // outside the task, and a note could wait for a turn that never
-            // comes, so say so rather than guess.
-            return yield* fail(
-              "That task is between turns (just starting or just finishing). Check it with get_task and try again in a moment.",
-            );
-          }
-          // The selection the task's turn runs with. A different one restarts
-          // a Claude session, which would end the very turn this steers, so a
-          // bot edited mid-task keeps its running selection until its next turn.
-          const botSelection = yield* botModelSelectionForThread(
-            botRepository,
-            attempt.providerThreadId,
-            thread?.modelSelection,
-          );
-          const modelSelection =
-            thread?.modelSelection !== undefined &&
-            botSelection !== undefined &&
-            !Equal.equals(botSelection, thread.modelSelection)
-              ? thread.modelSelection
-              : botSelection;
-          // The normal turn path: a turn start on a thread whose turn is
-          // running steers that turn instead of starting another. The thread's
-          // own modes, since a changed runtime mode restarts the session.
-          yield* engine
-            .dispatch({
-              type: "thread.turn.start",
-              commandId: CommandId.make(`personal-task:${task.taskId}:steer:${steerId}`),
-              threadId: attempt.providerThreadId,
-              ...(modelSelection !== undefined ? { modelSelection } : {}),
-              message: {
-                messageId: personalTaskSteerMessageId(steerId),
-                role: "user",
-                text,
-                attachments: [],
-              },
-              runtimeMode: thread?.runtimeMode ?? "full-access",
-              interactionMode: thread?.interactionMode ?? "default",
-              createdAt: DateTime.formatIso(now),
-            })
-            .pipe(Effect.mapError((cause) => fail("Could not deliver the update.", cause)));
-          yield* repository.insertResumeNote({
-            noteId,
-            taskId: task.taskId,
-            text,
-            restartSession: false,
-            createdAt: now,
-            deliveredAt: now,
-          });
-          yield* recordWorkSteer(task, text);
-          return { outcome: "steered" as const, task, text };
-        }),
+            return { outcome: "steered" as const, task, text };
+          }),
+        ),
       )
       .pipe(toPublic("steer"));
 

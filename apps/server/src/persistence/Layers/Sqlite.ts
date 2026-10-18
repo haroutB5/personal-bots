@@ -150,6 +150,12 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
   NodeSqliteClient.layer({ filename: ":memory:" }),
 );
 
+/** The same database, explicitly on the serialized worker (the 1.66.70 path). */
+export const SqlitePersistenceMemoryWorker = Layer.provideMerge(
+  setup(),
+  NodeSqliteClient.layer({ filename: ":memory:", worker: true }),
+);
+
 export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig;
