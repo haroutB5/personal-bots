@@ -1,4 +1,4 @@
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   PersonalBotId,
@@ -129,7 +129,7 @@ const harness = (scanner: ReturnType<typeof fakeScanner>) =>
  * answers from a worker thread, so this has to wait for a real event-loop turn
  * (yieldNow only drains microtasks) before the fiber can make progress.
  */
-const settle = Effect.promise(() => delay(20));
+const settle = Effect.promise(() => NodeTimersPromises.setTimeout(20));
 
 const input = { timeZone: "UTC" };
 

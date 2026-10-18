@@ -1,4 +1,4 @@
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -26,7 +26,7 @@ const SLOW_SELECT = `
   SELECT sum(x) FROM cnt
 `;
 
-const realSleep = (ms: number) => Effect.promise(() => delay(ms));
+const realSleep = (ms: number) => Effect.promise(() => NodeTimersPromises.setTimeout(ms));
 
 const tempDatabase = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

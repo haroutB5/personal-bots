@@ -1,6 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - asserts the stored payload JSON verbatim.
 import * as NodeCrypto from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
@@ -174,7 +174,7 @@ const visiblePage = (connectionId: string) =>
   });
 
 /** Waits for the SQLite worker's replies, which arrive on a real event-loop turn. */
-const flushIo = Effect.promise(() => delay(20));
+const flushIo = Effect.promise(() => NodeTimersPromises.setTimeout(20));
 
 /** Lets every in-app wait run out (acknowledged or not), then drains the outbox. */
 const settle = Effect.gen(function* () {

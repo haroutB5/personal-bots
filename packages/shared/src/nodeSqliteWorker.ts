@@ -315,6 +315,8 @@ export class SqliteWorkerClient {
       this.pending.set(id, { resolve, reject, abandoned: false });
     });
     try {
+      // Worker ports have no browser target origin.
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin
       this.worker.postMessage({ id, op: "execute", ...request });
     } catch (error) {
       this.pending.delete(id);
@@ -377,6 +379,7 @@ export class SqliteWorkerClient {
         abandoned: false,
       });
       try {
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin
         this.worker.postMessage({ id, op: "close" });
       } catch {
         finish();

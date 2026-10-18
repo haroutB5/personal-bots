@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -1424,7 +1424,7 @@ describe("PersonalBrowser", () => {
   });
 
   /** The activity log is written through the SQLite worker; wait for its reply. */
-  const flushIo = Effect.promise(() => delay(20));
+  const flushIo = Effect.promise(() => NodeTimersPromises.setTimeout(20));
 
   const recentSummaries = (browser: PersonalBrowser.PersonalBrowser["Service"]) =>
     browser.activity("session-1").pipe(
