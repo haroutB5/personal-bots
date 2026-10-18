@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { CommandId, PersonalGroupRoundId, ThreadId } from "@t3tools/contracts";
+import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import { parseMentions } from "./groupMentions.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
 import {
@@ -70,107 +71,118 @@ export const makeGroupMessaging = (
           const roundId = Option.isSome(liveRound)
             ? liveRound.value.roundId
             : PersonalGroupRoundId.make(NodeCrypto.randomUUID());
-          const row = yield* repository.insertMessage({
-            groupId: group.groupId,
-            messageId: input.messageId,
-            speakerKind: "user",
-            speakerBotId: null,
-            roundId,
-            createdAt: now,
-          });
-          yield* engine
-            .dispatch({
-              type: "thread.message.user.append",
-              commandId: CommandId.make(`personal-group:${input.messageId}:append`),
-              threadId: group.threadId,
-              message: {
+          // The message row, the transcript command and the round are one
+          // post: under the worker a disconnect between them left a message
+          // whose round never existed, and the retry refused it as already
+          // sent. No bot would ever answer it.
+          return yield* uninterruptibleWrite(
+            Effect.gen(function* () {
+              const row = yield* repository.insertMessage({
+                groupId: group.groupId,
                 messageId: input.messageId,
-                text: input.text,
-                attachments: [],
-                context: personalGroupMessageContext(
-                  {
-                    groupId: group.groupId,
-                    seq: row.seq,
-                    roundId,
-                    speaker: { kind: "user" },
+                speakerKind: "user",
+                speakerBotId: null,
+                roundId,
+                createdAt: now,
+              });
+              yield* engine
+                .dispatch({
+                  type: "thread.message.user.append",
+                  commandId: CommandId.make(`personal-group:${input.messageId}:append`),
+                  threadId: group.threadId,
+                  message: {
+                    messageId: input.messageId,
+                    text: input.text,
+                    attachments: [],
+                    context: personalGroupMessageContext(
+                      {
+                        groupId: group.groupId,
+                        seq: row.seq,
+                        roundId,
+                        speaker: { kind: "user" },
+                      },
+                      input.replyTo,
+                    ),
                   },
-                  input.replyTo,
-                ),
-              },
-              createdAt: DateTime.formatIso(now),
-            })
-            .pipe(
-              Effect.mapError((cause) =>
-                fail("Personal groups could not post the message.", cause),
-              ),
-            );
+                  createdAt: DateTime.formatIso(now),
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    fail("Personal groups could not post the message.", cause),
+                  ),
+                );
 
-          if (Option.isSome(liveRound)) {
-            // One live round per group. The new message is in the transcript,
-            // so the next member to speak picks it up in its catch-up rather
-            // than racing a second round for the same single slot.
-            return toRound(liveRound.value);
-          }
+              if (Option.isSome(liveRound)) {
+                // One live round per group. The new message is in the transcript,
+                // so the next member to speak picks it up in its catch-up rather
+                // than racing a second round for the same single slot.
+                return toRound(liveRound.value);
+              }
 
-          const all = yield* liveBots();
-          const mentioned = parseMentions(
-            input.text,
-            members.map((member) => ({ botId: member.botId, name: botName(all, member.botId) })),
-          );
-          const addressed = mentioned.filter((botId) =>
-            members.some((member) => member.botId === botId),
-          );
-          const coordinator = members.find((member) => member.role === "coordinator");
-          const firstSpeaker = (coordinator ?? members[0]!).botId;
-          const discussionOrder = [
-            firstSpeaker,
-            ...members
-              .filter((member) => member.botId !== firstSpeaker)
-              .map((member) => member.botId),
-          ];
-          // One contribution per member, then one reserved synthesis turn.
-          // Explicit mentions retain their targeted conversation behavior.
-          const broadcast = addressed.length === 0;
-          const queue = broadcast ? discussionOrder : addressed;
-          const verdictBotId = broadcast && members.length > 1 ? firstSpeaker : null;
-          const round: RoundRecord = {
-            roundId,
-            groupId: group.groupId,
-            triggerMessageId: input.messageId,
-            verdictBotId,
-            status: "running",
-            // A broadcast round is sized to the group: every member is queued
-            // and the per-member cap lets each take two turns, so a fixed six
-            // would pause a six-member discussion halfway through its own
-            // plan. A round aimed at named members keeps the frozen rail.
-            budgetRemaining: budgetFor({
-              frozenMaxBotTurns: group.maxBotTurns,
-              memberCount: members.length,
-              broadcast,
+              const all = yield* liveBots();
+              const mentioned = parseMentions(
+                input.text,
+                members.map((member) => ({
+                  botId: member.botId,
+                  name: botName(all, member.botId),
+                })),
+              );
+              const addressed = mentioned.filter((botId) =>
+                members.some((member) => member.botId === botId),
+              );
+              const coordinator = members.find((member) => member.role === "coordinator");
+              const firstSpeaker = (coordinator ?? members[0]!).botId;
+              const discussionOrder = [
+                firstSpeaker,
+                ...members
+                  .filter((member) => member.botId !== firstSpeaker)
+                  .map((member) => member.botId),
+              ];
+              // One contribution per member, then one reserved synthesis turn.
+              // Explicit mentions retain their targeted conversation behavior.
+              const broadcast = addressed.length === 0;
+              const queue = broadcast ? discussionOrder : addressed;
+              const verdictBotId = broadcast && members.length > 1 ? firstSpeaker : null;
+              const round: RoundRecord = {
+                roundId,
+                groupId: group.groupId,
+                triggerMessageId: input.messageId,
+                verdictBotId,
+                status: "running",
+                // A broadcast round is sized to the group: every member is queued
+                // and the per-member cap lets each take two turns, so a fixed six
+                // would pause a six-member discussion halfway through its own
+                // plan. A round aimed at named members keeps the frozen rail.
+                budgetRemaining: budgetFor({
+                  frozenMaxBotTurns: group.maxBotTurns,
+                  memberCount: members.length,
+                  broadcast,
+                }),
+                queue,
+                spoken: [],
+                activeBotId: null,
+                activeThreadId: null,
+                activeTurnId: null,
+                activeMessageId: null,
+                relayedChars: 0,
+                leaseOwner: null,
+                leaseExpiresAt: null,
+                availableAt: null,
+                // Turns are serial, so the window is the queue's length in turns,
+                // plus the reserved verdict, times one provider turn.
+                deadlineAt: DateTime.add(now, {
+                  milliseconds: windowMsFor(queue.length + (verdictBotId === null ? 0 : 1)),
+                }),
+                errorMessage: null,
+                createdAt: now,
+                updatedAt: now,
+              };
+              yield* repository.insertRound(round);
+              yield* publishRound(round);
+              yield* worker.enqueue({ type: "pump" });
+              return toRound(round);
             }),
-            queue,
-            spoken: [],
-            activeBotId: null,
-            activeThreadId: null,
-            activeTurnId: null,
-            activeMessageId: null,
-            relayedChars: 0,
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            availableAt: null,
-            // Turns are serial, so the window is the queue's length in turns,
-            // plus the reserved verdict, times one provider turn.
-            deadlineAt: DateTime.add(now, {
-              milliseconds: windowMsFor(queue.length + (verdictBotId === null ? 0 : 1)),
-            }),
-            errorMessage: null,
-            createdAt: now,
-            updatedAt: now,
-          };
-          yield* repository.insertRound(round);
-          yield* publishRound(round);
-          yield* worker.enqueue({ type: "pump" });
-          return toRound(round);
+          );
         }),
       )
       .pipe(toPublic("sendMessage"));

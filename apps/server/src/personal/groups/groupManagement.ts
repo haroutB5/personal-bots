@@ -10,6 +10,7 @@ import {
   PersonalGroupsError,
   type PersonalGroupListResult,
 } from "@t3tools/contracts";
+import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import { GROUP_THREAD_TITLE, type GroupRecord } from "./groupShared.ts";
 import type { GroupCore } from "./groupCore.ts";
 import type { GroupVotes } from "./groupVotes.ts";
@@ -261,18 +262,24 @@ export const makeGroupManagement = (core: GroupCore, votes: GroupVotes, turns: G
           // A member joining mid-conversation starts at the current cursor:
           // it is told what has been said since it joined, not the backlog.
           const deliveredSeq = yield* repository.latestSeq(input.groupId);
-          yield* repository.insertMember({
-            groupId: input.groupId,
-            botId: input.botId,
-            threadId: null,
-            role: input.role ?? "member",
-            sortOrder: members.reduce((max, member) => Math.max(max, member.sortOrder), -1) + 1,
-            deliveredSeq,
-            joinedAt: now,
-            leftAt: null,
-          });
-          yield* writeSystemRow(group, null, "member-added", `${bot.name} joined the group.`);
-          return yield* publishGroup(group);
+          // The member row and the transcript line that tells the group are one
+          // change; a disconnect between them lost the line for good.
+          return yield* uninterruptibleWrite(
+            Effect.gen(function* () {
+              yield* repository.insertMember({
+                groupId: input.groupId,
+                botId: input.botId,
+                threadId: null,
+                role: input.role ?? "member",
+                sortOrder: members.reduce((max, member) => Math.max(max, member.sortOrder), -1) + 1,
+                deliveredSeq,
+                joinedAt: now,
+                leftAt: null,
+              });
+              yield* writeSystemRow(group, null, "member-added", `${bot.name} joined the group.`);
+              return yield* publishGroup(group);
+            }),
+          );
         }),
       )
       .pipe(toPublic("addMember"));
@@ -287,23 +294,30 @@ export const makeGroupManagement = (core: GroupCore, votes: GroupVotes, turns: G
             return yield* toPublicGroup(group);
           }
           const all = yield* liveBots();
-          yield* repository.removeMember({ groupId: input.groupId, botId: input.botId });
-          yield* writeSystemRow(
-            group,
-            null,
-            "member-removed",
-            `${botName(all, input.botId)} left the group.`,
+          // Removing the member, the transcript line and archiving the group it
+          // emptied are one change; a partial removal leaves an empty group
+          // that a retry would not archive.
+          return yield* uninterruptibleWrite(
+            Effect.gen(function* () {
+              yield* repository.removeMember({ groupId: input.groupId, botId: input.botId });
+              yield* writeSystemRow(
+                group,
+                null,
+                "member-removed",
+                `${botName(all, input.botId)} left the group.`,
+              );
+              const remaining = yield* repository.listMembers(input.groupId);
+              if (remaining.length === 0 && group.archivedAt === null) {
+                // An empty group is archived, never deleted: the transcript is
+                // the record of a conversation that actually happened.
+                const now = yield* DateTime.now;
+                const archived: GroupRecord = { ...group, archivedAt: now, updatedAt: now };
+                yield* repository.writeGroup(archived);
+                return yield* publishGroup(archived);
+              }
+              return yield* publishGroup(group);
+            }),
           );
-          const remaining = yield* repository.listMembers(input.groupId);
-          if (remaining.length === 0 && group.archivedAt === null) {
-            // An empty group is archived, never deleted: the transcript is the
-            // record of a conversation that actually happened.
-            const now = yield* DateTime.now;
-            const archived: GroupRecord = { ...group, archivedAt: now, updatedAt: now };
-            yield* repository.writeGroup(archived);
-            return yield* publishGroup(archived);
-          }
-          return yield* publishGroup(group);
         }),
       )
       .pipe(toPublic("removeMember"));

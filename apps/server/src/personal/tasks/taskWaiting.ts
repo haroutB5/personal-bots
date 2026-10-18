@@ -2,6 +2,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { CommandId, PersonalTaskId } from "@t3tools/contracts";
+import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import { type Changed, type WorkItem } from "./taskShared.ts";
 import { isWaitingForUser, sessionIsAlive } from "./taskSessionPolicy.ts";
 import type { TaskCore } from "./taskCore.ts";
@@ -65,48 +66,53 @@ export const makeTaskWaiting = (
   const resumeFromUser: PersonalTaskService["Service"]["resumeFromUser"] = (input) =>
     lock
       .withPermit(
-        Effect.gen(function* () {
-          const task = yield* requireTask(input.taskId);
-          if (!isWaitingForUser(task.status)) {
-            return yield* fail(
-              `Task '${task.taskId}' is ${task.status}; it is not waiting for you.`,
-            );
-          }
-          const now = yield* DateTime.now;
-          if (input.restartSession && task.threadId !== null) {
-            if (sessionIsAlive(yield* readSession(task.threadId))) {
-              // The environment is fixed when a provider process starts; stop
-              // it and queue on the "stopped" session event (tryResume).
-              resumingThreadIds.add(task.threadId);
-              yield* engine
-                .dispatch({
-                  type: "thread.session.stop",
-                  commandId: CommandId.make(
-                    `personal-task:${task.taskId}:resume:${input.noteId}:session.stop`,
-                  ),
-                  threadId: task.threadId,
-                  createdAt: DateTime.formatIso(now),
-                })
-                .pipe(
-                  Effect.mapError((cause) =>
-                    fail("Could not restart the bot's provider session.", cause),
-                  ),
-                );
+        // Stopping the old session and writing the resume note belong together:
+        // a disconnect between them would leave the task waiting on a session
+        // that is already gone.
+        uninterruptibleWrite(
+          Effect.gen(function* () {
+            const task = yield* requireTask(input.taskId);
+            if (!isWaitingForUser(task.status)) {
+              return yield* fail(
+                `Task '${task.taskId}' is ${task.status}; it is not waiting for you.`,
+              );
             }
-          }
-          yield* repository.insertResumeNote({
-            noteId: input.noteId,
-            taskId: task.taskId,
-            text: input.note,
-            restartSession: input.restartSession,
-            createdAt: now,
-          });
-          const changed: Changed = [];
-          yield* tryResume(changed, task);
-          yield* publish(changed);
-          yield* worker.enqueue({ type: "pump" });
-          return yield* requireTask(task.taskId);
-        }),
+            const now = yield* DateTime.now;
+            if (input.restartSession && task.threadId !== null) {
+              if (sessionIsAlive(yield* readSession(task.threadId))) {
+                // The environment is fixed when a provider process starts; stop
+                // it and queue on the "stopped" session event (tryResume).
+                resumingThreadIds.add(task.threadId);
+                yield* engine
+                  .dispatch({
+                    type: "thread.session.stop",
+                    commandId: CommandId.make(
+                      `personal-task:${task.taskId}:resume:${input.noteId}:session.stop`,
+                    ),
+                    threadId: task.threadId,
+                    createdAt: DateTime.formatIso(now),
+                  })
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      fail("Could not restart the bot's provider session.", cause),
+                    ),
+                  );
+              }
+            }
+            yield* repository.insertResumeNote({
+              noteId: input.noteId,
+              taskId: task.taskId,
+              text: input.note,
+              restartSession: input.restartSession,
+              createdAt: now,
+            });
+            const changed: Changed = [];
+            yield* tryResume(changed, task);
+            yield* publish(changed);
+            yield* worker.enqueue({ type: "pump" });
+            return yield* requireTask(task.taskId);
+          }),
+        ),
       )
       .pipe(toPublic("resumeFromUser"));
 
