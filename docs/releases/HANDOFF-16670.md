@@ -76,8 +76,11 @@ pinged every 25 ms. Three rounds each; worst of three:
 The worker run keeps a ~40-50 ms p99 from IPC and result copying; the
 hundreds-of-ms to seconds disk stalls are gone. The ~80 histogram samples in
 an 8 s before window versus ~450 after show how much of the loop the main
-thread used to lose. Evidence: `qa/hbots-sqlite-worker-20261018/SUMMARY.md`
-(raw `before.json` / `after.json`).
+thread used to lose. The measured bundle and `b141113faa0d`'s `dist/bin.mjs`
+are byte-identical (sha256
+`77e50425a12ad20fe04f65220adb62807f480a60509104bfae9606623e204e27`), so the
+numbers apply to the staged release exactly. Evidence:
+`qa/hbots-sqlite-worker-20261018/SUMMARY.md` (raw `before.json` / `after.json`).
 
 ## 3. Tests
 
