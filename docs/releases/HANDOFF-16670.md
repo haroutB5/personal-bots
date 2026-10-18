@@ -9,12 +9,12 @@ once at server start. No schema change and no migration (the maximum stays 111);
 
 Branch `release/hbots-16670`, cut from `personal-bots/main` `a99d8a68e9` (the
 docs commit after live 1.66.69 `9bb580cc2975`). Code commits `81165e135d` (the
-worker), `2e81b53101` (test timing), `b141113faa` (lint only) and `5772127dc7`
-(the QA fix in section 5); staged release `5772127dc72c` (version 1.66.70,
-externals copied), replacing the withdrawn `b141113faa0d`. The measurement below
-ran on `81165e135d80`, the same worker bridge this build carries: the fix changes
-service-level write sequences only, not the bridge, the connection mode or the
-result copying the numbers measure.
+worker), `2e81b53101` (test timing), `b141113faa` (lint only), `5772127dc7` and
+`652e989e9c` (the QA fix and audit in section 5); staged release `652e989e9ce3`
+(version 1.66.70, externals copied), replacing the withdrawn `b141113faa0d`.
+The measurement below ran on `81165e135d80`, the same worker bridge this build
+carries: the fix changes service-level write sequences only, not the bridge, the
+connection mode or the result copying the numbers measure.
 
 ## 1. One serialized worker
 
@@ -83,7 +83,7 @@ thread used to lose. The measured bundle and `b141113faa0d`'s `dist/bin.mjs`
 are byte-identical (sha256
 `77e50425a12ad20fe04f65220adb62807f480a60509104bfae9606623e204e27`), so the
 numbers apply to that build's worker bridge exactly. The current staged release
-`5772127dc72c` carries the same bridge (no change in `nodeSqliteWorker.ts` or
+`652e989e9ce3` carries the same bridge (no change in `nodeSqliteWorker.ts` or
 `nodeSqliteClient.ts`) plus the section 5 service fix. Evidence:
 `qa/hbots-sqlite-worker-20261018/SUMMARY.md` (raw `before.json` / `after.json`).
 
@@ -137,7 +137,7 @@ dispatch landed, then the socket cancellation stopped the operation before the
 link. The transaction layer was sound; the service-level sequence was not
 atomic.
 
-**Fix (`5772127dc7`).**
+**Fix (`5772127dc7`, `652e989e9c`).**
 
 - `createThread` runs the name check, dispatch, optional title and link as one
   uninterruptible region (`uninterruptibleWrite`), restoring the inline
@@ -150,13 +150,18 @@ atomic.
 - The same audit fixed other multi-step writes that relied on synchronous
   atomicity: bot create and update (one lead per team; a model change ends its
   fallback), chat archive/unarchive, chat delete, task steer (delivered turn and
-  resume note), the memory notice delta/complete pair, and secret fulfilment's
-  task resume plus secret cancel. Memory save/Undo and saved-key writes were
-  already one transaction or the uninterruptible secret-access lock. Task
-  create/delegate inserts are one transaction and the queue pump recovers a
-  lost enqueue; bot purge stays best-effort by design, tombstone last.
+  resume note), task resume from the user (session stop and resume note), a
+  group post (message row, transcript command and round), adding or removing a
+  group member (membership, transcript line, and archiving the group it
+  emptied), the memory notice delta/complete pair, and secret fulfilment's task
+  resume plus secret cancel. Memory save/Undo and saved-key writes were already
+  one transaction or the uninterruptible secret-access lock. Task create and
+  delegate inserts are one transaction and the queue pump recovers a lost
+  enqueue; task cancel's durable state is one transaction and its turn
+  interrupts are best-effort; bot purge stays best-effort by design, tombstone
+  last.
 
-**Proof on the staged build.** QA's procedure was rerun on `5772127dc72c` in
+**Proof on the staged build.** QA's procedure was rerun on `652e989e9ce3` in
 worker mode (`SQLite connection mode: worker` in the boot log), three runs
 identical: after the disconnect both rows were present (1/1) and no link intent
 was left; the retry kept both. 3/3 PASS. Evidence
