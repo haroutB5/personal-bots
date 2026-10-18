@@ -9,9 +9,12 @@ once at server start. No schema change and no migration (the maximum stays 111);
 
 Branch `release/hbots-16670`, cut from `personal-bots/main` `a99d8a68e9` (the
 docs commit after live 1.66.69 `9bb580cc2975`). Code commits `81165e135d` (the
-worker), `2e81b53101` (test timing) and `b141113faa` (lint only); staged release
-`b141113faa0d` (version 1.66.70, externals copied). The measurement below ran on
-`81165e135d80`, the same server code without those test and lint changes.
+worker), `2e81b53101` (test timing), `b141113faa` (lint only) and `5772127dc7`
+(the QA fix in section 5); staged release `5772127dc72c` (version 1.66.70,
+externals copied), replacing the withdrawn `b141113faa0d`. The measurement below
+ran on `81165e135d80`, the same worker bridge this build carries: the fix changes
+service-level write sequences only, not the bridge, the connection mode or the
+result copying the numbers measure.
 
 ## 1. One serialized worker
 
@@ -79,7 +82,9 @@ an 8 s before window versus ~450 after show how much of the loop the main
 thread used to lose. The measured bundle and `b141113faa0d`'s `dist/bin.mjs`
 are byte-identical (sha256
 `77e50425a12ad20fe04f65220adb62807f480a60509104bfae9606623e204e27`), so the
-numbers apply to the staged release exactly. Evidence:
+numbers apply to that build's worker bridge exactly. The current staged release
+`5772127dc72c` carries the same bridge (no change in `nodeSqliteWorker.ts` or
+`nodeSqliteClient.ts`) plus the section 5 service fix. Evidence:
 `qa/hbots-sqlite-worker-20261018/SUMMARY.md` (raw `before.json` / `after.json`).
 
 ## 3. Tests
@@ -95,17 +100,70 @@ values) now runs through the worker. Two server tests that used only
 turn, because the outbox and refresh rows genuinely arrive from the worker;
 their assertions are unchanged.
 
+The QA fix adds `PersonalBotService.workerInterrupt.test.ts` (worker-mode
+disconnect during create and delete, plus a retried create; the create test
+fails without the fix) and `personalThreadLinkRepair.test.ts` (each boot-repair
+state), and QA's `disconnect-only.mjs` procedure was rerun on the staged build:
+3/3 PASS (section 5).
+
 ## 4. Risks and what QA should focus on
 
 - Transaction ordering and cancellation are the main risk: sends, tasks,
-  memory and secrets, a turn cancelled mid-transaction, and a worker that is
-  stopped at shutdown.
+  memory and secrets, a turn cancelled mid-transaction, a chat created or
+  deleted while a client disconnects, and a worker that is stopped at shutdown.
 - Large result sets still cross structured clone on the main thread. Check a
   large memory page and a busy chat list for a responsive UI.
 - The release smoke and release-db-check use the same database file through
   separate processes; confirm the live DB opens, migrates nothing and stays
   `integrity_check ok`.
 - Kill switch: `T3CODE_SQLITE_WORKER=off` must boot and behave as 1.66.69 did.
+- The QA fix (section 5) adds one small `personal_meta` write and delete per
+  chat creation and one boot-time repair query; both run on the same
+  connection, so no new main-thread work. No migration.
+
+## 5. QA fix: interrupted chat creation
+
+QA's risky-tier pass on `b141113faa0d` failed: a client that disconnected during
+`personalBots.createThread` under writer contention left
+`projection_threads=1` and `personal_bot_threads=0` in worker mode, 3/3; inline
+mode left both rows, 3/3. The chat existed durably but no bot listed it.
+Report `qa/hbots-16670-qa/SUMMARY.md`, repro `disconnect-only.mjs`.
+
+**Root cause.** Before the worker every SQLite statement ran synchronously on
+the caller's thread, so `createThread`'s two durable writes (the
+`thread.create` dispatch, then the bot-link insert) could not be stopped
+between them. The worker makes each statement an interruption point: the
+dispatch landed, then the socket cancellation stopped the operation before the
+link. The transaction layer was sound; the service-level sequence was not
+atomic.
+
+**Fix (`5772127dc7`).**
+
+- `createThread` runs the name check, dispatch, optional title and link as one
+  uninterruptible region (`uninterruptibleWrite`), restoring the inline
+  contract for a disconnect. A retry still dedupes on the thread's command id.
+- A `personalThreadLinkIntent:<threadId>` row in `personal_meta` is written
+  before the dispatch and cleared after the link. At boot,
+  `personalThreadLinkRepair` links a live projection to its bot when the link is
+  missing and drops intents whose thread never landed (or whose thread or bot
+  was deleted). Idempotent, additive, no migration.
+- The same audit fixed other multi-step writes that relied on synchronous
+  atomicity: bot create and update (one lead per team; a model change ends its
+  fallback), chat archive/unarchive, chat delete, task steer (delivered turn and
+  resume note), the memory notice delta/complete pair, and secret fulfilment's
+  task resume plus secret cancel. Memory save/Undo and saved-key writes were
+  already one transaction or the uninterruptible secret-access lock. Task
+  create/delegate inserts are one transaction and the queue pump recovers a
+  lost enqueue; bot purge stays best-effort by design, tombstone last.
+
+**Proof on the staged build.** QA's procedure was rerun on `5772127dc72c` in
+worker mode (`SQLite connection mode: worker` in the boot log), three runs
+identical: after the disconnect both rows were present (1/1) and no link intent
+was left; the retry kept both. 3/3 PASS. Evidence
+`qa/hbots-16670-fix/SUMMARY.md`, raw `disconnect-worker-fixed.json`.
+`PersonalBotService.workerInterrupt.test.ts` reproduces the interruption at the
+service boundary on the real worker and fails without the fix;
+`personalThreadLinkRepair.test.ts` covers each boot-repair state.
 
 ## Gate evidence
 
