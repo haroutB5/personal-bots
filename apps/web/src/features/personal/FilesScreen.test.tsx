@@ -106,6 +106,7 @@ vi.mock("./ChatsScreen", () => ({ useMinuteClock: () => Date.parse("2026-09-14T1
 vi.mock("./BotAvatar", () => ({ BotAvatar: () => <span /> }));
 vi.mock("./usePersonalBots", () => ({
   usePersonalEnvironmentId: () => "env-1",
+  useHiddenUsageProviders: () => new Set<string>(),
   usePersonalBotsList: () => ({ data: { bots: [bot, otherBot] }, error: null, refresh: vi.fn() }),
   usePersonalFiles: () => ({ data: { files: state.files }, error: null, refresh: vi.fn() }),
 }));

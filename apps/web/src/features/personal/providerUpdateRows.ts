@@ -12,6 +12,7 @@ import {
 
 import { resolveBotProvider } from "./botSummaries";
 import { formatRetryTime } from "./conversationModel";
+import { USAGE_CARD_DRIVERS } from "./usagePresentation";
 
 export interface ProviderUpdateRow {
   readonly instanceId: ProviderInstanceId;
@@ -28,6 +29,11 @@ export interface ProviderUpdateRow {
   /** An update is queued or running. */
   readonly busy: boolean;
   readonly canCheck: boolean;
+  /**
+   * Installed, signed in and with usage to show, so Settings offers the
+   * "Show usage" switch for it.
+   */
+  readonly canToggleUsage: boolean;
 }
 
 /**
@@ -65,6 +71,7 @@ export function buildProviderUpdateRows(
             canUpdate: false,
             busy: false,
             canCheck: false,
+            canToggleUsage: false,
           }
         : providerUpdateRow(snapshot, label, now),
     );
@@ -176,5 +183,10 @@ export function providerUpdateRow(
     canUpdate: !busy && oneClick,
     busy,
     canCheck: !busy && smoke?.status !== "checking",
+    canToggleUsage:
+      snapshot.installed &&
+      snapshot.auth?.status === "authenticated" &&
+      ((USAGE_CARD_DRIVERS as ReadonlyArray<string>).includes(snapshot.driver) ||
+        (snapshot.usageLimits?.windows.length ?? 0) > 0),
   };
 }

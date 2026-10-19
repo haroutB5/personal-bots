@@ -137,6 +137,7 @@ vi.mock("./usePersonalGroups", () => ({
 }));
 vi.mock("./usePersonalBots", () => ({
   usePersonalEnvironmentId: () => state.environmentId,
+  useHiddenUsageProviders: () => new Set<string>(),
   usePersonalBotsList: () => ({ data: state.listData, error: null, refresh: state.refresh }),
   usePersonalProfile: () => ({ data: null }),
 }));

@@ -508,6 +508,7 @@ it.effect("profile display name defaults to empty, trims on set, and rejects lon
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
       autoArchiveTaskChatsAfterMinutes: 2880,
+      hiddenUsageProviders: [],
     });
 
     expect(yield* service.setProfile({ displayName: "  Harout  " })).toEqual({
@@ -515,12 +516,14 @@ it.effect("profile display name defaults to empty, trims on set, and rejects lon
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
       autoArchiveTaskChatsAfterMinutes: 2880,
+      hiddenUsageProviders: [],
     });
     expect(yield* service.getProfile()).toEqual({
       displayName: "Harout",
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
       autoArchiveTaskChatsAfterMinutes: 2880,
+      hiddenUsageProviders: [],
     });
 
     expect(yield* service.setProfile({ displayName: "" })).toEqual({
@@ -528,16 +531,41 @@ it.effect("profile display name defaults to empty, trims on set, and rejects lon
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
       autoArchiveTaskChatsAfterMinutes: 2880,
+      hiddenUsageProviders: [],
     });
     expect(yield* service.getProfile()).toEqual({
       displayName: "",
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
       autoArchiveTaskChatsAfterMinutes: 2880,
+      hiddenUsageProviders: [],
     });
 
     const tooLong = yield* Effect.flip(service.setProfile({ displayName: "x".repeat(81) }));
     expect(tooLong.message).toContain("at most 80 characters");
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
+it.effect("usage visibility hides and shows one provider at a time", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    expect((yield* service.getProfile()).hiddenUsageProviders).toEqual([]);
+    const hidden = yield* service.setProfile({
+      usageVisibility: { instanceId: "codex", visible: false },
+    });
+    expect(hidden.hiddenUsageProviders).toEqual(["codex"]);
+    // Hiding twice keeps one entry; another provider is added beside it.
+    yield* service.setProfile({ usageVisibility: { instanceId: "codex", visible: false } });
+    yield* service.setProfile({ usageVisibility: { instanceId: "deepseek", visible: false } });
+    expect((yield* service.getProfile()).hiddenUsageProviders).toEqual(["codex", "deepseek"]);
+    // Other profile edits leave it alone.
+    yield* service.setProfile({ displayName: "Harout" });
+    expect((yield* service.getProfile()).hiddenUsageProviders).toEqual(["codex", "deepseek"]);
+    const shown = yield* service.setProfile({
+      usageVisibility: { instanceId: "codex", visible: true },
+    });
+    expect(shown.hiddenUsageProviders).toEqual(["deepseek"]);
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 
@@ -640,6 +668,7 @@ it.effect("auto-archive of finished task chats is on by default and saved when t
       autoArchiveTaskChats: false,
       ...DEFAULT_VOICE_CALLS,
       autoArchiveTaskChatsAfterMinutes: 2880,
+      hiddenUsageProviders: [],
     });
     expect((yield* service.getProfile()).autoArchiveTaskChats).toBe(false);
     // A name change alone leaves the setting as it was.
@@ -697,6 +726,7 @@ it.effect(
         autoArchiveTaskChats: true,
         ...DEFAULT_VOICE_CALLS,
         autoArchiveTaskChatsAfterMinutes: 2880,
+        hiddenUsageProviders: [],
       });
       yield* service.setProfile({ displayName: "Ht" });
       expect((yield* service.getProfile()).customTeams).toEqual(["Research"]);
@@ -726,6 +756,7 @@ it.effect(
         autoArchiveTaskChats: true,
         ...DEFAULT_VOICE_CALLS,
         autoArchiveTaskChatsAfterMinutes: 2880,
+        hiddenUsageProviders: [],
       });
     }).pipe(Effect.provide(makeTestLayer(context)));
   },
@@ -829,6 +860,7 @@ it.effect("an undecodable customTeams row still serves the profile", () => {
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
       autoArchiveTaskChatsAfterMinutes: 2880,
+      hiddenUsageProviders: [],
     });
 
     // And the user can register a team again, which rewrites the bad row.
@@ -839,6 +871,7 @@ it.effect("an undecodable customTeams row still serves the profile", () => {
       autoArchiveTaskChats: true,
       ...DEFAULT_VOICE_CALLS,
       autoArchiveTaskChatsAfterMinutes: 2880,
+      hiddenUsageProviders: [],
     });
   }).pipe(Effect.provide(makeTestLayer(context)));
 });

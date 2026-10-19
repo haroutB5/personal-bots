@@ -13,6 +13,8 @@ import {
 
 import { formatUsd } from "./tokenUsagePresentation";
 
+const NO_HIDDEN_PROVIDERS: ReadonlySet<string> = new Set();
+
 /** Drivers surfaced as cards, in display order. */
 export const USAGE_CARD_DRIVERS = ["claudeAgent", "codex", "deepseek"] as const;
 export type UsageCardDriver = (typeof USAGE_CARD_DRIVERS)[number];
@@ -130,6 +132,21 @@ export function formatResetCountdown(resetsAt: string | undefined, now: number):
   return `resets in ${formatDuration(at - now)}`;
 }
 
+/** The sheet's subtitle, naming the cards it shows: "Token windows for Claude and Codex". */
+export function usageSheetDescription(cards: readonly UsageCard[]): string {
+  const titles = cards.map((card) => card.title);
+  const list =
+    titles.length <= 1
+      ? (titles[0] ?? "")
+      : `${titles.slice(0, -1).join(", ")} and ${titles[titles.length - 1]}`;
+  const balance = cards.some((card) => card.balance !== null);
+  const windows = cards.some((card) => card.balance === null);
+  if (list === "") return "No providers to show";
+  const kind =
+    balance && windows ? "Token windows and balance" : balance ? "Balance" : "Token windows";
+  return `${kind} for ${list}`;
+}
+
 /** "1 reset banked", "2 resets banked". */
 export function resetCreditsHeadline(count: number): string {
   return `${count} ${count === 1 ? "reset" : "resets"} banked`;
@@ -238,11 +255,13 @@ function parseCheckedAt(value: string | undefined): number | null {
 function newestInstance(
   providers: ReadonlyArray<ServerProvider>,
   driver: UsageCardDriver,
+  hidden: ReadonlySet<string>,
 ): ServerProvider | null {
   let best: ServerProvider | null = null;
   let bestAt = Number.NEGATIVE_INFINITY;
   for (const provider of providers) {
     if (provider.driver !== driver || !provider.enabled || !provider.installed) continue;
+    if (hidden.has(provider.instanceId)) continue;
     const at = parseCheckedAt(provider.usageLimits?.checkedAt) ?? Number.NEGATIVE_INFINITY;
     if (best === null || at > bestAt) {
       best = provider;
@@ -303,10 +322,12 @@ function placeholderNotice(provider: ServerProvider, title: string): string | nu
 export function selectUsageCards(
   providers: ReadonlyArray<ServerProvider>,
   now: number,
+  /** Instances the owner turned "Show usage" off for in Settings > Providers. */
+  hidden: ReadonlySet<string> = NO_HIDDEN_PROVIDERS,
 ): readonly UsageCard[] {
   const cards: UsageCard[] = [];
   for (const driver of USAGE_CARD_DRIVERS) {
-    const provider = newestInstance(providers, driver);
+    const provider = newestInstance(providers, driver, hidden);
     if (!provider) continue;
     const title = USAGE_CARD_TITLES[driver];
     if (driver === "deepseek") {

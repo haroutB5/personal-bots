@@ -16,6 +16,7 @@ import {
   usageCardEmptyText,
   usageNeedsRefreshOnOpen,
   usageRefreshFailureText,
+  usageSheetDescription,
   USAGE_STALE_AFTER_MS,
   type UsageCard,
 } from "./usagePresentation";
@@ -763,5 +764,28 @@ describe("auto probe", () => {
 
   it("still asks at most once per server probe interval", () => {
     expect(due([card({ refreshFailure: "x" })], 1_000_000 - 60_000)).toBe(false);
+  });
+});
+
+describe("Show usage off in Settings", () => {
+  const claude = provider({
+    driver: "claudeAgent",
+    instanceId: "claudeAgent",
+    usageLimits: claudeLimits(),
+  });
+  const codex = provider({
+    driver: "codex",
+    instanceId: "codex",
+    usageLimits: { checkedAt: "2026-09-13T11:58:00Z", windows: [window({ id: "primary" })] },
+  });
+
+  it("leaves a hidden provider out and names only the cards shown", () => {
+    const all = selectUsageCards([claude, codex], NOW);
+    expect(all.map((card) => card.title)).toEqual(["Claude", "Codex"]);
+    expect(usageSheetDescription(all)).toBe("Token windows for Claude and Codex");
+    const shown = selectUsageCards([claude, codex], NOW, new Set(["codex"]));
+    expect(shown.map((card) => card.title)).toEqual(["Claude"]);
+    expect(usageSheetDescription(shown)).toBe("Token windows for Claude");
+    expect(usageSheetDescription([])).toBe("No providers to show");
   });
 });

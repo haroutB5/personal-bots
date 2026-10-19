@@ -189,6 +189,20 @@ export function usePersonalProfile(environmentId: EnvironmentId | null) {
   return useEnvironmentQuery(atom);
 }
 
+const NO_HIDDEN_USAGE: ReadonlySet<string> = new Set();
+
+/**
+ * Provider instances whose usage the owner turned off in Settings >
+ * Providers. Empty until the profile has loaded; stable between renders.
+ */
+export function useHiddenUsageProviders(environmentId: EnvironmentId | null): ReadonlySet<string> {
+  const hidden = usePersonalProfile(environmentId).data?.hiddenUsageProviders;
+  return useMemo(
+    () => (hidden === undefined || hidden.length === 0 ? NO_HIDDEN_USAGE : new Set(hidden)),
+    [hidden],
+  );
+}
+
 /** The zone "today" is cut in: this device's, else the app's own. */
 function deviceTimeZone(): string {
   try {

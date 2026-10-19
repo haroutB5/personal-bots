@@ -13,7 +13,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { formatRelativeTime } from "./relativeTime";
 import { trackUsageRefresh, useUsageRefreshing } from "./usageRefresh";
-import { usePersonalEnvironmentId } from "./usePersonalBots";
+import { useHiddenUsageProviders, usePersonalEnvironmentId } from "./usePersonalBots";
 import {
   deepSeekSpendText,
   formatBalanceAmount,
@@ -22,6 +22,7 @@ import {
   usageAutoProbeDue,
   usageNeedsRefreshOnOpen,
   usageRefreshFailureText,
+  usageSheetDescription,
   type UsageBalanceView,
   type UsageCard,
   type UsageWindowRow,
@@ -382,9 +383,7 @@ function UsageSheetBody({
             Usage
           </SheetTitle>
           <SheetDescription className="text-[13px] text-[var(--personal-text-tertiary)]">
-            {cards.some((card) => card.balance !== null)
-              ? "Token windows and balance for Claude, Codex and DeepSeek"
-              : "Token windows for Claude and Codex"}
+            {usageSheetDescription(cards)}
           </SheetDescription>
         </div>
         <button
@@ -439,6 +438,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
     reportFailure: false,
   });
   const [open, setOpen] = useState(false);
+  const hidden = useHiddenUsageProviders(environmentId);
 
   // The bars should not wait for the sheet to be opened: ask for the reading
   // the sheet would ask for, once, when the list first has providers (and again
@@ -448,7 +448,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
     if (environmentId === null) return;
     const at = Date.now();
     const due = usageAutoProbeDue({
-      cards: selectUsageCards(providers, at),
+      cards: selectUsageCards(providers, at, hidden),
       now: at,
       lastProbeAt: autoProbe.lastProbeAt,
       firstLoad: !autoProbe.firstLoadSeen,
@@ -460,9 +460,9 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
     // Each new provider snapshot is a chance, and so is each minute tick: a
     // window can reset while the list sits open. `refreshProviders` only
     // wraps the RPC.
-  }, [environmentId, providers, now]);
+  }, [environmentId, providers, now, hidden]);
 
-  const cards = selectUsageCards(providers, now);
+  const cards = selectUsageCards(providers, now, hidden);
   const cells = selectUsageStripCells(cards);
   if (cells.length === 0) return null;
 

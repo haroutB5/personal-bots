@@ -48,6 +48,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("./usePersonalBots", () => ({
   personalProfileSet: {},
+  useHiddenUsageProviders: () => new Set<string>(),
   personalProfile: () => ({}),
   personalProviderRecheck: {},
   usePersonalEnvironmentId: () => "env-1",

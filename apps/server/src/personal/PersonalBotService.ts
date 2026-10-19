@@ -99,6 +99,21 @@ const PERSONAL_META_PROJECT_ID = "personalProjectId";
 const PERSONAL_META_DISPLAY_NAME = "displayName";
 /** Settings > Voice calls: the voice and the quiet-hangup time, as JSON. */
 const PERSONAL_META_VOICE_CALLS = "voiceCalls";
+/** JSON array of provider instance ids whose usage the owner hid. */
+const PERSONAL_META_USAGE_HIDDEN = "usageHiddenProviders";
+
+/** A row that is not a JSON array of strings reads as nothing hidden. */
+function parseHiddenUsageProviders(stored: string | null): ReadonlyArray<string> {
+  if (stored === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.filter((value): value is string => typeof value === "string"))]
+      : [];
+  } catch {
+    return [];
+  }
+}
 const decodeVoiceCallSettings = Schema.decodeUnknownEffect(
   Schema.fromJsonString(VoiceCallSettings),
 );
@@ -1099,6 +1114,9 @@ export const make = Effect.gen(function* () {
       const autoArchiveAfter = yield* repository.getMeta({
         key: TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
       });
+      const hiddenUsage = parseHiddenUsageProviders(
+        Option.getOrNull(yield* repository.getMeta({ key: PERSONAL_META_USAGE_HIDDEN })),
+      );
       return {
         displayName: Option.getOrElse(stored, () => ""),
         ...(customTeams.length > 0 ? { customTeams } : {}),
@@ -1107,6 +1125,7 @@ export const make = Effect.gen(function* () {
         autoArchiveTaskChatsAfterMinutes: personalChatArchiveAfterMinutesFromStored(
           Option.getOrNull(autoArchiveAfter),
         ),
+        hiddenUsageProviders: hiddenUsage,
       };
     }).pipe(Effect.mapError(repositoryError("profile lookup")));
 
@@ -1204,6 +1223,18 @@ export const make = Effect.gen(function* () {
             key: TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
             value: String(input.autoArchiveTaskChatsAfterMinutes),
           })
+          .pipe(Effect.mapError(repositoryError("profile update")));
+      }
+      if (input.usageVisibility !== undefined) {
+        const { instanceId, visible } = input.usageVisibility;
+        const current = profile.hiddenUsageProviders ?? [];
+        const next = visible
+          ? current.filter((hidden) => hidden !== instanceId)
+          : current.includes(instanceId)
+            ? current
+            : [...current, instanceId];
+        yield* repository
+          .setMeta({ key: PERSONAL_META_USAGE_HIDDEN, value: JSON.stringify(next) })
           .pipe(Effect.mapError(repositoryError("profile update")));
       }
       yield* repository

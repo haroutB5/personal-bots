@@ -18,6 +18,10 @@ import {
   remainingPercent,
   windowAsOf,
 } from "@t3tools/shared/usageLimits";
+import {
+  useHiddenUsageProviders,
+  usePersonalEnvironmentId,
+} from "~/features/personal/usePersonalBots";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
@@ -338,9 +342,29 @@ export function UsageLimitsSection({
   readonly cursorPrompt?: ReactNode;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const selected =
-    selectedEnvironmentIds === null
-      ? presentations
-      : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
+  // Providers the owner turned "Show usage" off for (phone Settings >
+  // Providers) are left out here too. The setting lives on the bots server.
+  const personalEnvironmentId = usePersonalEnvironmentId();
+  const hidden = useHiddenUsageProviders(personalEnvironmentId);
+  const selected = new Map(
+    [...presentations]
+      .filter(([id]) => selectedEnvironmentIds === null || selectedEnvironmentIds.has(id))
+      .map(([id, presentation]) => {
+        const providers = presentation.serverConfig?.providers;
+        if (id !== personalEnvironmentId || hidden.size === 0 || providers === undefined) {
+          return [id, presentation] as const;
+        }
+        return [
+          id,
+          {
+            ...presentation,
+            serverConfig: {
+              ...presentation.serverConfig,
+              providers: providers.filter((provider) => !hidden.has(provider.instanceId)),
+            },
+          },
+        ] as const;
+      }),
+  );
   return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
 }

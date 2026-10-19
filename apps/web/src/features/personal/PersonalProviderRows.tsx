@@ -13,7 +13,11 @@ import {
   type ProviderUpdateRow,
   withPendingAction,
 } from "./providerUpdateRows";
-import { personalProviderRecheck } from "./usePersonalBots";
+import {
+  personalProfileSet,
+  personalProviderRecheck,
+  useHiddenUsageProviders,
+} from "./usePersonalBots";
 
 const ROW_BUTTON =
   "h-11 shrink-0 rounded-[var(--personal-radius-button)] text-[13px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40";
@@ -34,6 +38,10 @@ export function PersonalProviderRows({
     reportFailure: false,
   });
   const recheck = useAtomCommand(personalProviderRecheck, { reportFailure: false });
+  const setProfile = useAtomCommand(personalProfileSet, { reportFailure: false });
+  const hiddenUsage = useHiddenUsageProviders(environmentId);
+  // A tapped switch shows its new state at once; the profile takes over once saved.
+  const [usagePending, setUsagePending] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   // Requests in flight (the snapshot takes over once the server answers).
   const [sending, setSending] = useState<ReadonlyMap<string, ProviderRowAction>>(() => new Map());
   const [errors, setErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
@@ -55,6 +63,27 @@ export function PersonalProviderRows({
       return next;
     });
     setSending((previous) => {
+      const next = new Map(previous);
+      next.delete(instanceId);
+      return next;
+    });
+  };
+
+  const toggleUsage = async (instanceId: string, label: string, visible: boolean) => {
+    if (usagePending.has(instanceId)) return;
+    setUsagePending((previous) => new Map(previous).set(instanceId, visible));
+    const result = await setProfile({
+      environmentId,
+      input: { usageVisibility: { instanceId, visible } },
+    });
+    const failure = commandFailureMessage(result, `Couldn't save ${label}'s usage setting.`);
+    setErrors((previous) => {
+      const next = new Map(previous);
+      if (failure === null) next.delete(instanceId);
+      else next.set(instanceId, failure);
+      return next;
+    });
+    setUsagePending((previous) => {
       const next = new Map(previous);
       next.delete(instanceId);
       return next;
@@ -154,6 +183,14 @@ export function PersonalProviderRows({
                 {row.detail}
               </p>
             ) : null}
+            {row.canToggleUsage ? (
+              <UsageSwitch
+                label={row.label}
+                shown={usagePending.get(row.instanceId) ?? !hiddenUsage.has(row.instanceId)}
+                saving={usagePending.has(row.instanceId)}
+                onToggle={(visible) => void toggleUsage(row.instanceId, row.label, visible)}
+              />
+            ) : null}
             {error !== null ? (
               <p role="alert" className="pl-8 text-sm text-[var(--personal-error)]">
                 {error}
@@ -163,5 +200,39 @@ export function PersonalProviderRows({
         );
       })}
     </>
+  );
+}
+
+/**
+ * "Show usage" under a provider that is installed and signed in: off leaves
+ * it out of the Chats usage strip, its sheet and the Usage page. Same On/Off
+ * shape as the Chat preferences.
+ */
+function UsageSwitch({
+  label,
+  shown,
+  saving,
+  onToggle,
+}: {
+  label: string;
+  shown: boolean;
+  saving: boolean;
+  onToggle: (visible: boolean) => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(!shown)}
+      aria-pressed={shown}
+      aria-busy={saving}
+      aria-label={`Show ${label} usage`}
+      disabled={saving}
+      className="-mx-2 ml-6 flex min-h-11 items-center justify-between gap-3 rounded-[var(--personal-radius-button)] px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-60"
+    >
+      <span className="text-[13px] text-[var(--personal-text-secondary)]">Show usage</span>
+      <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+        {shown ? "On" : "Off"}
+      </span>
+    </button>
   );
 }

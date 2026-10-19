@@ -869,6 +869,13 @@ export const PersonalProfile = Schema.Struct({
    * server's profile still decodes (read as the default).
    */
   autoArchiveTaskChatsAfterMinutes: Schema.optionalKey(Schema.Int),
+  /**
+   * Provider instances whose usage the owner turned off in Settings >
+   * Providers: they are left out of the Chats usage strip, its sheet and the
+   * Usage page. Stored in `personal_meta` under "usageHiddenProviders".
+   * Optional so an older server's profile still decodes (read as none).
+   */
+  hiddenUsageProviders: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type PersonalProfile = typeof PersonalProfile.Type;
 
@@ -889,6 +896,13 @@ export const PersonalProfileSetInput = Schema.Struct({
    * refuses anything outside that range rather than clamping it.
    */
   autoArchiveTaskChatsAfterMinutes: Schema.optional(Schema.Int),
+  /** Shows or hides one provider instance's usage; the rest keep their setting. */
+  usageVisibility: Schema.optional(
+    Schema.Struct({
+      instanceId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+      visible: Schema.Boolean,
+    }),
+  ),
 });
 export type PersonalProfileSetInput = typeof PersonalProfileSetInput.Type;
 

@@ -41,7 +41,10 @@ vi.mock("~/components/ui/alert-dialog", () => ({
     <button type="button">{children}</button>
   ),
 }));
-vi.mock("./usePersonalBots", () => ({ usePersonalEnvironmentId: () => "env-1" }));
+vi.mock("./usePersonalBots", () => ({
+  usePersonalEnvironmentId: () => "env-1",
+  useHiddenUsageProviders: () => new Set<string>(),
+}));
 vi.mock("~/components/ui/sheet", () => ({
   Sheet: ({ open, children }: { open: boolean; children: ReactNode }) =>
     open ? <div data-slot="sheet">{children}</div> : null,

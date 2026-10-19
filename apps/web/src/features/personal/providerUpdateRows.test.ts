@@ -274,3 +274,30 @@ describe("buildProviderUpdateRows", () => {
     expect(rows[1]).toMatchObject({ canCheck: true });
   });
 });
+
+describe("the Show usage switch", () => {
+  const signedIn = { status: "authenticated" } as ServerProvider["auth"];
+
+  it("is offered only for a provider that is installed, signed in and has usage", () => {
+    expect(providerUpdateRow(claude({ auth: signedIn }), "Claude Code").canToggleUsage).toBe(true);
+    expect(
+      providerUpdateRow(claude({ auth: { status: "unauthenticated" } }), "Claude Code")
+        .canToggleUsage,
+    ).toBe(false);
+    expect(
+      providerUpdateRow(claude({ auth: signedIn, installed: false }), "Claude Code").canToggleUsage,
+    ).toBe(false);
+    // A driver with no usage card shows it only once it reports windows.
+    const grok = claude({ instanceId: "grok", driver: "grok", auth: signedIn } as never);
+    expect(providerUpdateRow(grok, "Grok").canToggleUsage).toBe(false);
+    const grokWithWindows = {
+      ...grok,
+      usageLimits: {
+        checkedAt: "2026-10-19T21:00:00.000Z",
+        windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 4 }],
+      },
+    } as ServerProvider;
+    expect(providerUpdateRow(grokWithWindows, "Grok").canToggleUsage).toBe(true);
+    expect(buildProviderUpdateRows([], [bot("a", "missing", 0)])[0]!.canToggleUsage).toBe(false);
+  });
+});
