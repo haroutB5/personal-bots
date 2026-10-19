@@ -958,6 +958,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       yield* Effect.forkScoped(
         Effect.forever(
           TestClock.adjust("1 second").pipe(
+            // Real time between steps: an Effect sleep would wait on the test clock itself.
+            // @effect-diagnostics-next-line globalTimers:off
             Effect.andThen(Effect.promise(() => new Promise((done) => setTimeout(done, 5)))),
           ),
         ),

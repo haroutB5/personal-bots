@@ -102,18 +102,17 @@ const PERSONAL_META_VOICE_CALLS = "voiceCalls";
 /** JSON array of provider instance ids whose usage the owner hid. */
 const PERSONAL_META_USAGE_HIDDEN = "usageHiddenProviders";
 
+const HiddenUsageProvidersJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeHiddenUsageProviders = Schema.encodeEffect(HiddenUsageProvidersJson);
+
 /** A row that is not a JSON array of strings reads as nothing hidden. */
-function parseHiddenUsageProviders(stored: string | null): ReadonlyArray<string> {
-  if (stored === null) return [];
-  try {
-    const parsed: unknown = JSON.parse(stored);
-    return Array.isArray(parsed)
-      ? [...new Set(parsed.filter((value): value is string => typeof value === "string"))]
-      : [];
-  } catch {
-    return [];
-  }
-}
+const parseHiddenUsageProviders = (stored: string | null) =>
+  stored === null
+    ? Effect.succeed<ReadonlyArray<string>>([])
+    : Schema.decodeUnknownEffect(HiddenUsageProvidersJson)(stored).pipe(
+        Effect.map((ids): ReadonlyArray<string> => [...new Set(ids)]),
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      );
 const decodeVoiceCallSettings = Schema.decodeUnknownEffect(
   Schema.fromJsonString(VoiceCallSettings),
 );
@@ -1114,7 +1113,7 @@ export const make = Effect.gen(function* () {
       const autoArchiveAfter = yield* repository.getMeta({
         key: TASK_CHAT_AUTO_ARCHIVE_AFTER_META_KEY,
       });
-      const hiddenUsage = parseHiddenUsageProviders(
+      const hiddenUsage = yield* parseHiddenUsageProviders(
         Option.getOrNull(yield* repository.getMeta({ key: PERSONAL_META_USAGE_HIDDEN })),
       );
       return {
@@ -1233,8 +1232,11 @@ export const make = Effect.gen(function* () {
           : current.includes(instanceId)
             ? current
             : [...current, instanceId];
+        const value = yield* encodeHiddenUsageProviders(next).pipe(
+          Effect.mapError(repositoryError("usage visibility encoding")),
+        );
         yield* repository
-          .setMeta({ key: PERSONAL_META_USAGE_HIDDEN, value: JSON.stringify(next) })
+          .setMeta({ key: PERSONAL_META_USAGE_HIDDEN, value })
           .pipe(Effect.mapError(repositoryError("profile update")));
       }
       yield* repository
