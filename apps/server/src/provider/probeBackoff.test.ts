@@ -1,7 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 
-import { PROBE_BACKOFF_CAP, probeBackoffInterval } from "./probeBackoff.ts";
+import {
+  PROBE_BACKOFF_CAP,
+  USAGE_RESET_GRACE,
+  probeBackoffInterval,
+  usageAwareWait,
+} from "./probeBackoff.ts";
 
 const minutes = (base: Duration.Input, failures: number) =>
   Duration.toMillis(probeBackoffInterval(base, failures)) / 60_000;
@@ -29,5 +34,38 @@ describe("probeBackoffInterval", () => {
     expect(Duration.toMillis(probeBackoffInterval("5 minutes", 5_000))).toBe(
       Duration.toMillis(PROBE_BACKOFF_CAP),
     );
+  });
+});
+
+describe("usageAwareWait", () => {
+  const limits = (resetsAt: string | undefined) => ({
+    checkedAt: "1970-01-01T00:00:00.000Z",
+    windows: [
+      {
+        id: "five_hour",
+        kind: "session" as const,
+        label: "Session",
+        usedPercent: 100,
+        ...(resetsAt === undefined ? {} : { resetsAt }),
+      },
+    ],
+  });
+  const waitMs = (resetsAt: string | undefined, nowMs: number) =>
+    Duration.toMillis(usageAwareWait(Duration.minutes(5), limits(resetsAt), nowMs));
+
+  it("wakes just after a reset that comes before the interval", () => {
+    expect(waitMs("1970-01-01T00:02:00.000Z", 0)).toBe(
+      120_000 + Duration.toMillis(USAGE_RESET_GRACE),
+    );
+  });
+
+  it("keeps the interval when the next reset is further away or unknown", () => {
+    expect(waitMs("1970-01-01T05:00:00.000Z", 0)).toBe(300_000);
+    expect(waitMs(undefined, 0)).toBe(300_000);
+    expect(Duration.toMillis(usageAwareWait(Duration.minutes(5), undefined, 0))).toBe(300_000);
+  });
+
+  it("ignores a reset already in the past, so it cannot spin the loop", () => {
+    expect(waitMs("1970-01-01T00:00:00.000Z", 60_000)).toBe(300_000);
   });
 });

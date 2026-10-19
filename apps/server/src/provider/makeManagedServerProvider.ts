@@ -4,7 +4,9 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { usageResetSinceReading } from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -18,7 +20,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { probeBackoffInterval } from "./probeBackoff.ts";
+import { probeBackoffInterval, usageAwareWait } from "./probeBackoff.ts";
 import {
   applyUsageLimitsUpdate,
   resolveUsageLimitsAfterProbe,
@@ -61,6 +63,10 @@ const ignoreCauseWithoutInterruptNoise = <A, E, R>(
     onFailure: (cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.log(cause)),
     onSuccess: () => Effect.void,
   });
+
+/** The usage reset times a snapshot reports, as one comparable string. */
+const resetTimesKey = (snapshot: ServerProvider): string =>
+  snapshot.usageLimits?.windows.map((window) => window.resetsAt ?? "").join("|") ?? "";
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
@@ -312,6 +318,22 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   }
 
+  // A reading that moves a usage reset changes when the loop should wake, so
+  // the loop re-plans its sleep (without probing) when the reset times differ
+  // from the ones it planned with. Subscribed here, before the first probe
+  // can publish.
+  const plannedResetsRef = yield* Ref.make(resetTimesKey(initialSnapshot));
+  const resetTimeChanges = yield* PubSub.subscribe(changesPubSub);
+  yield* Stream.fromSubscription(resetTimeChanges).pipe(
+    Stream.runForEach((snapshot) =>
+      Effect.gen(function* () {
+        if (resetTimesKey(snapshot) === (yield* Ref.get(plannedResetsRef))) return;
+        yield* Queue.offer(refreshIntervalChanges, undefined);
+      }),
+    ),
+    Effect.forkScoped,
+  );
+
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
     Effect.asVoid(applySnapshot(nextSettings)),
   ).pipe(Effect.forkScoped);
@@ -326,13 +348,32 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         yield* Ref.get(usageFailureStreakRef),
       );
       const enabled = Duration.toMillis(refreshInterval) > 0;
+      // Wake just after the next usage window resets when that comes first,
+      // so the new window is read then rather than up to one interval later.
+      const planned = (yield* Ref.get(snapshotStateRef)).snapshot;
+      yield* Ref.set(plannedResetsRef, resetTimesKey(planned));
+      const wait = usageAwareWait(
+        enabled ? refreshInterval : Duration.seconds(60),
+        planned.usageLimits,
+        yield* Clock.currentTimeMillis,
+      );
       // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
       const intervalElapsed = yield* Effect.raceFirst(
-        Effect.sleep(enabled ? refreshInterval : "60 seconds").pipe(Effect.as(true)),
+        Effect.sleep(wait).pipe(Effect.as(true)),
         Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
       );
       if (input.refreshOnInterval === false || !intervalElapsed || !enabled) return;
-      if (yield* hasProviderStatusDemand) yield* Effect.asVoid(refreshSnapshot());
+      // A reading older than a reset is wrong for everyone who opens the app
+      // next, so it is read again with or without a viewer. One read per
+      // reset: a successful read is newer than the reset, and a failing one
+      // is held to the backed-off interval like any other probe.
+      const resetSinceReading = usageResetSinceReading(
+        (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits,
+        yield* Clock.currentTimeMillis,
+      );
+      if (resetSinceReading || (yield* hasProviderStatusDemand)) {
+        yield* Effect.asVoid(refreshSnapshot());
+      }
     }).pipe(ignoreCauseWithoutInterruptNoise),
   ).pipe(Effect.forkScoped);
 

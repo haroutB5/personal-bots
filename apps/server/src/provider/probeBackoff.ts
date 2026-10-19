@@ -13,6 +13,8 @@
  *
  * @module provider/probeBackoff
  */
+import type { ServerProviderUsageLimits } from "@t3tools/contracts";
+import { nextUsageResetAt } from "@t3tools/shared/usageLimits";
 import * as Duration from "effect/Duration";
 
 /** The longest gap backoff will stretch a probe interval to. */
@@ -37,4 +39,23 @@ export const probeBackoffInterval = (
   return Duration.millis(
     Math.max(baseMillis, Math.min(Duration.toMillis(PROBE_BACKOFF_CAP), backedOff)),
   );
+};
+
+/** How long after a reported reset the re-read waits, so the provider has rolled over. */
+export const USAGE_RESET_GRACE = Duration.seconds(20);
+
+/**
+ * The loop's next wait: `interval`, or less when a usage window resets sooner,
+ * waking {@link USAGE_RESET_GRACE} after that reset. Never shorter than the
+ * grace, so a reset reported in the past cannot spin the loop.
+ */
+export const usageAwareWait = (
+  interval: Duration.Duration,
+  limits: ServerProviderUsageLimits | undefined,
+  nowMillis: number,
+): Duration.Duration => {
+  const nextReset = nextUsageResetAt(limits, nowMillis);
+  if (nextReset === null) return interval;
+  const untilReset = nextReset - nowMillis + Duration.toMillis(USAGE_RESET_GRACE);
+  return Duration.millis(Math.min(Duration.toMillis(interval), untilReset));
 };

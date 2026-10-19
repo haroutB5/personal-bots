@@ -442,7 +442,8 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
 
   // The bars should not wait for the sheet to be opened: ask for the reading
   // the sheet would ask for, once, when the list first has providers (and again
-  // only if a card later has nothing to show).
+  // only if a card later has nothing to show, or a window has reset since it
+  // was read).
   useEffect(() => {
     if (environmentId === null) return;
     const at = Date.now();
@@ -456,8 +457,10 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
     if (!due) return;
     autoProbe.lastProbeAt = at;
     void trackUsageRefresh(refreshProviders({ environmentId, input: { refreshUsage: true } }));
-    // Each new provider snapshot is a chance; `refreshProviders` only wraps the RPC.
-  }, [environmentId, providers]);
+    // Each new provider snapshot is a chance, and so is each minute tick: a
+    // window can reset while the list sits open. `refreshProviders` only
+    // wraps the RPC.
+  }, [environmentId, providers, now]);
 
   const cards = selectUsageCards(providers, now);
   const cells = selectUsageStripCells(cards);

@@ -10,6 +10,7 @@ import {
   type LimitPoolMember,
   type LimitPoolWindow,
   remainingPercent,
+  windowAsOf,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, TicketIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
@@ -148,7 +149,7 @@ function SegmentPopover({
   readonly onRedeem: () => void;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const remaining = remainingPercent(window);
+  const remaining = remainingPercent(windowAsOf(window, now));
   const resetsIn = formatResetsIn(window, now);
   const where =
     account.environments.length > 0
@@ -237,7 +238,7 @@ function PoolSegment({
   readonly showAccountName: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const remaining = remainingPercent(window);
+  const remaining = remainingPercent(windowAsOf(window, now));
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
@@ -347,7 +348,7 @@ function LegendRow({
   readonly now: number;
   readonly index: number;
 }) {
-  const remaining = remainingPercent(window);
+  const remaining = remainingPercent(windowAsOf(window, now));
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (

@@ -4,7 +4,12 @@ import type {
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimits";
+import {
+  formatDuration,
+  limitsNotice,
+  usageResetSinceReading,
+  windowHasReset,
+} from "@t3tools/shared/usageLimits";
 
 import { formatUsd } from "./tokenUsagePresentation";
 
@@ -59,6 +64,11 @@ export interface UsageCard {
    * refresh did not fail (or there are no bars).
    */
   readonly refreshFailure: string | null;
+  /**
+   * A window has reset since the bars were read: the bars already show it
+   * empty, and the reading is worth asking for again. Absent means false.
+   */
+  readonly resetSinceReading?: boolean;
   readonly session: UsageWindowRow | null;
   readonly weeklies: readonly UsageWindowRow[];
   /** Epoch millis the snapshot was checked, or null when unknown. */
@@ -156,6 +166,18 @@ export function formatResetTime(resetsAt: string | undefined, now: number): stri
 }
 
 function toRow(window: ServerProviderUsageWindow, now: number): UsageWindowRow {
+  // Past its reset the window starts over: show it empty now rather than the
+  // spent reading until the next read comes back.
+  if (windowHasReset(window, now)) {
+    const time = formatResetTime(window.resetsAt, now);
+    return {
+      id: window.id,
+      label: window.label,
+      usedPercent: 0,
+      resetLabel: null,
+      resetTimeLabel: time === null ? null : time.replace(/^Resets /, "Reset at "),
+    };
+  }
   return {
     id: window.id,
     label: window.label,
@@ -306,6 +328,7 @@ export function selectUsageCards(
         status: "ready",
         notice: null,
         refreshFailure: failure,
+        resetSinceReading: usageResetSinceReading(limits, now),
         session: pickSession(limits.windows, now),
         weeklies: pickWeeklies(limits.windows, now),
         checkedAt: parseCheckedAt(limits.checkedAt),
@@ -519,6 +542,8 @@ export function usageNeedsRefreshOnOpen(cards: readonly UsageCard[], now: number
  * - whenever a card has no reading at all (the state right after such a
  *   restart, and a server that restarts under an open page), even when that
  *   failed probe was only seconds ago;
+ * - whenever a window has reset since its card was read (the bars show it
+ *   empty already; the read brings the new window's real numbers);
  * - on the first load of the app, a card whose reading is past a minute, by
  *   the sheet's rule ({@link usageNeedsRefreshOnOpen}); never because a good
  *   reading aged later: the server's own cadence keeps those fresh;
@@ -542,7 +567,14 @@ export function usageAutoProbeDue(input: {
   // A probe that failed just now still carries a fresh `checkedAt`, so the
   // sheet's staleness rule alone would call it current: a card with no
   // reading, or one whose newest refresh failed, is due whenever it is seen.
-  if (input.cards.some((card) => card.status === "not-reported" || card.refreshFailure !== null)) {
+  if (
+    input.cards.some(
+      (card) =>
+        card.status === "not-reported" ||
+        card.refreshFailure !== null ||
+        card.resetSinceReading === true,
+    )
+  ) {
     return true;
   }
   return input.firstLoad && usageNeedsRefreshOnOpen(input.cards, input.now);

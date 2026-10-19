@@ -18,6 +18,10 @@ import {
   collectLimitPools,
   displayLimitWindows,
   elapsedShare,
+  nextUsageResetAt,
+  usageResetSinceReading,
+  windowAsOf,
+  windowHasReset,
   formatResetsIn,
   limitsNotice,
   paceOf,
@@ -1054,5 +1058,37 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("windows past their reset", () => {
+  const spent = {
+    id: "five_hour",
+    kind: "session" as const,
+    label: "Session",
+    usedPercent: 100,
+    resetsAt: "2026-10-19T21:19:00.000Z",
+    windowDurationMins: 300,
+  };
+  const before = Date.parse("2026-10-19T21:00:00.000Z");
+  const after = Date.parse("2026-10-19T21:31:00.000Z");
+
+  it("start over at 0% once the clock passes the reset", () => {
+    expect(windowHasReset(spent, before)).toBe(false);
+    expect(windowAsOf(spent, before).usedPercent).toBe(100);
+    expect(windowHasReset(spent, after)).toBe(true);
+    expect(windowAsOf(spent, after).usedPercent).toBe(0);
+    expect(elapsedShare(spent, after)).toBeNull();
+  });
+
+  it("finds the next reset and whether one passed since the reading", () => {
+    const limits = { checkedAt: "2026-10-19T20:59:00.000Z", windows: [spent] };
+    expect(nextUsageResetAt(limits, before)).toBe(Date.parse(spent.resetsAt));
+    expect(nextUsageResetAt(limits, after)).toBeNull();
+    expect(usageResetSinceReading(limits, before)).toBe(false);
+    expect(usageResetSinceReading(limits, after)).toBe(true);
+    expect(
+      usageResetSinceReading({ ...limits, checkedAt: "2026-10-19T21:20:00.000Z" }, after),
+    ).toBe(false);
   });
 });

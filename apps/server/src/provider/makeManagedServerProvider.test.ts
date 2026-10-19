@@ -1103,4 +1103,77 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
+  it.effect("re-reads usage once a window resets, with or without a viewer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const spent: ServerProvider = {
+          ...refreshedSnapshot,
+          checkedAt: "1970-01-01T00:00:00.000Z",
+          usageLimits: {
+            checkedAt: "1970-01-01T00:00:00.000Z",
+            windows: [
+              {
+                id: "five_hour",
+                kind: "session",
+                label: "Session",
+                usedPercent: 100,
+                resetsAt: "1970-01-01T00:10:00.000Z",
+              },
+            ],
+          },
+        };
+        const renewed: ServerProvider = {
+          ...spent,
+          checkedAt: "1970-01-01T00:10:20.000Z",
+          usageLimits: {
+            checkedAt: "1970-01-01T00:10:20.000Z",
+            windows: [
+              {
+                id: "five_hour",
+                kind: "session",
+                label: "Session",
+                usedPercent: 3,
+                resetsAt: "1970-01-01T05:10:00.000Z",
+              },
+            ],
+          },
+        };
+        yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
+                : Effect.void,
+            ),
+            Effect.map((count) => (count === 1 ? spent : renewed)),
+          ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        // Let the first reading publish and the loop re-plan around its reset.
+        for (let step = 0; step < 20; step++) yield* Effect.yieldNow;
+        yield* TestClock.adjust("10 minutes");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+
+        // 20 s after the reset: read again although nobody is looking.
+        yield* TestClock.adjust("20 seconds");
+        for (let step = 0; step < 20; step++) yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+
+        // The new reading is newer than the reset, so no viewer means no probe.
+        yield* TestClock.adjust("1 hour");
+        for (let step = 0; step < 20; step++) yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NeverRunTestLayer, TestClock.layer()))),
+  );
 });

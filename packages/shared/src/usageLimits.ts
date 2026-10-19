@@ -387,7 +387,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   const pools = [...byKey.values()].map((members): LimitPoolWindow => {
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
-    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
+    const usedPercent =
+      members.reduce((sum, m) => sum + windowAsOf(m.window, now).usedPercent, 0) / members.length;
     // Pace compares spend against the clock, so it is judged only over the
     // members that have a clock; a window with no reset would otherwise
     // count as spend with no time elapsed and skew the verdict.
@@ -451,10 +452,62 @@ function resetMillis(window: ServerProviderUsageWindow): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
-/** Elapsed share of the window, 0..1, or null when its length or reset is unknown. */
+/** True once the clock has passed the window's reset, so its reading no longer applies. */
+export function windowHasReset(window: ServerProviderUsageWindow, now: number): boolean {
+  const resetsAt = resetMillis(window);
+  return resetsAt !== null && resetsAt <= now;
+}
+
+/**
+ * The window as it stands at `now`: a window whose reset has passed starts
+ * over at 0% used, whatever the last reading said. Readings only arrive with a
+ * probe or a turn, so without this a spent window kept showing 100% after its
+ * reset until the next read came back.
+ */
+export function windowAsOf(
+  window: ServerProviderUsageWindow,
+  now: number,
+): ServerProviderUsageWindow {
+  return windowHasReset(window, now) && window.usedPercent !== 0
+    ? { ...window, usedPercent: 0 }
+    : window;
+}
+
+/** Earliest reset still ahead of `now`, epoch ms, or null when none is reported. */
+export function nextUsageResetAt(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): number | null {
+  let next: number | null = null;
+  for (const window of limits?.windows ?? []) {
+    const resetsAt = resetMillis(window);
+    if (resetsAt !== null && resetsAt > now && (next === null || resetsAt < next)) next = resetsAt;
+  }
+  return next;
+}
+
+/** A window has reset since this reading was taken, so the reading is out of date. */
+export function usageResetSinceReading(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): boolean {
+  if (limits === undefined) return false;
+  const readAt = Date.parse(limits.checkedAt);
+  if (!Number.isFinite(readAt)) return false;
+  return limits.windows.some((window) => {
+    const resetsAt = resetMillis(window);
+    return resetsAt !== null && resetsAt > readAt && resetsAt <= now;
+  });
+}
+
+/**
+ * Elapsed share of the window, 0..1, or null when its length or reset is
+ * unknown, or the reset has passed (the next window's start is not known).
+ */
 export function elapsedShare(window: ServerProviderUsageWindow, now: number): number | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null || window.windowDurationMins === undefined) return null;
+  if (resetsAt <= now) return null;
   const length = window.windowDurationMins * MINUTE;
   if (length <= 0) return null;
   return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));

@@ -16,6 +16,7 @@ import {
   type LimitPace,
   paceOf,
   remainingPercent,
+  windowAsOf,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
@@ -89,7 +90,7 @@ function WindowBar({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const remaining = remainingPercent(window);
+  const remaining = remainingPercent(windowAsOf(window, now));
   const elapsed = elapsedShare(window, now);
   // The fill is quota left, so the even-spending mark is the time left.
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
@@ -180,7 +181,7 @@ export function LimitWindows({
             <span className="flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+                {remainingPercent(windowAsOf(window, now))}% left
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />

@@ -166,6 +166,49 @@ describe("selectUsageCards", () => {
     expect(codex!.session).toMatchObject({ usedPercent: 63, resetLabel: "resets in 45m" });
   });
 
+  it("shows a window whose reset has passed as empty, and asks for a new reading", () => {
+    // Harout, 19 Oct: Claude still read "100% used, resets now" 12 minutes
+    // after the 22:19 reset, because the reading was 32 minutes old.
+    const spent = provider({
+      driver: "claudeAgent",
+      instanceId: "claudeAgent",
+      usageLimits: {
+        checkedAt: "2026-09-13T11:30:00Z",
+        windows: [
+          window({
+            id: "five_hour",
+            kind: "session",
+            label: "Session",
+            usedPercent: 100,
+            resetsAt: "2026-09-13T11:48:00Z",
+            windowDurationMins: 300,
+          }),
+          window({
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 34,
+            resetsAt: "2026-09-20T12:00:00Z",
+          }),
+        ],
+      },
+    });
+    const [card] = selectUsageCards([spent], NOW);
+    expect(card!.session).toMatchObject({ usedPercent: 0, resetLabel: null });
+    expect(card!.session!.resetTimeLabel).toMatch(/^Reset at \d\d:\d\d$/);
+    expect(card!.weeklies[0]).toMatchObject({ usedPercent: 34, resetLabel: "resets in 7d 0h" });
+    expect(card!.resetSinceReading).toBe(true);
+    // Due even on a later look and within a minute of the last reading.
+    expect(
+      usageAutoProbeDue({ cards: [card!], now: NOW, lastProbeAt: null, firstLoad: false }),
+    ).toBe(true);
+
+    // Before the reset the same reading stands as it is.
+    const [before] = selectUsageCards([spent], Date.parse("2026-09-13T11:40:00Z"));
+    expect(before!.session).toMatchObject({ usedPercent: 100, resetLabel: "resets in 8m" });
+    expect(before!.resetSinceReading).toBe(false);
+  });
+
   it("carries banked reset credits with the instance to redeem them on", () => {
     const [claude, codex] = selectUsageCards(
       [
