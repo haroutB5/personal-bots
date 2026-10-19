@@ -349,21 +349,21 @@ export function UsageLimitsSection({
   const selected = new Map(
     [...presentations]
       .filter(([id]) => selectedEnvironmentIds === null || selectedEnvironmentIds.has(id))
-      .map(([id, presentation]) => {
-        const providers = presentation.serverConfig?.providers;
-        if (id !== personalEnvironmentId || hidden.size === 0 || providers === undefined) {
-          return [id, presentation] as const;
+      .map(([id, presentation]): [EnvironmentId, typeof presentation] => {
+        const config = presentation.serverConfig;
+        if (id !== personalEnvironmentId || hidden.size === 0 || config === null) {
+          return [id, presentation];
         }
         return [
           id,
           {
             ...presentation,
             serverConfig: {
-              ...presentation.serverConfig,
-              providers: providers.filter((provider) => !hidden.has(provider.instanceId)),
+              ...config,
+              providers: config.providers.filter((provider) => !hidden.has(provider.instanceId)),
             },
           },
-        ] as const;
+        ];
       }),
   );
   return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
