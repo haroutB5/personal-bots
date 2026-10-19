@@ -46,9 +46,11 @@ const DOWNLOAD_TIMEOUT = "45 minutes";
 // The runtime is a PyInstaller bundle that unpacks a few hundred MB before it
 // answers; on a busy laptop the first launch has taken well over a minute.
 const VALIDATION_TIMEOUT = "180 seconds";
-// The final rename can meet a file Windows still holds for a moment after the
-// validation launch (antivirus scanning the new executable, the exiting child).
-const PUBLISH_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000];
+// The final rename can meet a file Windows still holds after the validation
+// launch: antivirus scanning the new executable, or the bundle's own child
+// still exiting (it deletes a few hundred MB it unpacked first). About a
+// minute in all before giving up.
+const PUBLISH_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
