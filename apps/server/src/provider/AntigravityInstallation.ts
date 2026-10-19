@@ -43,7 +43,12 @@ import {
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
-const VALIDATION_TIMEOUT = "90 seconds";
+// The runtime is a PyInstaller bundle that unpacks a few hundred MB before it
+// answers; on a busy laptop the first launch has taken well over a minute.
+const VALIDATION_TIMEOUT = "180 seconds";
+// The final rename can meet a file Windows still holds for a moment after the
+// validation launch (antivirus scanning the new executable, the exiting child).
+const PUBLISH_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000];
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
@@ -73,6 +78,42 @@ export class AntigravityInstallationError extends Schema.TaggedError<Antigravity
   }
 }
 const isInstallationError = Schema.is(AntigravityInstallationError);
+
+const validationTimeout = <A, E, R>(self: Effect.Effect<A, E, R>) =>
+  self.pipe(
+    Effect.timeoutOrElse({
+      duration: VALIDATION_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          installationError(
+            "verify",
+            "Antigravity took too long to start for its first check. Close other heavy apps and try again.",
+          ),
+        ),
+    }),
+  );
+
+/** The card shows one plain sentence; the log keeps the underlying cause. */
+const logInstallFailure = (cause: Cause.Cause<AntigravityInstallationError>) => {
+  if (Cause.hasInterruptsOnly(cause)) return Effect.void;
+  const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+  return Effect.logWarning("Antigravity install failed", {
+    operation: failure?.operation ?? "unknown",
+    detail: failure?.detail ?? "no error value",
+    cause: String(failure?.cause ?? Cause.pretty(cause)).slice(0, 2_000),
+  });
+};
+
+/** Retries an fs step through short-lived Windows locks, then gives up with its own error. */
+const retryThroughLocks = <A, E, R>(self: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    for (const delay of PUBLISH_RETRY_DELAYS_MS) {
+      const exit = yield* Effect.exit(self);
+      if (Exit.isSuccess(exit)) return exit.value;
+      yield* Effect.sleep(delay);
+    }
+    return yield* self;
+  });
 
 export interface AntigravityExecutable {
   readonly executablePath: string;
@@ -578,10 +619,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           );
         }
         yield* report("verifying", "Checking the installed runtime.");
-        yield* validate(existing, asset.version).pipe(
-          Effect.scoped,
-          Effect.timeout(VALIDATION_TIMEOUT),
-        );
+        yield* validate(existing, asset.version).pipe(Effect.scoped, validationTimeout);
         yield* activate();
         return;
       }
@@ -598,6 +636,20 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         return yield* installationError(
           "download",
           `Antigravity needs at least ${Math.ceil(required / 1024 / 1024)} MiB of free space to install.`,
+        );
+      }
+      // Only one install runs at a time, so any staging folder left here is
+      // from one that was interrupted or could not clean up (a launch held a
+      // file). Each holds hundreds of MB.
+      for (const name of yield* fs.readDirectory(versionsDirectory)) {
+        if (!name.startsWith(".install-")) continue;
+        yield* fs.remove(path.join(versionsDirectory, name), { recursive: true }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Antigravity install could not remove an old staging folder", {
+              folder: name,
+              cause: String(cause),
+            }),
+          ),
         );
       }
       const staging = yield* fs.makeTempDirectoryScoped({
@@ -744,7 +796,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           managedVersionDirectory: pairDirectory,
         },
         asset.version,
-      ).pipe(Effect.scoped, Effect.timeout(VALIDATION_TIMEOUT));
+      ).pipe(Effect.scoped, validationTimeout);
       const record: InstalledRelease = {
         releaseId: asset.sha256,
         version: asset.version,
@@ -756,15 +808,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         yield* encodeInstalledRelease(record),
         { flag: "wx", mode: 0o600 },
       );
-      yield* fs.rename(pairDirectory, destination).pipe(
+      yield* retryThroughLocks(fs.rename(pairDirectory, destination)).pipe(
         Effect.catch((cause) =>
           completedRelease(asset.sha256).pipe(
             Effect.flatMap((existing) =>
               existing.version === asset.version
-                ? validate(existing, asset.version).pipe(
-                    Effect.scoped,
-                    Effect.timeout(VALIDATION_TIMEOUT),
-                  )
+                ? validate(existing, asset.version).pipe(Effect.scoped, validationTimeout)
                 : Effect.fail(
                     installationError(
                       "activate",
@@ -820,21 +869,24 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         const work = install(releaseAsset).pipe(
           Effect.onExit((exit) =>
             Exit.isFailure(exit)
-              ? SubscriptionRef.update(state, (value) => {
-                  if (value.operationId !== operationId || value.phase === "succeeded")
-                    return value;
-                  const error = Cause.findErrorOption(exit.cause);
-                  const cancelled = Cause.hasInterruptsOnly(exit.cause);
-                  return {
-                    ...value,
-                    phase: cancelled ? "cancelled" : "failed",
-                    message: cancelled
-                      ? "Installation cancelled. The previous runtime is unchanged."
-                      : Option.isSome(error)
-                        ? error.value.detail
-                        : "Could not finish the Antigravity installation. Check disk space and directory access.",
-                  } satisfies ProviderInstallState;
-                })
+              ? Effect.andThen(
+                  logInstallFailure(exit.cause),
+                  SubscriptionRef.update(state, (value) => {
+                    if (value.operationId !== operationId || value.phase === "succeeded")
+                      return value;
+                    const error = Cause.findErrorOption(exit.cause);
+                    const cancelled = Cause.hasInterruptsOnly(exit.cause);
+                    return {
+                      ...value,
+                      phase: cancelled ? "cancelled" : "failed",
+                      message: cancelled
+                        ? "Installation cancelled. The previous runtime is unchanged."
+                        : Option.isSome(error)
+                          ? error.value.detail
+                          : "Could not finish the Antigravity installation. Check disk space and directory access.",
+                    } satisfies ProviderInstallState;
+                  }),
+                )
               : Effect.void,
           ),
           Effect.ignoreCause,

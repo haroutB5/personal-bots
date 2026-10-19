@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
@@ -924,6 +925,63 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           path.join(installation.managedDirectory, "active.json"),
         ]);
       }),
+  );
+
+  it.effect("publishes through a short Windows lock on the new release folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      // 19 Oct 2026, live: "Could not publish the Antigravity runtime" right
+      // after a validation launch; the folder rename met a held file once.
+      let denials = 2;
+      const { installation } = yield* makeHarness({
+        fileSystem: FileSystem.FileSystem.of({
+          ...fs,
+          // Lazy like the real file system: each attempt runs the check again.
+          rename: (source, target) =>
+            Effect.suspend(() =>
+              !target.endsWith("active.json") && denials-- > 0
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: target,
+                      description: "EPERM: operation not permitted",
+                    }),
+                  )
+                : fs.rename(source, target),
+            ),
+        }),
+      });
+      yield* installation.start;
+      // The retry waits between attempts; move the test clock along for it.
+      yield* Effect.forkScoped(
+        Effect.forever(
+          TestClock.adjust("1 second").pipe(
+            Effect.andThen(Effect.promise(() => new Promise((done) => setTimeout(done, 5)))),
+          ),
+        ),
+      );
+      expect(yield* terminalState(installation)).toMatchObject({ phase: "succeeded" });
+      expect(denials).toBe(-1);
+      expect((yield* installation.resolve()).version).toBe("fixture-new");
+    }),
+  );
+
+  it.effect("clears staging folders an earlier install left behind", () =>
+    Effect.gen(function* () {
+      const { installation, fs, path, stagingReleased } = yield* makeHarness();
+      const versions = path.join(installation.managedDirectory, "versions");
+      const stale = path.join(versions, ".install-stale1", "runtime");
+      yield* fs.makeDirectory(stale, { recursive: true });
+      yield* fs.writeFileString(path.join(stale, "agy_acp_server.exe"), "left over");
+      yield* installation.start;
+      expect((yield* terminalState(installation)).phase).toBe("succeeded");
+      yield* Deferred.await(stagingReleased);
+      expect(
+        (yield* fs.readDirectory(versions)).filter((name) => name.startsWith(".install-")),
+      ).toEqual([]);
+    }),
   );
 
   it.effect("reports unsupported hosts without downloading or changing state", () =>
