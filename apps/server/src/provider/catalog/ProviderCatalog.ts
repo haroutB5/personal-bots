@@ -41,6 +41,7 @@ import {
 import { redactUrls } from "./errors.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { deriveProviderInstanceConfigMap } from "../Layers/ProviderInstanceRegistryHydration.ts";
 import { resolveNodePath } from "./launch.ts";
 import {
   BUNDLED_CATALOG_OVERLAY,
@@ -151,11 +152,13 @@ export class ProviderCatalog extends Context.Service<ProviderCatalog, ProviderCa
       const added = settingsService.getSettings.pipe(
         Effect.map((settings) => {
           const map = new Map<string, string>();
-          for (const [id, instance] of Object.entries(settings.providerInstances)) {
+          for (const [id, instance] of Object.entries(deriveProviderInstanceConfigMap(settings))) {
             const catId = (instance.config as { catalogId?: string } | undefined)?.catalogId;
             if (catId) {
               map.set(catId, id);
             }
+            if (BUILT_IN_DESCRIPTORS.some((builtIn) => builtIn.driver === instance.driver))
+              map.set(`builtin:${instance.driver}`, id);
           }
           return map;
         }),
@@ -163,7 +166,7 @@ export class ProviderCatalog extends Context.Service<ProviderCatalog, ProviderCa
       );
       const networkAllowed = settingsService.getSettings.pipe(
         Effect.map((settings) => settings.enableProviderUpdateChecks ?? true),
-        Effect.orElseSucceed(() => true),
+        Effect.orElseSucceed(() => false),
       );
       return yield* makeProviderCatalog({
         stateDirectory: config.stateDir,
@@ -216,7 +219,8 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
       registry = parsed;
       fetchedAtMs = cache.value.fetchedAtMs;
       for (const [url, bytes] of Object.entries(cache.value.sizes)) sizes.set(url, bytes);
-      if (cache.value.overlay !== undefined) cachedOverlay = parseOverlay(cache.value.overlay);
+      if (options.overlayUrl && cache.value.overlay !== undefined)
+        cachedOverlay = parseOverlay(cache.value.overlay);
     }),
   );
 
@@ -245,7 +249,7 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
   const allowed = options.networkAllowed ?? Effect.succeed(true);
 
   const probeSizes = Effect.fn("ProviderCatalog.probeSizes")(function* () {
-    if (sizeProbeRunning || registry === null) return;
+    if (sizeProbeRunning || registry === null || !(yield* allowed)) return;
     const now = yield* Clock.currentTimeMillis;
     // Heads that failed are tried again in an hour, not on every list.
     if (lastProbeAtMs !== null && now >= lastProbeAtMs && now - lastProbeAtMs < PROBE_RETRY_MS)
@@ -422,6 +426,7 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
         icons.set(agent.id, onDisk.value);
         return onDisk.value;
       }
+      if (!(yield* allowed)) return null;
       const fetched = yield* fetchText(http, agent.icon, ICON_MAX_BYTES, transport).pipe(
         Effect.timeout(FETCH_TIMEOUT),
         Effect.option,

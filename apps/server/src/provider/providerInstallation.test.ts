@@ -3,6 +3,8 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  PersonalBot,
+  PersonalBotsError,
   type ProviderInstallState,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -11,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 
 import { layerTest as settingsLayerTest } from "../serverSettings.ts";
 import { AntigravityInstallation } from "./AntigravityInstallation.ts";
@@ -59,6 +62,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   input: {
     instance?: ProviderInstance;
     settings?: Parameters<typeof settingsLayerTest>[0];
+    listBots?: PersonalBotService["Service"]["list"];
   } = {},
 ) {
   const calls: string[] = [];
@@ -104,14 +108,43 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
         }),
         Layer.mock(CatalogInstaller)({
           runtimesRoot: "/unused-test-runtimes-root",
-          start: () => Effect.succeed({ ...state, catalogId: "agent-1", previousVersion: null, failure: null }),
-          cancel: () => Effect.succeed({ ...state, catalogId: "agent-1", previousVersion: null, failure: null }),
-          state: () => Effect.succeed({ ...state, catalogId: "agent-1", previousVersion: null, failure: null }),
-          changes: () => Stream.succeed({ ...state, catalogId: "agent-1", previousVersion: null, failure: null }),
-          remove: () => Effect.void,
+          start: () =>
+            Effect.succeed({
+              ...state,
+              catalogId: "agent-1",
+              previousVersion: null,
+              failure: null,
+            }),
+          cancel: () =>
+            Effect.succeed({
+              ...state,
+              catalogId: "agent-1",
+              previousVersion: null,
+              failure: null,
+            }),
+          state: () =>
+            Effect.succeed({
+              ...state,
+              catalogId: "agent-1",
+              previousVersion: null,
+              failure: null,
+            }),
+          changes: () =>
+            Stream.succeed({
+              ...state,
+              catalogId: "agent-1",
+              previousVersion: null,
+              failure: null,
+            }),
+          remove: () =>
+            Effect.sync(() => {
+              calls.push("catalog-remove");
+            }),
         }),
         Layer.mock(PersonalBotService)({
-          list: () => Effect.succeed({ bots: [], threads: [], personalProjectId: "default" as any }),
+          list:
+            input.listBots ??
+            (() => Effect.succeed({ bots: [], threads: [], personalProjectId: "default" as any })),
         }),
       ),
     ),
@@ -184,3 +217,76 @@ describe("provider installation routing", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+
+const registryDriver = ProviderDriverKind.make("registry");
+const sharedAgentInstance = ProviderInstanceId.make("registry-other-instance");
+const registrySettings = {
+  providerInstances: {
+    [instanceId]: { driver: registryDriver, config: { catalogId: "agent-1" } },
+    [sharedAgentInstance]: { driver: registryDriver, config: { catalogId: "agent-1" } },
+  },
+};
+const referenceBot = Schema.decodeUnknownSync(PersonalBot)({
+  botId: "catalog-remove-test",
+  name: "Test bot",
+  title: "",
+  description: "",
+  instructions: "",
+  avatarShape: "blob",
+  avatarColor: "#123456",
+  enabled: true,
+  sortOrder: 0,
+  modelSelection: { instanceId: "codex", model: "default" },
+  createdAt: "2026-10-20T00:00:00Z",
+  updatedAt: "2026-10-20T00:00:00Z",
+});
+for (const reference of ["primary", "fallback", "schedule", "active"] as const) {
+  it.effect(
+    `refuses registry Remove when a bot uses another instance of the same agent as ${reference}`,
+    () =>
+      Effect.gen(function* () {
+        const selection = { instanceId: sharedAgentInstance, model: "default" };
+        const bot: PersonalBot = {
+          ...referenceBot,
+          ...(reference === "primary" ? { modelSelection: selection } : {}),
+          ...(reference === "fallback"
+            ? { fallback: { enabled: true, modelSelection: selection } }
+            : {}),
+          ...(reference === "schedule"
+            ? { schedule: { enabled: true, from: "00:00", to: "01:00", modelSelection: selection } }
+            : {}),
+          ...(reference === "active"
+            ? {
+                fallbackActive: {
+                  modelSelection: selection,
+                  since: referenceBot.createdAt,
+                  fromProvider: "Other",
+                },
+              }
+            : {}),
+        };
+        const h = yield* makeHarness({
+          instance: instance(registryDriver),
+          settings: registrySettings,
+          listBots: () =>
+            Effect.succeed({ bots: [bot], threads: [], personalProjectId: "default" as any }),
+        });
+        const error = yield* h.router.remove({ instanceId }).pipe(Effect.flip);
+        assert.include(error.detail, "Test bot");
+        assert.deepEqual(h.calls, []);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect("registry Remove fails closed if the bot lookup fails", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({
+      instance: instance(registryDriver),
+      settings: registrySettings,
+      listBots: () => Effect.fail(new PersonalBotsError({ message: "lookup failed" })),
+    });
+    const error = yield* h.router.remove({ instanceId }).pipe(Effect.flip);
+    assert.include(error.detail, "Could not check");
+    assert.deepEqual(h.calls, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

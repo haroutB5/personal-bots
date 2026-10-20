@@ -691,6 +691,7 @@ const makeWsRpcLayer = (
       const checkOwnerSession = Effect.gen(function* () {
         if (
           currentSession.subject === "bot" ||
+          currentSession.subject.toLowerCase().includes("mcp") ||
           currentSession.subject.startsWith("bot:") ||
           currentSession.subject.startsWith("agent:")
         ) {
@@ -703,7 +704,7 @@ const makeWsRpcLayer = (
           .listClientSessions(currentSessionId)
           .pipe(Effect.orElseSucceed(() => []));
         const match = clientSessions.find((s) => s.sessionId === currentSessionId);
-        if (match?.client.deviceType === "bot") {
+        if (!match || match.client.deviceType === "bot") {
           return yield* new EnvironmentAuthorizationError({
             message: "This operation requires an owner session; bots cannot perform this action.",
             requiredScope: AuthAccessWriteScope,
@@ -2677,7 +2678,9 @@ const makeWsRpcLayer = (
                       }),
                   ),
                 );
-                const config = input.instanceId ? settings.providerInstances[input.instanceId]?.config : undefined;
+                const config = input.instanceId
+                  ? settings.providerInstances[input.instanceId]?.config
+                  : undefined;
                 const catalogId = (config as { catalogId?: string } | undefined)?.catalogId;
                 if (!catalogId) {
                   return yield* new ServerProviderUpdateError({
@@ -2810,9 +2813,13 @@ const makeWsRpcLayer = (
             },
           ),
         [WS_METHODS.providerInstallCancel]: (input) =>
-          observeRpcEffect(WS_METHODS.providerInstallCancel, providerInstallation.cancel(input), {
-            "rpc.aggregate": "provider",
-          }),
+          observeRpcEffect(
+            WS_METHODS.providerInstallCancel,
+            checkOwnerSession.pipe(Effect.andThen(providerInstallation.cancel(input))),
+            {
+              "rpc.aggregate": "provider",
+            },
+          ),
         [WS_METHODS.providerInstallSubscribe]: (input) =>
           observeRpcStream(
             WS_METHODS.providerInstallSubscribe,
@@ -2828,11 +2835,9 @@ const makeWsRpcLayer = (
             },
           ),
         [WS_METHODS.providerCatalogList]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerCatalogList,
-            providerCatalog.list(input),
-            { "rpc.aggregate": "provider" },
-          ),
+          observeRpcEffect(WS_METHODS.providerCatalogList, providerCatalog.list(input), {
+            "rpc.aggregate": "provider",
+          }),
         [WS_METHODS.providerCatalogInstallFacts]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerCatalogInstallFacts,
@@ -2873,38 +2878,49 @@ const makeWsRpcLayer = (
                     }),
                 ),
               );
+              const driver =
+                entry.source === "builtIn"
+                  ? ProviderDriverKind.make(entry.catalogId.slice("builtin:".length))
+                  : ProviderDriverKind.make("registry");
               for (const [id, inst] of Object.entries(current.providerInstances)) {
-                if ((inst.config as { catalogId?: string } | undefined)?.catalogId === input.catalogId) {
+                if (
+                  (entry.source === "builtIn" && inst.driver === driver) ||
+                  (inst.config as { catalogId?: string } | undefined)?.catalogId === input.catalogId
+                ) {
                   return { instanceId: ProviderInstanceId.make(id) };
                 }
               }
-              const rawSlug = input.catalogId.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/^[^a-zA-Z]+/, "inst_");
+              const rawSlug = input.catalogId
+                .replace(/[^a-zA-Z0-9_-]/g, "_")
+                .replace(/^[^a-zA-Z]+/, "inst_");
               const baseId = (rawSlug || "agent").slice(0, 60);
               let candidate = ProviderInstanceId.make(baseId);
               let counter = 2;
               while (current.providerInstances[candidate] !== undefined) {
                 candidate = ProviderInstanceId.make(`${baseId}_${counter++}`);
               }
-              yield* serverSettings.updateSettings({
-                providerInstances: {
-                  ...current.providerInstances,
-                  [candidate]: {
-                    driver: ProviderDriverKind.make("registry"),
-                    displayName: entry.name,
-                    enabled: true,
-                    config: { catalogId: input.catalogId },
+              yield* serverSettings
+                .updateSettings({
+                  providerInstances: {
+                    ...current.providerInstances,
+                    [candidate]: {
+                      driver,
+                      displayName: entry.name,
+                      enabled: true,
+                      config: entry.source === "builtIn" ? {} : { catalogId: input.catalogId },
+                    },
                   },
-                },
-              }).pipe(
-                Effect.mapError(
-                  (err) =>
-                    new ProviderSetupError({
-                      instanceId: candidate,
-                      operation: "catalog-add",
-                      detail: err.message,
-                    }),
-                ),
-              );
+                })
+                .pipe(
+                  Effect.mapError(
+                    (err) =>
+                      new ProviderSetupError({
+                        instanceId: candidate,
+                        operation: "catalog-add",
+                        detail: err.message,
+                      }),
+                  ),
+                );
               yield* providerRegistry.refreshInstance(candidate);
               return { instanceId: candidate };
             }),

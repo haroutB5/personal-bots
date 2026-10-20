@@ -2877,8 +2877,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const providerRegistryLayer = ProviderRegistryLive.pipe(
               Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
               Layer.provideMerge(AntigravityInstallation.layer),
-            Layer.provideMerge(ProviderCatalog.layer),
-            Layer.provideMerge(CatalogInstaller.layer),
+              Layer.provideMerge(ProviderCatalog.layer),
+              Layer.provideMerge(CatalogInstaller.layer),
               Layer.provideMerge(
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
               ),

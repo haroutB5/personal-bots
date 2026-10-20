@@ -33,6 +33,7 @@ const FAKE_CLI = [
   'import { createInterface } from "node:readline";',
   "writeFileSync(process.env.T3_BOT_DENY_INVOCATION_PATH, JSON.stringify({ args: process.argv.slice(2) }));",
   "const lines = createInterface({ input: process.stdin });",
+  'lines.on("close", () => process.exit(0));',
   'lines.on("line", (line) => {',
   "  let message; try { message = JSON.parse(line); } catch { return; }",
   '  if (message.type !== "control_request") return;',
@@ -141,7 +142,7 @@ const startAndReadSettings = (personalBot: boolean) =>
   });
 
 describe("personal bot deny rules reach the Claude CLI", () => {
-  it.effect("passes the deny rules on --settings for a bot, and none for a normal thread", () =>
+  it.live("passes the deny rules on --settings for a bot, and none for a normal thread", () =>
     Effect.gen(function* () {
       const bot = yield* startAndReadSettings(true);
       const deny = bot.settings?.permissions?.deny ?? [];
@@ -157,7 +158,7 @@ describe("personal bot deny rules reach the Claude CLI", () => {
     }),
   );
 
-  it.effect(
+  it.live(
     "trims the bot's tool list, skills list and whole-file reads, and leaves a normal thread alone",
     () =>
       Effect.gen(function* () {
@@ -179,8 +180,11 @@ describe("personal bot deny rules reach the Claude CLI", () => {
           "keybindings-help",
           "loop",
           "plugin-authoring",
+          "run",
           "schedule",
+          "security-review",
           "simplify",
+          "workflow-authoring",
         ]);
         assert.deepEqual(
           new Set(Object.values(bot.settings?.skillOverrides ?? {})),

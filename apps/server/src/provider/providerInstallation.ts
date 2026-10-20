@@ -12,10 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ServerSettingsService } from "../serverSettings.ts";
-import {
-  AntigravityInstallation,
-  type AntigravityInstallationError,
-} from "./AntigravityInstallation.ts";
+import { AntigravityInstallation } from "./AntigravityInstallation.ts";
 import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
@@ -91,8 +88,14 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
     }
   });
 
-  const failure = (instanceId: ProviderInstanceId, defaultOp = "install") => (error: { operation?: string; detail: string; cause?: unknown }) =>
-    new ProviderSetupError({ instanceId, operation: error.operation ?? defaultOp, detail: error.detail });
+  const failure =
+    (instanceId: ProviderInstanceId, defaultOp = "install") =>
+    (error: { operation?: string; detail: string; cause?: unknown }) =>
+      new ProviderSetupError({
+        instanceId,
+        operation: error.operation ?? defaultOp,
+        detail: error.detail,
+      });
 
   const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
     const entries = yield* readEntries(input.instanceId, "install");
@@ -164,9 +167,9 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
               }),
             );
           }
-          return catalogInstaller.changes(catalogId).pipe(
-            Stream.map((s) => ({ ...s, driver: REGISTRY })),
-          );
+          return catalogInstaller
+            .changes(catalogId)
+            .pipe(Stream.map((s) => ({ ...s, driver: REGISTRY })));
         }
         yield* requireInstance(input.instanceId, "observe-install");
         return installation.changes;
@@ -186,11 +189,34 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
         });
       }
       // Refuse Remove while any bot's instance uses the agent (Item 10)
-      const botList = yield* personalBots.list().pipe(Effect.orElseSucceed(() => ({ bots: [] })));
+      const botList = yield* personalBots.list().pipe(
+        Effect.mapError(
+          () =>
+            new ProviderSetupError({
+              instanceId: input.instanceId,
+              operation: "remove-install",
+              detail: "Could not check which bots use this agent. Try again before removing it.",
+            }),
+        ),
+      );
+      const agentInstanceIds = new Set(
+        Object.entries(entries)
+          .filter(
+            ([, candidate]) =>
+              candidate.driver === REGISTRY &&
+              (candidate.config as { catalogId?: string } | undefined)?.catalogId === catalogId,
+          )
+          .map(([id]) => id),
+      );
       const usingBot = botList.bots.find(
         (b) =>
-          b.modelSelection.instanceId === input.instanceId ||
-          b.fallback?.modelSelection?.instanceId === input.instanceId,
+          agentInstanceIds.has(b.modelSelection.instanceId) ||
+          (b.fallback?.modelSelection?.instanceId !== undefined &&
+            agentInstanceIds.has(b.fallback.modelSelection.instanceId)) ||
+          (b.schedule?.modelSelection?.instanceId !== undefined &&
+            agentInstanceIds.has(b.schedule.modelSelection.instanceId)) ||
+          (b.fallbackActive?.modelSelection?.instanceId !== undefined &&
+            agentInstanceIds.has(b.fallbackActive.modelSelection.instanceId)),
       );
       if (usingBot) {
         return yield* new ProviderSetupError({

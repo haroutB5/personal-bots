@@ -387,7 +387,11 @@ export const providerCatalogIconRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Bad Request", { status: 400 });
     }
     const rawCatalogId = url.value.pathname.slice(`${PROVIDER_CATALOG_ICON_ROUTE_PREFIX}/`.length);
-    const catalogId = decodeURIComponent(rawCatalogId).trim();
+    const decodedId = yield* Effect.try(() => decodeURIComponent(rawCatalogId).trim()).pipe(
+      Effect.option,
+    );
+    if (Option.isNone(decodedId)) return HttpServerResponse.text("Bad Request", { status: 400 });
+    const catalogId = decodedId.value;
     if (!catalogId) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
@@ -400,13 +404,15 @@ export const providerCatalogIconRouteLayer = HttpRouter.add(
       status: 200,
       headers: {
         "content-type": "image/svg+xml; charset=utf-8",
-        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
         "x-content-type-options": "nosniff",
         "cache-control": "private, max-age=86400",
       },
     });
   }).pipe(
     Effect.catchTags({
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentInternalError: HttpServerRespondable.toResponse,
       EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
   ),

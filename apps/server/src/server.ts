@@ -776,7 +776,13 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     // consume the bot service and repository.
     Layer.provideMerge(PersonalLayerWithCallSummaryLive),
     // Two independent background sweeps share a step: a pipe takes at most 20.
-    Layer.provideMerge(Layer.mergeAll(AntigravityInstallationRefreshLive, ProviderCatalogBootRefreshLive, ReplayMarkers.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        AntigravityInstallationRefreshLive,
+        ProviderCatalogBootRefreshLive,
+        ReplayMarkers.layer,
+      ),
+    ),
     Layer.provideMerge(ProviderAuthServiceLive),
     // Split into a second pipe: a single pipe accepts at most 20 steps. The
     // order is unchanged, so provideMerge still feeds earlier steps first.
@@ -813,7 +819,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
   )
   .pipe(
-    Layer.provideMerge(Layer.mergeAll(AntigravityInstallation.layer, ProviderCatalog.layer, CatalogInstaller.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(AntigravityInstallation.layer, ProviderCatalog.layer, CatalogInstaller.layer),
+    ),
     // Shared native/canonical NDJSON writers used by both the per-instance
     // drivers (native stream, written from inside each `<X>Adapter`) and
     // `ProviderService` (canonical stream, written after event normalization).

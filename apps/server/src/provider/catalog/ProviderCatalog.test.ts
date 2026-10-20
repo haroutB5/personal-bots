@@ -333,6 +333,40 @@ it.layer(NodeServices.layer)("provider catalog service", (it) => {
     }),
   );
 
+  it.effect(
+    "uses only the bundled overlay when no remote overlay is configured, including after restart",
+    () =>
+      Effect.gen(function* () {
+        const overlayUrl = "https://overlay.example.com/catalog.json";
+        const first = yield* harness(
+          (request) =>
+            request.url === overlayUrl
+              ? {
+                  body: encodeJson({
+                    version: 1,
+                    updatedAt: "2099-01-01",
+                    entries: { "amp-acp": { hidden: true } },
+                  }),
+                }
+              : normal(request),
+          { overlayUrl },
+        );
+        expect(
+          (yield* first.catalog.list({})).entries.some((entry) => entry.catalogId === "amp-acp"),
+        ).toBe(false);
+        const second = yield* harness(
+          normal,
+          { networkAllowed: Effect.succeed(false) },
+          first.stateDir,
+        );
+        expect(
+          (yield* second.catalog.list({})).entries.some((entry) => entry.catalogId === "amp-acp"),
+        ).toBe(true);
+        expect(yield* second.catalog.icon("amp-acp")).toBeNull();
+        expect(second.requests).toEqual([]);
+      }),
+  );
+
   it.effect("gives the install sheet its facts, and none for what cannot be installed", () =>
     Effect.gen(function* () {
       const { catalog } = yield* harness(normal);

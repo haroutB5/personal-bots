@@ -581,9 +581,9 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // its own platform: the Windows fixture (claude.cmd shim + package
       // cli.js) only launches through win32 spawn/SDK resolution, and the
       // code under test branches on platform nowhere else.
-      Effect.provideService(
+      Effect.provideServiceEffect(
         HostProcessPlatform,
-        process.platform === "darwin" ? "linux" : process.platform,
+        Effect.map(HostProcessPlatform, (platform) => (platform === "darwin" ? "linux" : platform)),
       ),
       Effect.provide(testLayer),
     );
