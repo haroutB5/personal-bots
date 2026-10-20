@@ -56,6 +56,10 @@ ran on open failed during the stall above.
 - Server probe loop: wakes 20 s after the next reported reset (re-planning
   when reset times change) and re-reads once per reset even with no viewer;
   a failing read keeps the backed-off interval.
+- Claude's 5-minute capabilities cache drops a cached `get_usage` response
+  that names a passed reset, so that re-read reaches the CLI (QA found the
+  cache serving the pre-reset reading stamped as new; `ce37c5fb9b`). Codex
+  has no such cache.
 
 ## 3. Show usage switch per provider
 
@@ -74,7 +78,48 @@ connected and installed."
 
 ## 4. Tests
 
-PROOF_PLACEHOLDER
+Code commits on `release/hbots-16671`: `8a2c950502` (usage after reset),
+`41e1cb621d` and `0134e62abb` (Antigravity), `ffc79a7c29` and `703bf26217`
+(Show usage), `aacbe74638` (version), `bf493c3b80` (web type fix),
+`ce37c5fb9b` (Claude cache after reset, stable test mocks). Staged release
+`6e53a91ec1b9`. Gate evidence below: PASS (earlier runs on `f2e571485e17`
+failed web-tsc, on `d06be469c1e8` failed 7 strip tests that timed out under
+load from a parallel QA run; both recorded in the history of this file).
+
+New unit tests: shared `usageLimits` (passed windows, next reset, reset since
+reading), web `usagePresentation` (passed window 0% and "Reset at", probe due,
+hidden providers, sheet subtitle), `providerUpdateRows` (switch eligibility),
+server `makeManagedServerProvider` (re-read after a reset with no viewer, then
+no extra probe), `probeBackoff` (`usageAwareWait`), `AntigravityInstallation`
+(publish through a short lock; stale staging removed), `PersonalBotService`
+(usage visibility), `claudeUsageLimits` (passed-reset check).
+
+CTO throwaway (`f2e571485e17`, evidence `qa/cto-16671/`): Install
+Antigravity showed "126 MB download", installed v1.4.0 first try in ~47 s,
+0 stalls on the throwaway and the live server; Sign in with Google reached the
+sign-in link (cancelled). Show usage at 390 px dark: only on the two signed-in
+Claude instances, Off persisted after reload and removed the Chats strip, On
+restored "Token windows for Claude".
+
+QA (`qa/qa-16671/REPORT.md`, risky tier): first pass on `d06be469c1e8` FIX:
+Antigravity (2 clean installs 40.6 s and 49.7 s, Remove empties `versions/`,
+0 stalls, no leftover processes by path), usage UI after reset, Show usage
+(two browser profiles, desktop /usage) and regression all PASS; the
+server-side re-read after a reset got Claude's cached reading. Re-test on
+`6e53a91ec1b9` (`qa/qa-16671/retest-6e53/`) SHIP: with the page closed the
+fake CLI logged a real read 20.1 s and 20.15 s after the reset and the
+snapshot carried the new window; a CLI that keeps reporting a passed reset
+settles after 3 reads; smoke (chat 4.5 s, Providers 390 px, sheet Refresh)
+PASS; 0 stalls and 0 ERROR lines.
+
+Not tested: a real Google sign-in (needs Harout; done live after install), a
+real Claude account crossing a reset (the fake stands in). Follow-ups: two
+callers can drop the cached reading in the same tick (one extra CLI start per
+reset, seen once by QA); with two Claude instances and one hidden, the card
+keeps the title "Claude"; `UsageProviderChart.test.ts` "keeps band values
+absolute" fails on main too (outside the gate); 5 `src/provider` tests fail
+on main too (ClaudeAdapter botDeny/personal-bot, ProviderService compaction
+and routing; outside the gate).
 
 ## 5. Risks and what QA should focus on
 
