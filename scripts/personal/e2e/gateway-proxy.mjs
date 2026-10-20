@@ -4,6 +4,7 @@
 import http from "node:http";
 import net from "node:net";
 import fs from "node:fs";
+import path from "node:path";
 const [configFile, portText] = process.argv.slice(2);
 const read = () => JSON.parse(fs.readFileSync(configFile, "utf8"));
 const server = http.createServer((req, res) => {
@@ -20,6 +21,31 @@ const server = http.createServer((req, res) => {
   if (cfg.mode !== "ok" && failing) {
     res.writeHead(Number(cfg.mode), { "content-type": "text/plain", "cache-control": "no-store" });
     res.end("Unable to reach the origin service");
+    return;
+  }
+  if (
+    cfg.webDist &&
+    req.method === "GET" &&
+    !/^\/(api|oauth|\.well-known)(\/|$)/.test(req.url) &&
+    req.url !== "/version.txt"
+  ) {
+    const base = path.resolve(cfg.webDist);
+    let file = path.resolve(base, "." + new URL(req.url, cfg.upstream).pathname);
+    if (!file.startsWith(base + path.sep)) file = path.join(base, "index.html");
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) file = path.join(base, "index.html");
+    const type =
+      {
+        ".html": "text/html",
+        ".js": "text/javascript",
+        ".css": "text/css",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".wasm": "application/wasm",
+        ".woff2": "font/woff2",
+      }[path.extname(file)] || "application/octet-stream";
+    res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
+    fs.createReadStream(file).pipe(res);
     return;
   }
   const upstream = http.request(

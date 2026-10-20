@@ -8,7 +8,7 @@ $state = Join-Path $root 'state.json'
 $saved = $env:HBOTS_HEAVY_JOB_HELD
 $env:HBOTS_HEAVY_JOB_HELD = $null
 $jobs = @()
-function Assert([bool]$Value, [string]$Label) { if (-not $Value) { throw "FAIL $Label" }; Write-Host "ok $Label" }
+function Assert([bool]$Value, [string]$Label) { if (-not $Value) { throw "FAIL $Label" }; Write-Host "  ok $Label" }
 function Launch([string]$Command, [string]$Suffix) {
     $args = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Label test -MutexName "{1}" -StateFile "{2}" -WorkDir "{3}" -Command "{4}"' -f $wrapper,$lock,$state,$root,$Command
     $p = Start-Process powershell.exe -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $root "$Suffix.out") -RedirectStandardError (Join-Path $root "$Suffix.err")
@@ -21,7 +21,7 @@ try {
     Assert ($p.ExitCode -eq 37) 'command exit code 37 preserved'
     $script = Join-Path $root 'args.ps1'
     Set-Content -LiteralPath $script -Value 'param([switch]$Flag,[string[]]$Items); if (-not $Flag -or $Items[0] -ne ''a b'' -or $Items[1] -ne ''c"d'') { exit 9 }; exit 23'
-    & $wrapper -Label args -MutexName $lock -StateFile $state -ScriptPath $script -ScriptParameters @{ Flag = $true; Items = @('a b','c"d') }
+    & $wrapper -Label args -MutexName $lock -StateFile $state -ScriptPath $script -ScriptParameters @{ Flag = [Management.Automation.SwitchParameter]::new($true); Items = @('a b','c"d') }
     Assert ($LASTEXITCODE -eq 23) 'script arguments and exit code preserved'
     $env:HBOTS_HEAVY_JOB_HELD = $null
     # Parent test thread owns the isolated mutex while a real child waits.

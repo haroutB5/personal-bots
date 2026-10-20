@@ -1,6 +1,6 @@
 # Exercises the actual start.ps1 -Wait supervisor and smoke.ps1 with an isolated
 # USERPROFILE and node/relay-shaped fixture. No scheduled task is changed.
-param([string]$EvidenceDir)
+param([string]$EvidenceDir, [string]$RelayExecutable)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('hbots-priority-test-' + [guid]::NewGuid().ToString('N'))
@@ -10,11 +10,21 @@ New-Item -ItemType Directory -Force $dist | Out-Null
 $nodeExe = Resolve-NodeExe
 # A relay-shaped long-lived executable lets us prove inherited Windows process
 # priorities without pairing a disposable server to the owner's T3 account.
-Copy-Item -LiteralPath $nodeExe -Destination (Join-Path $dist 'cloudflared.exe')
+if ($RelayExecutable) {
+    Copy-Item -LiteralPath $RelayExecutable -Destination (Join-Path $dist 'cloudflared.exe')
+    # A real cloudflared local Access listener makes no account/tunnel changes.
+    # Nothing connects to it, so no Access login or upstream data is sent.
+    $relayArgs = @('access','tcp','--hostname','stability-fixture.invalid','--url',('127.0.0.1:' + (Get-FreeTcpPort)))
+} else {
+    Copy-Item -LiteralPath $nodeExe -Destination (Join-Path $dist 'cloudflared.exe')
+    $relayArgs = @('-e','setInterval(()=>{},1000)')
+}
+[IO.File]::WriteAllText((Join-Path $dist 'relay-args.json'), (ConvertTo-Json -InputObject $relayArgs -Compress))
 [IO.File]::WriteAllText((Join-Path $dist 'bin.mjs'), @'
 import fs from 'node:fs'; import http from 'node:http'; import path from 'node:path'; import { spawn } from 'node:child_process';
 const args = process.argv.slice(2), base = args[args.indexOf('--base-dir')+1], port=Number(args[args.indexOf('--port')+1]);
-const relay = spawn(path.join(import.meta.dirname,'cloudflared.exe'), ['-e','setInterval(()=>{},1000)'], {windowsHide:true,stdio:'ignore'});
+const relayArgs = JSON.parse(fs.readFileSync(path.join(import.meta.dirname,'relay-args.json'),'utf8'));
+const relay = spawn(path.join(import.meta.dirname,'cloudflared.exe'), relayArgs, {windowsHide:true,stdio:'ignore'});
 const server = http.createServer((req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({serverVersion:'fixture'}));});
 server.listen(port,'127.0.0.1',()=>{fs.mkdirSync(path.join(base,'userdata'),{recursive:true});fs.writeFileSync(path.join(base,'userdata/server-runtime.json'),JSON.stringify({pid:process.pid,origin:'http://127.0.0.1:'+port,startedAt:new Date().toISOString()}));});
 '@)
@@ -23,12 +33,17 @@ $launch = Join-Path $temp 'launch.ps1'
 $start = Join-Path $PSScriptRoot 'start.ps1'
 [IO.File]::WriteAllText($launch, @"
 `$env:USERPROFILE = '$($temp.Replace("'","''"))'
+Get-ChildItem Env: | Where-Object { `$_.Name -match '^(TUNNEL_|CLOUDFLARE_)' } | ForEach-Object { Remove-Item ('Env:' + `$_.Name) }
 . '$($PSScriptRoot.Replace("'","''"))/background-priority.ps1'
 `$null = Set-PbProcessPriority -ProcessId `$PID -Cpu BelowNormal -Io 1 -Memory 2
 & '$($start.Replace("'","''"))' -Release fixture -Port $port -Wait
 "@)
 $supervisor = $null; $wrapperId = 0
 $savedProfile = $env:USERPROFILE
+$savedCache = $env:PSModuleAnalysisCachePath
+# An isolated profile has no LocalApplicationData shell folder yet. Otherwise
+# PowerShell can write Microsoft/Windows/PowerShell into the worktree.
+$env:PSModuleAnalysisCachePath = Join-Path $temp 'ModuleAnalysisCache'
 try {
     $supervisor = Start-Process powershell.exe -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launch`"" -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $temp 'start.out') -RedirectStandardError (Join-Path $temp 'start.err')
     $null = $supervisor.Handle
@@ -43,25 +58,26 @@ try {
     if ($processes.Count -ne 2) { throw 'fixture node and relay missing' }
     foreach ($p in $processes) {
         $text = Get-PbProcessPriorityText -ProcessId ([int]$p.ProcessId)
-        Write-Host ("ok scheduled-style start: {0} {1}" -f $p.Name,$text)
+        Write-Host ("  ok scheduled-style start: {0} {1}" -f $p.Name,$text)
         if ($text -notmatch 'cpu=AboveNormal io=2 mem=5$') { throw "Wrong priority: $text" }
     }
     $env:USERPROFILE = $temp
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'smoke.ps1') -ExpectRelease fixture -NoTunnel -StableSeconds 0 -StartTimeoutSeconds 2 > (Join-Path $temp 'smoke.out')
     if ($LASTEXITCODE -ne 0) { throw 'fixture smoke failed' }
-    Write-Host 'ok smoke accepts AboveNormal/2/5'
+    Write-Host '  ok smoke accepts AboveNormal/2/5'
     $null = Set-PbProcessPriority -ProcessId ([int]$processes[0].ProcessId) -Io 1 -Memory 2
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'smoke.ps1') -ExpectRelease fixture -NoTunnel -StableSeconds 0 -StartTimeoutSeconds 2 > (Join-Path $temp 'smoke-low.out')
     if ($LASTEXITCODE -ne 1) { throw 'smoke accepted low priority' }
-    Write-Host 'ok smoke rejects low I/O and memory priority'
+    Write-Host '  ok smoke rejects low I/O and memory priority'
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $start -Release fixture -Port $port > (Join-Path $temp 'existing.out')
     if ($LASTEXITCODE -ne 0) { throw 'existing-server start failed' }
     $text = Get-PbProcessPriorityText -ProcessId ([int]$processes[0].ProcessId)
     if ($text -notmatch 'cpu=AboveNormal io=2 mem=5$') { throw 'existing-server start did not restore priorities' }
-    Write-Host 'ok idempotent start restores priority without restarting'
+    Write-Host '  ok idempotent start restores priority without restarting'
     Write-Host 'Tests: 5 passed'
 } finally {
     $env:USERPROFILE = $savedProfile
+    $env:PSModuleAnalysisCachePath = $savedCache
     if (-not $wrapperId -and (Test-Path (Join-Path $homeDir 'run\server.json'))) {
         $wrapperId = [int](Get-Content (Join-Path $homeDir 'run\server.json') -Raw | ConvertFrom-Json).pid
     }
