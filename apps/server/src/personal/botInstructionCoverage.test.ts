@@ -72,6 +72,7 @@ describe("bot instruction coverage", () => {
       opencode: "Layers/OpenCodeAdapter.ts",
       deepseek: "Layers/ClaudeAdapter.ts",
       antigravity: "Layers/AntigravityAdapter.ts",
+      registry: "Layers/RegistryAcpAdapter.ts",
     });
   });
 
@@ -91,4 +92,3 @@ describe("bot instruction coverage", () => {
     }
   });
 });
-

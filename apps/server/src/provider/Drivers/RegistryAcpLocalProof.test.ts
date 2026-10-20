@@ -1,228 +1,142 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { HostProcessIsExecutable, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
-
+import { FetchHttpClient } from "effect/unstable/http";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { makeZip } from "../catalog/archiveFixtures.ts";
-import { makeCatalogInstaller } from "../catalog/installer.ts";
-import { makeProviderCatalog } from "../catalog/ProviderCatalog.ts";
-import { ProviderCatalog } from "../catalog/ProviderCatalog.ts";
-import { CatalogInstaller } from "../catalog/installer.ts";
-import { REGISTRY_URL } from "../catalog/registry.ts";
+import { makeCatalogInstaller, CatalogInstaller } from "../catalog/installer.ts";
+import { makeProviderCatalog, ProviderCatalog } from "../catalog/ProviderCatalog.ts";
 import { RegistryAcpDriver } from "./RegistryAcpDriver.ts";
-import registryFixture from "../catalog/fixtures/registry-2026-10-20.json" with { type: "json" };
 
-const sha256Hex = (data: Uint8Array) => NodeCrypto.createHash("sha256").update(data).digest("hex");
+const encodeSummary = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-describe("RegistryAcpDriver Local Proof on throwaway data root", () => {
-  it.live("list catalogue -> add checksum-pinned agent -> install -> start ACP session -> remove", () =>
-    Effect.gen(function* () {
-      const timings: Record<string, number> = {};
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-
-      // Target agent: amp-acp from official registry fixture
-      const targetAgentId = "amp-acp";
-      const targetAgentInFixture = registryFixture.agents.find((a: any) => a.id === targetAgentId);
-      const ampArchiveUrl = targetAgentInFixture.distribution.binary["windows-x86_64"].archive;
-      const cmdName = targetAgentInFixture.distribution.binary["windows-x86_64"].cmd; // "amp-acp.exe"
-
-      // Use cmd.exe binary (real Windows PE executable) as amp-acp.exe, with args calling acp-mock-agent.ts
-      const cmdExeBytes = NodeFS.readFileSync(process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe");
-      const mockAgentScript = path.resolve("apps/server/scripts/acp-mock-agent.ts");
-      const zipArchive = makeZip([
-        { name: cmdName, data: cmdExeBytes, mode: 0o100755 },
-      ]);
-      const zipSha256 = sha256Hex(zipArchive);
-
-      // Pin the checksum and configure args in the fixture
-      targetAgentInFixture.distribution.binary["windows-x86_64"].sha256 = zipSha256;
-      targetAgentInFixture.distribution.binary["windows-x86_64"].args = ["/c", "node", mockAgentScript];
-      const registryPayloadText = JSON.stringify(registryFixture);
-
-      const httpMock = HttpClient.make((request) =>
-        Effect.sync(() => {
-          const url = request.url;
-          if (url === REGISTRY_URL) {
-            const body = Buffer.from(registryPayloadText, "utf8");
-            const response = HttpClientResponse.fromWeb(
-              request,
-              new Response(null, {
-                status: 200,
-                headers: {
-                  "content-type": "application/json",
-                  "content-length": String(body.byteLength),
-                },
-              }),
-            );
-            return Object.defineProperty(response, "stream", {
-              value: Stream.make(body),
-            });
-          }
-          if (url === ampArchiveUrl) {
-            if (request.method === "HEAD") {
-              const response = HttpClientResponse.fromWeb(
-                request,
-                new Response(null, {
-                  status: 200,
-                  headers: { "content-length": String(zipArchive.byteLength) },
-                }),
-              );
-              return Object.defineProperty(response, "stream", {
-                value: Stream.empty,
-              });
-            }
-            const response = HttpClientResponse.fromWeb(
-              request,
-              new Response(null, {
-                status: 200,
-                headers: {
-                  "content-type": "application/zip",
-                  "content-length": String(zipArchive.byteLength),
-                },
-              }),
-            );
-            return Object.defineProperty(response, "stream", {
-              value: Stream.make(zipArchive),
-            });
-          }
-          const response = HttpClientResponse.fromWeb(
-            request,
-            new Response(null, { status: 404 }),
-          );
-          return Object.defineProperty(response, "stream", {
-            value: Stream.empty,
-          });
-        }),
-      );
-
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-proof-root-" });
-      const runtimesRoot = path.join(tempDir, "runtimes");
-      const downloadsRoot = path.join(tempDir, "downloads");
-      yield* fs.makeDirectory(runtimesRoot, { recursive: true });
-      yield* fs.makeDirectory(downloadsRoot, { recursive: true });
-
-      const installer = yield* makeCatalogInstaller({
-        runtimesRoot,
-        downloadsRoot,
-      }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
-        Effect.provideService(HttpClient.HttpClient, httpMock),
-      );
-
-      const catalog = yield* makeProviderCatalog({
-        stateDirectory: tempDir,
-        platform: "windows-x86_64",
-      }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
-        Effect.provideService(HttpClient.HttpClient, httpMock),
-      );
-
-      const runtimeLayers = Layer.mergeAll(
-        Layer.succeed(CatalogInstaller, installer),
-        Layer.succeed(ProviderCatalog, catalog),
-        Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
-      );
-
-      const workflow = Effect.gen(function* () {
-        // STEP 1: List Catalogue
-        const t0 = Date.now();
-        const catalogResult = yield* catalog.list({ refresh: true });
-        timings["list"] = Date.now() - t0;
-        expect(catalogResult.entries.length).toBeGreaterThanOrEqual(1);
-        const found = catalogResult.entries.find((e) => e.catalogId === targetAgentId);
-        expect(found).toBeDefined();
-        expect(found?.name).toBe("Amp");
-        expect(found?.source).toBe("registry");
-        expect(found?.sha256Checked).toBe(true);
-
-        // STEP 2: Add checksum-pinned agent (prepare install request)
-        const t1 = Date.now();
-        const installRequest = yield* catalog.installRequest(targetAgentId);
-        timings["add"] = Date.now() - t1;
-        expect(installRequest).not.toBeNull();
-        expect(installRequest?.agent.id).toBe(targetAgentId);
-
-        // STEP 3: Install
-        const t2 = Date.now();
-        const waitDone = installer.changes(targetAgentId).pipe(
-          Stream.filter((s) => s.phase === "succeeded" || s.phase === "failed" || s.phase === "cancelled"),
-          Stream.runHead,
-          Effect.map((opt) => opt._tag === "Some" ? opt.value : null),
+// Opt in: real third-party download and process, always isolated from the live server.
+describe.skipIf(process.env.HBOTS_CATALOG_DRIVER_LIVE !== "1")("Registry ACP local proof", () => {
+  it.live(
+    "lists, adds, installs a pinned binary, initializes through the driver and removes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-registry-driver-proof-" });
+        const settings = yield* ServerSettingsService;
+        const catalog = yield* makeProviderCatalog({ stateDirectory: path.join(root, "state") });
+        const agentHome = path.join(root, "agent-home");
+        yield* fs.makeDirectory(agentHome, { recursive: true });
+        const homeEnv = Object.fromEntries(
+          [
+            "HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+          ].map((name) => [name, agentHome]),
         );
-        const finishedFiber = yield* waitDone.pipe(Effect.forkChild);
-        const startResult = yield* installer.start(installRequest!);
-        expect(startResult.catalogId).toBe(targetAgentId);
-        const installedState = yield* Fiber.join(finishedFiber);
-        expect(installedState?.phase).toBe("succeeded");
-        timings["install"] = Date.now() - t2;
-
-        // STEP 4: Start session through RegistryAcpDriver (ACP initialize)
-        const t3 = Date.now();
-        const instanceId = ProviderInstanceId.make("reg-proof-instance");
-        const driverInstance = yield* RegistryAcpDriver.create({
-          instanceId,
-          displayName: "Amp ACP Instance",
-          environment: { kind: "host" },
-          enabled: true,
-          config: { catalogId: targetAgentId },
-        }).pipe(Effect.provide(runtimeLayers));
-
-        const threadId = ThreadId.make("proof-thread-1");
-        const session = yield* driverInstance.adapter.startSession({
-          threadId,
-          cwd: tempDir,
+        const installer = yield* makeCatalogInstaller({
+          runtimesRoot: path.join(root, "runtimes"),
+        }).pipe(Effect.provideService(HostProcessEnvironment, { ...process.env, ...homeEnv }));
+        const timings: Record<string, number> = {};
+        const startedAt = yield* Clock.currentTimeMillis;
+        const list = yield* catalog.list({ refresh: true });
+        timings.list = (yield* Clock.currentTimeMillis) - startedAt;
+        const id = process.env.HBOTS_CATALOG_DRIVER_PROOF_AGENT ?? "kilo";
+        const entry = list.entries.find((candidate) => candidate.catalogId === id);
+        expect(entry?.sha256Checked).toBe(true);
+        const plan = yield* catalog.installPlan(id);
+        expect(plan?.kind).toBe("binary");
+        const addAt = yield* Clock.currentTimeMillis;
+        const instanceId = ProviderInstanceId.make("registry-proof-amp");
+        yield* settings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: RegistryAcpDriver.driverKind,
+              displayName: "Proof Amp",
+              enabled: true,
+              config: { catalogId: id },
+            },
+          },
         });
-        timings["startSession"] = Date.now() - t3;
+        expect((yield* settings.getSettings).providerInstances[instanceId]?.driver).toBe(
+          "registry",
+        );
+        timings.add = (yield* Clock.currentTimeMillis) - addAt;
+        const installAt = yield* Clock.currentTimeMillis;
+        const request = yield* catalog.installRequest(id);
+        expect(request).not.toBeNull();
+        yield* installer.start(request!);
+        const done = yield* installer.changes(id).pipe(
+          Stream.filter((state) => ["succeeded", "failed", "cancelled"].includes(state.phase)),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect(done.failure).toBeNull();
+        expect(done.phase).toBe("succeeded");
+        timings.install = (yield* Clock.currentTimeMillis) - installAt;
+        const initializeAt = yield* Clock.currentTimeMillis;
+        const driver = yield* RegistryAcpDriver.create({
+          instanceId,
+          displayName: "Proof Agent",
+          environment: [
+            "HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+          ].map((name) => ({ name, value: agentHome, sensitive: false })),
+          enabled: true,
+          config: { catalogId: id },
+        }).pipe(
+          Effect.provideService(CatalogInstaller, installer),
+          Effect.provideService(ProviderCatalog, catalog),
+          Effect.provideService(ProviderEventLoggers, NoOpProviderEventLoggers),
+        );
+        const threadId = ThreadId.make("registry-proof-thread");
+        const session = yield* driver.adapter.startSession({
+          threadId,
+          cwd: root,
+          runtimeMode: "approval-required",
+        });
         expect(session.status).toBe("ready");
-        expect(session.threadId).toBe(threadId);
-
-        // STEP 5: Remove
-        const t4 = Date.now();
-        yield* driverInstance.adapter.stopSession(threadId);
-        yield* installer.remove(targetAgentId);
-        const afterRemove = yield* installer.resolve(targetAgentId);
-        timings["remove"] = Date.now() - t4;
-        expect(afterRemove).toBeNull();
-
-        timings["total"] = Date.now() - t0;
-
-        console.log("\n=================== LOCAL PROOF RESULTS ===================");
-        console.log("Agent Used:     ", targetAgentId, `(${found?.name} v${found?.version})`);
-        console.log("Sha256 Pinned:  ", zipSha256);
-        console.log("Data Root:      ", tempDir);
-        console.log("Timings:");
-        console.log(`  - List catalogue:   ${timings.list} ms`);
-        console.log(`  - Add agent facts:  ${timings.add} ms`);
-        console.log(`  - Install & verify: ${timings.install} ms`);
-        console.log(`  - ACP initialize:   ${timings.startSession} ms`);
-        console.log(`  - Teardown & Remove:${timings.remove} ms`);
-        console.log(`  - Total runtime:    ${timings.total} ms`);
-        console.log("===========================================================\n");
-      });
-
-      yield* workflow.pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
-        Effect.provideService(HttpClient.HttpClient, httpMock),
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-proof-test-" })),
-      Effect.provide(ServerSettingsService.layerTest()),
-      Effect.provide(NodeServices.layer),
-    ),
+        timings.initialize = (yield* Clock.currentTimeMillis) - initializeAt;
+        const removeAt = yield* Clock.currentTimeMillis;
+        yield* driver.adapter.stopSession(threadId);
+        yield* installer.remove(id);
+        expect(yield* installer.resolve(id)).toBeNull();
+        timings.remove = (yield* Clock.currentTimeMillis) - removeAt;
+        timings.total = (yield* Clock.currentTimeMillis) - startedAt;
+        const summary = {
+          agent: id,
+          version: request!.agent.version,
+          checksum: plan?.kind === "binary" ? plan.sha256 : null,
+          timings,
+        };
+        yield* Effect.logInfo("Registry driver local proof", summary);
+        const output = process.env.HBOTS_CATALOG_DRIVER_PROOF_OUT;
+        if (output) yield* fs.writeFileString(output, yield* encodeSummary(summary));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            ServerConfig.layerTest(process.cwd(), { prefix: "hbots-registry-proof-config-" }),
+            ServerSettingsService.layerTest(),
+            FetchHttpClient.layer,
+          ).pipe(Layer.provideMerge(NodeServices.layer)),
+        ),
+      ),
+    10 * 60 * 1000,
   );
 });

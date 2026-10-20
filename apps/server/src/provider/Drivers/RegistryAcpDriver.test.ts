@@ -4,16 +4,30 @@ import { expect, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Scope from "effect/Scope";
+
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { CatalogInstaller } from "../catalog/installer.ts";
 import { ProviderCatalog } from "../catalog/ProviderCatalog.ts";
-import { RegistryAcpConfig, RegistryAcpDriver } from "./RegistryAcpDriver.ts";
+import { RegistryAcpDriver } from "./RegistryAcpDriver.ts";
 
 const mockCatalogEntry = {
+  source: "registry" as const,
+  website: null,
+  repository: null,
+  openSource: true,
+  version: "1.0.0",
+  iconUrl: null,
+  distribution: null,
+  downloadBytes: null,
+  sha256Checked: true,
+  cost: { kind: "unknown" as const, label: "Unknown", detail: null },
+  signInLabel: null,
+  popularRank: null,
+  supported: { ok: true as const },
+  added: null,
   catalogId: "test-agent",
   name: "Test ACP Agent",
   publisher: "Antigravity Team",
@@ -56,26 +70,24 @@ const mockInstallerLayer = Layer.mock(CatalogInstaller)({
       failure: null,
     }),
   changes: () => Stream.empty,
-  start: () => Effect.dieMessage("not used"),
-  cancel: () => Effect.dieMessage("not used"),
+  start: () => Effect.die(new Error("not used")),
+  cancel: () => Effect.die(new Error("not used")),
   remove: () => Effect.void,
-  goBack: () => Effect.dieMessage("not used"),
-  acquire: () => Effect.dieMessage("not used"),
+  goBack: () => Effect.die(new Error("not used")),
+  acquire: () => Effect.die(new Error("not used")),
   resolve: () =>
     Effect.succeed({
       catalogId: "test-agent",
       version: "1.0.0",
       previousVersion: null,
-      runtimePath: "C:/test-runtimes/test-agent",
-      packageRoot: "C:/test-runtimes/test-agent/node_modules/test-agent",
-      manifest: {
-        name: "test-agent",
-        version: "1.0.0",
-        program: "bin/cli.js",
-        args: ["--acp"],
-        environment: "node",
-      },
-      installedAt: "2026-10-20T20:00:00.000Z",
+      kind: "npm" as const,
+      agentName: "test-agent",
+      agentVersion: "1.0.0",
+      directory: "C:/test-runtimes/test-agent",
+      runner: "node" as const,
+      entry: "bin/cli.js",
+      args: ["--acp"],
+      env: {},
     }),
 });
 
@@ -98,7 +110,7 @@ it.effect("RegistryAcpDriver decodes valid config and instantiates correctly", (
       instanceId,
       displayName: "My Custom Agent",
       accentColor: "#ff0000",
-      environment: { kind: "host" },
+      environment: [],
       enabled: true,
       config: { catalogId: "test-agent" },
     });
@@ -140,9 +152,9 @@ it.effect("RegistryAcpDriver decodes valid config and instantiates correctly", (
     expect(instance.adapter.capabilities.promptlessTurnContinuation).toBe(false);
 
     // Text generation is unsupported
-    const textGenError = yield* instance.textGeneration.generateCommitMessage({} as any).pipe(
-      Effect.flip,
-    );
+    const textGenError = yield* instance.textGeneration
+      .generateCommitMessage({} as any)
+      .pipe(Effect.flip);
     expect(textGenError._tag).toBe("TextGenerationError");
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );

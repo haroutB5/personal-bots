@@ -7,11 +7,7 @@
  *
  * @module provider/Drivers/RegistryAcpDriver
  */
-import {
-  ProviderDriverKind,
-  type ServerProvider,
-  TextGenerationError,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProvider, TextGenerationError } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -62,7 +58,7 @@ export const RegistryAcpDriver: ProviderDriver<RegistryAcpConfig, RegistryAcpDri
   },
   configSchema: RegistryAcpConfig,
   defaultConfig: () => ({ catalogId: "" }),
-  create: ({ instanceId, displayName, accentColor, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, enabled, config, environment }) =>
     Effect.gen(function* () {
       const installer = yield* CatalogInstaller;
       const catalog = yield* ProviderCatalog;
@@ -78,12 +74,16 @@ export const RegistryAcpDriver: ProviderDriver<RegistryAcpConfig, RegistryAcpDri
       const readSnapshot = Effect.gen(function* () {
         const installState = yield* installer.state(catalogId);
         const installed = yield* installer.resolve(catalogId);
-        const entries = yield* catalog.list({}).pipe(Effect.map((res) => res.entries), Effect.orElseSucceed(() => []));
+        const entries = yield* catalog.list({}).pipe(
+          Effect.map((res) => res.entries),
+          Effect.orElseSucceed(() => []),
+        );
         const entry = entries.find((e) => e.catalogId === catalogId);
         const nowIso = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
         const isInstalled = installed !== null;
-        const version = installed?.version ?? (isInstalled && installState.version ? installState.version : null);
+        const version =
+          installed?.version ?? (isInstalled && installState.version ? installState.version : null);
         const previousVersion = installed?.previousVersion ?? installState.previousVersion ?? null;
 
         return {
@@ -135,9 +135,7 @@ export const RegistryAcpDriver: ProviderDriver<RegistryAcpConfig, RegistryAcpDri
         refresh: readSnapshot,
         streamChanges: Stream.concat(
           Stream.fromEffect(readSnapshot),
-          installer.changes(catalogId).pipe(
-            Stream.mapEffect(() => readSnapshot),
-          ),
+          installer.changes(catalogId).pipe(Stream.mapEffect(() => readSnapshot)),
         ),
         resolveMaintenance: () =>
           Effect.succeed(
@@ -152,19 +150,31 @@ export const RegistryAcpDriver: ProviderDriver<RegistryAcpConfig, RegistryAcpDri
       const textGeneration: TextGeneration.TextGeneration["Service"] = {
         generateCommitMessage: () =>
           Effect.fail(
-            new TextGenerationError({ operation: "generate", detail: "Text generation is not supported for registry providers." }),
+            new TextGenerationError({
+              operation: "generate",
+              detail: "Text generation is not supported for registry providers.",
+            }),
           ),
         generatePrContent: () =>
           Effect.fail(
-            new TextGenerationError({ operation: "generate", detail: "Text generation is not supported for registry providers." }),
+            new TextGenerationError({
+              operation: "generate",
+              detail: "Text generation is not supported for registry providers.",
+            }),
           ),
         generateThreadTitle: () =>
           Effect.fail(
-            new TextGenerationError({ operation: "generate", detail: "Text generation is not supported for registry providers." }),
+            new TextGenerationError({
+              operation: "generate",
+              detail: "Text generation is not supported for registry providers.",
+            }),
           ),
         generateBranchName: () =>
           Effect.fail(
-            new TextGenerationError({ operation: "generate", detail: "Text generation is not supported for registry providers." }),
+            new TextGenerationError({
+              operation: "generate",
+              detail: "Text generation is not supported for registry providers.",
+            }),
           ),
       };
 
@@ -173,6 +183,7 @@ export const RegistryAcpDriver: ProviderDriver<RegistryAcpConfig, RegistryAcpDri
         catalogId,
         nodePath,
         hostEnvironment: process.env,
+        extraEnv: Object.fromEntries((environment ?? []).map((entry) => [entry.name, entry.value])),
       });
 
       return {

@@ -54,6 +54,18 @@ const provider: ServerProvider = {
 describe("provider compatibility", () => {
   it("bundles a compatibility policy for every built-in harness", () => {
     for (const builtIn of BUILT_IN_DRIVERS) {
+      // Registry instances run unrelated agents. Their version numbers cannot
+      // share a harness-wide semver policy; installation checks ACP initialize.
+      if (builtIn.driverKind === "registry") {
+        assert.isUndefined(
+          resolveProviderCompatibility(
+            ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+            builtIn.driverKind,
+            null,
+          ),
+        );
+        continue;
+      }
       assert.isDefined(
         resolveProviderCompatibility(
           ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
