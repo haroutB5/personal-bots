@@ -36,7 +36,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
-import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import {
@@ -1099,7 +1099,12 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                   ...prompt,
                   {
                     type: "text",
-                    text: buildRuntimeInstructions({ harness: "Antigravity", model }),
+                    // Sent with every prompt, so a bot edited mid-chat answers
+                    // with its new persona on the next turn.
+                    text: withBotInstructions(
+                      buildRuntimeInstructions({ harness: "Antigravity", model }),
+                      input.systemInstructions,
+                    ),
                   },
                 ],
               },

@@ -620,6 +620,32 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
+  it.effect("sends the bot's persona with every prompt", () =>
+    Effect.gen(function* () {
+      // 1.66.73: Antigravity bots get their name, instructions and app rules
+      // in the same text block as the runtime notes, on every turn.
+      const h = yield* makeHarness({ holdCancel: true });
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      yield* h.adapter
+        .sendTurn({ threadId, input: "Who are you?", systemInstructions: "You are CTO." })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      expect(prompt.content).toEqual([
+        { type: "text", text: "Who are you?" },
+        {
+          type: "text",
+          text: expect.stringMatching(
+            /Antigravity harness[\s\S]*<bot_instructions>You are CTO\.<\/bot_instructions>$/,
+          ),
+        },
+      ]);
+    }),
+  );
+
   it.effect("waits for native cancellation before a steer changes the model", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ holdCancel: true });
