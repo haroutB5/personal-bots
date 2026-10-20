@@ -101,8 +101,23 @@ orchestration v2; the effect-acp rewrite; the React Compiler refactors.
 
 ## 5. Proof
 
-Filled in after the staged build and the checks (390 px dark proof for the markdown
-picks, the test per pick, throwaway-server run).
+Each pick brings the upstream test for its fix (table in the triage file, column "Test
+that covers it"). Targeted run before the build: server 19 files, shared 4, client-runtime
+4, web 6 plus `src/features/personal`; every failure was one of three kinds and is fixed:
+test helpers named differently in this fork (storage, Claude catalog), the preview-state
+flag this fork lacks, and two tests that needed the 1 s browser grace (broker test and the
+two `ServerBrowserHost` tests, which the first gate run found). The 4
+`ProviderService.test.ts` compaction failures are the same 4 on `main`.
+
+390 px dark proof, throwaway server on the first staged build (`d0e0023b05b9`, 1.66.76,
+fake CLI, evidence `dev-team/qa/hbots-upstream-fixes-20261020/md-390-dark.png`): the reply
+shows numbered items 98, 99 and 100 with the marker unclipped, `glm-5.3` and
+`Qwen2.5-Coder` as plain code beside a real file chip, `<A>` as text with the next
+paragraph intact, and a link with a Windows path kept as a chip. Console: no output;
+page errors: none. The code that changed after that build is test files only.
+
+Builder proof only for the rest: they are contained fixes with upstream tests, so no
+live QA step was run by the builder; suggested tier is QA risky (see top).
 
 ## Gate evidence
 
