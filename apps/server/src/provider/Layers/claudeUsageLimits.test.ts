@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+import {
+  claudeRateLimitEventToUpdate,
+  claudeUsageResponseHasPassedReset,
+  claudeUsageResponseToLimits,
+} from "./claudeUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
@@ -177,5 +181,37 @@ describe("claudeRateLimitEventToUpdate", () => {
     expect(
       claudeRateLimitEventToUpdate({ status: "rejected", rateLimitType: "five_hour" }, noNames),
     ).toBeUndefined();
+  });
+});
+
+describe("claudeUsageResponseHasPassedReset", () => {
+  // QA 1.66.71: the re-read 20 s after a reset was served this cached,
+  // pre-reset reading by the 5-minute capabilities cache.
+  const response = {
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: { utilization: 100, resets_at: "2026-10-20T02:54:09Z" },
+      seven_day: { utilization: 34, resets_at: "2026-10-25T09:59:00Z" },
+    },
+  } as unknown as Parameters<typeof claudeUsageResponseHasPassedReset>[0];
+
+  it("is false before any reset and true once one has passed", () => {
+    expect(claudeUsageResponseHasPassedReset(response, Date.parse("2026-10-20T02:54:00Z"))).toBe(
+      false,
+    );
+    expect(claudeUsageResponseHasPassedReset(response, Date.parse("2026-10-20T02:54:29Z"))).toBe(
+      true,
+    );
+  });
+
+  it("is false when the account reports no limits", () => {
+    expect(
+      claudeUsageResponseHasPassedReset(
+        { rate_limits_available: false } as unknown as Parameters<
+          typeof claudeUsageResponseHasPassedReset
+        >[0],
+        Date.parse("2030-01-01T00:00:00Z"),
+      ),
+    ).toBe(false);
   });
 });

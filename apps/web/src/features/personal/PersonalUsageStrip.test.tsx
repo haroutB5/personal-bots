@@ -43,7 +43,11 @@ vi.mock("~/components/ui/alert-dialog", () => ({
 }));
 vi.mock("./usePersonalBots", () => ({
   usePersonalEnvironmentId: () => "env-1",
-  useHiddenUsageProviders: () => new Set<string>(),
+  // One stable empty set, as the real hook memoizes it.
+  useHiddenUsageProviders: (
+    (none: ReadonlySet<string>) => () =>
+      none
+  )(new Set<string>()),
 }));
 vi.mock("~/components/ui/sheet", () => ({
   Sheet: ({ open, children }: { open: boolean; children: ReactNode }) =>

@@ -48,7 +48,11 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("./usePersonalBots", () => ({
   personalProfileSet: {},
-  useHiddenUsageProviders: () => new Set<string>(),
+  // One stable empty set, as the real hook memoizes it.
+  useHiddenUsageProviders: (
+    (none: ReadonlySet<string>) => () =>
+      none
+  )(new Set<string>()),
   personalProfile: () => ({}),
   personalProviderRecheck: {},
   usePersonalEnvironmentId: () => "env-1",

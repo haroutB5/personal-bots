@@ -137,7 +137,11 @@ vi.mock("./usePersonalGroups", () => ({
 }));
 vi.mock("./usePersonalBots", () => ({
   usePersonalEnvironmentId: () => state.environmentId,
-  useHiddenUsageProviders: () => new Set<string>(),
+  // One stable empty set, as the real hook memoizes it.
+  useHiddenUsageProviders: (
+    (none: ReadonlySet<string>) => () =>
+      none
+  )(new Set<string>()),
   usePersonalBotsList: () => ({ data: state.listData, error: null, refresh: state.refresh }),
   usePersonalProfile: () => ({ data: null }),
 }));

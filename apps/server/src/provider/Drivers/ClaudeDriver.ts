@@ -16,6 +16,7 @@ import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -33,7 +34,10 @@ import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
-import { makeClaudeScopedLimitNames } from "../Layers/claudeUsageLimits.ts";
+import {
+  claudeUsageResponseHasPassedReset,
+  makeClaudeScopedLimitNames,
+} from "../Layers/claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../Layers/claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../Layers/resetCreditCoordinator.ts";
 import {
@@ -242,6 +246,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           Effect.provideService(Path.Path, path),
         );
 
+      // A cached reading taken before a usage reset is out of date the moment
+      // the reset passes (the probe loop re-reads just after one), so it is
+      // dropped and the CLI asked again rather than served for the rest of
+      // the TTL.
+      const readCapabilities = Effect.gen(function* () {
+        const cached = yield* Cache.get(capabilitiesProbeCache, capabilitiesCacheKey);
+        const now = yield* Clock.currentTimeMillis;
+        if (cached?.usage === undefined || !claudeUsageResponseHasPassedReset(cached.usage, now)) {
+          return cached;
+        }
+        yield* Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey);
+        return yield* Cache.get(capabilitiesProbeCache, capabilitiesCacheKey);
+      });
+
       // Start the TTL-gated refresh without delaying provider readiness. The
       // next check observes a remote manifest after the background fetch lands.
       const checkProvider = modelManifest.refreshInBackground.pipe(
@@ -254,7 +272,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                 // kept for the TTL, or the early retry after a failed read
                 // would be served the same miss.
                 () =>
-                  Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+                  readCapabilities.pipe(
                     Effect.tap((capabilities) =>
                       capabilities?.usage === undefined
                         ? Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey)
