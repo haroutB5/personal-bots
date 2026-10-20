@@ -189,12 +189,13 @@ async function offlineQueue({ page, origin, step, server, root }) {
   }
   if (reloadedWhileDown) {
     // The service worker opens the app from its saved shell; the laptop cannot be reached, so it is the cold-launch
-    // "Laptop offline" screen, and it says the messages are still here.
-    await expect(page.getByText("Laptop offline")).toBeVisible({ timeout: 90_000 });
+    // "Reconnecting to your laptop" screen (was "Laptop offline" before 1.66.74, which keeps retrying by itself),
+    // and it says the messages are still here.
+    await expect(page.getByRole("heading", { name: "Reconnecting to your laptop" })).toBeVisible({
+      timeout: 90_000,
+    });
     await expect(page.getByText("3 messages are waiting to send")).toBeVisible();
-    step(
-      "reloaded while the laptop was down: the Laptop offline screen says 3 messages are waiting",
-    );
+    step("reloaded while the laptop was down: the Reconnecting screen says 3 messages are waiting");
   } else {
     step(
       "the app shell does not load without the laptop (no cache here); the queue is on the device",

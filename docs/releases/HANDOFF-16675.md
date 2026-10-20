@@ -64,18 +64,63 @@ the CTO hotfix 1.66.73 (`hotfix/hbots-16673-antigravity-bots`) and Optimizer's s
   launcher stops, so the PyInstaller child no longer holds files and the runtime temp folder can be
   removed ("Could not remove an Antigravity runtime temp directory" is now a real-failure WARN only).
 
-## 4. Left for releases 2 and 3 / spec deviations
+## 4. Left for releases 2 and 3, and spec deviations
 
-See the builder report: registry catalogue and installs, generic sign-in kinds (device code, paste
-code, console, Cursor link + wait), the model list page and bot avatars in Models, the bot-form
-entry, the `reply` text on the Ready card, `auth.expired` ("Signed out" vs "Sign in to use it").
+Release 2 (catalogue, registry install, generic API-key sign-in) and release 3 (device code, paste
+code, console, Cursor link + wait) are not started. Deviations in this release:
 
-## 5. Tests
+- Add provider is the built-in half only (no search, filters, Popular or registry); the not-installed
+  built-ins list there.
+- Only Antigravity has an installer today, so Install is offered only there; Claude, Codex, OpenCode,
+  Cursor, Grok and DeepSeek say "Install it on your computer" when missing. The list's install
+  progress comes from `providerInstallSubscribe`, not a snapshot field.
+- The Ready card has no reply text (the smoke runners return nothing; release 2 adds `reply`) and
+  Antigravity has no test step (no smoke test exists for it): its card has two steps.
+- No `auth.expired` state: a signed-out provider always reads "Sign in to use it".
+- Models card expands in place (no separate searchable page, no bot avatar stack); "Make a bot with it"
+  opens `/bots/new` without preselecting the provider; "Pick a new model" has no "Other models" row;
+  Remove keeps the Google sign-in (the installer's rule) and says so; built-ins show no "Turn off" row
+  (the Use for bots switch does it).
+- OpenCode: server address only; the server password stays a desktop setting (it is stored in plain
+  text in the config, so the phone does not become a second way to write it).
+- `previousVersion` rides on `smokeCheck`, not the snapshot top level.
+
+## 5. Stability (was 1.66.74, Optimizer's `fix/hbots-stability`)
+
+There is no separate 1.66.74: this release carries Optimizer's stability code (`049767fb4a`; the later
+commits on that branch are docs, the 1.66.73 merge and its version bump only). Their notes are
+`docs/releases/HANDOFF-16674.md` on `origin/fix/hbots-stability` (not copied here).
+
+- **Heavy-job lock**: `scripts/personal/heavy-job.ps1`; `build.ps1` and `gate-evidence.ps1` take the
+  machine-wide lock themselves (nested-safe, abandoned mutex recovered, exit codes propagated), and
+  run their children at BelowNormal CPU, I/O 0 and memory 1. `HBOTS_LOW_PRIORITY=off` lowers nothing
+  but keeps the lock.
+- **Server priorities**: node and cloudflared start at CPU AboveNormal, I/O Normal (2) and memory
+  Normal (5) at every start (`start.ps1`, so `restart.ps1` and the release runner too); an
+  already-running server is repaired without a restart; `smoke.ps1` checks the priorities after
+  readiness and fails on a wrong one. Rollback switch: `HBOTS_SERVER_PRIORITY=legacy` (smoke still
+  requires AboveNormal / 2 / 5).
+- **Phone auto-recovery**: on HTTP 502/503/504/520-530, 408, transport failures, timeouts and
+  interrupted response bodies during bootstrap the app retries by itself (2, 4, 8, 16, 30 s, plus
+  online / visible events) instead of the crash page; the screen now reads "Reconnecting to your
+  laptop" (it said "Laptop offline") and keeps the queued-message line. HTTP 400/401/403/500 and
+  schema errors still show. Device rollback: `localStorage['bots:origin-recovery'] = 'off'`.
+- **Live evidence (CTO, `server-20261020.log`)**: 69 event-loop stalls, maximum 66.6 s, in the 70 minutes
+  before the live priority was raised by hand (about 08:46 BST); 1 stall (2.4 s) in the hour after. The
+  comparison is observational (heavy-job adoption changed in the same hours); Optimizer's synthetic
+  memory-pressure run showed no gain.
+- **e2e fallout fixed here**: the full gate failed on this merge because two e2e checks still expected
+  the old heading (`offlineQueue.mjs` waited for "Laptop offline"; `offlineNetwork.mjs`'s "never the root
+  screen" check looked for it). Both now use "Reconnecting to your laptop". The same gate passed 12/12
+  on this branch before the stability merge (`ac1c00bf042b`).
+
+## 6. Tests
 
 PROOF_PLACEHOLDER
 
-## 6. Risks
+## 7. Risks
 
 - The provider page writes provider settings from the phone (enabled flag, key, OpenCode address)
   with the same patch builder as the desktop panel.
 - Credentials are touched (API key entry, sign-in): Security reviews before shipping.
+- Startup path and release tooling changed by the stability part: QA risky tier covers both parts.

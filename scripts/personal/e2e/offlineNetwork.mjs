@@ -75,13 +75,17 @@ function assertNoPageErrors(id, watch) {
 }
 
 /**
- * The root "Laptop offline" screen (an h1 of its own with a Try again button): the thing a phone with no network
+ * The root "Reconnecting to your laptop" screen (called "Laptop offline" before 1.66.74; an h1 of its own): the thing a phone with no network
  * must never fall back to. The Bots list has its own small "Your laptop is offline" card with a Try again button,
  * and the banner says "Laptop offline" too; only the full-screen heading is the fallback.
  */
 async function expectNoFallback(page) {
-  if ((await page.getByRole("heading", { name: "Laptop offline" }).count()) > 0) {
-    throw new Error("the app fell back to the root 'Laptop offline' screen");
+  if (
+    (await page
+      .getByRole("heading", { name: /^(Laptop offline|Reconnecting to your laptop)$/ })
+      .count()) > 0
+  ) {
+    throw new Error("the app fell back to the root 'Reconnecting to your laptop' screen");
   }
 }
 
