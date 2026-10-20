@@ -1,4 +1,4 @@
-﻿import type { JSX } from "react";
+import type { JSX } from "react";
 import { useId, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
@@ -14,7 +14,8 @@ import {
   partitionCatalog,
   type CatalogFilter,
 } from "./catalogModel";
-import { BUILT_IN_CATALOG_FALLBACK, providerCatalogList } from "./catalogClient";
+import { providerCatalogList } from "./catalogClient";
+import { deriveBuiltInCatalogEntries } from "./catalogModel";
 import type { ProviderCatalogEntry, ProviderCatalogListResult } from "./catalogTypes";
 import { useProviderInstallStates } from "./providerInstallStates";
 import {
@@ -68,8 +69,8 @@ export function AddProviderScreen(): JSX.Element {
     if (catalogData?.entries && catalogData.entries.length > 0) {
       return catalogData.entries;
     }
-    return BUILT_IN_CATALOG_FALLBACK;
-  }, [catalogData]);
+    return deriveBuiltInCatalogEntries(providers);
+  }, [catalogData, providers]);
 
   // Merge live provider snapshots into entry.added status
   const entries: ReadonlyArray<ProviderCatalogEntry> = useMemo(() => {
@@ -99,6 +100,8 @@ export function AddProviderScreen(): JSX.Element {
   const isStale = catalogData?.registryStale === true;
   const fetchFailed = catalogQuery.error !== null;
   const isLoading = catalogQuery.isPending && !catalogQuery.data;
+  const showFallbackNote =
+    fetchFailed || (!isLoading && (!catalogData?.entries || catalogData.entries.length === 0));
 
   const clearSearch = () => {
     setQuery("");
@@ -191,7 +194,7 @@ export function AddProviderScreen(): JSX.Element {
       </div>
 
       {/* Fetch error note */}
-      {fetchFailed ? (
+      {showFallbackNote ? (
         <div className="mt-4">
           <ProviderNote
             tone="info"

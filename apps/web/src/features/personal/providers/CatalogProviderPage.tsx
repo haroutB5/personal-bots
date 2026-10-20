@@ -1,4 +1,4 @@
-﻿import type { JSX, ReactNode } from "react";
+import type { JSX, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
@@ -13,12 +13,18 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { commandFailureMessage } from "../commandFeedback";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "../usePersonalBots";
 import {
-  BUILT_IN_CATALOG_FALLBACK,
   providerCatalogAdd,
+  providerCatalogInstallFacts,
   providerCatalogList,
 } from "./catalogClient";
+import { deriveBuiltInCatalogEntries } from "./catalogModel";
 import { unsupportedReasonCopy } from "./catalogModel";
-import type { ProviderCatalogEntry, ProviderCatalogListResult } from "./catalogTypes";
+import { TEST_CATALOG_FIXTURES } from "./catalogTestFixtures";
+import type {
+  ProviderCatalogEntry,
+  ProviderCatalogInstallPlan,
+  ProviderCatalogListResult,
+} from "./catalogTypes";
 import { downloadLine, licenceLine } from "./providerFacts";
 import {
   BUTTON_BIG,
@@ -72,8 +78,23 @@ export function CatalogProviderPageScreen({
       (e: ProviderCatalogEntry) => e.catalogId === catalogId,
     );
     if (fromServer !== undefined) return fromServer;
-    return BUILT_IN_CATALOG_FALLBACK.find((e) => e.catalogId === catalogId);
-  }, [catalogQuery.data, catalogId]);
+    const builtIns = deriveBuiltInCatalogEntries(providers);
+    const builtIn = builtIns.find(
+      (e) => e.catalogId === catalogId || e.catalogId === `builtin:${catalogId}`,
+    );
+    if (builtIn !== undefined) return builtIn;
+    return TEST_CATALOG_FIXTURES[catalogId];
+  }, [catalogQuery.data, catalogId, providers]);
+
+  const installFactsQuery = useEnvironmentQuery(
+    environmentId !== null && entry !== undefined && entry.source !== "builtIn"
+      ? providerCatalogInstallFacts({
+          environmentId,
+          input: { catalogId: entry.catalogId },
+        })
+      : null,
+  );
+  const installPlan = installFactsQuery.data as ProviderCatalogInstallPlan | null | undefined;
 
   // Check if an instance already exists for this catalogId
   const existingInstance = useMemo(() => {
@@ -358,12 +379,13 @@ export function CatalogProviderPageScreen({
       </div>
 
       {/* Confirmation sheet (SPEC §5.2) */}
-      {sheetOpen ? (
+      {sheetOpen && entry ? (
         <InstallConfirmSheet
           driver={
             entry.source === "builtIn" ? (entry.catalogId.replace(/^builtin:/, "") as any) : null
           }
           label={entry.name}
+          iconUrl={entry.iconUrl}
           facts={{
             publisher: entry.publisher,
             openSource: entry.openSource,
@@ -371,10 +393,14 @@ export function CatalogProviderPageScreen({
             description: entry.description,
             cost: entry.cost,
             signIn: entry.signInLabel,
-            from: entry.distribution?.label ?? "ACP registry",
+            from:
+              installPlan?.distribution?.label ??
+              entry.distribution?.label ??
+              (entry.source === "builtIn" ? "Built into hbots" : null),
+            sha256Checked: installPlan?.sha256Checked ?? entry.sha256Checked,
           }}
-          version={entry.version}
-          totalBytes={entry.downloadBytes}
+          version={installPlan?.version ?? entry.version ?? null}
+          totalBytes={installPlan?.downloadBytes ?? entry.downloadBytes ?? null}
           builtIn={entry.source === "builtIn"}
           busy={busy}
           error={sheetError}

@@ -15,6 +15,7 @@ export interface ProviderFacts {
   readonly cost: { readonly label: string; readonly detail: string | null } | null;
   readonly signIn: string | null;
   readonly from: string | null;
+  readonly sha256Checked?: boolean | undefined;
 }
 
 const FACTS: Readonly<Record<string, ProviderFacts>> = {

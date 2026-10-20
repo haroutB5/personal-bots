@@ -6,6 +6,7 @@ import {
   filterMatches,
   highlightNameMatch,
   normalizeSearch,
+  deriveBuiltInCatalogEntries,
   partitionCatalog,
   unsupportedReasonCopy,
 } from "./catalogModel";
@@ -238,5 +239,77 @@ describe("catalogModel - catalogInstallFailureNote", () => {
       'Kimi CLI stopped with "unsupported platform". This version may not run on Windows.',
     );
     expect(note.buttons).toEqual(["tryAgain", "removeIt"]);
+  });
+});
+
+describe("catalogModel - deriveBuiltInCatalogEntries", () => {
+  it("derives built-in catalogue entries from live ServerProvider snapshots", () => {
+    const snapshots: any = [
+      {
+        driver: "claudeAgent",
+        label: "Claude Code",
+        installed: true,
+        instanceId: "claudeAgent",
+        enabled: true,
+      },
+      {
+        driver: "codex",
+        label: "OpenAI Codex",
+        installed: false,
+        instanceId: "codex",
+        enabled: true,
+      },
+      {
+        driver: "antigravity",
+        label: "Antigravity",
+        installed: true,
+        instanceId: "antigravity",
+        enabled: true,
+      },
+    ];
+
+    const entries = deriveBuiltInCatalogEntries(snapshots);
+    expect(entries).toHaveLength(3);
+
+    expect(entries[0]?.catalogId).toBe("builtin:claudeAgent");
+    expect(entries[0]?.source).toBe("builtIn");
+    expect(entries[0]?.name).toBe("Claude Code");
+    expect(entries[0]?.publisher).toBe("Anthropic");
+    expect(entries[0]?.cost.kind).toBe("subscription");
+    expect(entries[0]?.added).toEqual({ instanceId: "claudeAgent" });
+    expect(entries[0]?.version).toBeNull();
+    expect(entries[0]?.downloadBytes).toBeNull();
+
+    expect(entries[1]?.catalogId).toBe("builtin:codex");
+    expect(entries[1]?.name).toBe("OpenAI Codex");
+    expect(entries[1]?.added).toBeNull();
+
+    expect(entries[2]?.catalogId).toBe("builtin:antigravity");
+    expect(entries[2]?.name).toBe("Antigravity");
+    expect(entries[2]?.cost.kind).toBe("freeTier");
+    expect(entries[2]?.added).toEqual({ instanceId: "antigravity" });
+  });
+
+  it("filters out non-builtIn custom instances", () => {
+    const snapshots: any = [
+      {
+        driver: "claudeAgent",
+        label: "Claude Code",
+        source: "builtIn",
+        installed: true,
+        instanceId: "claudeAgent",
+      },
+      {
+        driver: "acpRegistry",
+        label: "Custom Agent",
+        source: "registry",
+        installed: true,
+        instanceId: "custom-1",
+      },
+    ];
+
+    const entries = deriveBuiltInCatalogEntries(snapshots);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.catalogId).toBe("builtin:claudeAgent");
   });
 });

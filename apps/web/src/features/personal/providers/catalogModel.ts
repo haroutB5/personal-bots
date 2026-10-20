@@ -1,3 +1,6 @@
+import type { ServerProvider } from "@t3tools/contracts";
+import { providerFacts } from "./providerFacts";
+import { resolveBotProvider } from "../botSummaries";
 import type {
   ProviderCatalogCost,
   ProviderCatalogEntry,
@@ -289,4 +292,79 @@ export function catalogInstallFailureNote(
         buttons: ["tryAgain"],
       };
   }
+}
+
+/**
+ * SPEC §4 fallback: "Couldn't load the full list, showing the built-in providers".
+ * Derived strictly from live ServerProvider snapshots — no invented data, no hardcoded
+ * versions or download sizes.
+ */
+export function deriveBuiltInCatalogEntries(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ProviderCatalogEntry> {
+  return providers
+    .filter((p) => {
+      const snap = p as unknown as { source?: string };
+      return snap.source === "builtIn" || !snap.source;
+    })
+    .map((p) => {
+      const snap = p as unknown as {
+        label?: string;
+        publisher?: string;
+        license?: string;
+        openSource?: boolean;
+        install?: { version?: string; totalBytes?: number };
+        iconUrl?: string;
+      };
+      const facts = providerFacts(p.driver);
+      const isFree = facts?.cost?.label.toLowerCase().includes("free") ?? false;
+      const isSub = facts?.cost?.label.toLowerCase().includes("plan") ?? false;
+      const isKey =
+        (facts?.cost?.label.toLowerCase().includes("key") ||
+          facts?.cost?.label.toLowerCase().includes("pay as you go")) ??
+        false;
+
+      const costKind: ProviderCatalogCost["kind"] = isSub
+        ? "subscription"
+        : isKey
+          ? "apiKey"
+          : isFree
+            ? "freeTier"
+            : "unknown";
+
+      const name = snap.label ?? resolveBotProvider(p.instanceId, providers).label ?? p.driver;
+
+      return {
+        catalogId: `builtin:${p.driver}`,
+        source: "builtIn" as const,
+        name,
+        publisher: snap.publisher ?? facts?.publisher ?? "hbots",
+        description: facts?.description ?? "",
+        website: null,
+        repository: null,
+        license:
+          snap.license ?? facts?.licence ?? (facts?.openSource ? "Open source" : "Proprietary"),
+        openSource: snap.openSource ?? facts?.openSource ?? false,
+        version: snap.install?.version ?? p.versionAdvisory?.latestVersion ?? p.version ?? null,
+        iconUrl: snap.iconUrl ?? null,
+        distribution: null,
+        downloadBytes: snap.install?.totalBytes ?? null,
+        sha256Checked: false,
+        cost: facts?.cost
+          ? {
+              kind: costKind,
+              label: facts.cost.label,
+              detail: facts.cost.detail,
+            }
+          : {
+              kind: "unknown" as const,
+              label: "Price not listed",
+              detail: null,
+            },
+        signInLabel: facts?.signIn ?? null,
+        popularRank: null,
+        supported: { ok: true as const },
+        added: p.installed ? { instanceId: p.instanceId } : null,
+      };
+    });
 }

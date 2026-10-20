@@ -1,4 +1,4 @@
-﻿import type { JSX, ReactNode, RefObject } from "react";
+import type { JSX, ReactNode, RefObject } from "react";
 import { useRef, useState } from "react";
 
 import type { PersonalBot, ServerProvider } from "@t3tools/contracts";
@@ -171,11 +171,15 @@ export function InstallConfirmSheet({
   const licence = licenceLine(facts);
   const rows: ReadonlyArray<{ key: string; value: string; review?: boolean }> = [
     ...(facts !== null ? [{ key: "Publisher", value: facts.publisher }] : []),
-    { key: "Version", value: version ?? "Latest" },
-    { key: "Download", value: downloadLine(totalBytes), ...(big ? { review: true } : {}) },
+    ...(version !== null ? [{ key: "Version", value: version }] : []),
+    ...(totalBytes !== null
+      ? [{ key: "Download", value: downloadLine(totalBytes), ...(big ? { review: true } : {}) }]
+      : []),
     ...(facts?.from != null ? [{ key: "From", value: facts.from }] : []),
     ...(licence !== null ? [{ key: "Licence", value: licence }] : []),
-    { key: "Checked", value: "Checked against the registry's fingerprint before it runs" },
+    ...(facts?.sha256Checked === true
+      ? [{ key: "Checked", value: "Checked against the registry's fingerprint before it runs" }]
+      : []),
   ];
   const warning =
     "Once installed it can do what your bots can: read and change files, run commands and use the internet. Install only publishers you trust.";

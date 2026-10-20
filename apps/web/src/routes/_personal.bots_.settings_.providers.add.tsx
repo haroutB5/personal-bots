@@ -1,4 +1,4 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 
 import { AddProviderScreen } from "~/features/personal/providers/AddProviderScreen";
 import type { CatalogFilter } from "~/features/personal/providers/catalogModel";

@@ -1,4 +1,4 @@
-﻿import type { JSX, ReactNode } from "react";
+import type { JSX, ReactNode } from "react";
 import { useState } from "react";
 import { AlertTriangle, Info } from "lucide-react";
 
