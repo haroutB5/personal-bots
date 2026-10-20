@@ -7,10 +7,10 @@ Antigravity fixes found on 20 Oct. No migration (the maximum stays 111);
 `PERSONAL_TASKS_CONCURRENCY` stays 5.
 
 Branch `feat/hbots-16673-providers` (the name predates the renumbering: this is 1.66.75). It carries
-the CTO hotfix 1.66.73 (`hotfix/hbots-16673-antigravity-bots`) and Optimizer's stability branch
-(`fix/hbots-stability`, 1.66.74), both merged, on top of `personal-bots/main` `713302bea5`
-(live 1.66.72 `1aeb673228da`). Before staging for real, merge `personal-bots/main` once 1.66.73 and
-1.66.74 are live.
+the CTO hotfix 1.66.73 (`hotfix/hbots-16673-antigravity-bots`) and Optimizer's stability code
+(`fix/hbots-stability`, originally planned as 1.66.74). There is no separate 1.66.74 release.
+Live 1.66.73's notes commit `79d8783a4558` is already merged via `6a1bd467b9`, before the final
+build and gate. Gemini effort selection is deferred to a separate follow-up, per CTO's correction.
 
 ## 1. What the phone gets
 
@@ -117,7 +117,27 @@ commits on that branch are docs, the 1.66.73 merge and its version bump only). T
 
 ## 6. Tests
 
-PROOF_PLACEHOLDER
+- **Staged artifact:** `450ec5ba145f`, version 1.66.75, clean source tree, externals copied.
+  Build completed with exit 0. No activation; DevOps ships after risky-tier QA and Security review.
+- **Full gate:** PASS on that artifact, exit 0. Server: 2,946 passed, 4 skipped; web: 2,965 passed;
+  server and web typechecks: exit 0; PowerShell: 288 checks passed; phone e2e: 12/12 journeys passed.
+  The machine-wide lock serialized every heavy step. The interrupted gate from the cancelled task
+  had no final evidence; this completed run replaces it without rebuilding or changing source.
+- **Focused Antigravity regressions:** 8 files, 156 passed, 13 skipped, exit 0 (auth, skills/profile
+  support, driver, adapter, auth service, default-browser launch and maintenance runner). Includes
+  the three bug fixes and laptop sign-in handling. Log: `antigravity-regression.log` in the evidence
+  folder above. Platform-dependent skips remain skips, not claimed passes.
+- **Phone proof:** `C:/Users/Ht/.personal-bots/qa/hbots-16673/README.md` indexes the evidence.
+  `shots/40-list.png`, `03-antigravity-before.png`, `04-confirm.png`, `05-installing.png`,
+  `22-signin-idle.png`, `23-signin-redirect.png`, `25-signin-cancelled.png`, `32-ready.png`:
+  390x844 dark, with 320 px checks in `41-list-320.png` and `42-page-320.png`.
+  Throwaway servers and fake Claude only; no real Google sign-in. Install reached the paste/link
+  and open-on-laptop step, then cancelled. DeepSeek key was redacted in settings, held in the secret
+  store and absent from server logs. Fake Claude's on-demand test passed in 0.5 s. Turning Show
+  usage off for both Claude instances removed the usage strip. Browser errors: none.
+- Screenshots predate the final stability/notes merges; their provider UI is unchanged except the
+  fix that restarts sign-in after a cancelled flow. The final artifact also passed all 12 phone e2e
+  journeys, including offline queue, cold-load drop and offline screen recovery.
 
 ## 7. Risks
 
@@ -125,3 +145,25 @@ PROOF_PLACEHOLDER
   with the same patch builder as the desktop panel.
 - Credentials are touched (API key entry, sign-in): Security reviews before shipping.
 - Startup path and release tooling changed by the stability part: QA risky tier covers both parts.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=450ec5ba145f56df26587984a33942b3bd0c4d05 release=450ec5ba145f json-sha256=07af724ecb28ec2767750a15b2c4261a041e74d4eb870b5583a6cd2e80c4fd24 result=PASS -->
+
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-20T11:58:53Z. Version 1.66.75, release `450ec5ba145f`, commit `450ec5ba145f56df26587984a33942b3bd0c4d05` on `feat/hbots-16673-providers`, working tree clean, result **PASS**.
+
+Machine-readable copy: `releases\450ec5ba145f\gate-evidence.json` (sha256 `07af724ecb28ec2767750a15b2c4261a041e74d4eb870b5583a6cd2e80c4fd24`) and the full gate logs in `releases\450ec5ba145f\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+
+| Gate         | Commands                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Exit | Result                                                     | Seconds |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 0    | pass: 2946 tests passed, 0 failed, 4 skipped, in 213 files | 427.3   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 0    | pass: exit code only                                       | 54.8    |
+| web-tests    | `vp test run --project unit src/features/personal src/authBootstrap.test.ts` (in `apps\web`)                                                                                                                                                                                                                                                                                                                                                                                                                                 | 0    | pass: 2965 tests passed, 0 failed, 0 skipped, in 261 files | 37.2    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 0    | pass: exit code only                                       | 4.9     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\heavy-job.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\server-priority.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 288 checks ok, 0 failed                              | 87.1    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16670\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\450ec5ba145f" -Json` (in `.`)                                                                                                                                                                                                                                                                                                                           | 0    | pass: 12/12 journeys passed                                | 281.7   |
+
+E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
+
+Tree: HEAD at start `450ec5ba145f56df26587984a33942b3bd0c4d05`, at end `450ec5ba145f56df26587984a33942b3bd0c4d05`; tracked files modified: none. Staged release: version 1.66.75, sha 450ec5ba145f, dirty False, externals copied; `dist/bin.mjs` sha256 `99aff1e5030ecf12a5ae0cea6dd0c764e32b430d87bbe50801cd8acbf93b7584`.
+<!-- gate-evidence:end -->
