@@ -72,6 +72,20 @@ if (-not $state) {
 }
 Pass "process pid $($state.pid), release $($state.release), started $($state.startedAt)"
 
+# Priority is a release requirement, not just diagnostic output. A missing
+# relay fails unless -NoTunnel was requested for an isolated local check.
+try {
+    $processes = @(Get-PbServerProcesses -RootProcessId ([int]$state.pid))
+    Initialize-PbProcPriorityType
+    if (-not ($processes.Name -contains 'node.exe')) { Fail 'server node priority could not be inspected' }
+    if (-not $NoTunnel -and -not ($processes.Name -contains 'cloudflared.exe')) { Fail 'relay priority could not be inspected' }
+    foreach ($child in $processes) {
+        $text = Get-PbProcessPriorityText -ProcessId ([int]$child.ProcessId)
+        if ($text -match 'cpu=AboveNormal io=2 mem=5$') { Pass ("priority {0}: {1}" -f $child.Name, $text) }
+        else { Fail ("priority {0}: {1}; expected AboveNormal/2/5" -f $child.Name, $text) }
+    }
+} catch { Fail "priority inspection failed: $($_.Exception.Message)" }
+
 # 2. Local health
 $runtime = $null
 $deadline = (Get-Date).AddSeconds($StartTimeoutSeconds)

@@ -18,7 +18,8 @@ build.ps1 because only here is the new release known to actually start, and
 only here is the rollback target known at all.
 
 The server (node) and its T3 Connect relay (cloudflared) are then raised to
-AboveNormal priority, best-effort (Set-PbServerPriority in common.ps1).
+CPU AboveNormal, I/O Normal (2), memory Normal (5), best-effort at startup.
+smoke.ps1 fails if those priorities were not applied.
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restart.ps1
