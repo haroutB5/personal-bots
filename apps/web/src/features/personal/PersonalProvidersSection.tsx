@@ -33,7 +33,11 @@ import {
   SECTION_TITLE,
   StatusDot,
 } from "./providers/providerUi";
-import { personalProviderRecheck } from "./usePersonalBots";
+import {
+  personalProfileSet,
+  personalProviderRecheck,
+  useHiddenUsageProviders,
+} from "./usePersonalBots";
 
 const ROW_BUTTON_CLASS = "min-w-[78px] px-3.5 text-[14px] font-semibold";
 
@@ -80,6 +84,9 @@ export function PersonalProvidersSection({
     reportDefect: false,
   });
   const recheck = useAtomCommand(personalProviderRecheck, { reportFailure: false });
+  const setProfile = useAtomCommand(personalProfileSet, { reportFailure: false });
+  const hiddenUsage = useHiddenUsageProviders(environmentId);
+  const [usagePending, setUsagePending] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const runTest = useAtomCommand(serverEnvironment.runProviderTest, {
     reportFailure: false,
     reportDefect: false,
@@ -213,6 +220,27 @@ export function PersonalProvidersSection({
     }
   };
 
+  const toggleUsage = async (instanceId: string, label: string, visible: boolean) => {
+    if (usagePending.has(instanceId)) return;
+    setUsagePending((previous) => new Map(previous).set(instanceId, visible));
+    const result = await setProfile({
+      environmentId,
+      input: { usageVisibility: { instanceId, visible } },
+    });
+    const failure = commandFailureMessage(result, `Couldn't save ${label}'s usage setting.`);
+    setErrors((previous) => {
+      const next = new Map(previous);
+      if (failure === null) next.delete(instanceId);
+      else next.set(instanceId, failure);
+      return next;
+    });
+    setUsagePending((previous) => {
+      const next = new Map(previous);
+      next.delete(instanceId);
+      return next;
+    });
+  };
+
   const checkAll = async () => {
     if (checkingAll) return;
     setCheckingAll(true);
@@ -260,6 +288,9 @@ export function PersonalProvidersSection({
               row={row}
               error={errors.get(row.instanceId) ?? null}
               onAction={(action) => runAction(snapshotRow, action)}
+              usageShown={usagePending.get(row.instanceId) ?? !hiddenUsage.has(row.instanceId)}
+              usageBusy={usagePending.has(row.instanceId)}
+              onToggleUsage={(visible) => void toggleUsage(row.instanceId, row.label, visible)}
             />
           );
         })}
@@ -304,10 +335,16 @@ function ProviderListRow({
   row,
   error,
   onAction,
+  usageShown,
+  usageBusy,
+  onToggleUsage,
 }: {
   row: ProviderRow;
   error: string | null;
   onAction: (action: ProviderRowAction) => void;
+  usageShown: boolean;
+  usageBusy: boolean;
+  onToggleUsage: (visible: boolean) => void;
 }): JSX.Element {
   const action = row.action;
   const body = (
@@ -359,6 +396,14 @@ function ProviderListRow({
           />
         ) : null}
       </div>
+      {row.canToggleUsage ? (
+        <UsageSwitch
+          label={row.label}
+          shown={usageShown}
+          busy={usageBusy}
+          onToggle={onToggleUsage}
+        />
+      ) : null}
       {row.progress !== null ? (
         <div className="mt-1 pl-12">
           <ProgressBar
@@ -379,5 +424,39 @@ function ProviderListRow({
         </p>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * "Show usage" under an eligible provider row: off leaves it out of the
+ * Chats usage strip, its sheet and the Limits tab.
+ */
+function UsageSwitch({
+  label,
+  shown,
+  busy,
+  onToggle,
+}: {
+  readonly label: string;
+  readonly shown: boolean;
+  readonly busy: boolean;
+  readonly onToggle: (visible: boolean) => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      onClick={() => onToggle(!shown)}
+      aria-checked={shown}
+      aria-busy={busy}
+      aria-label={`Show ${label} usage`}
+      disabled={busy}
+      className={`ml-12 flex min-h-9 items-center justify-between gap-3 rounded-[10px] py-1 pr-2 text-left ${FOCUS} disabled:opacity-60`}
+    >
+      <span className="text-[13px] text-[var(--personal-text-secondary)]">Show usage</span>
+      <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+        {shown ? "On" : "Off"}
+      </span>
+    </button>
   );
 }

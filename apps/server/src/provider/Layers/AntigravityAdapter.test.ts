@@ -1387,4 +1387,80 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       expect(active.launches).toHaveLength(0);
     }),
   );
+  it.effect(
+    "suppresses client cancellation text on steer or interrupt while preserving real errors",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ holdCancel: true });
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+
+        const first = yield* h.adapter
+          .sendTurn({ threadId, input: "Working on task" })
+          .pipe(Effect.forkChild);
+        yield* h.nextPrompt;
+
+        const second = yield* h.adapter
+          .sendTurn({ threadId, input: "Steering prompt" })
+          .pipe(Effect.forkChild);
+        expect(yield* h.nextCancellation).toBe(1);
+
+        yield* h.emitNative({
+          _tag: "ContentDelta",
+          text: "The request was cancelled by the client.",
+          rawPayload: {},
+        });
+        yield* Deferred.succeed(h.cancelRelease, undefined);
+
+        const replacement = yield* h.nextPrompt;
+        yield* h.emitNative({
+          _tag: "ContentDelta",
+          text: "Continuing with new instructions.",
+          rawPayload: {},
+        });
+        yield* Deferred.succeed(replacement.result, { stopReason: "end_turn" });
+
+        yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+
+        const deltas = h.seen.filter(
+          (event): event is Extract<ProviderRuntimeEvent, { type: "content.delta" }> =>
+            event.type === "content.delta",
+        );
+        const deltaTexts = deltas.map((d) => d.payload.delta);
+        expect(deltaTexts).toContain("Continuing with new instructions.");
+        expect(deltaTexts.some((text) => /cancelled by the client/i.test(text))).toBe(false);
+
+        const turnCompleted = yield* h.waitForEvent((event) => event.type === "turn.completed");
+        expect(turnCompleted.payload.errorMessage).toBeUndefined();
+      }),
+  );
+
+  it.effect("publishes real prompt failures with an error message", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* h.adapter
+        .sendTurn({ threadId, input: "Failing prompt" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      yield* Deferred.fail(
+        prompt.result,
+        AcpErrors.AcpRequestError.internalError(
+          "Model service returned HTTP 500 internal server error.",
+        ),
+      );
+      const exit = yield* Fiber.await(turn);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(completed.payload.state).toBe("failed");
+      expect(completed.payload.errorMessage).toContain("Model service returned HTTP 500");
+    }),
+  );
 });

@@ -412,3 +412,38 @@ describe("buildProviderList (SPEC 3.2)", () => {
     expect(list.rows[1]?.state).toBe("notInstalled");
   });
 });
+
+describe("canToggleUsage on ProviderRow", () => {
+  it("marks installed and signed in providers with usage as canToggleUsage", () => {
+    const row = providerRow({
+      snapshot: provider({
+        driver: "antigravity",
+        installed: true,
+        auth: { status: "authenticated" },
+      }),
+      label: "Google Antigravity",
+      bots: [],
+      install: null,
+      now: new Date(NOW),
+    });
+    expect(row.canToggleUsage).toBe(true);
+
+    const pending = withPendingAction(row, { kind: "check" });
+    expect(pending.canToggleUsage).toBe(true);
+  });
+
+  it("marks unauthenticated or uninstalled providers as not eligible for usage toggle", () => {
+    const unauth = providerRow({
+      snapshot: provider({
+        driver: "antigravity",
+        installed: true,
+        auth: { status: "unauthenticated" },
+      }),
+      label: "Google Antigravity",
+      bots: [],
+      install: null,
+      now: new Date(NOW),
+    });
+    expect(unauth.canToggleUsage).toBe(false);
+  });
+});

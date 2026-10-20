@@ -72,6 +72,7 @@ export interface ProviderRow {
   /** Something is running on the server, so Check all leaves this row alone. */
   readonly busy: boolean;
   readonly bots: ReadonlyArray<string>;
+  readonly canToggleUsage: boolean;
 }
 
 /** What a tap is doing while its request is still in flight. */
@@ -232,6 +233,7 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
     action: null,
     busy: false,
     tone: "normal" as const,
+    canToggleUsage: providerReportsUsage(snapshot),
   };
   const row = (
     state: ProviderRowState,
@@ -486,6 +488,7 @@ export function buildProviderList(
           progress: null,
           busy: false,
           bots: botsUsingProvider(instanceId, bots),
+          canToggleUsage: false,
         });
         continue;
       }

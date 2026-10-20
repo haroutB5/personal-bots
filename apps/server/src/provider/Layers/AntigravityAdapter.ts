@@ -190,6 +190,11 @@ interface TurnIntent {
   settled: boolean;
 }
 
+export function isAntigravityCancellationMessage(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return /cancelled by the client/i.test(text.trim());
+}
+
 interface SessionContext {
   readonly threadId: ThreadId;
   readonly cwd: string;
@@ -208,6 +213,7 @@ interface SessionContext {
   session: ProviderSession;
   activeTurnId: TurnId | undefined;
   promptFiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> | undefined;
+  cancellingTurnId: TurnId | undefined;
   generation: number;
   stopped: boolean;
   closed: boolean;
@@ -602,6 +608,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         return;
       case "ThoughtDelta":
       case "ContentDelta":
+        if (event._tag === "ContentDelta" && isAntigravityCancellationMessage(event.text)) {
+          return;
+        }
         yield* emit(
           makeAcpContentDeltaEvent({
             stamp: yield* stamp,
@@ -894,6 +903,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 session,
                 activeTurnId: undefined,
                 promptFiber: undefined,
+                cancellingTurnId: undefined,
                 generation: 0,
                 stopped: false,
                 closed: false,
@@ -1022,6 +1032,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         );
         context.activeTurnId = undefined;
         context.promptFiber = undefined;
+        context.cancellingTurnId = undefined;
         context.session = {
           ...context.session,
           status: payload.state === "failed" ? "error" : "ready",
@@ -1075,10 +1086,12 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             });
           }
           if (context.promptFiber) {
+            context.cancellingTurnId = context.activeTurnId;
             yield* cancelRequests(context);
             yield* context.runtime.cancel;
             yield* Fiber.await(context.promptFiber);
             yield* finishSubagents(context, "cancelled");
+            context.cancellingTurnId = undefined;
           }
           yield* applyAntigravityAcpModelSelection({
             runtime: context.runtime,
@@ -1158,13 +1171,20 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         isAcpError(cause) ? mapAntigravityError(input.threadId, "session/prompt", cause) : cause,
       ),
       Effect.tapError((cause) =>
-        Effect.suspend(() =>
-          intent
-            ? context.promptLock.withPermit(
-                finishTurn(intent, { state: "failed", errorMessage: cause.message }),
-              )
-            : Effect.void,
-        ),
+        Effect.suspend(() => {
+          if (!intent) return Effect.void;
+          const cancelled =
+            isAntigravityCancellationMessage(cause.message) ||
+            context.cancellingTurnId === intent.turnId;
+          return context.promptLock.withPermit(
+            finishTurn(
+              intent,
+              cancelled
+                ? { state: "cancelled", stopReason: "cancelled" }
+                : { state: "failed", errorMessage: cause.message },
+            ),
+          );
+        }),
       ),
       Effect.onInterrupt(() =>
         context.promptLock.withPermit(
@@ -1200,6 +1220,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
               idleWithCommands = true;
               return;
             }
+            context.cancellingTurnId = context.activeTurnId;
             yield* cancelRequests(context);
             yield* context.runtime.cancel;
           }),

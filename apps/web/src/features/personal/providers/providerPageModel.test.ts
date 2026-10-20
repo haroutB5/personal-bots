@@ -70,6 +70,7 @@ const row = (overrides: Partial<ProviderRow>): ProviderRow => ({
   progress: null,
   busy: false,
   bots: [],
+  canToggleUsage: false,
   ...overrides,
 });
 

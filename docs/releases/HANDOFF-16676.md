@@ -13,6 +13,15 @@ Risk tier: risky (credentials and release tooling). Builder stages only; QA and 
 - OpenCode server passwords are redacted from both legacy and instance settings. Saving the redacted marker preserves the stored password; an explicit empty string clears it. The phone's password notice was already conditional in the 1.66.75 base and now receives only the marker, never the password.
 - gate-evidence records startedAt with milliseconds. The release runner's artifact timestamp guard is unchanged.
 - DeepSeek copy now says the key is saved on the laptop, hidden in settings, and used by the provider. The Claude Code engine passes its token through the subprocess environment, so the previous promise that bots never see it was too strong. A fake-key subprocess test documents that boundary.
+- Antigravity usage limits: surfaced in the usage strip, usage sheet, and Limits tab under the `antigravity` driver card. Shows rolling session quota windows for Gemini (tracking the tightest remaining fraction of active bot models: Gemini 4 Argon and Gemini 3.8 Flash) and Claude (when present on the account), labeled with their reset times. Stale Gemini 2.5 Pro lookup dropped. Window duration minutes is left unset rather than guessed.
+- Provider row usage switch: restored compact "Show usage" toggle directly on provider rows in Settings > Providers.
+- Antigravity ACP cancellation suppression: synthetic assistant messages containing "The request was cancelled by the client." on turn steer/interrupt cancellations are suppressed in the adapter so conversations continue seamlessly with new prompts while real errors remain surfaced.
+- Credential handling (Antigravity usage limits):
+  - Read: `acp_token.json` (client_id, client_secret, refresh_token) read in-memory only per token refresh cycle.
+  - Sent: Exclusively to Google OAuth token endpoint (`https://oauth2.googleapis.com/token`) and Google Cloud Code Assist usage endpoint (`https://cloudcode-pa.googleapis.com`); any unexpected `token_uri` host is rejected.
+  - Kept: Cached short-lived access token kept in memory keyed by profile directory; refresh token and client secret are never logged, persisted, or leaked to bots or client requests.
+- Live verified tier note: Live probe against Google's endpoint confirmed account tier is `free-tier` (display name `Antigravity`), with paid tier `g1-pro-tier` (`Google AI Pro`).
+- Reused managed probe loop: Usage limits probing reuses the managed server provider probe loop with backoff; zero extra polling and no work on the request path, preventing lag.
 
 ## Builder proof
 

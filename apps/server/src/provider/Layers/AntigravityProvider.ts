@@ -6,6 +6,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
@@ -145,6 +146,7 @@ interface AntigravityProviderOptions {
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
+  readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
 }
 
 /** Health uses initialize only. Session callbacks supply account-specific metadata. */
@@ -250,7 +252,12 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         },
       } satisfies AntigravityProviderState;
     });
-    return yield* options.stampIdentity(next.draft);
+    const stamped = yield* options.stampIdentity(next.draft);
+    if (!options.readUsageLimits || stamped.auth.status !== "authenticated") {
+      return stamped;
+    }
+    const usageLimits = yield* options.readUsageLimits;
+    return usageLimits ? { ...stamped, usageLimits } : stamped;
   });
 
   const maintenanceCapabilities =

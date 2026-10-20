@@ -789,3 +789,42 @@ describe("Show usage off in Settings", () => {
     expect(usageSheetDescription([])).toBe("No providers to show");
   });
 });
+
+describe("Antigravity usage card", () => {
+  const antigravity = provider({
+    driver: "antigravity",
+    instanceId: "antigravity",
+    usageLimits: {
+      checkedAt: "2026-10-20T17:00:00Z",
+      windows: [
+        {
+          id: "session",
+          kind: "session",
+          label: "Session",
+          usedPercent: 12,
+          resetsAt: "2026-10-20T21:00:00Z",
+        },
+        {
+          id: "weekly",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 5,
+          resetsAt: "2026-10-27T17:00:00Z",
+        },
+      ],
+    },
+  });
+
+  it("surfaces Antigravity with session and weekly windows and respects hidden set", () => {
+    const cards = selectUsageCards([antigravity], NOW);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.driver).toBe("antigravity");
+    expect(cards[0]?.title).toBe("Antigravity");
+    expect(cards[0]?.session?.usedPercent).toBe(12);
+    expect(cards[0]?.weeklies).toHaveLength(1);
+    expect(cards[0]?.weeklies[0]?.usedPercent).toBe(5);
+
+    const hidden = selectUsageCards([antigravity], NOW, new Set(["antigravity"]));
+    expect(hidden).toHaveLength(0);
+  });
+});
