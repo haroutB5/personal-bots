@@ -28,6 +28,7 @@ import * as ServerConfig from "./config.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
+  providerCatalogIconRouteLayer,
   attachmentUploadRouteLayer,
   serverEnvironmentHttpApiLayer,
   staticAndDevRouteLayer,
@@ -57,6 +58,8 @@ import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderAuthServiceLive } from "./provider/Layers/ProviderAuthService.ts";
 import { AntigravityInstallation } from "./provider/AntigravityInstallation.ts";
+import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
+import { CatalogInstaller } from "./provider/catalog/installer.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
@@ -690,6 +693,13 @@ const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
   Layer.provideMerge(PersonalVoiceSampleService.layerLive),
 );
 
+const ProviderCatalogBootRefreshLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const catalog = yield* ProviderCatalog;
+    yield* catalog.refresh().pipe(Effect.ignore, Effect.forkScoped);
+  }),
+);
+
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const installation = yield* AntigravityInstallation;
@@ -766,7 +776,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     // consume the bot service and repository.
     Layer.provideMerge(PersonalLayerWithCallSummaryLive),
     // Two independent background sweeps share a step: a pipe takes at most 20.
-    Layer.provideMerge(Layer.mergeAll(AntigravityInstallationRefreshLive, ReplayMarkers.layer)),
+    Layer.provideMerge(Layer.mergeAll(AntigravityInstallationRefreshLive, ProviderCatalogBootRefreshLive, ReplayMarkers.layer)),
     Layer.provideMerge(ProviderAuthServiceLive),
     // Split into a second pipe: a single pipe accepts at most 20 steps. The
     // order is unchanged, so provideMerge still feeds earlier steps first.
@@ -803,7 +813,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
   )
   .pipe(
-    Layer.provideMerge(AntigravityInstallation.layer),
+    Layer.provideMerge(Layer.mergeAll(AntigravityInstallation.layer, ProviderCatalog.layer, CatalogInstaller.layer)),
     // Shared native/canonical NDJSON writers used by both the per-instance
     // drivers (native stream, written from inside each `<X>Adapter`) and
     // `ProviderService` (canonical stream, written after event normalization).
@@ -873,6 +883,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    providerCatalogIconRouteLayer,
     attachmentUploadRouteLayer,
     deviceHubProxyRouteLayer,
     // personal browser (routes + in-process preview automation host; the host

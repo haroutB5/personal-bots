@@ -33,6 +33,8 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as NodeOS from "node:os";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -229,7 +231,19 @@ interface CatalogInstallerService {
 
 export class CatalogInstaller extends Context.Service<CatalogInstaller, CatalogInstallerService>()(
   "t3/provider/catalog/installer/CatalogInstaller",
-) {}
+) {
+  static readonly layer = Layer.effect(
+    CatalogInstaller,
+    Effect.gen(function* () {
+      const home = process.env.USERPROFILE ?? process.env.HOME ?? NodeOS.homedir();
+      const path = yield* Path.Path;
+      const runtimesRoot = path.join(home, ".personal-bots", "runtimes", "acp");
+      return yield* makeCatalogInstaller({
+        runtimesRoot,
+      });
+    }),
+  );
+}
 
 const isRunning = (state: ProviderCatalogInstallState) =>
   state.phase === "resolving" ||

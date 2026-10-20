@@ -24,6 +24,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -38,6 +39,8 @@ import {
   type BuiltInDescriptor,
 } from "./entries.ts";
 import { redactUrls } from "./errors.ts";
+import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveNodePath } from "./launch.ts";
 import {
   BUNDLED_CATALOG_OVERLAY,
@@ -139,7 +142,37 @@ interface ProviderCatalogService {
 
 export class ProviderCatalog extends Context.Service<ProviderCatalog, ProviderCatalogService>()(
   "t3/provider/catalog/ProviderCatalog",
-) {}
+) {
+  static readonly layer = Layer.effect(
+    ProviderCatalog,
+    Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const settingsService = yield* ServerSettingsService;
+      const added = settingsService.getSettings.pipe(
+        Effect.map((settings) => {
+          const map = new Map<string, string>();
+          for (const [id, instance] of Object.entries(settings.providerInstances)) {
+            const catId = (instance.config as { catalogId?: string } | undefined)?.catalogId;
+            if (catId) {
+              map.set(catId, id);
+            }
+          }
+          return map;
+        }),
+        Effect.orElseSucceed(() => new Map<string, string>()),
+      );
+      const networkAllowed = settingsService.getSettings.pipe(
+        Effect.map((settings) => settings.enableProviderUpdateChecks ?? true),
+        Effect.orElseSucceed(() => true),
+      );
+      return yield* makeProviderCatalog({
+        stateDirectory: config.stateDir,
+        added,
+        networkAllowed,
+      });
+    }),
+  );
+}
 
 export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
   options: ProviderCatalogOptions,

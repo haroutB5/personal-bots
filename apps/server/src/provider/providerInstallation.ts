@@ -20,8 +20,12 @@ import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegist
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
+import { CatalogInstaller } from "./catalog/installer.ts";
+import { ProviderCatalog } from "./catalog/ProviderCatalog.ts";
+import { PersonalBotService } from "../personal/PersonalBotService.ts";
 
 const ANTIGRAVITY = ProviderDriverKind.make("antigravity");
+const REGISTRY = ProviderDriverKind.make("registry");
 const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
 const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings);
 
@@ -31,6 +35,9 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
   const instances = yield* ProviderInstanceRegistry;
   const providers = yield* ProviderRegistry;
   const settings = yield* ServerSettingsService;
+  const catalogInstaller = yield* CatalogInstaller;
+  const providerCatalog = yield* ProviderCatalog;
+  const personalBots = yield* PersonalBotService;
 
   const readEntries = Effect.fn("ProviderInstallation.readEntries")(function* (
     instanceId: ProviderInstanceId,
@@ -84,38 +91,131 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
     }
   });
 
-  const failure = (instanceId: ProviderInstanceId) => (error: AntigravityInstallationError) =>
-    new ProviderSetupError({ instanceId, operation: error.operation, detail: error.detail });
+  const failure = (instanceId: ProviderInstanceId, defaultOp = "install") => (error: { operation?: string; detail: string; cause?: unknown }) =>
+    new ProviderSetupError({ instanceId, operation: error.operation ?? defaultOp, detail: error.detail });
 
   const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
+    const entries = yield* readEntries(input.instanceId, "install");
+    const entry = entries[input.instanceId];
+    if (entry?.driver === REGISTRY) {
+      const catalogId = (entry.config as { catalogId?: string } | undefined)?.catalogId;
+      if (!catalogId) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "install",
+          detail: "Registry instance catalogId not found.",
+        });
+      }
+      const request = yield* providerCatalog.installRequest(catalogId);
+      if (!request) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "install",
+          detail: `Agent '${catalogId}' was not found in the catalogue.`,
+        });
+      }
+      const state = yield* catalogInstaller
+        .start(request)
+        .pipe(Effect.mapError(failure(input.instanceId, "install")));
+      return { ...state, driver: REGISTRY };
+    }
     yield* requireInstance(input.instanceId, "install", true);
-    return yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
+    return yield* installation.start.pipe(Effect.mapError(failure(input.instanceId, "install")));
   });
 
   const cancel = Effect.fn("ProviderInstallation.cancel")(function* (
     input: ProviderInstallCancelInput,
   ) {
+    const entries = yield* readEntries(input.instanceId, "cancel-install");
+    const entry = entries[input.instanceId];
+    if (entry?.driver === REGISTRY) {
+      const catalogId = (entry.config as { catalogId?: string } | undefined)?.catalogId;
+      if (!catalogId) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "cancel-install",
+          detail: "Registry instance catalogId not found.",
+        });
+      }
+      const state = yield* catalogInstaller
+        .cancel(catalogId, input.operationId)
+        .pipe(Effect.mapError(failure(input.instanceId, "cancel-install")));
+      return { ...state, driver: REGISTRY };
+    }
     yield* requireInstance(input.instanceId, "cancel-install");
     return yield* installation
       .cancel(input.operationId)
-      .pipe(Effect.mapError(failure(input.instanceId)));
+      .pipe(Effect.mapError(failure(input.instanceId, "cancel-install")));
   });
 
   const subscribe = (input: ProviderSetupInput) =>
     Stream.unwrap(
-      requireInstance(input.instanceId, "observe-install").pipe(Effect.as(installation.changes)),
+      Effect.gen(function* () {
+        const entries = yield* readEntries(input.instanceId, "observe-install");
+        const entry = entries[input.instanceId];
+        if (entry?.driver === REGISTRY) {
+          const catalogId = (entry.config as { catalogId?: string } | undefined)?.catalogId;
+          if (!catalogId) {
+            return Stream.fail(
+              new ProviderSetupError({
+                instanceId: input.instanceId,
+                operation: "observe-install",
+                detail: "Registry instance catalogId not found.",
+              }),
+            );
+          }
+          return catalogInstaller.changes(catalogId).pipe(
+            Stream.map((s) => ({ ...s, driver: REGISTRY })),
+          );
+        }
+        yield* requireInstance(input.instanceId, "observe-install");
+        return installation.changes;
+      }),
     );
 
   const remove = Effect.fn("ProviderInstallation.remove")(function* (input: ProviderSetupInput) {
-    yield* requireInstance(input.instanceId, "remove-install", true);
     const entries = yield* readEntries(input.instanceId, "remove-install");
-    const protectedPaths = yield* Effect.forEach(Object.values(entries), (entry) => {
-      if (!hasBinaryPath(entry.config) || !entry.config.binaryPath.trim()) {
+    const entry = entries[input.instanceId];
+    if (entry?.driver === REGISTRY) {
+      const catalogId = (entry.config as { catalogId?: string } | undefined)?.catalogId;
+      if (!catalogId) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "remove-install",
+          detail: "Registry instance catalogId not found.",
+        });
+      }
+      // Refuse Remove while any bot's instance uses the agent (Item 10)
+      const botList = yield* personalBots.list().pipe(Effect.orElseSucceed(() => ({ bots: [] })));
+      const usingBot = botList.bots.find(
+        (b) =>
+          b.modelSelection.instanceId === input.instanceId ||
+          b.fallback?.modelSelection?.instanceId === input.instanceId,
+      );
+      if (usingBot) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "remove-install",
+          detail: `Cannot remove provider: bot '${usingBot.name}' is configured to use it.`,
+        });
+      }
+
+      yield* catalogInstaller
+        .remove(catalogId)
+        .pipe(Effect.mapError(failure(input.instanceId, "remove-install")));
+      yield* providers.refreshInstance(input.instanceId);
+      const state = yield* catalogInstaller.state(catalogId);
+      return { ...state, driver: REGISTRY };
+    }
+
+    yield* requireInstance(input.instanceId, "remove-install", true);
+    const protectedPaths = yield* Effect.forEach(Object.values(entries), (e) => {
+      if (!hasBinaryPath(e.config) || !e.config.binaryPath.trim()) {
         return Effect.succeed([]);
       }
-      const binaryPath = entry.config.binaryPath.trim();
+      const binaryPath = e.config.binaryPath.trim();
       return resolveCommandPath(binaryPath, {
-        env: mergeProviderInstanceEnvironment(entry.environment),
+        env: mergeProviderInstanceEnvironment(e.environment),
       }).pipe(
         Effect.map((resolved) => [binaryPath, resolved]),
         Effect.orElseSucceed(() => [binaryPath]),
@@ -123,7 +223,7 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
     });
     yield* installation
       .remove(protectedPaths.flat())
-      .pipe(Effect.mapError(failure(input.instanceId)));
+      .pipe(Effect.mapError(failure(input.instanceId, "remove-install")));
     const allInstances = yield* instances.listInstances;
     yield* Effect.forEach(
       allInstances.filter((instance) => instance.driverKind === ANTIGRAVITY),

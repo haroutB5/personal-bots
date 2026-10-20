@@ -161,6 +161,9 @@ import {
   AntigravityInstallation,
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
+import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
+import { CatalogInstaller } from "./provider/catalog/installer.ts";
+import { CatalogInstallError } from "./provider/catalog/errors.ts";
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
@@ -553,6 +556,8 @@ const buildAppUnderTest = (options?: {
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
+    providerCatalog?: Partial<ProviderCatalog["Service"]>;
+    catalogInstaller?: Partial<CatalogInstaller["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -886,6 +891,62 @@ const buildAppUnderTest = (options?: {
           Layer.mock(AntigravityInstallation)({
             managedDirectory: "unused-test-antigravity-runtime",
             ...options?.layers?.antigravityInstallation,
+          }),
+          Layer.mock(ProviderCatalog)({
+            list: () => Effect.succeed({ entries: [], registryFetchedAt: null, registryStale: false }),
+            installFacts: () => Effect.succeed(null),
+            installRequest: () => Effect.succeed(null),
+            icon: () => Effect.succeed(null),
+            refresh: () => Effect.void,
+            ...options?.layers?.providerCatalog,
+          }),
+          Layer.mock(CatalogInstaller)({
+            runtimesRoot: "unused-test-catalog-runtime",
+            state: () => Effect.succeed({
+              catalogId: "unused",
+              operationId: null,
+              phase: "idle",
+              downloadedBytes: 0,
+              totalBytes: null,
+              version: null,
+              installedVersion: null,
+              previousVersion: null,
+              canRemove: false,
+              message: null,
+              failure: null,
+            }),
+            changes: () => Stream.empty,
+            start: () => Effect.succeed({
+              catalogId: "unused",
+              operationId: null,
+              phase: "idle",
+              downloadedBytes: 0,
+              totalBytes: null,
+              version: null,
+              installedVersion: null,
+              previousVersion: null,
+              canRemove: false,
+              message: null,
+              failure: null,
+            }),
+            cancel: () => Effect.succeed({
+              catalogId: "unused",
+              operationId: null,
+              phase: "idle",
+              downloadedBytes: 0,
+              totalBytes: null,
+              version: null,
+              installedVersion: null,
+              previousVersion: null,
+              canRemove: false,
+              message: null,
+              failure: null,
+            }),
+            remove: () => Effect.void,
+            goBack: () => Effect.fail(new CatalogInstallError({ kind: "other", detail: "Not supported in test" })),
+            acquire: () => Effect.fail(new CatalogInstallError({ kind: "other", detail: "Not supported in test" })),
+            resolve: () => Effect.succeed(null),
+            ...options?.layers?.catalogInstaller,
           }),
           Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
             upsert: () => Effect.void,

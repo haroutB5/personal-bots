@@ -18,6 +18,9 @@ import type { ProviderInstance } from "./ProviderDriver.ts";
 import { makeProviderInstallation } from "./providerInstallation.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import { ProviderCatalog } from "./catalog/ProviderCatalog.ts";
+import { CatalogInstaller } from "./catalog/installer.ts";
+import { PersonalBotService } from "../personal/PersonalBotService.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity");
 const driver = ProviderDriverKind.make("antigravity");
@@ -95,6 +98,20 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
               protectedPaths = paths ?? [];
               calls.push("remove");
             }),
+        }),
+        Layer.mock(ProviderCatalog)({
+          installRequest: () => Effect.succeed(null),
+        }),
+        Layer.mock(CatalogInstaller)({
+          runtimesRoot: "/unused-test-runtimes-root",
+          start: () => Effect.succeed({ ...state, catalogId: "agent-1", previousVersion: null, failure: null }),
+          cancel: () => Effect.succeed({ ...state, catalogId: "agent-1", previousVersion: null, failure: null }),
+          state: () => Effect.succeed({ ...state, catalogId: "agent-1", previousVersion: null, failure: null }),
+          changes: () => Stream.succeed({ ...state, catalogId: "agent-1", previousVersion: null, failure: null }),
+          remove: () => Effect.void,
+        }),
+        Layer.mock(PersonalBotService)({
+          list: () => Effect.succeed({ bots: [], threads: [], personalProjectId: "default" as any }),
         }),
       ),
     ),

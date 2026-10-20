@@ -48,6 +48,7 @@ import {
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 import { findRetainedReleaseAsset, isBuildAssetPath } from "./personal/retainedReleaseAssets.ts";
+import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -368,6 +369,44 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
     Effect.catchTags({
       EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
       EnvironmentInternalError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+    }),
+  ),
+);
+
+export const PROVIDER_CATALOG_ICON_ROUTE_PREFIX = "/api/provider-catalog/icon";
+
+export const providerCatalogIconRouteLayer = HttpRouter.add(
+  "GET",
+  `${PROVIDER_CATALOG_ICON_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+    const rawCatalogId = url.value.pathname.slice(`${PROVIDER_CATALOG_ICON_ROUTE_PREFIX}/`.length);
+    const catalogId = decodeURIComponent(rawCatalogId).trim();
+    if (!catalogId) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    const catalog = yield* ProviderCatalog;
+    const iconSvg = yield* catalog.icon(catalogId);
+    if (iconSvg === null) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    return HttpServerResponse.text(iconSvg, {
+      status: 200,
+      headers: {
+        "content-type": "image/svg+xml; charset=utf-8",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+        "x-content-type-options": "nosniff",
+        "cache-control": "private, max-age=86400",
+      },
+    });
+  }).pipe(
+    Effect.catchTags({
       EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
   ),

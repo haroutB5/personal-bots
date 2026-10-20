@@ -37,6 +37,8 @@ import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from ".
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { AntigravityInstallation } from "../AntigravityInstallation.ts";
+import { ProviderCatalog } from "../catalog/ProviderCatalog.ts";
+import { CatalogInstaller } from "../catalog/installer.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { applyProviderCompatibility } from "../providerCompatibility.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
@@ -2583,6 +2585,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(AntigravityInstallation.layer),
+            Layer.provideMerge(ProviderCatalog.layer),
+            Layer.provideMerge(CatalogInstaller.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -2685,6 +2689,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(AntigravityInstallation.layer),
+            Layer.provideMerge(ProviderCatalog.layer),
+            Layer.provideMerge(CatalogInstaller.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -2804,6 +2810,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(AntigravityInstallation.layer),
+            Layer.provideMerge(ProviderCatalog.layer),
+            Layer.provideMerge(CatalogInstaller.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -2869,6 +2877,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const providerRegistryLayer = ProviderRegistryLive.pipe(
               Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
               Layer.provideMerge(AntigravityInstallation.layer),
+            Layer.provideMerge(ProviderCatalog.layer),
+            Layer.provideMerge(CatalogInstaller.layer),
               Layer.provideMerge(
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
               ),
