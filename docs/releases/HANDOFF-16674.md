@@ -12,6 +12,15 @@ maximum remains 111. `PERSONAL_TASKS_CONCURRENCY` remains 5.
 Risk tier: QA risky, assigned by CTO (startup path and release tooling).
 Builder stages and pushes; CTO briefs QA; DevOps alone ships.
 
+**Status at the 20 October continuation checkpoint: not ready for QA or
+deployment.** Source candidate `f3ddcefc5f42` is committed. The initial full
+build exited 0 and staged that folder, but its dependency junctions resolved
+contracts from main and omitted the assigned base's Antigravity bot driver.
+That artifact is invalid. Local workspace links are corrected; the required
+rebuild and full gate evidence could not start because another worktree's
+build held the heavy-job lock for about 30 minutes. No gate-evidence.json
+exists for this candidate. Do not deploy it. See section 6 for continuation.
+
 ## 1. Observed live stalls
 
 CTO supplied this real-world observation from `server-20261020.log` on
@@ -28,6 +37,18 @@ observational comparison, confounded with heavy-job adoption and differing
 workload/windows; it does not isolate priority restoration's causal effect.
 Both protections are part of this release. Optimizer did not change live
 processes or deployment during its tests.
+
+Read-only verification found a discrepancy in the supplied summary. There
+are two metrics in the log: EventLoopMonitor warnings (`event loop stalled
+for N ms`) and separate StallRecorder captures (`durationMs`). Using the
+printed log clock, the monitor has **57** warnings in 07:38-08:46 (16 over
+10 seconds, maximum 66,612 ms at 07:53:56), then **1** in 08:46-09:47
+(20,357 ms at 08:56:39). The total of 69 earlier monitor warnings starts at
+06:07:14, not 07:38. The recorder's separate 2,436 ms capture is timestamped
+08:46:05. CTO's supplied figures above are retained with attribution, not
+presented as independently reproduced. Evidence:
+`live-stall-monitor-lines.log`, `live-stall-summary.json` and
+`live-stall-audit-provenance.json` under the evidence root in section 3.
 
 ## 2. Changes and rollback controls
 
@@ -107,7 +128,13 @@ All paths below are under the evidence root unless stated otherwise.
   retains cached Bots and reconnects after descriptor restoration.
 - Changed-file lint passed; two existing `__root.tsx` warnings are outside
   the changed path. The final release build and artifact-bound fork gates
-  are recorded in the generated Gate evidence section when complete.
+  remain outstanding at this checkpoint.
+- A small isolated probe of the exact self-invoking wrapper pattern using
+  `$PSBoundParameters` passed with exit 0 (`self-wrapper-probe.ps1`). It uses
+  its own mutex and does not take the real heavy-job lock. Its small
+  evidence folder is retained. An initial combined launch/cleanup command
+  was rejected by automatic review; direct execution through the tool
+  session succeeded. No probe process remains running.
 
 Owned test servers, relays and proxies from the focused checks are stopped;
 throwaway roots removed. CTO reports deleting the remaining stopped
@@ -120,6 +147,35 @@ The earlier automatic-review deletion refusal is resolved by that cleanup.
   eliminate synchronous SQLite stalls under arbitrary memory pressure.
 - Synchronous provider event-log appends merit separate worker work with
   ordering and durability proof.
+- Add a worktree dependency-resolution guard: shared outer node_modules
+  junctions can silently compile workspace packages from main. This
+  worktree now has private dependency overlays with local `@t3tools` links;
+  third-party packages remain shared. Main was not modified. Frontend's
+  later release should verify its workspace sources too.
 - QA risky check is required before DevOps ships. No deployment or live
   restart is part of this builder handoff. Frontend's 1.66.75 will merge
   this branch.
+
+## 6. Continuation blocker and exact next step
+
+At 10:56 BST, the shared `Global\hbots-heavy-job` mutex was still held by
+`build.ps1`, PID 24732, worktree `C:/Claude/AI/_wt/hbots-16670`, holder start
+10:27:57 BST. Read-only inspection found its encoded PowerShell child
+15700 and no compiler descendants. Neither process was stopped or changed.
+CTO should have the owning task inspect that build and release the lock.
+
+Optimizer stopped its own queued pipeline through its tool session. No
+owned build, gate, test server, relay or probe remains running. Current
+remote main was fetched again and remains `713302bea5`, already included.
+
+Resume this same task. The external evidence script
+`C:/Users/Ht/.personal-bots/qa/hbots-stability-20261020/rebuild-and-gate-16674.ps1`
+performs full `build.ps1 -CopyExternals`, asserts the staged server's
+Antigravity bot contract, then runs all default `gate-evidence.ps1` gates
+under one outer heavy-job lock. It currently pins source candidate
+`f3ddcefc5f42`; after these docs-only commits, update the script's release
+argument to the new HEAD before building, since build.ps1 stages HEAD.
+Then finish the generated gate notes, run the notes/evidence guards, commit
+docs only, push and report the valid staged sha12. QA risky follows; DevOps
+ships. Pipeline log: `release-16674-pipeline.log`; initial invalid build
+log: `release-16674-build-initial.log`.
