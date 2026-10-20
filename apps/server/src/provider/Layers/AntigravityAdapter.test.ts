@@ -31,7 +31,11 @@ import {
   parseSessionUpdateEvent,
   type AcpToolCallState,
 } from "../acp/AcpRuntimeModel.ts";
-import { makeAntigravityAdapter, type AntigravityAdapterOptions } from "./AntigravityAdapter.ts";
+import {
+  antigravityQuotaNotice,
+  makeAntigravityAdapter,
+  type AntigravityAdapterOptions,
+} from "./AntigravityAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-test");
 const threadId = ThreadId.make("antigravity-thread");
@@ -1461,6 +1465,64 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
       expect(completed.payload.state).toBe("failed");
       expect(completed.payload.errorMessage).toContain("Model service returned HTTP 500");
+    }),
+  );
+
+  it("reads the quota notice and its reset, and nothing else", () => {
+    const now = Date.parse("2026-10-20T23:00:00.000Z");
+    expect(
+      antigravityQuotaNotice(
+        "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 3 hours, 15 minutes.",
+        now,
+      ),
+    ).toEqual({ resetIn: "3 hours, 15 minutes", retryAt: "2026-10-21T02:15:00.000Z" });
+    expect(
+      antigravityQuotaNotice(
+        "You have reached your current quota for this period. Your limit will reset in 45 minutes.",
+        now,
+      )?.retryAt,
+    ).toBe("2026-10-20T23:45:00.000Z");
+    expect(
+      antigravityQuotaNotice(
+        "You have reached your current quota for this period. Your limit will reset in a while.",
+        now,
+      ),
+    ).toEqual({ resetIn: "a while", retryAt: undefined });
+    expect(
+      antigravityQuotaNotice(
+        "Here is the fix. Earlier it said: You have reached your current quota for this period. Your limit will reset in 3 hours.",
+        now,
+      ),
+    ).toBeNull();
+    expect(antigravityQuotaNotice("Done.", now)).toBeNull();
+  });
+
+  it.effect("a quota notice reply fails the turn as rate limited with its reset", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* h.adapter
+        .sendTurn({ threadId, input: "Keep going" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      yield* h.emitNative({
+        _tag: "ContentDelta",
+        text: "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 3 hours, 15 minutes.",
+        rawPayload: {},
+      });
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.await(turn);
+      const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(completed.payload.state).toBe("failed");
+      expect(completed.payload.errorMessage).toBe(
+        "Antigravity usage limit reached. It resets in 3 hours, 15 minutes.",
+      );
+      expect(completed.payload.retry?.kind).toBe("rate_limited");
+      expect(completed.payload.retry?.retryAt).toBeDefined();
     }),
   );
 

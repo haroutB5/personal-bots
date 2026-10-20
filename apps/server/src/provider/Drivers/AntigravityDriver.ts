@@ -7,6 +7,8 @@ import {
 } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -50,7 +52,12 @@ import {
 } from "../acp/AntigravitySessionFiles.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
-import { readAntigravityUsageLimits } from "../Layers/antigravityUsageLimits.ts";
+import {
+  readAntigravityUsageLimits,
+  withAntigravityQuotaHit,
+  type AntigravityQuotaHit,
+} from "../Layers/antigravityUsageLimits.ts";
+import { makeUsageLimits } from "../providerUsageLimits.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -383,6 +390,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         };
       });
 
+      let quotaHit: AntigravityQuotaHit | undefined;
       const readUsageLimits = readAntigravityUsageLimits({
         profileDirectory: directories.profile,
         authMethod: auth.authMethod,
@@ -391,6 +399,12 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.provideService(HttpClient.HttpClient, httpClient),
+        // The runtime's own quota notice wins over a summary that still reads 0%.
+        Effect.flatMap((limits) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((nowMs) => withAntigravityQuotaHit(limits, quotaHit, nowMs)),
+          ),
+        ),
       );
 
       const provider = yield* makeAntigravityProvider(settings, {
@@ -426,6 +440,26 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
         onAvailableCommands: provider.onAvailableCommands,
         onAuthRequired: provider.onAuthRequired,
+        onQuotaReached: (hit) =>
+          Effect.gen(function* () {
+            const nowMs = yield* Clock.currentTimeMillis;
+            quotaHit = {
+              // No reset in the notice: assume the five-hour window.
+              retryAt:
+                hit.retryAt ?? DateTime.formatIso(DateTime.makeUnsafe(nowMs + 5 * 60 * 60_000)),
+              group: /^(claude|gpt)/i.test(hit.model ?? "") ? "claude-gpt" : "gemini",
+            };
+            const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
+            const spent = withAntigravityQuotaHit(
+              makeUsageLimits({ checkedAt, windows: [] }),
+              quotaHit,
+              nowMs,
+            );
+            yield* provider.snapshot.applyUsageLimits({
+              windows: spent.unavailable ? [] : spent.windows,
+              checkedAt,
+            });
+          }),
         ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
       });
       const textGeneration = yield* makeAntigravityTextGeneration({

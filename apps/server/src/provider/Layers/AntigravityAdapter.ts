@@ -17,6 +17,7 @@ import {
   type TurnCompletedPayload,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -142,6 +143,11 @@ export interface AntigravityAdapterOptions {
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   ) => Effect.Effect<void>;
   readonly onAuthRequired?: Effect.Effect<void>;
+  /** The runtime answered a prompt with its quota notice (see antigravityQuotaNotice). */
+  readonly onQuotaReached?: (hit: {
+    readonly retryAt: string | undefined;
+    readonly model: string | undefined;
+  }) => Effect.Effect<void>;
   /** Model the provider default alias selects, when the account offers it. */
   readonly defaultModel?: Effect.Effect<string | undefined>;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -190,6 +196,43 @@ interface TurnIntent {
   settled: boolean;
 }
 
+const QUOTA_NOTICE =
+  /^(?:usage limit reached\s*)?you have reached your current quota for this period\.?\s*your limit will reset in ([^.]+?)\.?$/i;
+const QUOTA_UNIT_MS: Record<string, number> = {
+  day: 86_400_000,
+  hour: 3_600_000,
+  minute: 60_000,
+  second: 1_000,
+};
+
+/**
+ * Antigravity reports a spent quota as an ordinary reply ("Usage Limit Reached
+ * ... Your limit will reset in 3 hours, 15 minutes.") and ends the turn as if it
+ * succeeded. Only a reply that is that notice and nothing else counts, so a bot
+ * quoting it in a longer answer is left alone. Returns the reset time when the
+ * wording gives one.
+ */
+export function antigravityQuotaNotice(
+  text: string | null | undefined,
+  nowMs: number,
+): { readonly resetIn: string; readonly retryAt: string | undefined } | null {
+  if (!text || text.length > 400) return null;
+  const match = QUOTA_NOTICE.exec(text.trim().replace(/\s+/g, " "));
+  if (!match) return null;
+  const resetIn = match[1]!.trim();
+  let totalMs = 0;
+  let parts = 0;
+  for (const part of resetIn.matchAll(/(\d+)\s*(day|hour|minute|second)s?/gi)) {
+    totalMs += Number(part[1]) * QUOTA_UNIT_MS[part[2]!.toLowerCase()]!;
+    parts += 1;
+  }
+  const retryAt =
+    parts > 0 && totalMs > 0 && totalMs <= 8 * 86_400_000
+      ? DateTime.formatIso(DateTime.makeUnsafe(nowMs + totalMs))
+      : undefined;
+  return { resetIn, retryAt };
+}
+
 export function isAntigravityCancellationMessage(text: string | null | undefined): boolean {
   if (!text) return false;
   return /^the request was cancelled by the client\.?$/i.test(text.trim());
@@ -214,6 +257,8 @@ interface SessionContext {
   activeTurnId: TurnId | undefined;
   promptFiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> | undefined;
   cancellingTurnId: TurnId | undefined;
+  /** Reply text of the current prompt, capped; only read to spot the quota notice. */
+  turnText: string;
   generation: number;
   stopped: boolean;
   closed: boolean;
@@ -618,6 +663,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         ) {
           return;
         }
+        if (event._tag === "ContentDelta" && context.turnText.length <= 400) {
+          context.turnText += event.text;
+        }
         yield* emit(
           makeAcpContentDeltaEvent({
             stamp: yield* stamp,
@@ -911,6 +959,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 activeTurnId: undefined,
                 promptFiber: undefined,
                 cancellingTurnId: undefined,
+                turnText: "",
                 generation: 0,
                 stopped: false,
                 closed: false,
@@ -1082,6 +1131,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           const turn: TurnIntent = { turnId, generation: ++context.generation, settled: false };
           intent = turn;
           context.activeTurnId = turnId;
+          context.turnText = "";
           if (!steering) {
             yield* emit({
               type: "turn.started",
@@ -1157,12 +1207,40 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       const record = context.turns.find((turn) => turn.id === launch.turn.turnId);
       if (record) record.items.push(result);
       else context.turns.push({ id: launch.turn.turnId, items: [result] });
+      const quota =
+        result.stopReason === "cancelled"
+          ? null
+          : antigravityQuotaNotice(context.turnText, yield* Clock.currentTimeMillis);
       yield* context.promptLock.withPermit(
-        finishTurn(launch.turn, {
-          state: result.stopReason === "cancelled" ? "cancelled" : "completed",
-          stopReason: result.stopReason,
-        }),
+        finishTurn(
+          launch.turn,
+          quota
+            ? {
+                // A failed turn with a rate-limit retry: the app's fallback model
+                // and limit resume take over, as for Claude and Codex.
+                state: "failed",
+                stopReason: result.stopReason,
+                errorMessage: `Antigravity usage limit reached. It resets in ${quota.resetIn}.`,
+                retry: {
+                  kind: "rate_limited",
+                  ...(quota.retryAt ? { retryAt: quota.retryAt } : {}),
+                  reason: "Antigravity usage limit",
+                },
+              }
+            : {
+                state: result.stopReason === "cancelled" ? "cancelled" : "completed",
+                stopReason: result.stopReason,
+              },
+        ),
       );
+      if (quota && options.onQuotaReached) {
+        yield* options
+          .onQuotaReached({
+            retryAt: quota.retryAt,
+            model: input.modelSelection?.model ?? context.session.model,
+          })
+          .pipe(Effect.ignoreCause({ log: true }));
+      }
       return {
         threadId: input.threadId,
         turnId: launch.turn.turnId,

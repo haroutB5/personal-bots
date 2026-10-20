@@ -7,7 +7,9 @@ import { FetchHttpClient } from "effect/unstable/http";
 import {
   antigravityQuotaSummaryToLimits,
   readAntigravityUsageLimits,
+  withAntigravityQuotaHit,
 } from "./antigravityUsageLimits.ts";
+import { makeUnavailableUsageLimits, makeUsageLimits } from "../providerUsageLimits.ts";
 
 const CHECKED_AT = "2026-10-20T17:00:00.000Z";
 const TestServicesLayer = Layer.merge(NodeServices.layer, FetchHttpClient.layer);
@@ -158,4 +160,61 @@ it.layer(TestServicesLayer)("readAntigravityUsageLimits", (it) => {
       expect(result.unavailable?.reason).toBe("unsupported");
     }),
   );
+
+  describe("withAntigravityQuotaHit", () => {
+    const now = Date.parse("2026-10-20T23:00:00.000Z");
+    const read = makeUsageLimits({
+      checkedAt: "2026-10-20T23:00:00.000Z",
+      windows: [
+        { id: "gemini-session", kind: "session", label: "Gemini · 5-hour session", usedPercent: 0 },
+        { id: "gemini-weekly", kind: "weekly", label: "Gemini · Weekly", usedPercent: 0 },
+      ],
+    });
+
+    it("marks the session window spent until the notice's reset", () => {
+      const out = withAntigravityQuotaHit(
+        read,
+        { retryAt: "2026-10-21T02:15:00.000Z", group: "gemini" },
+        now,
+      );
+      expect(out.windows.find((w) => w.id === "gemini-session")).toMatchObject({
+        usedPercent: 100,
+        resetsAt: "2026-10-21T02:15:00.000Z",
+      });
+      expect(out.windows.find((w) => w.id === "gemini-weekly")?.usedPercent).toBe(0);
+    });
+
+    it("a reset beyond five hours is the weekly window", () => {
+      const out = withAntigravityQuotaHit(
+        read,
+        { retryAt: "2026-10-23T23:00:00.000Z", group: "gemini" },
+        now,
+      );
+      expect(out.windows.find((w) => w.id === "gemini-weekly")?.usedPercent).toBe(100);
+      expect(out.windows.find((w) => w.id === "gemini-session")?.usedPercent).toBe(0);
+    });
+
+    it("adds the window when the summary had none, and ignores a passed reset", () => {
+      const empty = makeUnavailableUsageLimits({
+        checkedAt: read.checkedAt,
+        reason: "unsupported",
+      });
+      const added = withAntigravityQuotaHit(
+        empty,
+        { retryAt: "2026-10-21T01:00:00.000Z", group: "claude-gpt" },
+        now,
+      );
+      expect(added.windows).toEqual([
+        expect.objectContaining({ id: "z-claude-gpt-session", usedPercent: 100 }),
+      ]);
+      expect(
+        withAntigravityQuotaHit(
+          read,
+          { retryAt: "2026-10-20T22:00:00.000Z", group: "gemini" },
+          now,
+        ),
+      ).toBe(read);
+      expect(withAntigravityQuotaHit(read, undefined, now)).toBe(read);
+    });
+  });
 });

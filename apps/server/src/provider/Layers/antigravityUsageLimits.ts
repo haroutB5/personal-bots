@@ -179,6 +179,48 @@ export function antigravityQuotaSummaryToLimits(
   return makeUsageLimits({ checkedAt, windows });
 }
 
+export interface AntigravityQuotaHit {
+  readonly retryAt: string;
+  /** Claude and GPT models share their own quota; anything else is Gemini. */
+  readonly group: "gemini" | "claude-gpt";
+}
+
+const FIVE_HOURS_MS = 5 * 60 * 60_000;
+
+/**
+ * Google's quota summary has been seen reading 0% while the runtime refuses
+ * prompts for a spent quota, so the runtime's own notice wins until its reset:
+ * the matching window shows 100% with the reset the notice gave (a reset more
+ * than five hours out is the weekly window).
+ */
+export function withAntigravityQuotaHit(
+  limits: ServerProviderUsageLimits,
+  hit: AntigravityQuotaHit | undefined,
+  nowMs: number,
+): ServerProviderUsageLimits {
+  if (!hit) return limits;
+  const resetMs = Date.parse(hit.retryAt);
+  if (!Number.isFinite(resetMs) || resetMs <= nowMs) return limits;
+  const weekly = resetMs - nowMs > FIVE_HOURS_MS;
+  const prefix = hit.group === "gemini" ? "gemini" : "z-claude-gpt";
+  const name = hit.group === "gemini" ? "Gemini" : "Claude & GPT";
+  const id = `${prefix}-${weekly ? "weekly" : "session"}`;
+  const windows = limits.unavailable ? [] : [...limits.windows];
+  const index = windows.findIndex((window) => window.id === id);
+  if (index >= 0) {
+    windows[index] = { ...windows[index]!, usedPercent: 100, resetsAt: hit.retryAt };
+  } else {
+    windows.push({
+      id,
+      kind: weekly ? "weekly" : "session",
+      label: `${name} · ${weekly ? "Weekly" : "5-hour session"}`,
+      usedPercent: 100,
+      resetsAt: hit.retryAt,
+    });
+  }
+  return makeUsageLimits({ checkedAt: limits.checkedAt, windows });
+}
+
 interface CachedAccessToken {
   readonly token: string;
   readonly expiresAtMs: number;
