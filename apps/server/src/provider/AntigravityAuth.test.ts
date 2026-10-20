@@ -64,6 +64,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
     readonly openFails?: boolean;
+    readonly discoverDefect?: boolean;
   } = {},
 ) {
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
@@ -107,7 +108,9 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
               }
               yield* Deferred.await(authenticated);
               events.push("session-new");
-              yield* Deferred.await(discovered);
+              yield* options.discoverDefect
+                ? Deferred.await(discovered).pipe(Effect.orDie)
+                : Deferred.await(discovered);
               return started;
             }),
           request: (method) =>
@@ -270,6 +273,42 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     });
     return Effect.gen(function* () {
       const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.fail(
+        harness.discovered,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: `Internal error ${callbackUrl} ${authorizationUrl} access_token=secret-token`,
+          method: "session/new",
+        }),
+      );
+      yield* phase(harness.auth, "failed");
+      yield* Deferred.await(harness.closed);
+
+      assert.equal(warnings.length, 1);
+      assert.include(warnings[0]!, "AcpRequestError method=session/new code=-32603");
+      for (const secret of ["http", "google", "test-code", "test-state", "secret-token"]) {
+        assert.notInclude(warnings[0]!, secret);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Logger.layer([logger], { mergeWithExisting: false }),
+          Layer.succeed(References.MinimumLogLevel, "Debug"),
+        ),
+      ),
+    );
+  });
+
+  it.effect("logs ACP defects with class, method and code without the payload", () => {
+    const warnings: string[] = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Warn") warnings.push(JSON.stringify(message));
+    });
+    return Effect.gen(function* () {
+      const harness = yield* makeHarness({ discoverDefect: true });
       yield* harness.auth.controller.start(owner);
       yield* phase(harness.auth, "waiting");
       yield* Deferred.succeed(harness.authenticated, undefined);

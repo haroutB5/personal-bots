@@ -140,13 +140,19 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
  * ACP method and the JSON-RPC code.
  */
 function describeAuthFailure(cause: Cause.Cause<unknown>): string {
-  const error = Cause.findErrorOption(cause);
-  if (Option.isNone(error)) return Cause.hasInterrupts(cause) ? "interrupted" : "defect";
-  if (isAcpRequestError(error.value)) {
-    return `AcpRequestError method=${error.value.method} code=${error.value.code}`;
+  // Runtime boundaries may promote ACP failures to defects. Inspect both
+  // channels, but never stringify an error or its payload.
+  const failure = Cause.findErrorOption(cause);
+  const error = Option.isSome(failure)
+    ? failure.value
+    : cause.reasons.find(Cause.isDieReason)?.defect;
+  if (error === undefined) return Cause.hasInterrupts(cause) ? "interrupted" : "defect";
+  if (isAcpRequestError(error)) {
+    const method = /^[A-Za-z][A-Za-z/]{0,63}$/.test(error.method) ? error.method : "unknown";
+    return `AcpRequestError method=${method} code=${error.code}`;
   }
-  if (isSetupError(error.value)) return `ProviderSetupError operation=${error.value.operation}`;
-  const tag = (error.value as { readonly _tag?: unknown } | null)?._tag;
+  if (isSetupError(error)) return `ProviderSetupError operation=${error.operation}`;
+  const tag = (error as { readonly _tag?: unknown } | null)?._tag;
   return typeof tag === "string" && /^[A-Za-z]{1,64}$/.test(tag) ? tag : "unknown error";
 }
 

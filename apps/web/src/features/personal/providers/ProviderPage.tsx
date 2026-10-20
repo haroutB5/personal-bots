@@ -502,7 +502,9 @@ function ProviderPageBody({
     }
   };
 
-  const instanceConfig = instanceSettings.instance?.config as { serverUrl?: unknown } | undefined;
+  const instanceConfig = instanceSettings.instance?.config as
+    | { serverUrl?: unknown; serverPassword?: unknown }
+    | undefined;
   const serverUrl = typeof instanceConfig?.serverUrl === "string" ? instanceConfig.serverUrl : "";
   const keyField = providerApiKeyField(driver);
   const environmentVariables = instanceSettings.instance?.environment ?? [];
@@ -533,6 +535,19 @@ function ProviderPageBody({
           totalBytes={install?.totalBytes ?? null}
           version={snapshot.versionAdvisory?.latestVersion ?? install?.version ?? null}
           onInstall={() => setSheet("install")}
+          keyEntry={
+            driver === "deepseek" && keyField !== undefined ? (
+              <ProviderKeyEntry
+                field={keyField}
+                environment={environmentVariables}
+                enabled={snapshot.enabled}
+                balance={snapshot.usageBalance}
+                mode="setup"
+                onChange={(next) => instanceSettings.setEnvironment(next, true)}
+                onSaved={onCheckAgain}
+              />
+            ) : null
+          }
         />
       ) : (
         <div className="flex flex-col gap-6">
@@ -625,6 +640,10 @@ function ProviderPageBody({
                 driver === "opencode" ? (
                   <OpenCodeServerRow
                     url={serverUrl}
+                    hasPassword={
+                      typeof instanceConfig?.serverPassword === "string" &&
+                      instanceConfig.serverPassword.trim().length > 0
+                    }
                     editing={editingServer}
                     onEdit={() => setEditingServer(true)}
                     onCancel={() => setEditingServer(false)}
@@ -702,7 +721,7 @@ function ProviderPageBody({
             />
           ) : null}
 
-          {canRemove && !showSetup ? (
+          {canRemove && !installActive && !startingInstall ? (
             <section>
               <button
                 type="button"
@@ -856,6 +875,7 @@ function BeforeInstall({
   totalBytes,
   version,
   onInstall,
+  keyEntry,
 }: {
   label: string;
   facts: ReturnType<typeof providerFacts>;
@@ -863,6 +883,7 @@ function BeforeInstall({
   totalBytes: number | null;
   version: string | null;
   onInstall: () => void;
+  keyEntry: ReactNode;
 }): JSX.Element {
   const licence = licenceLine(facts);
   const details: ReadonlyArray<{ key: string; value: string }> = [
@@ -924,7 +945,9 @@ function BeforeInstall({
           </dl>
         </section>
       ) : null}
-      {canInstall ? (
+      {keyEntry !== null ? (
+        keyEntry
+      ) : canInstall ? (
         <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-[var(--personal-bg)] via-[var(--personal-bg)] to-transparent pt-6">
           <button
             type="button"
@@ -1398,12 +1421,14 @@ function AccountSection({
 
 function OpenCodeServerRow({
   url,
+  hasPassword,
   editing,
   onEdit,
   onCancel,
   onSave,
 }: {
   url: string;
+  hasPassword: boolean;
   editing: boolean;
   onEdit: () => void;
   onCancel: () => void;
@@ -1466,9 +1491,11 @@ function OpenCodeServerRow({
           {problem}
         </p>
       ) : null}
-      <p className="mt-2 text-[13px] text-[var(--personal-text-secondary)]">
-        A server password is set on your computer.
-      </p>
+      {hasPassword ? (
+        <p className="mt-2 text-[13px] text-[var(--personal-text-secondary)]">
+          A server password is set on your computer.
+        </p>
+      ) : null}
       <div className="mt-3 flex gap-2">
         <button
           type="button"

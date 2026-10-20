@@ -72,7 +72,7 @@ code, console, Cursor link + wait) are not started. Deviations in this release:
 - Add provider is the built-in half only (no search, filters, Popular or registry); the not-installed
   built-ins list there.
 - Only Antigravity has an installer today, so Install is offered only there; Claude, Codex, OpenCode,
-  Cursor, Grok and DeepSeek say "Install it on your computer" when missing. The list's install
+  Cursor and Grok say "Install it on your computer" when missing. DeepSeek offers API-key entry in Settings, including when disabled. The list's install
   progress comes from `providerInstallSubscribe`, not a snapshot field.
 - The Ready card has no reply text (the smoke runners return nothing; release 2 adds `reply`) and
   Antigravity has no test step (no smoke test exists for it): its card has two steps.
@@ -114,6 +114,19 @@ commits on that branch are docs, the 1.66.73 merge and its version bump only). T
   screen" check looked for it), now "Reconnecting to your laptop"; and three type errors in its new tests
   (`PersonalUnreachableScreen.test.tsx`, `bootstrapRecovery.test.ts`) broke web tsc. Test code only. The
   same gate passed on this branch before the stability merge (`ac1c00bf042b`, 12/12 e2e).
+
+## 6. QA correction pass (same version)
+
+QA rejected artifact `450ec5ba145f`; it must not ship. The replacement fixes:
+
+- A: installed, signed-out providers keep Remove during setup; active installation still uses Cancel.
+- B: live instances are registered before snapshots and stream events project their capabilities, so laptop sign-in and manual tests work immediately after restart without Check all.
+- C: API-key copy says saved privately, with no encryption claim. Storage is unchanged.
+- D: the single auth-failure WARN recognizes ACP errors carried as defects, with class, safe method and numeric code, never the payload.
+- E: DeepSeek offers API-key entry before install/when disabled; saving enables it in the same settings update.
+- F: OpenCode's server-password note appears only for a nonempty configured password.
+
+The other security should-fix items and Gemini effort selection remain deferred per CTO.
 
 ## 6. Tests
 

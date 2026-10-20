@@ -26,7 +26,7 @@ import {
 
 /**
  * A provider's API key, typed into this field only. Saving writes the same
- * sensitive entry the desktop key field writes: the server encrypts it, never
+ * sensitive entry the desktop key field writes: the server stores it, never
  * sends it back, and bots never see it. Once saved the row says so and offers
  * Replace and Remove (the Voice calls key pattern). No value is kept anywhere
  * but this component's own state, and that is cleared on save.
@@ -204,7 +204,7 @@ export function ProviderKeyEntry({
         </button>
       </div>
       <p className="mt-2 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-        Saved encrypted on your laptop and never shown again. Bots never see it.
+        Saved privately on your laptop and never shown again. Bots never see it.
       </p>
       {check !== null && check.tone === "pending" ? (
         <p role="status" className="mt-2 text-[13px] text-[var(--personal-text-secondary)]">

@@ -755,6 +755,10 @@ export const ProviderRegistryLive = Layer.effect(
           }
         }
 
+        // Capabilities must be available before either a snapshot or a stream
+        // event is projected, including drivers that never publish after boot.
+        yield* Ref.set(liveSubsRef, nextByInstance);
+
         // Fork long-lived subscriptions to each new/rebuilt instance's
         // change stream before reading its current snapshot. If the
         // driver's own initial probe finishes during this sync, either
@@ -787,12 +791,6 @@ export const ProviderRegistryLive = Layer.effect(
           persist: false,
           replace: true,
         });
-
-        const nextSubs = new Map(carriedOver);
-        for (const [instanceId, instance] of newlyAdded) {
-          nextSubs.set(instanceId, instance);
-        }
-        yield* Ref.set(liveSubsRef, nextSubs);
 
         // Drop aggregator state for instances that have disappeared —
         // otherwise the UI would keep rendering ghosts.

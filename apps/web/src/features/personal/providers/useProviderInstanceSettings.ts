@@ -42,6 +42,7 @@ export interface ProviderInstanceSettings {
   readonly setEnabled: (enabled: boolean) => void;
   readonly setEnvironment: (
     environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+    enabled?: boolean,
   ) => void;
   readonly setConfig: (patch: Record<string, unknown>) => void;
 }
@@ -88,11 +89,11 @@ export function useProviderInstanceSettings(
     [resolved, write],
   );
   const setEnvironment = useCallback(
-    (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
+    (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>, enabled?: boolean) => {
       const base: ProviderInstanceConfig =
         resolved?.instance ?? ({ driver } as ProviderInstanceConfig);
       write(
-        { ...base, environment: [...environment] },
+        { ...base, ...(enabled === undefined ? {} : { enabled }), environment: [...environment] },
         resolved?.isDefault ?? String(instanceId) === String(defaultInstanceIdForDriver(driver)),
       );
     },
