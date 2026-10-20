@@ -122,7 +122,7 @@ QA rejected artifact `450ec5ba145f`; it must not ship. The replacement fixes:
 - A: installed, signed-out providers keep Remove during setup; active installation still uses Cancel.
 - B: live instances are registered before snapshots and stream events project their capabilities, so laptop sign-in and manual tests work immediately after restart without Check all.
 - C: API-key copy says saved privately, with no encryption claim. Storage is unchanged.
-- D: the single auth-failure WARN recognizes ACP errors carried as defects, with class, safe method and numeric code, never the payload.
+- D: the single auth-failure WARN recognizes ACP errors carried as defects, with class, safe method and numeric code, never the payload. Native Error defects have no ACP metadata and explicitly report method/code as unavailable; messages and stacks are never logged or parsed.
 - E: DeepSeek offers API-key entry before install/when disabled; saving enables it in the same settings update.
 - F: OpenCode's server-password note appears only for a nonempty configured password.
 

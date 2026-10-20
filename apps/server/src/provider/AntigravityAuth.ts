@@ -152,6 +152,17 @@ function describeAuthFailure(cause: Cause.Cause<unknown>): string {
     return `AcpRequestError method=${method} code=${error.code}`;
   }
   if (isSetupError(error)) return `ProviderSetupError operation=${error.operation}`;
+  if (error instanceof Error) {
+    // Some runtime defects have only message/stack, with no ACP metadata.
+    // Report that absence explicitly; neither field is safe to log or parse.
+    const name =
+      /^(Error|TypeError|RangeError|SyntaxError|ReferenceError|URIError|EvalError)$/.test(
+        error.name,
+      )
+        ? error.name
+        : "Error";
+    return `${name} method=unavailable code=unavailable`;
+  }
   const tag = (error as { readonly _tag?: unknown } | null)?._tag;
   return typeof tag === "string" && /^[A-Za-z]{1,64}$/.test(tag) ? tag : "unknown error";
 }
