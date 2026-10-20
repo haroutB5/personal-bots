@@ -202,4 +202,35 @@ describe("terminateDescendants", () => {
       }),
     60_000,
   );
+
+  it.effect(
+    "leaves the descendants of a PID whose start time is not the expected one",
+    () =>
+      Effect.gen(function* () {
+        const parent = NodeChildProcess.spawn(
+          process.execPath,
+          [
+            "-e",
+            `const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 120000)"], { stdio: "ignore" }); console.log(c.pid); setTimeout(() => {}, 120000);`,
+          ],
+          { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
+        );
+        const childPid = yield* Effect.promise(
+          () =>
+            new Promise<number>((resolve) => {
+              parent.stdout.once("data", (chunk: Buffer) => resolve(Number(String(chunk).trim())));
+            }),
+        );
+        try {
+          const ended = yield* terminateDescendants(parent.pid!, 1);
+          assert.isFalse(ended.snapshotFailed);
+          assert.deepEqual(ended.killed, []);
+          assert.isTrue(isAlive(childPid));
+        } finally {
+          parent.kill();
+          if (isAlive(childPid)) process.kill(childPid);
+        }
+      }),
+    60_000,
+  );
 });

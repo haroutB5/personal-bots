@@ -11,7 +11,9 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -376,19 +378,92 @@ describe("Antigravity launcher process tree", () => {
     }),
   );
 
-  it.effect.each([null, 456])("skips a vanished or reused launcher (%s)", (current) =>
+  it.effect("does not make the runtime wait for the process snapshot", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const calls: Array<readonly [number, number]> = [];
+      const order: string[] = [];
+      const tree = makeAntigravityLauncherTree(
+        (pid) => Effect.sync(() => void order.push(`outer-${pid}`)),
+        (pid, expected) => Effect.sync(() => (calls.push([pid, expected]), ended)),
+        () => Deferred.await(gate).pipe(Effect.as(123)),
+      );
+      // The snapshot is still pending here; waiting for it would never return.
+      yield* tree.onProcessStarted(4242);
+      expect(order).toEqual(["outer-4242"]);
+      expect(calls).toEqual([]);
+      yield* Deferred.succeed(gate, undefined);
+      yield* tree.terminate;
+      expect(calls).toEqual([[4242, 123]]);
+    }),
+  );
+
+  it.effect("waits for the pending start time before ending the descendants", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const calls: Array<readonly [number, number]> = [];
+      const tree = makeAntigravityLauncherTree(
+        undefined,
+        (pid, expected) => Effect.sync(() => (calls.push([pid, expected]), ended)),
+        () => Deferred.await(gate).pipe(Effect.as(123)),
+      );
+      yield* tree.onProcessStarted(4242);
+      const stopped = yield* tree.terminate.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.yieldNow;
+      expect(calls).toEqual([]);
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(stopped);
+      expect(calls).toEqual([[4242, 123]]);
+    }),
+  );
+
+  const unusableStartTimes: ReadonlyArray<readonly [string, number | null]> = [
+    ["missing", null],
+    ["from before the spawn", -20_000],
+    ["from after the spawn", 5_000],
+  ];
+  for (const [label, time] of unusableStartTimes) {
+    it.effect(`ends nothing for a start time that is ${label}`, () =>
+      Effect.gen(function* () {
+        const calls: number[] = [];
+        const tree = makeAntigravityLauncherTree(
+          undefined,
+          (pid) => Effect.sync(() => (calls.push(pid), ended)),
+          () => Effect.succeed(time),
+        );
+        yield* tree.onProcessStarted(4242);
+        yield* tree.terminate;
+        expect(calls).toEqual([]);
+      }),
+    );
+  }
+
+  it.effect("ends nothing, and does not hang, when the snapshot fails", () =>
     Effect.gen(function* () {
       const calls: number[] = [];
-      let time: number | null = 123;
       const tree = makeAntigravityLauncherTree(
         undefined,
         (pid) => Effect.sync(() => (calls.push(pid), ended)),
-        () => Effect.succeed(time),
+        () => Effect.die(new Error("snapshot failed")),
       );
       yield* tree.onProcessStarted(4242);
-      time = current;
       yield* tree.terminate;
       expect(calls).toEqual([]);
+    }),
+  );
+
+  it.effect("takes one process snapshot on the stop path, not a second one", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const tree = makeAntigravityLauncherTree(
+        undefined,
+        () => Effect.succeed(ended),
+        () => Effect.sync(() => (reads++, 123)),
+      );
+      yield* tree.onProcessStarted(4242);
+      yield* tree.terminate;
+      // The start-time read; `end` makes the only snapshot the stop needs.
+      expect(reads).toBe(1);
     }),
   );
 });

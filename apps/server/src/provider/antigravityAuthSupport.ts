@@ -4,7 +4,9 @@ import * as NodeFSP from "node:fs/promises";
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -472,20 +474,50 @@ export function makeAntigravityLauncherTree(
   readStartTime: (pid: number) => Effect.Effect<number | null> = processStartTime,
 ): AntigravityLauncherTree {
   let launcherPid: number | undefined;
-  let launcherStartedAt: number | null = null;
+  let launcherStartedAt: Deferred.Deferred<number | null> | undefined;
   return {
     onProcessStarted: (pid) =>
       Effect.gen(function* () {
+        const reportedAt = yield* Clock.currentTimeMillis;
+        const startedAt = yield* Deferred.make<number | null>();
         launcherPid = pid;
-        launcherStartedAt = yield* readStartTime(pid);
+        launcherStartedAt = startedAt;
+        // The process snapshot takes about 0.4 s and the runtime waits for this
+        // callback, so read it in the background and await it only to stop.
+        yield* readStartTime(pid).pipe(
+          Effect.map((createdAtMs) => acceptLauncherStartTime(createdAtMs, reportedAt)),
+          Effect.catchCause(() => Effect.succeed(null)),
+          Effect.flatMap((createdAtMs) => Deferred.succeed(startedAt, createdAtMs)),
+          Effect.forkDetach,
+        );
         yield* onProcessStarted?.(pid) ?? Effect.void;
       }),
     terminate: Effect.gen(function* () {
-      if (launcherPid === undefined || launcherStartedAt === null) return;
-      if ((yield* readStartTime(launcherPid)) !== launcherStartedAt) return;
-      yield* end(launcherPid, launcherStartedAt);
+      if (launcherPid === undefined || launcherStartedAt === undefined) return;
+      const createdAtMs = yield* Deferred.await(launcherStartedAt);
+      if (createdAtMs === null) return;
+      // `end` compares this time with the same snapshot it walks, so a reused
+      // PID is skipped without a second process snapshot.
+      yield* end(launcherPid, createdAtMs);
     }),
   };
+}
+
+/** A launcher is created just before the runtime reports its PID, never after. */
+const launcherStartEarlyToleranceMs = 10_000;
+const launcherStartLateToleranceMs = 2_000;
+
+/**
+ * The start time is read after the spawn. If the launcher already exited and
+ * its PID was reused, that snapshot would record the new owner, so a time that
+ * does not fit the spawn is dropped (and nothing is killed).
+ */
+function acceptLauncherStartTime(createdAtMs: number | null, reportedAt: number): number | null {
+  if (createdAtMs === null) return null;
+  return createdAtMs >= reportedAt - launcherStartEarlyToleranceMs &&
+    createdAtMs <= reportedAt + launcherStartLateToleranceMs
+    ? createdAtMs
+    : null;
 }
 
 /** Applies the same subscription-only launch settings to every ACP process. */
