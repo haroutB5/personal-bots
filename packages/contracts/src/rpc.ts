@@ -3,6 +3,14 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
+  ProviderCatalogAddInput,
+  ProviderCatalogAddResult,
+  ProviderCatalogInstallFactsInput,
+  ProviderCatalogInstallPlan,
+  ProviderCatalogListInput,
+  ProviderCatalogListResult,
+} from "./providerCatalog.ts";
+import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
   ProviderAuthState,
@@ -517,6 +525,9 @@ export const WS_METHODS = {
   providerInstallCancel: "provider.install.cancel",
   providerInstallSubscribe: "provider.install.subscribe",
   providerInstallRemove: "provider.install.remove",
+  providerCatalogList: "provider.catalog.list",
+  providerCatalogAdd: "provider.catalog.add",
+  providerCatalogInstallFacts: "provider.catalog.installFacts",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -942,6 +953,24 @@ const WsProviderInstallSubscribeRpc = Rpc.make(WS_METHODS.providerInstallSubscri
 const WsProviderInstallRemoveRpc = Rpc.make(WS_METHODS.providerInstallRemove, {
   payload: ProviderSetupInput,
   success: ProviderInstallState,
+  error: ProviderSetupRpcError,
+});
+
+const WsProviderCatalogListRpc = Rpc.make(WS_METHODS.providerCatalogList, {
+  payload: ProviderCatalogListInput,
+  success: ProviderCatalogListResult,
+  error: ProviderSetupRpcError,
+});
+
+const WsProviderCatalogAddRpc = Rpc.make(WS_METHODS.providerCatalogAdd, {
+  payload: ProviderCatalogAddInput,
+  success: ProviderCatalogAddResult,
+  error: ProviderSetupRpcError,
+});
+
+const WsProviderCatalogInstallFactsRpc = Rpc.make(WS_METHODS.providerCatalogInstallFacts, {
+  payload: ProviderCatalogInstallFactsInput,
+  success: ProviderCatalogInstallPlan,
   error: ProviderSetupRpcError,
 });
 
@@ -2686,6 +2715,9 @@ export const WsServerRpcGroup = RpcGroup.make(
   WsProviderInstallCancelRpc,
   WsProviderInstallSubscribeRpc,
   WsProviderInstallRemoveRpc,
+  WsProviderCatalogListRpc,
+  WsProviderCatalogAddRpc,
+  WsProviderCatalogInstallFactsRpc,
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerCommitDesktopUpdateRpc,

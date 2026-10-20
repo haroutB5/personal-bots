@@ -129,6 +129,11 @@ export const ProviderCatalogAddResult = Schema.Struct({
 });
 export type ProviderCatalogAddResult = typeof ProviderCatalogAddResult.Type;
 
+export const ProviderCatalogInstallFactsInput = Schema.Struct({
+  catalogId: ProviderCatalogId,
+});
+export type ProviderCatalogInstallFactsInput = typeof ProviderCatalogInstallFactsInput.Type;
+
 // ---------------------------------------------------------------------------
 // Install state additions (SPEC 11.2). `ProviderInstallState` in providerSetup.ts
 // takes these when release 2 is wired in; until then this file is the contract.

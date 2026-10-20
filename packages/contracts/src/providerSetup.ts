@@ -7,6 +7,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderCatalogId, ProviderInstallFailure } from "./providerCatalog.ts";
 
 export const ProviderSetupInput = Schema.Struct({
   instanceId: ProviderInstanceId,
@@ -137,24 +138,32 @@ export type ProviderAuthCancelInput = typeof ProviderAuthCancelInput.Type;
 
 const ByteCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
+export const ProviderInstallPhase = Schema.Literals([
+  "idle",
+  "resolving",
+  "downloading",
+  "extracting",
+  "verifying",
+  "starting",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+export type ProviderInstallPhase = typeof ProviderInstallPhase.Type;
+
 export const ProviderInstallState = Schema.Struct({
   driver: ProviderDriverKind,
+  catalogId: Schema.optionalKey(Schema.NullOr(ProviderCatalogId)),
   operationId: Schema.NullOr(SetupOperationId),
-  phase: Schema.Literals([
-    "idle",
-    "downloading",
-    "extracting",
-    "verifying",
-    "succeeded",
-    "failed",
-    "cancelled",
-  ]),
+  phase: ProviderInstallPhase,
   downloadedBytes: ByteCount,
   totalBytes: Schema.NullOr(ByteCount),
   version: Schema.NullOr(TrimmedNonEmptyString),
   installedVersion: Schema.NullOr(TrimmedNonEmptyString),
+  previousVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   canRemove: Schema.Boolean,
   message: Schema.NullOr(Schema.String),
+  failure: Schema.optionalKey(Schema.NullOr(ProviderInstallFailure)),
 });
 export type ProviderInstallState = typeof ProviderInstallState.Type;
 
