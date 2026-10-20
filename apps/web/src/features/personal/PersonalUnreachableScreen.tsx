@@ -12,7 +12,11 @@ import { useOutboxCount } from "./outbox";
  * trace for what is, on a phone behind a tunnel, an everyday condition.
  * Rendered by the root error boundary for personal paths only.
  */
-export function PersonalUnreachableScreen({ onRetry }: { onRetry: () => void }): JSX.Element {
+export function PersonalUnreachableScreen({
+  onRetry,
+}: {
+  onRetry: () => void | Promise<void>;
+}): JSX.Element {
   const retry = useRef(onRetry);
   useEffect(() => {
     retry.current = onRetry;
@@ -25,19 +29,35 @@ export function PersonalUnreachableScreen({ onRetry }: { onRetry: () => void }):
     }
     let delay = 2_000;
     let timer: ReturnType<typeof setTimeout>;
-    const attempt = () => {
-      clearTimeout(timer);
-      if (document.visibilityState !== "hidden" && navigator.onLine !== false) retry.current();
-      delay = Math.min(delay * 2, 30_000);
+    let stopped = false;
+    let inFlight = false;
+    const schedule = () => {
+      if (stopped) return;
       timer = setTimeout(attempt, delay);
+      delay = Math.min(delay * 2, 30_000);
+    };
+    const attempt = async () => {
+      clearTimeout(timer);
+      if (stopped || inFlight) return;
+      inFlight = true;
+      try {
+        if (document.visibilityState !== "hidden" && navigator.onLine !== false)
+          await retry.current();
+      } catch {
+        // The route error boundary retains failures; continue recovery later.
+      } finally {
+        inFlight = false;
+        schedule();
+      }
     };
     const visible = () => {
       if (document.visibilityState === "visible") attempt();
     };
-    timer = setTimeout(attempt, delay);
+    schedule();
     window.addEventListener("online", attempt);
     document.addEventListener("visibilitychange", visible);
     return () => {
+      stopped = true;
       clearTimeout(timer);
       window.removeEventListener("online", attempt);
       document.removeEventListener("visibilitychange", visible);

@@ -48,6 +48,7 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import {
   isPrimaryEnvironmentRequestError,
+  resolveInitialPrimaryEnvironmentDescriptor,
   resolveInitialServerAuthGateState,
 } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -491,9 +492,21 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   if (isPersonalPath(pathname) && isPrimaryEnvironmentRequestError(error) && error.unreachable) {
     return (
       <PersonalUnreachableScreen
-        onRetry={() => {
+        onRetry={async () => {
+          // Keep the fallback mounted while the failed bootstrap retries.
+          // Clearing the boundary first can leave an empty cold-launch root.
+          try {
+            if (error.operation === "fetch-environment-descriptor") {
+              await resolveInitialPrimaryEnvironmentDescriptor();
+            } else {
+              await resolveInitialServerAuthGateState();
+            }
+          } catch (retryError) {
+            if (isPrimaryEnvironmentRequestError(retryError) && retryError.unreachable) return;
+            // Let the router surface permanent errors from the next attempt.
+          }
+          await router.invalidate();
           reset();
-          void router.invalidate();
         }}
       />
     );

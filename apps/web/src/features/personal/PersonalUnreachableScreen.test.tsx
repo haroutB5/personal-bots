@@ -28,6 +28,31 @@ afterEach(async () => {
 });
 
 describe("automatic reconnect", () => {
+  it("waits for a slow retry and never schedules after an in-flight retry unmounts", async () => {
+    let finish = () => {};
+    const retry = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await act(async () => {
+      renderer = create(<PersonalUnreachableScreen onRetry={retry} />);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    win.dispatchEvent(new Event("online"));
+    doc.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(retry).toHaveBeenCalledTimes(1);
+    await act(async () => renderer?.unmount());
+    renderer = undefined;
+    finish();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("says nothing about messages when none are waiting", async () => {
     await act(async () => {
       renderer = create(<PersonalUnreachableScreen onRetry={() => {}} />);

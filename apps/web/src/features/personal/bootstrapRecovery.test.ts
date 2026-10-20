@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -7,8 +8,15 @@ import {
   PrimaryEnvironmentRequestError,
   retryTransientBootstrap,
 } from "../../environments/primary/auth";
+import {
+  resetPrimaryEnvironmentDescriptorForTests,
+  resolveInitialPrimaryEnvironmentDescriptor,
+} from "../../environments/primary/context";
+import { __setPrimaryHttpRunnerForTests, type PrimaryHttpEffectRunner } from "../../lib/runtime";
 
 afterEach(() => {
+  __setPrimaryHttpRunnerForTests();
+  resetPrimaryEnvironmentDescriptorForTests();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -25,6 +33,36 @@ function responseError(status: number) {
 }
 
 describe("bootstrap origin recovery", () => {
+  it.each([504, 524])(
+    "retries descriptor HTTP %i and can recover after exhausting its budget",
+    async (status) => {
+      vi.useFakeTimers();
+      const descriptor: ExecutionEnvironmentDescriptor = {
+        environmentId: EnvironmentId.make("fixture"),
+        label: "Fixture",
+        platform: { os: "win32", arch: "x64" },
+        serverVersion: "fixture",
+        capabilities: { repositoryIdentity: true },
+      };
+      let attempts = 0;
+      const failing: PrimaryHttpEffectRunner = async () => {
+        attempts++;
+        throw responseError(status).cause;
+      };
+      __setPrimaryHttpRunnerForTests(failing);
+      const result = resolveInitialPrimaryEnvironmentDescriptor().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(16_000);
+      const error = await result;
+      expect(error).toBeInstanceOf(PrimaryEnvironmentRequestError);
+      if (!(error instanceof PrimaryEnvironmentRequestError))
+        throw new Error("Expected descriptor error");
+      expect(error.operation).toBe("fetch-environment-descriptor");
+      expect(error.unreachable).toBe(true);
+      expect(attempts).toBe(31);
+      __setPrimaryHttpRunnerForTests(async <A>() => descriptor as A);
+      await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(descriptor);
+    },
+  );
   it.each([408, 502, 503, 504, ...Array.from({ length: 11 }, (_, i) => 520 + i)])(
     "retries HTTP %i and remains recoverable after the budget",
     async (status) => {
