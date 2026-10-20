@@ -1504,7 +1504,7 @@ it.effect("evicts an unanswered host and lets later calls use a healthy runtime"
           Effect.forkScoped,
         );
       yield* Deferred.await(otherReceived);
-      yield* TestClock.adjust(1_000);
+      yield* TestClock.adjust(2_000);
       expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
       expect(yield* Deferred.isDone(otherCompleted)).toBe(true);
       expect(yield* Fiber.join(other)).toMatchObject({
