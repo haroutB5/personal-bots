@@ -1463,4 +1463,56 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       expect(completed.payload.errorMessage).toContain("Model service returned HTTP 500");
     }),
   );
+
+  it.effect("keeps cancellation wording in a reply when nothing is being cancelled", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* h.adapter
+        .sendTurn({ threadId, input: "What does that error mean?" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      yield* h.emitNative({
+        _tag: "ContentDelta",
+        text: "The request was cancelled by the client.",
+        rawPayload: {},
+      });
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(turn);
+      const deltaTexts = h.seen
+        .filter(
+          (event): event is Extract<ProviderRuntimeEvent, { type: "content.delta" }> =>
+            event.type === "content.delta",
+        )
+        .map((d) => d.payload.delta);
+      expect(deltaTexts).toContain("The request was cancelled by the client.");
+    }),
+  );
+
+  it.effect("reports a real failure that mentions client cancellation as failed", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* h.adapter
+        .sendTurn({ threadId, input: "Failing prompt" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      yield* Deferred.fail(
+        prompt.result,
+        AcpErrors.AcpRequestError.internalError("The request was cancelled by the client."),
+      );
+      yield* Fiber.await(turn);
+      const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(completed.payload.state).toBe("failed");
+      expect(completed.payload.errorMessage).toContain("cancelled by the client");
+    }),
+  );
 });

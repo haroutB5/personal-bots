@@ -192,7 +192,7 @@ interface TurnIntent {
 
 export function isAntigravityCancellationMessage(text: string | null | undefined): boolean {
   if (!text) return false;
-  return /cancelled by the client/i.test(text.trim());
+  return /^the request was cancelled by the client\.?$/i.test(text.trim());
 }
 
 interface SessionContext {
@@ -608,7 +608,14 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         return;
       case "ThoughtDelta":
       case "ContentDelta":
-        if (event._tag === "ContentDelta" && isAntigravityCancellationMessage(event.text)) {
+        // Only the runtime's own cancellation notice, and only while we are
+        // cancelling this turn for a steer or interrupt.
+        if (
+          event._tag === "ContentDelta" &&
+          context.cancellingTurnId !== undefined &&
+          context.cancellingTurnId === context.activeTurnId &&
+          isAntigravityCancellationMessage(event.text)
+        ) {
           return;
         }
         yield* emit(
@@ -1173,9 +1180,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       Effect.tapError((cause) =>
         Effect.suspend(() => {
           if (!intent) return Effect.void;
-          const cancelled =
-            isAntigravityCancellationMessage(cause.message) ||
-            context.cancellingTurnId === intent.turnId;
+          const cancelled = context.cancellingTurnId === intent.turnId;
           return context.promptLock.withPermit(
             finishTurn(
               intent,
