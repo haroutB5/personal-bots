@@ -360,7 +360,7 @@ function CatalogRow({
           </div>
           <span className="truncate text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
             {entry.publisher}
-            {entry.cost.label ? ` · ${entry.cost.label}` : ""}
+            {entry.cost.label ? `${entry.publisher ? " · " : ""}${entry.cost.label}` : ""}
           </span>
           <span className="truncate text-[13px] leading-[18px] text-[var(--personal-text-tertiary)]">
             {entry.description}

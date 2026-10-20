@@ -329,7 +329,9 @@ export function deriveBuiltInCatalogEntries(
       supported: { ok: true },
       added: { instanceId: provider.instanceId },
     };
-    if (!byDriver.has(provider.driver) || provider.installed) byDriver.set(provider.driver, entry);
+    if (!byDriver.has(provider.driver) || provider.instanceId === provider.driver) {
+      byDriver.set(provider.driver, entry);
+    }
   }
   return [...byDriver.values()];
 }

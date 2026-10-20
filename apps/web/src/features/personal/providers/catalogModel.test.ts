@@ -248,7 +248,7 @@ describe("catalogModel - deriveBuiltInCatalogEntries", () => {
       { driver: "codex", instanceId: "one", installed: false, version: null },
       {
         driver: "codex",
-        instanceId: "two",
+        instanceId: "codex",
         installed: true,
         version: "7.2.1",
         publisher: "Server publisher",
@@ -263,7 +263,7 @@ describe("catalogModel - deriveBuiltInCatalogEntries", () => {
       version: "7.2.1",
       publisher: "Server publisher",
       license: "Server licence",
-      added: { instanceId: "two" },
+      added: { instanceId: "codex" },
       downloadBytes: null,
     });
   });
