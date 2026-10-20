@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-20",
+  "entries": {
+    "builtin:claudeAgent": {
+      "cost": { "kind": "subscription", "label": "Your Claude plan" },
+      "signInLabel": "Claude account"
+    },
+    "builtin:codex": {
+      "cost": { "kind": "subscription", "label": "Your ChatGPT plan" },
+      "signInLabel": "ChatGPT account"
+    },
+    "builtin:cursor": {
+      "cost": { "kind": "subscription", "label": "Your Cursor plan" },
+      "signInLabel": "Cursor account",
+      "popularRank": 1
+    },
+    "builtin:opencode": {
+      "cost": {
+        "kind": "freeTier",
+        "label": "Free models or your own key",
+        "detail": "OpenCode lists some models for free. Others need a key from the model's maker."
+      }
+    },
+    "builtin:deepseek": {
+      "cost": { "kind": "payAsYouGo", "label": "Pay as you go" },
+      "signInLabel": "API key"
+    },
+    "gemini": {
+      "cost": { "kind": "freeTier", "label": "Free with a Google account" },
+      "signInLabel": "Google account or API key",
+      "popularRank": 2,
+      "env": { "NO_BROWSER": "true" }
+    },
+    "github-copilot-cli": {
+      "cost": { "kind": "subscription", "label": "Your Copilot plan" },
+      "signInLabel": "GitHub account",
+      "popularRank": 3
+    },
+    "qwen-code": {
+      "cost": { "kind": "freeTier", "label": "Free with a Qwen account" },
+      "signInLabel": "Qwen account or API key",
+      "popularRank": 4
+    },
+    "kimi": {
+      "cost": { "kind": "subscription", "label": "Your Kimi plan or API key" },
+      "signInLabel": "Kimi account or API key",
+      "popularRank": 5
+    },
+    "mistral-vibe": {
+      "cost": { "kind": "apiKey", "label": "API key, pay as you go" },
+      "signInLabel": "API key",
+      "popularRank": 6,
+      "apiKey": {
+        "env": "MISTRAL_API_KEY",
+        "keyPageUrl": "https://console.mistral.ai/api-keys"
+      }
+    },
+    "agoragentic-acp": { "hidden": true }
+  }
+}
