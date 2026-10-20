@@ -305,6 +305,41 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     );
   });
 
+  it.effect("reports an absent ACP method without logging the error payload", () => {
+    const warnings: string[] = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Warn") warnings.push(JSON.stringify(message));
+    });
+    return Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.fail(
+        harness.discovered,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: `Internal error ${callbackUrl} ${authorizationUrl} access_token=secret-token`,
+        }),
+      );
+      yield* phase(harness.auth, "failed");
+      yield* Deferred.await(harness.closed);
+
+      assert.equal(warnings.length, 1);
+      assert.include(warnings[0]!, "AcpRequestError method=unknown code=-32603");
+      for (const secret of ["http", "google", "test-code", "test-state", "secret-token"]) {
+        assert.notInclude(warnings[0]!, secret);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Logger.layer([logger], { mergeWithExisting: false }),
+          Layer.succeed(References.MinimumLogLevel, "Debug"),
+        ),
+      ),
+    );
+  });
+
   it.effect("logs ACP defects with class, method and code without the payload", () => {
     const warnings: string[] = [];
     const logger = Logger.make(({ logLevel, message }) => {

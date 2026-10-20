@@ -148,7 +148,10 @@ function describeAuthFailure(cause: Cause.Cause<unknown>): string {
     : cause.reasons.find(Cause.isDieReason)?.defect;
   if (error === undefined) return Cause.hasInterrupts(cause) ? "interrupted" : "defect";
   if (isAcpRequestError(error)) {
-    const method = /^[A-Za-z][A-Za-z/]{0,63}$/.test(error.method) ? error.method : "unknown";
+    const method =
+      typeof error.method === "string" && /^[A-Za-z][A-Za-z/]{0,63}$/.test(error.method)
+        ? error.method
+        : "unknown";
     return `AcpRequestError method=${method} code=${error.code}`;
   }
   if (isSetupError(error)) return `ProviderSetupError operation=${error.operation}`;
