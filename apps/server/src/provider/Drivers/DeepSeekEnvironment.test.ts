@@ -1,10 +1,12 @@
 import * as NodeOS from "node:os";
-import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import {
   DEEPSEEK_ANTHROPIC_BASE_URL,
@@ -112,16 +114,25 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
               PERSONAL_DEEPSEEK_ENGINE: "claude-code",
             },
           );
-          const result = NodeChildProcess.execFileSync(
-            process.execPath,
-            [
-              "-e",
-              "process.stdout.write(String(process.env.ANTHROPIC_AUTH_TOKEN === 'throwaway-key-not-a-secret'))",
-            ],
-            { env: environment, windowsHide: true, encoding: "utf8" },
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const child = yield* spawner.spawn(
+            ChildProcess.make(
+              process.execPath,
+              [
+                "-e",
+                "process.stdout.write(String(process.env.ANTHROPIC_AUTH_TOKEN === 'throwaway-key-not-a-secret'))",
+              ],
+              { env: environment, extendEnv: false },
+            ),
+          );
+          const result = yield* child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.runCollect,
+            Effect.map((chunks) => chunks.join("")),
           );
           expect(result).toBe("true");
-        }),
+          expect(Number(yield* child.exitCode)).toBe(0);
+        }).pipe(Effect.scoped),
     );
 
     it.effect("the harness engine gets no Claude CLI switches", () =>

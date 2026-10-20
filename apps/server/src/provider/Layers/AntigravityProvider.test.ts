@@ -156,6 +156,30 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 });
 
 describe("Antigravity model catalog", () => {
+  it("shows the native thinking level as the default when moving between Gemini families", () => {
+    const models = buildAntigravityModelsFromSession({
+      configOptions: [
+        {
+          ...modelConfig,
+          currentValue: "gemini-4-argon",
+          options: ["gemini-4-argon", "gemini-3.8-flash"].map((value) => ({ value, name: value })),
+        },
+        {
+          id: "thinking_level",
+          name: "Thinking Level",
+          type: "select",
+          currentValue: "low",
+          options: ["low", "medium", "high"].map((value) => ({ value, name: value })),
+        },
+      ],
+    });
+    for (const model of models) {
+      const descriptor = model.capabilities?.optionDescriptors?.[0];
+      expect(
+        descriptor?.type === "select" && descriptor.options.find((option) => option.isDefault)?.id,
+      ).toBe("low");
+    }
+  });
   it("keeps the captured personal catalog's IDs, labels, order, and selected default", () => {
     const models = buildAntigravityModelsFromSession(sessionSetupResult);
     expect(models.map((model) => [model.slug, model.name])).toEqual(

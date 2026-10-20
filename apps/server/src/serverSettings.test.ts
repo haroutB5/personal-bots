@@ -92,10 +92,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
       const client = ServerSettingsModule.redactServerSettingsForClient(saved);
-      assert.notInclude(JSON.stringify(client), "fake-instance-password");
-      assert.notInclude(JSON.stringify(client), "fake-legacy-password");
+      assert.equal(client.providers.opencode.serverPassword, "[redacted]");
       const instance = client.providerInstances[id];
       assert.isDefined(instance);
+      const clientConfig = instance?.config as { serverPassword?: string } | undefined;
+      assert.equal(clientConfig?.serverPassword, "[redacted]");
       const updated = yield* service.updateSettings({
         providers: client.providers,
         providerInstances: {
@@ -103,7 +104,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             ...instance!,
             driver: ProviderDriverKind.make("opencode"),
             config: {
-              ...instance!.config,
+              ...clientConfig,
               serverUrl: "http://127.0.0.1:4096",
             },
           },

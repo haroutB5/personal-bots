@@ -166,6 +166,21 @@ function redactProviderEnvironmentVariable(
 
 const OPENCODE_PASSWORD_REDACTED = "[redacted]";
 
+function openCodeServerConfig(
+  instance: ProviderInstanceConfig | undefined,
+): Record<string, unknown> | undefined {
+  if (instance?.driver !== "opencode") return undefined;
+  const config = instance.config;
+  return config && typeof config === "object" && !Array.isArray(config)
+    ? (config as Record<string, unknown>)
+    : undefined;
+}
+
+function openCodeServerPassword(instance: ProviderInstanceConfig | undefined): string | undefined {
+  const password = openCodeServerConfig(instance)?.serverPassword;
+  return typeof password === "string" ? password : undefined;
+}
+
 /** Restore only the sentinel; an explicit empty string still clears a password. */
 export function restoreRedactedOpenCodePasswords(
   current: ServerSettings,
@@ -184,20 +199,15 @@ export function restoreRedactedOpenCodePasswords(
     },
     providerInstances: Object.fromEntries(
       Object.entries(next.providerInstances).map(([id, instance]) => {
-        if (
-          instance.driver !== "opencode" ||
-          instance.config?.serverPassword !== OPENCODE_PASSWORD_REDACTED
-        )
-          return [id, instance];
+        if (openCodeServerPassword(instance) !== OPENCODE_PASSWORD_REDACTED) return [id, instance];
         const previous = current.providerInstances[ProviderInstanceId.make(id)];
         return [
           id,
           {
             ...instance,
             config: {
-              ...instance.config,
-              serverPassword:
-                previous?.driver === "opencode" ? (previous.config?.serverPassword ?? "") : "",
+              ...openCodeServerConfig(instance),
+              serverPassword: openCodeServerPassword(previous) ?? "",
             },
           },
         ];
@@ -215,8 +225,13 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         ...(instance.environment
           ? { environment: instance.environment.map(redactProviderEnvironmentVariable) }
           : {}),
-        ...(instance.driver === "opencode" && instance.config?.serverPassword
-          ? { config: { ...instance.config, serverPassword: OPENCODE_PASSWORD_REDACTED } }
+        ...(openCodeServerPassword(instance)
+          ? {
+              config: {
+                ...openCodeServerConfig(instance),
+                serverPassword: OPENCODE_PASSWORD_REDACTED,
+              },
+            }
           : {}),
       },
     ]),

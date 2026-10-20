@@ -67,9 +67,7 @@ export function buildAntigravityModelsFromSession(
     seen.add(entry.value);
     const defaultEffort =
       entry.value.match(/-(low|medium|high)$/u)?.[1] ??
-      (entry.value === currentValue && thinking?.type === "select"
-        ? thinking.currentValue
-        : "high");
+      (thinking?.type === "select" ? thinking.currentValue : "high");
     return [
       {
         slug: entry.value,
