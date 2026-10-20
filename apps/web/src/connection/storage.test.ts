@@ -3,7 +3,7 @@ import {
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
+import { ConnectionCatalogDocument, EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -16,7 +16,7 @@ import {
   makeBrowserGitHubRoutingPermissions,
   makeCatalogBackend,
   makeCatalogStore,
-  layer as connectionStorageLayer,
+  connectionStorageLayer,
 } from "./storage";
 
 const emptyCatalog = {
@@ -169,7 +169,7 @@ describe("environment cache removal", () => {
       });
 
       const [threadError, refsError] = yield* Effect.gen(function* () {
-        const cache = yield* Persistence.EnvironmentCacheStore;
+        const cache = yield* EnvironmentCacheStore;
         return [
           yield* Effect.flip(
             cache.removeThread(EnvironmentId.make("env"), ThreadId.make("thread")),
@@ -195,7 +195,7 @@ describe("IndexedDB connection recovery", () => {
       vi.stubGlobal("indexedDB", { open });
 
       yield* Effect.gen(function* () {
-        const cache = yield* Persistence.EnvironmentCacheStore;
+        const cache = yield* EnvironmentCacheStore;
         expect(open).not.toHaveBeenCalled();
         const error = yield* Effect.flip(
           cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread")),
@@ -241,7 +241,7 @@ describe("IndexedDB connection recovery", () => {
       vi.stubGlobal("indexedDB", { open });
 
       yield* Effect.gen(function* () {
-        const cache = yield* Persistence.EnvironmentCacheStore;
+        const cache = yield* EnvironmentCacheStore;
         const environmentId = EnvironmentId.make("env");
         const threadId = ThreadId.make("thread");
         expect(Option.isNone(yield* cache.loadThread(environmentId, threadId))).toBe(true);
@@ -298,7 +298,7 @@ describe("IndexedDB connection closed without a close event", () => {
       vi.stubGlobal("indexedDB", { open });
 
       yield* Effect.gen(function* () {
-        const cache = yield* Persistence.EnvironmentCacheStore;
+        const cache = yield* EnvironmentCacheStore;
         const loaded = yield* cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread"));
         expect(Option.isNone(loaded)).toBe(true);
         expect(open).toHaveBeenCalledTimes(2);

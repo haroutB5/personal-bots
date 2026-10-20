@@ -258,7 +258,7 @@ describe("Claude model catalog", () => {
   });
 
   it("preserves only SDK effort levels for uncatalogued models", () => {
-    const catalog = catalogFromManifest(manifest());
+    const catalog = resolveClaudeModelCatalog(manifest());
     for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
       assert.strictEqual(resolveClaudeCatalogEffort(catalog, "custom", ` ${effort} `), effort);
     }

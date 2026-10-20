@@ -345,7 +345,6 @@ export function reconcilePreviewServerSessions(
     // object when nothing moved spares every subscriber a re-render.
     if (
       sameServer &&
-      current.listLoaded &&
       current.serverRevision === result.revision &&
       current.activeTabId === activeTabId &&
       current.snapshot === snapshot &&
