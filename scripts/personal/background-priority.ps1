@@ -9,8 +9,7 @@
 #   node.exe grandchild came up BelowNormal, I/O 0, memory 1), so the whole tree runs in the background.
 #   Called by build.ps1, gate-evidence.ps1, e2e-smoke.ps1, throwaway-server.ps1 and perf/check.mjs + bench.mjs;
 #   never by start.ps1 or restart.ps1.
-# - The live server keeps the I/O Low / memory Low it gets from the logon task (seen 14 Oct on 1.66.45);
-#   Set-PbServerPriority (common.ps1) only lifts its CPU. Raising its I/O is left for a measured A/B later.
+# - start/restart restore server and relay to AboveNormal, I/O 2, memory 5.
 # Kill switch: HBOTS_LOW_PRIORITY=off (or 0, false, no, disabled) in the environment.
 # The release runner's own backup priority (run/hbots-release/proc-priority.ps1) is separate and unchanged.
 

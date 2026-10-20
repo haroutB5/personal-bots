@@ -51,6 +51,10 @@ param(
     [switch]$E2E
 )
 
+if ($env:HBOTS_HEAVY_JOB_HELD -ne '1') {
+    & (Join-Path $PSScriptRoot 'heavy-job.ps1') -Label 'build.ps1' -ScriptPath $PSCommandPath -ScriptParameters $PSBoundParameters
+    exit $LASTEXITCODE
+}
 . (Join-Path $PSScriptRoot 'common.ps1')
 # The build and everything it starts run in the background: the live server's SQLite shares this disk
 # (background-priority.ps1; HBOTS_LOW_PRIORITY=off to disable).

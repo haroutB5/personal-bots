@@ -72,6 +72,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($env:HBOTS_HEAVY_JOB_HELD -ne '1') {
+    & (Join-Path $PSScriptRoot 'heavy-job.ps1') -Label 'gate-evidence.ps1' -ScriptPath $PSCommandPath -ScriptParameters $PSBoundParameters
+    exit $LASTEXITCODE
+}
 . (Join-Path $PSScriptRoot 'common.ps1')
 # Fork gate, e2e and their throwaway servers run in the background (background-priority.ps1; HBOTS_LOW_PRIORITY=off).
 Enter-PbBackgroundPriority -Label 'gate-evidence.ps1'
@@ -164,10 +168,12 @@ if ($GatesJson) {
     $defs = @(
         @{ id = 'server-tests'; kind = 'vitest'; cwd = 'apps\server'; title = 'Server tests'; commands = @('vp test run src/personal src/mcp') },
         @{ id = 'server-tsc'; kind = 'tsc'; cwd = 'apps\server'; title = 'Server typecheck'; commands = @('..\..\node_modules\.bin\tsc --noEmit') },
-        @{ id = 'web-tests'; kind = 'vitest'; cwd = 'apps\web'; title = 'Web tests'; commands = @('vp test run --project unit src/features/personal') },
+        @{ id = 'web-tests'; kind = 'vitest'; cwd = 'apps\web'; title = 'Web tests'; commands = @('vp test run --project unit src/features/personal src/authBootstrap.test.ts') },
         @{ id = 'web-tsc'; kind = 'tsc'; cwd = 'apps\web'; title = 'Web typecheck'; commands = @('..\..\node_modules\.bin\tsc --noEmit') },
         @{ id = 'ps-tests'; kind = 'ps'; cwd = '.'; title = 'PowerShell script tests'; commands = @(
                 "$psBase scripts\personal\release-safety.tests.ps1",
+                "$psBase scripts\personal\heavy-job.tests.ps1",
+                "$psBase scripts\personal\server-priority.tests.ps1",
                 "$psBase scripts\personal\gate-evidence.tests.ps1",
                 "$psBase scripts\personal\updates\updates.tests.ps1") },
         @{ id = 'e2e'; kind = 'e2e'; cwd = '.'; title = 'Phone e2e smoke'; commands = @("$psBase `"$e2eScript`" -Release `"$releaseDir`" -Json") },

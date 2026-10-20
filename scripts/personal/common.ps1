@@ -297,12 +297,28 @@ function Remove-PbOldFiles {
 }
 
 # --- Process priority ------------------------------------------------------
-# A heavy VM on this PC starved the server: the logon task runs it at
-# BelowNormal, and cloudflared (the T3 Connect relay) inherits that. After a
-# start, raise the server's node process (the direct child of the recorded
-# cmd.exe) and its cloudflared to AboveNormal. The relay starts a few seconds
-# after the server, so it is waited for up to -WaitSeconds. Best-effort: this
-# never throws, and a restart is never failed by it.
+# Only the recorded wrapper's direct node child and its relay descendants.
+function Get-PbServerProcesses {
+    param([Parameter(Mandatory = $true)][int]$RootProcessId)
+    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name -ErrorAction Stop)
+    $queue = New-Object System.Collections.Queue
+    $seen = @{}
+    $queue.Enqueue(@{ Id = $RootProcessId; Depth = 0 })
+    while ($queue.Count -gt 0) {
+        $item = $queue.Dequeue()
+        foreach ($child in $all) {
+            $childId = [int]$child.ProcessId
+            if ([int]$child.ParentProcessId -ne [int]$item.Id -or $seen.ContainsKey($childId) -or $childId -eq $RootProcessId) { continue }
+            $seen[$childId] = $true
+            if (($item.Depth -eq 0 -and $child.Name -ieq 'node.exe') -or $child.Name -ieq 'cloudflared.exe') { $child }
+            if ($item.Depth -lt 6) { $queue.Enqueue(@{ Id = $childId; Depth = $item.Depth + 1 }) }
+        }
+    }
+}
+
+# Best effort at startup, fail-closed in smoke. Raising node before the relay
+# starts also gives future relay children normal I/O and memory priorities.
+# HBOTS_SERVER_PRIORITY=legacy restores the old CPU-only adjustment.
 function Set-PbServerPriority {
     param(
         [Parameter(Mandatory = $true)][int]$RootProcessId,
@@ -313,49 +329,22 @@ function Set-PbServerPriority {
         $raised = @{}
         $deadline = (Get-Date).AddSeconds($WaitSeconds)
         while ($true) {
-            $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, Name -ErrorAction Stop)
-            $byParent = @{}
-            foreach ($p in $all) {
-                $key = [int]$p.ParentProcessId
-                if (-not $byParent.ContainsKey($key)) { $byParent[$key] = New-Object System.Collections.ArrayList }
-                [void]$byParent[$key].Add($p)
+            $processes = @(Get-PbServerProcesses -RootProcessId $RootProcessId)
+            foreach ($child in $processes) {
+                $childId = [int]$child.ProcessId
+                if ($raised.ContainsKey($childId)) { continue }
+                $io = 2; $memory = 5
+                if ($env:HBOTS_SERVER_PRIORITY -eq 'legacy') { $io = -1; $memory = -1 }
+                $result = Set-PbProcessPriority -ProcessId $childId -Cpu $Priority -Io $io -Memory $memory
+                Write-Host ("Priority {0}: {1}" -f $child.Name, $result)
+                if ($result -match 'failed') { Write-Warning "Server priority was not fully applied: $result" }
+                else { $raised[$childId] = $true }
             }
-            $queue = New-Object System.Collections.Queue
-            $queue.Enqueue(@{ Id = $RootProcessId; Depth = 0 })
-            $sawRelay = $false
-            while ($queue.Count -gt 0) {
-                $item = $queue.Dequeue()
-                if (-not $byParent.ContainsKey([int]$item.Id)) { continue }
-                foreach ($child in $byParent[[int]$item.Id]) {
-                    $childId = [int]$child.ProcessId
-                    if ($childId -eq [int]$item.Id) { continue }
-                    $name = [string]$child.Name
-                    $isServer = ($item.Depth -eq 0 -and $name -ieq 'node.exe')
-                    $isRelay = ($name -ieq 'cloudflared.exe')
-                    if ($isRelay) { $sawRelay = $true }
-                    if (($isServer -or $isRelay) -and -not $raised.ContainsKey($childId)) {
-                        try {
-                            $proc = Get-Process -Id $childId -ErrorAction Stop
-                            if ([string]$proc.PriorityClass -ne $Priority) { $proc.PriorityClass = $Priority }
-                            $raised[$childId] = $name
-                            Write-Host ("Priority {0}: {1} (pid {2})." -f $Priority, $name, $childId)
-                        } catch {
-                            Write-Warning ("Could not raise {0} (pid {1}): {2}" -f $name, $childId, $_.Exception.Message)
-                            $raised[$childId] = $name
-                        }
-                    }
-                    if ($item.Depth -lt 6) { $queue.Enqueue(@{ Id = $childId; Depth = $item.Depth + 1 }) }
-                }
-            }
-            if ($sawRelay -or (Get-Date) -ge $deadline) { break }
+            if (($processes.Name -contains 'cloudflared.exe') -or (Get-Date) -ge $deadline) { break }
             Start-Sleep -Seconds 1
         }
-        if (-not ($raised.Values -contains 'cloudflared.exe')) {
-            Write-Host 'No T3 Connect relay (cloudflared) seen under the server; only the server was raised.'
-        }
-    } catch {
-        Write-Warning "Could not set process priority: $($_.Exception.Message)"
-    }
+        if (-not ($processes.Name -contains 'cloudflared.exe')) { Write-Host 'No T3 Connect relay seen; only server priority applied.' }
+    } catch { Write-Warning "Could not set server priority: $($_.Exception.Message)" }
 }
 
 # --- Release pruning -------------------------------------------------------

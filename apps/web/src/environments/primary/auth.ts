@@ -50,9 +50,18 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
     readonly pairingLinkId?: string;
     readonly sessionId?: string;
   }): PrimaryEnvironmentRequestError {
-    // 0 means no HTTP response at all (offline, tunnel down, DNS): the one
-    // failure a phone behind a tunnel hits every day, and always transient.
-    const status = readHttpApiStatus(input.cause) ?? (isTransportFailure(input.cause) ? 0 : 500);
+    // Headers alone are not a usable bootstrap response: an aborted/timed-out
+    // body after a 2xx is transient too. Keep permanent HTTP statuses intact.
+    const httpStatus = readHttpApiStatus(input.cause);
+    const interruptedBody =
+      transientOriginRecoveryEnabled() &&
+      HttpClientError.isHttpClientError(input.cause) &&
+      input.cause.reason._tag === "DecodeError" &&
+      isInterruptedFailure(input.cause.reason.cause);
+    const status =
+      interruptedBody && httpStatus !== null && httpStatus >= 200 && httpStatus < 300
+        ? 0
+        : (httpStatus ?? (isTransportFailure(input.cause) ? 0 : 500));
     return new PrimaryEnvironmentRequestError({
       operation: input.operation,
       status,
@@ -68,9 +77,12 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
       : `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
   }
 
-  /** No HTTP response was received: the server is unreachable, not failing. */
+  /** Transport and relay/origin failures can recover without user intervention. */
   get unreachable(): boolean {
-    return this.status === 0;
+    return (
+      this.status === 0 ||
+      (transientOriginRecoveryEnabled() && isTransientOriginStatus(this.status))
+    );
   }
 }
 
@@ -209,10 +221,28 @@ function isTransportFailure(error: unknown): boolean {
   if (error instanceof DOMException && error.name === "AbortError") {
     return true;
   }
+  if (transientOriginRecoveryEnabled() && isInterruptedFailure(error)) return true;
   return (
     HttpClientError.isHttpClientError(error) &&
     error.response === undefined &&
     error.reason._tag === "TransportError"
+  );
+}
+
+function isInterruptedFailure(error: unknown): boolean {
+  if (
+    error instanceof DOMException &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  )
+    return true;
+  // Effect's runPromise squashes an interrupt-only Cause to this exact Error.
+  if (error instanceof Error && error.message === "All fibers interrupted without error")
+    return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (("name" in error && error.name === "Interrupt") ||
+      ("_tag" in error && error._tag === "TimeoutError"))
   );
 }
 
@@ -290,6 +320,25 @@ async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionS
 }
 
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([0, 502, 503, 504]);
+function transientOriginRecoveryEnabled(): boolean {
+  try {
+    return (
+      typeof localStorage === "undefined" || localStorage.getItem("bots:origin-recovery") !== "off"
+    );
+  } catch {
+    return true;
+  }
+}
+
+function isTransientOriginStatus(status: number): boolean {
+  return (
+    status === 408 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    (status >= 520 && status <= 530)
+  );
+}
 const BOOTSTRAP_RETRY_TIMEOUT_MS = 15_000;
 const BOOTSTRAP_RETRY_STEP_MS = 500;
 
@@ -320,14 +369,14 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
 
 function isTransientBootstrapError(error: unknown): boolean {
   if (isPrimaryEnvironmentRequestError(error)) {
-    return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
+    return error.unreachable || TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
   }
 
   if (error instanceof TypeError) {
     return true;
   }
 
-  return error instanceof DOMException && error.name === "AbortError";
+  return isTransportFailure(error);
 }
 
 async function bootstrapServerAuth(urlCredential: string | null): Promise<ServerAuthGateState> {

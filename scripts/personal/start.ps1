@@ -39,6 +39,7 @@ foreach ($dir in @($paths.LogsDir, $paths.RunDir, $paths.BaseDir, $paths.WorkDir
 $existing = Read-PbServerState -Paths $paths
 if ($existing -and (Test-PbServerProcess -ProcessId ([int]$existing.pid) -BinPath $existing.binPath -BaseDir $existing.baseDir)) {
     Write-Host "Personal Bots is already running (pid $($existing.pid), root $($existing.root))."
+    Set-PbServerPriority -RootProcessId ([int]$existing.pid)
     exit 0
 }
 
@@ -110,6 +111,11 @@ function Start-PbServerOnce {
     if (Test-Path -LiteralPath $paths.StopMarker) { Remove-Item -LiteralPath $paths.StopMarker -Force }
 
     $launchedAt = Get-Date
+    # Reset the logon task's inherited low I/O/memory before creating node,
+    # so even cold startup and a later relay respawn get normal priorities.
+    if ($env:HBOTS_SERVER_PRIORITY -ne 'legacy') {
+        Write-Host (Set-PbProcessPriority -ProcessId $PID -Cpu 'AboveNormal' -Io 2 -Memory 5)
+    }
     $proc = Start-PbServeProcess -NodeExe $nodeExe -BinPath $releaseInfo.Bin -BaseDir $paths.BaseDir `
         -LogFile $script:logFile -WorkingDirectory $paths.WorkDir -Port $Port
     $state = [ordered]@{
@@ -124,6 +130,7 @@ function Start-PbServerOnce {
     }
     Set-Content -LiteralPath $paths.PidFile -Value $proc.Id -Encoding ASCII
     Set-Content -LiteralPath $paths.StateFile -Value ($state | ConvertTo-Json) -Encoding ASCII
+    Set-PbServerPriority -RootProcessId $proc.Id -WaitSeconds 0
 
     # Ready = the server rewrote server-runtime.json after this launch.
     for ($i = 0; $i -lt 120; $i++) {

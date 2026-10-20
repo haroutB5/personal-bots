@@ -58,6 +58,18 @@ hand-run build with nothing live yet; the old `-NoActivate` is still accepted
 and does nothing (waiters, the nightly job and the upstream sync pass it).
 Uncommitted builds are staged as `<sha>-dirty-<time>`.
 
+`build.ps1` and `gate-evidence.ps1` acquire the machine-wide heavy-job mutex
+themselves. Other heavy commands use `heavy-job.ps1 -Label <name> -WorkDir <dir>
+-Command <command>`. Nested calls reuse the lock; the command's exit code is
+preserved. Heavy children run at CPU BelowNormal, I/O 0, memory 1
+(`HBOTS_LOW_PRIORITY=off` disables lowering, never the lock).
+
+Server startup restores CPU AboveNormal, I/O 2 and memory 5 before creating
+node, then checks node and its cloudflared descendants. `smoke.ps1` fails when
+either process has the wrong priority. `HBOTS_SERVER_PRIORITY=legacy` restores
+the former CPU-only startup adjustment for diagnosis; smoke still requires
+the normal priorities.
+
 Roll back to an earlier release:
 
 ```powershell
