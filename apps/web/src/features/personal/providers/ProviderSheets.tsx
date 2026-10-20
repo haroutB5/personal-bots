@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from "react";
+import type { JSX, ReactNode, RefObject } from "react";
 import { useRef, useState } from "react";
 
 import type { PersonalBot, ServerProvider } from "@t3tools/contracts";
@@ -19,7 +19,7 @@ export function ProviderSheet({
   readonly title: string;
   readonly onClose: () => void;
   readonly children: ReactNode;
-  readonly initialFocus?: React.RefObject<HTMLElement | null>;
+  readonly initialFocus?: RefObject<HTMLElement | null>;
 }): JSX.Element {
   return (
     <Sheet
@@ -139,6 +139,7 @@ export function InstallConfirmSheet({
   totalBytes,
   builtIn,
   busy,
+  error = null,
   onConfirm,
   onCancel,
 }: {
@@ -149,6 +150,7 @@ export function InstallConfirmSheet({
   readonly totalBytes: number | null;
   readonly builtIn: boolean;
   readonly busy: boolean;
+  readonly error?: string | null;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
 }): JSX.Element {
@@ -196,6 +198,11 @@ export function InstallConfirmSheet({
       <p className="mt-3 px-1 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
         {lead} {warning}
       </p>
+      {error !== null ? (
+        <p role="alert" className="mt-2 px-1 text-sm text-[var(--personal-error)]">
+          {error}
+        </p>
+      ) : null}
       {big ? (
         <p className="mt-2 px-1 text-[13px] leading-[18px] text-[var(--personal-review-text)]">
           Big download. It may take a few minutes.

@@ -155,6 +155,16 @@ export function providerReportsUsage(snapshot: ServerProvider): boolean {
   );
 }
 
+/**
+ * Signed out, or (for a provider the app signs in itself) not known to be
+ * signed in: Antigravity reports "unknown" until a sign-in has been tried, and
+ * the page must offer it then.
+ */
+export function providerNeedsSignIn(snapshot: ServerProvider): boolean {
+  if (snapshot.auth.status === "unauthenticated") return true;
+  return snapshot.setup?.canAuthenticate === true && snapshot.auth.status !== "authenticated";
+}
+
 const INSTALL_ACTIVE = new Set<ProviderInstallState["phase"]>([
   "downloading",
   "extracting",
@@ -310,7 +320,7 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
     });
   }
   // 9. Needs sign-in
-  if (snapshot.installed && snapshot.enabled && snapshot.auth.status === "unauthenticated") {
+  if (snapshot.installed && snapshot.enabled && providerNeedsSignIn(snapshot)) {
     return row("needsSignIn", "review", "Sign in to use it", {
       tone: "review",
       action: { kind: "signIn", label: "Sign in" },

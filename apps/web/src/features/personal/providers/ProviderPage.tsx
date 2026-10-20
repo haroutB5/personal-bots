@@ -21,11 +21,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "../commandFeedback";
 import {
+  botsNamed,
   botsUseText,
   botsUsingModels,
   botsUsingProvider,
   currentSmoke,
   isInstallActive,
+  providerNeedsSignIn,
   providerReportsUsage,
   providerRow,
   withPendingAction,
@@ -237,8 +239,7 @@ function ProviderPageBody({
   const installActive = isInstallActive(install);
   const installed = snapshot.installed || (install?.installedVersion ?? null) !== null;
   const smoke = currentSmoke(snapshot);
-  const authNeeded =
-    installed && snapshot.enabled !== false && snapshot.auth.status === "unauthenticated";
+  const authNeeded = installed && providerNeedsSignIn(snapshot);
   const row: ProviderRow = withPendingAction(
     providerRow({ snapshot, label, bots, install: install ?? null, now: new Date() }),
     pending,
@@ -270,8 +271,8 @@ function ProviderPageBody({
     !finished &&
     (incomplete || setupSeen) &&
     (installed || startingInstall || installActive || install?.phase === "failed");
-  const showReady =
-    finished && setupSeen && canTest && smoke?.status === "passed" && smoke.manual === true;
+  // Done when every step is done; a provider with a test message waits for its answer.
+  const showReady = finished && setupSeen;
   const before = !installed && !installActive && !startingInstall && install?.phase !== "failed";
 
   // After the last sign-in step lands, the test runs by itself, once.
@@ -322,6 +323,9 @@ function ProviderPageBody({
     setSheetBusy(true);
     setSheetError(null);
     setStartingInstall(true);
+    // A provider added from here is on for bots from the start; a disabled
+    // driver is not probed, so it would never notice its own install.
+    if (!snapshot.enabled) instanceSettings.setEnabled(true);
     const result = await startInstall({ environmentId, input: { instanceId } });
     setSheetBusy(false);
     const failure = commandFailureMessage(result, `Couldn't start the ${label} install.`);
@@ -559,10 +563,14 @@ function ProviderPageBody({
           ) : null}
 
           {showReady ? (
-            <ReadyBlock label={label} line={answeredLine(smoke, snapshot.models)} />
+            <ReadyBlock
+              label={label}
+              line={canTest ? answeredLine(smoke, snapshot.models) : "Installed and signed in"}
+              tested={canTest}
+            />
           ) : null}
 
-          {!showSetup ? (
+          {!showSetup && (!showReady || note !== null) ? (
             <StatusBlock
               row={row}
               note={note}
@@ -740,6 +748,7 @@ function ProviderPageBody({
           version={snapshot.versionAdvisory?.latestVersion ?? install?.version ?? null}
           totalBytes={install?.totalBytes ?? null}
           builtIn
+          error={sheetError}
           busy={sheetBusy}
           onConfirm={() => void confirmInstall()}
           onCancel={() => {
@@ -747,11 +756,6 @@ function ProviderPageBody({
             setSheetError(null);
           }}
         />
-      ) : null}
-      {sheet === "install" && sheetError !== null ? (
-        <p role="alert" className="mt-2 text-sm text-[var(--personal-error)]">
-          {sheetError}
-        </p>
       ) : null}
       {sheet === "remove" ? (
         <ConfirmSheet
@@ -762,11 +766,7 @@ function ProviderPageBody({
           body={
             <>
               {users.length > 0
-                ? `${
-                    botsUseText(users)
-                      ?.replace(/ uses it$/, "")
-                      .replace(/ use it$/, "") ?? ""
-                  } ${users.length === 1 ? "uses it and can't reply" : "use it and can't reply"} until you give ${users.length === 1 ? "it" : "them"} another model. `
+                ? `${botsNamed(users)} ${users.length === 1 ? "uses it and can't reply" : "use it and can't reply"} until you give ${users.length === 1 ? "it" : "them"} another model. `
                 : ""}
               Your sign-in for {label} is kept; remove it with Sign out first if you want it gone.
               {sheetError !== null ? (
@@ -792,11 +792,7 @@ function ProviderPageBody({
           label={label}
           title={`Turn off ${label}?`}
           subtitle="Bots can't use it while it's off"
-          body={`${
-            botsUseText(users)
-              ?.replace(/ uses it$/, " uses it and can't reply")
-              .replace(/ use it$/, " use it and can't reply") ?? ""
-          } until you turn it back on or give ${users.length === 1 ? "it" : "them"} another model.`}
+          body={`${botsNamed(users)} ${users.length === 1 ? "uses it and can't reply" : "use it and can't reply"} until you turn it back on or give ${users.length === 1 ? "it" : "them"} another model.`}
           confirmLabel="Turn off"
           destructive
           onConfirm={confirmTurnOff}
@@ -1208,7 +1204,15 @@ function SetupCard({
   );
 }
 
-function ReadyBlock({ label, line }: { label: string; line: string | null }): JSX.Element {
+function ReadyBlock({
+  label,
+  line,
+  tested,
+}: {
+  label: string;
+  line: string | null;
+  tested: boolean;
+}): JSX.Element {
   return (
     <section aria-label="Ready" className={`${CARD} px-4 py-4`} data-ready>
       <div className="flex items-center gap-3">
@@ -1229,9 +1233,11 @@ function ReadyBlock({ label, line }: { label: string; line: string | null }): JS
           ) : null}
         </div>
       </div>
-      <p className="mt-3 rounded-[10px] bg-[var(--personal-fill-muted)] px-3 py-2 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-        We asked for one word. It answered.
-      </p>
+      {tested ? (
+        <p className="mt-3 rounded-[10px] bg-[var(--personal-fill-muted)] px-3 py-2 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+          We asked for one word. It answered.
+        </p>
+      ) : null}
     </section>
   );
 }

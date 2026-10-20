@@ -225,6 +225,11 @@ describe("provider row states (SPEC 3.3, first match wins, at most one action)",
       statusText: "Sign in to use it",
       action: { kind: "signIn", label: "Sign in" },
     });
+    // A provider the app signs in itself reports "unknown" until a sign-in was tried.
+    expect(
+      rowOf(provider({ auth: { status: "unknown" }, setup: { canAuthenticate: true } })).state,
+    ).toBe("needsSignIn");
+    expect(rowOf(provider({ auth: { status: "unknown" } })).state).toBe("ready");
     const notInstalled = rowOf(provider({ installed: false, setup: { canInstall: true } }), {
       bots: [bot("Musey", "claudeAgent", 0), bot("Scout", "claudeAgent", 1)],
     });
