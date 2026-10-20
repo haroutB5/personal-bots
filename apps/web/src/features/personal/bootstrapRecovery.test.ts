@@ -33,6 +33,45 @@ function responseError(status: number) {
 }
 
 describe("bootstrap origin recovery", () => {
+  it.each(["AbortError", "TimeoutError"])(
+    "recovers when the response body is interrupted after HTTP 200 (%s)",
+    (name) => {
+      const request = HttpClientRequest.get("http://localhost/api/auth/session");
+      const response = HttpClientResponse.fromWeb(
+        request,
+        new Response("partial", { status: 200 }),
+      );
+      const error = PrimaryEnvironmentRequestError.fromCause({
+        operation: "fetch-session-state",
+        cause: new HttpClientError.HttpClientError({
+          reason: new HttpClientError.DecodeError({
+            request,
+            response,
+            cause: new DOMException("interrupted", name),
+          }),
+        }),
+      });
+      expect(error.status).toBe(0);
+      expect(error.unreachable).toBe(true);
+    },
+  );
+
+  it.each([200, 400, 401, 403])("keeps real HTTP %i/schema failures visible", (status) => {
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const response = HttpClientResponse.fromWeb(request, new Response("invalid", { status }));
+    const cause =
+      status === 200
+        ? new SyntaxError("Invalid JSON schema")
+        : new DOMException("interrupted", "AbortError");
+    const error = PrimaryEnvironmentRequestError.fromCause({
+      operation: "fetch-session-state",
+      cause: new HttpClientError.HttpClientError({
+        reason: new HttpClientError.DecodeError({ request, response, cause }),
+      }),
+    });
+    expect(error.status).toBe(status);
+    expect(error.unreachable).toBe(false);
+  });
   it.each([504, 524])(
     "retries descriptor HTTP %i and can recover after exhausting its budget",
     async (status) => {

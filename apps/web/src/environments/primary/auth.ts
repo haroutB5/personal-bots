@@ -50,9 +50,18 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
     readonly pairingLinkId?: string;
     readonly sessionId?: string;
   }): PrimaryEnvironmentRequestError {
-    // 0 means no HTTP response at all (offline, tunnel down, DNS): the one
-    // failure a phone behind a tunnel hits every day, and always transient.
-    const status = readHttpApiStatus(input.cause) ?? (isTransportFailure(input.cause) ? 0 : 500);
+    // Headers alone are not a usable bootstrap response: an aborted/timed-out
+    // body after a 2xx is transient too. Keep permanent HTTP statuses intact.
+    const httpStatus = readHttpApiStatus(input.cause);
+    const interruptedBody =
+      transientOriginRecoveryEnabled() &&
+      HttpClientError.isHttpClientError(input.cause) &&
+      input.cause.reason._tag === "DecodeError" &&
+      isInterruptedFailure(input.cause.reason.cause);
+    const status =
+      interruptedBody && httpStatus !== null && httpStatus >= 200 && httpStatus < 300
+        ? 0
+        : (httpStatus ?? (isTransportFailure(input.cause) ? 0 : 500));
     return new PrimaryEnvironmentRequestError({
       operation: input.operation,
       status,
@@ -209,23 +218,31 @@ function isTransportFailure(error: unknown): boolean {
   if (error instanceof TypeError) {
     return true;
   }
-  if (
-    error instanceof DOMException &&
-    (error.name === "AbortError" || error.name === "TimeoutError")
-  ) {
+  if (error instanceof DOMException && error.name === "AbortError") {
     return true;
   }
-  if (transientOriginRecoveryEnabled() && typeof error === "object" && error !== null) {
-    // Effect's runPromise squashes an interrupt-only Cause to this exact Error.
-    if (error instanceof Error && error.message === "All fibers interrupted without error")
-      return true;
-    if ("name" in error && error.name === "Interrupt") return true;
-    if ("_tag" in error && error._tag === "TimeoutError") return true;
-  }
+  if (transientOriginRecoveryEnabled() && isInterruptedFailure(error)) return true;
   return (
     HttpClientError.isHttpClientError(error) &&
     error.response === undefined &&
     error.reason._tag === "TransportError"
+  );
+}
+
+function isInterruptedFailure(error: unknown): boolean {
+  if (
+    error instanceof DOMException &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  )
+    return true;
+  // Effect's runPromise squashes an interrupt-only Cause to this exact Error.
+  if (error instanceof Error && error.message === "All fibers interrupted without error")
+    return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (("name" in error && error.name === "Interrupt") ||
+      ("_tag" in error && error._tag === "TimeoutError"))
   );
 }
 
