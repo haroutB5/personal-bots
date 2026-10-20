@@ -72,20 +72,6 @@ if (-not $state) {
 }
 Pass "process pid $($state.pid), release $($state.release), started $($state.startedAt)"
 
-# Priority is a release requirement, not just diagnostic output. A missing
-# relay fails unless -NoTunnel was requested for an isolated local check.
-try {
-    $processes = @(Get-PbServerProcesses -RootProcessId ([int]$state.pid))
-    Initialize-PbProcPriorityType
-    if (-not ($processes.Name -contains 'node.exe')) { Fail 'server node priority could not be inspected' }
-    if (-not $NoTunnel -and -not ($processes.Name -contains 'cloudflared.exe')) { Fail 'relay priority could not be inspected' }
-    foreach ($child in $processes) {
-        $text = Get-PbProcessPriorityText -ProcessId ([int]$child.ProcessId)
-        if ($text -match 'cpu=AboveNormal io=2 mem=5$') { Pass ("priority {0}: {1}" -f $child.Name, $text) }
-        else { Fail ("priority {0}: {1}; expected AboveNormal/2/5" -f $child.Name, $text) }
-    }
-} catch { Fail "priority inspection failed: $($_.Exception.Message)" }
-
 # 2. Local health
 $runtime = $null
 $deadline = (Get-Date).AddSeconds($StartTimeoutSeconds)
@@ -149,6 +135,21 @@ if ($stable -and $localUri -and (Test-Http200 -Uri $localUri -TimeoutSeconds 20)
 } else {
     Fail "server restarted or stopped answering within the $StableSeconds s stability window"
 }
+
+# Priority is a release requirement, not just diagnostic output. Check after
+# readiness/stability so a relay still starting on a slow machine is not a
+# false failure. A missing relay fails unless -NoTunnel was requested.
+try {
+    $processes = @(Get-PbServerProcesses -RootProcessId ([int]$state.pid))
+    Initialize-PbProcPriorityType
+    if (-not ($processes.Name -contains 'node.exe')) { Fail 'server node priority could not be inspected' }
+    if (-not $NoTunnel -and -not ($processes.Name -contains 'cloudflared.exe')) { Fail 'relay priority could not be inspected' }
+    foreach ($child in $processes) {
+        $text = Get-PbProcessPriorityText -ProcessId ([int]$child.ProcessId)
+        if ($text -match 'cpu=AboveNormal io=2 mem=5$') { Pass ("priority {0}: {1}" -f $child.Name, $text) }
+        else { Fail ("priority {0}: {1}; expected AboveNormal/2/5" -f $child.Name, $text) }
+    }
+} catch { Fail "priority inspection failed: $($_.Exception.Message)" }
 
 # 5. Log scan
 if (-not $LogFile) {
