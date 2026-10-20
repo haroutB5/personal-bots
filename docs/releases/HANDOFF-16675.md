@@ -126,33 +126,48 @@ QA rejected artifact `450ec5ba145f`; it must not ship. The replacement fixes:
 - E: DeepSeek offers API-key entry before install/when disabled; saving enables it in the same settings update.
 - F: OpenCode's server-password note appears only for a nonempty configured password.
 
-The other security should-fix items and Gemini effort selection remain deferred per CTO.
+Deferred per CTO: smoke model allowlist, rollback only to recorded previousVersion, launcher
+start-time check, openDefaultBrowser host pin, OpenCode serverPassword redaction, and Gemini effort
+selection. No code for these is included in this correction pass.
 
-## 6. Tests
+## 7. Tests and final replacement artifact
 
-- **Staged artifact:** `450ec5ba145f`, version 1.66.75, clean source tree, externals copied.
-  Build completed with exit 0. No activation; DevOps ships after risky-tier QA and Security review.
-- **Full gate:** PASS on that artifact, exit 0. Server: 2,946 passed, 4 skipped; web: 2,965 passed;
-  server and web typechecks: exit 0; PowerShell: 288 checks passed; phone e2e: 12/12 journeys passed.
-  The machine-wide lock serialized every heavy step. The interrupted gate from the cancelled task
-  had no final evidence; this completed run replaces it without rebuilding or changing source.
-- **Focused Antigravity regressions:** 8 files, 156 passed, 13 skipped, exit 0 (auth, skills/profile
-  support, driver, adapter, auth service, default-browser launch and maintenance runner). Includes
-  the three bug fixes and laptop sign-in handling. Log: `antigravity-regression.log` in the evidence
-  folder above. Platform-dependent skips remain skips, not claimed passes.
-- **Phone proof:** `C:/Users/Ht/.personal-bots/qa/hbots-16673/README.md` indexes the evidence.
-  `shots/40-list.png`, `03-antigravity-before.png`, `04-confirm.png`, `05-installing.png`,
-  `22-signin-idle.png`, `23-signin-redirect.png`, `25-signin-cancelled.png`, `32-ready.png`:
-  390x844 dark, with 320 px checks in `41-list-320.png` and `42-page-320.png`.
-  Throwaway servers and fake Claude only; no real Google sign-in. Install reached the paste/link
-  and open-on-laptop step, then cancelled. DeepSeek key was redacted in settings, held in the secret
-  store and absent from server logs. Fake Claude's on-demand test passed in 0.5 s. Turning Show
-  usage off for both Claude instances removed the usage strip. Browser errors: none.
-- Screenshots predate the final stability/notes merges; their provider UI is unchanged except the
-  fix that restarts sign-in after a cancelled flow. The final artifact also passed all 12 phone e2e
-  journeys, including offline queue, cold-load drop and offline screen recovery.
+- **Staged artifact:** `8699a2f8fdba`, version 1.66.75, clean source tree, externals copied.
+  Build completed with exit 0. This supersedes QA-rejected `450ec5ba145f` and intermediate
+  `627bd6428605` / `6db5b3b308d1`. No activation; DevOps ships after the focused QA/Security recheck.
+- **Full gate:** PASS on `8699a2f8fdba`, exit 0. Server: 2,946 passed, 4 skipped; web: 2,965 passed;
+  both typechecks: exit 0; PowerShell: 288 checks passed; phone e2e: 12/12 journeys passed.
+  Build and gate ran through the machine-wide `heavy-job.ps1` lock. Final log:
+  `C:/Users/Ht/.personal-bots/qa/hbots-16675-qa/fix-build-gate-final.log`.
+  The earlier correction gate was stopped to complete the native-defect diagnostic; the next
+  caught the optional ACP method type error. That guard is fixed and the complete final gate is green.
+- **Focused regressions:** 82 passed, zero failed or skipped, exit 0, in `AntigravityAuth.test.ts`
+  and `ProviderRegistry.test.ts`. Includes capabilities on the first snapshot without probes or
+  stream events, typed ACP failures and defects, missing optional method, and native Error defects
+  whose sensitive fake payload must not appear in the warning. Log: `fix-targeted-server3.log`.
+- **Correction browser proof:** `C:/Users/Ht/.personal-bots/qa/hbots-16675-qa/FIX-REPORT.md`
+  and `fix-browser-results.json` index the targeted A-F checks and `fix-*.png` screenshots.
+  Dark mode at 390x844 and 1440x900, no horizontal overflow. Signed-out Remove opens confirmation
+  after cancel; confirmed removal deletes the copied runtime. The laptop sign-in button appears
+  after restart without Check all. Disabled DeepSeek offers key entry, saves a redacted dummy key
+  and enables it in one settings patch. OpenCode's password note is absent/present as configured.
+  A realistic invalid OAuth code logs exactly one native Error warning with method/code explicitly
+  unavailable (the runtime supplied no ACP metadata), and leaves zero Antigravity processes.
+- **Artifact coverage:** UI screenshots use `627bd6428605`; real-runtime failure, confirmed removal
+  and positive desktop password proof use `6db5b3b308d1`. The final change only guards the optional
+  ACP method and adds its test; the UI and native-error path are unchanged. All 12 final phone e2e
+  journeys ran against the exact final staged artifact.
+- **Original setup proof retained:** `C:/Users/Ht/.personal-bots/qa/hbots-16673/README.md`
+  covers install confirmation/progress, paste/open-on-laptop and cancel, DeepSeek key entry,
+  fake Claude's manual test and Show usage. Those unchanged flows are historical proof;
+  the correction report above covers the changed states. Catalogue/registry and broader sign-in
+  remain releases 2/3.
+- **Cleanup:** browser tab closed; throwaway server/root removed. Automatic approval review blocked
+  deletion of the separate isolated test profile at
+  `C:/Users/Ht/AppData/Local/Temp/hbots-16675-fix-profile` as "blocked by policy", with no more specific
+  reason. No real credentials were used.
 
-## 7. Risks
+## 8. Risks
 
 - The provider page writes provider settings from the phone (enabled flag, key, OpenCode address)
   with the same patch builder as the desktop panel.
@@ -161,22 +176,22 @@ The other security should-fix items and Gemini effort selection remain deferred 
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=450ec5ba145f56df26587984a33942b3bd0c4d05 release=450ec5ba145f json-sha256=07af724ecb28ec2767750a15b2c4261a041e74d4eb870b5583a6cd2e80c4fd24 result=PASS -->
+<!-- gate-evidence:begin sha=8699a2f8fdba02e22ac51b96295f776fc2824b28 release=8699a2f8fdba json-sha256=1c60165d37939ed4ad970a4e2478e51b1b1afd0683e08fcac354538a28c2b8e9 result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-20T11:58:53Z. Version 1.66.75, release `450ec5ba145f`, commit `450ec5ba145f56df26587984a33942b3bd0c4d05` on `feat/hbots-16673-providers`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-20T13:37:27Z. Version 1.66.75, release `8699a2f8fdba`, commit `8699a2f8fdba02e22ac51b96295f776fc2824b28` on `feat/hbots-16673-providers`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\450ec5ba145f\gate-evidence.json` (sha256 `07af724ecb28ec2767750a15b2c4261a041e74d4eb870b5583a6cd2e80c4fd24`) and the full gate logs in `releases\450ec5ba145f\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\8699a2f8fdba\gate-evidence.json` (sha256 `1c60165d37939ed4ad970a4e2478e51b1b1afd0683e08fcac354538a28c2b8e9`) and the full gate logs in `releases\8699a2f8fdba\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 0    | pass: 2946 tests passed, 0 failed, 4 skipped, in 213 files | 427.3   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 0    | pass: exit code only                                       | 54.8    |
-| web-tests    | `vp test run --project unit src/features/personal src/authBootstrap.test.ts` (in `apps\web`)                                                                                                                                                                                                                                                                                                                                                                                                                                 | 0    | pass: 2965 tests passed, 0 failed, 0 skipped, in 261 files | 37.2    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 0    | pass: exit code only                                       | 4.9     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\heavy-job.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\server-priority.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 288 checks ok, 0 failed                              | 87.1    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16670\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\450ec5ba145f" -Json` (in `.`)                                                                                                                                                                                                                                                                                                                           | 0    | pass: 12/12 journeys passed                                | 281.7   |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 0    | pass: 2946 tests passed, 0 failed, 4 skipped, in 213 files | 416.7   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 0    | pass: exit code only                                       | 45.3    |
+| web-tests    | `vp test run --project unit src/features/personal src/authBootstrap.test.ts` (in `apps\web`)                                                                                                                                                                                                                                                                                                                                                                                                                                 | 0    | pass: 2965 tests passed, 0 failed, 0 skipped, in 261 files | 37.4    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 0    | pass: exit code only                                       | 5.4     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\heavy-job.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\server-priority.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 288 checks ok, 0 failed                              | 84.3    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-16670\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\8699a2f8fdba" -Json` (in `.`)                                                                                                                                                                                                                                                                                                                           | 0    | pass: 12/12 journeys passed                                | 283.8   |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok, `continue-chat` ok, `offline-queue` ok, `offline-network` ok, `cold-load-drop` ok, `offline-screens` ok, `stale-deploy` ok, `revoked-session` ok.
 
-Tree: HEAD at start `450ec5ba145f56df26587984a33942b3bd0c4d05`, at end `450ec5ba145f56df26587984a33942b3bd0c4d05`; tracked files modified: none. Staged release: version 1.66.75, sha 450ec5ba145f, dirty False, externals copied; `dist/bin.mjs` sha256 `99aff1e5030ecf12a5ae0cea6dd0c764e32b430d87bbe50801cd8acbf93b7584`.
+Tree: HEAD at start `8699a2f8fdba02e22ac51b96295f776fc2824b28`, at end `8699a2f8fdba02e22ac51b96295f776fc2824b28`; tracked files modified: none. Staged release: version 1.66.75, sha 8699a2f8fdba, dirty False, externals copied; `dist/bin.mjs` sha256 `f71b74cbe771260efec1374f64f0137a8edd6f30fb75a84845a36747fdddade1`.
 <!-- gate-evidence:end -->
