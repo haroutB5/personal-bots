@@ -182,7 +182,7 @@ it.effect("re-registers after an unanswered request disconnects it from the brok
         .invoke<BrowserStatus>({ scope, operation: "open", input: {} })
         .pipe(Effect.flip, Effect.forkScoped);
       yield* Deferred.await(openReceived);
-      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("16 seconds");
       expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
 
       // Before the fix every later call failed with NoAvailableHost until the
@@ -226,7 +226,7 @@ it.effect("stops reconnecting once the layer scope closes", () =>
       yield* Deferred.await(openReceived);
       // Leaves the host inside its reconnect backoff, the moment a leaked fiber
       // would survive shutdown.
-      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("16 seconds");
       yield* Fiber.join(timedOut);
       const afterDisconnect = connects.count;
       // The wedged op finishing lets the scope close; it must not reconnect.

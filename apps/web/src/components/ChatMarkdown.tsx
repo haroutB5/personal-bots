@@ -89,6 +89,8 @@ import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import remarkGfm from "remark-gfm";
+import type { Processor } from "unified";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
   artifactTemplateFromHastProperties,
@@ -374,7 +376,7 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
  * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits one-character
  * markers. Wider markers can extend past it and get clipped by a collapsed
  * message's overflow. Widen the gutter to fit the widest marker, including a
- * negative marker's minus sign.
+ * negative marker's minus sign, the period, and the trailing space.
  */
 function orderedListGutterStyle(
   itemCount: number,
@@ -385,11 +387,12 @@ function orderedListGutterStyle(
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
   const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
   if (markerWidth <= 1) return undefined;
-  return { "--list-gutter": `${markerWidth + 1}ch` };
+  return { "--list-gutter": `${markerWidth + 2}ch` };
 }
 
 type MarkdownImageHastNode = {
   type?: string;
+  value?: string;
   tagName?: string;
   properties?: Record<string, unknown>;
   children?: MarkdownImageHastNode[];
@@ -444,6 +447,54 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
+/** Keep unmatched inline `<A>` placeholders from opening an HTML link over later blocks. */
+function rehypePreserveBareAnchorPlaceholders() {
+  return (tree: MarkdownImageHastNode) => {
+    const anchors: Array<MarkdownImageHastNode | null> = [];
+    let rawTextTag: string | undefined;
+    const visit = (node: MarkdownImageHastNode) => {
+      if (node.type === "raw" && typeof node.value === "string") {
+        // Raw blocks can contain several tags. Consume whole tags, quoted attributes,
+        // and comments so text resembling a closing anchor cannot pair a placeholder.
+        const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+        let offset = 0;
+        while (rawTextTag !== "plaintext") {
+          // Raw text ends at its closing tag even inside comment-looking text.
+          const matcher = rawTextTag ? new RegExp(`</${rawTextTag}\\s*>`, "gi") : tags;
+          matcher.lastIndex = offset;
+          const match = matcher.exec(node.value);
+          if (!match) break;
+          const [tag] = match;
+          offset = matcher.lastIndex;
+          if (rawTextTag) {
+            rawTextTag = undefined;
+            continue;
+          }
+          if (tag.startsWith("<!--")) continue;
+          const closing = /^<\/([a-z]+)\s*>$/i.exec(tag)?.[1]?.toLowerCase();
+          const opening = /^<([a-z]+)(?:\s|\/?>)/i.exec(tag)?.[1]?.toLowerCase();
+          if (
+            opening &&
+            /^(?:script|style|textarea|title|xmp|iframe|noembed|noframes|plaintext)$/.test(opening)
+          ) {
+            rawTextTag = opening;
+          } else if (opening === "a") {
+            anchors.push(node.value === tag && /^<a\s*\/?>$/i.test(tag) ? node : null);
+          } else if (closing === "a") {
+            anchors.pop();
+          }
+        }
+      }
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+    for (const anchor of anchors) {
+      if (anchor) anchor.type = "text";
+    }
+  };
+}
+
 /** Carries authored image source metadata through the sanitizer to the image renderer. */
 function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
@@ -490,6 +541,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -499,6 +551,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -508,6 +561,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
+  rehypePreserveBareAnchorPlaceholders,
   rehypeRaw,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
@@ -631,6 +685,36 @@ function remarkPreserveCodeMeta() {
 
     visit(tree);
   };
+}
+
+interface DestinationCompileContext {
+  readonly stack: ReadonlyArray<{ readonly type: string; url?: string }>;
+  resume(): string;
+  sliceSerialize(token: unknown): string;
+}
+
+function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
+  const decoded = this.resume();
+  const authored = this.sliceSerialize(token);
+  const node = this.stack.at(-1);
+  // Character references still need decoding, so those destinations keep the parsed URL.
+  if (node)
+    node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
+}
+
+/**
+ * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape, even in a link
+ * destination. Every backslash in a Windows path is a separator, so link, image, and
+ * definition destinations that are Windows paths keep the text as written.
+ */
+function remarkKeepWindowsPathDestinations(this: Processor) {
+  const data = this.data();
+  (data.fromMarkdownExtensions ??= []).push({
+    exit: {
+      resourceDestinationString: keepWindowsPathDestination,
+      definitionDestinationString: keepWindowsPathDestination,
+    },
+  });
 }
 
 /**

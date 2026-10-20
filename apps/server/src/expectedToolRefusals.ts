@@ -43,6 +43,9 @@ export const EXPECTED_TOOL_REFUSAL_TAGS: ReadonlySet<string> = new Set([
 const CALLER_INPUT_ERROR_TAGS: ReadonlySet<string> = new Set([
   "McpCapabilityUnavailableError",
   "PreviewAutomationUnavailableError",
+  // A browser action that ran out of time: the bot is told and can retry, so it
+  // is one WARN line, not an ERROR that trips the release runner's scan.
+  "PreviewAutomationTimeoutError",
 ]);
 
 /** Longest schema message kept in the log line; the arguments themselves never go in. */

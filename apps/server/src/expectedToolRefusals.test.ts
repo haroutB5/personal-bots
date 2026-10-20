@@ -97,6 +97,23 @@ describe("expected tool refusals in the log", () => {
     }),
   );
 
+  it.effect("a browser action timeout is one WARN line without a stack", () =>
+    Effect.gen(function* () {
+      const lines = yield* logged(
+        toolFailed(
+          new Refusal("PreviewAutomationTimeoutError", "The page did not respond in time."),
+        ),
+      );
+      expect(lines).toEqual([
+        {
+          level: "Warn",
+          text: "tool call refused: PreviewAutomationTimeoutError: The page did not respond in time.",
+          hasCause: false,
+        },
+      ]);
+    }),
+  );
+
   it.effect("a login mismatch and an untrusted certificate are refusals too", () =>
     Effect.gen(function* () {
       const lines = yield* logged(
