@@ -19,6 +19,7 @@ import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
+  resolveAntigravityModel,
 } from "./AntigravityAcpSupport.ts";
 
 const modelConfig = {
@@ -48,6 +49,32 @@ function makeModelRuntime(
 }
 
 describe("applyAntigravityAcpModelSelection", () => {
+  it.effect(
+    "maps each Gemini effort to its native ID and keeps unsuffixed saved bots unchanged",
+    () =>
+      Effect.gen(function* () {
+        for (const base of ["gemini-4-argon", "gemini-3.8-flash"]) {
+          // 1.4's model option contains the family, not the concrete IDs.
+          const config = {
+            ...modelConfig,
+            currentValue: base,
+            options: [{ value: base, name: base }],
+          };
+          expect(resolveAntigravityModel({ model: base, configOptions: [config] })).toBe(base);
+          for (const effort of ["low", "medium", "high"]) {
+            const { runtime, selections } = makeModelRuntime([config]);
+            const model = yield* applyAntigravityAcpModelSelection({
+              runtime,
+              model: base,
+              options: [{ id: "effort", value: effort }],
+              mapError: (cause) => cause,
+            });
+            expect(model).toBe(`${base}-${effort}`);
+            expect(selections).toEqual([`${base}-${effort}`]);
+          }
+        }
+      }),
+  );
   it.effect("restores the saved model instead of the cold-resume default", () =>
     Effect.gen(function* () {
       const { runtime, selections } = makeModelRuntime();

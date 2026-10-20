@@ -754,6 +754,13 @@ export const makeWith = (
           (provider.models.find((candidate) => candidate.isDefault === true) ?? provider.models[0])
             ?.slug;
         if (model === undefined) return yield* refuse("There is no model to test with.");
+        if (
+          model.trimStart().startsWith("-") ||
+          !provider.models.some(
+            (candidate) => candidate.slug === model || candidate.aliases?.includes(model),
+          )
+        )
+          return yield* refuse("Choose a model listed by this provider.");
         const nowMs = yield* Clock.currentTimeMillis;
         const previous = yield* readVerdict(provider, nowMs);
         yield* cancelRetry(provider.instanceId);

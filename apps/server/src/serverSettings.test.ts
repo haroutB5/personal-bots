@@ -78,6 +78,56 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("redacts OpenCode passwords and preserves them when the phone saves other fields", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const id = ProviderInstanceId.make("opencode");
+      const saved = yield* service.updateSettings({
+        providers: { opencode: { serverPassword: "fake-legacy-password" } },
+        providerInstances: {
+          [id]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverPassword: "fake-instance-password" },
+          },
+        },
+      });
+      const client = ServerSettingsModule.redactServerSettingsForClient(saved);
+      assert.notInclude(JSON.stringify(client), "fake-instance-password");
+      assert.notInclude(JSON.stringify(client), "fake-legacy-password");
+      const instance = client.providerInstances[id];
+      assert.isDefined(instance);
+      const updated = yield* service.updateSettings({
+        providers: client.providers,
+        providerInstances: {
+          [id]: {
+            ...instance!,
+            driver: ProviderDriverKind.make("opencode"),
+            config: {
+              ...instance!.config,
+              serverUrl: "http://127.0.0.1:4096",
+            },
+          },
+        },
+      });
+      assert.equal(updated.providers.opencode.serverPassword, "fake-legacy-password");
+      const config = updated.providerInstances[id]?.config as { serverPassword?: string };
+      assert.equal(config.serverPassword, "fake-instance-password");
+      const cleared = yield* service.updateSettings({
+        providerInstances: {
+          [id]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverPassword: "" },
+          },
+        },
+      });
+      const clearedClient = ServerSettingsModule.redactServerSettingsForClient(cleared);
+      assert.equal(
+        (clearedClient.providerInstances[id]?.config as { serverPassword?: string } | undefined)
+          ?.serverPassword,
+        "",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
       _tag: "PermissionDenied",

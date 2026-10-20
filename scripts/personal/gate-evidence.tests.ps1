@@ -150,6 +150,7 @@ try {
     Assert-Equal 'gate-evidence.json sits next to the staged release' $true (Test-Path -LiteralPath $jsonPath)
     $ev = Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json
     Assert-Equal 'it records the full commit' $fx.Sha $ev.sha
+    Assert-Equal 'startedAt retains millisecond precision for the seal guard' $true ($ev.startedAt -match '\.\d{3}Z$')
     Assert-Equal 'it records the clean tree' $true $ev.treeClean
     Assert-Equal 'it records five gates' 5 @($ev.gates).Count
     $vit = @($ev.gates | Where-Object { $_.id -eq 'server-tests' })[0]

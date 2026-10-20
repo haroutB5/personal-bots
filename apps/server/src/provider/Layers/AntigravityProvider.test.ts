@@ -169,7 +169,14 @@ describe("Antigravity model catalog", () => {
         .filter((model) => model.aliases?.includes(ANTIGRAVITY_DEFAULT_MODEL))
         .map((model) => model.slug),
     ).toEqual(["gemini-3.7-flash-high"]);
-    expect(models.every((model) => model.capabilities?.optionDescriptors?.length === 0)).toBe(true);
+    expect(
+      models
+        .slice(0, 3)
+        .every((model) => model.capabilities?.optionDescriptors?.[0]?.id === "effort"),
+    ).toBe(true);
+    expect(
+      models.slice(3).every((model) => model.capabilities?.optionDescriptors?.length === 0),
+    ).toBe(true);
     expect(models.every((model) => !model.isCustom)).toBe(true);
   });
 

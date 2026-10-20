@@ -59,7 +59,17 @@ export type OpenInDefaultBrowser = (url: string) => Effect.Effect<void, DefaultB
 
 export const isHttpsUrl = (value: string): boolean => {
   try {
-    return new URL(value).protocol === "https:";
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "accounts.google.com" &&
+      url.pathname === "/o/oauth2/v2/auth" &&
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      value.length <= 16_384 &&
+      !/\s/u.test(value)
+    );
   } catch {
     return false;
   }
@@ -75,7 +85,7 @@ export function makeOpenInDefaultBrowser(
       // oxlint-disable-next-line t3code/no-global-process-runtime -- the host platform picks the OS URL handler; tests inject it.
       const platform = deps.platform ?? NodeOS.platform();
       const launch = buildDefaultBrowserLaunch(
-        url,
+        new URL(url).href,
         platform,
         platform === "win32" ? resolveWindowsSystemTool(["rundll32.exe"]) : undefined,
       );

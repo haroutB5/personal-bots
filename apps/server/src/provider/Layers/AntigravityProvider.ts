@@ -42,7 +42,7 @@ type SessionSetupResult = Pick<
   "configOptions" | "models"
 >;
 
-/** Keep the native model IDs, including model-specific thinking levels. */
+/** Native families expose thinking levels through the shared effort descriptor. */
 export function buildAntigravityModelsFromSession(
   setup: SessionSetupResult,
 ): ReadonlyArray<ServerProviderModel> {
@@ -61,9 +61,15 @@ export function buildAntigravityModelsFromSession(
           })) ?? [])
         : [];
   const seen = new Set<string>();
+  const thinking = setup.configOptions?.find((option) => option.id === "thinking_level");
   return entries.flatMap((entry): ServerProviderModel[] => {
     if (!entry.value.trim() || seen.has(entry.value)) return [];
     seen.add(entry.value);
+    const defaultEffort =
+      entry.value.match(/-(low|medium|high)$/u)?.[1] ??
+      (entry.value === currentValue && thinking?.type === "select"
+        ? thinking.currentValue
+        : "high");
     return [
       {
         slug: entry.value,
@@ -72,7 +78,22 @@ export function buildAntigravityModelsFromSession(
         ...(entry.value === currentValue
           ? { isDefault: true, aliases: [ANTIGRAVITY_DEFAULT_MODEL] }
           : {}),
-        capabilities: EMPTY_MODEL_CAPABILITIES,
+        capabilities: /^gemini-(?:4-argon|3\.8-flash)(?:-(?:low|medium|high))?$/u.test(entry.value)
+          ? createModelCapabilities({
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Effort",
+                  type: "select",
+                  options: ["low", "medium", "high"].map((id) => ({
+                    id,
+                    label: id[0]!.toUpperCase() + id.slice(1),
+                    ...(id === defaultEffort ? { isDefault: true } : {}),
+                  })),
+                },
+              ],
+            })
+          : EMPTY_MODEL_CAPABILITIES,
       },
     ];
   });

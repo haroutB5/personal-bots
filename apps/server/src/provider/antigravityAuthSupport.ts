@@ -18,7 +18,11 @@ import * as AcpErrors from "effect-acp/errors";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import type { AcpSpawnInput } from "./acp/AcpSessionRuntime.ts";
-import { terminateDescendants, type TerminatedDescendants } from "./processTree.ts";
+import {
+  processStartTime,
+  terminateDescendants,
+  type TerminatedDescendants,
+} from "./processTree.ts";
 import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
@@ -461,18 +465,26 @@ export interface AntigravityLauncherTree {
  */
 export function makeAntigravityLauncherTree(
   onProcessStarted?: (pid: number) => Effect.Effect<void>,
-  end: (pid: number) => Effect.Effect<TerminatedDescendants> = terminateDescendants,
+  end: (
+    pid: number,
+    expectedCreatedAtMs: number,
+  ) => Effect.Effect<TerminatedDescendants> = terminateDescendants,
+  readStartTime: (pid: number) => Effect.Effect<number | null> = processStartTime,
 ): AntigravityLauncherTree {
   let launcherPid: number | undefined;
+  let launcherStartedAt: number | null = null;
   return {
     onProcessStarted: (pid) =>
-      Effect.suspend(() => {
+      Effect.gen(function* () {
         launcherPid = pid;
-        return onProcessStarted?.(pid) ?? Effect.void;
+        launcherStartedAt = yield* readStartTime(pid);
+        yield* onProcessStarted?.(pid) ?? Effect.void;
       }),
-    terminate: Effect.suspend(() =>
-      launcherPid === undefined ? Effect.void : end(launcherPid).pipe(Effect.asVoid),
-    ),
+    terminate: Effect.gen(function* () {
+      if (launcherPid === undefined || launcherStartedAt === null) return;
+      if ((yield* readStartTime(launcherPid)) !== launcherStartedAt) return;
+      yield* end(launcherPid, launcherStartedAt);
+    }),
   };
 }
 

@@ -404,14 +404,19 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)
                 : fresh.update;
+            const recordedPreviousVersion = (yield* providerRegistry.getProviders).find(
+              (candidate) => candidate.instanceId === instanceId,
+            )?.smokeCheck?.previousVersion;
             const rejected =
-              targetVersion !== undefined
-                ? !command ||
-                  (rollback
-                    ? advisory?.status === "broken" || advisory?.status === "unsupported"
-                    : advisory?.recommendedVersion !== targetVersion ||
-                      advisory.status !== "supported")
-                : advisory?.status === "broken" || advisory?.status === "unsupported";
+              rollback && (targetVersion === undefined || targetVersion !== recordedPreviousVersion)
+                ? true
+                : targetVersion !== undefined
+                  ? !command ||
+                    (rollback
+                      ? advisory?.status === "broken" || advisory?.status === "unsupported"
+                      : advisory?.recommendedVersion !== targetVersion ||
+                        advisory.status !== "supported")
+                  : advisory?.status === "broken" || advisory?.status === "unsupported";
             if (rejected || !command) {
               return yield* finish(
                 makeUpdateState({

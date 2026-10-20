@@ -798,6 +798,26 @@ it.effect("Test runs on the default model with no bots, and records model and du
   }).pipe(Effect.scoped),
 );
 
+it.effect("Test refuses unlisted models and option-like aliases before any smoke run", () =>
+  Effect.gen(function* () {
+    const { state, deps } = makeHarness();
+    state.bots = [];
+    state.providers = state.providers.map((provider) => ({
+      ...provider,
+      models: [{ ...modelEntry("claude-sonnet-5-5", true), aliases: ["sonnet", "--unsafe"] }],
+    }));
+    const service = yield* makeWith(deps);
+    for (const model of ["unlisted-model", "--unsafe", " -flag"]) {
+      const error = yield* Effect.flip(service.testRun({ instanceId: CLAUDE, model }));
+      assert.include(error.message, "listed");
+    }
+    assert.deepEqual(state.smokeModels, []);
+    yield* service.testRun({ instanceId: CLAUDE, model: "sonnet" });
+    yield* service.drainChecks;
+    assert.deepEqual(state.smokeModels, ["sonnet"]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("a failed Test is the owner's test: no push, no previous version", () =>
   Effect.gen(function* () {
     const { state, deps } = makeHarness();

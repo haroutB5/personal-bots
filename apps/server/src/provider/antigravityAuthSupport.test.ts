@@ -346,6 +346,7 @@ describe("Antigravity launcher process tree", () => {
       const tree = makeAntigravityLauncherTree(
         (pid) => Effect.sync(() => void order.push(`outer-${pid}`)),
         (pid) => Effect.sync(() => (order.push(`terminate-${pid}`), ended)),
+        () => Effect.succeed(123),
       );
       // Same order as AntigravityDriver.makeRuntime: temp dir, runtime, tree.
       const scope = yield* Scope.make();
@@ -370,6 +371,22 @@ describe("Antigravity launcher process tree", () => {
       const tree = makeAntigravityLauncherTree(undefined, (pid) =>
         Effect.sync(() => (calls.push(pid), ended)),
       );
+      yield* tree.terminate;
+      expect(calls).toEqual([]);
+    }),
+  );
+
+  it.effect.each([null, 456])("skips a vanished or reused launcher (%s)", (current) =>
+    Effect.gen(function* () {
+      const calls: number[] = [];
+      let time: number | null = 123;
+      const tree = makeAntigravityLauncherTree(
+        undefined,
+        (pid) => Effect.sync(() => (calls.push(pid), ended)),
+        () => Effect.succeed(time),
+      );
+      yield* tree.onProcessStarted(4242);
+      time = current;
       yield* tree.terminate;
       expect(calls).toEqual([]);
     }),
@@ -707,10 +724,11 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
   );
 
   // Junctions on Windows, symlinks elsewhere; the former need no privilege.
-  it.effect.skipIf(!symlinksSupported && process.platform !== "win32")(
+  it.effect(
     "links only skill directories that exist and never creates folders in the user's home",
     () =>
       Effect.gen(function* () {
+        if (!symlinksSupported && (yield* HostProcessPlatform) !== "win32") return;
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const temporaryDirectory = yield* fs.makeTempDirectoryScoped();

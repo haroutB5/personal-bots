@@ -155,6 +155,18 @@ export function parseWindowsSnapshot(text: string): ProcessEntry[] {
 export function parsePosixSnapshot(text: string): ProcessEntry[] {
   const out: ProcessEntry[] = [];
   for (const line of text.split(/\r?\n/)) {
+    const dated =
+      /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/u.exec(line);
+    if (dated) {
+      const started = Date.parse(dated[3]!);
+      out.push({
+        pid: Number(dated[1]),
+        parentPid: Number(dated[2]),
+        name: dated[4]!.trim(),
+        createdAtMs: Number.isFinite(started) ? started : null,
+      });
+      continue;
+    }
     const match = /^\s*(\d+)\s+(\d+)\s*(.*)$/.exec(line);
     if (match === null) continue;
     out.push({
@@ -181,11 +193,17 @@ export async function listProcesses(
     );
     return result.code === 0 ? parseWindowsSnapshot(result.stdout) : null;
   }
-  const result = await exec("ps", ["-A", "-o", "pid=,ppid=,comm="], 15_000);
+  const result = await exec("ps", ["-A", "-o", "pid=,ppid=,lstart=,comm="], 15_000);
   return result.code === 0 ? parsePosixSnapshot(result.stdout) : null;
 }
 
 const snapshotProcesses = Effect.promise(() => listProcesses());
+
+/** Identity of a captured launcher, never inferred from a process name. */
+export const processStartTime = (pid: number): Effect.Effect<number | null> =>
+  snapshotProcesses.pipe(
+    Effect.map((snapshot) => snapshot?.find((entry) => entry.pid === pid)?.createdAtMs ?? null),
+  );
 
 const killOne = (pid: number) =>
   Effect.promise(async (): Promise<boolean> => {
@@ -218,13 +236,22 @@ export interface TerminatedDescendants {
  * own way, so the provider can flush its transcript). Parents go first so a
  * shell cannot start a replacement for a child just killed.
  */
-export const terminateDescendants = (rootPid: number): Effect.Effect<TerminatedDescendants> =>
+export const terminateDescendants = (
+  rootPid: number,
+  expectedCreatedAtMs?: number,
+): Effect.Effect<TerminatedDescendants> =>
   Effect.gen(function* () {
     if (!Number.isInteger(rootPid) || rootPid <= 4 || rootPid === process.pid) {
       return { rootPid, found: [], killed: [], snapshotFailed: false };
     }
     const snapshot = yield* snapshotProcesses;
     if (snapshot === null) return { rootPid, found: [], killed: [], snapshotFailed: true };
+    if (
+      expectedCreatedAtMs !== undefined &&
+      snapshot.find((entry) => entry.pid === rootPid)?.createdAtMs !== expectedCreatedAtMs
+    ) {
+      return { rootPid, found: [], killed: [], snapshotFailed: false };
+    }
     const found = descendantsOf(snapshot, rootPid);
     const killed: number[] = [];
     for (const entry of found) {

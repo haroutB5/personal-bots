@@ -1,4 +1,5 @@
 import * as NodeOS from "node:os";
+import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -98,6 +99,29 @@ it.layer(NodeServices.layer)("DeepSeekEnvironment", (it) => {
         expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe("1");
         expect(env.DISABLE_TELEMETRY).toBe("1");
       }),
+    );
+
+    it.effect(
+      "the Claude engine's key can be inherited by a tool shell, so UI copy must not promise isolation",
+      () =>
+        Effect.gen(function* () {
+          const environment = yield* makeDeepSeekEnvironment(
+            { engine: "dsh", homePath: "" },
+            {
+              ANTHROPIC_AUTH_TOKEN: "throwaway-key-not-a-secret",
+              PERSONAL_DEEPSEEK_ENGINE: "claude-code",
+            },
+          );
+          const result = NodeChildProcess.execFileSync(
+            process.execPath,
+            [
+              "-e",
+              "process.stdout.write(String(process.env.ANTHROPIC_AUTH_TOKEN === 'throwaway-key-not-a-secret'))",
+            ],
+            { env: environment, windowsHide: true, encoding: "utf8" },
+          );
+          expect(result).toBe("true");
+        }),
     );
 
     it.effect("the harness engine gets no Claude CLI switches", () =>

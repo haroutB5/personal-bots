@@ -5,6 +5,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderSendTurnInput,
   type RuntimeMode,
+  type ProviderOptionSelections,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -105,7 +106,20 @@ export function antigravityModelOptions(
 ) {
   const model = configOptions.find((option) => option.id === "model");
   if (model?.type !== "select") return [];
-  return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
+  const entries = model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
+  // Runtime 1.4 groups these native IDs into a family in configOptions.
+  // setModel still accepts the concrete IDs and validates account availability.
+  return entries.flatMap((entry) =>
+    /^gemini-(?:4-argon|3\.8-flash)$/u.test(entry.value)
+      ? [
+          entry,
+          ...["low", "medium", "high"].map((effort) => ({
+            ...entry,
+            value: `${entry.value}-${effort}`,
+          })),
+        ]
+      : [entry],
+  );
 }
 
 /**
@@ -118,10 +132,22 @@ export function resolveAntigravityModel(input: {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly model: string | null | undefined;
   readonly defaultModel?: string | undefined;
+  readonly options?: ProviderOptionSelections | undefined;
 }): string | undefined {
   const modelConfig = input.configOptions.find((option) => option.id === "model");
   const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
-  if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) return input.model;
+  if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) {
+    const effort = input.options?.find((option) => option.id === "effort")?.value;
+    if (
+      /^gemini-(?:4-argon|3\.8-flash)(?:-(?:low|medium|high))?$/u.test(input.model) &&
+      (effort === "low" || effort === "medium" || effort === "high")
+    ) {
+      return `${input.model.replace(/-(low|medium|high)$/u, "")}-${effort}`;
+    }
+    // No effort means exactly the previously saved native selection, including
+    // Google's unsuffixed alias. Never silently promote an existing bot.
+    return input.model;
+  }
   const options = antigravityModelOptions(input.configOptions);
   return input.defaultModel && options.some((option) => option.value === input.defaultModel)
     ? input.defaultModel
@@ -136,6 +162,7 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       "getConfigOptions" | "setModel"
     >;
     readonly model: string | null | undefined;
+    readonly options?: ProviderOptionSelections | undefined;
     /** Model to select for the provider default alias. See `resolveAntigravityModel`. */
     readonly defaultModel?: string | undefined;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
@@ -146,6 +173,7 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
     const resolved = resolveAntigravityModel({
       configOptions,
       model: input.model,
+      options: input.options,
       defaultModel: input.defaultModel,
     });
     // The default alias never sends an internal ID. It selects the manifest

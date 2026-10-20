@@ -204,7 +204,7 @@ export function ProviderKeyEntry({
         </button>
       </div>
       <p className="mt-2 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-        Saved privately on your laptop and never shown again. Bots never see it.
+        Saved on your laptop and hidden in settings. The provider uses it to connect to DeepSeek.
       </p>
       {check !== null && check.tone === "pending" ? (
         <p role="status" className="mt-2 text-[13px] text-[var(--personal-text-secondary)]">

@@ -28,11 +28,34 @@ it.effect("launches an https link once and refuses other schemes", () =>
     yield* open(url);
     assert.deepEqual(launches, [{ command: "xdg-open", args: [url] }]);
 
-    for (const refused of ["http://accounts.google.com/", "file:///C:/x", "javascript:1", "nope"]) {
+    for (const refused of [
+      "http://accounts.google.com/",
+      "file:///C:/x",
+      "javascript:1",
+      "nope",
+      "https://evil.example/o/oauth2/v2/auth",
+      "https://accounts.google.com.evil.example/o/oauth2/v2/auth",
+      "https://accounts.google.com/other",
+      "https://user@accounts.google.com/o/oauth2/v2/auth",
+      `${url} bad`,
+      `${url}${"a".repeat(16_384)}`,
+    ]) {
       const error = yield* open(refused).pipe(Effect.flip);
       assert.equal(error.reason, "not-https");
     }
     assert.equal(launches.length, 1);
+  }),
+);
+
+it.effect("canonicalizes quotes before handing a URL to the OS", () =>
+  Effect.gen(function* () {
+    const launches: DefaultBrowserLaunch[] = [];
+    const open = makeOpenInDefaultBrowser({
+      platform: "win32",
+      spawn: (launch) => Promise.resolve(void launches.push(launch)),
+    });
+    yield* open(`${url}&quoted="value"`);
+    assert.equal(launches[0]?.args[1], `${url}&quoted=%22value%22`);
   }),
 );
 

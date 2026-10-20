@@ -191,6 +191,7 @@ export function buildCodexSmokeTestArgs(input: {
   readonly model: string;
   readonly skillFiles: ReadonlyArray<string>;
 }): ReadonlyArray<string> {
+  assertSmokeModelArgument(input.model);
   return [
     "exec",
     ...codexExecLaunchArgs(input.launchArgs),
@@ -318,7 +319,14 @@ export function openCodeSmokeTestEnvironment(input: {
 export function buildOpenCodeSmokeTestArgs(input: {
   readonly model: string;
 }): ReadonlyArray<string> {
+  assertSmokeModelArgument(input.model);
   return ["run", "-m", input.model, "--format", "json", SMOKE_TEST_PROMPT];
+}
+
+function assertSmokeModelArgument(model: string): void {
+  if (!model.trim() || model.trimStart().startsWith("-")) {
+    throw new Error("A smoke test model must be a model ID, not an option.");
+  }
 }
 
 const decodeJsonLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));

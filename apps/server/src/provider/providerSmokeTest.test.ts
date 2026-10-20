@@ -15,6 +15,13 @@ import {
 const result = (fields: Record<string, unknown>) =>
   ({ type: "result", duration_ms: 1, is_error: false, ...fields }) as unknown as SDKMessage;
 
+it.each(["--help", " -unsafe", ""])("never passes option-like model %j to either CLI", (model) => {
+  expect(() => buildCodexSmokeTestArgs({ model, launchArgs: undefined, skillFiles: [] })).toThrow(
+    "model ID",
+  );
+  expect(() => buildOpenCodeSmokeTestArgs({ model })).toThrow("model ID");
+});
+
 describe("Claude smoke test options", () => {
   it("uses the personal-bot isolation: no settings files, no MCP, no tools, one turn", () => {
     const options = buildClaudeSmokeTestQueryOptions({

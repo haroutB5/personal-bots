@@ -164,16 +164,61 @@ function redactProviderEnvironmentVariable(
   };
 }
 
+const OPENCODE_PASSWORD_REDACTED = "[redacted]";
+
+/** Restore only the sentinel; an explicit empty string still clears a password. */
+export function restoreRedactedOpenCodePasswords(
+  current: ServerSettings,
+  next: ServerSettings,
+): ServerSettings {
+  return {
+    ...next,
+    providers: {
+      ...next.providers,
+      opencode: {
+        ...next.providers.opencode,
+        ...(next.providers.opencode.serverPassword === OPENCODE_PASSWORD_REDACTED
+          ? { serverPassword: current.providers.opencode.serverPassword }
+          : {}),
+      },
+    },
+    providerInstances: Object.fromEntries(
+      Object.entries(next.providerInstances).map(([id, instance]) => {
+        if (
+          instance.driver !== "opencode" ||
+          instance.config?.serverPassword !== OPENCODE_PASSWORD_REDACTED
+        )
+          return [id, instance];
+        const previous = current.providerInstances[ProviderInstanceId.make(id)];
+        return [
+          id,
+          {
+            ...instance,
+            config: {
+              ...instance.config,
+              serverPassword:
+                previous?.driver === "opencode" ? (previous.config?.serverPassword ?? "") : "",
+            },
+          },
+        ];
+      }),
+    ) as ServerSettings["providerInstances"],
+  };
+}
+
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
       instanceId,
-      instance.environment
-        ? {
-            ...instance,
-            environment: instance.environment.map(redactProviderEnvironmentVariable),
-          }
-        : instance,
+      {
+        ...instance,
+        ...(instance.environment
+          ? { environment: instance.environment.map(redactProviderEnvironmentVariable) }
+          : {}),
+        ...(instance.driver === "opencode" && instance.config?.serverPassword
+          ? { config: { ...instance.config, serverPassword: OPENCODE_PASSWORD_REDACTED } }
+          : {}),
+      },
     ]),
   );
   // The hub key is a bearer secret; clients only need to know one is set.
@@ -186,7 +231,20 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       },
     ]),
   );
-  return { ...settings, providerInstances, usageLimitSources };
+  return {
+    ...settings,
+    providerInstances,
+    usageLimitSources,
+    providers: {
+      ...settings.providers,
+      opencode: {
+        ...settings.providers.opencode,
+        ...(settings.providers.opencode.serverPassword
+          ? { serverPassword: OPENCODE_PASSWORD_REDACTED }
+          : {}),
+      },
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -946,7 +1004,10 @@ const make = Effect.gen(function* () {
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
-        const updated = applyServerSettingsPatch(current, patch);
+        const updated = restoreRedactedOpenCodePasswords(
+          current,
+          applyServerSettingsPatch(current, patch),
+        );
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>

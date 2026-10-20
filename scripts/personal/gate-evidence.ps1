@@ -282,7 +282,7 @@ if ($Merge -and (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
 if ($start.Dirty.Count -gt 0) {
     Write-Warning ("Tracked files are modified ({0}): the evidence is recorded with treeClean=false and the release will be refused. Commit first." -f (($start.Dirty | Select-Object -First 3) -join '; '))
 }
-$startedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+$startedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
 Write-Host ("Gate evidence for {0} (release {1}, commit {2}): {3}" -f $Version, $releaseName, $releaseSha.Substring(0, 12), ($selected -join ', '))
 
 $results = @()

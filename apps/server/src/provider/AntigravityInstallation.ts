@@ -32,9 +32,9 @@ import * as Yauzl from "yauzl";
 
 import { ServerConfig } from "../config.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
-import { terminateDescendants } from "./processTree.ts";
 import {
   buildAntigravityAcpSpawnInput,
+  makeAntigravityLauncherTree,
   prepareAntigravityProfile,
 } from "./antigravityAuthSupport.ts";
 import {
@@ -536,7 +536,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           // root keeps it under Windows' path limit.
           tempDirectory: profileDirectory,
         });
-        let launcherPid: number | undefined;
+        const launcherTree = makeAntigravityLauncherTree();
         const runtime = yield* makeAntigravityAcpRuntime({
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
@@ -547,20 +547,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           cwd: profileDirectory,
           childProcessSpawner: spawner,
           clientInfo: { name: "t3-code", version: "0.0.0" },
-          onProcessStarted: (pid) =>
-            Effect.sync(() => {
-              launcherPid = pid;
-            }),
+          onProcessStarted: launcherTree.onProcessStarted,
         });
         // The runtime is a launcher plus a child it starts. Stopping the
         // launcher leaves the child running on Windows, holding files in the
         // folders above, so end the child first, while the launcher still
         // links to it. Added after the runtime, so it runs before its stop.
-        yield* Effect.addFinalizer(() =>
-          launcherPid === undefined
-            ? Effect.void
-            : terminateDescendants(launcherPid).pipe(Effect.asVoid),
-        );
+        yield* Effect.addFinalizer(() => launcherTree.terminate);
         const initialized = yield* runtime.initialize();
         if (
           initialized.agentInfo?.name !== "antigravity-acp" ||

@@ -1058,6 +1058,27 @@ it.effect("Go back installs an older pinned version unless the manifest marks it
       targetVersion: "1.0.0",
     });
     assert.strictEqual(refused.providers[0]?.updateState?.status, "failed");
+    // A rollback must match the server's record, even if a version is otherwise safe.
+    for (const targetVersion of [undefined, "1.0.0", "1.2.0"]) {
+      const unrecorded = yield* updater.updateProvider({
+        provider: CODEX_DRIVER,
+        ...(targetVersion ? { targetVersion } : {}),
+        rollback: true,
+      });
+      assert.strictEqual(unrecorded.providers[0]?.updateState?.status, "failed");
+    }
+    yield* Ref.update(providersRef, (providers) =>
+      providers.map((entry) => ({
+        ...entry,
+        smokeCheck: {
+          status: "failed" as const,
+          version: "2.0.0",
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          message: "Test failed",
+          previousVersion: "1.5.0",
+        },
+      })),
+    );
     // ... a version the manifest marks broken is refused even as a rollback ...
     const broken = yield* updater.updateProvider({
       provider: CODEX_DRIVER,
@@ -1068,7 +1089,17 @@ it.effect("Go back installs an older pinned version unless the manifest marks it
     assert.deepStrictEqual(calls, []);
     // ... and Go back installs the older one.
     yield* Ref.update(providersRef, (providers) =>
-      providers.map((entry) => ({ ...entry, version: "1.0.0" })),
+      providers.map((entry) => ({
+        ...entry,
+        version: "1.0.0",
+        smokeCheck: {
+          status: "failed" as const,
+          version: "2.0.0",
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          message: "Test failed",
+          previousVersion: "1.0.0",
+        },
+      })),
     );
     const back = yield* updater.updateProvider({
       provider: CODEX_DRIVER,
