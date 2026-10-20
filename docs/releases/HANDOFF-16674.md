@@ -172,9 +172,9 @@ Resume this same task. The external evidence script
 `C:/Users/Ht/.personal-bots/qa/hbots-stability-20261020/rebuild-and-gate-16674.ps1`
 performs full `build.ps1 -CopyExternals`, asserts the staged server's
 Antigravity bot contract, then runs all default `gate-evidence.ps1` gates
-under one outer heavy-job lock. It currently pins source candidate
-`f3ddcefc5f42`; after these docs-only commits, update the script's release
-argument to the new HEAD before building, since build.ps1 stages HEAD.
+under one outer heavy-job lock. It resolves the clean current HEAD before
+building and gates that exact staged release, so docs-only checkpoint
+commits do not require manual changes to the release argument.
 Then finish the generated gate notes, run the notes/evidence guards, commit
 docs only, push and report the valid staged sha12. QA risky follows; DevOps
 ships. Pipeline log: `release-16674-pipeline.log`; initial invalid build
