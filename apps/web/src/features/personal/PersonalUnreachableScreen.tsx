@@ -1,4 +1,5 @@
 import type { JSX } from "react";
+import { useEffect, useRef } from "react";
 
 import { WifiOff } from "lucide-react";
 
@@ -12,6 +13,36 @@ import { useOutboxCount } from "./outbox";
  * Rendered by the root error boundary for personal paths only.
  */
 export function PersonalUnreachableScreen({ onRetry }: { onRetry: () => void }): JSX.Element {
+  const retry = useRef(onRetry);
+  useEffect(() => {
+    retry.current = onRetry;
+  }, [onRetry]);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("bots:origin-recovery") === "off") return;
+    } catch {
+      /* Storage may be unavailable. */
+    }
+    let delay = 2_000;
+    let timer: ReturnType<typeof setTimeout>;
+    const attempt = () => {
+      clearTimeout(timer);
+      if (document.visibilityState !== "hidden" && navigator.onLine !== false) retry.current();
+      delay = Math.min(delay * 2, 30_000);
+      timer = setTimeout(attempt, delay);
+    };
+    const visible = () => {
+      if (document.visibilityState === "visible") attempt();
+    };
+    timer = setTimeout(attempt, delay);
+    window.addEventListener("online", attempt);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("online", attempt);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, []);
   // Messages typed while the laptop was away are still on this device (outbox.ts):
   // say so, because the app closing and opening again must not look like losing them.
   const waiting = useOutboxCount();
@@ -22,10 +53,9 @@ export function PersonalUnreachableScreen({ onRetry }: { onRetry: () => void }):
         className="flex max-w-[360px] flex-col items-center gap-3 text-[var(--personal-text)]"
       >
         <WifiOff aria-hidden="true" className="size-8" strokeWidth={1.5} />
-        <h1 className="text-[19px] font-bold">Laptop offline</h1>
+        <h1 className="text-[19px] font-bold">Reconnecting to your laptop</h1>
         <p className="text-[15px] leading-[1.45] text-[var(--personal-text-secondary)]">
-          Bots could not reach your laptop. Check it is on and online, and that this phone has a
-          connection.
+          Bots is waiting for your laptop to respond. We’ll keep trying automatically.
         </p>
         {waiting > 0 ? (
           <p className="text-[15px] leading-[1.45] font-medium">{offlineBannerHint(waiting)}</p>
