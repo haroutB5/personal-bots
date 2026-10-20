@@ -16,6 +16,8 @@
 //   text is streamed first (message_start, content_block_*), as the real CLI sends it.
 //   TABLEMSG  a markdown table wider than a 390 px phone.   TABLEFIT  a table that fits the screen.
 //   WIDECODE  an unwrapped code block wider than a phone (the sideways-scroll checks drag them).
+//   MDFIX  markdown the upstream-pick fixes cover: a wide ordered-list marker, model ids in inline code,
+//     a bare <A> placeholder, and a link and image whose destination is a Windows path.
 //   DELEGATE:<botId>  calls the delegate_task MCP tool (not on a [Task continuation] turn, which quotes
 //     the request).   TASKDONE  answers a delegated task.
 //   MCPTOOL <name> <one-line json>  calls any MCP tool the bot has (update_bot, create_bot, ...) and
@@ -508,6 +510,28 @@ lines.on("line", async (line) => {
     // A table that fits the screen: the message's own swipe must still work on it.
     assistant(
       `A small one.\n\n| Step | State |\n| --- | --- |\n| Build | done |\n| Smoke | ok |\n`,
+    );
+    finish("ok", false);
+    return;
+  }
+  if (text.includes("MDFIX")) {
+    assistant(
+      `Markdown check.
+
+98. ninety-eight
+99. ninety-nine
+100. one hundred
+
+Model ids: \`glm-5.3\` and \`Qwen2.5-Coder\`, and a real file \`src/app.ts\`.
+
+Placeholder <A> stays plain text.
+
+Text after the placeholder.
+
+[the log](C:\\Users\\me\\.t3\\log.txt)
+
+![shot](C:\\Users\\me\\.t3\\shot.png)
+`,
     );
     finish("ok", false);
     return;
