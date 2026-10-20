@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -79,7 +80,7 @@ describe("bootstrap origin recovery", () => {
       const descriptor: ExecutionEnvironmentDescriptor = {
         environmentId: EnvironmentId.make("fixture"),
         label: "Fixture",
-        platform: { os: "win32", arch: "x64" },
+        platform: { os: "windows", arch: "x64" },
         serverVersion: "fixture",
         capabilities: { repositoryIdentity: true },
       };
@@ -93,7 +94,7 @@ describe("bootstrap origin recovery", () => {
       await vi.advanceTimersByTimeAsync(16_000);
       const error = await result;
       expect(error).toBeInstanceOf(PrimaryEnvironmentRequestError);
-      if (!(error instanceof PrimaryEnvironmentRequestError))
+      if (!Schema.is(PrimaryEnvironmentRequestError)(error))
         throw new Error("Expected descriptor error");
       expect(error.operation).toBe("fetch-environment-descriptor");
       expect(error.unreachable).toBe(true);

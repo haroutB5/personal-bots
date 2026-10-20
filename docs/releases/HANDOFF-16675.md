@@ -105,14 +105,15 @@ commits on that branch are docs, the 1.66.73 merge and its version bump only). T
   online / visible events) instead of the crash page; the screen now reads "Reconnecting to your
   laptop" (it said "Laptop offline") and keeps the queued-message line. HTTP 400/401/403/500 and
   schema errors still show. Device rollback: `localStorage['bots:origin-recovery'] = 'off'`.
-- **Live evidence (CTO, `server-20261020.log`)**: 69 event-loop stalls, maximum 66.6 s, in the 70 minutes
-  before the live priority was raised by hand (about 08:46 BST); 1 stall (2.4 s) in the hour after. The
-  comparison is observational (heavy-job adoption changed in the same hours); Optimizer's synthetic
-  memory-pressure run showed no gain.
-- **e2e fallout fixed here**: the full gate failed on this merge because two e2e checks still expected
+- **Live evidence (CTO, `server-20261020.log`)**: 69 event-loop stalls (16 over 10 s, maximum 66.6 s) from
+  07:38 to 08:46 BST, when the live priority was raised by hand; after the raise, one 20.4 s stall at 08:56,
+  then none from 08:57 to at least 11:31 BST. The comparison is observational (heavy-job adoption changed in
+  the same hours); Optimizer's synthetic memory-pressure run showed no gain.
+- **Gate fallout fixed here** (the stability branch never ran the full gate): two e2e checks still expected
   the old heading (`offlineQueue.mjs` waited for "Laptop offline"; `offlineNetwork.mjs`'s "never the root
-  screen" check looked for it). Both now use "Reconnecting to your laptop". The same gate passed 12/12
-  on this branch before the stability merge (`ac1c00bf042b`).
+  screen" check looked for it), now "Reconnecting to your laptop"; and three type errors in its new tests
+  (`PersonalUnreachableScreen.test.tsx`, `bootstrapRecovery.test.ts`) broke web tsc. Test code only. The
+  same gate passed on this branch before the stability merge (`ac1c00bf042b`, 12/12 e2e).
 
 ## 6. Tests
 

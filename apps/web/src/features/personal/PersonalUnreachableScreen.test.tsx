@@ -87,14 +87,15 @@ describe("automatic reconnect", () => {
     await act(async () => {
       renderer = create(<PersonalUnreachableScreen onRetry={retry} />);
     });
-    for (const [delay, count] of [
+    const backoff: ReadonlyArray<readonly [number, number]> = [
       [2_000, 1],
       [4_000, 2],
       [8_000, 3],
       [16_000, 4],
       [30_000, 5],
       [30_000, 6],
-    ]) {
+    ];
+    for (const [delay, count] of backoff) {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(delay);
       });
