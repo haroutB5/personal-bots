@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 
 import {
   ProviderPageScreen,
@@ -10,15 +10,21 @@ function readAction(value: unknown): ProviderPageAction | undefined {
 }
 
 export const Route = createFileRoute("/_personal/bots_/settings_/providers/$instanceId")({
-  validateSearch: (search: Record<string, unknown>): { action?: ProviderPageAction } => {
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { action?: ProviderPageAction; return?: string } => {
     const action = readAction(search.action);
-    return action === undefined ? {} : { action };
+    const returnTarget = typeof search.return === "string" ? search.return : undefined;
+    return {
+      ...(action !== undefined ? { action } : {}),
+      ...(returnTarget !== undefined ? { return: returnTarget } : {}),
+    };
   },
   component: ProviderPageRoute,
 });
 
 function ProviderPageRoute() {
   const { instanceId } = Route.useParams();
-  const { action } = Route.useSearch();
-  return <ProviderPageScreen instanceId={instanceId} action={action} />;
+  const { action, return: returnTarget } = Route.useSearch();
+  return <ProviderPageScreen instanceId={instanceId} action={action} returnTarget={returnTarget} />;
 }

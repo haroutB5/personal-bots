@@ -1,4 +1,5 @@
-import type { JSX, ReactNode } from "react";
+﻿import type { JSX, ReactNode } from "react";
+import { useState } from "react";
 import { AlertTriangle, Info } from "lucide-react";
 
 import type { ProviderDriverKind } from "@t3tools/contracts";
@@ -31,20 +32,34 @@ export const FIELD =
 export function ProviderTile({
   driver,
   label,
+  iconUrl,
   size = "row",
+  pulse = false,
 }: {
   readonly driver: ProviderDriverKind | null;
   readonly label: string;
+  readonly iconUrl?: string | null | undefined;
   readonly size?: "row" | "hero";
+  readonly pulse?: boolean | undefined;
 }): JSX.Element {
+  const [imgFailed, setImgFailed] = useState(false);
   const Icon = driver === null ? undefined : PROVIDER_ICON_BY_PROVIDER[driver];
   const hero = size === "hero";
+  const showImg = !imgFailed && iconUrl != null && iconUrl.length > 0;
   return (
     <span
       aria-hidden="true"
-      className={`flex shrink-0 items-center justify-center bg-[var(--personal-fill-muted)] text-[var(--personal-text)] shadow-[inset_0_0_0_1px_var(--personal-border)] ${hero ? "size-16 rounded-[var(--personal-radius-card)]" : "size-9 rounded-[10px]"}`}
+      className={`flex shrink-0 items-center justify-center bg-[var(--personal-fill-muted)] text-[var(--personal-text)] shadow-[inset_0_0_0_1px_var(--personal-border)] ${hero ? "size-16 rounded-[var(--personal-radius-card)]" : "size-9 rounded-[10px]"} ${pulse ? "shadow-[0_0_0_8px_var(--personal-live)] transition-shadow duration-600 motion-reduce:transition-none" : ""}`}
     >
-      {Icon !== undefined ? (
+      {showImg ? (
+        <img
+          src={iconUrl}
+          alt=""
+          loading="lazy"
+          className={`${hero ? "size-[34px]" : "size-5"} object-contain`}
+          onError={() => setImgFailed(true)}
+        />
+      ) : Icon !== undefined ? (
         <Icon className={hero ? "size-[34px]" : "size-5"} />
       ) : (
         <span className={`${hero ? "text-xl" : "text-[13px]"} leading-none font-bold`}>
@@ -55,7 +70,28 @@ export function ProviderTile({
   );
 }
 
-/** "DeepSeek" -> "DS", "Gemini CLI" -> "GC", "Grok" -> "GR". */
+/**
+ * 6 skeleton rows (tile and two bars, --personal-fill-muted), no spinner (SPEC Â§4).
+ */
+export function ProviderCatalogueSkeleton(): JSX.Element {
+  return (
+    <ul
+      className={`${CARD} divide-y divide-[var(--personal-border)]`}
+      aria-label="Loading providers"
+    >
+      {Array.from({ length: 6 }).map((_, index) => (
+        <li key={index} className="flex min-h-16 items-center gap-3 px-3.5 py-2.5">
+          <span className="size-9 shrink-0 rounded-[10px] bg-[var(--personal-fill-muted)] opacity-70 animate-pulse" />
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <span className="h-3.5 w-28 rounded bg-[var(--personal-fill-muted)] opacity-70 animate-pulse" />
+            <span className="h-3 w-44 rounded bg-[var(--personal-fill-muted)] opacity-50 animate-pulse" />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function monogram(label: string): string {
   const parts = label.split(/[\s_-]+/).filter((part) => part.length > 0);
   const first = parts[0] ?? "";

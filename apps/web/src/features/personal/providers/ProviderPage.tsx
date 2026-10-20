@@ -11,7 +11,7 @@ import type {
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Check, ChevronLeft, ChevronRight, Laptop, Trash2 } from "lucide-react";
 
 import { providerApiKeyField } from "~/components/settings/providerApiKeys";
@@ -54,6 +54,7 @@ import {
   type SetupStep,
 } from "./providerPageModel";
 import { downloadLine, licenceLine, providerFacts, publisherLine } from "./providerFacts";
+import { catalogInstallFailureNote } from "./catalogModel";
 import {
   BUTTON_BIG,
   BUTTON_OUTLINE,
@@ -130,9 +131,11 @@ function PageHeader({ title, visible }: { title: string; visible: boolean }): JS
 export function ProviderPageScreen({
   instanceId,
   action,
+  returnTarget,
 }: {
   readonly instanceId: string;
   readonly action?: ProviderPageAction | undefined;
+  readonly returnTarget?: string | undefined;
 }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -160,6 +163,7 @@ export function ProviderPageScreen({
       providers={providers}
       bots={bots}
       action={action}
+      returnTarget={returnTarget}
     />
   );
 }
@@ -170,13 +174,16 @@ function ProviderPageBody({
   providers,
   bots,
   action,
+  returnTarget,
 }: {
   environmentId: EnvironmentId;
   snapshot: ServerProvider;
   providers: ReadonlyArray<ServerProvider>;
   bots: ReadonlyArray<PersonalBot>;
   action: ProviderPageAction | undefined;
+  returnTarget?: string | undefined;
 }): JSX.Element {
+  const navigate = useNavigate();
   const instanceId = snapshot.instanceId as ProviderInstanceId;
   const driver = snapshot.driver;
   const setup = snapshot.setup;
@@ -245,7 +252,7 @@ function ProviderPageBody({
     pending,
   );
   const canTest = setup?.canTest === true;
-  const canRemove = setup?.canRemove === true && installed;
+  const canRemove = (setup?.canRemove === true || driver === ("registry" as any)) && installed;
   const users = botsUsingProvider(instanceId, bots);
 
   // The setup card shows while a step is open, and for the rest of this visit
@@ -411,7 +418,13 @@ function ProviderPageBody({
       () =>
         updateProvider({
           environmentId,
-          input: { provider: driver, instanceId, targetVersion: goBackVersion, rollback: true },
+          input: {
+            provider: driver,
+            instanceId,
+            targetVersion: goBackVersion,
+            rollback: true,
+            toVersion: goBackVersion,
+          } as any,
         }),
       `Couldn't go back to ${goBackVersion}.`,
     );
@@ -428,6 +441,7 @@ function ProviderPageBody({
       return;
     }
     setSheet(null);
+    void navigate({ to: "/bots/settings" });
   };
   const confirmTurnOff = () => {
     setEnabledPending(false);
@@ -516,7 +530,13 @@ function ProviderPageBody({
       <PageHeader title={label} visible={!heroVisible} />
 
       <div ref={heroRef} className="flex items-center gap-4 pb-4">
-        <ProviderTile driver={driver} label={label} size="hero" />
+        <ProviderTile
+          driver={driver}
+          label={label}
+          iconUrl={(snapshot as any).iconUrl ?? null}
+          size="hero"
+          pulse={showReady}
+        />
         <div className="min-w-0">
           <h2 className="text-2xl leading-7 font-bold text-[var(--personal-text)]">{label}</h2>
           {publisher !== null ? (
@@ -671,7 +691,7 @@ function ProviderPageBody({
             />
           ) : null}
 
-          {showReady ? <ReadyButtons /> : null}
+          {showReady ? <ReadyButtons instanceId={instanceId} returnTarget={returnTarget} /> : null}
 
           {installed && snapshot.models.length > 0 ? (
             <ModelsSection
@@ -763,6 +783,7 @@ function ProviderPageBody({
         <InstallConfirmSheet
           driver={driver}
           label={label}
+          iconUrl={(snapshot as any).iconUrl ?? null}
           facts={facts}
           version={snapshot.versionAdvisory?.latestVersion ?? install?.version ?? null}
           totalBytes={install?.totalBytes ?? null}
@@ -780,6 +801,7 @@ function ProviderPageBody({
         <ConfirmSheet
           driver={driver}
           label={label}
+          iconUrl={(snapshot as any).iconUrl ?? null}
           title={`Remove ${label}?`}
           subtitle="From your laptop"
           body={
@@ -1053,8 +1075,10 @@ function SetupCard({
     install?.phase === "extracting"
       ? "Unpacking"
       : install?.phase === "verifying"
-        ? "Checking it starts"
-        : "Downloading";
+        ? "Checking the download"
+        : (install?.phase as string) === "starting"
+          ? "Checking it starts"
+          : "Downloading";
   const total = install?.totalBytes ?? null;
   const downloaded = install?.downloadedBytes ?? 0;
   const fraction =
@@ -1096,21 +1120,33 @@ function SetupCard({
             {step.key === "install" && (step.status === "now" || step.status === "failed") ? (
               <div className="pb-4 pl-10">
                 {install?.phase === "failed" ? (
-                  <ProviderNote
-                    tone="danger"
-                    title="The install stopped"
-                    actions={
-                      <button
-                        type="button"
-                        onClick={() => onNoteButton("tryAgain")}
-                        className={BUTTON_PRIMARY}
+                  (() => {
+                    const failNote = catalogInstallFailureNote(
+                      (install as any)?.failure ?? null,
+                      install.message,
+                      label,
+                    );
+                    return (
+                      <ProviderNote
+                        tone={failNote.tone}
+                        title={failNote.title}
+                        actions={failNote.buttons.map((btn) => (
+                          <button
+                            key={btn}
+                            type="button"
+                            onClick={() =>
+                              onNoteButton(btn === "removeIt" ? "removeIt" : "tryAgain")
+                            }
+                            className={btn === "removeIt" ? BUTTON_OUTLINE : BUTTON_PRIMARY}
+                          >
+                            {btn === "removeIt" ? "Remove it" : "Try again"}
+                          </button>
+                        ))}
                       >
-                        Try again
-                      </button>
-                    }
-                  >
-                    {install.message?.split(/\r?\n/)[0] ?? "Nothing was installed."}
-                  </ProviderNote>
+                        {failNote.text}
+                      </ProviderNote>
+                    );
+                  })()
                 ) : (
                   <>
                     <div className="flex items-baseline justify-between gap-3 text-[14px]">
@@ -1265,17 +1301,24 @@ function ReadyBlock({
   );
 }
 
-function ReadyButtons(): JSX.Element {
+function ReadyButtons({
+  instanceId,
+  returnTarget,
+}: {
+  readonly instanceId: string;
+  readonly returnTarget?: string | undefined;
+}): JSX.Element {
+  const href = `/bots/new?provider=${encodeURIComponent(instanceId)}`;
   return (
     <div className="flex flex-col gap-2">
       <Link
-        to="/bots/new"
+        to={href}
         className={`${BUTTON_BIG} bg-[var(--personal-primary)] text-[var(--personal-primary-text)]`}
       >
         Make a bot with it
       </Link>
       <Link
-        to="/bots/settings"
+        to={returnTarget === "botform" ? href : "/bots/settings"}
         className={`${BUTTON_BIG} bg-[var(--personal-fill-muted)] text-[var(--personal-text)]`}
       >
         Done

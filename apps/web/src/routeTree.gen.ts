@@ -59,6 +59,7 @@ import { Route as PersonalBotsBotIdThreadIdRouteImport } from './routes/_persona
 import { Route as PersonalTasksRoutinesRoutineIdEditRouteImport } from './routes/_personal.tasks_.routines_.$routineId_.edit'
 import { Route as PersonalBotsSettingsProvidersAddRouteImport } from './routes/_personal.bots_.settings_.providers.add'
 import { Route as PersonalBotsSettingsProvidersInstanceIdRouteImport } from './routes/_personal.bots_.settings_.providers.$instanceId'
+import { Route as PersonalBotsSettingsProvidersCatalogCatalogIdRouteImport } from './routes/_personal.bots_.settings_.providers.catalog.$catalogId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -323,6 +324,12 @@ const PersonalBotsSettingsProvidersInstanceIdRoute =
     path: '/bots/settings/providers/$instanceId',
     getParentRoute: () => PersonalRoute,
   } as any)
+const PersonalBotsSettingsProvidersCatalogCatalogIdRoute =
+  PersonalBotsSettingsProvidersCatalogCatalogIdRouteImport.update({
+    id: '/bots_/settings_/providers/catalog/$catalogId',
+    path: '/bots/settings/providers/catalog/$catalogId',
+    getParentRoute: () => PersonalRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -373,6 +380,7 @@ export interface FileRoutesByFullPath {
   '/bots/settings/providers/$instanceId': typeof PersonalBotsSettingsProvidersInstanceIdRoute
   '/bots/settings/providers/add': typeof PersonalBotsSettingsProvidersAddRoute
   '/tasks/routines/$routineId/edit': typeof PersonalTasksRoutinesRoutineIdEditRoute
+  '/bots/settings/providers/catalog/$catalogId': typeof PersonalBotsSettingsProvidersCatalogCatalogIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
@@ -423,6 +431,7 @@ export interface FileRoutesByTo {
   '/bots/settings/providers/$instanceId': typeof PersonalBotsSettingsProvidersInstanceIdRoute
   '/bots/settings/providers/add': typeof PersonalBotsSettingsProvidersAddRoute
   '/tasks/routines/$routineId/edit': typeof PersonalTasksRoutinesRoutineIdEditRoute
+  '/bots/settings/providers/catalog/$catalogId': typeof PersonalBotsSettingsProvidersCatalogCatalogIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -476,6 +485,7 @@ export interface FileRoutesById {
   '/_personal/bots_/settings_/providers/$instanceId': typeof PersonalBotsSettingsProvidersInstanceIdRoute
   '/_personal/bots_/settings_/providers/add': typeof PersonalBotsSettingsProvidersAddRoute
   '/_personal/tasks_/routines_/$routineId_/edit': typeof PersonalTasksRoutinesRoutineIdEditRoute
+  '/_personal/bots_/settings_/providers/catalog/$catalogId': typeof PersonalBotsSettingsProvidersCatalogCatalogIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -528,6 +538,7 @@ export interface FileRouteTypes {
     | '/bots/settings/providers/$instanceId'
     | '/bots/settings/providers/add'
     | '/tasks/routines/$routineId/edit'
+    | '/bots/settings/providers/catalog/$catalogId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -578,6 +589,7 @@ export interface FileRouteTypes {
     | '/bots/settings/providers/$instanceId'
     | '/bots/settings/providers/add'
     | '/tasks/routines/$routineId/edit'
+    | '/bots/settings/providers/catalog/$catalogId'
   id:
     | '__root__'
     | '/_chat'
@@ -630,6 +642,7 @@ export interface FileRouteTypes {
     | '/_personal/bots_/settings_/providers/$instanceId'
     | '/_personal/bots_/settings_/providers/add'
     | '/_personal/tasks_/routines_/$routineId_/edit'
+    | '/_personal/bots_/settings_/providers/catalog/$catalogId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -995,6 +1008,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PersonalBotsSettingsProvidersInstanceIdRouteImport
       parentRoute: typeof PersonalRoute
     }
+    '/_personal/bots_/settings_/providers/catalog/$catalogId': {
+      id: '/_personal/bots_/settings_/providers/catalog/$catalogId'
+      path: '/bots/settings/providers/catalog/$catalogId'
+      fullPath: '/bots/settings/providers/catalog/$catalogId'
+      preLoaderRoute: typeof PersonalBotsSettingsProvidersCatalogCatalogIdRouteImport
+      parentRoute: typeof PersonalRoute
+    }
   }
 }
 
@@ -1040,6 +1060,7 @@ interface PersonalRouteChildren {
   PersonalBotsSettingsProvidersInstanceIdRoute: typeof PersonalBotsSettingsProvidersInstanceIdRoute
   PersonalBotsSettingsProvidersAddRoute: typeof PersonalBotsSettingsProvidersAddRoute
   PersonalTasksRoutinesRoutineIdEditRoute: typeof PersonalTasksRoutinesRoutineIdEditRoute
+  PersonalBotsSettingsProvidersCatalogCatalogIdRoute: typeof PersonalBotsSettingsProvidersCatalogCatalogIdRoute
 }
 
 const PersonalRouteChildren: PersonalRouteChildren = {
@@ -1071,6 +1092,8 @@ const PersonalRouteChildren: PersonalRouteChildren = {
   PersonalBotsSettingsProvidersAddRoute: PersonalBotsSettingsProvidersAddRoute,
   PersonalTasksRoutinesRoutineIdEditRoute:
     PersonalTasksRoutinesRoutineIdEditRoute,
+  PersonalBotsSettingsProvidersCatalogCatalogIdRoute:
+    PersonalBotsSettingsProvidersCatalogCatalogIdRoute,
 }
 
 const PersonalRouteWithChildren = PersonalRoute._addFileChildren(

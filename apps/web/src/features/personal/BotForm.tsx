@@ -1,5 +1,5 @@
 import type { FormEvent, JSX, ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -21,7 +21,7 @@ import {
   hidesBotPreviews,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
+import { Link, useBlocker, useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -289,6 +289,7 @@ function BotForm({
   groupId?: string | null;
 }): JSX.Element {
   const navigate = useNavigate();
+
   const backTarget = usePersonalBackTarget();
   const addToGroup = useAtomCommand(personalGroupAddMember, { reportFailure: false });
   const leave = () =>
@@ -713,6 +714,16 @@ function BotForm({
             {instructionWarning}
           </p>
         ) : null}
+        <div className="mt-1 flex items-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+          <span>Need another one?&nbsp;</span>
+          <Link
+            to="/bots/settings/providers/add"
+            search={{ return: "botform" }}
+            className="inline-flex min-h-[44px] items-center font-semibold text-[var(--personal-text)] underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          >
+            Add a provider
+          </Link>
+        </div>
       </div>
 
       {models.length > 0 ? (

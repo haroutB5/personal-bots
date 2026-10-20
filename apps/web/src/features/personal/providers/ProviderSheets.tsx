@@ -1,4 +1,4 @@
-import type { JSX, ReactNode, RefObject } from "react";
+﻿import type { JSX, ReactNode, RefObject } from "react";
 import { useRef, useState } from "react";
 
 import type { PersonalBot, ServerProvider } from "@t3tools/contracts";
@@ -48,17 +48,19 @@ export function ProviderSheet({
 function SheetHead({
   driver,
   label,
+  iconUrl,
   title,
   subtitle,
 }: {
   readonly driver: ServerProvider["driver"] | null;
   readonly label: string;
+  readonly iconUrl?: string | null | undefined;
   readonly title: string;
   readonly subtitle: string;
 }): JSX.Element {
   return (
     <div className="flex items-center gap-3 px-1">
-      <ProviderTile driver={driver} label={label} />
+      <ProviderTile driver={driver} label={label} iconUrl={iconUrl} />
       <div className="min-w-0">
         <p className="text-[17px] leading-6 font-bold text-[var(--personal-text)]">{title}</p>
         <p className="text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
@@ -73,6 +75,7 @@ function SheetHead({
 export function ConfirmSheet({
   driver,
   label,
+  iconUrl,
   title,
   subtitle,
   body,
@@ -84,19 +87,26 @@ export function ConfirmSheet({
 }: {
   readonly driver: ServerProvider["driver"] | null;
   readonly label: string;
+  readonly iconUrl?: string | null | undefined;
   readonly title: string;
   readonly subtitle: string;
   readonly body: ReactNode;
   readonly confirmLabel: string;
-  readonly destructive?: boolean;
-  readonly busy?: boolean;
+  readonly destructive?: boolean | undefined;
+  readonly busy?: boolean | undefined;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
 }): JSX.Element {
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (
     <ProviderSheet title={title} onClose={onCancel} initialFocus={cancelRef}>
-      <SheetHead driver={driver} label={label} title={title} subtitle={subtitle} />
+      <SheetHead
+        driver={driver}
+        label={label}
+        iconUrl={iconUrl}
+        title={title}
+        subtitle={subtitle}
+      />
       <div className="mt-3 px-1 text-[15px] leading-[21px] text-[var(--personal-text-secondary)]">
         {body}
       </div>
@@ -134,6 +144,7 @@ export function ConfirmSheet({
 export function InstallConfirmSheet({
   driver,
   label,
+  iconUrl,
   facts,
   version,
   totalBytes,
@@ -145,12 +156,13 @@ export function InstallConfirmSheet({
 }: {
   readonly driver: ServerProvider["driver"] | null;
   readonly label: string;
+  readonly iconUrl?: string | null | undefined;
   readonly facts: ProviderFacts | null;
   readonly version: string | null;
   readonly totalBytes: number | null;
   readonly builtIn: boolean;
   readonly busy: boolean;
-  readonly error?: string | null;
+  readonly error?: string | null | undefined;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
 }): JSX.Element {
@@ -163,7 +175,7 @@ export function InstallConfirmSheet({
     { key: "Download", value: downloadLine(totalBytes), ...(big ? { review: true } : {}) },
     ...(facts?.from != null ? [{ key: "From", value: facts.from }] : []),
     ...(licence !== null ? [{ key: "Licence", value: licence }] : []),
-    { key: "Checked", value: "Against the publisher's fingerprint before it runs" },
+    { key: "Checked", value: "Checked against the registry's fingerprint before it runs" },
   ];
   const warning =
     "Once installed it can do what your bots can: read and change files, run commands and use the internet. Install only publishers you trust.";
@@ -177,6 +189,7 @@ export function InstallConfirmSheet({
       <SheetHead
         driver={driver}
         label={label}
+        iconUrl={iconUrl}
         title={`Install ${label}?`}
         subtitle="On your laptop, for your bots"
       />
