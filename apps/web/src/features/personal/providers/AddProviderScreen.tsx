@@ -16,7 +16,7 @@ import {
 } from "./catalogModel";
 import { providerCatalogList } from "./catalogClient";
 import { deriveBuiltInCatalogEntries } from "./catalogModel";
-import type { ProviderCatalogEntry, ProviderCatalogListResult } from "./catalogTypes";
+import type { ProviderCatalogEntry } from "./catalogTypes";
 import { useProviderInstallStates } from "./providerInstallStates";
 import {
   BUTTON_PRIMARY,
@@ -64,7 +64,7 @@ export function AddProviderScreen(): JSX.Element {
       : null,
   );
 
-  const catalogData = catalogQuery.data as ProviderCatalogListResult | null | undefined;
+  const catalogData = catalogQuery.error === null ? catalogQuery.data : undefined;
   const rawEntries: ReadonlyArray<ProviderCatalogEntry> = useMemo(() => {
     if (catalogData?.entries && catalogData.entries.length > 0) {
       return catalogData.entries;
@@ -81,8 +81,7 @@ export function AddProviderScreen(): JSX.Element {
           const builtinDriver = entry.catalogId.replace(/^builtin:/, "");
           return p.driver === builtinDriver;
         }
-        const cfg = (p as unknown as { config?: { catalogId?: string } }).config;
-        return cfg?.catalogId === entry.catalogId || p.instanceId === entry.catalogId;
+        return p.catalogId === entry.catalogId || p.instanceId === entry.added?.instanceId;
       });
 
       if (live !== undefined && live.installed) {

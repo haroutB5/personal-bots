@@ -24,6 +24,7 @@ import {
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderCatalogId, ProviderCatalogSource } from "./providerCatalog.ts";
 import {
   ServerProviderUsageBalance,
   ServerProviderUsageLimits,
@@ -307,6 +308,24 @@ export const ServerProvider = Schema.Struct({
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
   smokeCheck: Schema.optionalKey(ServerProviderSmokeCheck),
+  catalogId: Schema.optionalKey(Schema.NullOr(ProviderCatalogId)),
+  source: Schema.optionalKey(Schema.NullOr(ProviderCatalogSource)),
+  publisher: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  license: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  openSource: Schema.optionalKey(Schema.Boolean),
+  iconUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  addedByUser: Schema.optionalKey(Schema.Boolean),
+  previousVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  showUsage: Schema.optionalKey(Schema.Boolean),
+  install: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        phase: Schema.String,
+        downloadedBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        totalBytes: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+      }),
+    ),
+  ),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

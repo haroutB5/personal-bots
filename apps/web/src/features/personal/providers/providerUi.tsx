@@ -71,7 +71,7 @@ export function ProviderTile({
 }
 
 /**
- * 6 skeleton rows (tile and two bars, --personal-fill-muted), no spinner (SPEC Â§4).
+ * 6 skeleton rows (tile and two bars, --personal-fill-muted), no spinner (SPEC §4).
  */
 export function ProviderCatalogueSkeleton(): JSX.Element {
   return (

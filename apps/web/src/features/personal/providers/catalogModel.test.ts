@@ -243,25 +243,49 @@ describe("catalogModel - catalogInstallFailureNote", () => {
 });
 
 describe("catalogModel - deriveBuiltInCatalogEntries", () => {
+  it("deduplicates drivers, preserves server facts and excludes registry snapshots without source", () => {
+    const snapshots: any = [
+      { driver: "codex", instanceId: "one", installed: false, version: null },
+      {
+        driver: "codex",
+        instanceId: "two",
+        installed: true,
+        version: "7.2.1",
+        publisher: "Server publisher",
+        license: "Server licence",
+        openSource: true,
+      },
+      { driver: "acpRegistry", instanceId: "agent", catalogId: "real-agent", installed: true },
+    ];
+    const entries = deriveBuiltInCatalogEntries(snapshots);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      version: "7.2.1",
+      publisher: "Server publisher",
+      license: "Server licence",
+      added: { instanceId: "two" },
+      downloadBytes: null,
+    });
+  });
   it("derives built-in catalogue entries from live ServerProvider snapshots", () => {
     const snapshots: any = [
       {
         driver: "claudeAgent",
-        label: "Claude Code",
+        displayName: "Claude Code",
         installed: true,
         instanceId: "claudeAgent",
         enabled: true,
       },
       {
         driver: "codex",
-        label: "OpenAI Codex",
+        displayName: "OpenAI Codex",
         installed: false,
         instanceId: "codex",
         enabled: true,
       },
       {
         driver: "antigravity",
-        label: "Antigravity",
+        displayName: "Antigravity",
         installed: true,
         instanceId: "antigravity",
         enabled: true,
@@ -274,19 +298,20 @@ describe("catalogModel - deriveBuiltInCatalogEntries", () => {
     expect(entries[0]?.catalogId).toBe("builtin:claudeAgent");
     expect(entries[0]?.source).toBe("builtIn");
     expect(entries[0]?.name).toBe("Claude Code");
-    expect(entries[0]?.publisher).toBe("Anthropic");
-    expect(entries[0]?.cost.kind).toBe("subscription");
+    expect(entries[0]?.publisher).toBe("");
+    expect(entries[0]?.license).toBe("");
+    expect(entries[0]?.cost.kind).toBe("unknown");
     expect(entries[0]?.added).toEqual({ instanceId: "claudeAgent" });
     expect(entries[0]?.version).toBeNull();
     expect(entries[0]?.downloadBytes).toBeNull();
 
     expect(entries[1]?.catalogId).toBe("builtin:codex");
     expect(entries[1]?.name).toBe("OpenAI Codex");
-    expect(entries[1]?.added).toBeNull();
+    expect(entries[1]?.added).toEqual({ instanceId: "codex" });
 
     expect(entries[2]?.catalogId).toBe("builtin:antigravity");
     expect(entries[2]?.name).toBe("Antigravity");
-    expect(entries[2]?.cost.kind).toBe("freeTier");
+    expect(entries[2]?.cost.kind).toBe("unknown");
     expect(entries[2]?.added).toEqual({ instanceId: "antigravity" });
   });
 

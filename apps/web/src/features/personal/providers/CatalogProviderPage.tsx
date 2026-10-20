@@ -19,12 +19,7 @@ import {
 } from "./catalogClient";
 import { deriveBuiltInCatalogEntries } from "./catalogModel";
 import { unsupportedReasonCopy } from "./catalogModel";
-import { TEST_CATALOG_FIXTURES } from "./catalogTestFixtures";
-import type {
-  ProviderCatalogEntry,
-  ProviderCatalogInstallPlan,
-  ProviderCatalogListResult,
-} from "./catalogTypes";
+import type { ProviderCatalogEntry } from "./catalogTypes";
 import { downloadLine, licenceLine } from "./providerFacts";
 import {
   BUTTON_BIG,
@@ -73,7 +68,7 @@ export function CatalogProviderPageScreen({
   );
 
   const entry: ProviderCatalogEntry | undefined = useMemo(() => {
-    const catalogData = catalogQuery.data as ProviderCatalogListResult | null | undefined;
+    const catalogData = catalogQuery.error === null ? catalogQuery.data : undefined;
     const fromServer = catalogData?.entries.find(
       (e: ProviderCatalogEntry) => e.catalogId === catalogId,
     );
@@ -83,7 +78,7 @@ export function CatalogProviderPageScreen({
       (e) => e.catalogId === catalogId || e.catalogId === `builtin:${catalogId}`,
     );
     if (builtIn !== undefined) return builtIn;
-    return TEST_CATALOG_FIXTURES[catalogId];
+    return undefined;
   }, [catalogQuery.data, catalogId, providers]);
 
   const installFactsQuery = useEnvironmentQuery(
@@ -94,7 +89,7 @@ export function CatalogProviderPageScreen({
         })
       : null,
   );
-  const installPlan = installFactsQuery.data as ProviderCatalogInstallPlan | null | undefined;
+  const installPlan = installFactsQuery.error === null ? installFactsQuery.data : undefined;
 
   // Check if an instance already exists for this catalogId
   const existingInstance = useMemo(() => {
@@ -102,8 +97,7 @@ export function CatalogProviderPageScreen({
       if (entry?.source === "builtIn") {
         return p.driver === catalogId.replace(/^builtin:/, "");
       }
-      const cfg = (p as unknown as { config?: { catalogId?: string } }).config;
-      return cfg?.catalogId === catalogId || p.instanceId === catalogId;
+      return p.catalogId === catalogId || p.instanceId === entry?.added?.instanceId;
     });
   }, [providers, entry, catalogId]);
 
@@ -132,9 +126,7 @@ export function CatalogProviderPageScreen({
     let instanceId: ProviderInstanceId | undefined = existingInstance?.instanceId;
 
     if (instanceId === undefined) {
-      if (entry.source === "builtIn") {
-        instanceId = entry.catalogId.replace(/^builtin:/, "") as ProviderInstanceId;
-      } else {
+      {
         const addRes = await addCommand({ environmentId, input: { catalogId } });
         const addFail = commandFailureMessage(addRes, `Couldn't add ${entry.name}.`);
         if (addFail !== null) {
@@ -143,15 +135,18 @@ export function CatalogProviderPageScreen({
           return;
         }
         // Result gives instanceId
-        const value = (addRes as { value?: { instanceId?: string } })?.value;
-        instanceId = (value?.instanceId ?? catalogId) as ProviderInstanceId;
+        if (addRes._tag !== "Success") {
+          setBusy(false);
+          return;
+        }
+        instanceId = addRes.value.instanceId;
       }
     }
 
     // Start install
     const startRes = await startInstall({
       environmentId,
-      input: { instanceId: instanceId as any },
+      input: { instanceId },
     });
     const startFail = commandFailureMessage(startRes, `Couldn't start ${entry.name} install.`);
     if (startFail !== null) {
@@ -166,9 +161,8 @@ export function CatalogProviderPageScreen({
     // Navigate to instance provider page with replace so Back returns to catalogue
     await navigate({
       to: "/bots/settings/providers/$instanceId",
-      params: { instanceId: instanceId as any },
+      params: { instanceId },
       search: {
-        action: "install",
         ...(returnTarget ? { return: returnTarget } : {}),
       },
       replace: true,
@@ -216,8 +210,8 @@ export function CatalogProviderPageScreen({
     : `/bots?draft=${encodeURIComponent(ctoDraft)}`;
 
   const licence = licenceLine({
-    openSource: entry.openSource,
-    licence: entry.license,
+    openSource: entry.license ? entry.openSource : null,
+    licence: entry.license || null,
     publisher: entry.publisher,
     description: entry.description,
     cost: entry.cost,
@@ -289,7 +283,8 @@ export function CatalogProviderPageScreen({
         <div className="min-w-0">
           <h2 className="text-2xl leading-7 font-bold text-[var(--personal-text)]">{entry.name}</h2>
           <p className="text-[14px] leading-4.75 text-[var(--personal-text-secondary)]">
-            {entry.publisher} · {entry.openSource ? "Open source" : "Closed source"}
+            {entry.publisher}
+            {entry.license ? ` · ${entry.openSource ? "Open source" : "Closed source"}` : ""}
           </p>
         </div>
       </div>
@@ -388,8 +383,8 @@ export function CatalogProviderPageScreen({
           iconUrl={entry.iconUrl}
           facts={{
             publisher: entry.publisher,
-            openSource: entry.openSource,
-            licence: entry.license,
+            openSource: entry.license ? entry.openSource : null,
+            licence: entry.license || null,
             description: entry.description,
             cost: entry.cost,
             signIn: entry.signInLabel,
@@ -402,8 +397,13 @@ export function CatalogProviderPageScreen({
           version={installPlan?.version ?? entry.version ?? null}
           totalBytes={installPlan?.downloadBytes ?? entry.downloadBytes ?? null}
           builtIn={entry.source === "builtIn"}
-          busy={busy}
-          error={sheetError}
+          busy={busy || (entry.source === "registry" && !installPlan)}
+          error={
+            sheetError ??
+            (installFactsQuery.error !== null
+              ? "Couldn't load the install details. Close this sheet and try again."
+              : null)
+          }
           onConfirm={() => void onConfirmInstall()}
           onCancel={() => {
             setSheetOpen(false);

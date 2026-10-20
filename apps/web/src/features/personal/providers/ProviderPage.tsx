@@ -55,6 +55,7 @@ import {
 } from "./providerPageModel";
 import { downloadLine, licenceLine, providerFacts, publisherLine } from "./providerFacts";
 import { catalogInstallFailureNote } from "./catalogModel";
+import { providerCatalogInstallFacts } from "./catalogClient";
 import {
   BUTTON_BIG,
   BUTTON_OUTLINE,
@@ -188,7 +189,22 @@ function ProviderPageBody({
   const driver = snapshot.driver;
   const setup = snapshot.setup;
   const label = resolveBotProvider(instanceId, providers).label;
-  const facts = providerFacts(driver);
+  const builtInFacts = snapshot.source === "registry" ? null : providerFacts(driver);
+  const facts = {
+    publisher: snapshot.publisher ?? builtInFacts?.publisher ?? "",
+    openSource: snapshot.openSource ?? null,
+    licence: snapshot.license ?? null,
+    description: builtInFacts?.description ?? "",
+    cost: builtInFacts?.cost ?? null,
+    signIn: builtInFacts?.signIn ?? null,
+    from: builtInFacts?.from ?? null,
+  };
+  const installFactsQuery = useEnvironmentQuery(
+    snapshot.source === "registry" && snapshot.catalogId
+      ? providerCatalogInstallFacts({ environmentId, input: { catalogId: snapshot.catalogId } })
+      : null,
+  );
+  const installPlan = installFactsQuery.error === null ? installFactsQuery.data : undefined;
   const kind = signInKindOf(snapshot);
   const commandOptions = { reportFailure: false, reportDefect: false };
 
@@ -252,7 +268,7 @@ function ProviderPageBody({
     pending,
   );
   const canTest = setup?.canTest === true;
-  const canRemove = (setup?.canRemove === true || driver === ("registry" as any)) && installed;
+  const canRemove = (setup?.canRemove === true || install?.canRemove === true) && installed;
   const users = botsUsingProvider(instanceId, bots);
 
   // The setup card shows while a step is open, and for the rest of this visit
@@ -410,7 +426,8 @@ function ProviderPageBody({
       () => updateProvider({ environmentId, input: { provider: driver, instanceId } }),
       `Couldn't start the ${label} update.`,
     );
-  const goBackVersion = snapshot.smokeCheck?.previousVersion;
+  const goBackVersion =
+    snapshot.previousVersion ?? install?.previousVersion ?? snapshot.smokeCheck?.previousVersion;
   const onGoBack = () => {
     if (goBackVersion === undefined) return;
     void run(
@@ -423,8 +440,7 @@ function ProviderPageBody({
             instanceId,
             targetVersion: goBackVersion,
             rollback: true,
-            toVersion: goBackVersion,
-          } as any,
+          },
         }),
       `Couldn't go back to ${goBackVersion}.`,
     );
@@ -784,12 +800,26 @@ function ProviderPageBody({
           driver={driver}
           label={label}
           iconUrl={(snapshot as any).iconUrl ?? null}
-          facts={facts}
-          version={snapshot.versionAdvisory?.latestVersion ?? install?.version ?? null}
-          totalBytes={install?.totalBytes ?? null}
-          builtIn
-          error={sheetError}
-          busy={sheetBusy}
+          facts={{
+            ...facts,
+            from: installPlan?.distribution.label ?? facts.from,
+            sha256Checked: installPlan?.sha256Checked,
+          }}
+          version={
+            installPlan?.version ??
+            snapshot.versionAdvisory?.latestVersion ??
+            install?.version ??
+            null
+          }
+          totalBytes={installPlan?.downloadBytes ?? install?.totalBytes ?? null}
+          builtIn={snapshot.source !== "registry"}
+          error={
+            sheetError ??
+            (installFactsQuery.error !== null
+              ? "Couldn't load the install details. Close this sheet and try again."
+              : null)
+          }
+          busy={sheetBusy || (snapshot.source === "registry" && !installPlan)}
           onConfirm={() => void confirmInstall()}
           onCancel={() => {
             setSheet(null);
