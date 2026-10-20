@@ -74,6 +74,7 @@ export interface UsageCard {
   readonly resetSinceReading?: boolean;
   readonly session: UsageWindowRow | null;
   readonly weeklies: readonly UsageWindowRow[];
+  readonly windows?: readonly UsageWindowRow[];
   /** Epoch millis the snapshot was checked, or null when unknown. */
   readonly checkedAt: number | null;
   /**
@@ -343,6 +344,11 @@ export function selectUsageCards(
           : limits.unavailable?.reason === "probeFailed"
             ? (limits.unavailable.message ?? "")
             : null;
+      const isAntigravity = driver === "antigravity";
+      const stripWindows = isAntigravity
+        ? limits.windows.filter((w) => !w.id.includes("claude") && !w.id.includes("gpt"))
+        : limits.windows;
+
       cards.push({
         driver,
         title,
@@ -351,8 +357,9 @@ export function selectUsageCards(
         notice: null,
         refreshFailure: failure,
         resetSinceReading: usageResetSinceReading(limits, now),
-        session: pickSession(limits.windows, now),
-        weeklies: pickWeeklies(limits.windows, now),
+        session: pickSession(stripWindows, now),
+        weeklies: pickWeeklies(stripWindows, now),
+        windows: limits.windows.map((w) => toRow(w, now)),
         checkedAt: parseCheckedAt(limits.checkedAt),
         resetCredits: limits.resetCredits
           ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }
@@ -373,6 +380,7 @@ export function selectUsageCards(
       refreshFailure: null,
       session: null,
       weeklies: [],
+      windows: [],
       checkedAt: parseCheckedAt(limits?.checkedAt),
       resetCredits: null,
       balance: null,

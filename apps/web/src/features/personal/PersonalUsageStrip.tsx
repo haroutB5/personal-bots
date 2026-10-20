@@ -78,13 +78,12 @@ function bindingInk(cell: UsageStripCell, window: "session" | "weekly"): string 
 function ShortWindowFigure({ cell }: { readonly cell: UsageStripCell }): JSX.Element {
   const window = stripShortWindow(cell);
   const nothing = cell.sessionPercent === null && cell.weeklyPercent === null;
+  const percent = window === "session" ? cell.sessionPercent : cell.weeklyPercent;
   return (
-    <span className={cn("hidden md:inline md:@min-[196px]:hidden", bindingInk(cell, window))}>
+    <span className={cn("hidden md:inline md:@min-[180px]:hidden", bindingInk(cell, window))}>
       {nothing
         ? "Not reported"
-        : `${window === "session" ? "Session" : "Weekly"} ${formatStripPercent(
-            window === "session" ? cell.sessionPercent : cell.weeklyPercent,
-          )} used`}
+        : `${window === "session" ? "Sess" : "Wk"} ${formatStripPercent(percent)}`}
     </span>
   );
 }
@@ -112,7 +111,7 @@ function WindowRow({ card, row }: { readonly card: UsageCard; readonly row: Usag
       <div className="flex items-baseline justify-between gap-3">
         <span className="truncate text-[15px] text-[var(--personal-text)]">{row.label}</span>
         <span className="shrink-0 text-[15px] font-semibold text-[var(--personal-text)] tabular-nums">
-          {row.usedPercent}% used
+          {`${row.usedPercent}% used`}
         </span>
       </div>
       <div
@@ -298,15 +297,21 @@ function UsageCardView({
         <BalanceRows balance={card.balance} now={now} />
       ) : card.status === "ready" ? (
         <div className="flex flex-col gap-4">
-          {card.session ? (
-            <WindowRow card={card} row={card.session} />
+          {card.windows && card.windows.length > 0 ? (
+            card.windows.map((row) => <WindowRow key={row.id} card={card} row={row} />)
           ) : (
-            <MissingRow label="5-hour session" />
-          )}
-          {card.weeklies.length > 0 ? (
-            card.weeklies.map((row) => <WindowRow key={row.id} card={card} row={row} />)
-          ) : (
-            <MissingRow label="Weekly" />
+            <>
+              {card.session ? (
+                <WindowRow card={card} row={card.session} />
+              ) : (
+                <MissingRow label="5-hour session" />
+              )}
+              {card.weeklies.length > 0 ? (
+                card.weeklies.map((row) => <WindowRow key={row.id} card={card} row={row} />)
+              ) : (
+                <MissingRow label="Weekly" />
+              )}
+            </>
           )}
         </div>
       ) : (
@@ -473,13 +478,28 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
         onClick={() => setOpen(true)}
         aria-label={usageStripAriaLabel(cells)}
         aria-haspopup="dialog"
-        className="mt-0.5 grid min-h-11 w-full grid-cols-2 items-center gap-3 rounded-[var(--personal-radius-button)] text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        className={cn(
+          "mt-0.5 min-h-11 w-full items-center gap-2 rounded-[var(--personal-radius-button)] text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+          cells.length === 1
+            ? "grid grid-cols-1"
+            : cells.length === 2
+              ? "grid grid-cols-2"
+              : cells.length === 3
+                ? "grid grid-cols-3"
+                : "flex overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        )}
       >
         {cells.map((cell) => (
           // A container so the figures can fit the cell they are given: the
           // desktop list is as narrow as 280px, where both windows at a
           // readable size ran into the next cell ("59% used Session 2%").
-          <span key={cell.driver} className="@container flex min-w-0 flex-col gap-0.5">
+          <span
+            key={cell.driver}
+            className={cn(
+              "@container flex min-w-0 flex-col gap-0.5",
+              cells.length >= 4 && "min-w-[110px] flex-1 shrink-0",
+            )}
+          >
             <span className="truncate text-[12px] leading-4 font-semibold text-[var(--personal-text-secondary)] md:text-[13px]">
               {cell.title}
             </span>
@@ -487,19 +507,21 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
                 where the cell is wide enough, else only the one the bar is
                 filled to (the sheet and the label carry the other). */}
             <span className="truncate text-[11px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums md:text-[12px]">
-              <span className="md:hidden md:@min-[196px]:inline">
+              <span className="md:hidden md:@min-[180px]:inline">
                 {cell.sessionPercent === null && cell.weeklyPercent === null ? (
-                  // Nothing reported yet: "Session – · Weekly – used" read as a
-                  // broken line of dashes.
                   "Not reported"
+                ) : cell.weeklyPercent === null ? (
+                  <span className={bindingInk(cell, "session")}>
+                    {`Sess ${formatStripPercent(cell.sessionPercent)}`}
+                  </span>
                 ) : (
                   <>
                     <span className={bindingInk(cell, "session")}>
-                      Session {formatStripPercent(cell.sessionPercent)}
-                    </span>{" "}
-                    ·{" "}
+                      {`Sess ${formatStripPercent(cell.sessionPercent)}`}
+                    </span>
+                    {" · "}
                     <span className={bindingInk(cell, "weekly")}>
-                      Weekly {formatStripPercent(cell.weeklyPercent)} used
+                      {`Wk ${formatStripPercent(cell.weeklyPercent)}`}
                     </span>
                   </>
                 )}

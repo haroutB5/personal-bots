@@ -214,15 +214,33 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
+
+    const usageLimits =
+      options.readUsageLimits && before.draft.auth.status !== "unauthenticated"
+        ? yield* options.readUsageLimits.pipe(Effect.orElseSucceed(() => undefined))
+        : undefined;
+    const hasActiveQuota =
+      usageLimits !== undefined && !usageLimits.unavailable && usageLimits.windows.length > 0;
+
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
-      const authenticated = draft.auth.status === "authenticated";
+      const authenticated =
+        draft.auth.status === "authenticated" ||
+        (draft.auth.status === "unknown" && hasActiveQuota);
+      const auth =
+        authenticated && draft.auth.status === "unknown"
+          ? {
+              status: "authenticated" as const,
+              type: options.auth?.type ?? "oauth-personal",
+              label: options.auth?.label ?? "Google account",
+            }
+          : draft.auth;
       const message =
         errorMessage ??
         (authenticated
           ? undefined
-          : draft.auth.status === "unauthenticated"
+          : auth.status === "unauthenticated"
             ? SIGN_IN_MESSAGE
             : AUTH_UNCHECKED_MESSAGE);
       return {
@@ -232,6 +250,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           installed: !missingInstallation,
           version: initialized?.agentInfo?.version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
+          auth,
           checkedAt: updatedAt,
           ...(missingInstallation
             ? {
@@ -244,20 +263,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             : {}),
           ...(initialized !== undefined
             ? {
-                supportsTextGeneration:
-                  supportsTextGeneration && draft.auth.status !== "unauthenticated",
+                supportsTextGeneration: supportsTextGeneration && auth.status !== "unauthenticated",
               }
             : {}),
           ...(message ? { message } : {}),
+          ...(usageLimits ? { usageLimits } : {}),
         },
       } satisfies AntigravityProviderState;
     });
-    const stamped = yield* options.stampIdentity(next.draft);
-    if (!options.readUsageLimits || stamped.auth.status !== "authenticated") {
-      return stamped;
-    }
-    const usageLimits = yield* options.readUsageLimits;
-    return usageLimits ? { ...stamped, usageLimits } : stamped;
+    return yield* options.stampIdentity(next.draft);
   });
 
   const maintenanceCapabilities =
@@ -393,6 +407,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             skills: [],
             workspaceSnapshots: [],
             supportsTextGeneration: false,
+            usageLimits: undefined,
           },
         }) satisfies AntigravityProviderState,
     );

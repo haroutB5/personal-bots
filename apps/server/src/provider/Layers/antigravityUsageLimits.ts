@@ -1,14 +1,8 @@
 /**
- * Antigravity (Google AI Pro) subscription usage.
+ * Reads usage limits for the Google Antigravity provider.
  *
- * Reads the OAuth credentials stored in the Antigravity instance profile
- * (`acp_token.json`), refreshes the token against Google's token endpoint if
- * needed, and queries the Code Assist model endpoint
- * (`https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels`)
- * for per-model remaining fractions and reset times.
- *
- * Maps Gemini quota to the session window (labelled "Gemini") and Claude
- * quota (when present) to the session window (labelled "Claude").
+ * Discovers the user's project and tier via loadCodeAssist, then retrieves
+ * the quota summary (session and weekly buckets for Gemini and Claude/GPT).
  *
  * @module provider/Layers/antigravityUsageLimits
  */
@@ -45,80 +39,137 @@ const TokenResponse = Schema.Struct({
   token_type: Schema.optional(Schema.String),
 });
 
-const QuotaInfo = Schema.Struct({
+const LoadCodeAssistResponse = Schema.Struct({
+  cloudaicompanionProject: Schema.optional(Schema.String),
+  paidTier: Schema.optional(
+    Schema.Struct({
+      id: Schema.optional(Schema.String),
+      name: Schema.optional(Schema.String),
+      description: Schema.optional(Schema.String),
+    }),
+  ),
+});
+
+const QuotaBucket = Schema.Struct({
+  bucketId: Schema.optional(Schema.String),
+  displayName: Schema.optional(Schema.String),
+  window: Schema.optional(Schema.String),
   remainingFraction: Schema.optional(Schema.Number),
   resetTime: Schema.optional(Schema.String),
 });
 
-const ModelEntry = Schema.Struct({
+const QuotaGroup = Schema.Struct({
   displayName: Schema.optional(Schema.String),
-  quotaInfo: Schema.optional(QuotaInfo),
+  description: Schema.optional(Schema.String),
+  buckets: Schema.optional(Schema.Array(QuotaBucket)),
 });
 
-const AvailableModelsResponse = Schema.Struct({
-  models: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
+export const QuotaSummaryResponse = Schema.Struct({
+  groups: Schema.optional(Schema.Array(QuotaGroup)),
 });
 
-export const DAILY_CLOUDCODE_ENDPOINT =
-  "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
-export const PROD_CLOUDCODE_ENDPOINT =
-  "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+export const DAILY_LOAD_CODE_ASSIST_ENDPOINT =
+  "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+export const PROD_LOAD_CODE_ASSIST_ENDPOINT =
+  "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+export const DAILY_QUOTA_SUMMARY_ENDPOINT =
+  "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+export const PROD_QUOTA_SUMMARY_ENDPOINT =
+  "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
 export const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 
-export function antigravityAvailableModelsToLimits(
-  response: typeof AvailableModelsResponse.Type,
+export function antigravityQuotaSummaryToLimits(
+  response: typeof QuotaSummaryResponse.Type,
   checkedAt: string,
 ): ServerProviderUsageLimits {
-  const models = response.models ?? {};
-
-  // Gemini family: tightest (lowest remainingFraction) among active bot models (Argon, Flash)
-  const geminiCandidates = Object.entries(models).filter(
-    ([k, v]) =>
-      k.startsWith("gemini-") &&
-      v.quotaInfo?.remainingFraction !== undefined &&
-      Number.isFinite(v.quotaInfo.remainingFraction),
-  );
-  const activeGemini = geminiCandidates.filter(
-    ([k]) => k.startsWith("gemini-4-argon") || k.startsWith("gemini-3.8-flash"),
-  );
-  const geminiPool = activeGemini.length > 0 ? activeGemini : geminiCandidates;
-  const tightestGemini = geminiPool.sort(
-    (a, b) => a[1].quotaInfo!.remainingFraction! - b[1].quotaInfo!.remainingFraction!,
-  )[0]?.[1]?.quotaInfo;
-
-  // Claude family: only if the account has Claude models
-  const claudeCandidates = Object.entries(models).filter(
-    ([k, v]) =>
-      k.startsWith("claude-") &&
-      v.quotaInfo?.remainingFraction !== undefined &&
-      Number.isFinite(v.quotaInfo.remainingFraction),
-  );
-  const tightestClaude = claudeCandidates.sort(
-    (a, b) => a[1].quotaInfo!.remainingFraction! - b[1].quotaInfo!.remainingFraction!,
-  )[0]?.[1]?.quotaInfo;
-
+  const groups = response.groups ?? [];
   const windows: ServerProviderUsageWindow[] = [];
 
-  if (tightestGemini?.remainingFraction !== undefined) {
-    const usedPercent = clampPercent(Math.round((1 - tightestGemini.remainingFraction) * 100));
-    windows.push({
-      id: "gemini",
-      kind: "session",
-      label: "Gemini",
-      usedPercent,
-      ...(tightestGemini.resetTime ? { resetsAt: tightestGemini.resetTime } : {}),
-    });
+  const geminiGroup = groups.find((g) => g.displayName?.toLowerCase().includes("gemini"));
+  const claudeGptGroup = groups.find(
+    (g) =>
+      g.displayName?.toLowerCase().includes("claude") ||
+      g.displayName?.toLowerCase().includes("gpt"),
+  );
+
+  if (geminiGroup?.buckets) {
+    const sessionBucket = geminiGroup.buckets.find(
+      (b) =>
+        b.window === "5h" ||
+        b.bucketId === "gemini-5h" ||
+        b.displayName?.toLowerCase().includes("five hour"),
+    );
+    if (
+      sessionBucket?.remainingFraction !== undefined &&
+      Number.isFinite(sessionBucket.remainingFraction)
+    ) {
+      windows.push({
+        id: "gemini-session",
+        kind: "session",
+        label: "Gemini · 5-hour session",
+        usedPercent: clampPercent(Math.round((1 - sessionBucket.remainingFraction) * 100)),
+        ...(sessionBucket.resetTime ? { resetsAt: sessionBucket.resetTime } : {}),
+      });
+    }
+
+    const weeklyBucket = geminiGroup.buckets.find(
+      (b) =>
+        b.window === "weekly" ||
+        b.bucketId === "gemini-weekly" ||
+        b.displayName?.toLowerCase().includes("weekly"),
+    );
+    if (
+      weeklyBucket?.remainingFraction !== undefined &&
+      Number.isFinite(weeklyBucket.remainingFraction)
+    ) {
+      windows.push({
+        id: "gemini-weekly",
+        kind: "weekly",
+        label: "Gemini · Weekly",
+        usedPercent: clampPercent(Math.round((1 - weeklyBucket.remainingFraction) * 100)),
+        ...(weeklyBucket.resetTime ? { resetsAt: weeklyBucket.resetTime } : {}),
+      });
+    }
   }
 
-  if (tightestClaude?.remainingFraction !== undefined) {
-    const usedPercent = clampPercent(Math.round((1 - tightestClaude.remainingFraction) * 100));
-    windows.push({
-      id: "claude",
-      kind: "session",
-      label: "Claude",
-      usedPercent,
-      ...(tightestClaude.resetTime ? { resetsAt: tightestClaude.resetTime } : {}),
-    });
+  if (claudeGptGroup?.buckets) {
+    const sessionBucket = claudeGptGroup.buckets.find(
+      (b) =>
+        b.window === "5h" ||
+        b.bucketId?.includes("5h") ||
+        b.displayName?.toLowerCase().includes("five hour"),
+    );
+    if (
+      sessionBucket?.remainingFraction !== undefined &&
+      Number.isFinite(sessionBucket.remainingFraction)
+    ) {
+      windows.push({
+        id: "z-claude-gpt-session",
+        kind: "session",
+        label: "Claude & GPT · 5-hour session",
+        usedPercent: clampPercent(Math.round((1 - sessionBucket.remainingFraction) * 100)),
+        ...(sessionBucket.resetTime ? { resetsAt: sessionBucket.resetTime } : {}),
+      });
+    }
+
+    const weeklyBucket = claudeGptGroup.buckets.find(
+      (b) =>
+        b.window === "weekly" ||
+        b.bucketId?.includes("weekly") ||
+        b.displayName?.toLowerCase().includes("weekly"),
+    );
+    if (
+      weeklyBucket?.remainingFraction !== undefined &&
+      Number.isFinite(weeklyBucket.remainingFraction)
+    ) {
+      windows.push({
+        id: "z-claude-gpt-weekly",
+        kind: "weekly",
+        label: "Claude & GPT · Weekly",
+        usedPercent: clampPercent(Math.round((1 - weeklyBucket.remainingFraction) * 100)),
+        ...(weeklyBucket.resetTime ? { resetsAt: weeklyBucket.resetTime } : {}),
+      });
+    }
   }
 
   if (windows.length === 0) {
@@ -134,6 +185,12 @@ interface CachedAccessToken {
 }
 // Cache keyed by profile directory (never by raw token)
 const cachedTokens = new Map<string, CachedAccessToken>();
+const cachedProjects = new Map<string, string>();
+
+export function resetAntigravityUsageCache(): void {
+  cachedTokens.clear();
+  cachedProjects.clear();
+}
 
 export interface ReadAntigravityUsageLimitsInput {
   readonly profileDirectory: string;
@@ -209,26 +266,65 @@ export const readAntigravityUsageLimits = Effect.fn("readAntigravityUsageLimits"
       });
     }
 
-    const fetchModels = (endpoint: string) =>
+    let project = cachedProjects.get(cacheKey);
+    if (!project) {
+      const fetchCodeAssist = (endpoint: string) =>
+        client
+          .execute(
+            HttpClientRequest.post(endpoint).pipe(
+              HttpClientRequest.bearerToken(accessToken),
+              HttpClientRequest.setHeader("User-Agent", "antigravity/1.4.0"),
+              HttpClientRequest.setHeader("Content-Type", "application/json"),
+              HttpClientRequest.bodyJsonUnsafe({}),
+            ),
+          )
+          .pipe(
+            Effect.flatMap(HttpClientResponse.filterStatusOk),
+            Effect.flatMap(HttpClientResponse.schemaBodyJson(LoadCodeAssistResponse)),
+          );
+
+      const codeAssistBody = yield* fetchCodeAssist(DAILY_LOAD_CODE_ASSIST_ENDPOINT).pipe(
+        Effect.catch(() => fetchCodeAssist(PROD_LOAD_CODE_ASSIST_ENDPOINT)),
+        Effect.orElseSucceed(() => null),
+      );
+
+      if (codeAssistBody?.cloudaicompanionProject) {
+        project = codeAssistBody.cloudaicompanionProject;
+        cachedProjects.set(cacheKey, project);
+      }
+    }
+
+    const effectiveProject = project ?? "aicode-consumers";
+
+    const fetchQuotaSummary = (endpoint: string) =>
       client
         .execute(
           HttpClientRequest.post(endpoint).pipe(
             HttpClientRequest.bearerToken(accessToken),
             HttpClientRequest.setHeader("User-Agent", "antigravity/1.4.0"),
             HttpClientRequest.setHeader("Content-Type", "application/json"),
-            HttpClientRequest.bodyJsonUnsafe({}),
+            HttpClientRequest.bodyJsonUnsafe({ project: effectiveProject }),
           ),
         )
         .pipe(
           Effect.flatMap(HttpClientResponse.filterStatusOk),
-          Effect.flatMap(HttpClientResponse.schemaBodyJson(AvailableModelsResponse)),
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(QuotaSummaryResponse)),
         );
 
-    const body = yield* fetchModels(DAILY_CLOUDCODE_ENDPOINT).pipe(
-      Effect.catch(() => fetchModels(PROD_CLOUDCODE_ENDPOINT)),
+    const dailyQuota = yield* fetchQuotaSummary(DAILY_QUOTA_SUMMARY_ENDPOINT).pipe(
+      Effect.orElseSucceed(() => null),
     );
 
-    return antigravityAvailableModelsToLimits(body, checkedAt);
+    const hasGemini = dailyQuota?.groups?.some((g) =>
+      g.displayName?.toLowerCase().includes("gemini"),
+    );
+
+    let quotaBody = hasGemini ? dailyQuota : null;
+    if (!quotaBody) {
+      quotaBody = yield* fetchQuotaSummary(PROD_QUOTA_SUMMARY_ENDPOINT);
+    }
+
+    return antigravityQuotaSummaryToLimits(quotaBody, checkedAt);
   }).pipe(
     Effect.timeout("15 seconds"),
     Effect.orElseSucceed(() =>

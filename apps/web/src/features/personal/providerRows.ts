@@ -150,7 +150,7 @@ export function botsUsingModels(
 export function providerReportsUsage(snapshot: ServerProvider): boolean {
   return (
     snapshot.installed &&
-    snapshot.auth.status === "authenticated" &&
+    snapshot.enabled &&
     ((USAGE_CARD_DRIVERS as ReadonlyArray<string>).includes(snapshot.driver) ||
       (snapshot.usageLimits?.windows.length ?? 0) > 0)
   );

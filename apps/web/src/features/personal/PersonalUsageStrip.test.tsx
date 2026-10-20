@@ -279,6 +279,76 @@ describe("PersonalUsageStrip", () => {
     expect(json).not.toContain("resets in");
   });
 
+  it("puts 3 cards on ONE row using grid-cols-3 and abbreviations Sess and Wk", async () => {
+    const ANTIGRAVITY = provider("antigravity", {
+      checkedAt: "2026-09-13T11:57:00Z",
+      windows: [
+        {
+          id: "gemini-session",
+          kind: "session",
+          label: "Gemini · 5-hour session",
+          usedPercent: 21,
+          resetsAt: "2026-09-13T16:00:00Z",
+        },
+        {
+          id: "gemini-weekly",
+          kind: "weekly",
+          label: "Gemini · Weekly",
+          usedPercent: 58,
+          resetsAt: "2026-09-20T12:00:00Z",
+        },
+      ],
+    });
+    state.providers = [CLAUDE, CODEX, ANTIGRAVITY];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+
+    const button = renderer!.root.findAllByType("button")[0]!;
+    expect(button.props.className).toContain("grid-cols-3");
+    expect(button.props.className).not.toContain("grid-cols-2");
+
+    // Full words in aria-label
+    expect(button.props["aria-label"]).toContain("Session 21 percent used, Weekly 58 percent used");
+
+    const text = textOf(renderer!.toJSON());
+    // Strip figures use Sess and Wk abbreviations
+    expect(text).toContain("Sess 26% · Wk 8%");
+    expect(text).toContain("Sess 12%");
+    expect(text).toContain("Sess 21% · Wk 58%");
+    const json = JSON.stringify(renderer!.toJSON());
+    // Weekly - used must never appear
+    expect(json).not.toContain("Weekly – used");
+    expect(json).not.toContain("Weekly - used");
+  });
+
+  it("omits weekly and shows only Sess when the weekly bucket is missing", async () => {
+    const ANTIGRAVITY_SESSION_ONLY = provider("antigravity", {
+      checkedAt: "2026-09-13T11:57:00Z",
+      windows: [
+        {
+          id: "gemini-session",
+          kind: "session",
+          label: "Gemini · 5-hour session",
+          usedPercent: 30,
+          resetsAt: "2026-09-13T16:00:00Z",
+        },
+      ],
+    });
+    state.providers = [ANTIGRAVITY_SESSION_ONLY];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+
+    const button = renderer!.root.findAllByType("button")[0]!;
+    expect(button.props.className).toContain("grid-cols-1");
+
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("Sess 30%");
+    expect(json).not.toContain("Wk");
+    expect(json).not.toContain("Weekly – used");
+  });
+
   it("says the provider did not report, never 0%, when it cannot report", async () => {
     state.providers = [
       provider("claudeAgent", {

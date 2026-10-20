@@ -432,7 +432,7 @@ describe("canToggleUsage on ProviderRow", () => {
     expect(pending.canToggleUsage).toBe(true);
   });
 
-  it("marks unauthenticated or uninstalled providers as not eligible for usage toggle", () => {
+  it("marks unauthenticated installed providers as eligible, but uninstalled or disabled as not eligible", () => {
     const unauth = providerRow({
       snapshot: provider({
         driver: "antigravity",
@@ -444,6 +444,31 @@ describe("canToggleUsage on ProviderRow", () => {
       install: null,
       now: new Date(NOW),
     });
-    expect(unauth.canToggleUsage).toBe(false);
+    expect(unauth.canToggleUsage).toBe(true);
+
+    const uninstalled = providerRow({
+      snapshot: provider({
+        driver: "antigravity",
+        installed: false,
+      }),
+      label: "Google Antigravity",
+      bots: [],
+      install: null,
+      now: new Date(NOW),
+    });
+    expect(uninstalled.canToggleUsage).toBe(false);
+
+    const disabled = providerRow({
+      snapshot: provider({
+        driver: "antigravity",
+        installed: true,
+        enabled: false,
+      }),
+      label: "Google Antigravity",
+      bots: [],
+      install: null,
+      now: new Date(NOW),
+    });
+    expect(disabled.canToggleUsage).toBe(false);
   });
 });

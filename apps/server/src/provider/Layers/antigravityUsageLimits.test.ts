@@ -5,33 +5,57 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import {
-  antigravityAvailableModelsToLimits,
+  antigravityQuotaSummaryToLimits,
   readAntigravityUsageLimits,
 } from "./antigravityUsageLimits.ts";
 
 const CHECKED_AT = "2026-10-20T17:00:00.000Z";
 const TestServicesLayer = Layer.merge(NodeServices.layer, FetchHttpClient.layer);
 
-describe("antigravityAvailableModelsToLimits", () => {
-  it("maps Gemini models to Gemini window and Claude models to Claude window", () => {
-    const limits = antigravityAvailableModelsToLimits(
+describe("antigravityQuotaSummaryToLimits", () => {
+  it("maps Gemini and Claude & GPT groups to session and weekly windows", () => {
+    const limits = antigravityQuotaSummaryToLimits(
       {
-        models: {
-          "gemini-3.8-flash-tiered": {
-            displayName: "Gemini 3.8 Flash",
-            quotaInfo: {
-              remainingFraction: 0.92,
-              resetTime: "2026-10-20T21:00:00Z",
-            },
+        groups: [
+          {
+            displayName: "Gemini Models",
+            buckets: [
+              {
+                bucketId: "gemini-5h",
+                displayName: "Five Hour Limit Remaining",
+                window: "5h",
+                remainingFraction: 0.79,
+                resetTime: "2026-10-21T01:00:00Z",
+              },
+              {
+                bucketId: "gemini-weekly",
+                displayName: "Weekly Limit Remaining",
+                window: "weekly",
+                remainingFraction: 0.42,
+                resetTime: "2026-10-27T20:00:00Z",
+              },
+            ],
           },
-          "claude-sonnet-5-5-high": {
-            displayName: "Claude Sonnet 5.5",
-            quotaInfo: {
-              remainingFraction: 1,
-              resetTime: "2026-10-20T21:30:00Z",
-            },
+          {
+            displayName: "Claude and GPT models",
+            buckets: [
+              {
+                bucketId: "3p-5h",
+                displayName: "Five Hour Limit Remaining",
+                window: "5h",
+                remainingFraction: 1,
+                resetTime: "2026-10-21T01:00:00Z",
+              },
+              {
+                bucketId: "3p-weekly",
+                displayName: "Weekly Limit Remaining",
+                window: "weekly",
+                remainingFraction: 0.95,
+                resetTime: "2026-10-27T20:00:00Z",
+              },
+            ],
           },
-        },
+        ],
       },
       CHECKED_AT,
     );
@@ -39,61 +63,72 @@ describe("antigravityAvailableModelsToLimits", () => {
     expect(limits.unavailable).toBeUndefined();
     expect(limits.windows).toEqual([
       {
-        id: "claude",
+        id: "gemini-session",
         kind: "session",
-        label: "Claude",
-        usedPercent: 0,
-        resetsAt: "2026-10-20T21:30:00Z",
+        label: "Gemini · 5-hour session",
+        usedPercent: 21,
+        resetsAt: "2026-10-21T01:00:00Z",
       },
       {
-        id: "gemini",
+        id: "z-claude-gpt-session",
         kind: "session",
-        label: "Gemini",
-        usedPercent: 8,
-        resetsAt: "2026-10-20T21:00:00Z",
+        label: "Claude & GPT · 5-hour session",
+        usedPercent: 0,
+        resetsAt: "2026-10-21T01:00:00Z",
+      },
+      {
+        id: "gemini-weekly",
+        kind: "weekly",
+        label: "Gemini · Weekly",
+        usedPercent: 58,
+        resetsAt: "2026-10-27T20:00:00Z",
+      },
+      {
+        id: "z-claude-gpt-weekly",
+        kind: "weekly",
+        label: "Claude & GPT · Weekly",
+        usedPercent: 5,
+        resetsAt: "2026-10-27T20:00:00Z",
       },
     ]);
   });
 
-  it("prefers tightest active Gemini model", () => {
-    const limits = antigravityAvailableModelsToLimits(
+  it("handles accounts with Gemini only and missing weekly bucket", () => {
+    const limits = antigravityQuotaSummaryToLimits(
       {
-        models: {
-          "gemini-4-argon-high": {
-            displayName: "Gemini 4 Argon",
-            quotaInfo: {
-              remainingFraction: 0.6,
-              resetTime: "2026-10-20T22:00:00Z",
-            },
+        groups: [
+          {
+            displayName: "Gemini Models",
+            buckets: [
+              {
+                bucketId: "gemini-5h",
+                displayName: "Five Hour Limit Remaining",
+                window: "5h",
+                remainingFraction: 0.65,
+                resetTime: "2026-10-21T02:00:00Z",
+              },
+            ],
           },
-          "gemini-3.8-flash-tiered": {
-            displayName: "Gemini 3.8 Flash",
-            quotaInfo: {
-              remainingFraction: 0.8,
-              resetTime: "2026-10-20T21:00:00Z",
-            },
-          },
-        },
+        ],
       },
       CHECKED_AT,
     );
 
-    expect(limits.windows).toHaveLength(1);
-    expect(limits.windows[0]).toEqual({
-      id: "gemini",
-      kind: "session",
-      label: "Gemini",
-      usedPercent: 40,
-      resetsAt: "2026-10-20T22:00:00Z",
-    });
+    expect(limits.windows).toEqual([
+      {
+        id: "gemini-session",
+        kind: "session",
+        label: "Gemini · 5-hour session",
+        usedPercent: 35,
+        resetsAt: "2026-10-21T02:00:00Z",
+      },
+    ]);
   });
 
-  it("returns unsupported when response contains no models with quotaInfo", () => {
-    const limits = antigravityAvailableModelsToLimits(
+  it("returns unsupported when response contains no groups with valid quota", () => {
+    const limits = antigravityQuotaSummaryToLimits(
       {
-        models: {
-          chat_123: { displayName: "Chat" },
-        },
+        groups: [],
       },
       CHECKED_AT,
     );

@@ -827,4 +827,57 @@ describe("Antigravity usage card", () => {
     const hidden = selectUsageCards([antigravity], NOW, new Set(["antigravity"]));
     expect(hidden).toHaveLength(0);
   });
+  it("never falls back to Claude/GPT for Antigravity strip windows, keeping them in card.windows", () => {
+    const multi = provider({
+      driver: "antigravity",
+      instanceId: "antigravity",
+      usageLimits: {
+        checkedAt: "2026-10-20T17:00:00Z",
+        windows: [
+          {
+            id: "gemini-session",
+            kind: "session",
+            label: "Gemini · 5-hour session",
+            usedPercent: 21,
+            resetsAt: "2026-10-20T21:00:00Z",
+          },
+          {
+            id: "z-claude-gpt-session",
+            kind: "session",
+            label: "Claude & GPT · 5-hour session",
+            usedPercent: 0,
+            resetsAt: "2026-10-20T21:00:00Z",
+          },
+          {
+            id: "gemini-weekly",
+            kind: "weekly",
+            label: "Gemini · Weekly",
+            usedPercent: 58,
+            resetsAt: "2026-10-27T17:00:00Z",
+          },
+          {
+            id: "z-claude-gpt-weekly",
+            kind: "weekly",
+            label: "Claude & GPT · Weekly",
+            usedPercent: 5,
+            resetsAt: "2026-10-27T17:00:00Z",
+          },
+        ],
+      },
+    });
+
+    const cards = selectUsageCards([multi], NOW);
+    expect(cards[0]?.session?.id).toBe("gemini-session");
+    expect(cards[0]?.session?.usedPercent).toBe(21);
+    expect(cards[0]?.weeklies).toHaveLength(1);
+    expect(cards[0]?.weeklies[0]?.id).toBe("gemini-weekly");
+    expect(cards[0]?.weeklies[0]?.usedPercent).toBe(58);
+    expect(cards[0]?.windows).toHaveLength(4);
+    expect(cards[0]?.windows?.map((w) => w.id)).toEqual([
+      "gemini-session",
+      "z-claude-gpt-session",
+      "gemini-weekly",
+      "z-claude-gpt-weekly",
+    ]);
+  });
 });
