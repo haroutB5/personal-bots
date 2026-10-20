@@ -12,7 +12,7 @@ Layout under `%USERPROFILE%\.personal-bots\`:
 | `releases\<sha>\`                   | Built server (`dist\`, `VERSION`, `node_modules` junction). `releases\current.txt` names the active one. |
 | `logs\server-YYYYMMDD.log`          | Server output, newest 7 kept.                                                                            |
 | `run\server.pid`, `run\server.json` | The running server's PID and what it was started with.                                                   |
-| `backups\<timestamp>\`              | Backups, newest 14 kept.                                                                                 |
+| `backups\<timestamp>\`              | Backups, newest 3 kept (pre-* never pruned).                                                             |
 
 Run every command below from the repo root.
 
