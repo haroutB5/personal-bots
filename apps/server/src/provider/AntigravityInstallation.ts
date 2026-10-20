@@ -32,6 +32,7 @@ import * as Yauzl from "yauzl";
 
 import { ServerConfig } from "../config.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
+import { terminateDescendants } from "./processTree.ts";
 import {
   buildAntigravityAcpSpawnInput,
   prepareAntigravityProfile,
@@ -512,9 +513,21 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     options.validate ??
     Effect.fn("AntigravityInstallation.validate")(
       function* (executable: AntigravityExecutable, expectedVersion: string) {
-        const profileDirectory = yield* fs.makeTempDirectoryScoped({
-          prefix: "t3-antigravity-validate-",
-        });
+        // Removing it can meet files the bundle's child still holds while it
+        // exits; that must never fail an install that already validated
+        // (live 1.66.71: "Busy: makeTempDirectoryScoped" failed the install).
+        const profileDirectory = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({ prefix: "t3-antigravity-validate-" }),
+          (directory) =>
+            retryThroughLocks(fs.remove(directory, { recursive: true, force: true })).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Antigravity validation folder left behind", {
+                  folder: directory,
+                  cause: String(cause),
+                }),
+              ),
+            ),
+        );
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
           platform,
@@ -523,6 +536,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           // root keeps it under Windows' path limit.
           tempDirectory: profileDirectory,
         });
+        let launcherPid: number | undefined;
         const runtime = yield* makeAntigravityAcpRuntime({
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
@@ -533,7 +547,20 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           cwd: profileDirectory,
           childProcessSpawner: spawner,
           clientInfo: { name: "t3-code", version: "0.0.0" },
+          onProcessStarted: (pid) =>
+            Effect.sync(() => {
+              launcherPid = pid;
+            }),
         });
+        // The runtime is a launcher plus a child it starts. Stopping the
+        // launcher leaves the child running on Windows, holding files in the
+        // folders above, so end the child first, while the launcher still
+        // links to it. Added after the runtime, so it runs before its stop.
+        yield* Effect.addFinalizer(() =>
+          launcherPid === undefined
+            ? Effect.void
+            : terminateDescendants(launcherPid).pipe(Effect.asVoid),
+        );
         const initialized = yield* runtime.initialize();
         if (
           initialized.agentInfo?.name !== "antigravity-acp" ||
