@@ -1,4 +1,4 @@
-# HANDOFF 1.66.74
+# HANDOFF 1.66.75
 
 Provider setup, release 1 of 3 (Designer's SPEC `dev-team/design/hbots/provider-setup/SPEC.md`, CTO
 task 659d6279): Settings > Providers redesigned and a provider page for every provider hbots
@@ -6,9 +6,11 @@ supports today, so Harout can install, sign in to, test and manage them from the
 Antigravity fixes found on 20 Oct. No migration (the maximum stays 111);
 `PERSONAL_TASKS_CONCURRENCY` stays 5.
 
-Branch `feat/hbots-16673-providers` (the name predates the renumbering: this is 1.66.74). It carries
-the CTO hotfix 1.66.73 (`hotfix/hbots-16673-antigravity-bots`, merged) on top of
-`personal-bots/main` `713302bea5` (live 1.66.72 `1aeb673228da`).
+Branch `feat/hbots-16673-providers` (the name predates the renumbering: this is 1.66.75). It carries
+the CTO hotfix 1.66.73 (`hotfix/hbots-16673-antigravity-bots`) and Optimizer's stability branch
+(`fix/hbots-stability`, 1.66.74), both merged, on top of `personal-bots/main` `713302bea5`
+(live 1.66.72 `1aeb673228da`). Before staging for real, merge `personal-bots/main` once 1.66.73 and
+1.66.74 are live.
 
 ## 1. What the phone gets
 
