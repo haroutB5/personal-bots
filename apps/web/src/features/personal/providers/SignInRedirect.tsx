@@ -132,7 +132,9 @@ export function SignInRedirect({
 
   const autoStarted = useRef(false);
   useEffect(() => {
-    if (!autoStart || autoStarted.current || auth === null || phase !== "idle") return;
+    if (!autoStart || autoStarted.current || auth === null) return;
+    // Waiting, verifying or done: a flow is already under way (or finished).
+    if (phase !== "idle" && phase !== "cancelled" && phase !== "failed") return;
     autoStarted.current = true;
     void startAuth({ environmentId, input: { instanceId } });
   }, [autoStart, auth, phase, startAuth, environmentId, instanceId]);
