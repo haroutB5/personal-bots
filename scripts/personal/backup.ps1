@@ -8,7 +8,7 @@ runs) and integrity-checked. attachments\, browser-artifacts\, themes\,
 settings.json, keybindings.json and environment-id are copied beside it, plus
 any userdata\personal* directories. secrets\ is deliberately NOT copied: a
 backup never carries credentials, and a restored copy cannot relink T3 Connect.
-Keeps the newest 14 backups.
+Keeps the newest 3 backups (pre-* migration backups are never pruned).
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\backup.ps1
@@ -16,7 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\backup.ps1
 [CmdletBinding()]
 param(
     [ValidateSet('dev', 'prod')][string]$Root = 'dev',
-    [ValidateRange(3, 2147483647)][int]$Keep = 14,
+    [ValidateRange(3, 2147483647)][int]$Keep = 3,
     [string]$Node
 )
 

@@ -12,10 +12,13 @@ $previousNames = @('20200101-000001', '20200101-000002', '20200101-000003')
 $oldProfile = $env:USERPROFILE
 $lock = $null
 
-function Invoke-Backup {
+function Invoke-Backup([switch]$DefaultKeep) {
     $out = Join-Path $root 'output.txt'
     $err = Join-Path $root 'error.txt'
-    $p = Start-Process powershell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'backup.ps1'), '-Keep', '3') -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
+    # -DefaultKeep passes no -Keep, so backup.ps1's own default (3, Harout 20 Oct) is what prunes.
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'backup.ps1'))
+    if (-not $DefaultKeep) { $argList += @('-Keep', '3') }
+    $p = Start-Process powershell -ArgumentList $argList -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
     $null = $p.Handle
     if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; throw 'Wrapper timeout' }
     $p.WaitForExit()
@@ -70,6 +73,31 @@ try {
     $fresh = @(Get-ChildItem $backups -Directory | Where-Object { $_.Name -notlike '20200101-*' })
     if ($fresh.Count -ne 1 -or -not (Test-Path (Join-Path $fresh[0].FullName 'backup.json'))) { throw 'good backup did not publish its folder' }
     Write-Host 'PASS: a good backup publishes backup.json and keeps its folder.'
+
+    # 4. the default keeps the newest 3 timestamp backups and never touches a pre-* migration backup or a stray file
+    $defaultKeep = [int](([regex]::Match((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'backup.ps1') -Raw), '\$Keep\s*=\s*(\d+)')).Groups[1].Value)
+    if ($defaultKeep -ne 3) { throw "backup.ps1 default -Keep is $defaultKeep, expected 3" }
+    $pre = Join-Path $backups 'pre-migration-keepme'
+    New-Item -ItemType Directory $pre | Out-Null
+    Set-Content (Join-Path $pre 'backup.json') '{}'
+    Set-Content (Join-Path $pre 'state.sqlite') 'pre-migration backup'
+    Set-Content (Join-Path $backups 'stray-file.txt') 'stray'
+    foreach ($name in '20200101-000004', '20200101-000005') {
+        New-Item -ItemType Directory (Join-Path $backups $name) | Out-Null
+        Set-Content (Join-Path (Join-Path $backups $name) 'backup.json') '{}'
+    }
+    Start-Sleep -Seconds 2
+    $before = @(Get-ChildItem $backups -Directory | Where-Object { $_.Name -match '^\d{8}-\d{6}$' }).Count
+    $def = Invoke-Backup -DefaultKeep
+    if ($def.Code -ne 0) { throw "default-keep backup failed: $($def.Out)" }
+    $ts = @(Get-ChildItem $backups -Directory | Where-Object { $_.Name -match '^\d{8}-\d{6}$' } | Sort-Object Name)
+    if ($before -le 3) { throw "default-keep case needs more than 3 backups before the run (had $before)" }
+    if ($ts.Count -ne 3) { throw "default keep left $($ts.Count) timestamp backups, expected 3: $(($ts | ForEach-Object Name) -join ',')" }
+    if (-not (Test-Path (Join-Path $ts[-1].FullName 'backup.json'))) { throw 'the newest backup is not the fresh published one' }
+    if ($ts[0].Name -ne '20200101-000005') { throw "default keep should leave the newest old backup first, found: $(($ts | ForEach-Object Name) -join ',')" }
+    if ((Get-Content (Join-Path $pre 'state.sqlite') -Raw).Trim() -ne 'pre-migration backup') { throw 'the pre-* migration backup was touched' }
+    if (-not (Test-Path (Join-Path $backups 'stray-file.txt'))) { throw 'a non-timestamp entry was removed' }
+    Write-Host 'PASS: the default -Keep is 3, it prunes only older timestamp backups and leaves pre-* backups and stray files alone.'
 } finally {
     if ($lock) { $lock.Dispose() }
     $env:USERPROFILE = $oldProfile
