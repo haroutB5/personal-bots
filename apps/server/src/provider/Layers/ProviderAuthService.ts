@@ -176,6 +176,17 @@ export const makeProviderAuthService = Effect.gen(function* () {
       const auth = yield* getController(input.instanceId, "cancel");
       return yield* auth.cancel(ownerSessionId, input.flowId);
     }),
+    openOnLaptop: Effect.fn("ProviderAuthService.openOnLaptop")(function* (input, ownerSessionId) {
+      const auth = yield* getController(input.instanceId, "openOnLaptop");
+      if (!auth.openOnLaptop) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "openOnLaptop",
+          detail: "Opening the sign-in page on the laptop is not available for this provider.",
+        });
+      }
+      return yield* auth.openOnLaptop(ownerSessionId, input.flowId);
+    }),
     logout: Effect.fn("ProviderAuthService.logout")(function* (input) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {

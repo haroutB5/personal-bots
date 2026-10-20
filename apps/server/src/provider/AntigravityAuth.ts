@@ -28,6 +28,11 @@ import {
   forwardAntigravityCallback,
   validateAntigravityCallbackUrl,
 } from "./antigravityCallback.ts";
+import {
+  isHttpsUrl,
+  openInDefaultBrowser,
+  type OpenInDefaultBrowser,
+} from "./openDefaultBrowser.ts";
 import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
 
 const AUTH_TIMEOUT_MS = 300_000;
@@ -83,6 +88,8 @@ export interface AntigravityAuthOptions<
   ) => Effect.Effect<void>;
   readonly onSignedOut: Effect.Effect<void>;
   readonly forwardCallback?: (callback: URL) => Effect.Effect<void, ProviderSetupError>;
+  /** Opens the active flow's link in the laptop's default browser. Tests inject a fake. */
+  readonly openInDefaultBrowser?: OpenInDefaultBrowser;
   /** False for API key methods, which authenticate without a Google sign-in page. */
   readonly usesBrowser?: boolean;
 }
@@ -125,6 +132,22 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
   return usesBrowser
     ? "Google sign-in failed. Start sign-in again."
     : "Antigravity could not authenticate with the configured credentials.";
+}
+
+/**
+ * The cause class and a short reason for the one WARN a failed sign-in logs.
+ * Never the error message, URLs, codes or tokens: only the error class, the
+ * ACP method and the JSON-RPC code.
+ */
+function describeAuthFailure(cause: Cause.Cause<unknown>): string {
+  const error = Cause.findErrorOption(cause);
+  if (Option.isNone(error)) return Cause.hasInterrupts(cause) ? "interrupted" : "defect";
+  if (isAcpRequestError(error.value)) {
+    return `AcpRequestError method=${error.value.method} code=${error.value.code}`;
+  }
+  if (isSetupError(error.value)) return `ProviderSetupError operation=${error.value.operation}`;
+  const tag = (error.value as { readonly _tag?: unknown } | null)?._tag;
+  return typeof tag === "string" && /^[A-Za-z]{1,64}$/.test(tag) ? tag : "unknown error";
 }
 
 /** Owns one instance's explicit sign-in and all process admission around sign-out. */
@@ -223,6 +246,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         activeFlow = undefined;
         operation = "idle";
         flow.pending = undefined;
+        if (Exit.isFailure(result)) {
+          yield* Effect.logWarning(
+            `Antigravity sign-in failed for ${options.instanceId} (${describeAuthFailure(result.cause)}).`,
+          );
+        }
         yield* publishFlow(flow, {
           ...flow.state,
           phase: Exit.isSuccess(result) ? "succeeded" : "failed",
@@ -432,6 +460,35 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         return yield* setupError("complete", FORWARDING_FAILED_MESSAGE);
       }
       return pending.flow.state;
+    }),
+    openOnLaptop: Effect.fn("AntigravityAuth.openOnLaptop")(function* (ownerSessionId, flowId) {
+      // Only the link this owner's active flow already holds; the client sends
+      // an id, never a URL. It is never logged.
+      const url = yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          const flow = yield* requireFlow(ownerSessionId, flowId, "openOnLaptop");
+          const authorizationUrl = flow.pending?.authorizationUrl;
+          if (authorizationUrl === undefined || flow.callbackSent) {
+            return yield* setupError(
+              "openOnLaptop",
+              "The Google sign-in link is not ready or was already used.",
+            );
+          }
+          if (!isHttpsUrl(authorizationUrl)) {
+            return yield* setupError("openOnLaptop", "The Google sign-in link cannot be opened.");
+          }
+          return authorizationUrl;
+        }),
+      );
+      yield* (options.openInDefaultBrowser ?? openInDefaultBrowser)(url).pipe(
+        Effect.mapError(() =>
+          setupError(
+            "openOnLaptop",
+            "Could not open the sign-in page on the laptop. Use the link instead.",
+          ),
+        ),
+      );
+      yield* Effect.logInfo(`opened sign-in page on laptop (${options.instanceId})`);
     }),
     cancel: Effect.fn("AntigravityAuth.cancel")(function* (ownerSessionId, flowId) {
       const flow = yield* lock.withPermits(1)(requireFlow(ownerSessionId, flowId, "cancel"));

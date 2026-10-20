@@ -116,6 +116,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
     sharedBusy?: boolean;
     sharedBusyEffect?: Effect.Effect<boolean>;
     responds?: boolean;
+    opens?: boolean;
     beforeLogout?: Effect.Effect<void>;
     beforeStop?: Effect.Effect<void>;
     beforeListSessions?: Effect.Effect<void>;
@@ -148,6 +149,14 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
   const auth: ProviderAuthController = {
     ...(input.sharedCredentials
       ? { credentialBinding: { owner: "provider" as const, key: "shared" } }
+      : {}),
+    ...(input.opens
+      ? {
+          openOnLaptop: Effect.fn(function* (ownerSessionId, requestedFlowId) {
+            yield* checkOwner(ownerSessionId, requestedFlowId, "openOnLaptop");
+            actions.push("open-on-laptop");
+          }),
+        }
       : {}),
     ...(input.responds
       ? {
@@ -413,6 +422,25 @@ describe("ProviderAuthService", () => {
       const unsupported = yield* makeHarness();
       const error = yield* unsupported.service.respond(request, owner).pipe(Effect.flip);
       assert.include(error.detail, "does not accept");
+    }),
+  );
+  it.effect("opens the sign-in page through the owner's controller only", () =>
+    Effect.gen(function* () {
+      const { service, actions } = yield* makeHarness({ opens: true });
+      yield* service.start({ instanceId }, owner);
+      const rejected = yield* service
+        .openOnLaptop({ instanceId, flowId }, otherOwner)
+        .pipe(Effect.flip);
+      assert.strictEqual(rejected.operation, "openOnLaptop");
+      assert.notInclude(actions, "open-on-laptop");
+      yield* service.openOnLaptop({ instanceId, flowId }, owner);
+      assert.strictEqual(actions.at(-1), "open-on-laptop");
+
+      const unsupported = yield* makeHarness();
+      const error = yield* unsupported.service
+        .openOnLaptop({ instanceId, flowId }, owner)
+        .pipe(Effect.flip);
+      assert.include(error.detail, "not available for this provider");
     }),
   );
   it.effect("stops routed sessions before sign-in, including for a disabled instance", () =>

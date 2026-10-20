@@ -178,3 +178,18 @@ export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()
     return this.detail;
   }
 }
+
+/** Run the one-message test now; the verdict arrives on the provider's `smokeCheck`. */
+export const ProviderTestRunInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  /** Defaults to the provider's default model. */
+  model: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ProviderTestRunInput = typeof ProviderTestRunInput.Type;
+
+/** Open the sign-in link of a running flow in the laptop's default browser. */
+export const ProviderAuthOpenOnLaptopInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  flowId: SetupOperationId,
+});
+export type ProviderAuthOpenOnLaptopInput = typeof ProviderAuthOpenOnLaptopInput.Type;

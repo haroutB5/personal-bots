@@ -32,6 +32,7 @@ import {
   antigravityAuthUsesBrowser,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
+  makeAntigravityLauncherTree,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
   type AntigravityAuthConfig,
@@ -225,8 +226,13 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
                 ),
               ),
         );
+        // Sessions, sign-in and text generation all stop through this scope.
+        // End the launcher's child before the launcher stops, so nothing
+        // survives to hold the temp directory removed above.
+        const launcherTree = makeAntigravityLauncherTree(input.onProcessStarted);
         const runtime = yield* makeAntigravityAcpRuntime({
           ...input,
+          onProcessStarted: launcherTree.onProcessStarted,
           authMethod: auth.authMethod,
           childProcessSpawner: spawner,
           spawn: buildAntigravityAcpSpawnInput({
@@ -238,6 +244,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             runtimeTempDirectory,
           }),
         }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+        yield* Effect.addFinalizer(() => launcherTree.terminate);
         return {
           ...runtime,
           start: () =>

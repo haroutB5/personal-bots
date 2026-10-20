@@ -1017,3 +1017,76 @@ it.effect("refuses incompatible latest versions and unapproved or unpinnable tar
     ),
   );
 });
+
+it.effect("Go back installs an older pinned version unless the manifest marks it broken", () => {
+  const calls: string[] = [];
+  const manifest: ModelManifest.ModelManifestData = {
+    version: 1,
+    currentModels: {},
+    compatibility: [
+      {
+        driver: "codex",
+        t3CodeRange: ">=0.0.42",
+        recommendedVersion: "2.0.0",
+        ranges: [
+          { range: "=2.0.0", status: "supported" },
+          { range: "=1.5.0", status: "broken" },
+          { range: ">2.0.0", status: "broken" },
+        ],
+      },
+    ],
+  };
+  return Effect.gen(function* () {
+    const { registry, providersRef } = yield* makeRegistry();
+    const pinnedCapabilities = makeProviderMaintenanceCapabilities({
+      provider: CODEX_DRIVER,
+      packageName: "@openai/codex",
+      updateExecutable: "npm",
+      updateArgs: ["install", "-g", "@openai/codex@latest"],
+      updateLockKey: "npm-global:/fixture",
+    });
+    const updater = yield* makeTestRunner(
+      {
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
+      },
+      manifest,
+    );
+    // An older version is refused as an ordinary pin ...
+    const refused = yield* updater.updateProvider({
+      provider: CODEX_DRIVER,
+      targetVersion: "1.0.0",
+    });
+    assert.strictEqual(refused.providers[0]?.updateState?.status, "failed");
+    // ... a version the manifest marks broken is refused even as a rollback ...
+    const broken = yield* updater.updateProvider({
+      provider: CODEX_DRIVER,
+      targetVersion: "1.5.0",
+      rollback: true,
+    });
+    assert.strictEqual(broken.providers[0]?.updateState?.status, "failed");
+    assert.deepStrictEqual(calls, []);
+    // ... and Go back installs the older one.
+    yield* Ref.update(providersRef, (providers) =>
+      providers.map((entry) => ({ ...entry, version: "1.0.0" })),
+    );
+    const back = yield* updater.updateProvider({
+      provider: CODEX_DRIVER,
+      targetVersion: "1.0.0",
+      rollback: true,
+    });
+    assert.deepStrictEqual(calls, ["install -g @openai/codex@1.0.0"]);
+    assert.strictEqual(back.providers[0]?.updateState?.status, "succeeded");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NonWindowsPlatform,
+        latestVersionHttpClient("3.0.0"),
+        mockSpawnerLayer((_command, args) => {
+          calls.push(args.join(" "));
+          return { stdout: "installed" };
+        }),
+      ),
+    ),
+  );
+});

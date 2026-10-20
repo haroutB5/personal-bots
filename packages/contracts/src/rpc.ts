@@ -8,10 +8,12 @@ import {
   ProviderAuthState,
   ProviderAuthStartInput,
   ProviderAuthRespondInput,
+  ProviderAuthOpenOnLaptopInput,
   ProviderInstallCancelInput,
   ProviderInstallState,
   ProviderSetupError,
   ProviderSetupInput,
+  ProviderTestRunInput,
 } from "./providerSetup.ts";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
@@ -509,6 +511,8 @@ export const WS_METHODS = {
   providerAuthCancel: "provider.auth.cancel",
   providerAuthLogout: "provider.auth.logout",
   providerAuthSubscribe: "provider.auth.subscribe",
+  providerAuthOpenOnLaptop: "provider.auth.openOnLaptop",
+  providerTestRun: "provider.test.run",
   providerInstallStart: "provider.install.start",
   providerInstallCancel: "provider.install.cancel",
   providerInstallSubscribe: "provider.install.subscribe",
@@ -894,6 +898,18 @@ const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
 const WsProviderAuthLogoutRpc = Rpc.make(WS_METHODS.providerAuthLogout, {
   payload: ProviderSetupInput,
   success: ProviderAuthState,
+  error: ProviderSetupRpcError,
+});
+
+const WsProviderAuthOpenOnLaptopRpc = Rpc.make(WS_METHODS.providerAuthOpenOnLaptop, {
+  payload: ProviderAuthOpenOnLaptopInput,
+  success: Schema.Struct({}),
+  error: ProviderSetupRpcError,
+});
+
+const WsProviderTestRunRpc = Rpc.make(WS_METHODS.providerTestRun, {
+  payload: ProviderTestRunInput,
+  success: Schema.Struct({}),
   error: ProviderSetupRpcError,
 });
 
@@ -2663,6 +2679,8 @@ export const WsServerRpcGroup = RpcGroup.make(
   WsProviderAuthRespondRpc,
   WsProviderAuthCancelRpc,
   WsProviderAuthLogoutRpc,
+  WsProviderAuthOpenOnLaptopRpc,
+  WsProviderTestRunRpc,
   WsProviderAuthSubscribeRpc,
   WsProviderInstallStartRpc,
   WsProviderInstallCancelRpc,

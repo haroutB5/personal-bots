@@ -56,6 +56,8 @@ export interface ProviderMaintenanceRunnerShape {
           readonly provider: ProviderDriverKind;
           readonly instanceId?: ProviderInstanceId | undefined;
           readonly targetVersion?: string | undefined;
+          /** "Go back": an older `targetVersion` is allowed unless the manifest marks it broken. */
+          readonly rollback?: boolean | undefined;
         },
   ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
 }
@@ -317,6 +319,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ? defaultInstanceIdForDriver(provider)
         : (target.instanceId ?? defaultInstanceIdForDriver(provider));
     const targetVersion = typeof target === "string" ? undefined : target.targetVersion;
+    const rollback = typeof target === "string" ? false : target.rollback === true;
     const targetKey = `instance:${instanceId}`;
     const capabilities = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
       instanceId,
@@ -404,8 +407,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const rejected =
               targetVersion !== undefined
                 ? !command ||
-                  advisory?.recommendedVersion !== targetVersion ||
-                  advisory.status !== "supported"
+                  (rollback
+                    ? advisory?.status === "broken" || advisory?.status === "unsupported"
+                    : advisory?.recommendedVersion !== targetVersion ||
+                      advisory.status !== "supported")
                 : advisory?.status === "broken" || advisory?.status === "unsupported";
             if (rejected || !command) {
               return yield* finish(

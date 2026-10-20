@@ -1012,6 +1012,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:auth-logout",
       tag: WS_METHODS.providerAuthLogout,
     }),
+    openProviderAuthOnLaptop: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:auth-open-on-laptop",
+      tag: WS_METHODS.providerAuthOpenOnLaptop,
+    }),
+    runProviderTest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:test-run",
+      tag: WS_METHODS.providerTestRun,
+    }),
     providerInstallState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:install-state",
       tag: WS_METHODS.providerInstallSubscribe,

@@ -5,7 +5,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -17,6 +21,7 @@ import {
   type AntigravityAuth,
   type AntigravityAuthRuntime,
 } from "./AntigravityAuth.ts";
+import { DefaultBrowserOpenError } from "./openDefaultBrowser.ts";
 import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-auth-test");
@@ -58,6 +63,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
+    readonly openFails?: boolean;
   } = {},
 ) {
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
@@ -68,6 +74,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
     | undefined;
   let forwarded = 0;
+  const opened: string[] = [];
   let catalog = ["previous-account-model"];
   const auth = yield* makeAntigravityAuth({
     instanceId,
@@ -119,6 +126,10 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
       catalog = [];
       events.push("catalog-cleared");
     }),
+    openInDefaultBrowser: (url) =>
+      options.openFails
+        ? Effect.fail(new DefaultBrowserOpenError({ reason: "launch-failed" }))
+        : Effect.sync(() => void opened.push(url)),
     forwardCallback: () =>
       options.forwardCallback ??
       Effect.sync(() => {
@@ -133,6 +144,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
+    opened,
     receiveAuthorizationUrl: (url: string) =>
       Effect.suspend(() =>
         receiveAuthorizationUrl
@@ -249,6 +261,103 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         assert.deepEqual(harness.catalog(), ["previous-account-model"]);
         yield* Deferred.await(harness.closed);
       }),
+  );
+
+  it.effect("logs exactly one warning for a failed sign-in, without URL, code or token", () => {
+    const warnings: string[] = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Warn") warnings.push(JSON.stringify(message));
+    });
+    return Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.fail(
+        harness.discovered,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: `Internal error ${callbackUrl} ${authorizationUrl} access_token=secret-token`,
+          method: "session/new",
+        }),
+      );
+      yield* phase(harness.auth, "failed");
+      yield* Deferred.await(harness.closed);
+
+      assert.equal(warnings.length, 1);
+      assert.include(warnings[0]!, "AcpRequestError method=session/new code=-32603");
+      for (const secret of ["http", "google", "test-code", "test-state", "secret-token"]) {
+        assert.notInclude(warnings[0]!, secret);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Logger.layer([logger], { mergeWithExisting: false }),
+          Layer.succeed(References.MinimumLogLevel, "Debug"),
+        ),
+      ),
+    );
+  });
+
+  it.effect("opens the active flow's link on the laptop once and logs no URL", () => {
+    const infos: string[] = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Info") infos.push(JSON.stringify(message));
+    });
+    return Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.openOnLaptop!(owner, state.flowId!);
+      assert.deepEqual(harness.opened, [authorizationUrl]);
+      assert.deepEqual(infos, [`["opened sign-in page on laptop (${instanceId})"]`]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Logger.layer([logger], { mergeWithExisting: false }),
+          Layer.succeed(References.MinimumLogLevel, "Debug"),
+        ),
+      ),
+    );
+  });
+
+  it.effect("refuses to open the link for a wrong flow, another session or no flow", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const open = harness.auth.controller.openOnLaptop!;
+      assert.isTrue(
+        Result.isFailure(
+          yield* open(owner, "00000000-0000-4000-8000-000000000000").pipe(Effect.result),
+        ),
+      );
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      const wrongFlow = yield* open(owner, "00000000-0000-4000-8000-000000000000").pipe(
+        Effect.flip,
+      );
+      assert.equal(wrongFlow._tag, "ProviderSetupError");
+      const otherSession = yield* open(otherOwner, state.flowId!).pipe(Effect.flip);
+      assert.equal(otherSession._tag, "ProviderSetupError");
+      assert.deepEqual(harness.opened, []);
+
+      yield* harness.auth.controller.cancel(owner, state.flowId!);
+      yield* open(owner, state.flowId!).pipe(Effect.flip);
+      assert.deepEqual(harness.opened, []);
+    }),
+  );
+
+  it.effect("reports a failed launch without the URL", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ openFails: true });
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      const failed = yield* harness.auth.controller.openOnLaptop!(owner, state.flowId!).pipe(
+        Effect.flip,
+      );
+      assert.equal(failed._tag, "ProviderSetupError");
+      assert.notInclude(failed.detail, "https");
+      assert.deepEqual(harness.opened, []);
+    }),
   );
 
   it.effect("does not call callback HTTP success a successful Google sign-in", () =>

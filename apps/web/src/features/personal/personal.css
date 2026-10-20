@@ -1318,3 +1318,23 @@
     animation: none;
   }
 }
+
+/* Settings > Providers (provider-setup SPEC section 12): the indeterminate
+ * progress segment slides 34% of the track in 1.3 s; reduced motion keeps it
+ * still. */
+@keyframes prov-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(294%);
+  }
+}
+.prov-progress-slide {
+  animation: prov-progress-slide 1.3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .prov-progress-slide {
+    animation: none;
+  }
+}

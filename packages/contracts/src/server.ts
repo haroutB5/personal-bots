@@ -229,6 +229,23 @@ export const ServerProviderSmokeCheck = Schema.Struct({
   checkedAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(TrimmedNonEmptyString),
   retryAt: Schema.optional(IsoDateTime),
+  /** The model that answered (passed) or that the last attempt used (failed). */
+  model: Schema.optional(TrimmedNonEmptyString),
+  /** How long the answering turn took, for the Ready card. */
+  durationMs: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /**
+   * The version that worked before this one, when the test failed after an
+   * update: the "Go back" target. Absent when none is known.
+   */
+  previousVersion: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Model slugs bots use that the provider no longer lists. The test then
+   * retried on the provider's default model; this is set when that passed, so
+   * the provider is fine and only those bots need a new model.
+   */
+  missingModels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** The owner asked for this test ("Test"); it is not about an update. */
+  manual: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderSmokeCheck = typeof ServerProviderSmokeCheck.Type;
 
@@ -254,6 +271,10 @@ export const ServerProvider = Schema.Struct({
     Schema.Struct({
       canAuthenticate: Schema.Boolean,
       canInstall: Schema.Boolean,
+      // Newer fields: absent from older servers, read as false.
+      canRemove: Schema.optionalKey(Schema.Boolean),
+      canTest: Schema.optionalKey(Schema.Boolean),
+      canOpenOnLaptop: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   enabled: Schema.Boolean,
@@ -852,6 +873,12 @@ export const ServerProviderUpdateInput = Schema.Struct({
   provider: ProviderDriverKind,
   targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
   instanceId: Schema.optionalKey(ProviderInstanceId),
+  /**
+   * "Go back": install `targetVersion` even though it is older than the
+   * recommended one. Only a version the manifest does not mark broken or
+   * unsupported is accepted.
+   */
+  rollback: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 

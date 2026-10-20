@@ -82,6 +82,15 @@ const PersistedSmokeCheck = Schema.Struct({
   message: Schema.NullOr(Schema.String),
   // Only on waiting_for_limit: when the limit is expected to be over.
   retryAt: Schema.optional(Schema.String),
+  // The model that answered (passed) or that the last attempt used (failed).
+  model: Schema.optional(Schema.String),
+  durationMs: Schema.optional(Schema.Int),
+  // The version that worked before this one ("Go back"); set on a failure after an update.
+  previousVersion: Schema.optional(Schema.String),
+  // Bot models the provider no longer lists; the default model answered instead.
+  missingModels: Schema.optional(Schema.Array(Schema.String)),
+  // The owner pressed Test: not about an update, so no alert and no "Update broke".
+  manual: Schema.optional(Schema.Boolean),
 });
 export type PersistedSmokeCheck = typeof PersistedSmokeCheck.Type;
 const decodePersisted = Schema.decodeUnknownEffect(Schema.fromJsonString(PersistedSmokeCheck));
@@ -156,6 +165,14 @@ export interface PersonalProviderUpdatesDeps {
 export interface PersonalProviderUpdatesShape {
   /** Subscribes to provider snapshots and runtime events; parks until server activation. */
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+  /**
+   * "Test" on the provider page: one message on the given (else the default)
+   * model, with or without bots on it. The verdict arrives on `smokeCheck`.
+   */
+  readonly testRun: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly model?: string;
+  }) => Effect.Effect<void, PersonalBotsError>;
   /** "Check again": refreshes the instance, then re-runs the test message for its version. */
   readonly recheck: (input: {
     readonly instanceId: ProviderInstanceId;
@@ -184,6 +201,8 @@ interface CheckRequest {
   readonly models: ReadonlyArray<string>;
   readonly test: SmokeTest;
   readonly previous: PersistedSmokeCheck | null;
+  /** The owner asked for this test: no alert, and it is not blamed on an update. */
+  readonly manual?: boolean;
 }
 
 const versionOf = (providers: ReadonlyArray<ServerProvider>, instanceId: ProviderInstanceId) =>
@@ -220,6 +239,15 @@ const projectionOf = (persisted: PersistedSmokeCheck): ServerProviderSmokeCheck 
         ...(persisted.status === "waiting_for_limit" && persisted.retryAt !== undefined
           ? { retryAt: persisted.retryAt }
           : {}),
+        ...(persisted.model !== undefined ? { model: persisted.model } : {}),
+        ...(persisted.durationMs !== undefined ? { durationMs: persisted.durationMs } : {}),
+        ...(persisted.previousVersion !== undefined
+          ? { previousVersion: persisted.previousVersion }
+          : {}),
+        ...(persisted.missingModels !== undefined && persisted.missingModels.length > 0
+          ? { missingModels: persisted.missingModels }
+          : {}),
+        ...(persisted.manual === true ? { manual: true } : {}),
       };
 
 const sameProjection = (
@@ -233,7 +261,12 @@ const sameProjection = (
       current.version === wanted.version &&
       current.checkedAt === wanted.checkedAt &&
       current.message === wanted.message &&
-      current.retryAt === wanted.retryAt;
+      current.retryAt === wanted.retryAt &&
+      current.model === wanted.model &&
+      current.durationMs === wanted.durationMs &&
+      current.previousVersion === wanted.previousVersion &&
+      current.manual === wanted.manual &&
+      (current.missingModels ?? []).join("|") === (wanted.missingModels ?? []).join("|");
 
 const failureDetail = (cause: Cause.Cause<{ readonly detail: string }>): string => {
   const failure = Cause.squash(cause);
@@ -249,6 +282,22 @@ const failureDetail = (cause: Cause.Cause<{ readonly detail: string }>): string 
   const trimmed = raw.trim();
   if (trimmed.length === 0) return "The test message failed.";
   return trimmed.length <= MESSAGE_MAX_LENGTH ? trimmed : trimmed.slice(0, MESSAGE_MAX_LENGTH);
+};
+
+/**
+ * The version that last worked before `version`: the previous record's version
+ * when that one passed (or was the first sight of it), else what that record
+ * already knew. Null when nobody knows.
+ */
+const previousWorkingVersion = (
+  previous: PersistedSmokeCheck | null,
+  version: string,
+): string | undefined => {
+  if (previous === null) return undefined;
+  if (previous.version === version) return previous.previousVersion;
+  return previous.status === "passed" || previous.status === "baseline"
+    ? previous.version
+    : previous.previousVersion;
 };
 
 export const makeWith = (
@@ -381,13 +430,41 @@ export const makeWith = (
         // are already failing, which is when the extra turns are worth it.
         const failures: Array<SmokeLimitFailure> = [];
         let passed = false;
+        let answeredBy: string | undefined;
+        let answeredInMs: number | undefined;
+        const attempt = (model: string) =>
+          Effect.gen(function* () {
+            const startedMs = yield* Clock.currentTimeMillis;
+            const outcome = yield* Effect.exit(request.test(model));
+            const endedMs = yield* Clock.currentTimeMillis;
+            if (Exit.isSuccess(outcome)) {
+              passed = true;
+              answeredBy = model;
+              answeredInMs = Math.max(0, Math.round(endedMs - startedMs));
+              return;
+            }
+            failures.push({ model, detail: failureDetail(outcome.cause) });
+          });
         for (const model of request.models) {
-          const outcome = yield* Effect.exit(request.test(model));
-          if (Exit.isSuccess(outcome)) {
-            passed = true;
-            break;
+          yield* attempt(model);
+          if (passed) break;
+        }
+        // A model the provider no longer lists: a failure on it says nothing
+        // about the provider. Try the provider's own default model; when that
+        // answers the provider is fine and only the bots need a new model.
+        const listed = (model: string) =>
+          provider.models.length === 0 ||
+          provider.models.some(
+            (candidate) => candidate.slug === model || (candidate.aliases ?? []).includes(model),
+          );
+        const unlisted = failures.filter((failure) => !listed(failure.model));
+        const missingModels = [...new Set(unlisted.map((failure) => failure.model))];
+        if (!passed && failures.length > 0 && unlisted.length === failures.length) {
+          const fallback =
+            provider.models.find((candidate) => candidate.isDefault === true) ?? provider.models[0];
+          if (fallback !== undefined && !failures.some((f) => f.model === fallback.slug)) {
+            yield* attempt(fallback.slug);
           }
-          failures.push({ model, detail: failureDetail(outcome.cause) });
         }
         const lastFailure = failures.at(-1) ?? null;
         const nowMs = yield* Clock.currentTimeMillis;
@@ -416,8 +493,22 @@ export const makeWith = (
               nowMs,
             )
           : null;
+        const previousVersion = previousWorkingVersion(request.previous, version);
+        const common = {
+          ...(request.manual === true ? { manual: true } : {}),
+          ...(previousVersion !== undefined && request.manual !== true ? { previousVersion } : {}),
+        };
         const next: PersistedSmokeCheck = passed
-          ? { version, status: "passed", checkedAt, message: null }
+          ? {
+              version,
+              status: "passed",
+              checkedAt,
+              message: null,
+              ...(answeredBy !== undefined ? { model: answeredBy } : {}),
+              ...(answeredInMs !== undefined ? { durationMs: answeredInMs } : {}),
+              ...(missingModels.length > 0 ? { missingModels } : {}),
+              ...(request.manual === true ? { manual: true } : {}),
+            }
           : retryAtMs !== null
             ? {
                 version,
@@ -425,8 +516,17 @@ export const makeWith = (
                 checkedAt,
                 message,
                 retryAt: DateTime.formatIso(DateTime.makeUnsafe(retryAtMs)),
+                ...(lastFailure !== null ? { model: lastFailure.model } : {}),
+                ...common,
               }
-            : { version, status: "failed", checkedAt, message };
+            : {
+                version,
+                status: "failed",
+                checkedAt,
+                message,
+                ...(lastFailure !== null ? { model: lastFailure.model } : {}),
+                ...common,
+              };
         yield* cancelRetry(instanceId);
         yield* writePersisted(instanceId, next);
         yield* deps.setSmokeCheck(instanceId, projectionOf(next));
@@ -453,7 +553,7 @@ export const makeWith = (
         // One alert per version: a re-check that fails again stays quiet.
         const alreadyAlerted =
           request.previous?.status === "failed" && request.previous.version === version;
-        if (!alreadyAlerted) {
+        if (!alreadyAlerted && request.manual !== true) {
           yield* deps.notifyBroken({ instanceId, label: providerProductName(provider), version });
         }
       }).pipe(
@@ -633,6 +733,41 @@ export const makeWith = (
         yield* considerSmoke(provider, bots, true);
       });
 
+    const testRun: PersonalProviderUpdatesShape["testRun"] = (input) =>
+      Effect.gen(function* () {
+        const provider = (yield* deps.getProviders).find(
+          (candidate) => candidate.instanceId === input.instanceId,
+        );
+        const refuse = (message: string) => new PersonalBotsError({ message });
+        if (provider === undefined) {
+          return yield* refuse("That provider is not set up on this computer.");
+        }
+        if (!provider.installed || provider.version === null) {
+          return yield* refuse("Install it before testing it.");
+        }
+        if (!provider.enabled) return yield* refuse("Turn it on before testing it.");
+        if (checking.has(provider.instanceId)) return;
+        const test = yield* deps.smokeTestFor(provider.instanceId);
+        if (Option.isNone(test)) return yield* refuse("This provider has no test message.");
+        const model =
+          input.model ??
+          (provider.models.find((candidate) => candidate.isDefault === true) ?? provider.models[0])
+            ?.slug;
+        if (model === undefined) return yield* refuse("There is no model to test with.");
+        const nowMs = yield* Clock.currentTimeMillis;
+        const previous = yield* readVerdict(provider, nowMs);
+        yield* cancelRetry(provider.instanceId);
+        checking.add(provider.instanceId);
+        yield* worker.enqueue({
+          provider,
+          version: provider.version,
+          models: [model],
+          test: test.value,
+          previous,
+          manual: true,
+        });
+      });
+
     const start: PersonalProviderUpdatesShape["start"] = () =>
       Effect.gen(function* () {
         yield* forkParked(Stream.runForEach(deps.runtimeEvents, handleRuntimeEvent));
@@ -654,6 +789,7 @@ export const makeWith = (
     return {
       start,
       recheck,
+      testRun,
       handleProviders,
       handleRuntimeEvent,
       restartStaleSessions,

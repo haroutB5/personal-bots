@@ -453,13 +453,31 @@ export const ProviderRegistryLive = Layer.effect(
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
       const actions = maintenanceActionStates.get(provider.instanceId);
+      const live = (yield* Ref.get(liveSubsRef)).get(provider.instanceId);
       const {
         updateState: _updateState,
         smokeCheck: _smokeCheck,
         ...providerWithoutActionState
       } = provider;
+      // What the phone's provider page may offer: the one-message test when the
+      // driver has one, Remove where the app owns the installation, and the
+      // sign-in link on the laptop when the sign-in flow can open it.
+      const canTest = live?.smokeTest !== undefined;
+      const canOpenOnLaptop = live?.auth?.openOnLaptop !== undefined;
+      const canRemove = provider.setup?.canInstall === true;
+      const setup =
+        provider.setup !== undefined || canTest || canOpenOnLaptop
+          ? {
+              canAuthenticate: provider.setup?.canAuthenticate ?? false,
+              canInstall: provider.setup?.canInstall ?? false,
+              canRemove,
+              canTest,
+              canOpenOnLaptop,
+            }
+          : undefined;
       return {
         ...providerWithoutActionState,
+        ...(setup !== undefined ? { setup } : {}),
         ...(actions?.update ? { updateState: actions.update } : {}),
         ...(actions?.smokeCheck ? { smokeCheck: actions.smokeCheck } : {}),
       };

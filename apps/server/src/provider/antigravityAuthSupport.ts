@@ -18,6 +18,7 @@ import * as AcpErrors from "effect-acp/errors";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import type { AcpSpawnInput } from "./acp/AcpSessionRuntime.ts";
+import { terminateDescendants, type TerminatedDescendants } from "./processTree.ts";
 import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
@@ -279,6 +280,19 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
       );
+      // A link to a missing directory makes the agent fail `session/new` with
+      // "failed to create workspace folder ...: Cannot create a file when that
+      // file already exists". Link only what the user already has, and never
+      // create anything under their `~/.gemini`. A stale link is removed on
+      // its own (never followed, its target never touched).
+      const targetIsDirectory = yield* fs.stat(target).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!targetIsDirectory) {
+        if (existing !== undefined) yield* fs.remove(link);
+        return;
+      }
       if (existing === target) return;
       if (existing !== undefined) {
         yield* fs.remove(link);
@@ -429,6 +443,38 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   yield* linkAntigravityUserSkills({ profileDirectory: geminiHome, userHome, platform });
   return profile;
 });
+
+export interface AntigravityLauncherTree {
+  /** Pass to the runtime as `onProcessStarted`; records the launcher PID. */
+  readonly onProcessStarted: (pid: number) => Effect.Effect<void>;
+  /** Ends every descendant of the recorded launcher. A no-op until a PID is recorded. */
+  readonly terminate: Effect.Effect<void>;
+}
+
+/**
+ * The agent is a PyInstaller bootloader that starts a child. Stopping only the
+ * launcher leaves that child running on Windows, where it holds files in the
+ * runtime temp directory. Register `terminate` as a finalizer right after the
+ * runtime is built so it runs before the runtime stops the launcher, while the
+ * parent links can still be walked (the same approach as the installer's
+ * validation). `end` is injectable for tests.
+ */
+export function makeAntigravityLauncherTree(
+  onProcessStarted?: (pid: number) => Effect.Effect<void>,
+  end: (pid: number) => Effect.Effect<TerminatedDescendants> = terminateDescendants,
+): AntigravityLauncherTree {
+  let launcherPid: number | undefined;
+  return {
+    onProcessStarted: (pid) =>
+      Effect.suspend(() => {
+        launcherPid = pid;
+        return onProcessStarted?.(pid) ?? Effect.void;
+      }),
+    terminate: Effect.suspend(() =>
+      launcherPid === undefined ? Effect.void : end(launcherPid).pipe(Effect.asVoid),
+    ),
+  };
+}
 
 /** Applies the same subscription-only launch settings to every ACP process. */
 export function buildAntigravityAcpSpawnInput(input: {

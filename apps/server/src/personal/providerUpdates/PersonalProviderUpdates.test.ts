@@ -246,6 +246,9 @@ it.effect("a failing version is marked broken with one push; a later pass clears
       // The model is named: a bare "API Error: 500" does not say whether the
       // provider is broken or one bot points at a model that is gone.
       message: "claude-opus-5: API Error: 500",
+      model: "claude-opus-5",
+      // The version that worked before: the "Go back" target.
+      previousVersion: "2.1.263",
     });
     assert.deepEqual(state.pushes, [
       { instanceId: CLAUDE, label: "Claude Code", version: "2.1.264" },
@@ -760,4 +763,124 @@ it.effect("a waiting record does not run while the account is signed out", () =>
     assert.deepEqual(state.smokeModels, ["claude-opus-5"]);
     assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
   }),
+);
+
+const modelEntry = (slug: string, isDefault = false) => ({
+  slug,
+  name: slug,
+  isCustom: false,
+  isDefault,
+  capabilities: null,
+});
+
+it.effect("Test runs on the default model with no bots, and records model and duration", () =>
+  Effect.gen(function* () {
+    const { state, deps } = makeHarness();
+    state.bots = [];
+    state.providers = state.providers.map((provider) => ({
+      ...provider,
+      models: [modelEntry("claude-haiku-5-5"), modelEntry("claude-sonnet-5-5", true)],
+    }));
+    const service = yield* makeWith(deps);
+    yield* service.testRun({ instanceId: CLAUDE });
+    yield* service.drainChecks;
+    assert.deepEqual(state.smokeModels, ["claude-sonnet-5-5"]);
+    const check = state.providers[0]?.smokeCheck;
+    assert.equal(check?.status, "passed");
+    assert.equal(check?.model, "claude-sonnet-5-5");
+    assert.equal(check?.manual, true);
+    assert.isNumber(check?.durationMs);
+
+    // A chosen model wins over the default.
+    yield* service.testRun({ instanceId: CLAUDE, model: "claude-haiku-5-5" });
+    yield* service.drainChecks;
+    assert.deepEqual(state.smokeModels, ["claude-sonnet-5-5", "claude-haiku-5-5"]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a failed Test is the owner's test: no push, no previous version", () =>
+  Effect.gen(function* () {
+    const { state, deps } = makeHarness();
+    state.bots = [];
+    state.providers = state.providers.map((provider) => ({
+      ...provider,
+      models: [modelEntry("claude-sonnet-5-5", true)],
+    }));
+    state.smokeFailure = "model not found";
+    const service = yield* makeWith(deps);
+    yield* service.testRun({ instanceId: CLAUDE });
+    yield* service.drainChecks;
+    const check = state.providers[0]?.smokeCheck;
+    assert.equal(check?.status, "failed");
+    assert.equal(check?.manual, true);
+    assert.equal(check?.previousVersion, undefined);
+    assert.deepEqual(state.pushes, []);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("Test refuses a provider that is missing, not installed or off", () =>
+  Effect.gen(function* () {
+    const { state, deps } = makeHarness();
+    const service = yield* makeWith(deps);
+    const missing = yield* Effect.flip(
+      service.testRun({ instanceId: ProviderInstanceId.make("nothing") }),
+    );
+    assert.include(missing.message, "not set up");
+    state.providers = state.providers.map((provider) => ({ ...provider, installed: false }));
+    const notInstalled = yield* Effect.flip(service.testRun({ instanceId: CLAUDE }));
+    assert.include(notInstalled.message, "Install it");
+    state.providers = state.providers.map((provider) => ({
+      ...provider,
+      installed: true,
+      enabled: false,
+    }));
+    const off = yield* Effect.flip(service.testRun({ instanceId: CLAUDE }));
+    assert.include(off.message, "Turn it on");
+    assert.deepEqual(state.smokeModels, []);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a model the provider dropped is not blamed on the update", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    state.providers = state.providers.map((provider) => ({
+      ...provider,
+      models: [modelEntry("claude-sonnet-5-5", true)],
+    }));
+    const service = yield* makeWith(deps);
+    yield* service.handleProviders(state.providers);
+    state.smokeFailureByModel.set("claude-opus-5", "Unexpected server error");
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+    // The bot's model is not in the provider's list: the default model is tried
+    // and answers, so the provider passed and only the bots need a new model.
+    assert.deepEqual(state.smokeModels, ["claude-opus-5", "claude-sonnet-5-5"]);
+    const check = state.providers[0]?.smokeCheck;
+    assert.equal(check?.status, "passed");
+    assert.equal(check?.model, "claude-sonnet-5-5");
+    assert.deepEqual(check?.missingModels, ["claude-opus-5"]);
+    assert.deepEqual(state.pushes, []);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("when the default model fails too, the update is blamed with the model named", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    state.providers = state.providers.map((provider) => ({
+      ...provider,
+      models: [modelEntry("claude-sonnet-5-5", true)],
+    }));
+    const service = yield* makeWith(deps);
+    yield* service.handleProviders(state.providers);
+    state.smokeFailure = "Unexpected server error";
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+    const check = state.providers[0]?.smokeCheck;
+    assert.equal(check?.status, "failed");
+    assert.equal(check?.missingModels, undefined);
+    assert.equal(check?.previousVersion, "2.1.263");
+    assert.equal(state.pushes.length, 1);
+  }).pipe(Effect.scoped),
 );

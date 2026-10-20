@@ -2704,6 +2704,28 @@ const makeWsRpcLayer = (
             providerAuth.subscribe(input, currentSessionId),
             { "rpc.aggregate": "provider" },
           ),
+        [WS_METHODS.providerAuthOpenOnLaptop]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthOpenOnLaptop,
+            providerAuth.openOnLaptop(input, currentSessionId).pipe(Effect.as({})),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerTestRun]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerTestRun,
+            personalProviderUpdates.testRun(input).pipe(
+              Effect.mapError(
+                (error) =>
+                  new ProviderSetupError({
+                    instanceId: input.instanceId,
+                    operation: "test-run",
+                    detail: error.message,
+                  }),
+              ),
+              Effect.as({}),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.providerInstallStart]: (input) =>
           observeRpcEffect(WS_METHODS.providerInstallStart, providerInstallation.start(input), {
             "rpc.aggregate": "provider",

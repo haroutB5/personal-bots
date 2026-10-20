@@ -13,10 +13,12 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/unstable/encoding/Ndjson";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
@@ -35,6 +37,7 @@ import {
   antigravityProfileSettings,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
+  makeAntigravityLauncherTree,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
@@ -331,6 +334,45 @@ describe("Antigravity authorization URL", () => {
           expect(encodeUnknownJson(result.failure)).not.toContain(invalidUrl);
         }
       }),
+  );
+});
+
+describe("Antigravity launcher process tree", () => {
+  const ended = { rootPid: 0, found: [], killed: [], snapshotFailed: false };
+
+  it.effect("ends the launcher's descendants before the runtime stops, on every scope close", () =>
+    Effect.gen(function* () {
+      const order: string[] = [];
+      const tree = makeAntigravityLauncherTree(
+        (pid) => Effect.sync(() => void order.push(`outer-${pid}`)),
+        (pid) => Effect.sync(() => (order.push(`terminate-${pid}`), ended)),
+      );
+      // Same order as AntigravityDriver.makeRuntime: temp dir, runtime, tree.
+      const scope = yield* Scope.make();
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.sync(() => void order.push("remove-temp")),
+      );
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.sync(() => void order.push("stop-launcher")),
+      );
+      yield* tree.onProcessStarted(4242);
+      yield* Scope.addFinalizer(scope, tree.terminate);
+      yield* Scope.close(scope, Exit.void);
+      expect(order).toEqual(["outer-4242", "terminate-4242", "stop-launcher", "remove-temp"]);
+    }),
+  );
+
+  it.effect("does nothing when the launcher never started", () =>
+    Effect.gen(function* () {
+      const calls: number[] = [];
+      const tree = makeAntigravityLauncherTree(undefined, (pid) =>
+        Effect.sync(() => (calls.push(pid), ended)),
+      );
+      yield* tree.terminate;
+      expect(calls).toEqual([]);
+    }),
   );
 });
 
@@ -639,6 +681,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         const configSkills = path.join(userHome, ".gemini", "config", "skills");
         const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
+        yield* fs.makeDirectory(cliSkills, { recursive: true });
 
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         const configLink = path.join(profileDirectory, "config", "skills");
@@ -660,6 +703,41 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
         expect(yield* fs.exists(path.join(configLink, "own-skill"))).toBe(true);
         expect((yield* fs.stat(configLink)).type).toBe("Directory");
+      }),
+  );
+
+  // Junctions on Windows, symlinks elsewhere; the former need no privilege.
+  it.effect.skipIf(!symlinksSupported && process.platform !== "win32")(
+    "links only skill directories that exist and never creates folders in the user's home",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const configSkills = path.join(userHome, ".gemini", "config", "skills");
+        const configLink = path.join(profileDirectory, "config", "skills");
+        const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
+
+        // Neither target exists: no link, and nothing appears under the home.
+        yield* fs.makeDirectory(userHome, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.exists(configLink)).toBe(false);
+        expect(yield* fs.exists(cliLink)).toBe(false);
+        expect(yield* fs.readDirectory(userHome)).toEqual([]);
+
+        // One target exists: only that one is linked.
+        yield* fs.makeDirectory(configSkills, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(configLink)).toBe(configSkills);
+        expect(yield* fs.exists(cliLink)).toBe(false);
+
+        // The target disappears: the stale link goes and the target is not recreated.
+        yield* fs.remove(configSkills, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(Result.isFailure(yield* fs.readLink(configLink).pipe(Effect.result))).toBe(true);
+        expect(yield* fs.exists(configSkills)).toBe(false);
       }),
   );
 

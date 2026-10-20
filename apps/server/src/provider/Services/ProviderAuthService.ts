@@ -36,6 +36,14 @@ export interface ProviderAuthController {
     ownerSessionId: string,
     input: ProviderAuthRespondInput,
   ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  /**
+   * Opens the sign-in link of this owner's current flow in the default browser
+   * of the machine the server runs on. Never takes a URL from the client.
+   */
+  readonly openOnLaptop?: (
+    ownerSessionId: string,
+    flowId: string,
+  ) => Effect.Effect<void, ProviderSetupError>;
   /** The controller closes process admission before it stops routed sessions. */
   readonly logout: (
     stopSessions: Effect.Effect<void, ProviderSetupError>,
@@ -68,6 +76,10 @@ export interface ProviderAuthServiceShape {
   readonly logout: (
     input: ProviderAuthTarget,
   ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly openOnLaptop: (
+    input: ProviderAuthTarget & { readonly flowId: string },
+    ownerSessionId: string,
+  ) => Effect.Effect<void, ProviderSetupError>;
   readonly subscribe: (
     input: ProviderAuthTarget,
     ownerSessionId: string,
