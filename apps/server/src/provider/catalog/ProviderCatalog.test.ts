@@ -333,6 +333,37 @@ it.layer(NodeServices.layer)("provider catalog service", (it) => {
     }),
   );
 
+  it.effect("gives the install sheet its facts, and none for what cannot be installed", () =>
+    Effect.gen(function* () {
+      const { catalog } = yield* harness(normal);
+      yield* catalog.list({});
+      yield* settle;
+      expect(yield* catalog.installFacts("goose")).toEqual({
+        catalogId: "goose",
+        version: "1.55.0",
+        distribution: { kind: "binary", label: "GitHub release · block/goose" },
+        downloadBytes: 76_483_830,
+        requiredBytes: Math.ceil(76_483_830 * 2.5),
+        sha256Checked: true,
+        host: "github.com",
+        runsInstallScripts: false,
+      });
+      expect(yield* catalog.installFacts("gemini")).toEqual({
+        catalogId: "gemini",
+        version: "0.64.0",
+        distribution: { kind: "npm", label: "npm · @google/gemini-cli" },
+        downloadBytes: null,
+        requiredBytes: 600 * 1024 * 1024,
+        sha256Checked: false,
+        host: "registry.npmjs.org",
+        runsInstallScripts: true,
+      });
+      expect(yield* catalog.installFacts("junie")).toBeNull();
+      expect(yield* catalog.installFacts("fast-agent")).toBeNull();
+      expect(yield* catalog.installFacts("nope")).toBeNull();
+    }),
+  );
+
   it.effect("marks agents the user already added", () =>
     Effect.gen(function* () {
       const { catalog } = yield* harness(normal, {

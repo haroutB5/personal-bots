@@ -15,9 +15,8 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import type * as NodeStream from "node:stream";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import * as NodeStream from "node:stream";
+import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeZlib from "node:zlib";
 import * as Yauzl from "yauzl";
 
@@ -91,9 +90,9 @@ function targetFor(root: string, name: string): string {
 }
 
 /** Counts bytes through a stream and fails when it passes `expected` (or ends short). */
-function exactLength(expected: number, onBytes: (size: number) => void): Transform {
+function exactLength(expected: number, onBytes: (size: number) => void): NodeStream.Transform {
   let seen = 0;
-  return new Transform({
+  return new NodeStream.Transform({
     transform(chunk: Buffer, _encoding, callback) {
       seen += chunk.byteLength;
       if (seen > expected) {
@@ -122,7 +121,7 @@ async function writeFileFrom(
   signal: AbortSignal | undefined,
 ): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
-  await pipeline(
+  await NodeStreamPromises.pipeline(
     source,
     exactLength(expectedBytes, (size) => budget.written(size)),
     NodeFS.createWriteStream(target, { flags: "wx", mode }),
@@ -379,7 +378,7 @@ export async function extractTarGz(
         if (size > METADATA_MAX) throw new ArchiveError("The archive has a damaged header.");
         const data = (await reader.read(padded)) ?? Buffer.alloc(0);
         const content = data.subarray(0, size);
-        if (type === "x") pax = { ...pax, ...parsePax(content) };
+        if (type === "x") Object.assign(pax, parsePax(content));
         else if (type === "L") longName = content.toString("utf8").replace(/\0.*$/su, "");
         continue;
       }
@@ -418,7 +417,14 @@ export async function extractTarGz(
       seen.add(key);
       budget.declared(size);
       const mode = (octalField(block, 100, 108) & 0o111) !== 0 ? 0o755 : 0o644;
-      await writeFileFrom(Readable.from(reader.take(size)), target, size, mode, budget, signal);
+      await writeFileFrom(
+        NodeStream.Readable.from(reader.take(size)),
+        target,
+        size,
+        mode,
+        budget,
+        signal,
+      );
       await reader.skip(padded - size);
       files += 1;
     }

@@ -164,7 +164,7 @@ function publisherOf(agent: RegistryAgent): string {
   return "Unknown publisher";
 }
 
-function downloadLabel(url: string, host: string): string {
+export function downloadLabel(url: string, host: string): string {
   const repo = githubRepoOf(url);
   if (repo !== null) return `GitHub release · ${repo}`;
   if (host === "google.com" || host.endsWith(".google.com")) return "Google download";

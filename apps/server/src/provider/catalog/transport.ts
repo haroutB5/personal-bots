@@ -167,10 +167,11 @@ export const openHttps = Effect.fn("CatalogTransport.openHttps")(function* (
     }
     return { response, host: checked.host };
   }
-  const host = hostLabel(current);
-  return yield* installError("network", "The download was redirected too many times.", {
-    ...(host === undefined ? {} : { host }),
-  });
+  return yield* installError(
+    "network",
+    "The download was redirected too many times.",
+    hostExtra(current),
+  );
 });
 
 /** Reads at most `maxBytes` of a response body. A longer body fails instead of filling memory. */

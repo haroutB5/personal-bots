@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import * as NodeHttp from "node:http";
-import type { AddressInfo } from "node:net";
+import type * as NodeNet from "node:net";
 
 import { isCatalogInstallError } from "./errors.ts";
 import {
@@ -33,7 +33,7 @@ const serve = (handler: Handler) =>
         handler(request, response);
       });
       server.listen(0, "127.0.0.1", () => {
-        const { port } = server.address() as AddressInfo;
+        const { port } = server.address() as NodeNet.AddressInfo;
         resume(Effect.succeed({ origin: `http://127.0.0.1:${port}`, requests, server }));
       });
     }),

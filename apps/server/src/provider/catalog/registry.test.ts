@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { normalizeRelativeCommand, resolveInstallPlan, safeRegistryEnv } from "./plan.ts";
+import {
+  normalizeRelativeCommand,
+  requiredFreeBytes,
+  resolveInstallPlan,
+  safeRegistryEnv,
+} from "./plan.ts";
 import {
   archiveFormatOf,
   parseExactNpmSpec,
@@ -187,6 +192,18 @@ describe("normalizeRelativeCommand", () => {
     ]) {
       expect(normalizeRelativeCommand(bad), JSON.stringify(bad)).toBeNull();
     }
+  });
+});
+
+describe("requiredFreeBytes", () => {
+  const binary = resolveInstallPlan(agent("goose"), { platform: win });
+  const npm = resolveInstallPlan(agent("gemini"), { platform: win });
+  it("asks for 2.5 times the download, or a large-agent floor when the size is unknown", () => {
+    if (binary.kind !== "binary" || npm.kind !== "npm") throw new Error("fixture plans changed");
+    expect(requiredFreeBytes(binary, 100_000_000)).toBe(250_000_000);
+    expect(requiredFreeBytes(binary, 1)).toBe(3);
+    expect(requiredFreeBytes(binary, null)).toBe(1536 * 1024 * 1024);
+    expect(requiredFreeBytes(npm, null)).toBe(600 * 1024 * 1024);
   });
 });
 

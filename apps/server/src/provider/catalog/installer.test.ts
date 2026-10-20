@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import type { ProviderCatalogInstallState } from "@t3tools/contracts";
+import { ProviderCatalogInstallState } from "@t3tools/contracts";
 import {
   HostProcessEnvironment,
   HostProcessIsExecutable,
@@ -132,7 +132,7 @@ const makeHarness = Effect.fn("test.makeCatalogInstaller")(function* (
   const runtimesRoot = path.join(base, "runtimes");
   const requests: string[] = [];
   const spawns: Array<Parameters<AcpSmoke>[0]> = [];
-  const serve = options.serve ?? (() => ({ status: 404 }));
+  const serve: Served = options.serve ?? (() => ({ status: 404 }));
   const smoke: AcpSmoke = options.smoke ?? okSmoke;
   const installer = yield* makeCatalogInstaller({
     runtimesRoot,
@@ -173,13 +173,19 @@ const makeHarness = Effect.fn("test.makeCatalogInstaller")(function* (
 const isTerminal = (state: ProviderCatalogInstallState) =>
   ["succeeded", "failed", "cancelled"].includes(state.phase);
 
+const isWireState = Schema.is(ProviderCatalogInstallState);
+
 const finished = (
   installer: Effect.Success<ReturnType<typeof makeHarness>>["installer"],
   catalogId: string,
 ) =>
-  installer
-    .changes(catalogId)
-    .pipe(Stream.filter(isTerminal), Stream.runHead, Effect.map(Option.getOrThrow));
+  installer.changes(catalogId).pipe(
+    Stream.filter(isTerminal),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+    // Every state the phone can see must decode with the wire schema.
+    Effect.tap((state) => Effect.sync(() => expect(isWireState(state)).toBe(true))),
+  );
 
 /** Phases an install passes through, collected from the change stream. */
 const recordPhases = (
@@ -198,7 +204,7 @@ const recordPhases = (
       Effect.forkScoped,
     );
     /** Resolves with the phases once the install reached a terminal one. */
-    return Fiber.join(fiber).pipe(Effect.as(phases));
+    return { settled: Fiber.join(fiber).pipe(Effect.as(phases)) };
   });
 
 const dirNames = (fs: FileSystem.FileSystem, directory: string) =>
@@ -211,7 +217,7 @@ it.layer(NodeServices.layer)("catalog installer: binary archives", (it) => {
       const { installer, fs, path, runtimesRoot, requests, spawns } = yield* makeHarness({
         serve: archiveRoute(archive),
       });
-      const settled = yield* recordPhases(installer, "fake-agent");
+      const { settled } = yield* recordPhases(installer, "fake-agent");
       const started = yield* installer.start({ agent: binaryAgent({ archive }) });
       expect(started).toMatchObject({ phase: "resolving", version: "1.0.0", failure: null });
       const done = yield* finished(installer, "fake-agent");
@@ -852,8 +858,9 @@ it.layer(NodeServices.layer)("catalog installer: binary archives", (it) => {
  * then lays out what `npm install <pkg>@<version>` would: the package, a lock
  * file with an integrity hash, and a program. `BEHAVIOR` picks a failure.
  */
+const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const fakeNpm = (behavior: string) => `
-const behavior = ${Schema.encodeSync(Schema.fromJsonString(Schema.String))(behavior)};
+const behavior = ${encodeString(behavior)};
 const fs = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
@@ -925,7 +932,7 @@ it.layer(NodeServices.layer)("catalog installer: npm packages", (it) => {
     () =>
       Effect.gen(function* () {
         const { installer, fs, path, runtimesRoot, spawns } = yield* makeNpmHarness("ok");
-        const settled = yield* recordPhases(installer, "npm-agent");
+        const { settled } = yield* recordPhases(installer, "npm-agent");
         yield* installer.start({ agent: npmAgent() });
         const done = yield* finished(installer, "npm-agent");
         expect(done).toMatchObject({

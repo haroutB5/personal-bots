@@ -75,6 +75,7 @@ import {
 import type { CatalogOverlayEntry } from "./overlay.ts";
 import {
   normalizeRelativeCommand,
+  requiredFreeBytes,
   resolveInstallPlan,
   type BinaryInstallPlan,
   type NpmInstallPlan,
@@ -91,11 +92,6 @@ import { headSize, openHttps, type TransportOptions } from "./transport.ts";
 const DOWNLOAD_TIMEOUT = "45 minutes";
 const NPM_TIMEOUT = "15 minutes";
 const PROGRESS_INTERVAL_MS = 250;
-/** Free space needed is this many times the download: the archive plus its unpacked copy plus slack. */
-export const DISK_SAFETY_FACTOR = 2.5;
-/** When the size is unknown, ask for room for a large agent. */
-const UNKNOWN_BINARY_REQUIRED_BYTES = 1536 * 1024 * 1024;
-const NPM_REQUIRED_BYTES = 600 * 1024 * 1024;
 const HARD_DOWNLOAD_CAP_BYTES = 2 * 1024 * 1024 * 1024;
 const RECORD_FILE = ".install-complete.json";
 const ACTIVE_FILE = "active.json";
@@ -146,6 +142,26 @@ const ActivePointer = Schema.Struct({
 });
 type ActivePointer = typeof ActivePointer.Type;
 
+const NpmPackageJson = Schema.Struct({
+  name: Schema.String,
+  version: Schema.String,
+  bin: Schema.optionalKey(
+    Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)]),
+  ),
+});
+const NpmLock = Schema.Struct({
+  packages: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      version: Schema.optionalKey(Schema.String),
+      resolved: Schema.optionalKey(Schema.String),
+      integrity: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+
+const decodeNpmPackage = Schema.decodeEffect(Schema.fromJsonString(NpmPackageJson));
+const decodeNpmLock = Schema.decodeEffect(Schema.fromJsonString(NpmLock));
 const encodeManifest = Schema.encodeEffect(
   Schema.fromJsonString(
     Schema.Struct({ name: Schema.String, private: Schema.Boolean, version: Schema.String }),
@@ -162,7 +178,6 @@ export interface InstalledAgent extends InstalledLaunch {
   readonly previousVersion: string | null;
   readonly agentName: string | null;
   readonly agentVersion: string | null;
-  readonly authMethods: ReadonlyArray<{ readonly id: string; readonly name: string }>;
 }
 
 export interface CatalogInstallRequest {
@@ -392,7 +407,6 @@ export const makeCatalogInstaller = Effect.fn("CatalogInstaller.make")(function*
       previousVersion,
       agentName: value.agentName,
       agentVersion: value.agentVersion,
-      authMethods: [],
     } satisfies InstalledAgent;
   });
 
@@ -701,24 +715,6 @@ export const makeCatalogInstaller = Effect.fn("CatalogInstaller.make")(function*
     }
   });
 
-  const NpmPackageJson = Schema.Struct({
-    name: Schema.String,
-    version: Schema.String,
-    bin: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)]),
-    ),
-  });
-  const NpmLock = Schema.Struct({
-    packages: Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        version: Schema.optionalKey(Schema.String),
-        resolved: Schema.optionalKey(Schema.String),
-        integrity: Schema.optionalKey(Schema.String),
-      }),
-    ),
-  });
-
   /** The installed package must be the pinned one, with an integrity hash from the registry. */
   const verifyNpmInstall = Effect.fn("CatalogInstaller.verifyNpmInstall")(function* (
     plan: NpmInstallPlan,
@@ -726,7 +722,7 @@ export const makeCatalogInstaller = Effect.fn("CatalogInstaller.make")(function*
   ) {
     const packageDirectory = path.join(directory, "node_modules", ...plan.name.split("/"));
     const manifest = yield* fs.readFileString(path.join(packageDirectory, "package.json")).pipe(
-      Effect.flatMap((text) => Schema.decodeEffect(Schema.fromJsonString(NpmPackageJson))(text)),
+      Effect.flatMap(decodeNpmPackage),
       Effect.mapError((cause) =>
         installError("wontStart", `npm did not install ${plan.name}.`, { cause }),
       ),
@@ -735,7 +731,7 @@ export const makeCatalogInstaller = Effect.fn("CatalogInstaller.make")(function*
       return yield* installError("wontStart", `npm installed a different version of ${plan.name}.`);
     }
     const lock = yield* fs.readFileString(path.join(directory, "package-lock.json")).pipe(
-      Effect.flatMap((text) => Schema.decodeEffect(Schema.fromJsonString(NpmLock))(text)),
+      Effect.flatMap(decodeNpmLock),
       Effect.mapError((cause) =>
         installError("checksum", "npm did not record an integrity hash.", { cause }),
       ),
@@ -950,12 +946,7 @@ export const makeCatalogInstaller = Effect.fn("CatalogInstaller.make")(function*
             Effect.orElseSucceed(() => null),
           );
         }
-        const required =
-          plan.kind === "npm"
-            ? NPM_REQUIRED_BYTES
-            : headBytes === null
-              ? UNKNOWN_BINARY_REQUIRED_BYTES
-              : Math.ceil(headBytes * DISK_SAFETY_FACTOR);
+        const required = requiredFreeBytes(plan, headBytes);
         yield* ensureRoom(agentDir, required);
         yield* report(catalogId, { totalBytes: headBytes }, operationId);
 

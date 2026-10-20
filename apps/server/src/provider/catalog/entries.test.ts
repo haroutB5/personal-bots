@@ -1,4 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
+import { ProviderCatalogEntry, ProviderCatalogListResult } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { BUILT_IN_DESCRIPTORS, buildCatalogEntries, registryAgentForCatalogId } from "./entries.ts";
 import {
@@ -10,6 +12,8 @@ import {
 import { parseRegistry } from "./registry.ts";
 import registryFixture from "./fixtures/registry-2026-10-20.json" with { type: "json" };
 
+const isWireEntry = Schema.is(ProviderCatalogEntry);
+const isWireList = Schema.is(ProviderCatalogListResult);
 const registry = parseRegistry(registryFixture)!;
 const win = "windows-x86_64" as const;
 
@@ -191,6 +195,17 @@ describe("buildCatalogEntries", () => {
     const entries = new Map(build({ overlay }).map((entry) => [entry.catalogId, entry]));
     expect(entries.has("builtin:grok")).toBe(false);
     expect(entries.get("goose")).toMatchObject({ publisher: "Block Inc.", description: "Goose." });
+  });
+});
+
+describe("wire contract", () => {
+  it("every entry built from the real registry decodes with the contract schema", () => {
+    const entries = build({ added: new Map([["gemini", "gemini"]]) });
+    for (const entry of entries) {
+      expect(isWireEntry(entry), entry.catalogId).toBe(true);
+    }
+    const result = { entries, registryFetchedAt: "2026-10-20T08:00:00.000Z", registryStale: false };
+    expect(isWireList(result)).toBe(true);
   });
 });
 

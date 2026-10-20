@@ -58,6 +58,14 @@ export type InstallPlan =
 
 const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$/iu;
 
+/** Characters Windows forbids in a file name, plus control characters. */
+function hasReservedCharacter(segment: string): boolean {
+  for (const character of segment) {
+    if (character.charCodeAt(0) < 0x20 || '<>:"|?*'.includes(character)) return true;
+  }
+  return false;
+}
+
 /**
  * A launch command from the registry as a safe path inside the unpacked folder.
  * The registry writes Windows paths with either slash (`./dist-package\cursor-agent.cmd`).
@@ -70,11 +78,7 @@ export function normalizeRelativeCommand(command: string): string | null {
   const segments: string[] = [];
   for (const segment of command.split(/[\\/]/u)) {
     if (segment === "" || segment === ".") continue;
-    if (
-      segment === ".." ||
-      /[<>:"|?*\u0000-\u001f]/u.test(segment) ||
-      WINDOWS_RESERVED.test(segment)
-    ) {
+    if (segment === ".." || hasReservedCharacter(segment) || WINDOWS_RESERVED.test(segment)) {
       return null;
     }
     if (segment.endsWith(".") || segment.endsWith(" ")) return null;
@@ -192,4 +196,22 @@ export function resolveInstallPlan(agent: RegistryAgent, options: PlanOptions): 
   if (target !== undefined) return { kind: "unsupported", reason: "noChecksum" };
   if (agent.uvx !== null) return { kind: "unsupported", reason: "needsUv" };
   return { kind: "unsupported", reason: "noWindowsBuild" };
+}
+
+/** Free space needed is this many times the download: the archive, its unpacked copy, and slack. */
+export const DISK_SAFETY_FACTOR = 2.5;
+/** When a binary's size is unknown, ask for room for a large agent. */
+export const UNKNOWN_BINARY_REQUIRED_BYTES = 1536 * 1024 * 1024;
+/** An npm tree is not sized before npm resolves it; ask for room for a big one (Gemini CLI unpacks to about 100 MB). */
+export const NPM_REQUIRED_BYTES = 600 * 1024 * 1024;
+
+/** Free bytes an install of `plan` needs before it starts. `downloadBytes` is the HEAD size, when known. */
+export function requiredFreeBytes(
+  plan: BinaryInstallPlan | NpmInstallPlan,
+  downloadBytes: number | null,
+): number {
+  if (plan.kind === "npm") return NPM_REQUIRED_BYTES;
+  return downloadBytes === null
+    ? UNKNOWN_BINARY_REQUIRED_BYTES
+    : Math.ceil(downloadBytes * DISK_SAFETY_FACTOR);
 }

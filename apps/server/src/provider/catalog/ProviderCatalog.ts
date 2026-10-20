@@ -8,7 +8,11 @@
  *
  * @module provider/catalog/ProviderCatalog
  */
-import type { ProviderCatalogListInput, ProviderCatalogListResult } from "@t3tools/contracts";
+import type {
+  ProviderCatalogInstallPlan,
+  ProviderCatalogListInput,
+  ProviderCatalogListResult,
+} from "@t3tools/contracts";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -29,6 +33,7 @@ import {
   BUILT_IN_DESCRIPTORS,
   buildCatalogEntries,
   defaultIconUrlFor,
+  downloadLabel,
   registryAgentForCatalogId,
   type BuiltInDescriptor,
 } from "./entries.ts";
@@ -42,7 +47,7 @@ import {
   type CatalogOverlay,
   type CatalogOverlayEntry,
 } from "./overlay.ts";
-import { resolveInstallPlan, type InstallPlan } from "./plan.ts";
+import { requiredFreeBytes, resolveInstallPlan, type InstallPlan } from "./plan.ts";
 import {
   parseRegistry,
   parseRegistryText,
@@ -63,6 +68,7 @@ const RETRY_AFTER_FAILURE_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT = "10 seconds";
 const SIZE_PROBE_TIMEOUT = "15 seconds";
 const SIZE_PROBE_CONCURRENCY = 3;
+const PROBE_RETRY_MS = 60 * 60 * 1000;
 const ICON_MAX_BYTES = 64 * 1024;
 const OVERLAY_MAX_BYTES = 512 * 1024;
 const CACHE_FILE = "provider-catalog.json";
@@ -78,6 +84,7 @@ const CacheFile = Schema.Struct({
 });
 type CacheFile = typeof CacheFile.Type;
 const decodeCache = Schema.decodeEffect(Schema.fromJsonString(CacheFile));
+const decodeJsonDocument = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeCache = Schema.encodeEffect(Schema.fromJsonString(CacheFile));
 
 /**
@@ -122,6 +129,8 @@ interface ProviderCatalogService {
   /** The registry agent and overlay entry the installer needs, or null for an unknown id. */
   readonly installRequest: (catalogId: string) => Effect.Effect<CatalogInstallRequest | null>;
   readonly installPlan: (catalogId: string) => Effect.Effect<InstallPlan | null>;
+  /** What the install sheet shows (SPEC 5.2): size, room needed, where from. Null for an id that cannot be installed. */
+  readonly installFacts: (catalogId: string) => Effect.Effect<ProviderCatalogInstallPlan | null>;
   readonly overlayEntry: (catalogId: string) => Effect.Effect<CatalogOverlayEntry | undefined>;
   /** The icon as served: reviewed SVG text, or null. */
   readonly icon: (catalogId: string) => Effect.Effect<string | null>;
@@ -160,6 +169,7 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
   const sizes = new Map<string, number>();
   const icons = new Map<string, string | null>();
   let sizeProbeRunning = false;
+  let lastProbeAtMs: number | null = null;
 
   const loadFromDisk = yield* Effect.cached(
     Effect.gen(function* () {
@@ -203,6 +213,11 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
 
   const probeSizes = Effect.fn("ProviderCatalog.probeSizes")(function* () {
     if (sizeProbeRunning || registry === null) return;
+    const now = yield* Clock.currentTimeMillis;
+    // Heads that failed are tried again in an hour, not on every list.
+    if (lastProbeAtMs !== null && now >= lastProbeAtMs && now - lastProbeAtMs < PROBE_RETRY_MS)
+      return;
+    lastProbeAtMs = now;
     sizeProbeRunning = true;
     const current = registry;
     const urls = new Set<string>();
@@ -241,9 +256,9 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
     registry = parsed;
     fetchedAtMs = now;
     // The raw JSON is what the cache keeps, so a parser fix applies to old copies.
-    rawRegistryForPersist = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
-      text.value,
-    ).pipe(Effect.orElseSucceed(() => null));
+    rawRegistryForPersist = yield* decodeJsonDocument(text.value).pipe(
+      Effect.orElseSucceed(() => null),
+    );
     return true;
   });
 
@@ -292,6 +307,8 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
         yield* refresh(input.refresh === true);
       } else if (fetchedAtMs === null || now - fetchedAtMs >= REGISTRY_TTL_MS) {
         yield* refresh(false).pipe(Effect.forkIn(serviceScope), Effect.asVoid);
+      } else {
+        yield* probeSizes().pipe(Effect.ignore, Effect.forkIn(serviceScope), Effect.asVoid);
       }
       const nodeAvailable = (yield* resolveNodePath(hostEnvironment)) !== null;
       const entries = buildCatalogEntries({
@@ -336,6 +353,29 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
       ),
     );
 
+  const installFacts: ProviderCatalogService["installFacts"] = (catalogId) =>
+    installRequest(catalogId).pipe(
+      Effect.map((request) => {
+        if (request === null) return null;
+        const plan = resolveInstallPlan(request.agent, { platform, overlay: request.overlay });
+        if (plan.kind === "unsupported") return null;
+        const downloadBytes = plan.kind === "binary" ? (sizes.get(plan.url) ?? null) : null;
+        return {
+          catalogId,
+          version: request.agent.version,
+          distribution:
+            plan.kind === "binary"
+              ? { kind: "binary", label: downloadLabel(plan.url, plan.host) }
+              : { kind: "npm", label: `npm · ${plan.name}` },
+          downloadBytes,
+          requiredBytes: requiredFreeBytes(plan, downloadBytes),
+          sha256Checked: plan.kind === "binary",
+          host: plan.kind === "binary" ? plan.host : "registry.npmjs.org",
+          runsInstallScripts: plan.kind === "npm",
+        } satisfies ProviderCatalogInstallPlan;
+      }),
+    );
+
   const icon: ProviderCatalogService["icon"] = (catalogId) =>
     Effect.gen(function* () {
       yield* loadFromDisk;
@@ -378,6 +418,7 @@ export const makeProviderCatalog = Effect.fn("ProviderCatalog.make")(function* (
     list,
     installRequest,
     installPlan,
+    installFacts,
     overlayEntry: (catalogId) => Effect.sync(() => overlay().entries[catalogId]),
     icon,
     refresh: (force) => refresh(force === true),
