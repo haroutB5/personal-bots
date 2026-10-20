@@ -328,7 +328,9 @@ describe("bot provider instruction support", () => {
     expect(readyProvider("codex")).toSatisfy(isBotProviderSelectable);
     expect(readyProvider("opencode")).toSatisfy(isBotProviderSelectable);
     expect(readyProvider("deepseek")).toSatisfy(isBotProviderSelectable);
-    for (const driver of ["cursor", "grok", "antigravity", "someFutureProvider"]) {
+    // 1.66.73: Antigravity bots get their persona with every prompt.
+    expect(readyProvider("antigravity")).toSatisfy(isBotProviderSelectable);
+    for (const driver of ["cursor", "grok", "someFutureProvider"]) {
       expect(isBotProviderSelectable(readyProvider(driver))).toBe(false);
     }
   });

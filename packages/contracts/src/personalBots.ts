@@ -38,6 +38,7 @@ export const BOT_INSTRUCTION_DRIVER_KINDS: ReadonlyArray<ProviderDriverKind> = [
   ProviderDriverKind.make("codex"),
   ProviderDriverKind.make("opencode"),
   ProviderDriverKind.make("deepseek"),
+  ProviderDriverKind.make("antigravity"),
 ];
 
 /**
