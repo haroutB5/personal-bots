@@ -104,6 +104,16 @@ const install = (overrides: Record<string, unknown>): ProviderInstallState =>
   }) as ProviderInstallState;
 
 describe("provider row states (SPEC 3.3, first match wins, at most one action)", () => {
+  it.each(["resolving", "starting"] as const)(
+    "keeps %s active with no action or invented progress",
+    (phase) => {
+      const row = rowOf(provider({ installed: false, setup: { canInstall: true } }), {
+        install: install({ phase }),
+      });
+      expect(row).toMatchObject({ state: "installing", action: null, busy: true });
+      expect(row.progress?.fraction ?? null).toBeNull();
+    },
+  );
   it("1 Installing: progress, no action", () => {
     const row = rowOf(provider({ installed: false, setup: { canInstall: true } }), {
       install: install({}),

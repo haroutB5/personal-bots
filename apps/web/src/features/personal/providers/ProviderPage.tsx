@@ -1106,9 +1106,11 @@ function SetupCard({
       ? "Unpacking"
       : install?.phase === "verifying"
         ? "Checking the download"
-        : (install?.phase as string) === "starting"
+        : install?.phase === "starting"
           ? "Checking it starts"
-          : "Downloading";
+          : install?.phase === "resolving"
+            ? "Preparing the download"
+            : "Downloading";
   const total = install?.totalBytes ?? null;
   const downloaded = install?.downloadedBytes ?? 0;
   const fraction =

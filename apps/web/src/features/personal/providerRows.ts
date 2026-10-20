@@ -167,9 +167,11 @@ export function providerNeedsSignIn(snapshot: ServerProvider): boolean {
 }
 
 const INSTALL_ACTIVE = new Set<ProviderInstallState["phase"]>([
+  "resolving",
   "downloading",
   "extracting",
   "verifying",
+  "starting",
 ]);
 
 export function isInstallActive(install: ProviderInstallState | null | undefined): boolean {
@@ -183,6 +185,7 @@ export function currentSmoke(snapshot: ServerProvider): ServerProvider["smokeChe
 }
 
 function installingText(install: ProviderInstallState): { text: string; fraction: number | null } {
+  if (install.phase === "resolving") return { text: "Preparing the download…", fraction: null };
   if (install.phase === "downloading") {
     const total = install.totalBytes;
     if (total !== null && total > 0) {
