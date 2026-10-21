@@ -125,7 +125,8 @@ import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
-import { exploreSubagentAgents } from "../claudeBackgroundModels.ts";
+import { botSubagentModelEnvironment, exploreSubagentAgents } from "../claudeBackgroundModels.ts";
+import { claudeAutoCompactWindow, claudeShellOutputSettings } from "../personalBotContextLimits.ts";
 import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -5372,15 +5373,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // guard. Each has its own env kill switch, read here at session start.
       const botSkillOverrides = personalBot ? personalBotSkillOverrides() : undefined;
       const botDisallowedTools = personalBot ? personalBotDisallowedTools() : undefined;
+      // A delegated-task or routine chat compacts near 200k; the owner's own
+      // chats keep the CLI default (PERSONAL_TASK_AUTO_COMPACT=off for all).
+      const autoCompactWindow = claudeAutoCompactWindow({
+        configured: claudeSettings.autoCompactWindow,
+        personalBot,
+        personalTaskChat: input.personalTaskChat === true,
+      });
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
-        ...(claudeSettings.autoCompactWindow
-          ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
-          : {}),
+        ...(autoCompactWindow !== undefined ? { autoCompactWindow } : {}),
         ...(personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
+        // Shell output past ~12k chars goes to a file with a short preview
+        // (PERSONAL_BOT_SHELL_OUTPUT_CAP=off restores the CLI's 30000).
+        ...claudeShellOutputSettings({ personalBot }),
         ...(botSkillOverrides === undefined ? {} : { skillOverrides: botSkillOverrides }),
         // Deny rules hold in every permission mode, bypassPermissions included.
         // Best effort: see botProtectedPaths for what they do and do not stop.
@@ -5448,6 +5457,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // switch PERSONAL_EXPLORE_MODEL=off); its own model and every other
       // subagent stay as they are.
       const exploreAgents = exploreSubagentAgents({
+        personalBot,
+        mainModel: modelSelection?.model,
+        modelKnown: (slug) => claudeCatalogHasModel(modelCatalog, slug),
+      });
+      // A Claude bot on Opus runs general-purpose and other model-less
+      // subagents on Sonnet 5.5 (kill switch PERSONAL_SUBAGENT_MODEL=off).
+      const subagentEnvironment = botSubagentModelEnvironment({
         personalBot,
         mainModel: modelSelection?.model,
         modelKnown: (slug) => claudeCatalogHasModel(modelCatalog, slug),
@@ -5540,7 +5556,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
         env: personalBot
-          ? { ...sessionEnvironment, ...PERSONAL_BOT_CLAUDE_ENVIRONMENT }
+          ? { ...sessionEnvironment, ...PERSONAL_BOT_CLAUDE_ENVIRONMENT, ...subagentEnvironment }
           : { ...CLAUDE_THREAD_DEFAULT_ENVIRONMENT, ...sessionEnvironment },
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),

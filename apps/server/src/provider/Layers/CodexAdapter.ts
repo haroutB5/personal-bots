@@ -86,6 +86,7 @@ import {
 import { logUnloadableBotPluginSkills } from "../botPluginSkillDiagnostics.ts";
 import { resolvePersonalBotPluginSkillDirs } from "../botPluginSkillRoots.ts";
 import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
+import { codexShellOutputArgs, codexTaskAutoCompactArgs } from "../personalBotContextLimits.ts";
 import {
   type CodexRateLimitSnapshot,
   codexRateLimitsToUpdate,
@@ -2367,6 +2368,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 ),
               ]
             : []),
+          // A delegated-task or routine chat compacts at 150k tokens; the
+          // owner's own chats keep Codex's default (PERSONAL_TASK_AUTO_COMPACT=off for all).
+          // A bot's tool output past ~12k chars (3000 tokens) is cut in the
+          // middle with a marker (PERSONAL_BOT_SHELL_OUTPUT_CAP=off for Codex's own).
+          ...codexShellOutputArgs({ personalBot: input.personalBot === true }),
+          ...codexTaskAutoCompactArgs({
+            personalBot: input.personalBot === true,
+            personalTaskChat: input.personalTaskChat === true,
+          }),
         ];
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,

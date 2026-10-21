@@ -950,6 +950,42 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ),
     });
 
+  /**
+   * Whether a bot thread was made for a delegated task or a routine run, or is
+   * a routine's own chat: the same markers as `taskChat` and `routineChat` in
+   * PersonalBotRepository's chat facts (the thread came after its task, or a
+   * routine relay post). A chat a task continued with continueChatId is the
+   * owner's, so it is never one. Fails closed to "the owner's chat".
+   */
+  const isPersonalTaskChat = (threadId: ThreadId) =>
+    Option.match(personalSql, {
+      onNone: () => Effect.succeed(false),
+      onSome: (sql) =>
+        sql<{ readonly taskChat: number }>`
+          SELECT (
+            EXISTS (
+              SELECT 1 FROM personal_tasks d
+              WHERE d.thread_id = t.thread_id
+                AND (
+                  (d.source IN ('delegation', 'routine') AND d.created_at <= t.created_at)
+                  OR (d.source = 'routine' AND EXISTS (
+                    SELECT 1 FROM projection_thread_messages relay
+                    WHERE relay.thread_id = t.thread_id
+                      AND relay.role = 'assistant' AND relay.message_id LIKE 'personal-relay-%'
+                  ))
+                )
+            )
+            OR EXISTS (SELECT 1 FROM personal_routines r WHERE r.thread_id = t.thread_id)
+          ) AS "taskChat"
+          FROM personal_bot_threads t
+          WHERE t.thread_id = ${threadId}
+          LIMIT 1
+        `.pipe(
+          Effect.map((rows) => Number(rows[0]?.taskChat ?? 0) === 1),
+          Effect.orElseSucceed(() => false),
+        ),
+    });
+
   /** Install only the local CLI here. device_open supplies a separate config for each host. */
   const hostPlatform = yield* HostProcessPlatform;
   const agentDeviceEnvironment = Effect.gen(function* () {
@@ -1006,11 +1042,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           }),
         );
       }
+      const personalTaskChat = botGrant || linked ? yield* isPersonalTaskChat(threadId) : false;
       // Decided here, where the thread's personal-bot link is already read,
       // so adapters never re-query it. It narrows the toolset and is set even
       // when no MCP credential could be issued, so isolation never fails open.
       return {
         personalBot: botGrant || linked,
+        // Task and routine chats cap their context by auto-compaction; the
+        // owner's own chats never do (he compacts those himself).
+        personalTaskChat,
         // Only recovery uses this: fresh starts carry the reactor's own
         // instructions (plus memory context) on their start input.
         systemInstructions: personal?.systemInstructions ?? undefined,
@@ -1390,6 +1430,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           runtimeMode: input.binding.runtimeMode ?? "full-access",
           ...(personalBot ? { personalBot: true } : {}),
           ...(personalBot && personalBotId ? { personalBotId } : {}),
+          ...(personalBot && prepared.personalTaskChat ? { personalTaskChat: true } : {}),
           // Session-scoped instructions (Claude's appended system prompt) are
           // read only at start, and this start bypasses the reactor, so a
           // resumed bot chat would otherwise lose its persona and app rules.
@@ -1627,13 +1668,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        const { personalBot, personalBotId } = yield* prepareMcpSession(
+        const { personalBot, personalBotId, personalTaskChat } = yield* prepareMcpSession(
           threadId,
           resolvedInstanceId,
         );
-        // The bot id comes only from the thread's personal-bot link, never
-        // from the caller's input.
-        const { personalBotId: _callerBotId, ...startInput } = input;
+        // The bot id and the task-chat mark come only from the thread's
+        // personal-bot link, never from the caller's input.
+        const {
+          personalBotId: _callerBotId,
+          personalTaskChat: _callerTaskChat,
+          ...startInput
+        } = input;
         const session = yield* adapter
           .startSession({
             ...startInput,
@@ -1642,6 +1687,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
             ...(personalBot ? { personalBot: true } : {}),
             ...(personalBot && personalBotId ? { personalBotId } : {}),
+            ...(personalBot && personalTaskChat ? { personalTaskChat: true } : {}),
           })
           .pipe(Effect.onError(() => clearMcpSession(threadId)));
 

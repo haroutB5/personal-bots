@@ -658,6 +658,8 @@ describe("ClaudeAdapterLive", () => {
         autoMemoryEnabled: false,
         disableClaudeAiConnectors: true,
         showThinkingSummaries: true,
+        // Shell output past 12k chars goes to a file with a preview (1.66.80).
+        bashOutputMaxChars: 12_000,
         permissions: { deny: buildClaudeBotPermissionDeny(serverConfig) },
       });
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
@@ -770,6 +772,49 @@ describe("ClaudeAdapterLive", () => {
           models: ["claude-sonnet-5-5", "claude-haiku-4-5"],
         });
         assert.equal(options?.agents, undefined);
+      }),
+    );
+
+    it.effect("runs a bot on Opus's other subagents on Sonnet 5.5 through the CLI env", () =>
+      Effect.gen(function* () {
+        const opus = yield* startBot({ model: "claude-opus-5-5" });
+        assert.equal(opus?.env?.CLAUDE_CODE_SUBAGENT_MODEL, "claude-sonnet-5-5");
+        // Explore names its own model, so it stays on Haiku; the bot stays on Opus.
+        assert.equal(opus?.agents?.Explore?.model, "claude-haiku-5-5");
+        assert.equal(opus?.model, "claude-opus-5-5");
+      }),
+    );
+
+    it.effect("leaves subagents of Sonnet, Haiku and Fable bots and plain threads alone", () =>
+      Effect.gen(function* () {
+        for (const model of ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]) {
+          assert.equal((yield* startBot({ model }))?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
+        }
+        assert.equal(
+          (yield* startBot({ model: "claude-opus-5-5", personalBot: false }))?.env
+            ?.CLAUDE_CODE_SUBAGENT_MODEL,
+          undefined,
+        );
+      }),
+    );
+
+    it.effect("PERSONAL_SUBAGENT_MODEL=off is the kill switch; another model id is a setting", () =>
+      Effect.gen(function* () {
+        const off = yield* startBot({
+          model: "claude-opus-5-5",
+          env: { PERSONAL_SUBAGENT_MODEL: "off" },
+        });
+        assert.equal(off?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
+        const haiku = yield* startBot({
+          model: "claude-opus-5-5",
+          env: { PERSONAL_SUBAGENT_MODEL: "claude-haiku-5-5" },
+        });
+        assert.equal(haiku?.env?.CLAUDE_CODE_SUBAGENT_MODEL, "claude-haiku-5-5");
+        const unknown = yield* startBot({
+          model: "claude-opus-5-5",
+          models: ["claude-opus-5-5", "claude-haiku-5-5"],
+        });
+        assert.equal(unknown?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
       }),
     );
 
@@ -1178,6 +1223,146 @@ describe("ClaudeAdapterLive", () => {
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+    );
+  });
+
+  describe("bot shell output cap", () => {
+    const startWith = (name: string, personalBot: boolean, env: Record<string, string>) => {
+      const harness = makeHarness();
+      const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+      return Effect.gen(function* () {
+        Object.assign(process.env, env);
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: ThreadId.make(`thread-shell-cap-${name}`),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          ...(personalBot ? { personalBot: true } : {}),
+        });
+        const settings = harness.getLastCreateQueryInput()?.options.settings;
+        return typeof settings === "object" ? settings.bashOutputMaxChars : undefined;
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const [key, value] of Object.entries(previous)) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+        ),
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    };
+
+    it.effect("caps a bot's shell output at 12k chars and leaves plain threads alone", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* startWith("bot", true, {}), 12_000);
+        assert.equal(yield* startWith("plain", false, {}), undefined);
+      }),
+    );
+
+    it.effect("PERSONAL_BOT_SHELL_OUTPUT_CAP=off is the kill switch; a number sets the cap", () =>
+      Effect.gen(function* () {
+        assert.equal(
+          yield* startWith("off", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "off" }),
+          undefined,
+        );
+        assert.equal(
+          yield* startWith("custom", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "20000" }),
+          20_000,
+        );
+        assert.equal(
+          yield* startWith("clamped", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "100" }),
+          4_000,
+        );
+      }),
+    );
+  });
+
+  describe("task chat auto-compaction", () => {
+    const startChat = (input: {
+      readonly name: string;
+      readonly personalBot?: boolean;
+      readonly personalTaskChat?: boolean;
+      readonly configured?: string;
+      readonly env?: Record<string, string>;
+    }) => {
+      const harness = makeHarness(
+        input.configured === undefined
+          ? {}
+          : { claudeConfig: { autoCompactWindow: input.configured } },
+      );
+      const previous = Object.fromEntries(
+        Object.keys(input.env ?? {}).map((key) => [key, process.env[key]]),
+      );
+      return Effect.gen(function* () {
+        Object.assign(process.env, input.env ?? {});
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: ThreadId.make(`thread-compact-${input.name}`),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          ...(input.personalBot === false ? {} : { personalBot: true }),
+          ...(input.personalTaskChat ? { personalTaskChat: true } : {}),
+        });
+        const settings = harness.getLastCreateQueryInput()?.options.settings;
+        return typeof settings === "object" ? settings.autoCompactWindow : undefined;
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const [key, value] of Object.entries(previous)) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+        ),
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    };
+
+    it.effect("a task or routine chat compacts with a 200k window", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* startChat({ name: "task", personalTaskChat: true }), 200_000);
+      }),
+    );
+
+    it.effect("the owner's own bot chat and a plain thread keep the CLI default", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* startChat({ name: "owner" }), undefined);
+        assert.equal(
+          yield* startChat({ name: "plain", personalBot: false, personalTaskChat: true }),
+          undefined,
+        );
+      }),
+    );
+
+    it.effect("the owner's provider setting still applies, and a smaller one wins", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* startChat({ name: "owner-set", configured: "300000" }), 300_000);
+        assert.equal(
+          yield* startChat({ name: "task-larger", personalTaskChat: true, configured: "300000" }),
+          200_000,
+        );
+        assert.equal(
+          yield* startChat({ name: "task-smaller", personalTaskChat: true, configured: "150000" }),
+          150_000,
+        );
+      }),
+    );
+
+    it.effect("PERSONAL_TASK_AUTO_COMPACT=off is the kill switch", () =>
+      Effect.gen(function* () {
+        assert.equal(
+          yield* startChat({
+            name: "task-off",
+            personalTaskChat: true,
+            env: { PERSONAL_TASK_AUTO_COMPACT: "off" },
+          }),
+          undefined,
+        );
+      }),
     );
   });
 

@@ -23,11 +23,18 @@ import { parseClaudeModelSlug } from "./ClaudeModelCatalog.ts";
  *   Claude model id picks that one); `PERSONAL_EXPLORE_EFFORT` (default
  *   `medium`; `off` sends none) is its effort. General-purpose, Plan and the
  *   bot's own model are never touched.
+ * - Every other subagent with no model of its own (general-purpose above all)
+ *   in a Claude bot on Opus runs on Sonnet 5.5 (1.66.80), through the CLI's
+ *   `CLAUDE_CODE_SUBAGENT_MODEL`. A subagent that names its model keeps it
+ *   (Explore above, Plan's "inherit"), and so does a call that passes one.
+ *   `PERSONAL_SUBAGENT_MODEL=off` leaves them on the bot's model; any other
+ *   Claude model id picks that one.
  */
 export const PERSONAL_TEXTGEN_MODEL_ENV = "PERSONAL_TEXTGEN_MODEL";
 export const PERSONAL_TEXTGEN_EFFORT_ENV = "PERSONAL_TEXTGEN_EFFORT";
 export const PERSONAL_EXPLORE_MODEL_ENV = "PERSONAL_EXPLORE_MODEL";
 export const PERSONAL_EXPLORE_EFFORT_ENV = "PERSONAL_EXPLORE_EFFORT";
+export const PERSONAL_SUBAGENT_MODEL_ENV = "PERSONAL_SUBAGENT_MODEL";
 
 /** The Claude model background text jobs run on unless the kill switch names another. */
 export const CLAUDE_TEXT_GENERATION_DEFAULT_MODEL =
@@ -36,6 +43,7 @@ export const CLAUDE_TEXT_GENERATION_DEFAULT_MODEL =
 export const CLAUDE_TEXTGEN_DEFAULT_EFFORT = "low";
 export const EXPLORE_SUBAGENT_DEFAULT_MODEL = "claude-haiku-5-5";
 export const EXPLORE_SUBAGENT_DEFAULT_EFFORT = "medium";
+export const SUBAGENT_DEFAULT_MODEL = "claude-sonnet-5-5";
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -149,4 +157,32 @@ export function exploreSubagentAgents(input: {
       ...(effort === null ? {} : { effort: effort as NonNullable<AgentDefinition["effort"]> }),
     },
   };
+}
+
+/** The model other subagents run on, or `undefined` when the override is off. */
+export function botSubagentModel(env: Env = process.env): string | undefined {
+  const setting = clean(env[PERSONAL_SUBAGENT_MODEL_ENV]);
+  if (setting === undefined) return SUBAGENT_DEFAULT_MODEL;
+  if (OFF_WORDS.has(setting.toLowerCase())) return undefined;
+  return parseClaudeModelSlug(setting) !== undefined ? setting : SUBAGENT_DEFAULT_MODEL;
+}
+
+/**
+ * The environment that runs a Claude bot's model-less subagents on Sonnet
+ * 5.5, or none. Only a bot on Opus gets it (Sonnet and Haiku bots already run
+ * there or below; Fable is never moved without being asked), and only when the
+ * model catalog knows the subagent model.
+ */
+export function botSubagentModelEnvironment(input: {
+  readonly personalBot: boolean;
+  readonly mainModel: string | undefined;
+  readonly modelKnown: (slug: string) => boolean;
+  readonly env?: Env;
+}): { readonly CLAUDE_CODE_SUBAGENT_MODEL?: string } {
+  if (!input.personalBot || input.mainModel === undefined) return {};
+  const family = parseClaudeModelSlug(input.mainModel.replace(/\[[^\]]*\]$/, ""))?.family;
+  if (family !== "opus") return {};
+  const model = botSubagentModel(input.env ?? process.env);
+  if (model === undefined || !input.modelKnown(model)) return {};
+  return { CLAUDE_CODE_SUBAGENT_MODEL: model };
 }

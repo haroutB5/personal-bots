@@ -37,6 +37,12 @@
 //   WHATWORD  answers "The codeword was <word>." from an earlier prompt of THIS provider session that said
 //     "the codeword is <word>" (the fake keeps each session's prompts in <pidDir>/sessions), else "I have no
 //     codeword in this session." Proves a turn ran in the session an earlier talk happened in (1.66.12).
+//   CTXSETTINGS  reports the context caps this session was started with (1.66.80): the --settings
+//     autoCompactWindow and bashOutputMaxChars, and CLAUDE_CODE_SUBAGENT_MODEL from its environment.
+//   AUTOCOMPACT  does what the real CLI does when the context passes its auto-compact threshold, when
+//     the session has an autoCompactWindow: status "compacting", a compact_boundary (trigger auto,
+//     pre_tokens = window - 33000, the CLI 2.1.304 threshold), status back, then carries on and answers
+//     with the CTXSETTINGS line. Without a window it answers "not compacted" plus that line.
 //   anything else  "Got it." plus the reply quote it received, if any.
 // Usage-probe flags (files in <pidDir>, so a test flips them while the server runs; all off by default):
 //   usage-weekly  adds a seven_day window (31%, resets in 3 days) beside the five-hour one.
@@ -84,18 +90,28 @@ const sessionId =
       : NodeCrypto.randomUUID();
 log(`start session=${sessionId}`);
 
-// The permission rules the server handed this session (`--settings`, JSON text or a file path).
-const denyRules = (() => {
+// The settings the server handed this session (`--settings`, JSON text or a file path).
+const sessionSettings = (() => {
   const index = args.findIndex((a) => a === "--settings");
-  if (index < 0) return [];
+  if (index < 0) return {};
   try {
     const raw = args[index + 1] ?? "";
     const parsed = JSON.parse(raw.trim().startsWith("{") ? raw : NodeFS.readFileSync(raw, "utf8"));
-    return Array.isArray(parsed?.permissions?.deny) ? parsed.permissions.deny : [];
+    return parsed !== null && typeof parsed === "object" ? parsed : {};
   } catch {
-    return [];
+    return {};
   }
 })();
+// The permission rules among them.
+const denyRules = Array.isArray(sessionSettings?.permissions?.deny)
+  ? sessionSettings.permissions.deny
+  : [];
+// The context caps among them (1.66.80), as one line for CTXSETTINGS and AUTOCOMPACT.
+const contextCapsLine = () =>
+  `CTXSETTINGS autoCompactWindow=${sessionSettings.autoCompactWindow ?? "none"} ` +
+  `bashOutputMaxChars=${sessionSettings.bashOutputMaxChars ?? "none"} ` +
+  `subagentModel=${process.env.CLAUDE_CODE_SUBAGENT_MODEL ?? "none"}`;
+log(contextCapsLine());
 log(
   `settings deny rules=${denyRules.length} secretsRule=${denyRules.some((r) => /^Read\(.*\/secrets/.test(r))}`,
 );
@@ -462,7 +478,50 @@ lines.on("line", async (line) => {
     return rest;
   })();
   log(`${NAME} handles prompt`);
-  // A prompt that is itself an MCPTOOL/MCPONCE call may quote the trigger word in its arguments.
+  // A prompt that is itself an MCPTOOL/MCPONCE call may quote these trigger words in its arguments.
+  if (text.includes("AUTOCOMPACT") && !/MCP(?:TOOL|ONCE) /.test(text)) {
+    const window = Number(sessionSettings.autoCompactWindow);
+    if (!Number.isFinite(window) || window <= 0) {
+      const reply = `AUTOCOMPACT not compacted. ${contextCapsLine()}`;
+      log(reply);
+      assistant(reply);
+      finish(reply, false);
+      return;
+    }
+    const preTokens = window - 33_000;
+    log(`autocompact pre_tokens=${preTokens}`);
+    out({
+      type: "system",
+      subtype: "status",
+      status: "compacting",
+      session_id: sessionId,
+      uuid: NodeCrypto.randomUUID(),
+    });
+    out({
+      type: "system",
+      subtype: "compact_boundary",
+      session_id: sessionId,
+      uuid: NodeCrypto.randomUUID(),
+      compact_metadata: { trigger: "auto", pre_tokens: preTokens, post_tokens: 12_000 },
+    });
+    out({
+      type: "system",
+      subtype: "status",
+      status: null,
+      session_id: sessionId,
+      uuid: NodeCrypto.randomUUID(),
+    });
+    const reply = `AUTOCOMPACT compacted at ${preTokens} and carried on. ${contextCapsLine()}`;
+    assistant(reply);
+    finish(reply, false);
+    return;
+  }
+  if (text.includes("CTXSETTINGS") && !/MCP(?:TOOL|ONCE) /.test(text)) {
+    const reply = contextCapsLine();
+    assistant(reply);
+    finish(reply, false);
+    return;
+  }
   if (text.includes("WHATWORD") && !/MCP(?:TOOL|ONCE) /.test(text)) {
     const word = earlierPrompts
       .map((earlier) => /codeword is (\w+)/i.exec(earlier)?.[1])
