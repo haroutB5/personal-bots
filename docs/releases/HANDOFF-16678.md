@@ -25,6 +25,11 @@ Branch `feat/hbots-16677`, on top of live 1.66.77 notes commit `20d63febf4`.
   - Cause: hbots sends the effort as a suffixed model ID, which runtime 1.4 accepts (it sets `model` and `thinking_level` from it), but `AcpSessionRuntime` rejected the value client-side because only the plain family IDs are in the `model` select.
   - Fix: Antigravity passes its own config-option checks into `AcpSessionRuntime` (other providers keep the strict check). After setting the model, hbots confirms the runtime's `model` and `thinking_level` match the request. Stale suffixed saved models and the manifest default map to the family plus effort; the manifest lists family slugs.
   - Proof: Backend set `gemini-3.8-flash-high` and `gemini-4-argon-medium` on the signed-in runtime and read back the matching `model` and `thinking_level`. AntigravityAcpSupport 44, ModelManifest 16 and AntigravityProvider 26 tests pass.
+- **PC at a glance on the Bots page** (Harout, 21 Oct: "add the ram perc usage, cpu and storage info under the Bots logo in main screen. Keep it small but visible").
+  - A small line under the Bots header: "CPU 12% · RAM 63% · C: 120 GB free". A figure turns amber at 90% (CPU, RAM) or under 10% free disk. A tap opens Computer > Performance.
+  - Source: new signed-in route `GET /api/personal/performance/summary`. CPU and RAM come from the existing HostResources reading (cached 5 s for every caller), the disk from one `statfs` of the data drive (cached a minute). It never starts the Performance sampler.
+  - The page asks every 10 s only while visible (30 s after a failed request), and keeps the row's height from the first paint so the list doesn't jump.
+  - Tests: route (answer, 401 without a session and no reading), summary rounding and the line's words, amber, missing figures and fetch.
 - Other session-learned drivers were checked: Cursor lists its models in the health check and is already retained, OpenCode lists them over its local HTTP API, and the registry driver probes with session/new.
 
 ## Builder proof
