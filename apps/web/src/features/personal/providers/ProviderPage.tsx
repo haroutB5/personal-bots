@@ -26,6 +26,7 @@ import {
   botsUsingModels,
   botsUsingProvider,
   currentSmoke,
+  firstLine,
   isInstallActive,
   providerNeedsSignIn,
   providerReportsUsage,
@@ -412,6 +413,19 @@ function ProviderPageBody({
     setUsagePending(null);
   };
 
+  const [signInTest, setSignInTest] = useState<{ busy: boolean; error: string | null }>({
+    busy: false,
+    error: null,
+  });
+  // A registry agent only reports being signed in after a turn that produces
+  // output, so the sign-in step carries its own test button.
+  const testNow = async () => {
+    setSignInTest({ busy: true, error: null });
+    const result = await runTest({ environmentId, input: { instanceId } });
+    const failure = commandFailureMessage(result, `Couldn't test ${label}.`);
+    setSignInTest({ busy: false, error: failure === null ? null : firstLine(failure, 200) });
+  };
+
   const onTest = () =>
     void run(
       { kind: "test" },
@@ -603,6 +617,15 @@ function ProviderPageBody({
               install={install ?? null}
               startingInstall={startingInstall}
               autoStartSignIn={action === "signIn"}
+              testNow={
+                snapshot.source === "registry" && canTest
+                  ? {
+                      busy: signInTest.busy || smoke?.status === "checking",
+                      error: signInTest.error,
+                      run: () => void testNow(),
+                    }
+                  : null
+              }
               testing={smoke?.status === "checking"}
               testNote={note}
               noteButtonLabel={noteButtonLabel}
@@ -748,7 +771,7 @@ function ProviderPageBody({
             </section>
           ) : null}
 
-          {installed && !showSetup ? (
+          {installed && (!showSetup || authNeeded) ? (
             <VersionSection
               snapshot={snapshot}
               distributionLabel={installPlan?.distribution.label ?? null}
@@ -1076,6 +1099,7 @@ function SetupCard({
   install,
   startingInstall,
   autoStartSignIn,
+  testNow,
   testing,
   testNote,
   noteButtonLabel,
@@ -1096,6 +1120,7 @@ function SetupCard({
   install: ProviderInstallState | null;
   startingInstall: boolean;
   autoStartSignIn: boolean;
+  testNow: { busy: boolean; error: string | null; run: () => void } | null;
   testing: boolean;
   testNote: ReturnType<typeof pageNote>;
   noteButtonLabel: (button: NoteButton) => string;
@@ -1257,9 +1282,36 @@ function SetupCard({
                           `Sign in to ${label} on your laptop.`}
                       </span>
                     </p>
-                    <p className="text-[13px] text-[var(--personal-text-secondary)]">
-                      This page moves on by itself once it sees you signed in.
-                    </p>
+                    {testNow !== null ? (
+                      <>
+                        <p className="text-[13px] text-[var(--personal-text-secondary)]">
+                          Tap Test it now after signing in.
+                        </p>
+                        <div>
+                          <button
+                            type="button"
+                            onClick={testNow.run}
+                            disabled={testNow.busy}
+                            aria-busy={testNow.busy}
+                            className={BUTTON_PRIMARY}
+                          >
+                            {testNow.busy ? "Testing…" : "Test it now"}
+                          </button>
+                        </div>
+                        {testNow.error !== null ? (
+                          <p
+                            role="alert"
+                            className="text-[14px] leading-5 text-[var(--personal-error)]"
+                          >
+                            {testNow.error}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className="text-[13px] text-[var(--personal-text-secondary)]">
+                        This page moves on by itself once it sees you signed in.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
