@@ -9,19 +9,25 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as NodeCrypto from "node:crypto";
 
 import type { AcpSmoke } from "./acpSmoke.ts";
 import { makeTarGz, makeZip } from "./archiveFixtures.ts";
 import { installError } from "./errors.ts";
-import { makeCatalogInstaller, type CatalogInstallerOptions } from "./installer.ts";
+import { ServerConfig } from "../../config.ts";
+import {
+  CatalogInstaller,
+  makeCatalogInstaller,
+  type CatalogInstallerOptions,
+} from "./installer.ts";
 import type { RegistryAgent } from "./registry.ts";
 
 const win = "windows-x86_64" as const;
@@ -1035,3 +1041,21 @@ it.layer(NodeServices.layer)("catalog installer: npm packages", (it) => {
     }),
   );
 });
+
+it.effect("installs under the server's own state directory, never the user profile", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    const path = yield* Path.Path;
+    const installer = yield* CatalogInstaller;
+    expect(installer.runtimesRoot).toBe(path.join(config.stateDir, "runtimes", "acp"));
+    expect(installer.runtimesRoot.startsWith(config.stateDir)).toBe(true);
+  }).pipe(
+    Effect.provide(
+      CatalogInstaller.layer.pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-installer-root-" })),
+        Layer.provideMerge(FetchHttpClient.layer),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);

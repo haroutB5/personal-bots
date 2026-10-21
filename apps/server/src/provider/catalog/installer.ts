@@ -34,7 +34,6 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as NodeOS from "node:os";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -50,6 +49,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 
+import { ServerConfig } from "../../config.ts";
 import { terminateDescendants } from "../processTree.ts";
 import { runAcpInitializeSmoke, type AcpSmoke, type AcpSmokeResult } from "./acpSmoke.ts";
 import {
@@ -188,7 +188,7 @@ export interface CatalogInstallRequest {
 }
 
 export interface CatalogInstallerOptions {
-  /** `%USERPROFILE%\.personal-bots\runtimes\acp` in production; a temp folder in tests. */
+  /** `<stateDir>/runtimes/acp` of the server that owns it in production; a temp folder in tests. */
   readonly runtimesRoot: string;
   /** Registry platform key. Default: this machine's. */
   readonly platform?: RegistryPlatform | null;
@@ -235,9 +235,12 @@ export class CatalogInstaller extends Context.Service<CatalogInstaller, CatalogI
   static readonly layer = Layer.effect(
     CatalogInstaller,
     Effect.gen(function* () {
-      const home = process.env.USERPROFILE ?? process.env.HOME ?? NodeOS.homedir();
+      const config = yield* ServerConfig;
       const path = yield* Path.Path;
-      const runtimesRoot = path.join(home, ".personal-bots", "runtimes", "acp");
+      // Under this server's own state directory, never the user profile: a
+      // throwaway server must not be able to install over or remove the
+      // files another data root's bots are running.
+      const runtimesRoot = path.join(config.stateDir, "runtimes", "acp");
       return yield* makeCatalogInstaller({
         runtimesRoot,
       });

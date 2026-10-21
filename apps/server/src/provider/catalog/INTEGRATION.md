@@ -60,7 +60,7 @@ openSource, iconUrl, addedByUser, setup, install, previousVersion` come from
 6. **Layers.** In the server layer stack provide `ProviderCatalog`
    (`stateDirectory: config.stateDir`, `added` from the provider instance
    settings, `networkAllowed` from `enableProviderUpdateChecks`) and
-   `CatalogInstaller` (`runtimesRoot: <home>/.personal-bots/runtimes/acp`). Both
+   `CatalogInstaller` (`runtimesRoot: <stateDir>/runtimes/acp`). Both
    need `FetchHttpClient`, `FileSystem`, `Path`, `Crypto` and `ChildProcessSpawner`
    (the installer also reads `HostProcess*`). The factories are
    `makeProviderCatalog` and `makeCatalogInstaller`; the `Context.Service`
