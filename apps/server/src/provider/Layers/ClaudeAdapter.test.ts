@@ -775,6 +775,49 @@ describe("ClaudeAdapterLive", () => {
       }),
     );
 
+    it.effect("runs a bot on Opus's other subagents on Sonnet 5.5 through the CLI env", () =>
+      Effect.gen(function* () {
+        const opus = yield* startBot({ model: "claude-opus-5-5" });
+        assert.equal(opus?.env?.CLAUDE_CODE_SUBAGENT_MODEL, "claude-sonnet-5-5");
+        // Explore names its own model, so it stays on Haiku; the bot stays on Opus.
+        assert.equal(opus?.agents?.Explore?.model, "claude-haiku-5-5");
+        assert.equal(opus?.model, "claude-opus-5-5");
+      }),
+    );
+
+    it.effect("leaves subagents of Sonnet, Haiku and Fable bots and plain threads alone", () =>
+      Effect.gen(function* () {
+        for (const model of ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]) {
+          assert.equal((yield* startBot({ model }))?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
+        }
+        assert.equal(
+          (yield* startBot({ model: "claude-opus-5-5", personalBot: false }))?.env
+            ?.CLAUDE_CODE_SUBAGENT_MODEL,
+          undefined,
+        );
+      }),
+    );
+
+    it.effect("PERSONAL_SUBAGENT_MODEL=off is the kill switch; another model id is a setting", () =>
+      Effect.gen(function* () {
+        const off = yield* startBot({
+          model: "claude-opus-5-5",
+          env: { PERSONAL_SUBAGENT_MODEL: "off" },
+        });
+        assert.equal(off?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
+        const haiku = yield* startBot({
+          model: "claude-opus-5-5",
+          env: { PERSONAL_SUBAGENT_MODEL: "claude-haiku-5-5" },
+        });
+        assert.equal(haiku?.env?.CLAUDE_CODE_SUBAGENT_MODEL, "claude-haiku-5-5");
+        const unknown = yield* startBot({
+          model: "claude-opus-5-5",
+          models: ["claude-opus-5-5", "claude-haiku-5-5"],
+        });
+        assert.equal(unknown?.env?.CLAUDE_CODE_SUBAGENT_MODEL, undefined);
+      }),
+    );
+
     it.effect("PERSONAL_EXPLORE_MODEL=off is the kill switch; effort and model are settings", () =>
       Effect.gen(function* () {
         assert.equal(

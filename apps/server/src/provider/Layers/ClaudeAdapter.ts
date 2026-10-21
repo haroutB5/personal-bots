@@ -125,7 +125,7 @@ import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
-import { exploreSubagentAgents } from "../claudeBackgroundModels.ts";
+import { botSubagentModelEnvironment, exploreSubagentAgents } from "../claudeBackgroundModels.ts";
 import { claudeAutoCompactWindow, claudeShellOutputSettings } from "../personalBotContextLimits.ts";
 import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 import {
@@ -5461,6 +5461,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         mainModel: modelSelection?.model,
         modelKnown: (slug) => claudeCatalogHasModel(modelCatalog, slug),
       });
+      // A Claude bot on Opus runs general-purpose and other model-less
+      // subagents on Sonnet 5.5 (kill switch PERSONAL_SUBAGENT_MODEL=off).
+      const subagentEnvironment = botSubagentModelEnvironment({
+        personalBot,
+        mainModel: modelSelection?.model,
+        modelKnown: (slug) => claudeCatalogHasModel(modelCatalog, slug),
+      });
       // Remembers the CLI's PID so a deleted chat can end the commands it ran.
       const processHandle = claudeSdkSpawnDisabled() ? undefined : makeClaudeProcessHandle();
       const queryOptions: ClaudeQueryOptions = {
@@ -5549,7 +5556,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
         env: personalBot
-          ? { ...sessionEnvironment, ...PERSONAL_BOT_CLAUDE_ENVIRONMENT }
+          ? { ...sessionEnvironment, ...PERSONAL_BOT_CLAUDE_ENVIRONMENT, ...subagentEnvironment }
           : { ...CLAUDE_THREAD_DEFAULT_ENVIRONMENT, ...sessionEnvironment },
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
