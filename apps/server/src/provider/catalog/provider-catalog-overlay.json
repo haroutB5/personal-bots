@@ -26,6 +26,14 @@
       "cost": { "kind": "payAsYouGo", "label": "Pay as you go" },
       "signInLabel": "API key"
     },
+    "builtin:antigravity": {
+      "cost": {
+        "kind": "subscription",
+        "label": "Your Google AI plan",
+        "detail": "Free with a Google account. Google AI Pro or Ultra raises the limits."
+      },
+      "signInLabel": "Google account"
+    },
     "gemini": {
       "cost": { "kind": "freeTier", "label": "Free with a Google account" },
       "signInLabel": "Google account or API key",
