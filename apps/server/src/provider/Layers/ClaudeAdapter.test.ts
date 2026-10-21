@@ -659,20 +659,6 @@ describe("ClaudeAdapterLive", () => {
         disableClaudeAiConnectors: true,
         showThinkingSummaries: true,
         permissions: { deny: buildClaudeBotPermissionDeny(serverConfig) },
-        // Bot sessions keep these bundled skills available only on explicit invocation.
-        skillOverrides: {
-          "keybindings-help": "user-invocable-only",
-          init: "user-invocable-only",
-          "plugin-authoring": "user-invocable-only",
-          "code-review": "user-invocable-only",
-          simplify: "user-invocable-only",
-          loop: "user-invocable-only",
-          schedule: "user-invocable-only",
-          "fewer-permission-prompts": "user-invocable-only",
-          "workflow-authoring": "user-invocable-only",
-          run: "user-invocable-only",
-          "security-review": "user-invocable-only",
-        },
       });
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");

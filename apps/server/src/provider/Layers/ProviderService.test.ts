@@ -2134,11 +2134,21 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
 
       const dispatched = yield* nextTurnDispatched(routing.cursor);
+      const settled = yield* Deferred.make<void>();
       const resultFiber = yield* provider
         .compactThread(threadId)
-        .pipe(Effect.result, Effect.forkChild);
+        .pipe(
+          Effect.result,
+          Effect.ensuring(Deferred.succeed(settled, undefined)),
+          Effect.forkChild,
+        );
       yield* dispatched;
-      yield* advanceTestClock(600_001);
+      // The timeout is registered after real filesystem work that follows the
+      // dispatch, so keep advancing the fake clock until the compaction settles.
+      for (let attempt = 0; attempt < 500 && !(yield* Deferred.isDone(settled)); attempt++) {
+        yield* advanceTestClock(600_001);
+        yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
+      }
       const result = yield* Fiber.join(resultFiber);
       assert.equal(result._tag, "Failure");
 
