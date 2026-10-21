@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDateInEffect:off -- background appends land on the disk's time, so waits for them use real time, not the TestClock.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -29,6 +29,21 @@ function ownedLogPath(basePath: string, segment: string): string {
   const stem = extension.length > 0 ? basename.slice(0, -extension.length) : basename;
   return NodePath.join(NodePath.dirname(basePath), `${stem}.${segment}.log`);
 }
+
+/** Background appends land on the disk's time, not the test clock's. */
+const waitForFile = (filePath: string, text?: string) =>
+  Effect.promise(async () => {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      if (
+        NodeFS.existsSync(filePath) &&
+        (text === undefined || NodeFS.readFileSync(filePath, "utf8").includes(text))
+      ) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  });
 
 function parseLogLine(line: string) {
   const match = /^\[([^\]]+)\] ([A-Z]+): (.+)$/.exec(line);
@@ -256,6 +271,7 @@ describe("EventNdjsonLogger", () => {
 
         assert.equal(NodeFS.existsSync(threadPath), false);
         yield* TestClock.adjust(1_000);
+        yield* waitForFile(threadPath);
         assert.equal(NodeFS.existsSync(threadPath), true);
         yield* store.close();
       } finally {
@@ -281,6 +297,7 @@ describe("EventNdjsonLogger", () => {
         yield* logger.write({ id: "accepted" }, ThreadId.make("thread-interrupted"));
 
         yield* TestClock.adjust(1_000);
+        yield* waitForFile(threadPath, '{"id":"accepted"}');
 
         assert.equal(NodeFS.existsSync(threadPath), true);
         assert.include(NodeFS.readFileSync(threadPath, "utf8"), '{"id":"accepted"}');
@@ -829,6 +846,7 @@ describe("EventNdjsonLogger", () => {
         const logger = store.logger("native");
 
         yield* logger.write({ id: "active-before-retention" }, ThreadId.make("active"));
+        yield* waitForFile(activePath);
         assert.equal(NodeFS.existsSync(activePath), true);
 
         yield* TestClock.adjust("2 millis");
@@ -841,6 +859,95 @@ describe("EventNdjsonLogger", () => {
       }
     }),
   );
+
+  it.effect("T3CODE_PROVIDER_LOG_ASYNC=off appends on the event loop again", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadPath = ownedLogPath(basePath, "thread-sync");
+      const previous = process.env.T3CODE_PROVIDER_LOG_ASYNC;
+      process.env.T3CODE_PROVIDER_LOG_ASYNC = "off";
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        yield* store.logger("native").write({ id: "sync" }, ThreadId.make("thread-sync"));
+        // No wait: the synchronous path has written the line before write returns.
+        assert.include(NodeFS.readFileSync(threadPath, "utf8"), '{"id":"sync"}');
+        yield* store.close();
+      } finally {
+        if (previous === undefined) delete process.env.T3CODE_PROVIDER_LOG_ASYNC;
+        else process.env.T3CODE_PROVIDER_LOG_ASYNC = previous;
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("keeps background appends in order across rotations and drains them on close", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadPath = ownedLogPath(basePath, "thread-order");
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          maxBytes: 2_048,
+          maxFiles: 100,
+        });
+        const logger = store.logger("canonical");
+        for (let index = 0; index < 300; index += 1) {
+          yield* logger.write({ seq: index }, ThreadId.make("thread-order"));
+        }
+        yield* store.close();
+
+        const files = [threadPath];
+        for (let index = 1; NodeFS.existsSync(`${threadPath}.${index}`); index += 1) {
+          files.unshift(`${threadPath}.${index}`);
+        }
+        assert.isAbove(files.length, 2);
+        const seqs = files.flatMap((file) =>
+          NodeFS.readFileSync(file, "utf8")
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map((line) => (decodeUnknownJson(parseLogLine(line).payload) as { seq: number }).seq),
+        );
+        assert.deepStrictEqual(
+          seqs,
+          Array.from({ length: 300 }, (_, index) => index),
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("reports a failed background append and opens a fresh sink afterwards", () => {
+    const messages: Array<unknown> = [];
+    const logCapture = Logger.make<unknown, void>(({ message }) => {
+      messages.push(...(Array.isArray(message) ? message : [message]));
+    });
+    return Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadPath = ownedLogPath(basePath, "thread-broken");
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const logger = store.logger("native");
+        // A directory where the log file belongs: the append fails off the event loop.
+        NodeFS.mkdirSync(threadPath);
+        yield* logger.write({ id: "lost" }, ThreadId.make("thread-broken"));
+        yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+        NodeFS.rmdirSync(threadPath);
+        yield* logger.write({ id: "after" }, ThreadId.make("thread-broken"));
+        yield* store.close();
+
+        assert.include(encodeUnknownJson(messages), "provider event log write or retention failed");
+        const contents = NodeFS.readFileSync(threadPath, "utf8");
+        assert.include(contents, '{"id":"after"}');
+        assert.notInclude(contents, '{"id":"lost"}');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(Logger.layer([logCapture], { mergeWithExisting: false })));
+  });
 
   it("attributes batches that were written before a later chunk fails", () => {
     const records: ReadonlyArray<PendingRecord> = [

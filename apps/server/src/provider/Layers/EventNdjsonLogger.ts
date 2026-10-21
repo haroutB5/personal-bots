@@ -34,6 +34,9 @@ const DEFAULT_MAX_AGE_MS = 14 * DAY_MS;
 const DEFAULT_RETENTION_CHECK_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_BUFFERED_BYTES = MEBIBYTE;
 const DEFAULT_MAX_BUFFERED_RECORDS = 512;
+// Lines waiting behind a slow disk. Past this the oldest whole batches are dropped (these logs
+// are best-effort; a server frozen behind a log file is worse than a gap in it).
+const MAX_QUEUED_WRITE_BYTES = 32 * MEBIBYTE;
 const MAX_RECORD_CHARACTERS = 64 * 1024;
 const MAX_RECORD_FIELDS = 1_024;
 const MAX_RECORD_DEPTH = 16;
@@ -169,6 +172,100 @@ interface RetentionResult {
 interface DrainResult {
   readonly attributions: ReadonlyArray<AttributionSummary>;
   readonly failures: ReadonlyArray<FileOperationFailure>;
+}
+
+/**
+ * Read once per store (so at server start). `off` restores the synchronous append on the event
+ * loop: 19-21 Oct, 27 stalls (94.5 s, up to 9.5 s) were the server waiting in appendFileSync on
+ * an `events.<thread>.log` while the disk was busy.
+ */
+export const providerLogAsyncEnabled = (value: string | undefined): boolean =>
+  !["off", "0", "false", "no", "disabled"].includes(value?.trim().toLowerCase() ?? "");
+
+interface BackgroundWriter {
+  readonly enqueue: (sink: RotatingFileSink, filePath: string, text: string | Buffer) => void;
+  readonly isBroken: (sink: RotatingFileSink) => boolean;
+  /** Failures and dropped lines since the last call. */
+  readonly takeReport: () => {
+    readonly failures: ReadonlyArray<FileOperationFailure>;
+    readonly droppedRecords: number;
+    readonly droppedBytes: number;
+  };
+  /** Waits until every queued append has landed or failed. */
+  readonly drain: () => Promise<void>;
+}
+
+/**
+ * Appends provider log batches off the event loop, the trace sink's pattern: one write in flight
+ * per store, so lines land in the order they were drained and a file is never rotated under an
+ * append. Only the append is asynchronous; a rotation (rare, renames only) stays synchronous.
+ * A failed append drops that sink, and its later queued batches, exactly as a throwing
+ * synchronous write did; the next drain opens a fresh sink.
+ */
+function makeBackgroundWriter(): BackgroundWriter {
+  const queue: Array<{
+    readonly sink: RotatingFileSink;
+    readonly filePath: string;
+    readonly text: string | Buffer;
+    readonly bytes: number;
+  }> = [];
+  let queuedBytes = 0;
+  let inFlight: Promise<void> | null = null;
+  let failures: Array<FileOperationFailure> = [];
+  let droppedRecords = 0;
+  let droppedBytes = 0;
+  const brokenSinks = new WeakSet<RotatingFileSink>();
+
+  const startNextWrite = () => {
+    if (inFlight !== null) return;
+    let next = queue.shift();
+    while (next !== undefined && brokenSinks.has(next.sink)) {
+      queuedBytes -= next.bytes;
+      next = queue.shift();
+    }
+    if (next === undefined) return;
+    queuedBytes -= next.bytes;
+    const write = next;
+    inFlight = write.sink
+      .writeAsync(write.text)
+      .then(
+        () => undefined,
+        (cause: unknown) => {
+          brokenSinks.add(write.sink);
+          failures.push({ filePath: write.filePath, cause });
+        },
+      )
+      .then(() => {
+        inFlight = null;
+        startNextWrite();
+      });
+  };
+
+  return {
+    enqueue: (sink, filePath, text) => {
+      const bytes = Buffer.byteLength(text);
+      queue.push({ sink, filePath, text, bytes });
+      queuedBytes += bytes;
+      while (queuedBytes > MAX_QUEUED_WRITE_BYTES && queue.length > 1) {
+        const dropped = queue.shift()!;
+        queuedBytes -= dropped.bytes;
+        droppedRecords += countLines(dropped.text);
+        droppedBytes += dropped.bytes;
+      }
+      startNextWrite();
+    },
+    isBroken: (sink) => brokenSinks.has(sink),
+    takeReport: () => {
+      const report = { failures, droppedRecords, droppedBytes };
+      failures = [];
+      droppedRecords = 0;
+      droppedBytes = 0;
+      return report;
+    },
+    drain: async () => {
+      for (let pending = inFlight; pending !== null; pending = inFlight) await pending;
+    },
+  };
 }
 
 function logWarning(message: string, context: Record<string, unknown>): Effect.Effect<void> {
@@ -546,6 +643,7 @@ function drainPending(input: {
   readonly now: number;
   readonly timerFired: boolean;
   readonly close: boolean;
+  readonly writer: BackgroundWriter | undefined;
 }): readonly [DrainResult, StoreState] {
   if (input.state.closed) {
     return [{ attributions: [], failures: [] }, input.state];
@@ -568,6 +666,10 @@ function drainPending(input: {
   for (const [threadSegment, records] of recordsBySegment) {
     const filePath = providerLogPath(input.directory, input.filePrefix, threadSegment);
     let sink = sinks.get(threadSegment);
+    if (sink && input.writer?.isBroken(sink)) {
+      sinks.delete(threadSegment);
+      sink = undefined;
+    }
     if (!sink) {
       try {
         sink = new RotatingFileSink({
@@ -583,8 +685,12 @@ function drainPending(input: {
       }
     }
 
+    const target = sink;
+    const writer = input.writer;
     try {
-      writeBatchedMessages(sink, records, input.options.maxBytes, (writtenRecords) => {
+      const destination: Pick<RotatingFileSink, "write"> =
+        writer === undefined ? target : { write: (text) => writer.enqueue(target, filePath, text) };
+      writeBatchedMessages(destination, records, input.options.maxBytes, (writtenRecords) => {
         for (const record of writtenRecords) {
           const current = attributionByStream.get(record.stream) ?? {
             count: 0,
@@ -621,6 +727,16 @@ function drainPending(input: {
   ];
 }
 
+function countLines(text: string | Buffer): number {
+  // Every record is one line, so this is the record count of a batch.
+  const value = typeof text === "string" ? text : text.toString("utf8");
+  let count = 0;
+  for (let index = value.indexOf("\n"); index !== -1; index = value.indexOf("\n", index + 1)) {
+    count += 1;
+  }
+  return count;
+}
+
 const serializeEvent = Effect.fnUntraced(function* (event: unknown) {
   return yield* encodeUnknownJsonString(event).pipe(
     Effect.catch((error) =>
@@ -638,6 +754,9 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   const resolved = yield* resolveOptions(filePath, options);
   const directory = NodePath.dirname(filePath);
   const filePrefix = providerLogPrefix(filePath);
+  const writer = providerLogAsyncEnabled(process.env.T3CODE_PROVIDER_LOG_ASYNC)
+    ? makeBackgroundWriter()
+    : undefined;
 
   yield* Effect.try({
     try: () => NodeFS.mkdirSync(directory, { recursive: true }),
@@ -685,6 +804,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
         now: startedAt,
         timerFired,
         close,
+        writer,
       });
       const [drainResult, drainedState] = result;
       // The due-check and the timestamp move together under the lock, so two
@@ -728,11 +848,21 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       }
     }
 
+    // On close, wait for the background appends so shutdown keeps every drained line.
+    if (writer !== undefined && close) yield* Effect.promise(() => writer.drain());
+
     const result = outcome.result;
-    for (const failure of result.failures) {
+    const background = writer?.takeReport();
+    for (const failure of [...result.failures, ...(background?.failures ?? [])]) {
       yield* logWarning("provider event log write or retention failed", {
         filePath: failure.filePath,
         errorTag: errorTag(failure.cause),
+      });
+    }
+    if (background !== undefined && background.droppedRecords > 0) {
+      yield* logWarning("provider event log writes fell behind the disk; oldest lines dropped", {
+        records: background.droppedRecords,
+        bytes: background.droppedBytes,
       });
     }
 
