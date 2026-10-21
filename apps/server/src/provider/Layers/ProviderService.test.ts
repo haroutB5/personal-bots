@@ -52,6 +52,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlError from "effect/unstable/sql/SqlError";
 
 import {
   ProviderAdapterRequestError,
@@ -5274,10 +5275,18 @@ describe("agent browser access", () => {
        * Gives the service an in-memory app database, seeded by this before the
        * session starts (the personal-bot thread and task-chat checks read it).
        */
-      readonly seedPersonalSql?: Effect.Effect<void, unknown, SqlClient.SqlClient>;
+      readonly seedPersonalSql?: Effect.Effect<void, never, SqlClient.SqlClient>;
     },
   ) =>
     Effect.gen(function* () {
+      // One in-memory app database, seeded before the service reads it.
+      const personalSqlContext =
+        options?.seedPersonalSql === undefined
+          ? undefined
+          : yield* Layer.build(SqlitePersistenceMemory).pipe(Effect.orDie);
+      if (personalSqlContext !== undefined && options?.seedPersonalSql !== undefined) {
+        yield* options.seedPersonalSql.pipe(Effect.provideContext(personalSqlContext));
+      }
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
       const enableAgentDeviceAccess = typeof access === "boolean" ? access : access.device;
       const issued: Array<{ threadId: ThreadId; capabilities: ReadonlyArray<string> }> = [];
@@ -5352,8 +5361,8 @@ describe("agent browser access", () => {
       }).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provideMerge(
-          options?.seedPersonalSql === undefined ? Layer.empty : SqlitePersistenceMemory,
+        Layer.provide(
+          personalSqlContext === undefined ? Layer.empty : Layer.succeedContext(personalSqlContext),
         ),
         Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
         Layer.provide(
@@ -5411,9 +5420,6 @@ describe("agent browser access", () => {
       );
 
       yield* Effect.gen(function* () {
-        if (options?.seedPersonalSql !== undefined) {
-          yield* options.seedPersonalSql.pipe(Effect.orDie);
-        }
         const provider = yield* ProviderService.ProviderService;
         yield* provider.startSession(threadId, {
           provider: CODEX_DRIVER,
@@ -5579,7 +5585,8 @@ describe("agent browser access", () => {
   // including one a task continued with continueChatId (its task came later).
   it.effect("marks only task and routine chats as task chats, on start and recovery", () =>
     Effect.gen(function* () {
-      const seed = (threadId: string, rows: (sql: SqlClient.SqlClient) => Effect.Effect<unknown, unknown>) =>
+      type Rows = (sql: SqlClient.SqlClient) => Effect.Effect<unknown, SqlError.SqlError>;
+      const seed = (threadId: string, rows: Rows) =>
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`INSERT INTO personal_bots (
@@ -5589,15 +5596,15 @@ describe("agent browser access", () => {
           yield* sql`INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
             VALUES (${threadId}, 'bot-personal', '2026-10-21T10:05:00.000Z')`;
           yield* rows(sql);
-        });
-      const task = (threadId: string, source: string, createdAt: string) =>
-        (sql: SqlClient.SqlClient) =>
+        }).pipe(Effect.orDie);
+      const task =
+        (threadId: string, source: string, createdAt: string) => (sql: SqlClient.SqlClient) =>
           sql`INSERT INTO personal_tasks (
             task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
             depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
           ) VALUES ('task-1', 'task-1', 'bot-personal', 't', 'o', 'running', ${source}, 'k1',
             0, 2, 5, ${createdAt}, ${createdAt}, ${createdAt}, ${threadId})`;
-      const run = (threadId: string, rows: (sql: SqlClient.SqlClient) => Effect.Effect<unknown, unknown>) =>
+      const run = (threadId: string, rows: Rows) =>
         Effect.gen(function* () {
           const starts: Array<unknown> = [];
           const recoveries: Array<unknown> = [];
@@ -5626,10 +5633,10 @@ describe("agent browser access", () => {
         yield* run("thread-continued", task("thread-continued", "delegation", after)),
         [undefined, undefined],
       );
-      assert.deepEqual(
-        yield* run("thread-user-task", task("thread-user-task", "user", before)),
-        [undefined, undefined],
-      );
+      assert.deepEqual(yield* run("thread-user-task", task("thread-user-task", "user", before)), [
+        undefined,
+        undefined,
+      ]);
       assert.deepEqual(yield* run("thread-owner", () => Effect.void), [undefined, undefined]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
