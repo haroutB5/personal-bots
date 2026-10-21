@@ -274,7 +274,12 @@ export function applyManifestDefault(
           (model) =>
             !model.isCustom && codexModelFamily(model.slug) === codexModelFamily(requestedSlug),
         )?.slug
-      : undefined);
+      : driverKind === "antigravity"
+        ? models.find(
+            (model) =>
+              !model.isCustom && model.slug === requestedSlug.replace(/-(?:low|medium|high)$/u, ""),
+          )?.slug
+        : undefined);
   if (slug === undefined) return models;
   const previous = models.find((model) => model.isDefault && model.slug !== slug);
   if (!previous) return models;

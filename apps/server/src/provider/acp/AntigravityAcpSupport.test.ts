@@ -17,6 +17,11 @@ import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
+  currentAntigravityModel,
+  isAntigravityAllowedConfigOptionValue,
+  isAntigravityConfigOptionCurrentValueMatching,
+  matchesAntigravityModelSelection,
+  parseAntigravityModel,
   resolveAntigravityModel,
 } from "./AntigravityAcpSupport.ts";
 
@@ -34,14 +39,44 @@ const modelConfig = {
 function makeModelRuntime(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> = [modelConfig],
   failure?: EffectAcpErrors.AcpError,
+  options?: { readonly skipOptionUpdateOnSetModel?: boolean },
 ) {
   const selections: string[] = [];
+  let currentOptions = [...configOptions];
   const setModel = Effect.fn("AntigravityAcpSupportTest.setModel")(function* (model: string) {
     if (failure) return yield* failure;
     selections.push(model);
+    if (!options?.skipOptionUpdateOnSetModel) {
+      const parsed = parseAntigravityModel(model);
+      currentOptions = currentOptions.map((opt) => {
+        if (opt.id === "model" && opt.type === "select") {
+          return { ...opt, currentValue: parsed.family ?? model };
+        }
+        if (opt.id === "thinking_level" && opt.type === "select") {
+          return { ...opt, currentValue: parsed.effort ?? opt.currentValue };
+        }
+        return opt;
+      });
+      if (parsed.effort && !currentOptions.some((opt) => opt.id === "thinking_level")) {
+        currentOptions.push({
+          id: "thinking_level",
+          name: "Thinking Level",
+          type: "select",
+          currentValue: parsed.effort,
+          options: [
+            { value: "low", name: "Low" },
+            { value: "medium", name: "Medium" },
+            { value: "high", name: "High" },
+          ],
+        });
+      }
+    }
   });
   return {
-    runtime: { getConfigOptions: Effect.succeed(configOptions), setModel },
+    runtime: {
+      getConfigOptions: Effect.sync(() => currentOptions),
+      setModel,
+    },
     selections,
   };
 }
@@ -181,6 +216,250 @@ describe("applyAntigravityAcpModelSelection", () => {
       expect(selections).toEqual(["gemini-saved"]);
     }),
   );
+
+  it.effect(
+    "applies and confirms all 6 combinations of Argon and Flash at Low, Medium and High",
+    () =>
+      Effect.gen(function* () {
+        const families = ["gemini-4-argon", "gemini-3.8-flash"] as const;
+        const efforts = ["low", "medium", "high"] as const;
+        for (const family of families) {
+          for (const effort of efforts) {
+            const expectedModel = `${family}-${effort}`;
+            const baseConfig = {
+              ...modelConfig,
+              currentValue: family,
+              options: [
+                { value: "gemini-4-argon", name: "Gemini 4 Argon" },
+                { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+              ],
+            };
+            const { runtime, selections } = makeModelRuntime([baseConfig]);
+            const resolved = resolveAntigravityModel({
+              configOptions: [baseConfig],
+              model: family,
+              options: [{ id: "effort", value: effort }],
+            });
+            expect(resolved).toBe(expectedModel);
+
+            const applied = yield* applyAntigravityAcpModelSelection({
+              runtime,
+              model: family,
+              options: [{ id: "effort", value: effort }],
+              mapError: (cause) => cause,
+            });
+            expect(applied).toBe(expectedModel);
+            expect(selections).toEqual([expectedModel]);
+            const finalOptions = yield* runtime.getConfigOptions;
+            expect(matchesAntigravityModelSelection(finalOptions, expectedModel)).toBe(true);
+          }
+        }
+      }),
+  );
+
+  it.effect("keeps plain family ID when no effort is requested", () =>
+    Effect.gen(function* () {
+      const baseConfig = {
+        ...modelConfig,
+        currentValue: "gemini-3.8-flash",
+        options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }],
+      };
+      // Without options
+      expect(
+        resolveAntigravityModel({
+          configOptions: [baseConfig],
+          model: "gemini-3.8-flash",
+        }),
+      ).toBe("gemini-3.8-flash");
+
+      // With empty options array
+      expect(
+        resolveAntigravityModel({
+          configOptions: [baseConfig],
+          model: "gemini-3.8-flash",
+          options: [],
+        }),
+      ).toBe("gemini-3.8-flash");
+
+      // With default effort option
+      expect(
+        resolveAntigravityModel({
+          configOptions: [baseConfig],
+          model: "gemini-3.8-flash",
+          options: [{ id: "effort", value: "default" }],
+        }),
+      ).toBe("gemini-3.8-flash");
+
+      const { runtime, selections } = makeModelRuntime([baseConfig]);
+      const applied = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model: "gemini-3.8-flash",
+        mapError: (cause) => cause,
+      });
+      expect(applied).toBe("gemini-3.8-flash");
+      expect(selections).toEqual(["gemini-3.8-flash"]);
+    }),
+  );
+
+  it.effect("handles stale saved suffixed selections correctly", () =>
+    Effect.gen(function* () {
+      const baseConfig = {
+        ...modelConfig,
+        currentValue: "gemini-3.8-flash",
+        options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }],
+      };
+
+      // Stale saved with no options retains inferred effort
+      expect(
+        resolveAntigravityModel({
+          configOptions: [baseConfig],
+          model: "gemini-3.8-flash-high",
+        }),
+      ).toBe("gemini-3.8-flash-high");
+
+      // Stale saved with new effort overridden
+      expect(
+        resolveAntigravityModel({
+          configOptions: [baseConfig],
+          model: "gemini-3.8-flash-high",
+          options: [{ id: "effort", value: "low" }],
+        }),
+      ).toBe("gemini-3.8-flash-low");
+
+      // Stale saved with default effort resets to plain family ID
+      expect(
+        resolveAntigravityModel({
+          configOptions: [baseConfig],
+          model: "gemini-3.8-flash-high",
+          options: [{ id: "effort", value: "default" }],
+        }),
+      ).toBe("gemini-3.8-flash");
+    }),
+  );
+
+  it.effect("normalises suffixed defaultModel from manifest when resolving default alias", () =>
+    Effect.gen(function* () {
+      const baseConfig = {
+        ...modelConfig,
+        currentValue: "gemini-4-argon",
+        options: [
+          { value: "gemini-4-argon", name: "Gemini 4 Argon" },
+          { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+        ],
+      };
+      // Manifest default with suffix gemini-3.8-flash-high resolves to expanded option
+      expect(
+        resolveAntigravityModel({
+          configOptions: [baseConfig],
+          model: ANTIGRAVITY_DEFAULT_MODEL,
+          defaultModel: "gemini-3.8-flash-high",
+        }),
+      ).toBe("gemini-3.8-flash-high");
+
+      // Plain manifest default gemini-3.8-flash resolves to plain family
+      expect(
+        resolveAntigravityModel({
+          configOptions: [baseConfig],
+          model: ANTIGRAVITY_DEFAULT_MODEL,
+          defaultModel: "gemini-3.8-flash",
+        }),
+      ).toBe("gemini-3.8-flash");
+    }),
+  );
+
+  it.effect("fails when runtime does not confirm the selected model and effort", () =>
+    Effect.gen(function* () {
+      const baseConfig = {
+        ...modelConfig,
+        currentValue: "gemini-3.8-flash",
+        options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }],
+      };
+      const { runtime } = makeModelRuntime([baseConfig], undefined, {
+        skipOptionUpdateOnSetModel: true,
+      });
+      const error = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model: "gemini-3.8-flash",
+        options: [{ id: "effort", value: "high" }],
+        mapError: (cause) => cause,
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "AcpRequestError",
+        code: -32602,
+        errorMessage: expect.stringContaining("could not be confirmed"),
+      });
+    }),
+  );
+
+  it("validates allowed config option values for Antigravity", () => {
+    const configOption: EffectAcpSchema.SessionConfigOption = {
+      id: "model",
+      name: "Model",
+      type: "select",
+      currentValue: "gemini-3.8-flash",
+      options: [
+        { value: "gemini-4-argon", name: "Gemini 4 Argon" },
+        { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+      ],
+    };
+    for (const family of ["gemini-4-argon", "gemini-3.8-flash"]) {
+      expect(isAntigravityAllowedConfigOptionValue(configOption, family)).toBe(true);
+      for (const effort of ["low", "medium", "high"]) {
+        expect(isAntigravityAllowedConfigOptionValue(configOption, `${family}-${effort}`)).toBe(
+          true,
+        );
+      }
+    }
+    expect(isAntigravityAllowedConfigOptionValue(configOption, "gemini-3.8-flash-max")).toBe(false);
+    expect(isAntigravityAllowedConfigOptionValue(configOption, "gpt-5")).toBe(false);
+  });
+
+  it("matches current option value for Antigravity composite options", () => {
+    const configOptions: EffectAcpSchema.SessionConfigOption[] = [
+      {
+        id: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "gemini-3.8-flash",
+        options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }],
+      },
+      {
+        id: "thinking_level",
+        name: "Thinking Level",
+        type: "select",
+        currentValue: "high",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+        ],
+      },
+    ];
+    const modelOption = configOptions[0]!;
+    // Current is flash + high
+    expect(
+      isAntigravityConfigOptionCurrentValueMatching(
+        modelOption,
+        "gemini-3.8-flash-high",
+        configOptions,
+      ),
+    ).toBe(true);
+    expect(
+      isAntigravityConfigOptionCurrentValueMatching(
+        modelOption,
+        "gemini-3.8-flash-low",
+        configOptions,
+      ),
+    ).toBe(false);
+    // Plain family check
+    expect(
+      isAntigravityConfigOptionCurrentValueMatching(modelOption, "gemini-3.8-flash", configOptions),
+    ).toBe(true);
+    expect(
+      isAntigravityConfigOptionCurrentValueMatching(modelOption, "gemini-4-argon", configOptions),
+    ).toBe(false);
+  });
 
   it.effect("reports a native model-selection failure through the adapter error mapper", () =>
     Effect.gen(function* () {

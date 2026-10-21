@@ -120,6 +120,28 @@ describe("applyManifestDefault", () => {
       models.slice(0, 1),
     );
   });
+  it("normalises stale suffixed Antigravity manifest default to match family model", () => {
+    const driver = ProviderDriverKind.make("antigravity");
+    const manifest: ModelManifestData = {
+      version: 1,
+      currentModels: {},
+      providers: {
+        antigravity: {
+          defaults: { chat: "gemini-3.8-flash-high" },
+          profiles: {},
+          models: [{ slug: "gemini-3.8-flash", name: "Flash", status: "current" }],
+        },
+      },
+    };
+    const models = [
+      model({ slug: "gemini-old", isDefault: true, aliases: ["antigravity-default"] }),
+      model({ slug: "gemini-3.8-flash" }),
+    ];
+    assert.deepStrictEqual(applyManifestDefault(models, manifest, driver), [
+      model({ slug: "gemini-old" }),
+      model({ slug: "gemini-3.8-flash", isDefault: true, aliases: ["antigravity-default"] }),
+    ]);
+  });
 });
 
 describe("resolveProviderCatalog", () => {

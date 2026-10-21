@@ -75,7 +75,7 @@
       "gpt-daybreak-red-latest"
     ],
     "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5"],
-    "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"],
+    "antigravity": ["gemini-3.8-flash", "gemini-4-argon"],
     "deepseek": ["deepseek-flash"]
   },
   "providers": {
@@ -767,23 +767,18 @@
     },
     "antigravity": {
       "defaults": {
-        "chat": "gemini-3.8-flash-high"
+        "chat": "gemini-3.8-flash"
       },
       "profiles": {},
       "models": [
         {
-          "slug": "gemini-3.8-flash-high",
-          "name": "Gemini 3.8 Flash (High)",
+          "slug": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash",
           "status": "current"
         },
         {
-          "slug": "gemini-3.8-flash-medium",
-          "name": "Gemini 3.8 Flash (Medium)",
-          "status": "current"
-        },
-        {
-          "slug": "gemini-3.8-flash-low",
-          "name": "Gemini 3.8 Flash (Low)",
+          "slug": "gemini-4-argon",
+          "name": "Gemini 4 Argon",
           "status": "current"
         }
       ]

@@ -70,6 +70,7 @@ import {
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
+  parseAntigravityModel,
   resolveAntigravityModel,
 } from "../acp/AntigravityAcpSupport.ts";
 import {
@@ -1166,6 +1167,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             updatedAt: yield* nowIso,
           };
           const dispatched = yield* Deferred.make<void>();
+          const parsedModel = parseAntigravityModel(model);
           const fiber = yield* context.runtime
             .prompt(
               {
@@ -1176,7 +1178,11 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                     // Sent with every prompt, so a bot edited mid-chat answers
                     // with its new persona on the next turn.
                     text: withBotInstructions(
-                      buildRuntimeInstructions({ harness: "Antigravity", model }),
+                      buildRuntimeInstructions({
+                        harness: "Antigravity",
+                        model: parsedModel.family,
+                        reasoningEffort: parsedModel.effort,
+                      }),
                       input.systemInstructions,
                     ),
                   },

@@ -91,6 +91,17 @@ export interface AcpSessionRuntimeOptions {
   /** Native cancellation waits for the prompt response and the getEvents consumer to drain. */
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
   readonly cancelTimeout?: Duration.Input;
+  /** Allows provider-specific validation of session config options (e.g. Antigravity concrete effort models). */
+  readonly isAllowedConfigOptionValue?: (
+    configOption: EffectAcpSchema.SessionConfigOption,
+    value: string,
+  ) => boolean;
+  /** Matches current option value when provider runtime internally unpacks or maps composite options. */
+  readonly isConfigOptionCurrentValueMatching?: (
+    configOption: EffectAcpSchema.SessionConfigOption,
+    value: string | boolean,
+    allConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  ) => boolean;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
@@ -672,7 +683,11 @@ export const make = (
           });
         }
         const allowedValues = collectSessionConfigOptionValues(configOption);
-        if (allowedValues.includes(value)) {
+        if (
+          allowedValues.includes(value) ||
+          (typeof value === "string" &&
+            options.isAllowedConfigOptionValue?.(configOption, value) === true)
+        ) {
           return;
         }
         return yield* new EffectAcpErrors.AcpRequestError({
@@ -713,7 +728,12 @@ export const make = (
           Ref.get(configOptionsRef).pipe(
             Effect.flatMap((configOptions) => {
               const existing = findSessionConfigOption(configOptions, configId);
-              if (existing && configOptionCurrentValueMatches(existing, value)) {
+              if (
+                existing &&
+                (configOptionCurrentValueMatches(existing, value) ||
+                  options.isConfigOptionCurrentValueMatching?.(existing, value, configOptions) ===
+                    true)
+              ) {
                 return Effect.succeed({
                   configOptions,
                 } satisfies EffectAcpSchema.SetSessionConfigOptionResponse);
