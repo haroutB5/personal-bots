@@ -11,11 +11,13 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 
-import { layerTest as settingsLayerTest } from "../serverSettings.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { layerTest as settingsLayerTest, ServerSettingsService } from "../serverSettings.ts";
 import { AntigravityInstallation } from "./AntigravityInstallation.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { makeProviderInstallation } from "./providerInstallation.ts";
@@ -39,14 +41,15 @@ const state: ProviderInstallState = {
   message: null,
 };
 
-function instance(kind = driver): ProviderInstance {
+function instance(kind = driver, adapter?: ProviderInstance["adapter"]): ProviderInstance {
   return {
     instanceId,
     driverKind: kind,
     enabled: false,
     displayName: undefined,
     continuationIdentity: { driverKind: kind, continuationKey: instanceId },
-    get adapter(): never {
+    get adapter(): ProviderInstance["adapter"] {
+      if (adapter !== undefined) return adapter;
       throw new Error("Installation must not start a provider session.");
     },
     get snapshot(): never {
@@ -63,93 +66,102 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     instance?: ProviderInstance;
     settings?: Parameters<typeof settingsLayerTest>[0];
     listBots?: PersonalBotService["Service"]["list"];
+    /** Threads the registry agent's chats are on: id to title. */
+    threadTitles?: Record<string, string>;
   } = {},
 ) {
   const calls: string[] = [];
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
-  const router = yield* makeProviderInstallation().pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        settingsLayerTest(input.settings),
-        Layer.mock(ProviderInstanceRegistry)({
-          getInstance: (id) =>
-            Effect.succeed(id === configured.instanceId ? configured : undefined),
-          listInstances: Effect.succeed([configured]),
+  const context = yield* Layer.build(
+    Layer.mergeAll(
+      settingsLayerTest(input.settings),
+      Layer.mock(ProviderInstanceRegistry)({
+        getInstance: (id) => Effect.succeed(id === configured.instanceId ? configured : undefined),
+        listInstances: Effect.succeed([configured]),
+      }),
+      Layer.mock(ProviderRegistry)({
+        refreshInstance: () =>
+          Effect.sync(() => {
+            calls.push("refresh");
+            return [];
+          }),
+      }),
+      Layer.mock(AntigravityInstallation)({
+        managedDirectory: "/unused-managed-runtime",
+        start: Effect.sync(() => {
+          calls.push("start");
+          return state;
         }),
-        Layer.mock(ProviderRegistry)({
-          refreshInstance: () =>
-            Effect.sync(() => {
-              calls.push("refresh");
-              return [];
-            }),
-        }),
-        Layer.mock(AntigravityInstallation)({
-          managedDirectory: "/unused-managed-runtime",
-          start: Effect.sync(() => {
-            calls.push("start");
+        cancel: () =>
+          Effect.sync(() => {
+            calls.push("cancel");
             return state;
           }),
-          cancel: () =>
-            Effect.sync(() => {
-              calls.push("cancel");
-              return state;
-            }),
-          state: Effect.succeed(state),
-          changes: Stream.succeed(state),
-          remove: (paths) =>
-            Effect.sync(() => {
-              protectedPaths = paths ?? [];
-              calls.push("remove");
-            }),
-        }),
-        Layer.mock(ProviderCatalog)({
-          installRequest: () => Effect.succeed(null),
-        }),
-        Layer.mock(CatalogInstaller)({
-          runtimesRoot: "/unused-test-runtimes-root",
-          start: () =>
-            Effect.succeed({
-              ...state,
-              catalogId: "agent-1",
-              previousVersion: null,
-              failure: null,
-            }),
-          cancel: () =>
-            Effect.succeed({
-              ...state,
-              catalogId: "agent-1",
-              previousVersion: null,
-              failure: null,
-            }),
-          state: () =>
-            Effect.succeed({
-              ...state,
-              catalogId: "agent-1",
-              previousVersion: null,
-              failure: null,
-            }),
-          changes: () =>
-            Stream.succeed({
-              ...state,
-              catalogId: "agent-1",
-              previousVersion: null,
-              failure: null,
-            }),
-          remove: () =>
-            Effect.sync(() => {
-              calls.push("catalog-remove");
-            }),
-        }),
-        Layer.mock(PersonalBotService)({
-          list:
-            input.listBots ??
-            (() => Effect.succeed({ bots: [], threads: [], personalProjectId: "default" as any })),
-        }),
-      ),
+        state: Effect.succeed(state),
+        changes: Stream.succeed(state),
+        remove: (paths) =>
+          Effect.sync(() => {
+            protectedPaths = paths ?? [];
+            calls.push("remove");
+          }),
+      }),
+      Layer.mock(ProviderCatalog)({
+        installRequest: () => Effect.succeed(null),
+      }),
+      Layer.mock(CatalogInstaller)({
+        runtimesRoot: "/unused-test-runtimes-root",
+        start: () =>
+          Effect.succeed({
+            ...state,
+            catalogId: "agent-1",
+            previousVersion: null,
+            failure: null,
+          }),
+        cancel: () =>
+          Effect.succeed({
+            ...state,
+            catalogId: "agent-1",
+            previousVersion: null,
+            failure: null,
+          }),
+        state: () =>
+          Effect.succeed({
+            ...state,
+            catalogId: "agent-1",
+            previousVersion: null,
+            failure: null,
+          }),
+        changes: () =>
+          Stream.succeed({
+            ...state,
+            catalogId: "agent-1",
+            previousVersion: null,
+            failure: null,
+          }),
+        remove: () =>
+          Effect.sync(() => {
+            calls.push("catalog-remove");
+          }),
+      }),
+      Layer.mock(ProjectionSnapshotQuery)({
+        getThreadShellById: (id) =>
+          Effect.succeed(
+            input.threadTitles?.[id] === undefined
+              ? Option.none()
+              : Option.some({ title: input.threadTitles[id] } as never),
+          ),
+      }),
+      Layer.mock(PersonalBotService)({
+        list:
+          input.listBots ??
+          (() => Effect.succeed({ bots: [], threads: [], personalProjectId: "default" as any })),
+      }),
     ),
   );
-  return { router, calls, protectedPaths: () => protectedPaths };
+  const router = yield* makeProviderInstallation().pipe(Effect.provide(context));
+  const settingsService = yield* ServerSettingsService.pipe(Effect.provide(context));
+  return { router, settingsService, calls, protectedPaths: () => protectedPaths };
 });
 
 describe("provider installation routing", () => {
@@ -289,4 +301,77 @@ it.effect("registry Remove fails closed if the bot lookup fails", () =>
     assert.include(error.detail, "Could not check");
     assert.deepEqual(h.calls, []);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const chatSession = (threadId: string, running: boolean) =>
+  ({
+    provider: registryDriver,
+    threadId,
+    status: running ? "running" : "ready",
+    runtimeMode: "approval-required",
+    createdAt: "2026-10-21T00:00:00Z",
+    updatedAt: "2026-10-21T00:00:00Z",
+    ...(running ? { activeTurnId: "turn-1" } : {}),
+  }) as never;
+
+const registryAdapter = (stopped: string[], sessions: ReadonlyArray<unknown>) =>
+  ({
+    listSessions: () => Effect.succeed(sessions),
+    stopSession: (threadId: string) =>
+      Effect.sync(() => {
+        stopped.push(threadId);
+      }),
+  }) as never as ProviderInstance["adapter"];
+
+it.effect(
+  "registry Remove stops idle chats, deletes every instance of the agent, and keeps others",
+  () =>
+    Effect.gen(function* () {
+      const stopped: string[] = [];
+      const h = yield* makeHarness({
+        instance: instance(
+          registryDriver,
+          registryAdapter(stopped, [chatSession("idle-chat", false)]),
+        ),
+        settings: {
+          providerInstances: {
+            ...registrySettings.providerInstances,
+            [ProviderInstanceId.make("other_agent")]: {
+              driver: registryDriver,
+              config: { catalogId: "agent-2" },
+            },
+          },
+        },
+      });
+      yield* h.router.remove({ instanceId });
+      assert.deepEqual(stopped, ["idle-chat"]);
+      assert.deepEqual(h.calls, ["catalog-remove"]);
+      const left = Object.keys((yield* h.settingsService.getSettings).providerInstances);
+      assert.deepEqual(left, ["other_agent"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "registry Remove names the chat that is in the middle of a turn and removes nothing",
+  () =>
+    Effect.gen(function* () {
+      const stopped: string[] = [];
+      const h = yield* makeHarness({
+        instance: instance(
+          registryDriver,
+          registryAdapter(stopped, [chatSession("busy-chat", true)]),
+        ),
+        settings: registrySettings,
+        threadTitles: { "busy-chat": "Plan the trip" },
+      });
+      const error = yield* h.router.remove({ instanceId }).pipe(Effect.flip);
+      assert.include(error.detail, "'Plan the trip'");
+      assert.include(error.detail, "Stop that chat first");
+      assert.deepEqual(stopped, []);
+      assert.deepEqual(h.calls, []);
+      assert.deepEqual(
+        Object.keys((yield* h.settingsService.getSettings).providerInstances).sort(),
+        [instanceId, sharedAgentInstance].sort(),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

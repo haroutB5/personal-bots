@@ -2,15 +2,17 @@ import {
   AntigravitySettings,
   ProviderDriverKind,
   type ProviderInstallCancelInput,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   ProviderSetupError,
   type ProviderSetupInput,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { AntigravityInstallation } from "./AntigravityInstallation.ts";
 import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
@@ -35,6 +37,7 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
   const catalogInstaller = yield* CatalogInstaller;
   const providerCatalog = yield* ProviderCatalog;
   const personalBots = yield* PersonalBotService;
+  const projection = yield* ProjectionSnapshotQuery;
 
   const readEntries = Effect.fn("ProviderInstallation.readEntries")(function* (
     instanceId: ProviderInstanceId,
@@ -226,10 +229,53 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
         });
       }
 
+      // An idle chat only keeps its agent process (and so its files) open;
+      // Remove stops it. A chat in the middle of a turn is named instead.
+      const busy: string[] = [];
+      for (const id of agentInstanceIds) {
+        const running = yield* instances.getInstance(id as ProviderInstanceId);
+        if (running === undefined) continue;
+        const sessions = yield* running.adapter.listSessions();
+        for (const session of sessions) {
+          if (session.status === "running" || session.activeTurnId !== undefined) {
+            const shell = yield* projection
+              .getThreadShellById(session.threadId)
+              .pipe(Effect.orElseSucceed(() => Option.none()));
+            busy.push(Option.match(shell, { onNone: () => "a chat", onSome: (t) => t.title }));
+            continue;
+          }
+          yield* running.adapter.stopSession(session.threadId).pipe(Effect.ignore);
+        }
+      }
+      if (busy.length > 0) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "remove-install",
+          detail: `Cannot remove provider: ${busy.map((name) => `'${name}'`).join(", ")} ${
+            busy.length === 1 ? "is" : "are"
+          } still using it. Stop ${busy.length === 1 ? "that chat" : "those chats"} first.`,
+        });
+      }
+
       yield* catalogInstaller
         .remove(catalogId)
         .pipe(Effect.mapError(failure(input.instanceId, "remove-install")));
-      yield* providers.refreshInstance(input.instanceId);
+      // The files are gone, so the instance would only offer an agent that
+      // cannot start. Drop every instance of it from settings.
+      const settingsFailure = () =>
+        new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "remove-install",
+          detail: "It was removed, but hbots could not update its provider list. Try again.",
+        });
+      const current = yield* settings.getSettings.pipe(Effect.mapError(settingsFailure));
+      yield* settings
+        .updateSettings({
+          providerInstances: Object.fromEntries(
+            Object.entries(current.providerInstances).filter(([id]) => !agentInstanceIds.has(id)),
+          ),
+        })
+        .pipe(Effect.mapError(settingsFailure));
       const state = yield* catalogInstaller.state(catalogId);
       return { ...state, driver: REGISTRY };
     }
