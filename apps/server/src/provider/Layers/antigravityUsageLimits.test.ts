@@ -6,6 +6,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import {
   antigravityQuotaSummaryToLimits,
+  antigravityUsageToLimits,
   readAntigravityUsageLimits,
   withAntigravityQuotaHit,
 } from "./antigravityUsageLimits.ts";
@@ -13,6 +14,84 @@ import { makeUnavailableUsageLimits, makeUsageLimits } from "../providerUsageLim
 
 const CHECKED_AT = "2026-10-20T17:00:00.000Z";
 const TestServicesLayer = Layer.merge(NodeServices.layer, FetchHttpClient.layer);
+
+describe("antigravityUsageToLimits", () => {
+  const checkedAt = "2026-10-21T11:24:00.000Z";
+  // Shapes seen live on 21 Oct 2026: the summary said untouched while the
+  // per-model list showed real use.
+  const untouchedSummary = {
+    groups: [
+      {
+        displayName: "Gemini Models",
+        buckets: [
+          {
+            bucketId: "gemini-weekly",
+            window: "weekly",
+            remainingFraction: 1,
+            resetTime: "2026-10-28T11:24:03Z",
+          },
+          {
+            bucketId: "gemini-5h",
+            window: "5h",
+            remainingFraction: 1,
+            resetTime: "2026-10-21T16:24:03Z",
+          },
+        ],
+      },
+    ],
+  };
+  const models = {
+    models: {
+      "gemini-3.8-flash-tiered": {
+        quotaInfo: { remainingFraction: 0.81310505, resetTime: "2026-10-21T15:27:04Z" },
+      },
+      "gemini-2.5-pro": {
+        quotaInfo: { remainingFraction: 0.9, resetTime: "2026-10-21T15:27:04Z" },
+      },
+      "claude-sonnet": { quotaInfo: { remainingFraction: 0.1 } },
+    },
+  };
+
+  it("takes the session from the tightest Gemini model, not the summary", () => {
+    const limits = antigravityUsageToLimits(models, untouchedSummary, checkedAt);
+    expect(limits.windows).toEqual([
+      expect.objectContaining({
+        id: "gemini-session",
+        usedPercent: 19,
+        resetsAt: "2026-10-21T15:27:04Z",
+      }),
+    ]);
+  });
+
+  it("adds the summary's weekly window only once it shows use", () => {
+    const used = {
+      groups: [
+        {
+          displayName: "Gemini Models",
+          buckets: [
+            {
+              bucketId: "gemini-weekly",
+              window: "weekly",
+              remainingFraction: 0.6,
+              resetTime: "2026-10-28T11:24:03Z",
+            },
+          ],
+        },
+      ],
+    };
+    const limits = antigravityUsageToLimits(models, used, checkedAt);
+    expect(limits.windows.map((w) => [w.id, w.usedPercent])).toEqual([
+      ["gemini-session", 19],
+      ["gemini-weekly", 40],
+    ]);
+  });
+
+  it("falls back to the summary when the per-model list has no Gemini data", () => {
+    const limits = antigravityUsageToLimits(null, untouchedSummary, checkedAt);
+    expect(limits.windows.map((w) => w.id)).toEqual(["gemini-session", "gemini-weekly"]);
+    expect(antigravityUsageToLimits(null, null, checkedAt).unavailable?.reason).toBe("unsupported");
+  });
+});
 
 describe("antigravityQuotaSummaryToLimits", () => {
   it("maps Gemini and Claude & GPT groups to session and weekly windows", () => {

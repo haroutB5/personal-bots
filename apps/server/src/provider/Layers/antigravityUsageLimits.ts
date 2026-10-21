@@ -68,6 +68,70 @@ export const QuotaSummaryResponse = Schema.Struct({
   groups: Schema.optional(Schema.Array(QuotaGroup)),
 });
 
+const ModelQuota = Schema.Struct({
+  quotaInfo: Schema.optional(
+    Schema.Struct({
+      remainingFraction: Schema.optional(Schema.Number),
+      resetTime: Schema.optional(Schema.String),
+    }),
+  ),
+});
+
+export const AvailableModelsResponse = Schema.Struct({
+  models: Schema.optional(Schema.Record(Schema.String, ModelQuota)),
+});
+
+export const DAILY_AVAILABLE_MODELS_ENDPOINT =
+  "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+export const PROD_AVAILABLE_MODELS_ENDPOINT =
+  "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+
+/**
+ * Gemini usage as the runtime actually counts it. On 21 Oct 2026 the quota
+ * summary read 100% left for Gemini (its reset rolling forward on every read)
+ * while the per-model list on the daily host read 81% left with a fixed reset,
+ * after hours of bot use. So the session window comes from the tightest Gemini
+ * model in the per-model list; the summary only adds the weekly window, and
+ * only once it shows some use. With no per-model Gemini data, the summary alone
+ * is used as before.
+ */
+export function antigravityUsageToLimits(
+  models: typeof AvailableModelsResponse.Type | null,
+  summary: typeof QuotaSummaryResponse.Type | null,
+  checkedAt: string,
+): ServerProviderUsageLimits {
+  const gemini = Object.entries(models?.models ?? {})
+    .filter(
+      ([id, entry]) =>
+        id.startsWith("gemini") &&
+        entry.quotaInfo?.remainingFraction !== undefined &&
+        Number.isFinite(entry.quotaInfo.remainingFraction),
+    )
+    .map(([, entry]) => entry.quotaInfo!)
+    .sort((a, b) => a.remainingFraction! - b.remainingFraction!)[0];
+  if (!gemini) {
+    return summary
+      ? antigravityQuotaSummaryToLimits(summary, checkedAt)
+      : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+  }
+  const windows: ServerProviderUsageWindow[] = [
+    {
+      id: "gemini-session",
+      kind: "session",
+      label: "Gemini · 5-hour session",
+      usedPercent: clampPercent(Math.round((1 - gemini.remainingFraction!) * 100)),
+      ...(gemini.resetTime ? { resetsAt: gemini.resetTime } : {}),
+    },
+  ];
+  const weekly = summary
+    ? antigravityQuotaSummaryToLimits(summary, checkedAt).windows.find(
+        (window) => window.id === "gemini-weekly" && window.usedPercent > 0,
+      )
+    : undefined;
+  if (weekly) windows.push(weekly);
+  return makeUsageLimits({ checkedAt, windows });
+}
+
 export const DAILY_LOAD_CODE_ASSIST_ENDPOINT =
   "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
 export const PROD_LOAD_CODE_ASSIST_ENDPOINT =
@@ -305,20 +369,47 @@ export const readAntigravityUsageLimits = Effect.fn("readAntigravityUsageLimits"
           Effect.flatMap(HttpClientResponse.schemaBodyJson(QuotaSummaryResponse)),
         );
 
-    const dailyQuota = yield* fetchQuotaSummary(DAILY_QUOTA_SUMMARY_ENDPOINT).pipe(
+    const fetchModels = (endpoint: string) =>
+      client
+        .execute(
+          HttpClientRequest.post(endpoint).pipe(
+            HttpClientRequest.bearerToken(accessToken),
+            HttpClientRequest.setHeader("User-Agent", "antigravity/1.4.0"),
+            HttpClientRequest.setHeader("Content-Type", "application/json"),
+            HttpClientRequest.bodyJsonUnsafe({ project: effectiveProject }),
+          ),
+        )
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(AvailableModelsResponse)),
+        );
+
+    // The daily host carries the live per-model counts; prod is the fallback.
+    const modelsBody = yield* fetchModels(DAILY_AVAILABLE_MODELS_ENDPOINT).pipe(
+      Effect.catch(() => fetchModels(PROD_AVAILABLE_MODELS_ENDPOINT)),
       Effect.orElseSucceed(() => null),
     );
 
+    const dailyQuota = yield* fetchQuotaSummary(DAILY_QUOTA_SUMMARY_ENDPOINT).pipe(
+      Effect.orElseSucceed(() => null),
+    );
     const hasGemini = dailyQuota?.groups?.some((g) =>
       g.displayName?.toLowerCase().includes("gemini"),
     );
+    const summaryBody = hasGemini
+      ? dailyQuota
+      : yield* fetchQuotaSummary(PROD_QUOTA_SUMMARY_ENDPOINT).pipe(
+          Effect.orElseSucceed(() => null),
+        );
 
-    let quotaBody = hasGemini ? dailyQuota : null;
-    if (!quotaBody) {
-      quotaBody = yield* fetchQuotaSummary(PROD_QUOTA_SUMMARY_ENDPOINT);
+    if (modelsBody === null && summaryBody === null) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Antigravity could not read usage limits.",
+      });
     }
-
-    return antigravityQuotaSummaryToLimits(quotaBody, checkedAt);
+    return antigravityUsageToLimits(modelsBody, summaryBody, checkedAt);
   }).pipe(
     Effect.timeout("15 seconds"),
     Effect.orElseSucceed(() =>
