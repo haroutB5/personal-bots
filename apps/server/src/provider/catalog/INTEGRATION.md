@@ -92,3 +92,19 @@ openSource, iconUrl, addedByUser, setup, install, previousVersion` come from
   pinned package from that registry.
 - Agents and the launch check get the trimmed environment, never the server's.
 - Live proof: `catalogLive.test.ts`, off unless `HBOTS_CATALOG_LIVE=1`.
+
+## Sign-in and the health check (1.66.77 fixes)
+
+- The driver's snapshot comes from a probe (`registryProbe.ts`): ACP `initialize`
+  plus `session/new`, no prompt. It runs in the managed provider loop (boot, after
+  an install or Remove, "Check again", hourly while someone looks), never on a
+  request. Models come from the session's `model` config option or `models` state.
+- ACP does not say whether the user is signed in. An agent that lists
+  `authMethods` is shown as needing sign-in (first line of `message` = the agent's
+  own hint) until a turn or the test message produces output. Kilo accepts a
+  session and then never answers a prompt when signed out, so a turn that stays
+  silent for 45 s fails with "<Name> needs you to sign in. <hint>" and its session
+  ends. Generic sign-in flows are release 3.
+- Agents install under `<stateDir>/runtimes/acp`. Remove stops idle chats, refuses
+  while a turn is running (naming the chat), and then deletes the agent's instances
+  from settings.
