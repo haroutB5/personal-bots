@@ -406,6 +406,19 @@ function makeStaticInstanceRegistry(
 const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
 
+// Compaction sends may first await real filesystem work. TestClock advances
+// cannot acknowledge that dispatch; wait for the fake adapter to receive it.
+const nextTurnDispatched = Effect.fn("providerService.test.nextTurnDispatched")(function* (
+  adapter: ReturnType<typeof makeFakeCodexAdapter>,
+) {
+  const dispatched = yield* Deferred.make<void>();
+  const send = adapter.sendTurn.getMockImplementation()!;
+  adapter.sendTurn.mockImplementationOnce((input) =>
+    send(input).pipe(Effect.tap(() => Deferred.succeed(dispatched, undefined))),
+  );
+  return Deferred.await(dispatched);
+});
+
 const hasMetricSnapshot = (
   snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
   id: string,
@@ -1137,10 +1150,11 @@ declaredCompaction.layer("ProviderService declared compaction", (it) => {
         Stream.runHead,
         Effect.forkChild({ startImmediately: true }),
       );
+      const dispatched = yield* nextTurnDispatched(customSlashCompaction);
       const compactFiber = yield* provider
         .compactThread(threadId, modelSelection, requestId)
         .pipe(Effect.forkChild);
-      yield* advanceTestClock(50);
+      yield* dispatched;
       customSlashCompaction.emit({
         type: "turn.completed",
         eventId: asEventId("custom-slash-completed"),
@@ -1925,10 +1939,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
         Effect.forkChild,
       );
       const requestId = MessageId.make("message-compact-cursor");
+      const dispatched = yield* nextTurnDispatched(routing.cursor);
       const compactFiber = yield* provider
         .compactThread(threadId, undefined, requestId)
         .pipe(Effect.forkChild);
-      yield* advanceTestClock(50);
+      yield* dispatched;
       routing.cursor.emit({
         type: "turn.completed",
         eventId: asEventId("evt-cursor-stale-turn-completed"),
@@ -1969,10 +1984,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
         Effect.forkChild,
       );
       const observedRequestId = MessageId.make("message-observed-compact-cursor");
+      const observedDispatched = yield* nextTurnDispatched(routing.cursor);
       const observedCompactFiber = yield* provider
         .compactThread(threadId, undefined, observedRequestId)
         .pipe(Effect.forkChild);
-      yield* advanceTestClock(50);
+      yield* observedDispatched;
       routing.cursor.emit({
         type: "thread.state.changed",
         eventId: asEventId("evt-cursor-provider-compacted"),
@@ -2117,21 +2133,34 @@ routing.layer("ProviderServiceLive routing", (it) => {
         runtimeMode: "full-access",
       });
 
+      const dispatched = yield* nextTurnDispatched(routing.cursor);
+      const settled = yield* Deferred.make<void>();
       const resultFiber = yield* provider
         .compactThread(threadId)
-        .pipe(Effect.result, Effect.forkChild);
-      yield* advanceTestClock(600_001);
+        .pipe(
+          Effect.result,
+          Effect.ensuring(Deferred.succeed(settled, undefined)),
+          Effect.forkChild,
+        );
+      yield* dispatched;
+      // The timeout is registered after real filesystem work that follows the
+      // dispatch, so keep advancing the fake clock until the compaction settles.
+      for (let attempt = 0; attempt < 500 && !(yield* Deferred.isDone(settled)); attempt++) {
+        yield* advanceTestClock(600_001);
+        yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
+      }
       const result = yield* Fiber.join(resultFiber);
       assert.equal(result._tag, "Failure");
 
+      const retried = yield* Deferred.make<void>();
       routing.cursor.sendTurn.mockImplementationOnce((input) =>
         Effect.succeed({
           threadId: input.threadId,
           turnId: asTurnId("turn-compact-fallback-retry"),
-        }),
+        }).pipe(Effect.tap(() => Deferred.succeed(retried, undefined))),
       );
       const retryFiber = yield* provider.compactThread(threadId).pipe(Effect.forkChild);
-      yield* advanceTestClock(50);
+      yield* Deferred.await(retried);
       routing.cursor.emit({
         type: "turn.completed",
         eventId: asEventId("evt-compact-fallback-retry-completed"),
@@ -2998,6 +3027,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       yield* routing.codex.stopAll();
       yield* routing.claude.stopAll();
+      yield* routing.cursor.stopAll();
 
       const remaining = yield* provider.listSessions();
       assert.equal(remaining.length, 0);

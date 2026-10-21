@@ -170,7 +170,9 @@ export function InstallConfirmSheet({
   const big = totalBytes !== null && totalBytes > BIG_DOWNLOAD_BYTES;
   const licence = licenceLine(facts);
   const rows: ReadonlyArray<{ key: string; value: string; review?: boolean }> = [
-    ...(facts !== null ? [{ key: "Publisher", value: facts.publisher }] : []),
+    ...(facts !== null && facts.publisher.trim() !== ""
+      ? [{ key: "Publisher", value: facts.publisher }]
+      : []),
     ...(version !== null ? [{ key: "Version", value: version }] : []),
     ...(totalBytes !== null
       ? [{ key: "Download", value: downloadLine(totalBytes), ...(big ? { review: true } : {}) }]
@@ -186,7 +188,7 @@ export function InstallConfirmSheet({
   const lead = builtIn
     ? "Built into hbots and tested by the team."
     : facts !== null && facts.openSource === false
-      ? `Closed source: nobody outside ${facts.publisher} can check what it does.`
+      ? `Closed source: nobody outside ${facts.publisher.trim() || "its publisher"} can check what it does.`
       : "This is software from another company.";
   return (
     <ProviderSheet title={`Install ${label}?`} onClose={onCancel} initialFocus={cancelRef}>

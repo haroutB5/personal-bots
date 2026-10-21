@@ -20,6 +20,8 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
+  ProviderInstanceId,
+  ProviderDriverKind,
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
@@ -128,6 +130,9 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
+import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
+import { CatalogInstaller } from "./provider/catalog/installer.ts";
+import { AuthAccessWriteScope, ServerProviderUpdateError } from "@t3tools/contracts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -680,7 +685,32 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService;
       const providerInstances = yield* ProviderInstanceRegistry;
+      const providerCatalog = yield* ProviderCatalog;
+      const catalogInstaller = yield* CatalogInstaller;
       const providerInstallation = yield* makeProviderInstallation();
+      const checkOwnerSession = Effect.gen(function* () {
+        if (
+          currentSession.subject === "bot" ||
+          currentSession.subject.toLowerCase().includes("mcp") ||
+          currentSession.subject.startsWith("bot:") ||
+          currentSession.subject.startsWith("agent:")
+        ) {
+          return yield* new EnvironmentAuthorizationError({
+            message: "This operation requires an owner session; bots cannot perform this action.",
+            requiredScope: AuthAccessWriteScope,
+          });
+        }
+        const clientSessions = yield* serverAuth
+          .listClientSessions(currentSessionId)
+          .pipe(Effect.orElseSucceed(() => []));
+        const match = clientSessions.find((s) => s.sessionId === currentSessionId);
+        if (!match || match.client.deviceType === "bot") {
+          return yield* new EnvironmentAuthorizationError({
+            message: "This operation requires an owner session; bots cannot perform this action.",
+            requiredScope: AuthAccessWriteScope,
+          });
+        }
+      });
       const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -2626,7 +2656,55 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateProvider,
-            providerMaintenanceRunner.updateProvider(input),
+            Effect.gen(function* () {
+              const isRegistry =
+                input.provider === ProviderDriverKind.make("registry") ||
+                (input.instanceId &&
+                  (yield* providerInstances.getInstance(input.instanceId))?.driverKind ===
+                    ProviderDriverKind.make("registry"));
+              if (
+                isRegistry &&
+                (input.rollback === true ||
+                  input.targetVersion !== undefined ||
+                  (input as { toVersion?: string }).toVersion !== undefined)
+              ) {
+                yield* checkOwnerSession;
+                const settings = yield* serverSettings.getSettings.pipe(
+                  Effect.mapError(
+                    (err) =>
+                      new ServerProviderUpdateError({
+                        provider: input.provider,
+                        reason: err.message,
+                      }),
+                  ),
+                );
+                const config = input.instanceId
+                  ? settings.providerInstances[input.instanceId]?.config
+                  : undefined;
+                const catalogId = (config as { catalogId?: string } | undefined)?.catalogId;
+                if (!catalogId) {
+                  return yield* new ServerProviderUpdateError({
+                    provider: input.provider,
+                    reason: "Registry instance catalogId not found.",
+                  });
+                }
+                yield* catalogInstaller.goBack(catalogId).pipe(
+                  Effect.mapError(
+                    (err) =>
+                      new ServerProviderUpdateError({
+                        provider: input.provider,
+                        reason: err.detail,
+                      }),
+                  ),
+                );
+                if (input.instanceId) {
+                  yield* providerRegistry.refreshInstance(input.instanceId);
+                }
+                const providers = yield* providerRegistry.getProviders;
+                return { providers };
+              }
+              return yield* providerMaintenanceRunner.updateProvider(input);
+            }),
             {
               "rpc.aggregate": "server",
             },
@@ -2727,13 +2805,21 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.providerInstallStart]: (input) =>
-          observeRpcEffect(WS_METHODS.providerInstallStart, providerInstallation.start(input), {
-            "rpc.aggregate": "provider",
-          }),
+          observeRpcEffect(
+            WS_METHODS.providerInstallStart,
+            checkOwnerSession.pipe(Effect.andThen(providerInstallation.start(input))),
+            {
+              "rpc.aggregate": "provider",
+            },
+          ),
         [WS_METHODS.providerInstallCancel]: (input) =>
-          observeRpcEffect(WS_METHODS.providerInstallCancel, providerInstallation.cancel(input), {
-            "rpc.aggregate": "provider",
-          }),
+          observeRpcEffect(
+            WS_METHODS.providerInstallCancel,
+            checkOwnerSession.pipe(Effect.andThen(providerInstallation.cancel(input))),
+            {
+              "rpc.aggregate": "provider",
+            },
+          ),
         [WS_METHODS.providerInstallSubscribe]: (input) =>
           observeRpcStream(
             WS_METHODS.providerInstallSubscribe,
@@ -2741,9 +2827,105 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.providerInstallRemove]: (input) =>
-          observeRpcEffect(WS_METHODS.providerInstallRemove, providerInstallation.remove(input), {
+          observeRpcEffect(
+            WS_METHODS.providerInstallRemove,
+            checkOwnerSession.pipe(Effect.andThen(providerInstallation.remove(input))),
+            {
+              "rpc.aggregate": "provider",
+            },
+          ),
+        [WS_METHODS.providerCatalogList]: (input) =>
+          observeRpcEffect(WS_METHODS.providerCatalogList, providerCatalog.list(input), {
             "rpc.aggregate": "provider",
           }),
+        [WS_METHODS.providerCatalogInstallFacts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerCatalogInstallFacts,
+            Effect.gen(function* () {
+              const facts = yield* providerCatalog.installFacts(input.catalogId);
+              if (facts === null) {
+                return yield* new ProviderSetupError({
+                  instanceId: ProviderInstanceId.make(input.catalogId),
+                  operation: "catalog-facts",
+                  detail: `Catalogue entry '${input.catalogId}' not found.`,
+                });
+              }
+              return facts;
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerCatalogAdd]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerCatalogAdd,
+            Effect.gen(function* () {
+              yield* checkOwnerSession;
+              const entries = yield* providerCatalog.list({ refresh: false });
+              const entry = entries.entries.find((e) => e.catalogId === input.catalogId);
+              if (!entry) {
+                return yield* new ProviderSetupError({
+                  instanceId: ProviderInstanceId.make(input.catalogId),
+                  operation: "catalog-add",
+                  detail: `Catalogue entry '${input.catalogId}' not found.`,
+                });
+              }
+              const current = yield* serverSettings.getSettings.pipe(
+                Effect.mapError(
+                  (err) =>
+                    new ProviderSetupError({
+                      instanceId: ProviderInstanceId.make(input.catalogId),
+                      operation: "catalog-add",
+                      detail: err.message,
+                    }),
+                ),
+              );
+              const driver =
+                entry.source === "builtIn"
+                  ? ProviderDriverKind.make(entry.catalogId.slice("builtin:".length))
+                  : ProviderDriverKind.make("registry");
+              for (const [id, inst] of Object.entries(current.providerInstances)) {
+                if (
+                  (entry.source === "builtIn" && inst.driver === driver) ||
+                  (inst.config as { catalogId?: string } | undefined)?.catalogId === input.catalogId
+                ) {
+                  return { instanceId: ProviderInstanceId.make(id) };
+                }
+              }
+              const rawSlug = input.catalogId
+                .replace(/[^a-zA-Z0-9_-]/g, "_")
+                .replace(/^[^a-zA-Z]+/, "inst_");
+              const baseId = (rawSlug || "agent").slice(0, 60);
+              let candidate = ProviderInstanceId.make(baseId);
+              let counter = 2;
+              while (current.providerInstances[candidate] !== undefined) {
+                candidate = ProviderInstanceId.make(`${baseId}_${counter++}`);
+              }
+              yield* serverSettings
+                .updateSettings({
+                  providerInstances: {
+                    ...current.providerInstances,
+                    [candidate]: {
+                      driver,
+                      displayName: entry.name,
+                      enabled: true,
+                      config: entry.source === "builtIn" ? {} : { catalogId: input.catalogId },
+                    },
+                  },
+                })
+                .pipe(
+                  Effect.mapError(
+                    (err) =>
+                      new ProviderSetupError({
+                        instanceId: candidate,
+                        operation: "catalog-add",
+                        detail: err.message,
+                      }),
+                  ),
+                );
+              yield* providerRegistry.refreshInstance(candidate);
+              return { instanceId: candidate };
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.serverUpdateServer]: (input) =>
           observeRpcEffect(WS_METHODS.serverUpdateServer, serverUpdate.update(input), {
             "rpc.aggregate": "server",
@@ -4867,6 +5049,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalMemoryTidy = yield* PersonalMemoryTidy.PersonalMemoryTidy;
     const personalPush = yield* PersonalPushService.PersonalPushService;
+    const providerCatalog = yield* ProviderCatalog;
+    const catalogInstaller = yield* CatalogInstaller;
     const sql = yield* SqlClient.SqlClient;
     // Server-lifetime too: its per-chat debounce must outlive one connection.
     const sessionPrewarmer = yield* makePersonalSessionPrewarmer();
@@ -4957,6 +5141,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PersonalPushService.PersonalPushService, personalPush)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+              Layer.provide(Layer.succeed(ProviderCatalog, providerCatalog)),
+              Layer.provide(Layer.succeed(CatalogInstaller, catalogInstaller)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),

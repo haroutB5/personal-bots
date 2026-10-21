@@ -1,4 +1,4 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - locates this repo's own source tree for static analysis.
+﻿// @effect-diagnostics-next-line nodeBuiltinImport:off - locates this repo's own source tree for static analysis.
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -36,7 +36,7 @@ describe("bot instruction coverage", () => {
   });
 
   // The whole point: the list the UI and seeding read is the list the
-  // adapters actually implement. Fails in both directions — a driver added
+  // adapters actually implement. Fails in both directions â€” a driver added
   // to the contracts list without wiring, and an adapter that loses its
   // withBotInstructions call.
   it("matches BOT_INSTRUCTION_DRIVER_KINDS to the adapters that call withBotInstructions", () => {
@@ -72,6 +72,7 @@ describe("bot instruction coverage", () => {
       opencode: "Layers/OpenCodeAdapter.ts",
       deepseek: "Layers/ClaudeAdapter.ts",
       antigravity: "Layers/AntigravityAdapter.ts",
+      registry: "Layers/RegistryAcpAdapter.ts",
     });
   });
 
@@ -86,7 +87,7 @@ describe("bot instruction coverage", () => {
       if (entry === undefined) continue;
       assert.isFalse(
         entry.carriesBotInstructions,
-        `'${kind}' now carries bot instructions — add it to BOT_INSTRUCTION_DRIVER_KINDS.`,
+        `'${kind}' now carries bot instructions â€” add it to BOT_INSTRUCTION_DRIVER_KINDS.`,
       );
     }
   });

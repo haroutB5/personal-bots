@@ -35,6 +35,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstallState,
+  type ProviderCatalogEntry,
   ProviderSetupError,
   ResolvedKeybindingRule,
   type ServerLifecycleStreamEvent,
@@ -161,6 +162,11 @@ import {
   AntigravityInstallation,
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
+import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
+import { CatalogInstaller } from "./provider/catalog/installer.ts";
+import { CatalogInstallError } from "./provider/catalog/errors.ts";
+import { parseRegistry } from "./provider/catalog/registry.ts";
+import catalogRegistryFixture from "./provider/catalog/fixtures/registry-2026-10-20.json" with { type: "json" };
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
@@ -553,6 +559,8 @@ const buildAppUnderTest = (options?: {
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
+    providerCatalog?: Partial<ProviderCatalog["Service"]>;
+    catalogInstaller?: Partial<CatalogInstaller["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -886,6 +894,72 @@ const buildAppUnderTest = (options?: {
           Layer.mock(AntigravityInstallation)({
             managedDirectory: "unused-test-antigravity-runtime",
             ...options?.layers?.antigravityInstallation,
+          }),
+          Layer.mock(ProviderCatalog)({
+            list: () =>
+              Effect.succeed({ entries: [], registryFetchedAt: null, registryStale: false }),
+            installFacts: () => Effect.succeed(null),
+            installRequest: () => Effect.succeed(null),
+            icon: () => Effect.succeed(null),
+            refresh: () => Effect.void,
+            ...options?.layers?.providerCatalog,
+          }),
+          Layer.mock(CatalogInstaller)({
+            runtimesRoot: "unused-test-catalog-runtime",
+            state: () =>
+              Effect.succeed({
+                catalogId: "unused",
+                operationId: null,
+                phase: "idle",
+                downloadedBytes: 0,
+                totalBytes: null,
+                version: null,
+                installedVersion: null,
+                previousVersion: null,
+                canRemove: false,
+                message: null,
+                failure: null,
+              }),
+            changes: () => Stream.empty,
+            start: () =>
+              Effect.succeed({
+                catalogId: "unused",
+                operationId: null,
+                phase: "idle",
+                downloadedBytes: 0,
+                totalBytes: null,
+                version: null,
+                installedVersion: null,
+                previousVersion: null,
+                canRemove: false,
+                message: null,
+                failure: null,
+              }),
+            cancel: () =>
+              Effect.succeed({
+                catalogId: "unused",
+                operationId: null,
+                phase: "idle",
+                downloadedBytes: 0,
+                totalBytes: null,
+                version: null,
+                installedVersion: null,
+                previousVersion: null,
+                canRemove: false,
+                message: null,
+                failure: null,
+              }),
+            remove: () => Effect.void,
+            goBack: () =>
+              Effect.fail(
+                new CatalogInstallError({ kind: "other", detail: "Not supported in test" }),
+              ),
+            acquire: () =>
+              Effect.fail(
+                new CatalogInstallError({ kind: "other", detail: "Not supported in test" }),
+              ),
+            resolve: () => Effect.succeed(null),
+            ...options?.layers?.catalogInstaller,
           }),
           Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
             upsert: () => Effect.void,
@@ -13419,4 +13493,241 @@ it.live(
       assert.deepEqual(transferBudgetViolations(runs), []);
     }).pipe(Effect.provide(NodeServices.layer)),
   120_000,
+);
+
+const registryWiringEntry: ProviderCatalogEntry = {
+  catalogId: "amp-acp",
+  source: "registry",
+  name: "Amp",
+  publisher: "Sourcegraph",
+  description: "ACP agent",
+  website: null,
+  repository: null,
+  license: "MIT",
+  openSource: true,
+  version: "0.5.1",
+  iconUrl: "/api/provider-catalog/icon/amp-acp",
+  distribution: { kind: "binary", label: "Binary" },
+  downloadBytes: null,
+  sha256Checked: true,
+  cost: { kind: "unknown", label: "Unknown", detail: null },
+  signInLabel: null,
+  popularRank: null,
+  supported: { ok: true },
+  added: null,
+};
+
+it.effect("provider catalog serves list, facts, add and registry installation over RPC", () =>
+  Effect.gen(function* () {
+    let settings = DEFAULT_SERVER_SETTINGS;
+    const calls: string[] = [];
+    const agent = parseRegistry(catalogRegistryFixture)!.agents.find(
+      (candidate) => candidate.id === "amp-acp",
+    )!;
+    const state = {
+      catalogId: agent.id,
+      operationId: "catalog-install",
+      phase: "starting" as const,
+      downloadedBytes: 10,
+      totalBytes: 10,
+      version: agent.version,
+      installedVersion: null,
+      previousVersion: null,
+      canRemove: false,
+      message: null,
+      failure: null,
+    };
+    yield* buildAppUnderTest({
+      layers: {
+        serverSettings: {
+          getSettings: Effect.sync(() => settings),
+          updateSettings: (patch) =>
+            Effect.sync(() => {
+              settings = {
+                ...settings,
+                providerInstances: { ...settings.providerInstances, ...patch.providerInstances },
+              };
+              return settings;
+            }),
+        },
+        providerCatalog: {
+          list: () =>
+            Effect.succeed({
+              entries: [registryWiringEntry],
+              registryFetchedAt: null,
+              registryStale: false,
+            }),
+          installFacts: () =>
+            Effect.succeed({
+              catalogId: agent.id,
+              version: agent.version,
+              distribution: { kind: "binary", label: "Binary" },
+              downloadBytes: 10,
+              requiredBytes: 25,
+              sha256Checked: true,
+              host: "github.com",
+              runsInstallScripts: false,
+            }),
+          installRequest: () => Effect.succeed({ agent }),
+        },
+        catalogInstaller: {
+          start: () =>
+            Effect.sync(() => {
+              calls.push("start");
+              return state;
+            }),
+          cancel: () =>
+            Effect.sync(() => {
+              calls.push("cancel");
+              return { ...state, phase: "cancelled" as const };
+            }),
+          changes: () => Stream.succeed(state),
+          goBack: () =>
+            Effect.sync(() => {
+              calls.push("go-back");
+              return {
+                catalogId: agent.id,
+                version: "0.9.0",
+                previousVersion: agent.version,
+                kind: "binary" as const,
+                agentName: "Amp",
+                agentVersion: "0.9.0",
+                directory: "unused",
+                runner: "native" as const,
+                entry: "agent.exe",
+                args: [],
+                env: {},
+              };
+            }),
+          remove: () =>
+            Effect.sync(() => {
+              calls.push("remove");
+            }),
+          state: () => Effect.succeed(state),
+        },
+        providerRegistry: { refreshInstance: () => Effect.succeed([]) },
+      },
+    });
+    yield* Effect.scoped(
+      withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+        Effect.gen(function* () {
+          assert.equal(
+            (yield* client[WS_METHODS.providerCatalogList]({})).entries[0]?.catalogId,
+            agent.id,
+          );
+          assert.equal(
+            (yield* client[WS_METHODS.providerCatalogInstallFacts]({ catalogId: agent.id }))
+              .sha256Checked,
+            true,
+          );
+          const added = yield* client[WS_METHODS.providerCatalogAdd]({ catalogId: agent.id });
+          assert.equal(settings.providerInstances[added.instanceId]?.driver, "registry");
+          assert.deepEqual(
+            yield* client[WS_METHODS.providerCatalogAdd]({ catalogId: agent.id }),
+            added,
+          );
+          assert.equal((yield* client[WS_METHODS.providerInstallStart](added)).phase, "starting");
+          assert.equal(
+            (yield* client[WS_METHODS.providerInstallSubscribe](added).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            )).driver,
+            "registry",
+          );
+          assert.equal(
+            (yield* client[WS_METHODS.providerInstallCancel]({
+              ...added,
+              operationId: "catalog-install",
+            })).phase,
+            "cancelled",
+          );
+          yield* client[WS_METHODS.serverUpdateProvider]({
+            ...added,
+            provider: ProviderDriverKind.make("registry"),
+            rollback: true,
+          });
+          yield* client[WS_METHODS.providerInstallRemove](added);
+        }),
+      ),
+    );
+    assert.deepEqual(calls, ["start", "cancel", "go-back", "remove"]);
+  }).pipe(Effect.provide(NodeHttpServer.layerTest.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect(
+  "provider catalog refuses bot credentials for add, install, cancel, remove and Go back",
+  () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        clientMetadata: { deviceType: "bot" },
+      });
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+      });
+      const { ticket } = yield* responseJsonEffect<{ ticket: string }>(ticketResponse);
+      const url = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+      yield* Effect.scoped(
+        withWsRpcClient(url, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.providerCatalogList]({});
+            const target = { instanceId: ProviderInstanceId.make("registry-test") };
+            const errors = [
+              yield* client[WS_METHODS.providerCatalogAdd]({ catalogId: "amp-acp" }).pipe(
+                Effect.flip,
+              ),
+              yield* client[WS_METHODS.providerInstallStart](target).pipe(Effect.flip),
+              yield* client[WS_METHODS.providerInstallCancel]({
+                ...target,
+                operationId: "test",
+              }).pipe(Effect.flip),
+              yield* client[WS_METHODS.providerInstallRemove](target).pipe(Effect.flip),
+              yield* client[WS_METHODS.serverUpdateProvider]({
+                ...target,
+                provider: ProviderDriverKind.make("registry"),
+                rollback: true,
+              }).pipe(Effect.flip),
+            ];
+            for (const error of errors) assert.equal(error._tag, "EnvironmentAuthorizationError");
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("provider catalog icon requires sign-in and sets safe SVG and cache headers", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    yield* buildAppUnderTest({
+      layers: {
+        providerCatalog: {
+          icon: (id) =>
+            Effect.sync(() => {
+              reads++;
+              return id === "amp-acp" ? '<svg xmlns="http://www.w3.org/2000/svg" />' : null;
+            }),
+        },
+      },
+    });
+    const anonymous = yield* HttpClient.get("/api/provider-catalog/icon/amp-acp");
+    assert.equal(anonymous.status, 401);
+    assert.equal(reads, 0);
+    const cookie = yield* getAuthenticatedSessionCookieHeader();
+    const response = yield* HttpClient.get("/api/provider-catalog/icon/amp-acp", {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    assert.include(response.headers["content-type"] ?? "", "image/svg+xml");
+    assert.include(response.headers["content-security-policy"] ?? "", "default-src 'none'");
+    assert.equal(response.headers["x-content-type-options"], "nosniff");
+    assert.equal(response.headers["cache-control"], "private, max-age=86400");
+    const missing = yield* HttpClient.get("/api/provider-catalog/icon/missing", {
+      headers: { cookie },
+    });
+    assert.equal(missing.status, 404);
+    const malformed = yield* HttpClient.get("/api/provider-catalog/icon/%ZZ", {
+      headers: { cookie },
+    });
+    assert.equal(malformed.status, 404);
+  }).pipe(Effect.provide(NodeHttpServer.layerTest.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
