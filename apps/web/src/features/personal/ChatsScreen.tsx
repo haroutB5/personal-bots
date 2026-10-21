@@ -98,6 +98,7 @@ import { usePendingSecretRequests } from "./useSecretRequests";
 import { usePersonalRoutines, usePersonalTasks } from "./usePersonalAutomation";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
+import { SystemStatsLine } from "./SystemStatsLine";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import {
@@ -893,6 +894,9 @@ export function ChatsScreen({
           </Menu>
         </div>
       </header>
+
+      {/* The PC at a glance: CPU, RAM and free disk; a tap opens Performance. */}
+      <SystemStatsLine />
 
       {/* The update status line: nothing at all unless a release is moving or
           just landed, and it expands and collapses smoothly when it changes

@@ -346,3 +346,19 @@ export function formatFileSize(bytes: number): string {
 
 /** Route base shared by the viewport socket and file downloads. */
 export const PERSONAL_BROWSER_ROUTE_BASE = "/api/personal/browser";
+
+/**
+ * A segment the next Computer screen opens on, asked for by a link elsewhere
+ * (the Bots page's CPU, RAM and disk line opens Performance). Taken once.
+ */
+let requestedSegment: "performance" | null = null;
+
+export function requestComputerPerformance(): void {
+  requestedSegment = "performance";
+}
+
+export function takeRequestedComputerSegment(): "performance" | null {
+  const segment = requestedSegment;
+  requestedSegment = null;
+  return segment;
+}

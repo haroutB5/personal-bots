@@ -201,6 +201,9 @@ vi.mock("./appVersion", () => ({
 }));
 // The line polls and owns its own storage; the screen only has to place it
 // and hand it the version it already shows.
+vi.mock("./SystemStatsLine", () => ({
+  SystemStatsLine: () => <span data-system-stats-line="" />,
+}));
 vi.mock("./UpdateStatusLine", () => ({
   UpdateStatusLine: ({ versionLabel }: { versionLabel?: string | null }) => (
     <span data-update-status-line={versionLabel ?? ""} />

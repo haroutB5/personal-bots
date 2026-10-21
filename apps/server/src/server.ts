@@ -132,6 +132,7 @@ import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts
 import { personalPushSentRouteLayer } from "./personal/push/sentPushesRoute.ts";
 import { personalUpdateStatusRouteLayer } from "./personal/updateStatus/updateStatusRoute.ts";
 import { personalPerformanceStreamRouteLayer } from "./personal/performance/routes.ts";
+import { personalSystemSummaryRouteLayer } from "./personal/performance/systemSummaryRoute.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
@@ -909,6 +910,9 @@ export const makeRoutesLayer = Layer.mergeAll(
     // Signed-in only: the Performance tab's SSE feed; samples only while watched
     // (see personal/performance/routes.ts).
     personalPerformanceStreamRouteLayer,
+    // Signed-in only: CPU, RAM and disk for the Bots page header line; never
+    // starts the sampler (see personal/performance/systemSummaryRoute.ts).
+    personalSystemSummaryRouteLayer,
     // Unauthenticated by necessity; the URL token is the whole credential.
     personalRoutineHookRouteLayer,
     personalRoutineHookMethodRouteLayer,

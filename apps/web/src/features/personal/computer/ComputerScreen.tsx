@@ -78,6 +78,7 @@ import {
   hasLiveViewport,
   mapViewportPoint,
   planViewportRequest,
+  takeRequestedComputerSegment,
   type ComputerDotTone,
   type SentViewport,
   type ViewportBox,
@@ -250,7 +251,9 @@ export function ComputerScreen({
 }: ComputerScreenProps) {
   const environmentId = usePersonalEnvironmentId();
   const { feed, error, loading } = useComputerFeed(environmentId);
-  const [segment, setSegment] = useState<ComputerSegment>(lastSegment ?? "browser");
+  const [segment, setSegment] = useState<ComputerSegment>(
+    () => takeRequestedComputerSegment() ?? lastSegment ?? "browser",
+  );
   const desktopStatus = useDesktopStatus(environmentId);
   // The PC's live view where there is a PC to show (the server runs on Windows).
   const segments: ReadonlyArray<ComputerSegment> =
