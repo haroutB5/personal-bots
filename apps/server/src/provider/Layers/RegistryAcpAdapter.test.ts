@@ -183,3 +183,39 @@ it.live(
     }).pipe(Effect.provide(NodeServices.layer)),
   30_000,
 );
+
+for (const [decision, state] of [
+  ["accept", "completed"],
+  ["cancel", "interrupted"],
+] as const) {
+  it.live(
+    `registry ACP permission ${decision} lets the agent's tool ${state === "completed" ? "run" : "not run"}`,
+    () =>
+      Effect.gen(function* () {
+        const h = yield* harness({ T3_ACP_EMIT_TOOL_CALLS: "1" });
+        const seen: ProviderRuntimeEvent[] = [];
+        yield* h.adapter.streamEvents.pipe(
+          Stream.runForEach((event) =>
+            event.type === "request.opened"
+              ? h.adapter.respondToRequest(
+                  threadId,
+                  ApprovalRequestId.make(event.requestId!),
+                  decision,
+                )
+              : Effect.sync(() => {
+                  seen.push(event);
+                }),
+          ),
+          Effect.forkChild,
+        );
+        yield* h.adapter.startSession({ threadId, cwd: h.root, runtimeMode: "approval-required" });
+        yield* h.adapter.sendTurn({ threadId, input: "test permission" });
+        const completed = seen.find((event) => event.type === "turn.completed");
+        expect(completed?.type === "turn.completed" ? completed.payload.state : undefined).toBe(
+          state,
+        );
+        yield* h.adapter.stopAll();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    30_000,
+  );
+}

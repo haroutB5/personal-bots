@@ -14,6 +14,16 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+/** Registry links are shown as tappable links, so only https ones are kept. */
+function httpsLinkOrNull(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).protocol === "https:" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export const REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
 /** A registry document larger than this is not a registry (the real one is about 57 KB). */
@@ -202,8 +212,8 @@ function toAgent(raw: unknown): RegistryAgent | null {
     name: agent.name.trim(),
     version: agent.version,
     description: agent.description?.trim() ?? "",
-    repository: agent.repository ?? null,
-    website: agent.website ?? null,
+    repository: httpsLinkOrNull(agent.repository),
+    website: httpsLinkOrNull(agent.website),
     authors: agent.authors ?? [],
     license: agent.license?.trim() || null,
     licenseUrl: agent.license_url ?? null,

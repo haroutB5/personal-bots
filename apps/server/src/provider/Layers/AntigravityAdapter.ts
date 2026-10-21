@@ -148,6 +148,8 @@ export interface AntigravityAdapterOptions {
     readonly retryAt: string | undefined;
     readonly model: string | undefined;
   }) => Effect.Effect<void>;
+  /** A prompt completed normally, so any earlier quota notice no longer holds. */
+  readonly onQuotaCleared?: Effect.Effect<void>;
   /** Model the provider default alias selects, when the account offers it. */
   readonly defaultModel?: Effect.Effect<string | undefined>;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -1233,6 +1235,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
               },
         ),
       );
+      if (!quota && result.stopReason !== "cancelled" && options.onQuotaCleared) {
+        yield* options.onQuotaCleared.pipe(Effect.ignoreCause({ log: true }));
+      }
       if (quota && options.onQuotaReached) {
         yield* options
           .onQuotaReached({

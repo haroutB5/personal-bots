@@ -443,10 +443,15 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         onQuotaReached: (hit) =>
           Effect.gen(function* () {
             const nowMs = yield* Clock.currentTimeMillis;
+            // The notice is model-visible text, so the card trusts it for at most
+            // five hours (a real longer limit shows the notice again on the next
+            // try), and the next normal turn clears it.
+            const capMs = nowMs + 5 * 60 * 60_000;
+            const statedMs = hit.retryAt === undefined ? Number.NaN : Date.parse(hit.retryAt);
             quotaHit = {
-              // No reset in the notice: assume the five-hour window.
-              retryAt:
-                hit.retryAt ?? DateTime.formatIso(DateTime.makeUnsafe(nowMs + 5 * 60 * 60_000)),
+              retryAt: DateTime.formatIso(
+                DateTime.makeUnsafe(Number.isFinite(statedMs) ? Math.min(statedMs, capMs) : capMs),
+              ),
               group: /^(claude|gpt)/i.test(hit.model ?? "") ? "claude-gpt" : "gemini",
             };
             const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
@@ -460,6 +465,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
               checkedAt,
             });
           }),
+        onQuotaCleared: Effect.sync(() => {
+          quotaHit = undefined;
+        }),
         ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
       });
       const textGeneration = yield* makeAntigravityTextGeneration({

@@ -56,7 +56,8 @@ export type InstallPlan =
   | NpmInstallPlan
   | { readonly kind: "unsupported"; readonly reason: UnsupportedReason };
 
-const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$/iu;
+const WINDOWS_RESERVED =
+  /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(?:\..*)?$/iu;
 
 /** Characters Windows forbids in a file name, plus control characters. */
 function hasReservedCharacter(segment: string): boolean {

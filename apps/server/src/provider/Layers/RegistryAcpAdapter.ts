@@ -640,12 +640,20 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
           });
         }
         ctx.pendingApprovals.delete(requestId);
+        // Only an explicit accept allows the action. Decline picks the agent's
+        // reject option when it offers one; Cancel and anything else cancel.
+        const wantedKind =
+          decision === "accept"
+            ? "allow_once"
+            : decision === "acceptForSession" || decision === "acceptAlways"
+              ? "allow_always"
+              : decision === "decline"
+                ? "reject_once"
+                : undefined;
         const option =
-          decision === "decline"
+          wantedKind === undefined
             ? undefined
-            : pending.request.options?.find(
-                (o) => o.kind === (decision === "acceptForSession" ? "allow_always" : "allow_once"),
-              );
+            : pending.request.options?.find((o) => o.kind === wantedKind);
         const response: EffectAcpSchema.RequestPermissionResponse =
           option === undefined
             ? { outcome: { outcome: "cancelled" } }
