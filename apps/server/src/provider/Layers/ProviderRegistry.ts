@@ -57,7 +57,7 @@ import {
   orderProviderSnapshots,
   readProviderStatusCache,
   resolveProviderStatusCachePath,
-  writeProviderStatusCache,
+  makeSerializedProviderStatusCacheWriter,
 } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -415,6 +415,7 @@ export const ProviderRegistryLive = Layer.effect(
     // Serialize `syncLiveSources` so a rapid burst of reconciles doesn't
     // interleave two passes clobbering each other's fiber bookkeeping.
     const syncSemaphore = yield* Semaphore.make(1);
+    const writeCache = yield* makeSerializedProviderStatusCacheWriter();
 
     const getLiveSources: Effect.Effect<ReadonlyArray<ProviderSnapshotSource>> = Ref.get(
       liveSubsRef,
@@ -440,11 +441,9 @@ export const ProviderRegistryLive = Layer.effect(
           smokeCheck: _smokeCheck,
           ...machineProvider
         } = provider;
-        yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
+        yield* writeCache({ filePath, provider: machineProvider }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
-          Effect.tapError(Effect.logError),
-          Effect.ignore,
         );
       });
 

@@ -7,7 +7,9 @@ import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 
@@ -188,3 +190,29 @@ export const writeProviderStatusCache = (input: {
     contents: `${JSON.stringify(cacheableProvider, null, 2)}\n`,
   });
 };
+
+/**
+ * A cache writer that runs one write at a time and retries a failed one. Each
+ * write renames a temp file onto the cache file; two at once collide on
+ * Windows (EPERM), and an install publishes snapshots in quick bursts. A write
+ * that still fails is logged as a warning: the cache is only a boot-time hint.
+ */
+export const makeSerializedProviderStatusCacheWriter = Effect.fn(
+  "makeSerializedProviderStatusCacheWriter",
+)(function* () {
+  const semaphore = yield* Semaphore.make(1);
+  return (input: { readonly filePath: string; readonly provider: ServerProvider }) =>
+    semaphore.withPermits(1)(
+      writeProviderStatusCache(input).pipe(
+        // A reader or scanner can still hold the file for a moment.
+        Effect.retry({ times: 3, schedule: Schedule.spaced("50 millis") }),
+        Effect.tapError((error) =>
+          Effect.logWarning("could not write the provider status cache", {
+            path: input.filePath,
+            error: String(error),
+          }),
+        ),
+        Effect.ignore,
+      ),
+    );
+});

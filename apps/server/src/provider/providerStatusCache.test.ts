@@ -15,6 +15,7 @@ import {
   cachedUsageLimitsToSeed,
   hydrateCachedProvider,
   isCachedProviderCorrelated,
+  makeSerializedProviderStatusCacheWriter,
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
@@ -362,3 +363,27 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }
   });
 });
+
+it.effect("a burst of cache writes to one file all land and leave a valid file", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-burst-" });
+    const filePath = `${directory}/kilo.json`;
+    const write = yield* makeSerializedProviderStatusCacheWriter();
+    const base = makeProvider(CODEX_DRIVER);
+    yield* Effect.forEach(
+      Array.from({ length: 40 }, (_, index) => index),
+      (index) =>
+        write({
+          filePath,
+          provider: { ...base, version: `1.0.${index}` },
+        }),
+      { concurrency: "unbounded", discard: true },
+    );
+    const cached = yield* readProviderStatusCache(filePath);
+    assert.isDefined(cached);
+    assert.match(cached?.version ?? "", /^1\.0\.\d+$/);
+    // No temp folders are left beside the cache file.
+    assert.deepEqual(yield* fs.readDirectory(directory), ["kilo.json"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
