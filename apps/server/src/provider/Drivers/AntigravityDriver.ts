@@ -1,5 +1,10 @@
 import { withAgentDeviceEnvironment } from "../../mcp/McpProviderSession.ts";
-import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
+import {
+  AntigravitySettings,
+  ProviderDriverKind,
+  ProviderSetupError,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   NodeRuntimeUnavailableError,
@@ -73,6 +78,25 @@ import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./Antigra
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+
+/**
+ * The usage limits after a quota hit: the spent window marked 100%, merged onto
+ * the windows already shown. The runtime update replaces the published windows,
+ * so starting from nothing would drop the figures for the other window until
+ * the next quota read.
+ */
+export function quotaHitUsageLimits(input: {
+  readonly shown: ServerProvider["usageLimits"];
+  readonly hit: AntigravityQuotaHit | undefined;
+  readonly checkedAt: string;
+  readonly nowMs: number;
+}) {
+  const base =
+    input.shown && !input.shown.unavailable && input.shown.windows.length > 0
+      ? makeUsageLimits({ checkedAt: input.checkedAt, windows: input.shown.windows })
+      : makeUsageLimits({ checkedAt: input.checkedAt, windows: [] });
+  return withAntigravityQuotaHit(base, input.hit, input.nowMs);
+}
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation
@@ -455,11 +479,12 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
               group: /^(claude|gpt)/i.test(hit.model ?? "") ? "claude-gpt" : "gemini",
             };
             const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
-            const spent = withAntigravityQuotaHit(
-              makeUsageLimits({ checkedAt, windows: [] }),
-              quotaHit,
+            const spent = quotaHitUsageLimits({
+              shown: (yield* provider.snapshot.getSnapshot).usageLimits,
+              hit: quotaHit,
+              checkedAt,
               nowMs,
-            );
+            });
             yield* provider.snapshot.applyUsageLimits({
               windows: spent.unavailable ? [] : spent.windows,
               checkedAt,

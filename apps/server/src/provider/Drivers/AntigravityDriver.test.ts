@@ -36,7 +36,7 @@ import {
 } from "../antigravityAuthSupport.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
-import { AntigravityDriver } from "./AntigravityDriver.ts";
+import { AntigravityDriver, quotaHitUsageLimits } from "./AntigravityDriver.ts";
 
 const hostPlatform = HostProcessPlatform.defaultValue();
 const windowsHost = hostPlatform === "win32";
@@ -547,4 +547,40 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       expect(h.acquisitions).toEqual([]);
     }).pipe(Effect.scoped),
   );
+});
+
+it("a quota hit keeps the weekly window that was already shown", () => {
+  const checkedAt = "2026-10-21T10:00:00.000Z";
+  const nowMs = Date.parse(checkedAt);
+  const retryAt = "2026-10-21T13:00:00.000Z";
+  const limits = quotaHitUsageLimits({
+    shown: {
+      checkedAt,
+      windows: [
+        {
+          id: "gemini-weekly",
+          kind: "weekly",
+          label: "Gemini · Weekly",
+          usedPercent: 40,
+          resetsAt: "2026-10-27T00:00:00.000Z",
+        },
+      ],
+    },
+    hit: { retryAt, group: "gemini" },
+    checkedAt,
+    nowMs,
+  });
+  expect(limits.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+    ["gemini-session", 100],
+    ["gemini-weekly", 40],
+  ]);
+  // With nothing shown yet, only the spent window appears.
+  expect(
+    quotaHitUsageLimits({
+      shown: undefined,
+      hit: { retryAt, group: "gemini" },
+      checkedAt,
+      nowMs,
+    }).windows.map((window) => window.id),
+  ).toEqual(["gemini-session"]);
 });
