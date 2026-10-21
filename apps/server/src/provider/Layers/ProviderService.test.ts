@@ -2147,6 +2147,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       // dispatch, so keep advancing the fake clock until the compaction settles.
       for (let attempt = 0; attempt < 500 && !(yield* Deferred.isDone(settled)); attempt++) {
         yield* advanceTestClock(600_001);
+        // @effect-diagnostics-next-line globalTimers:off - real time for the filesystem work under the test clock.
         yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
       }
       const result = yield* Fiber.join(resultFiber);
