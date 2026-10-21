@@ -12,6 +12,8 @@
 export const PERSONAL_TASK_AUTO_COMPACT_ENV = "PERSONAL_TASK_AUTO_COMPACT";
 /** Claude's `autoCompactWindow` for task chats; it compacts a little below it. */
 export const CLAUDE_TASK_AUTO_COMPACT_WINDOW = 200_000;
+/** Codex's `model_auto_compact_token_limit` for task chats. */
+export const CODEX_TASK_AUTO_COMPACT_TOKEN_LIMIT = 150_000;
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -47,4 +49,19 @@ export function claudeAutoCompactWindow(input: {
   return owner === undefined
     ? CLAUDE_TASK_AUTO_COMPACT_WINDOW
     : Math.min(owner, CLAUDE_TASK_AUTO_COMPACT_WINDOW);
+}
+
+/**
+ * The Codex app-server config overrides that make a task or routine chat
+ * compact at 150k tokens, or none for the owner's own chats (and with the
+ * kill switch off).
+ */
+export function codexTaskAutoCompactArgs(input: {
+  readonly personalBot: boolean;
+  readonly personalTaskChat: boolean;
+  readonly env?: Env;
+}): ReadonlyArray<string> {
+  if (!input.personalBot || !input.personalTaskChat) return [];
+  if (!taskAutoCompactEnabled(input.env ?? process.env)) return [];
+  return ["-c", `model_auto_compact_token_limit=${CODEX_TASK_AUTO_COMPACT_TOKEN_LIMIT}`];
 }

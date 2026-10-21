@@ -408,6 +408,44 @@ validationLayer("CodexAdapterLive validation", (it) => {
     }),
   );
 
+  it.effect("compacts a bot's task or routine chat at 150k tokens; kill switch off", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const compactArgs = (argv: ReadonlyArray<string> | undefined) =>
+        (argv ?? []).filter((arg) => arg.startsWith("model_auto_compact_token_limit="));
+      const start = (threadId: string, input: { personalBot?: boolean; personalTaskChat?: boolean }) =>
+        adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId(threadId),
+          runtimeMode: "full-access",
+          ...input,
+        });
+
+      yield* start("thread-codex-task-chat", { personalBot: true, personalTaskChat: true });
+      yield* start("thread-codex-owner-chat", { personalBot: true });
+      yield* start("thread-codex-plain-task", { personalTaskChat: true });
+      const previous = process.env.PERSONAL_TASK_AUTO_COMPACT;
+      process.env.PERSONAL_TASK_AUTO_COMPACT = "off";
+      yield* start("thread-codex-task-off", { personalBot: true, personalTaskChat: true }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env.PERSONAL_TASK_AUTO_COMPACT;
+            else process.env.PERSONAL_TASK_AUTO_COMPACT = previous;
+          }),
+        ),
+      );
+
+      const [task, owner, plain, off] = validationRuntimeFactory.factory.mock.calls.map(
+        ([options]) => options.appServerArgs,
+      );
+      NodeAssert.deepStrictEqual(compactArgs(task), ["model_auto_compact_token_limit=150000"]);
+      NodeAssert.deepStrictEqual(compactArgs(owner), []);
+      NodeAssert.deepStrictEqual(compactArgs(plain), []);
+      NodeAssert.deepStrictEqual(compactArgs(off), []);
+    }),
+  );
+
   it.effect("leaves normal Codex sessions with only the t3-code overrides", () =>
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();
