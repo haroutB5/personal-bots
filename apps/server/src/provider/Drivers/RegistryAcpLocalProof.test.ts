@@ -146,7 +146,7 @@ describe.skipIf(process.env.HBOTS_CATALOG_DRIVER_LIVE !== "1")("Registry ACP loc
               Layer.succeed(ServerSettingsService, settings),
               Layer.succeed(CatalogInstaller, installer),
               Layer.succeed(ProviderCatalog, catalog),
-              Layer.mock(AntigravityInstallation)({}),
+              Layer.mock(AntigravityInstallation)({ managedDirectory: root }),
               Layer.mock(ProviderInstanceRegistry)({
                 getInstance: () => Effect.succeed(driver),
                 listInstances: Effect.succeed([driver]),
