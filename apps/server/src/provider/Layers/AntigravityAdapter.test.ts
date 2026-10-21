@@ -33,6 +33,7 @@ import {
 } from "../acp/AcpRuntimeModel.ts";
 import {
   antigravityQuotaNotice,
+  antigravityTrailingQuotaNotice,
   makeAntigravityAdapter,
   type AntigravityAdapterOptions,
 } from "./AntigravityAdapter.ts";
@@ -1495,6 +1496,68 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       ),
     ).toBeNull();
     expect(antigravityQuotaNotice("Done.", now)).toBeNull();
+  });
+
+  it.effect(
+    "a quota notice after the bot already worked still fails the turn as rate limited",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+        const turn = yield* h.adapter
+          .sendTurn({ threadId, input: "Ship the release" })
+          .pipe(Effect.forkChild);
+        const prompt = yield* h.nextPrompt;
+        yield* h.emitNative({
+          _tag: "ContentDelta",
+          text: "I'll read the handbook first.",
+          rawPayload: {},
+        });
+        yield* h.emitNative({
+          _tag: "ToolCallUpdated",
+          toolCall: {
+            toolCallId: "command-1",
+            kind: "execute",
+            status: "completed",
+            data: {
+              rawInput: { CommandLine: "cat HANDBOOK.md", Cwd: "/tmp" },
+              rawOutput: { combinedOutput: "rules\n", exitCode: 0 },
+            },
+          },
+          rawPayload: {},
+        });
+        yield* h.emitNative({
+          _tag: "ContentDelta",
+          text: "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 5 days, 2 hours.",
+          rawPayload: {},
+        });
+        yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+        yield* Fiber.await(turn);
+        const completed = yield* h.waitForEvent((event) => event.type === "turn.completed");
+        expect(completed.payload.state).toBe("failed");
+        expect(completed.payload.errorMessage).toBe(
+          "Antigravity usage limit reached. It resets in 5 days, 2 hours.",
+        );
+        expect(completed.payload.retry?.kind).toBe("rate_limited");
+      }),
+  );
+
+  it("finds the notice at the end of the latest reply, and not quoted mid-answer", () => {
+    const now = Date.parse("2026-10-21T18:36:00.000Z");
+    const notice =
+      "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 5 days, 2 hours.";
+    expect(antigravityTrailingQuotaNotice(notice, now)?.resetIn).toBe("5 days, 2 hours");
+    expect(
+      antigravityTrailingQuotaNotice(`Checking the release files now.${notice}`, now)?.retryAt,
+    ).toBe("2026-10-26T20:36:00.000Z");
+    expect(
+      antigravityTrailingQuotaNotice(`${notice}\n\nSo I switched models and carried on.`, now),
+    ).toBeNull();
+    expect(antigravityTrailingQuotaNotice("All done.", now)).toBeNull();
   });
 
   it.effect("a quota notice reply fails the turn as rate limited with its reset", () =>

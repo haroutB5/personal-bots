@@ -236,6 +236,27 @@ export function antigravityQuotaNotice(
   return { resetIn, retryAt };
 }
 
+/** How much of the latest reply is kept to look for the notice at its end. */
+const QUOTA_REPLY_TAIL = 600;
+
+/**
+ * The quota notice as the end of a turn's latest reply. The runtime can spend
+ * the quota part way through a task, after the bot has already written and
+ * used tools, so the notice is read from the reply after the last tool call;
+ * when it follows other words in that same reply it still counts from its own
+ * "Usage Limit Reached" heading. A notice quoted mid-answer is left alone.
+ */
+export function antigravityTrailingQuotaNotice(
+  text: string | null | undefined,
+  nowMs: number,
+): ReturnType<typeof antigravityQuotaNotice> {
+  if (!text) return null;
+  const whole = antigravityQuotaNotice(text, nowMs);
+  if (whole) return whole;
+  const at = text.toLowerCase().lastIndexOf("usage limit reached");
+  return at > 0 ? antigravityQuotaNotice(text.slice(at), nowMs) : null;
+}
+
 export function isAntigravityCancellationMessage(text: string | null | undefined): boolean {
   if (!text) return false;
   return /^the request was cancelled by the client\.?$/i.test(text.trim());
@@ -260,8 +281,14 @@ interface SessionContext {
   activeTurnId: TurnId | undefined;
   promptFiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> | undefined;
   cancellingTurnId: TurnId | undefined;
-  /** Reply text of the current prompt, capped; only read to spot the quota notice. */
+  /**
+   * The current prompt's latest reply text (its last 600 characters), started
+   * afresh after a tool call or a new assistant item; only read to spot the
+   * quota notice, which can end a turn that already did work.
+   */
   turnText: string;
+  /** A tool call or new item came since the last text: the next text starts a new reply. */
+  turnTextBreak: boolean;
   generation: number;
   stopped: boolean;
   closed: boolean;
@@ -630,6 +657,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         return;
       case "AssistantItemStarted":
       case "AssistantItemCompleted":
+        if (event._tag === "AssistantItemStarted") context.turnTextBreak = true;
         yield* emit(
           makeAcpAssistantItemEvent({
             stamp: yield* stamp,
@@ -666,8 +694,10 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         ) {
           return;
         }
-        if (event._tag === "ContentDelta" && context.turnText.length <= 400) {
-          context.turnText += event.text;
+        if (event._tag === "ContentDelta") {
+          const previous = context.turnTextBreak ? "" : context.turnText;
+          context.turnTextBreak = false;
+          context.turnText = (previous + event.text).slice(-QUOTA_REPLY_TAIL);
         }
         yield* emit(
           makeAcpContentDeltaEvent({
@@ -697,6 +727,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         );
         return;
       case "ToolCallUpdated":
+        context.turnTextBreak = true;
         yield* context.commandLock.withPermit(
           Effect.gen(function* () {
             const toolCall = normalizeAntigravityToolCall(event.toolCall);
@@ -963,6 +994,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 promptFiber: undefined,
                 cancellingTurnId: undefined,
                 turnText: "",
+                turnTextBreak: false,
                 generation: 0,
                 stopped: false,
                 closed: false,
@@ -1135,6 +1167,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           intent = turn;
           context.activeTurnId = turnId;
           context.turnText = "";
+          context.turnTextBreak = false;
           if (!steering) {
             yield* emit({
               type: "turn.started",
@@ -1218,7 +1251,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       const quota =
         result.stopReason === "cancelled"
           ? null
-          : antigravityQuotaNotice(context.turnText, yield* Clock.currentTimeMillis);
+          : antigravityTrailingQuotaNotice(context.turnText, yield* Clock.currentTimeMillis);
       yield* context.promptLock.withPermit(
         finishTurn(
           launch.turn,
