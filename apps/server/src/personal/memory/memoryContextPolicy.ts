@@ -49,30 +49,72 @@ export const sessionHoldsRules = (input: {
   input.previous.turns + 1 < input.resendEvery;
 
 /**
- * Given that the session holds the rules sent earlier: `repeat` when the set is unchanged (a one-line reminder);
- * `addedRules` when app scoping is on and only rules were added, each limited to an app (sent alone, on top of the
- * list there); `delta` when that is the case. Otherwise the full list goes again.
+ * Given that the session holds the rules sent earlier: what changed since, as
+ * lines to send on top of that list instead of the whole list.
+ *
+ * `repeat` when nothing changed (a one-line reminder). Otherwise `delta` is
+ * true when every listed rule can be accounted for: added rules, rules whose
+ * version moved (they are sent again, marked as the new text), and rules that
+ * were forgotten or replaced (named by id so the bot stops applying them).
+ * `delta` stays false when an edited rule's new version did not make the
+ * listed set, because then the new text cannot be sent and the full list is
+ * the only honest answer. A rule that merely fell out of the caps is not a
+ * removal: its earlier line still applies and `allIds` still holds it.
  */
 export const preferenceSend = <
-  T extends { readonly memoryId: string; readonly apps?: ReadonlyArray<string> | null | undefined },
+  T extends {
+    readonly memoryId: string;
+    readonly version: number;
+    readonly apps?: ReadonlyArray<string> | null | undefined;
+  },
 >(input: {
   readonly reusable: boolean;
   readonly previous: SentPreferences | undefined;
   readonly setKey: string;
   readonly currentIds: ReadonlyMap<string, number>;
+  /** Every rule the bot can see right now, listed or not. */
+  readonly allIds: ReadonlyMap<string, number>;
   readonly listed: ReadonlyArray<T>;
-  readonly scoping: boolean;
 }) => {
   const { reusable, previous, listed } = input;
-  const repeat = reusable && previous !== undefined && previous.setKey === input.setKey;
-  const addedRules =
-    reusable &&
-    !repeat &&
-    previous !== undefined &&
-    input.scoping &&
-    [...previous.ids].every(([id, version]) => input.currentIds.get(id) === version)
-      ? listed.filter((entry) => !previous.ids.has(entry.memoryId))
-      : [];
-  const delta = addedRules.length > 0 && addedRules.every((entry) => (entry.apps ?? null) !== null);
-  return { repeat, addedRules, delta };
+  if (!reusable || previous === undefined) {
+    return { repeat: false, added: [], updated: [], removed: [], delta: false };
+  }
+  const repeat = previous.setKey === input.setKey;
+  if (repeat) {
+    return { repeat, added: [], updated: [], removed: [], delta: false };
+  }
+  const added = listed.filter((entry) => !previous.ids.has(entry.memoryId));
+  const updated = listed.filter((entry) => {
+    const before = previous.ids.get(entry.memoryId);
+    return before !== undefined && before !== entry.version;
+  });
+  const removed = [...previous.ids.keys()].filter((id) => !input.allIds.has(id));
+  // An edit whose new version the caps kept out of the list cannot be described here.
+  const stale = [...previous.ids].some(([id, version]) => {
+    const current = input.allIds.get(id);
+    return current !== undefined && current !== version && input.currentIds.get(id) !== current;
+  });
+  const changed = added.length + updated.length + removed.length > 0;
+  // Nothing changed at all — including a rule that merely left this turn's
+  // listed set but is still visible — so the earlier list is still exactly
+  // right and a reminder says so.
+  return { repeat: !changed && !stale, added, updated, removed, delta: changed && !stale };
 };
+
+/**
+ * The notes to show this turn: all picked notes on a full-refresh turn, and
+ * only those this session has not shown yet (or whose text changed) on the
+ * turns between. A chat that has run for an hour stops repeating the same
+ * three notes twenty times, but a note is still shown once when first picked.
+ */
+export const freshNotes = <
+  T extends { readonly memoryId: string; readonly version: number },
+>(input: {
+  readonly picked: ReadonlyArray<T>;
+  readonly shown: ReadonlyMap<string, number> | undefined;
+  readonly refresh: boolean;
+}): ReadonlyArray<T> =>
+  input.refresh
+    ? input.picked
+    : input.picked.filter((e) => input.shown?.get(e.memoryId) !== e.version);

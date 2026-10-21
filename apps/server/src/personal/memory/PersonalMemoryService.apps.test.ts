@@ -244,11 +244,13 @@ describe("app-scoped rules in a turn", () => {
         expect(third.block).toContain("CalTrack: 1 rule");
         expect(third.block).toContain("Matchday: 1 rule");
         yield* memory.confirmPreferencesSent(THREAD_A);
-        // A new global rule does change what the session holds: the full list again.
+        // A new global rule does change what the session holds: its line goes on top.
         yield* saveRule("Never use em dashes.");
         const fourth = yield* context("and this", { session: { ...session, fresh: false } });
-        expect(fourth.block).toContain("Always answer in plain words.");
+        expect(fourth.block).toContain("still apply unchanged");
         expect(fourth.block).toContain("Never use em dashes.");
+        expect(fourth.block).not.toContain("Always answer in plain words.");
+        expect(fourth.block).toContain("Matchday: 1 rule");
       }).pipe(Effect.provide(TestLayer)),
   );
 

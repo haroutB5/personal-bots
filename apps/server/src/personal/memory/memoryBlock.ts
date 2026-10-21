@@ -100,6 +100,10 @@ export function formatMemoryBlock(input: {
         readonly count: number;
         /** Rules of newly active apps sent now, on top of the ones listed earlier. */
         readonly added?: ReadonlyArray<PersonalMemoryEntry> | undefined;
+        /** Rules whose text changed: the line below replaces the earlier one with the same id. */
+        readonly updated?: ReadonlyArray<PersonalMemoryEntry> | undefined;
+        /** Ids of rules forgotten or replaced since the list: they no longer apply. */
+        readonly removed?: ReadonlyArray<string> | undefined;
       }
     | undefined;
   /** "Matchday: 5 rules, CalTrack: 1 rule": rules of apps this turn is not about, not listed. */
@@ -110,15 +114,31 @@ export function formatMemoryBlock(input: {
   const lines: Array<string> = [];
   if (input.preferencesRepeat !== undefined) {
     const added = input.preferencesRepeat.added ?? [];
-    if (added.length === 0) {
+    const updated = input.preferencesRepeat.updated ?? [];
+    const removed = input.preferencesRepeat.removed ?? [];
+    if (added.length === 0 && updated.length === 0 && removed.length === 0) {
       lines.push(
         `- The ${input.preferencesRepeat.count} saved preferences listed earlier in this chat still apply unchanged; none were added, replaced or forgotten since.`,
       );
-    } else {
+    } else if (updated.length === 0 && removed.length === 0) {
+      const appOnly = added.every((entry) => (entry.apps?.length ?? 0) > 0);
       lines.push(
-        `- The ${input.preferencesRepeat.count} saved preferences listed earlier in this chat still apply unchanged. This chat now also covers ${added.length === 1 ? "an app whose rule is" : "apps whose rules are"} listed here:`,
+        appOnly
+          ? `- The ${input.preferencesRepeat.count} saved preferences listed earlier in this chat still apply unchanged. This chat now also covers ${added.length === 1 ? "an app whose rule is" : "apps whose rules are"} listed here:`
+          : `- The ${input.preferencesRepeat.count} saved preferences listed earlier in this chat still apply unchanged. ${added.length === 1 ? "One preference" : `${added.length} preferences`} saved or newly in force since ${added.length === 1 ? "applies" : "apply"} now:`,
         ...added.map(memoryLine),
       );
+    } else {
+      lines.push(
+        `- The ${input.preferencesRepeat.count} saved preferences listed earlier in this chat still apply, except where a line below changes or drops one:`,
+        ...updated.map((entry) => `- (updated rule)${memoryLine(entry).slice(1)}`),
+        ...added.map(memoryLine),
+      );
+      if (removed.length > 0) {
+        lines.push(
+          `- Forgotten or replaced since that list, so no longer in force: ${removed.map((id) => `[${id.slice(0, 8)}]`).join(", ")}. Do not apply them.`,
+        );
+      }
     }
   } else {
     lines.push(...input.preferences.map(memoryLine));

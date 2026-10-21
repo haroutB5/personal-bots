@@ -30,8 +30,9 @@ import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
 
 /**
  * What each thread's session was last given in full: the preference set
- * (ids and versions), when, and how many turns since. In memory only: after
- * a server restart the next turn simply sends the full list again.
+ * (ids and versions), the notes it has already shown, when, and how many turns
+ * since. In memory only: after a server restart the next turn simply sends the
+ * full list again.
  */
 export type SentPreferences = {
   readonly sessionKey: string;
@@ -39,6 +40,8 @@ export type SentPreferences = {
   readonly setKey: string;
   /** The same, as a map: what the session has, to tell an addition from a change. */
   readonly ids: ReadonlyMap<string, number>;
+  /** Notes already shown in this session (id to version), so they are not repeated. */
+  readonly notes: ReadonlyMap<string, number>;
   readonly sentAt: string;
   readonly turns: number;
 };
