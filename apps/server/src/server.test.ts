@@ -13647,6 +13647,8 @@ it.effect("provider catalog serves list, facts, add and registry installation ov
             rollback: true,
           });
           yield* client[WS_METHODS.providerInstallRemove](added);
+          // The owner's own settings writes still work.
+          yield* client[WS_METHODS.serverUpdateSettings]({ patch: {} });
         }),
       ),
     );
@@ -13655,7 +13657,7 @@ it.effect("provider catalog serves list, facts, add and registry installation ov
 );
 
 it.effect(
-  "provider catalog refuses bot credentials for add, install, cancel, remove and Go back",
+  "provider catalog refuses bot credentials for add, install, cancel, remove, Go back and settings writes",
   () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -13682,6 +13684,8 @@ it.effect(
                 operationId: "test",
               }).pipe(Effect.flip),
               yield* client[WS_METHODS.providerInstallRemove](target).pipe(Effect.flip),
+              // A settings patch can add or drop provider instances, so it is owner-only too.
+              yield* client[WS_METHODS.serverUpdateSettings]({ patch: {} }).pipe(Effect.flip),
               yield* client[WS_METHODS.serverUpdateProvider]({
                 ...target,
                 provider: ProviderDriverKind.make("registry"),

@@ -2995,6 +2995,9 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
             Effect.gen(function* () {
+              // A settings patch can add or drop provider instances and so
+              // skips the owner checks of the install and Remove RPCs.
+              yield* checkOwnerSession;
               const deviceHosts = patch.deviceHosts
                 ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                     Effect.provide(deviceHostContext),
