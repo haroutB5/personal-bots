@@ -1181,6 +1181,92 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  describe("task chat auto-compaction", () => {
+    const startChat = (input: {
+      readonly name: string;
+      readonly personalBot?: boolean;
+      readonly personalTaskChat?: boolean;
+      readonly configured?: string;
+      readonly env?: Record<string, string>;
+    }) => {
+      const harness = makeHarness(
+        input.configured === undefined
+          ? {}
+          : { claudeConfig: { autoCompactWindow: input.configured } },
+      );
+      const previous = Object.fromEntries(
+        Object.keys(input.env ?? {}).map((key) => [key, process.env[key]]),
+      );
+      return Effect.gen(function* () {
+        Object.assign(process.env, input.env ?? {});
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: ThreadId.make(`thread-compact-${input.name}`),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          ...(input.personalBot === false ? {} : { personalBot: true }),
+          ...(input.personalTaskChat ? { personalTaskChat: true } : {}),
+        });
+        const settings = harness.getLastCreateQueryInput()?.options.settings;
+        return typeof settings === "object" ? settings.autoCompactWindow : undefined;
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const [key, value] of Object.entries(previous)) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+        ),
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    };
+
+    it.effect("a task or routine chat compacts with a 200k window", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* startChat({ name: "task", personalTaskChat: true }), 200_000);
+      }),
+    );
+
+    it.effect("the owner's own bot chat and a plain thread keep the CLI default", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* startChat({ name: "owner" }), undefined);
+        assert.equal(
+          yield* startChat({ name: "plain", personalBot: false, personalTaskChat: true }),
+          undefined,
+        );
+      }),
+    );
+
+    it.effect("the owner's provider setting still applies, and a smaller one wins", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* startChat({ name: "owner-set", configured: "300000" }), 300_000);
+        assert.equal(
+          yield* startChat({ name: "task-larger", personalTaskChat: true, configured: "300000" }),
+          200_000,
+        );
+        assert.equal(
+          yield* startChat({ name: "task-smaller", personalTaskChat: true, configured: "150000" }),
+          150_000,
+        );
+      }),
+    );
+
+    it.effect("PERSONAL_TASK_AUTO_COMPACT=off is the kill switch", () =>
+      Effect.gen(function* () {
+        assert.equal(
+          yield* startChat({
+            name: "task-off",
+            personalTaskChat: true,
+            env: { PERSONAL_TASK_AUTO_COMPACT: "off" },
+          }),
+          undefined,
+        );
+      }),
+    );
+  });
+
   it.effect("forwards claude effort levels into query options", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

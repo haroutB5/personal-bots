@@ -126,6 +126,7 @@ import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
 import { exploreSubagentAgents } from "../claudeBackgroundModels.ts";
+import { claudeAutoCompactWindow } from "../personalBotContextLimits.ts";
 import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -5372,14 +5373,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // guard. Each has its own env kill switch, read here at session start.
       const botSkillOverrides = personalBot ? personalBotSkillOverrides() : undefined;
       const botDisallowedTools = personalBot ? personalBotDisallowedTools() : undefined;
+      // A delegated-task or routine chat compacts near 200k; the owner's own
+      // chats keep the CLI default (PERSONAL_TASK_AUTO_COMPACT=off for all).
+      const autoCompactWindow = claudeAutoCompactWindow({
+        configured: claudeSettings.autoCompactWindow,
+        personalBot,
+        personalTaskChat: input.personalTaskChat === true,
+      });
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
-        ...(claudeSettings.autoCompactWindow
-          ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
-          : {}),
+        ...(autoCompactWindow !== undefined ? { autoCompactWindow } : {}),
         ...(personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
         ...(botSkillOverrides === undefined ? {} : { skillOverrides: botSkillOverrides }),
         // Deny rules hold in every permission mode, bypassPermissions included.

@@ -87,6 +87,13 @@ export const ProviderSessionStartInput = Schema.Struct({
    */
   personalBotId: Schema.optional(TrimmedNonEmptyString),
   /**
+   * Set by the server alongside `personalBot` when the thread was made for a
+   * delegated task or a routine run (or is a routine's own chat), never for a
+   * conversation with the owner. Adapters then cap the session's context with
+   * auto-compaction. Absent means the owner's own chat: no change.
+   */
+  personalTaskChat: Schema.optional(Schema.Boolean),
+  /**
    * Set by the server to start a new provider conversation and never resume
    * the thread's persisted one: after the bot moved to another provider, or
    * when the provider no longer has the conversation it would resume.

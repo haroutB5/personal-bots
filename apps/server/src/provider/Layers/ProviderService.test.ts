@@ -5270,6 +5270,11 @@ describe("agent browser access", () => {
       readonly turnInput?: string;
       /** Receives each input the adapter's sendTurn got during recovery. */
       readonly sentTurns?: Array<unknown>;
+      /**
+       * Gives the service an in-memory app database, seeded by this before the
+       * session starts (the personal-bot thread and task-chat checks read it).
+       */
+      readonly seedPersonalSql?: Effect.Effect<void, unknown, SqlClient.SqlClient>;
     },
   ) =>
     Effect.gen(function* () {
@@ -5347,6 +5352,9 @@ describe("agent browser access", () => {
       }).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
+        Layer.provideMerge(
+          options?.seedPersonalSql === undefined ? Layer.empty : SqlitePersistenceMemory,
+        ),
         Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
         Layer.provide(
           options?.personalBotThread === undefined
@@ -5403,6 +5411,9 @@ describe("agent browser access", () => {
       );
 
       yield* Effect.gen(function* () {
+        if (options?.seedPersonalSql !== undefined) {
+          yield* options.seedPersonalSql.pipe(Effect.orDie);
+        }
         const provider = yield* ProviderService.ProviderService;
         yield* provider.startSession(threadId, {
           provider: CODEX_DRIVER,
@@ -5562,6 +5573,65 @@ describe("agent browser access", () => {
           { personalBot: undefined, systemInstructions: undefined },
         ]);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // Task and routine chats compact by themselves; the owner's chats never do,
+  // including one a task continued with continueChatId (its task came later).
+  it.effect("marks only task and routine chats as task chats, on start and recovery", () =>
+    Effect.gen(function* () {
+      const seed = (threadId: string, rows: (sql: SqlClient.SqlClient) => Effect.Effect<unknown, unknown>) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`INSERT INTO personal_bots (
+            bot_id, name, avatar_shape, avatar_color, model_selection_json, created_at, updated_at
+          ) VALUES ('bot-personal', 'Nova', 'circle', 'blue', '{}', '2026-10-21T10:00:00.000Z',
+            '2026-10-21T10:00:00.000Z')`;
+          yield* sql`INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
+            VALUES (${threadId}, 'bot-personal', '2026-10-21T10:05:00.000Z')`;
+          yield* rows(sql);
+        });
+      const task = (threadId: string, source: string, createdAt: string) =>
+        (sql: SqlClient.SqlClient) =>
+          sql`INSERT INTO personal_tasks (
+            task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+            depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
+          ) VALUES ('task-1', 'task-1', 'bot-personal', 't', 'o', 'running', ${source}, 'k1',
+            0, 2, 5, ${createdAt}, ${createdAt}, ${createdAt}, ${threadId})`;
+      const run = (threadId: string, rows: (sql: SqlClient.SqlClient) => Effect.Effect<unknown, unknown>) =>
+        Effect.gen(function* () {
+          const starts: Array<unknown> = [];
+          const recoveries: Array<unknown> = [];
+          yield* startSessionWith(false, asThreadId(threadId), undefined, {
+            personalBotThread: true,
+            startInputs: starts,
+            recoveryInputs: recoveries,
+            seedPersonalSql: seed(threadId, rows),
+          });
+          return [...starts, ...recoveries].map(
+            (input) => (input as { personalTaskChat?: boolean }).personalTaskChat,
+          );
+        });
+      const before = "2026-10-21T10:04:00.000Z";
+      const after = "2026-10-21T10:06:00.000Z";
+
+      assert.deepEqual(
+        yield* run("thread-delegated", task("thread-delegated", "delegation", before)),
+        [true, true],
+      );
+      assert.deepEqual(
+        yield* run("thread-routine-run", task("thread-routine-run", "routine", before)),
+        [true, true],
+      );
+      assert.deepEqual(
+        yield* run("thread-continued", task("thread-continued", "delegation", after)),
+        [undefined, undefined],
+      );
+      assert.deepEqual(
+        yield* run("thread-user-task", task("thread-user-task", "user", before)),
+        [undefined, undefined],
+      );
+      assert.deepEqual(yield* run("thread-owner", () => Effect.void), [undefined, undefined]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // The adapter loads `<baseDir>/bot-plugins/<botId>` from this id, so both
