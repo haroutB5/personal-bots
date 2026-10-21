@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import * as Scope from "effect/Scope";
@@ -63,6 +64,7 @@ import {
   type AntigravityQuotaHit,
 } from "../Layers/antigravityUsageLimits.ts";
 import { makeUsageLimits } from "../providerUsageLimits.ts";
+import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -360,11 +362,14 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           yield* runtime.drainEvents;
         }).pipe(Effect.scoped);
 
+      const probedModelsOnceRef = yield* Ref.make(false);
       const authFlow: AntigravityAuth = yield* makeAntigravityAuth({
         instanceId,
         makeRuntime: makeDisposableRuntime,
         onAuthenticated: publishCatalog,
-        onSignedOut: Effect.suspend(() => provider.onSignedOut),
+        onSignedOut: Effect.suspend(() =>
+          Ref.set(probedModelsOnceRef, false).pipe(Effect.andThen(provider.onSignedOut)),
+        ),
         usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
       });
 
@@ -431,11 +436,40 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         ),
       );
 
+      const cacheFilePath = yield* resolveProviderStatusCachePath({
+        cacheDir: serverConfig.providerStatusCacheDir,
+        instanceId,
+      }).pipe(Effect.provideService(Path.Path, path));
+      const cachedProvider = yield* readProviderStatusCache(cacheFilePath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const initialModels = cachedProvider?.models?.filter((model) => !model.isCustom) ?? [];
+
+      let runRefreshModels: (() => Effect.Effect<void, never, never>) | undefined;
+      const onProbeCompleted = (snapshot: ServerProvider): Effect.Effect<void, never, never> =>
+        Effect.gen(function* () {
+          if (
+            snapshot.enabled &&
+            snapshot.installed &&
+            snapshot.auth.status === "authenticated" &&
+            snapshot.models.length === 0
+          ) {
+            const alreadyProbed = yield* Ref.getAndSet(probedModelsOnceRef, true);
+            if (!alreadyProbed && runRefreshModels) {
+              yield* Effect.logInfo("Antigravity models empty after boot, probing in background");
+              yield* runRefreshModels();
+            }
+          }
+        });
+
       const provider = yield* makeAntigravityProvider(settings, {
         stampIdentity: classifyModels,
         probe,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
         readUsageLimits,
+        initialModels,
+        onProbeCompleted,
         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
@@ -476,7 +510,6 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
               retryAt: DateTime.formatIso(
                 DateTime.makeUnsafe(Number.isFinite(statedMs) ? Math.min(statedMs, capMs) : capMs),
               ),
-              group: /^(claude|gpt)/i.test(hit.model ?? "") ? "claude-gpt" : "gemini",
             };
             const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
             const spent = quotaHitUsageLimits({
@@ -553,6 +586,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
               }),
         ),
       );
+
+      runRefreshModels = () => refreshModels().pipe(Effect.ignore);
+      yield* onProbeCompleted(yield* provider.snapshot.getSnapshot).pipe(Effect.forkScoped);
 
       return {
         instanceId,

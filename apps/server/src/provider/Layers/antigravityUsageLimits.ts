@@ -86,11 +86,6 @@ export function antigravityQuotaSummaryToLimits(
   const windows: ServerProviderUsageWindow[] = [];
 
   const geminiGroup = groups.find((g) => g.displayName?.toLowerCase().includes("gemini"));
-  const claudeGptGroup = groups.find(
-    (g) =>
-      g.displayName?.toLowerCase().includes("claude") ||
-      g.displayName?.toLowerCase().includes("gpt"),
-  );
 
   if (geminiGroup?.buckets) {
     const sessionBucket = geminiGroup.buckets.find(
@@ -132,46 +127,6 @@ export function antigravityQuotaSummaryToLimits(
     }
   }
 
-  if (claudeGptGroup?.buckets) {
-    const sessionBucket = claudeGptGroup.buckets.find(
-      (b) =>
-        b.window === "5h" ||
-        b.bucketId?.includes("5h") ||
-        b.displayName?.toLowerCase().includes("five hour"),
-    );
-    if (
-      sessionBucket?.remainingFraction !== undefined &&
-      Number.isFinite(sessionBucket.remainingFraction)
-    ) {
-      windows.push({
-        id: "z-claude-gpt-session",
-        kind: "session",
-        label: "Claude & GPT · 5-hour session",
-        usedPercent: clampPercent(Math.round((1 - sessionBucket.remainingFraction) * 100)),
-        ...(sessionBucket.resetTime ? { resetsAt: sessionBucket.resetTime } : {}),
-      });
-    }
-
-    const weeklyBucket = claudeGptGroup.buckets.find(
-      (b) =>
-        b.window === "weekly" ||
-        b.bucketId?.includes("weekly") ||
-        b.displayName?.toLowerCase().includes("weekly"),
-    );
-    if (
-      weeklyBucket?.remainingFraction !== undefined &&
-      Number.isFinite(weeklyBucket.remainingFraction)
-    ) {
-      windows.push({
-        id: "z-claude-gpt-weekly",
-        kind: "weekly",
-        label: "Claude & GPT · Weekly",
-        usedPercent: clampPercent(Math.round((1 - weeklyBucket.remainingFraction) * 100)),
-        ...(weeklyBucket.resetTime ? { resetsAt: weeklyBucket.resetTime } : {}),
-      });
-    }
-  }
-
   if (windows.length === 0) {
     return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   }
@@ -181,8 +136,7 @@ export function antigravityQuotaSummaryToLimits(
 
 export interface AntigravityQuotaHit {
   readonly retryAt: string;
-  /** Claude and GPT models share their own quota; anything else is Gemini. */
-  readonly group: "gemini" | "claude-gpt";
+  readonly group?: "gemini";
 }
 
 const FIVE_HOURS_MS = 5 * 60 * 60_000;
@@ -202,9 +156,7 @@ export function withAntigravityQuotaHit(
   const resetMs = Date.parse(hit.retryAt);
   if (!Number.isFinite(resetMs) || resetMs <= nowMs) return limits;
   const weekly = resetMs - nowMs > FIVE_HOURS_MS;
-  const prefix = hit.group === "gemini" ? "gemini" : "z-claude-gpt";
-  const name = hit.group === "gemini" ? "Gemini" : "Claude & GPT";
-  const id = `${prefix}-${weekly ? "weekly" : "session"}`;
+  const id = `gemini-${weekly ? "weekly" : "session"}`;
   const windows = limits.unavailable ? [] : [...limits.windows];
   const index = windows.findIndex((window) => window.id === id);
   if (index >= 0) {
@@ -213,7 +165,7 @@ export function withAntigravityQuotaHit(
     windows.push({
       id,
       kind: weekly ? "weekly" : "session",
-      label: `${name} · ${weekly ? "Weekly" : "5-hour session"}`,
+      label: `Gemini · ${weekly ? "Weekly" : "5-hour session"}`,
       usedPercent: 100,
       resetsAt: hit.retryAt,
     });

@@ -147,6 +147,10 @@ interface AntigravityProviderOptions {
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
   readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
+  readonly initialModels?: ReadonlyArray<ServerProviderModel> | undefined;
+  readonly onProbeCompleted?:
+    | ((snapshot: ServerProvider) => Effect.Effect<void, never, never>)
+    | undefined;
 }
 
 /** Health uses initialize only. Session callbacks supply account-specific metadata. */
@@ -160,7 +164,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       presentation: { displayName: "Antigravity", showInteractionModeToggle: false },
       enabled: settings.enabled,
       checkedAt,
-      models: [],
+      models: options.initialModels ?? [],
       probe: {
         installed: false,
         version: null,
@@ -274,7 +278,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         },
       } satisfies AntigravityProviderState;
     });
-    return yield* options.stampIdentity(next.draft);
+    const stamped = yield* options.stampIdentity(next.draft);
+    if (options.onProbeCompleted) {
+      yield* options.onProbeCompleted(stamped).pipe(Effect.forkDetach);
+    }
+    return stamped;
   });
 
   const maintenanceCapabilities =

@@ -5,6 +5,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -111,7 +113,14 @@ const testLayer = Layer.merge(
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
 const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
-  options: { readonly enabled?: boolean; readonly safe?: boolean } = {},
+  options: {
+    readonly enabled?: boolean;
+    readonly safe?: boolean;
+    readonly initialModels?: ReadonlyArray<ServerProviderModel> | undefined;
+    readonly onProbeCompleted?:
+      | ((snapshot: ServerProvider) => Effect.Effect<void, never, never>)
+      | undefined;
+  } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
   const probeCalls = yield* Ref.make(0);
@@ -132,6 +141,8 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
         Effect.andThen(Ref.get(safety)),
         Effect.flatten,
       ),
+      initialModels: options.initialModels,
+      onProbeCompleted: options.onProbeCompleted,
     },
   );
   const initialUpdate = yield* Stream.toPull(
@@ -733,5 +744,44 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
         expect(yield* Ref.get(harness.probeCalls)).toBe(1);
       }),
     ),
+  );
+  it.effect(
+    "publishes initial cached models with effort capabilities immediately after boot without a session",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cachedModels = buildAntigravityModelsFromSession(sessionSetupResult);
+          const harness = yield* makeHarness({ initialModels: cachedModels });
+          const initialSnapshot = yield* harness.provider.snapshot.getSnapshot;
+          expect(initialSnapshot.models).toEqual(cachedModels);
+
+          yield* harness.initialize;
+          const postProbeSnapshot = yield* harness.provider.snapshot.getSnapshot;
+          expect(postProbeSnapshot.models).toEqual(cachedModels);
+          expect(
+            postProbeSnapshot.models
+              .slice(0, 3)
+              .every((model) => model.capabilities?.optionDescriptors?.[0]?.id === "effort"),
+          ).toBe(true);
+        }),
+      ),
+  );
+
+  it.effect(
+    "triggers onProbeCompleted in the background after health check on a fresh provider",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const probedSnapshotDeferred = yield* Deferred.make<ServerProvider>();
+          const harness = yield* makeHarness({
+            onProbeCompleted: (snapshot) =>
+              Deferred.succeed(probedSnapshotDeferred, snapshot).pipe(Effect.asVoid),
+          });
+          yield* harness.initialize;
+          const probed = yield* Deferred.await(probedSnapshotDeferred);
+          expect(probed.instanceId).toBe(instanceId);
+          expect(probed.installed).toBe(true);
+        }),
+      ),
   );
 });

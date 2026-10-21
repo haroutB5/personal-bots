@@ -72,24 +72,10 @@ describe("antigravityQuotaSummaryToLimits", () => {
         resetsAt: "2026-10-21T01:00:00Z",
       },
       {
-        id: "z-claude-gpt-session",
-        kind: "session",
-        label: "Claude & GPT · 5-hour session",
-        usedPercent: 0,
-        resetsAt: "2026-10-21T01:00:00Z",
-      },
-      {
         id: "gemini-weekly",
         kind: "weekly",
         label: "Gemini · Weekly",
         usedPercent: 58,
-        resetsAt: "2026-10-27T20:00:00Z",
-      },
-      {
-        id: "z-claude-gpt-weekly",
-        kind: "weekly",
-        label: "Claude & GPT · Weekly",
-        usedPercent: 5,
         resetsAt: "2026-10-27T20:00:00Z",
       },
     ]);
@@ -199,21 +185,13 @@ it.layer(TestServicesLayer)("readAntigravityUsageLimits", (it) => {
         checkedAt: read.checkedAt,
         reason: "unsupported",
       });
-      const added = withAntigravityQuotaHit(
-        empty,
-        { retryAt: "2026-10-21T01:00:00.000Z", group: "claude-gpt" },
-        now,
-      );
+      const added = withAntigravityQuotaHit(empty, { retryAt: "2026-10-21T01:00:00.000Z" }, now);
       expect(added.windows).toEqual([
-        expect.objectContaining({ id: "z-claude-gpt-session", usedPercent: 100 }),
+        expect.objectContaining({ id: "gemini-session", usedPercent: 100 }),
       ]);
-      expect(
-        withAntigravityQuotaHit(
-          read,
-          { retryAt: "2026-10-20T22:00:00.000Z", group: "gemini" },
-          now,
-        ),
-      ).toBe(read);
+      expect(withAntigravityQuotaHit(read, { retryAt: "2026-10-20T22:00:00.000Z" }, now)).toBe(
+        read,
+      );
       expect(withAntigravityQuotaHit(read, undefined, now)).toBe(read);
     });
   });
