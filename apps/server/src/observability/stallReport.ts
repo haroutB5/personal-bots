@@ -81,6 +81,8 @@ export const classifyStall = (
   const half = stall.durationMs * 0.5;
   let bestOp: { op: StallWindowContext["ops"][number]; overlap: number } | null = null;
   for (const op of context.ops) {
+    // A worker statement waited, it did not block: the loop was held by something else.
+    if (op.kind === "sql-worker") continue;
     const overlap = overlapMs(op.at - op.ms, op.at, stall.startedAt, stall.endedAt);
     if (bestOp === null || overlap > bestOp.overlap) bestOp = { op, overlap };
   }

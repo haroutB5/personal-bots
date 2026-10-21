@@ -371,7 +371,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
         (rows) => {
           // Round-trip time, not loop occupancy: the statement now runs on the
           // worker. Still useful when the stall recorder names a slow query.
-          noteSlowOp("sql", startedAt, Array.isArray(rows) ? rows.length : 0, () => sql);
+          noteSlowOp("sql-worker", startedAt, Array.isArray(rows) ? rows.length : 0, () => sql);
           return rows;
         },
       );

@@ -28,8 +28,12 @@ export interface StallJobRecord {
 }
 
 export interface StallOpRecord {
-  /** `sql` for a SQLite statement, `fs` for a synchronous file write. */
-  readonly kind: "sql" | "fs";
+  /**
+   * `sql` for a SQLite statement on the main thread, `fs` for a synchronous file write.
+   * `sql-worker` is a statement's round trip to the SQLite worker: it names a slow query
+   * but never held the loop, so it is never a stall's cause.
+   */
+  readonly kind: "sql" | "sql-worker" | "fs";
   /** The statement with literals masked, or the file's base name, cut short. */
   readonly label: string;
   /** How long the synchronous call held the loop. */

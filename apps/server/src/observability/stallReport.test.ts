@@ -110,6 +110,25 @@ describe("classifyStall", () => {
     expect(cause.kind).not.toBe("sqlite-statement");
   });
 
+  it("never blames a statement that ran on the SQLite worker", () => {
+    // 21 Oct, 9462 ms: a worker query waited behind a provider-log append and took the blame.
+    const cause = classifyStall(base, {
+      jobs: [],
+      gc: [],
+      ops: [
+        {
+          kind: "sql-worker",
+          label: "SELECT command_id FROM receipts",
+          ms: 4900,
+          size: 1,
+          at: 1_004_900,
+        },
+        { kind: "fs", label: "events.n.log", ms: 4600, size: 9, at: 1_004_800 },
+      ],
+    });
+    expect(cause.kind).toBe("file-write");
+  });
+
   it("blames garbage collection that fills the stall", () => {
     const cause = classifyStall(base, {
       jobs: [],
