@@ -19,6 +19,11 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  providerSessionHistoryEnabled,
+  sessionIdFromCursor,
+  usageProviderOf,
+} from "../usage/providerSessions.ts";
+import {
   PersistenceDecodeError,
   type PersistenceErrorCorrelation,
   PersistenceSqlError,
@@ -318,6 +323,37 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  /**
+   * Remember the session this write resumes, because the next turn overwrites
+   * the cursor and the Token usage table would otherwise lose every session a
+   * chat has finished with. `INSERT OR IGNORE` keeps the first sighting and
+   * makes repeated turns cheap. A failure here is logged, never raised: losing
+   * an attribution row must not fail the runtime write that a turn depends on.
+   */
+  const recordSessionHistory = (runtime: ProviderSessionRuntime) => {
+    const provider = usageProviderOf(runtime.providerName);
+    const sessionId =
+      provider === null ? null : sessionIdFromCursor(provider, runtime.resumeCursor);
+    if (sessionId === null) return Effect.void;
+    return sql`
+      INSERT OR IGNORE INTO provider_session_history (
+        thread_id,
+        provider_name,
+        session_id,
+        first_seen_at
+      )
+      VALUES (${runtime.threadId}, ${runtime.providerName}, ${sessionId}, ${runtime.lastSeenAt})
+    `.pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("provider session history not recorded", {
+          threadId: runtime.threadId,
+          sessionId,
+          cause,
+        }),
+      ),
+    );
+  };
+
   const getRuntimeRowByThreadId = SqlSchema.findOneOption({
     Request: GetRuntimeRequestSchema,
     Result: ProviderSessionRuntimeRawDbRowSchema,
@@ -370,6 +406,9 @@ export const make = Effect.gen(function* () {
 
   const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime, options) =>
     (options?.onConflict === "ignore" ? insertRuntimeRow(runtime) : upsertRuntimeRow(runtime)).pipe(
+      Effect.flatMap(() =>
+        providerSessionHistoryEnabled() ? recordSessionHistory(runtime) : Effect.void,
+      ),
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.upsert:query",

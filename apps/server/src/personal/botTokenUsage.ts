@@ -25,6 +25,9 @@ import type {
 import { PersonalBotId } from "@t3tools/contracts";
 
 import { botUsageTotalTokens, type BotUsageCell } from "../usage/botUsage.ts";
+import { sessionIdFromResumeCursor, usageProviderOf } from "../usage/providerSessions.ts";
+
+export { sessionIdFromResumeCursor, usageProviderOf };
 
 /** Days the largest window spans, today included. */
 export const TOKEN_USAGE_MONTH_DAYS = 30;
@@ -42,56 +45,13 @@ export interface ChatSessionRow {
   readonly providerName: string;
   /** `provider_session_runtime.resume_cursor_json`. */
   readonly resumeCursorJson: string | null;
-}
-
-/** The usage provider a `provider_session_runtime.provider_name` names. */
-export function usageProviderOf(providerName: string): UsageProviderKind | null {
-  switch (providerName) {
-    case "claudeAgent":
-      return "claude";
-    case "codex":
-      return "codex";
-    case "opencode":
-      return "opencode";
-    case "deepseek":
-      return "deepseek";
-    case "antigravity":
-      return "antigravity";
-    case "grok":
-      return "grok";
-    default:
-      return null;
-  }
+  /** `provider_session_history.session_id`: a session this chat used earlier. */
+  readonly sessionId?: string | null;
 }
 
 /** The key sessions are matched on: the provider keeps id spaces apart. */
 export function sessionKey(provider: UsageProviderKind, sessionId: string): string {
   return `${provider}\u0000${sessionId}`;
-}
-
-/** The session id a chat's resume cursor names, or null when it names none. */
-export function sessionIdFromResumeCursor(
-  provider: UsageProviderKind,
-  resumeCursorJson: string | null,
-): string | null {
-  if (resumeCursorJson === null) return null;
-  let cursor: unknown;
-  try {
-    cursor = JSON.parse(resumeCursorJson);
-  } catch {
-    return null;
-  }
-  if (typeof cursor !== "object" || cursor === null) return null;
-  // DeepSeek resumes through the same Claude-shaped cursor (`resume`), so it
-  // reads like Claude; the rest keep their own field.
-  const field =
-    provider === "claude" || provider === "deepseek"
-      ? "resume"
-      : provider === "codex"
-        ? "threadId"
-        : "sessionId";
-  const value = (cursor as Record<string, unknown>)[field];
-  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 /** Session to bot, for every chat that has a session id we know how to read. */
@@ -100,9 +60,16 @@ export function buildSessionOwners(rows: ReadonlyArray<ChatSessionRow>): Map<str
   for (const row of rows) {
     const provider = usageProviderOf(row.providerName);
     if (provider === null) continue;
-    const sessionId = sessionIdFromResumeCursor(provider, row.resumeCursorJson);
-    if (sessionId === null) continue;
-    owners.set(sessionKey(provider, sessionId), row.botId);
+    // A history row names an earlier session; a runtime row names the current
+    // one. A row that carries both (as a test fixture may) maps both.
+    const sessionIds = [
+      row.sessionId ?? null,
+      sessionIdFromResumeCursor(provider, row.resumeCursorJson),
+    ];
+    for (const sessionId of sessionIds) {
+      if (sessionId === null) continue;
+      owners.set(sessionKey(provider, sessionId), row.botId);
+    }
   }
   return owners;
 }
