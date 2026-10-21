@@ -15,7 +15,7 @@ import {
   type CatalogFilter,
 } from "./catalogModel";
 import { providerCatalogList } from "./catalogClient";
-import { deriveBuiltInCatalogEntries } from "./catalogModel";
+import { deriveBuiltInCatalogEntries, withLiveAdded } from "./catalogModel";
 import type { ProviderCatalogEntry } from "./catalogTypes";
 import { useProviderInstallStates } from "./providerInstallStates";
 import {
@@ -72,24 +72,11 @@ export function AddProviderScreen(): JSX.Element {
     return deriveBuiltInCatalogEntries(providers);
   }, [catalogData, providers]);
 
-  // Merge live provider snapshots into entry.added status
-  const entries: ReadonlyArray<ProviderCatalogEntry> = useMemo(() => {
-    return rawEntries.map((entry) => {
-      // Find matching live provider
-      const live = providers.find((p) => {
-        if (entry.source === "builtIn") {
-          const builtinDriver = entry.catalogId.replace(/^builtin:/, "");
-          return p.driver === builtinDriver;
-        }
-        return p.catalogId === entry.catalogId || p.instanceId === entry.added?.instanceId;
-      });
-
-      if (live !== undefined && live.installed) {
-        return { ...entry, added: { instanceId: live.instanceId } };
-      }
-      return entry;
-    });
-  }, [rawEntries, providers]);
+  // "Added" comes from the live provider list only, never from the cached catalogue.
+  const entries: ReadonlyArray<ProviderCatalogEntry> = useMemo(
+    () => withLiveAdded(rawEntries, providers),
+    [rawEntries, providers],
+  );
 
   const partition = useMemo(
     () => partitionCatalog(entries, filter, query),

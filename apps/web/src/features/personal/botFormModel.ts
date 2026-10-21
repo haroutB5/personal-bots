@@ -33,6 +33,8 @@ import { resolveBotProvider } from "./botSummaries";
  * the bot the owner wrote (see `BOT_INSTRUCTION_DRIVER_KINDS` in contracts).
  */
 export function isBotProviderSelectable(provider: ServerProvider): boolean {
+  // A removed registry agent can linger in the list until the server drops it.
+  if (provider.source === "registry" && !provider.installed) return false;
   return (
     resolveBotProvider(provider.instanceId, [provider]).available &&
     driverCarriesBotInstructions(provider.driver)

@@ -319,6 +319,16 @@ const readyProvider = (driver: string, instanceId = driver) =>
     models: [],
   }) as unknown as ServerProvider;
 
+describe("removed registry agents", () => {
+  it("are not offered in the bot form", () => {
+    const base = readyProvider("claudeAgent", "kilo");
+    expect({ ...base, source: "registry", installed: false }).not.toSatisfy(
+      isBotProviderSelectable,
+    );
+    expect({ ...base, source: "registry", installed: true }).toSatisfy(isBotProviderSelectable);
+  });
+});
+
 describe("bot provider instruction support", () => {
   // The v1.19.0 defect: a bot could be created on any ready provider, but
   // only the Claude, Codex and OpenCode adapters pass its persona to the

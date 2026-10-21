@@ -3,13 +3,17 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ProviderRow } from "../providerRows";
 import {
+  agentSignInHint,
   answeredLine,
+  installedLine,
   pageNote,
   reasonOf,
   setupFinished,
   setupSteps,
+  sourceLine,
   stateWord,
   testLine,
+  useForBotsHint,
 } from "./providerPageModel";
 
 const input = {
@@ -176,5 +180,39 @@ describe("reasonOf, testLine, answeredLine", () => {
         { slug: "g3", name: "Gemini 3 Pro" },
       ] as unknown as ServerProvider["models"]),
     ).toBe("Gemini 3 Pro answered in 2.4 s");
+  });
+});
+
+describe("installed page lines come from the snapshot", () => {
+  it("never says signed in unless auth says so", () => {
+    expect(installedLine({ auth: { status: "authenticated" } })).toBe("Installed and signed in");
+    expect(installedLine({ auth: { status: "unauthenticated" } })).toBe(
+      "Installed · Needs sign-in",
+    );
+    expect(installedLine({ auth: { status: "unknown" } })).toBe(
+      "Installed · Sign-in status not reported",
+    );
+  });
+
+  it("names the registry source, publisher and distribution", () => {
+    expect(sourceLine({ source: "registry", publisher: "Kilo" }, "GitHub release")).toBe(
+      "ACP registry · Kilo · GitHub release",
+    );
+    expect(sourceLine({ source: "registry", publisher: null }, undefined)).toBe("ACP registry");
+    expect(sourceLine({ source: "builtIn" }, null)).toBe("Built into hbots");
+    expect(sourceLine({}, null)).toBe("Built into hbots");
+  });
+
+  it("mentions the bot form only when the agent has models", () => {
+    expect(useForBotsHint(3)).toBe("Its models show in the bot form");
+    expect(useForBotsHint(0)).toBe("No models yet, so bots can't pick it");
+  });
+
+  it("uses a registry agent's own sign-in hint", () => {
+    expect(
+      agentSignInHint({ source: "registry", message: "Run kilo auth login in the terminal\nmore" }),
+    ).toBe("Run kilo auth login in the terminal");
+    expect(agentSignInHint({ source: "registry" })).toBeNull();
+    expect(agentSignInHint({ source: "builtIn", message: "x" })).toBeNull();
   });
 });

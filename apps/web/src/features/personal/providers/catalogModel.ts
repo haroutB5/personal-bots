@@ -335,3 +335,25 @@ export function deriveBuiltInCatalogEntries(
   }
   return [...byDriver.values()];
 }
+
+/**
+ * Marks each entry "Added" from the live provider list. The catalogue answer is
+ * cached, so its own `added` goes stale after a Remove; a removed agent (gone,
+ * or no longer installed) is offered for install again.
+ */
+export function withLiveAdded(
+  entries: ReadonlyArray<ProviderCatalogEntry>,
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ProviderCatalogEntry> {
+  return entries.map((entry) => {
+    const live = providers.find((provider) =>
+      entry.source === "builtIn"
+        ? provider.driver === entry.catalogId.replace(/^builtin:/, "")
+        : provider.catalogId === entry.catalogId,
+    );
+    if (live !== undefined && live.installed) {
+      return { ...entry, added: { instanceId: live.instanceId } };
+    }
+    return entry.added === null ? entry : { ...entry, added: null };
+  });
+}

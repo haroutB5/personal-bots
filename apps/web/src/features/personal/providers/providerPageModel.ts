@@ -236,3 +236,48 @@ export function answeredLine(
     smoke.durationMs !== undefined ? ` in ${(smoke.durationMs / 1000).toFixed(1)} s` : "";
   return name === null ? `It answered${seconds}` : `${name} answered${seconds}`;
 }
+
+/**
+ * The Ready card line for a provider with no test message of its own. It says
+ * only what the snapshot reports: a provider that never reports its sign-in
+ * is "Installed", not "signed in".
+ */
+export function installedLine(snapshot: Pick<ServerProvider, "auth">): string {
+  switch (snapshot.auth.status) {
+    case "authenticated":
+      return "Installed and signed in";
+    case "unauthenticated":
+      return "Installed · Needs sign-in";
+    default:
+      return "Installed · Sign-in status not reported";
+  }
+}
+
+/** The Source row of the Version card: "ACP registry · Kilo · GitHub release", from the snapshot and the install facts. */
+export function sourceLine(
+  snapshot: Pick<ServerProvider, "source" | "publisher">,
+  distributionLabel: string | null | undefined,
+): string {
+  if (snapshot.source !== "registry") return "Built into hbots";
+  const parts = ["ACP registry"];
+  const publisher = snapshot.publisher?.trim();
+  if (publisher) parts.push(publisher);
+  const distribution = distributionLabel?.trim();
+  if (distribution) parts.push(distribution);
+  return parts.join(" · ");
+}
+
+/** The hint under "Use for bots": models only when the provider reports some. */
+export function useForBotsHint(modelCount: number): string {
+  return modelCount > 0
+    ? "Its models show in the bot form"
+    : "No models yet, so bots can't pick it";
+}
+
+/** A registry agent's own sign-in hint (its first line), or null. */
+export function agentSignInHint(
+  snapshot: Pick<ServerProvider, "source" | "message">,
+): string | null {
+  if (snapshot.source !== "registry") return null;
+  return firstLine(snapshot.message, 160);
+}

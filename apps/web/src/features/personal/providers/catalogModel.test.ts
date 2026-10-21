@@ -9,6 +9,7 @@ import {
   deriveBuiltInCatalogEntries,
   partitionCatalog,
   unsupportedReasonCopy,
+  withLiveAdded,
 } from "./catalogModel";
 import type { ProviderCatalogCost, ProviderCatalogEntry } from "./catalogTypes";
 
@@ -336,5 +337,21 @@ describe("catalogModel - deriveBuiltInCatalogEntries", () => {
     const entries = deriveBuiltInCatalogEntries(snapshots);
     expect(entries).toHaveLength(1);
     expect(entries[0]?.catalogId).toBe("builtin:claudeAgent");
+  });
+});
+
+describe("withLiveAdded", () => {
+  const kilo = entry({ catalogId: "kilo", name: "Kilo" });
+  const live = (installed: boolean) =>
+    [{ instanceId: "kilo", driver: "registryAcp", catalogId: "kilo", installed }] as never;
+
+  it("marks an installed agent as added", () => {
+    expect(withLiveAdded([kilo], live(true))[0]?.added).toEqual({ instanceId: "kilo" });
+  });
+
+  it("drops a stale added mark once the agent is removed", () => {
+    const stale = { ...kilo, added: { instanceId: "kilo" as never } };
+    expect(withLiveAdded([stale], [])[0]?.added).toBeNull();
+    expect(withLiveAdded([stale], live(false))[0]?.added).toBeNull();
   });
 });

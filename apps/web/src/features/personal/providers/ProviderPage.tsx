@@ -44,12 +44,16 @@ import {
   usePersonalEnvironmentId,
 } from "../usePersonalBots";
 import {
+  agentSignInHint,
   answeredLine,
+  installedLine,
   pageNote,
   setupFinished,
   setupSteps,
+  sourceLine,
   stateWord,
   testLine,
+  useForBotsHint,
   type NoteButton,
   type SetupStep,
 } from "./providerPageModel";
@@ -616,7 +620,7 @@ function ProviderPageBody({
           {showReady ? (
             <ReadyBlock
               label={label}
-              line={canTest ? answeredLine(smoke, snapshot.models) : "Installed and signed in"}
+              line={canTest ? answeredLine(smoke, snapshot.models) : installedLine(snapshot)}
               tested={canTest}
             />
           ) : null}
@@ -704,6 +708,7 @@ function ProviderPageBody({
               usageBusy={usagePending !== null}
               onUsage={(next) => void toggleUsage(next)}
               canRemove={canRemove}
+              modelCount={snapshot.models.length}
             />
           ) : null}
 
@@ -746,6 +751,7 @@ function ProviderPageBody({
           {installed && !showSetup ? (
             <VersionSection
               snapshot={snapshot}
+              distributionLabel={installPlan?.distribution.label ?? null}
               nowMs={nowMs}
               goBackVersion={
                 row.state === "updateBroke" && row.action?.kind === "goBack"
@@ -1101,6 +1107,7 @@ function SetupCard({
   model: string | null;
 }): JSX.Element {
   const keyField = providerApiKeyField(snapshot.driver);
+  const agentHint = agentSignInHint(snapshot);
   const phaseLine =
     install?.phase === "extracting"
       ? "Unpacking"
@@ -1236,7 +1243,7 @@ function SetupCard({
                 ) : (
                   <div className="flex flex-col gap-3">
                     <p className="text-[15px] leading-[21px] text-[var(--personal-text-secondary)]">
-                      {label} signs in on your laptop.
+                      {agentHint !== null ? "Needs sign-in." : `${label} signs in on your laptop.`}
                     </p>
                     <p className="flex gap-2.5 text-[15px] leading-[21px] text-[var(--personal-text)]">
                       <Laptop
@@ -1245,7 +1252,9 @@ function SetupCard({
                         strokeWidth={1.75}
                       />
                       <span>
-                        {LAPTOP_SIGN_IN[snapshot.driver] ?? `Sign in to ${label} on your laptop.`}
+                        {agentHint ??
+                          LAPTOP_SIGN_IN[snapshot.driver] ??
+                          `Sign in to ${label} on your laptop.`}
                       </span>
                     </p>
                     <p className="text-[13px] text-[var(--personal-text-secondary)]">
@@ -1597,6 +1606,7 @@ function UseSection({
   usageBusy,
   onUsage,
   canRemove,
+  modelCount,
 }: {
   label: string;
   enabled: boolean;
@@ -1606,6 +1616,7 @@ function UseSection({
   usageBusy: boolean;
   onUsage: (next: boolean) => void;
   canRemove: boolean;
+  modelCount: number;
 }): JSX.Element {
   void canRemove;
   return (
@@ -1616,7 +1627,7 @@ function UseSection({
       <div className={`${CARD} divide-y divide-[var(--personal-border)]`}>
         <CardRow
           title="Use for bots"
-          hint="Its models show in the bot form"
+          hint={useForBotsHint(modelCount)}
           control={
             <ProviderSwitch
               checked={enabled}
@@ -1716,12 +1727,14 @@ function ModelsSection({
 
 function VersionSection({
   snapshot,
+  distributionLabel,
   nowMs,
   goBackVersion,
   onGoBack,
   busy,
 }: {
   snapshot: ServerProvider;
+  distributionLabel: string | null;
   nowMs: number;
   goBackVersion: string | undefined;
   onGoBack: () => void;
@@ -1754,7 +1767,7 @@ function VersionSection({
             ) : undefined
           }
         />
-        <CardRow title="Source" hint="Built into hbots" />
+        <CardRow title="Source" hint={sourceLine(snapshot, distributionLabel)} />
       </div>
     </section>
   );
