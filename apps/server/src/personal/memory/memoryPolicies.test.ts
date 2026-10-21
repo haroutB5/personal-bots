@@ -20,7 +20,12 @@ import {
   TRACE_PRUNE_EVERY_MS,
   tracePruneDue,
 } from "./memoryAgeingPolicy.ts";
-import { carryActiveApps, preferenceSend, sessionHoldsRules } from "./memoryContextPolicy.ts";
+import {
+  carryActiveApps,
+  freshNotes,
+  preferenceSend,
+  sessionHoldsRules,
+} from "./memoryContextPolicy.ts";
 import { PERSONAL_MEMORY_RESEND_EVERY_TURNS } from "./memoryShared.ts";
 import type { SentPreferences } from "./memoryCore.ts";
 import {
@@ -254,6 +259,7 @@ describe("memoryContextPolicy", () => {
     ]),
     sentAt: "2026-10-07T10:00:00.000Z",
     turns: 2,
+    notes: new Map(),
     ...over,
   });
 
@@ -277,7 +283,21 @@ describe("memoryContextPolicy", () => {
     expect(PERSONAL_MEMORY_RESEND_EVERY_TURNS).toBe(20);
   });
 
-  const rule = (id: string, apps: ReadonlyArray<string> | null = null) => ({ memoryId: id, apps });
+  const rule = (
+    id: string,
+    apps: ReadonlyArray<string> | null = null,
+    version = 1,
+  ): {
+    readonly memoryId: string;
+    readonly version: number;
+    readonly apps: ReadonlyArray<string> | null;
+  } => ({
+    memoryId: id,
+    version,
+    apps,
+  });
+  const ids = (...entries: ReadonlyArray<readonly [string, number]>) =>
+    new Map<string, number>(entries.map(([id, version]) => [id, version]));
 
   it("an unchanged set is a one-line repeat", () => {
     const listed = [rule("a"), rule("b")];
@@ -285,67 +305,115 @@ describe("memoryContextPolicy", () => {
       reusable: true,
       previous: previous(),
       setKey: "a:1,b:1",
-      currentIds: new Map([
-        ["a", 1],
-        ["b", 1],
-      ]),
+      currentIds: ids(["a", 1], ["b", 1]),
+      allIds: ids(["a", 1], ["b", 1]),
       listed,
-      scoping: true,
     });
-    expect(send).toEqual({ repeat: true, addedRules: [], delta: false });
+    expect(send).toEqual({ repeat: true, added: [], updated: [], removed: [], delta: false });
   });
 
-  it("with app scoping, rules added for an app are sent alone on top of the earlier list", () => {
-    const listed = [rule("a"), rule("b"), rule("c", ["matchday"])];
-    const input = {
+  it("sends only the added rules, whether or not they belong to an app", () => {
+    const listed = [rule("a"), rule("b"), rule("c", ["matchday"]), rule("d")];
+    const send = preferenceSend({
       reusable: true,
       previous: previous(),
-      setKey: "a:1,b:1,c:1",
-      currentIds: new Map([
-        ["a", 1],
-        ["b", 1],
-        ["c", 1],
-      ]),
+      setKey: "a:1,b:1,c:1,d:1",
+      currentIds: ids(["a", 1], ["b", 1], ["c", 1], ["d", 1]),
+      allIds: ids(["a", 1], ["b", 1], ["c", 1], ["d", 1]),
       listed,
-      scoping: true,
-    };
-    const send = preferenceSend(input);
+    });
     expect(send.repeat).toBe(false);
-    expect(send.addedRules.map((r) => r.memoryId)).toEqual(["c"]);
+    expect(send.added.map((entry) => entry.memoryId)).toEqual(["c", "d"]);
+    expect(send.updated).toEqual([]);
+    expect(send.removed).toEqual([]);
     expect(send.delta).toBe(true);
-    // Without app scoping, or when an added rule is global, the full list goes again (no delta).
-    expect(preferenceSend({ ...input, scoping: false }).delta).toBe(false);
-    expect(preferenceSend({ ...input, listed: [rule("a"), rule("b"), rule("c")] }).delta).toBe(
-      false,
-    );
   });
 
-  it("a changed rule (new version) or a removed rule sends the full list again", () => {
-    const listed = [rule("a"), rule("b", ["matchday"])];
-    const changed = preferenceSend({
+  it("sends the new text of an edited rule and names a forgotten one", () => {
+    const listed = [rule("a", null, 2), rule("b", ["matchday"])];
+    const edited = preferenceSend({
       reusable: true,
       previous: previous(),
       setKey: "a:2,b:1",
-      currentIds: new Map([
-        ["a", 2],
-        ["b", 1],
-      ]),
+      currentIds: ids(["a", 2], ["b", 1]),
+      allIds: ids(["a", 2], ["b", 1]),
       listed,
-      scoping: true,
     });
-    expect(changed).toEqual({ repeat: false, addedRules: [], delta: false });
+    expect(edited.delta).toBe(true);
+    expect(edited.updated.map((entry) => entry.memoryId)).toEqual(["a"]);
+    expect(edited.added).toEqual([]);
+
+    // "b" was forgotten: it is gone from every rule the bot can see.
+    const forgotten = preferenceSend({
+      reusable: true,
+      previous: previous(),
+      setKey: "a:1",
+      currentIds: ids(["a", 1]),
+      allIds: ids(["a", 1]),
+      listed: [rule("a")],
+    });
+    expect(forgotten.delta).toBe(true);
+    expect(forgotten.removed).toEqual(["b"]);
+  });
+
+  it("does not call a rule a removal when the caps only stopped listing it", () => {
+    const listed = [rule("a")];
+    const send = preferenceSend({
+      reusable: true,
+      previous: previous(),
+      setKey: "a:1",
+      currentIds: ids(["a", 1]),
+      // "b" is still a rule the bot can see, just not one of this turn's listed set.
+      allIds: ids(["a", 1], ["b", 1]),
+      listed,
+    });
+    expect(send.removed).toEqual([]);
+    // Nothing changed, so the list already in the chat is still right: no resend.
+    expect(send.repeat).toBe(true);
+    expect(send.delta).toBe(false);
+  });
+
+  it("falls back to the full list when an edited rule's new text did not make the list", () => {
+    const send = preferenceSend({
+      reusable: true,
+      previous: previous(),
+      setKey: "b:1",
+      currentIds: ids(["b", 1]),
+      allIds: ids(["a", 2], ["b", 1]),
+      listed: [rule("b")],
+    });
+    expect(send.delta).toBe(false);
+    expect(send.updated).toEqual([]);
+  });
+
+  it("sends the full list when the session does not hold an earlier one", () => {
     const notReusable = preferenceSend({
       reusable: false,
       previous: previous(),
       setKey: "a:1,b:1",
-      currentIds: new Map([
-        ["a", 1],
-        ["b", 1],
-      ]),
-      listed,
-      scoping: true,
+      currentIds: ids(["a", 1], ["b", 1]),
+      allIds: ids(["a", 1], ["b", 1]),
+      listed: [rule("a"), rule("b")],
     });
-    expect(notReusable).toEqual({ repeat: false, addedRules: [], delta: false });
+    expect(notReusable).toEqual({
+      repeat: false,
+      added: [],
+      updated: [],
+      removed: [],
+      delta: false,
+    });
+  });
+
+  it("shows a note once per session and again on a refresh turn", () => {
+    const note = { memoryId: "n1", version: 1 };
+    const shown = new Map([["n1", 1]]);
+    expect(freshNotes({ picked: [note], shown, refresh: false })).toEqual([]);
+    expect(freshNotes({ picked: [note], shown, refresh: true })).toEqual([note]);
+    expect(freshNotes({ picked: [note], shown: new Map([["n1", 0]]), refresh: false })).toEqual([
+      note,
+    ]);
+    // No session yet: everything is new.
+    expect(freshNotes({ picked: [note], shown: undefined, refresh: false })).toEqual([note]);
   });
 });
 

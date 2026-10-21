@@ -453,3 +453,78 @@ it.effect("attributes Antigravity sessions to bots through resumeCursorJson", ()
     expect(today.total.totals.outputTokens).toBe(100);
   }).pipe(Effect.provide(harness(scanner)));
 });
+
+it.effect("attributes a finished session through provider session history", () => {
+  const OLD_CELL: BotUsageCell = {
+    day: "2026-10-04",
+    provider: "claude",
+    model: "claude-opus-5-5",
+    sessionId: "claude-session-old",
+    totals: {
+      uncachedInputTokens: 10,
+      cachedInputTokens: 100,
+      cacheCreationTokens: 5,
+      outputTokens: 30,
+    },
+    records: 1,
+    costUsd: 0.5,
+    unpricedTokens: 0,
+  };
+  const scanner = fakeScanner({ cells: [OLD_CELL] });
+  return Effect.gen(function* () {
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const bot = PersonalBotId.make("bot-ada");
+    yield* repository.createBot(
+      decodeCreateBot({
+        botId: bot,
+        name: "Ada",
+        title: "Engineer",
+        description: "Builds.",
+        instructions: "Build.",
+        avatarShape: "blob",
+        avatarColor: "#1A73E8",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+        },
+        team: "assistant",
+        lead: false,
+        pinned: false,
+        sortOrder: 0,
+        createdAt: "2026-09-13T20:38:00.000Z",
+        updatedAt: "2026-09-13T20:38:00.000Z",
+      }),
+    );
+    const threadId = ThreadId.make("thread-ada");
+    yield* repository.insertThreadLink(
+      decodeInsertThreadLink({ botId: bot, threadId, createdAt: "2026-09-13T20:38:00.000Z" }),
+    );
+    // The chat has since resumed a new session, so the cursor alone no longer
+    // names the one that produced these tokens.
+    yield* sql`
+      INSERT INTO provider_session_runtime
+        (thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json)
+      VALUES (${threadId}, 'claudeAgent', 'claudeAgent', 'full-access', 'running',
+        '2026-10-04T11:00:00.000Z', '{"resume":"claude-session-new","turnCount":3}')
+    `;
+    yield* sql`
+      INSERT INTO provider_session_history (thread_id, provider_name, session_id, first_seen_at)
+      VALUES (${threadId}, 'claudeAgent', 'claude-session-old', '2026-10-03T09:00:00.000Z')
+    `;
+
+    yield* TestClock.setTime(NOW_MS);
+    const service = yield* PersonalBotTokenUsage.PersonalBotTokenUsage;
+    yield* service.read(input);
+    yield* settle;
+    yield* Deferred.succeed(scanner.runs[0]!.release, undefined);
+    yield* settle;
+
+    const ready = yield* service.read(input);
+    expect(ready.status).toBe("ready");
+    const today = ready.windows[0]!;
+    expect(today.rows.map((row) => String(row.botId))).toEqual(["bot-ada"]);
+    expect(today.rows[0]?.totals.outputTokens).toBe(30);
+    expect(today.other.sessions).toBe(0);
+  }).pipe(Effect.provide(harness(scanner)));
+});

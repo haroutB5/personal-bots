@@ -153,13 +153,28 @@ function blob(value: unknown): Uint8Array {
   return value;
 }
 
+/**
+ * One generation is written down three times: a `steps` row, the matching
+ * `gen_metadata` usage (field 4) and, inside that same row, a retry blob
+ * (field 17) repeating the very same numbers. The three copies carry no id
+ * column we could join on, but their token totals are byte-identical, so a
+ * per-session tuple of those totals identifies one call. `=off` restores the
+ * release-1.66.79 behaviour, which counted each copy as a separate call.
+ */
+export const antigravityUsageDedupeEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  env.PERSONAL_ANTIGRAVITY_USAGE_DEDUPE !== "off";
+
 interface UsageCandidate {
   record: UsageRecord;
   keys: readonly string[];
   timestampQuality: number;
 }
 
-async function readDatabase(path: string, fallbackTimestamp: number): Promise<UsageCandidate[]> {
+async function readDatabase(
+  path: string,
+  fallbackTimestamp: number,
+  dedupe: boolean,
+): Promise<UsageCandidate[]> {
   const db = new NodeSqlite.DatabaseSync(path, { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout = 100; BEGIN");
@@ -200,11 +215,18 @@ async function readDatabase(path: string, fallbackTimestamp: number): Promise<Us
     const sessionId = NodePath.basename(path, ".db");
     const records: UsageCandidate[] = [];
     const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry.model]));
+    // A generation and its step are written as two rows with the same token
+    // totals, and the generation row repeats them in its retry blob. Total
+    // tokens are what identify one call: the row indexes are not aligned
+    // (a step at idx 1 belongs to the generation at idx 3), so the step is
+    // matched by its totals against the generations read just before it.
+    const generationTotals = new Set<string>();
     for (const [source, entries] of [
-      ["step", steps],
       ["generation", generations],
+      ["step", steps],
     ] as const) {
       for (const [index, { idx, entry }] of entries.entries()) {
+        const seenInEntry = new Set<string>();
         for (const [usageIndex, usage] of entry.usages.entries()) {
           const outputTokens = Math.max(
             numberAt(usage, 3),
@@ -225,6 +247,11 @@ async function readDatabase(path: string, fallbackTimestamp: number): Promise<Us
             0
           )
             continue;
+          const totalKey = `${totals.uncachedInputTokens}/${totals.cachedInputTokens}/${totals.cacheCreationTokens}/${outputTokens}`;
+          if (dedupe && seenInEntry.has(totalKey)) continue;
+          seenInEntry.add(totalKey);
+          if (dedupe && source === "step" && generationTotals.has(totalKey)) continue;
+          if (source === "generation") generationTotals.add(totalKey);
           const keys = ([11, 12, 7] as const).flatMap((key) => {
             const id = textAt(usage, key);
             return id ? [`antigravity:${key}:${id}`] : [];
@@ -282,7 +309,9 @@ export async function readAntigravityUsage(
   conversationsDirectories: string | readonly string[],
   sinceMs: number,
   cache?: Map<string, CachedDatabase>,
+  options: { readonly dedupe?: boolean } = {},
 ) {
+  const dedupe = options.dedupe ?? antigravityUsageDedupeEnabled();
   const roots =
     typeof conversationsDirectories === "string"
       ? [conversationsDirectories]
@@ -381,7 +410,7 @@ export async function readAntigravityUsage(
           if (cached?.fingerprint === fingerprint) {
             candidates = cached.candidates;
           } else {
-            candidates = await readDatabase(path, stat.mtimeMs);
+            candidates = await readDatabase(path, stat.mtimeMs, dedupe);
             cache?.set(canonical, { fingerprint, candidates });
           }
           const fileIndex = files.length;

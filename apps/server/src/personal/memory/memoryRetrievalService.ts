@@ -46,7 +46,12 @@ import {
   termsToMatch,
   type Ranked,
 } from "./memoryRetrieval.ts";
-import { carryActiveApps, preferenceSend, sessionHoldsRules } from "./memoryContextPolicy.ts";
+import {
+  carryActiveApps,
+  freshNotes,
+  preferenceSend,
+  sessionHoldsRules,
+} from "./memoryContextPolicy.ts";
 import { capPreferences, dedupeKey, visibleTo } from "./memoryScopePolicy.ts";
 import {
   errorTagOf,
@@ -474,69 +479,110 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
         relevant.push(entry);
       }
 
-      // The full list once per session; then a one-line reminder while
-      // nothing changed, the chat was not compacted and it is not due again.
-      // Rules of an app the chat has since started covering are sent alone,
-      // on top of the list already there. The index and any left-out line are
-      // printed on every turn, so a change in them needs no resend.
+      // The full list once per session; then only the changes while the chat
+      // was not compacted and it is not due again: a line for each added rule,
+      // a line for each rule whose text moved (sent again, marked as the new
+      // one), and the ids of the rules forgotten or replaced since. Rules that
+      // only fell out of the caps are not changes; the index and any left-out
+      // line are printed on every turn, so a change in them needs no resend.
       const currentIds = new Map<string, number>(
         listed.map((entry) => [entry.memoryId as string, entry.version] as const),
+      );
+      const allIds = new Map<string, number>(
+        allPreferences.map((entry) => [entry.memoryId as string, entry.version] as const),
       );
       const setKey = listed.map((entry) => `${entry.memoryId}:${entry.version}`).join(",");
       const nowIso = DateTime.formatIso(nowDate);
       const previous = sentPreferences.get(input.threadId);
-      const reusable =
-        sessionHoldsRules({
-          session: input.session,
-          listedCount: listed.length,
-          previous,
-          resendEvery: PERSONAL_MEMORY_RESEND_EVERY_TURNS,
-        }) &&
+      const holdsRules = sessionHoldsRules({
+        session: input.session,
+        listedCount: listed.length,
+        previous,
+        resendEvery: PERSONAL_MEMORY_RESEND_EVERY_TURNS,
+      });
+      const sessionContinued =
+        input.session !== undefined &&
+        !input.session.fresh &&
         previous !== undefined &&
-        !(yield* compactedSince(input.threadId, previous.sentAt));
-      const { repeat, addedRules, delta } = preferenceSend({
+        previous.sessionKey === input.session.key;
+      const compacted =
+        sessionContinued && previous !== undefined
+          ? yield* compactedSince(input.threadId, previous.sentAt)
+          : true;
+      const reusable = holdsRules && previous !== undefined && !compacted;
+      const { repeat, added, updated, removed, delta } = preferenceSend({
         reusable,
         previous,
         setKey,
         currentIds,
+        allIds,
         listed,
-        scoping,
       });
+
+      // Notes are shown once per session. A full-refresh turn (new session, a
+      // compaction, the periodic resend) shows them all again, so they do not
+      // drift out of reach in a long chat while still not repeating each turn.
+      const notesRefresh =
+        !sessionContinued ||
+        compacted ||
+        (previous?.turns ?? 0) + 1 >= PERSONAL_MEMORY_RESEND_EVERY_TURNS;
+      const notes = freshNotes({
+        picked: relevant,
+        shown: sessionContinued ? previous.notes : undefined,
+        refresh: notesRefresh,
+      });
+      const nextNotes = new Map<string, number>(sessionContinued ? previous.notes : []);
+      for (const entry of notes) nextNotes.set(entry.memoryId, entry.version);
+
       // Recorded only once the send succeeds (confirmPreferencesSent): a turn
       // that never reached the provider must not mark the list as given.
       if (input.session !== undefined) {
         pendingSent.set(
           input.threadId,
           (repeat || delta) && previous !== undefined
-            ? { ...previous, setKey, ids: currentIds, turns: previous.turns + 1 }
+            ? {
+                ...previous,
+                setKey,
+                ids: currentIds,
+                turns: previous.turns + 1,
+                notes: nextNotes,
+              }
             : {
                 sessionKey: input.session.key,
                 setKey,
                 ids: currentIds,
                 sentAt: nowIso,
                 turns: 0,
+                notes: nextNotes,
               },
         );
       } else pendingSent.delete(input.threadId);
 
       const sentPreferenceEntries = repeat || delta ? [] : listed;
-      const memoryIds = [...sentPreferenceEntries, ...(delta ? addedRules : []), ...relevant].map(
-        (entry) => entry.memoryId,
-      );
+      const memoryIds = [
+        ...sentPreferenceEntries,
+        ...(delta ? [...updated, ...added] : []),
+        ...notes,
+      ].map((entry) => entry.memoryId);
       const blockInput = {
         preferences: sentPreferenceEntries,
         droppedPreferences,
         preferencesRepeat: repeat
-          ? { count: listed.length }
+          ? { count: previous?.ids.size ?? listed.length }
           : delta && previous !== undefined
-            ? { count: previous.ids.size, added: addedRules }
+            ? {
+                count: previous.ids.size,
+                ...(added.length === 0 ? {} : { added }),
+                ...(updated.length === 0 ? {} : { updated }),
+                ...(removed.length === 0 ? {} : { removed }),
+              }
             : undefined,
         appIndex,
         leftOutRules,
       };
-      const block = formatMemoryBlock({ ...blockInput, relevant });
+      const block = formatMemoryBlock({ ...blockInput, relevant: notes });
       const preferencesBlock =
-        relevant.length > 0 && (sentPreferenceEntries.length > 0 || repeat || delta)
+        notes.length > 0 && (sentPreferenceEntries.length > 0 || repeat || delta)
           ? formatMemoryBlock({ ...blockInput, relevant: [] })
           : null;
       const trace: MemoryTurnTrace = {
@@ -550,7 +596,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
         rulesLeftOut: leftOutRules.map((entry) => entry.memoryId),
         rulesListed: listed.map((entry) => entry.memoryId),
         rulesSent: !repeat,
-        rulesAdded: delta ? addedRules.map((entry) => entry.memoryId) : [],
+        rulesAdded: delta ? [...updated, ...added].map((entry) => entry.memoryId) : [],
         query: { terms: [...picks.query.terms], followUp: picks.query.followUp },
         picked: picks.picked.map((row) => ({ ...row, why: [...row.why] })),
         leftOut: picks.leftOut,

@@ -391,11 +391,12 @@ it.effect(
       expect(repeat).not.toContain("Reply in short plain sentences.");
       expect(repeat).toContain("The 1 saved preferences listed earlier in this chat still apply");
 
-      // A new preference: the full list again.
+      // A new preference: only the new line, on top of the list the chat holds.
       yield* savePreference("Lead with the outcome.");
       const changed = yield* turn("s1");
-      expect(changed).toContain("Reply in short plain sentences.");
+      expect(changed).toContain("still apply unchanged");
       expect(changed).toContain("Lead with the outcome.");
+      expect(changed).not.toContain("Reply in short plain sentences.");
       expect(yield* turn("s1")).not.toContain("Lead with the outcome.");
 
       // The provider compacted the chat: the list may be gone from its context.
@@ -481,9 +482,78 @@ it.effect("a block with preferences and notes also offers the preferences alone"
     // Once the session has the list, the fallback is the one-line reminder.
     yield* memory.confirmPreferencesSent(THREAD_A);
     const repeat = yield* build("green tea");
-    expect(repeat.block).toContain("Harout likes green tea");
-    expect(repeat.preferencesBlock).toContain("still apply unchanged");
-    expect(repeat.preferencesBlock).not.toContain("green tea");
+    // The note already went this session: it is not sent twice.
+    expect(repeat.block).not.toContain("Harout likes green tea");
+    // With no note left to send, there is no notes-free fallback to offer.
+    expect(repeat.preferencesBlock).toBeUndefined();
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("an edited rule is sent as its new text and a forgotten one is named as dropped", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const session = { key: "s1", fresh: false };
+    const first = yield* savePreference("Always answer in plain words.");
+    yield* savePreference("Call the user by first name.");
+    const turn = () =>
+      memory.contextForThread({ threadId: THREAD_A, query: "hello", record: false, session }).pipe(
+        Effect.tap(() => memory.confirmPreferencesSent(THREAD_A)),
+        Effect.map((context) => context.block ?? ""),
+      );
+
+    expect(yield* turn()).toContain("Always answer in plain words.");
+
+    yield* memory.update({
+      memoryId: first.memoryId,
+      content: "Keep every answer to one sentence.",
+    });
+    const edited = yield* turn();
+    expect(edited).toContain("except where a line below changes or drops one");
+    expect(edited).toContain("(updated rule)");
+    expect(edited).toContain("Keep every answer to one sentence.");
+    expect(edited).not.toContain("Always answer in plain words.");
+
+    yield* memory.forget({ memoryId: first.memoryId, actorBotId: BOT_A });
+    const forgotten = yield* turn();
+    expect(forgotten).toContain("so no longer in force");
+    expect(forgotten).toContain("Do not apply them.");
+    expect(forgotten).not.toContain("Keep every answer to one sentence.");
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("a note is sent once per session and again once the provider compacted the chat", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* memory.save({
+      scope: "shared",
+      scopeId: null,
+      kind: "note",
+      content: "Harout likes green tea in the evening.",
+      source: "user",
+    });
+    const build = memory.contextForThread({
+      threadId: THREAD_A,
+      query: "green tea",
+      record: false,
+      session: { key: "s1", fresh: false },
+    });
+
+    expect((yield* build).block).toContain("Harout likes green tea");
+    yield* memory.confirmPreferencesSent(THREAD_A);
+    // Nothing left to say: the note was already sent this session.
+    expect((yield* build).block ?? "").not.toContain("Harout likes green tea");
+
+    const later = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 1 }));
+    yield* sql`
+      INSERT INTO projection_thread_activities
+        (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
+      VALUES ('compact-notes-1', ${THREAD_A}, NULL, 'info', 'context-compaction', 'Context compacted', '{}', ${later})
+    `;
+    yield* TestClock.adjust("2 seconds");
+    expect((yield* build).block).toContain("Harout likes green tea");
   }).pipe(Effect.provide(TestLayer)),
 );
 

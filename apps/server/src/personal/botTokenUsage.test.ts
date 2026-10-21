@@ -116,6 +116,25 @@ describe("resume cursors", () => {
     expect(owners.get(sessionKey("codex", "s1"))).toBeUndefined();
   });
 
+  it("maps a session history row to its bot even when the chat has moved on", () => {
+    const owners = buildSessionOwners([
+      {
+        botId: "a",
+        providerName: "claudeAgent",
+        resumeCursorJson: '{"resume":"s-new"}',
+        sessionId: "s-old",
+      },
+      // A history row carries no cursor: the session id alone maps it.
+      { botId: "b", providerName: "antigravity", resumeCursorJson: null, sessionId: "agy-old" },
+      // The cursor still maps the current session of the same chat.
+      { botId: "c", providerName: "codex", resumeCursorJson: '{"threadId":"t1"}' },
+    ]);
+    expect(owners.get(sessionKey("claude", "s-old"))).toBe("a");
+    expect(owners.get(sessionKey("claude", "s-new"))).toBe("a");
+    expect(owners.get(sessionKey("antigravity", "agy-old"))).toBe("b");
+    expect(owners.get(sessionKey("codex", "t1"))).toBe("c");
+  });
+
   it("maps provider names to usage provider kinds", () => {
     expect(usageProviderOf("claudeAgent")).toBe("claude");
     expect(usageProviderOf("codex")).toBe("codex");

@@ -14,6 +14,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { withStallJob } from "../observability/stallJobs.ts";
 import { botUsageTotalTokens } from "../usage/botUsage.ts";
+import { providerSessionHistoryEnabled } from "../usage/providerSessions.ts";
 import * as UsageService from "../usage/UsageService.ts";
 import {
   buildSessionOwners,
@@ -90,14 +91,34 @@ export const make = Effect.gen(function* () {
     return created;
   };
 
-  const readChatSessions = sql<ChatSessionRow>`
-    SELECT
-      t.bot_id AS "botId",
-      s.provider_name AS "providerName",
-      s.resume_cursor_json AS "resumeCursorJson"
-    FROM personal_bot_threads t
-    JOIN provider_session_runtime s ON s.thread_id = t.thread_id
-  `;
+  // The current session of every chat, plus — when session history is on —
+  // every session it used before, because a resume cursor only names the latest.
+  const readChatSessions = providerSessionHistoryEnabled()
+    ? sql<ChatSessionRow>`
+        SELECT
+          t.bot_id AS "botId",
+          s.provider_name AS "providerName",
+          s.resume_cursor_json AS "resumeCursorJson",
+          NULL AS "sessionId"
+        FROM personal_bot_threads t
+        JOIN provider_session_runtime s ON s.thread_id = t.thread_id
+        UNION ALL
+        SELECT
+          t.bot_id AS "botId",
+          h.provider_name AS "providerName",
+          NULL AS "resumeCursorJson",
+          h.session_id AS "sessionId"
+        FROM personal_bot_threads t
+        JOIN provider_session_history h ON h.thread_id = t.thread_id
+      `
+    : sql<ChatSessionRow>`
+        SELECT
+          t.bot_id AS "botId",
+          s.provider_name AS "providerName",
+          s.resume_cursor_json AS "resumeCursorJson"
+        FROM personal_bot_threads t
+        JOIN provider_session_runtime s ON s.thread_id = t.thread_id
+      `;
 
   const readActiveBotIds = sql<{ readonly botId: string }>`
     SELECT bot_id AS "botId" FROM personal_bots WHERE deleted_at IS NULL
