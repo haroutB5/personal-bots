@@ -504,10 +504,15 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             // The notice is model-visible text, so the card trusts it for at most
             // five hours (a real longer limit shows the notice again on the next
             // try), and the next normal turn clears it.
+            // The stated reset still says which window is spent: a 5-day reset is
+            // the weekly limit even though the card trusts it for five hours.
             const capMs = nowMs + 5 * 60 * 60_000;
             const statedMs = hit.retryAt === undefined ? Number.NaN : Date.parse(hit.retryAt);
             quotaHit = {
               retryAt: DateTime.formatIso(
+                DateTime.makeUnsafe(Number.isFinite(statedMs) ? statedMs : capMs),
+              ),
+              expiresAt: DateTime.formatIso(
                 DateTime.makeUnsafe(Number.isFinite(statedMs) ? Math.min(statedMs, capMs) : capMs),
               ),
             };

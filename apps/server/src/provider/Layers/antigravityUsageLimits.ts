@@ -81,6 +81,8 @@ export const AvailableModelsResponse = Schema.Struct({
   models: Schema.optional(Schema.Record(Schema.String, ModelQuota)),
 });
 
+const FIVE_HOURS_MS = 5 * 60 * 60_000;
+
 export const DAILY_AVAILABLE_MODELS_ENDPOINT =
   "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 export const PROD_AVAILABLE_MODELS_ENDPOINT =
@@ -100,29 +102,40 @@ export function antigravityUsageToLimits(
   summary: typeof QuotaSummaryResponse.Type | null,
   checkedAt: string,
 ): ServerProviderUsageLimits {
+  // Google's JSON leaves a zero out: a model with quota info and a reset but no
+  // remainingFraction is spent (seen live on 21 Oct 2026, weekly quota gone).
   const gemini = Object.entries(models?.models ?? {})
-    .filter(
-      ([id, entry]) =>
-        id.startsWith("gemini") &&
-        entry.quotaInfo?.remainingFraction !== undefined &&
-        Number.isFinite(entry.quotaInfo.remainingFraction),
-    )
-    .map(([, entry]) => entry.quotaInfo!)
-    .sort((a, b) => a.remainingFraction! - b.remainingFraction!)[0];
+    .flatMap(([id, entry]) => {
+      const info = entry.quotaInfo;
+      if (!id.startsWith("gemini") || info === undefined) return [];
+      const remainingFraction =
+        info.remainingFraction ?? (info.resetTime !== undefined ? 0 : undefined);
+      return remainingFraction !== undefined && Number.isFinite(remainingFraction)
+        ? [{ remainingFraction, resetTime: info.resetTime }]
+        : [];
+    })
+    .sort((a, b) => a.remainingFraction - b.remainingFraction)[0];
   if (!gemini) {
     return summary
       ? antigravityQuotaSummaryToLimits(summary, checkedAt)
       : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   }
+  // The per-model count follows whichever limit binds: a reset more than five
+  // hours out means the weekly limit is the one being counted.
+  const checkedMs = Date.parse(checkedAt);
+  const resetMs = gemini.resetTime ? Date.parse(gemini.resetTime) : Number.NaN;
+  const bindingWeekly =
+    Number.isFinite(checkedMs) && Number.isFinite(resetMs) && resetMs - checkedMs > FIVE_HOURS_MS;
   const windows: ServerProviderUsageWindow[] = [
     {
-      id: "gemini-session",
-      kind: "session",
-      label: "Gemini · 5-hour session",
-      usedPercent: clampPercent(Math.round((1 - gemini.remainingFraction!) * 100)),
+      id: bindingWeekly ? "gemini-weekly" : "gemini-session",
+      kind: bindingWeekly ? "weekly" : "session",
+      label: bindingWeekly ? "Gemini · Weekly" : "Gemini · 5-hour session",
+      usedPercent: clampPercent(Math.round((1 - gemini.remainingFraction) * 100)),
       ...(gemini.resetTime ? { resetsAt: gemini.resetTime } : {}),
     },
   ];
+  if (bindingWeekly) return makeUsageLimits({ checkedAt, windows });
   const weekly = summary
     ? antigravityQuotaSummaryToLimits(summary, checkedAt).windows.find(
         (window) => window.id === "gemini-weekly" && window.usedPercent > 0,
@@ -199,11 +212,12 @@ export function antigravityQuotaSummaryToLimits(
 }
 
 export interface AntigravityQuotaHit {
+  /** The reset the notice stated; it decides which window is spent. */
   readonly retryAt: string;
+  /** When the notice stops counting (model-visible text is trusted for at most five hours). */
+  readonly expiresAt?: string;
   readonly group?: "gemini";
 }
-
-const FIVE_HOURS_MS = 5 * 60 * 60_000;
 
 /**
  * Google's quota summary has been seen reading 0% while the runtime refuses
@@ -219,6 +233,8 @@ export function withAntigravityQuotaHit(
   if (!hit) return limits;
   const resetMs = Date.parse(hit.retryAt);
   if (!Number.isFinite(resetMs) || resetMs <= nowMs) return limits;
+  const expiresMs = hit.expiresAt === undefined ? resetMs : Date.parse(hit.expiresAt);
+  if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) return limits;
   const weekly = resetMs - nowMs > FIVE_HOURS_MS;
   const id = `gemini-${weekly ? "weekly" : "session"}`;
   const windows = limits.unavailable ? [] : [...limits.windows];

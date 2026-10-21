@@ -274,4 +274,66 @@ it.layer(TestServicesLayer)("readAntigravityUsageLimits", (it) => {
       expect(withAntigravityQuotaHit(read, undefined, now)).toBe(read);
     });
   });
+
+  describe("a spent Gemini quota (21 Oct 2026 live shape)", () => {
+    const checkedAt = "2026-10-21T20:05:00.000Z";
+    const nowMs = Date.parse(checkedAt);
+
+    it("reads a model with a reset but no remainingFraction as spent, on the weekly window", () => {
+      const limits = antigravityUsageToLimits(
+        {
+          models: {
+            "gemini-3-flash": { quotaInfo: { resetTime: "2026-10-26T20:56:06Z" } },
+            "gemini-2.5-pro": { quotaInfo: { resetTime: "2026-10-26T20:56:06Z" } },
+            "claude-opus": { quotaInfo: { remainingFraction: 1 } },
+          },
+        },
+        null,
+        checkedAt,
+      );
+      expect(limits.windows).toEqual([
+        {
+          id: "gemini-weekly",
+          kind: "weekly",
+          label: "Gemini · Weekly",
+          usedPercent: 100,
+          resetsAt: "2026-10-26T20:56:06Z",
+        },
+      ]);
+    });
+
+    it("keeps a reset within five hours on the session window", () => {
+      const limits = antigravityUsageToLimits(
+        {
+          models: {
+            "gemini-3-flash": {
+              quotaInfo: { remainingFraction: 0.81, resetTime: "2026-10-21T23:00:00Z" },
+            },
+          },
+        },
+        null,
+        checkedAt,
+      );
+      expect(limits.windows[0]).toMatchObject({ id: "gemini-session", usedPercent: 19 });
+    });
+
+    it("files a notice with a 5-day reset under the weekly window, for its five trusted hours", () => {
+      const read = makeUsageLimits({ checkedAt, windows: [] });
+      const hit = {
+        retryAt: "2026-10-26T22:05:00.000Z",
+        expiresAt: "2026-10-22T01:05:00.000Z",
+      };
+      const out = withAntigravityQuotaHit(read, hit, nowMs);
+      expect(out.windows).toEqual([
+        {
+          id: "gemini-weekly",
+          kind: "weekly",
+          label: "Gemini · Weekly",
+          usedPercent: 100,
+          resetsAt: "2026-10-26T22:05:00.000Z",
+        },
+      ]);
+      expect(withAntigravityQuotaHit(read, hit, Date.parse("2026-10-22T01:06:00.000Z"))).toBe(read);
+    });
+  });
 });
