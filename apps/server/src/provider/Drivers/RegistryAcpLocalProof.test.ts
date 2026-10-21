@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/unstable/http";
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -133,6 +134,9 @@ describe.skipIf(process.env.HBOTS_CATALOG_DRIVER_LIVE !== "1")("Registry ACP loc
           Layer.mergeAll(
             ServerConfig.layerTest(process.cwd(), { prefix: "hbots-registry-proof-config-" }),
             ServerSettingsService.layerTest(),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              shouldRunScopeWork: () => Effect.succeed(false),
+            }),
             FetchHttpClient.layer,
           ).pipe(Layer.provideMerge(NodeServices.layer)),
         ),

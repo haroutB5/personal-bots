@@ -52,6 +52,8 @@ const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
+// Lists a sign-in method the way Kilo does: `initialize` offers it, sessions still open.
+const offerSignInMethod = process.env.T3_ACP_OFFER_SIGN_IN === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
 const omitXAiPromptCompleteStopReason =
@@ -501,6 +503,17 @@ const program = Effect.gen(function* () {
         // Grok advertises model state before any session exists; the provider
         // health check reads it from here without authenticating.
         _meta: { modelState: modelState() },
+        ...(offerSignInMethod
+          ? {
+              authMethods: [
+                {
+                  id: "mock-login",
+                  name: "Login with Mock",
+                  description: "Run `mock auth login` in the terminal",
+                },
+              ],
+            }
+          : {}),
       };
     }),
   );

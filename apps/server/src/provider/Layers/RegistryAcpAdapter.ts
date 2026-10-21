@@ -15,6 +15,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -28,6 +29,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import * as AcpErrors from "effect-acp/errors";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import {
   ProviderAdapterProcessError,
@@ -53,6 +55,18 @@ import { appendAcpStderrTail } from "../acp/AcpStderr.ts";
 import { terminateDescendants } from "../processTree.ts";
 import { CatalogInstaller } from "../catalog/installer.ts";
 import { toSpawnInput } from "../catalog/launch.ts";
+import {
+  isAuthRequiredError,
+  signInTurnMessage,
+  toAuthMethods,
+  type RegistryAuthMemory,
+} from "../catalog/registryAuth.ts";
+import { isRegistryTurnSilent, promptUnlessSilent } from "../catalog/registryProbe.ts";
+import {
+  registryCurrentModel,
+  registryModelEntries,
+  registryModelSwitch,
+} from "../catalog/registryModels.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 
 const DRIVER = ProviderDriverKind.make("registry");
@@ -69,6 +83,12 @@ interface RegistryAcpSessionContext {
   session: ProviderSession;
   activeTurnId?: TurnId;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+  /** What the agent offered when the session opened; models and how to switch them. */
+  readonly setup: AcpSessionRuntime.AcpSessionRuntimeStartResult["sessionSetupResult"];
+  /** The model the agent is on now. */
+  appliedModel: string | undefined;
+  /** Whether the agent has produced any output for the active turn. */
+  turnHeard: boolean;
   notificationFiber?: Fiber.Fiber<void, unknown>;
   stopped: boolean;
 }
@@ -79,6 +99,12 @@ export interface RegistryAcpAdapterOptions {
   readonly nodePath: string | null;
   readonly hostEnvironment?: NodeJS.ProcessEnv;
   readonly extraEnv?: Readonly<Record<string, string>>;
+  /** The provider's name as the user sees it, for sign-in messages. */
+  readonly displayName?: string;
+  /** What is known about the agent's sign-in; the driver shows it on the snapshot. */
+  readonly auth?: RegistryAuthMemory;
+  /** Silence allowed before a turn counts as "needs sign-in". Default: 45 s. */
+  readonly firstOutputTimeout?: Duration.Input;
 }
 
 export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
@@ -95,6 +121,10 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const ownerScope = yield* Effect.scope;
 
+    const providerName = options.displayName?.trim() || "This agent";
+    const currentMethods = options.auth
+      ? SubscriptionRef.get(options.auth.state).pipe(Effect.map((state) => state.methods))
+      : Effect.succeed([]);
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
       Effect.mapError(
@@ -308,13 +338,27 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
               ),
             );
 
-            const started = yield* runtime
-              .start()
-              .pipe(
-                Effect.mapError((cause) =>
-                  mapAcpToAdapterError(DRIVER, input.threadId, "session/initialize", cause),
-                ),
-              );
+            const started = yield* runtime.start().pipe(
+              Effect.catch((cause) =>
+                isAuthRequiredError(cause)
+                  ? Effect.gen(function* () {
+                      yield* options.auth?.markNeeded ?? Effect.void;
+                      return yield* new ProviderAdapterProcessError({
+                        provider: DRIVER,
+                        threadId: input.threadId,
+                        detail: signInTurnMessage(providerName, yield* currentMethods),
+                        cause,
+                      });
+                    })
+                  : Effect.fail(
+                      mapAcpToAdapterError(DRIVER, input.threadId, "session/initialize", cause),
+                    ),
+              ),
+            );
+            yield* (
+              options.auth?.setMethods(toAuthMethods(started.initializeResult.authMethods ?? [])) ??
+                Effect.void
+            );
 
             const createdAt = yield* nowIso;
             const sessionRecord: ProviderSession = {
@@ -334,6 +378,9 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
               runtime,
               session: sessionRecord,
               pendingApprovals,
+              setup: started.sessionSetupResult,
+              appliedModel: registryCurrentModel(started.sessionSetupResult),
+              turnHeard: false,
               stopped: false,
             };
             context = ctx;
@@ -345,6 +392,20 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
                   return yield* Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
                 }
                 if (ctx.stopped) return;
+                if (
+                  !ctx.turnHeard &&
+                  ctx.activeTurnId !== undefined &&
+                  (event._tag === "ContentDelta" ||
+                    event._tag === "ThoughtDelta" ||
+                    event._tag === "AssistantItemStarted" ||
+                    event._tag === "ToolCallUpdated" ||
+                    event._tag === "PlanUpdated" ||
+                    event._tag === "UsageUpdated")
+                ) {
+                  ctx.turnHeard = true;
+                  // Output proves the agent works, whatever it listed for sign-in.
+                  yield* options.auth?.markSignedIn ?? Effect.void;
+                }
                 const common = {
                   stamp: yield* makeEventStamp(),
                   provider: DRIVER,
@@ -464,8 +525,34 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
                 operation: "sendTurn",
                 issue: "Wait for the current registry-agent turn to finish.",
               });
+            // Switch the agent's model before the turn exists, so a refusal leaves no half-started turn.
+            const wanted = input.modelSelection?.model;
+            if (wanted && wanted !== "default" && wanted !== ctx.appliedModel) {
+              const offered = registryModelEntries(ctx.setup);
+              if (offered.length > 0 && !offered.some((entry) => entry.value === wanted)) {
+                return yield* new ProviderAdapterValidationError({
+                  provider: DRIVER,
+                  operation: "sendTurn",
+                  issue: `${providerName} does not offer the model '${wanted}'. Pick another model.`,
+                });
+              }
+              const via = registryModelSwitch(ctx.setup);
+              const switchModel =
+                via === "config"
+                  ? ctx.runtime.setModel(wanted)
+                  : via === "session"
+                    ? ctx.runtime.setSessionModel(wanted).pipe(Effect.asVoid)
+                    : Effect.void;
+              yield* switchModel.pipe(
+                Effect.mapError((cause) =>
+                  mapAcpToAdapterError(DRIVER, input.threadId, "session/set_config_option", cause),
+                ),
+              );
+              ctx.appliedModel = wanted;
+            }
             const turnId = TurnId.make(yield* randomUUIDv4);
             ctx.activeTurnId = turnId;
+            ctx.turnHeard = false;
             ctx.session = {
               ...ctx.session,
               status: "running",
@@ -506,10 +593,52 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
           }),
         );
         const { ctx, turnId, fiber } = launch;
-        const response = yield* Fiber.await(fiber).pipe(
-          Effect.flatMap((exit) => exit),
-          Effect.mapError((cause) =>
-            mapAcpToAdapterError(DRIVER, input.threadId, "session/prompt", cause),
+        // An agent that lists sign-in options and has not produced output yet may
+        // be waiting for a sign-in it never announces; give it a deadline.
+        const authState = options.auth ? yield* SubscriptionRef.get(options.auth.state) : undefined;
+        const watched =
+          authState !== undefined &&
+          authState.methods.length > 0 &&
+          authState.verdict !== "signedIn";
+        let silentText: string | undefined;
+        const answered = Fiber.await(fiber).pipe(Effect.flatMap((exit) => exit));
+        const response = yield* (
+          watched
+            ? promptUnlessSilent({
+                prompt: answered,
+                sawOutput: Effect.sync(() => ctx.turnHeard),
+                ...(options.firstOutputTimeout !== undefined
+                  ? { timeout: options.firstOutputTimeout }
+                  : {}),
+              })
+            : answered
+        ).pipe(
+          Effect.catch((cause) =>
+            isRegistryTurnSilent(cause)
+              ? Effect.gen(function* () {
+                  silentText = signInTurnMessage(providerName, authState?.methods ?? []);
+                  yield* Fiber.interrupt(fiber).pipe(Effect.ignore);
+                  yield* ctx.runtime.cancel.pipe(Effect.ignore);
+                  yield* options.auth?.markNeeded ?? Effect.void;
+                  return yield* new ProviderAdapterRequestError({
+                    provider: DRIVER,
+                    method: "session/prompt",
+                    detail: silentText,
+                  });
+                })
+              : isAuthRequiredError(cause)
+                ? Effect.gen(function* () {
+                    silentText = signInTurnMessage(providerName, authState?.methods ?? []);
+                    yield* options.auth?.markNeeded ?? Effect.void;
+                    return yield* new ProviderAdapterRequestError({
+                      provider: DRIVER,
+                      method: "session/prompt",
+                      detail: silentText,
+                    });
+                  })
+                : Effect.fail(
+                    mapAcpToAdapterError(DRIVER, input.threadId, "session/prompt", cause),
+                  ),
           ),
           Effect.tapError((cause) =>
             Effect.gen(function* () {
@@ -526,8 +655,11 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
                 provider: DRIVER,
                 threadId: input.threadId,
                 turnId,
-                payload: { state: "failed", errorMessage: cause.message },
+                payload: { state: "failed", errorMessage: silentText ?? cause.message },
               });
+              // The agent never answered, so its process may be stuck on the prompt.
+              // Ending the session frees its files; the next turn starts a fresh one.
+              if (silentText !== undefined) yield* stopSessionInternal(ctx);
             }),
           ),
         );
@@ -681,7 +813,7 @@ export function makeRegistryAcpAdapter(options: RegistryAcpAdapterOptions) {
     return {
       provider: DRIVER,
       capabilities: {
-        sessionModelSwitch: "unsupported" as const,
+        sessionModelSwitch: "in-session" as const,
         promptlessTurnContinuation: false,
         supportsConversationRollback: false,
       },
