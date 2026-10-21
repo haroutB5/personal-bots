@@ -126,7 +126,7 @@ import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
 import { exploreSubagentAgents } from "../claudeBackgroundModels.ts";
-import { claudeAutoCompactWindow } from "../personalBotContextLimits.ts";
+import { claudeAutoCompactWindow, claudeShellOutputSettings } from "../personalBotContextLimits.ts";
 import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -5387,6 +5387,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(ultracode ? { ultracode: true } : {}),
         ...(autoCompactWindow !== undefined ? { autoCompactWindow } : {}),
         ...(personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
+        // Shell output past ~12k chars goes to a file with a short preview
+        // (PERSONAL_BOT_SHELL_OUTPUT_CAP=off restores the CLI's 30000).
+        ...claudeShellOutputSettings({ personalBot }),
         ...(botSkillOverrides === undefined ? {} : { skillOverrides: botSkillOverrides }),
         // Deny rules hold in every permission mode, bypassPermissions included.
         // Best effort: see botProtectedPaths for what they do and do not stop.

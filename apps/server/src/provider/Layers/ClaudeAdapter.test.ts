@@ -658,6 +658,8 @@ describe("ClaudeAdapterLive", () => {
         autoMemoryEnabled: false,
         disableClaudeAiConnectors: true,
         showThinkingSummaries: true,
+        // Shell output past 12k chars goes to a file with a preview (1.66.80).
+        bashOutputMaxChars: 12_000,
         permissions: { deny: buildClaudeBotPermissionDeny(serverConfig) },
       });
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
@@ -1178,6 +1180,60 @@ describe("ClaudeAdapterLive", () => {
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+    );
+  });
+
+  describe("bot shell output cap", () => {
+    const startWith = (name: string, personalBot: boolean, env: Record<string, string>) => {
+      const harness = makeHarness();
+      const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+      return Effect.gen(function* () {
+        Object.assign(process.env, env);
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: ThreadId.make(`thread-shell-cap-${name}`),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          ...(personalBot ? { personalBot: true } : {}),
+        });
+        const settings = harness.getLastCreateQueryInput()?.options.settings;
+        return typeof settings === "object" ? settings.bashOutputMaxChars : undefined;
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const [key, value] of Object.entries(previous)) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+        ),
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    };
+
+    it.effect("caps a bot's shell output at 12k chars and leaves plain threads alone", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* startWith("bot", true, {}), 12_000);
+        assert.equal(yield* startWith("plain", false, {}), undefined);
+      }),
+    );
+
+    it.effect("PERSONAL_BOT_SHELL_OUTPUT_CAP=off is the kill switch; a number sets the cap", () =>
+      Effect.gen(function* () {
+        assert.equal(
+          yield* startWith("off", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "off" }),
+          undefined,
+        );
+        assert.equal(
+          yield* startWith("custom", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "20000" }),
+          20_000,
+        );
+        assert.equal(
+          yield* startWith("clamped", true, { PERSONAL_BOT_SHELL_OUTPUT_CAP: "100" }),
+          4_000,
+        );
+      }),
     );
   });
 

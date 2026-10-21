@@ -8,6 +8,14 @@
  *   (`personalTaskChat` on the start input), never for the owner's own chats:
  *   Claude compacts with a 200k window, Codex at 150k tokens.
  *   `PERSONAL_TASK_AUTO_COMPACT=off` restores the provider defaults.
+ * - Shell output in every bot session: what a command prints past about 12k
+ *   characters stays out of the context. Claude saves the whole output to a
+ *   file and hands the model a short preview plus its path
+ *   (`bashOutputMaxChars`, Bash and PowerShell); Codex cuts the middle of a
+ *   tool output with a "tokens truncated" marker (`tool_output_token_limit`,
+ *   counted in tokens). `PERSONAL_BOT_SHELL_OUTPUT_CAP=off` restores the
+ *   defaults (Claude 30000 chars, Codex the model's own); a number of
+ *   characters (4000 to 128000) sets another cap.
  */
 export const PERSONAL_TASK_AUTO_COMPACT_ENV = "PERSONAL_TASK_AUTO_COMPACT";
 /** Claude's `autoCompactWindow` for task chats; it compacts a little below it. */
@@ -64,4 +72,44 @@ export function codexTaskAutoCompactArgs(input: {
   if (!input.personalBot || !input.personalTaskChat) return [];
   if (!taskAutoCompactEnabled(input.env ?? process.env)) return [];
   return ["-c", `model_auto_compact_token_limit=${CODEX_TASK_AUTO_COMPACT_TOKEN_LIMIT}`];
+}
+
+export const PERSONAL_BOT_SHELL_OUTPUT_CAP_ENV = "PERSONAL_BOT_SHELL_OUTPUT_CAP";
+export const BOT_SHELL_OUTPUT_DEFAULT_CHARS = 12_000;
+/** The range Claude Code clamps `bashOutputMaxChars` to (CLI 2.1.304). */
+export const BOT_SHELL_OUTPUT_MIN_CHARS = 4_000;
+export const BOT_SHELL_OUTPUT_MAX_CHARS = 128_000;
+/** Characters per token for the Codex limit, the usual rough English ratio. */
+const CHARS_PER_TOKEN = 4;
+
+/** The shell output cap in characters for a bot session, or undefined when off. */
+export function botShellOutputCapChars(env: Env = process.env): number | undefined {
+  const raw = env[PERSONAL_BOT_SHELL_OUTPUT_CAP_ENV]?.trim();
+  if (raw === undefined || raw.length === 0) return BOT_SHELL_OUTPUT_DEFAULT_CHARS;
+  if (isOff(raw)) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed)) return BOT_SHELL_OUTPUT_DEFAULT_CHARS;
+  return Math.min(Math.max(parsed, BOT_SHELL_OUTPUT_MIN_CHARS), BOT_SHELL_OUTPUT_MAX_CHARS);
+}
+
+/** The Claude settings that cap a bot's shell output, or none for other threads. */
+export function claudeShellOutputSettings(input: {
+  readonly personalBot: boolean;
+  readonly env?: Env;
+}): { readonly bashOutputMaxChars?: number } {
+  if (!input.personalBot) return {};
+  const chars = botShellOutputCapChars(input.env ?? process.env);
+  return chars === undefined ? {} : { bashOutputMaxChars: chars };
+}
+
+/** The Codex app-server overrides that cap a bot's tool output, or none. */
+export function codexShellOutputArgs(input: {
+  readonly personalBot: boolean;
+  readonly env?: Env;
+}): ReadonlyArray<string> {
+  if (!input.personalBot) return [];
+  const chars = botShellOutputCapChars(input.env ?? process.env);
+  return chars === undefined
+    ? []
+    : ["-c", `tool_output_token_limit=${Math.ceil(chars / CHARS_PER_TOKEN)}`];
 }

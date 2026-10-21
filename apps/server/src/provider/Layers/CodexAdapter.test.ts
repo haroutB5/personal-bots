@@ -394,6 +394,8 @@ validationLayer("CodexAdapterLive validation", (it) => {
         "features.memories=false",
         "-c",
         ownerSkillArg,
+        "-c",
+        "tool_output_token_limit=3000",
       ]);
       NodeAssert.deepStrictEqual(withoutMcp?.appServerArgs, [
         "-c",
@@ -404,7 +406,52 @@ validationLayer("CodexAdapterLive validation", (it) => {
         "features.memories=false",
         "-c",
         ownerSkillArg,
+        "-c",
+        "tool_output_token_limit=3000",
       ]);
+    }),
+  );
+
+  it.effect("caps a bot's tool output at about 12k chars; kill switch off", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const capArgs = (argv: ReadonlyArray<string> | undefined) =>
+        (argv ?? []).filter((arg) => arg.startsWith("tool_output_token_limit="));
+      const start = (threadId: string, personalBot: boolean) =>
+        adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId(threadId),
+          runtimeMode: "full-access",
+          ...(personalBot ? { personalBot: true } : {}),
+        });
+      const withEnv = <A, E, R>(value: string, effect: Effect.Effect<A, E, R>) => {
+        const previous = process.env.PERSONAL_BOT_SHELL_OUTPUT_CAP;
+        return Effect.sync(() => {
+          process.env.PERSONAL_BOT_SHELL_OUTPUT_CAP = value;
+        }).pipe(
+          Effect.andThen(effect),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env.PERSONAL_BOT_SHELL_OUTPUT_CAP;
+              else process.env.PERSONAL_BOT_SHELL_OUTPUT_CAP = previous;
+            }),
+          ),
+        );
+      };
+
+      yield* start("thread-codex-cap-bot", true);
+      yield* start("thread-codex-cap-plain", false);
+      yield* withEnv("off", start("thread-codex-cap-off", true));
+      yield* withEnv("40000", start("thread-codex-cap-custom", true));
+
+      const [bot, plain, off, custom] = validationRuntimeFactory.factory.mock.calls.map(
+        ([options]) => options.appServerArgs,
+      );
+      NodeAssert.deepStrictEqual(capArgs(bot), ["tool_output_token_limit=3000"]);
+      NodeAssert.deepStrictEqual(capArgs(plain), []);
+      NodeAssert.deepStrictEqual(capArgs(off), []);
+      NodeAssert.deepStrictEqual(capArgs(custom), ["tool_output_token_limit=10000"]);
     }),
   );
 
