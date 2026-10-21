@@ -461,7 +461,10 @@ validationLayer("CodexAdapterLive validation", (it) => {
       const adapter = yield* CodexAdapter;
       const compactArgs = (argv: ReadonlyArray<string> | undefined) =>
         (argv ?? []).filter((arg) => arg.startsWith("model_auto_compact_token_limit="));
-      const start = (threadId: string, input: { personalBot?: boolean; personalTaskChat?: boolean }) =>
+      const start = (
+        threadId: string,
+        input: { personalBot?: boolean; personalTaskChat?: boolean },
+      ) =>
         adapter.startSession({
           provider: ProviderDriverKind.make("codex"),
           threadId: asThreadId(threadId),
