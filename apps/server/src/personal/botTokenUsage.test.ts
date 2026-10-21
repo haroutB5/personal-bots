@@ -9,6 +9,7 @@ import {
   sessionKey,
   shiftDay,
   tokenUsageWindowRanges,
+  usageProviderOf,
 } from "./botTokenUsage.ts";
 
 function cell(overrides: Partial<BotUsageCell> = {}): BotUsageCell {
@@ -70,6 +71,13 @@ describe("resume cursors", () => {
         JSON.stringify({ threadId: "t1", resume: "ds_1", turnCount: 2 }),
       ),
     ).toBe("ds_1");
+    expect(
+      sessionIdFromResumeCursor(
+        "antigravity",
+        JSON.stringify({ schemaVersion: 1, sessionId: "agy_1" }),
+      ),
+    ).toBe("agy_1");
+    expect(sessionIdFromResumeCursor("grok", JSON.stringify({ sessionId: "gk_1" }))).toBe("gk_1");
   });
 
   it("returns null for a cursor with no usable id", () => {
@@ -89,15 +97,34 @@ describe("resume cursors", () => {
       { botId: "c", providerName: "opencode", resumeCursorJson: '{"sessionId":"s3"}' },
       { botId: "d", providerName: "cursor", resumeCursorJson: '{"resume":"s4"}' },
       { botId: "f", providerName: "deepseek", resumeCursorJson: '{"threadId":"t5","resume":"s5"}' },
+      {
+        botId: "g",
+        providerName: "antigravity",
+        resumeCursorJson: '{"schemaVersion":1,"sessionId":"s6"}',
+      },
+      { botId: "h", providerName: "grok", resumeCursorJson: '{"sessionId":"s7"}' },
       { botId: "e", providerName: "claudeAgent", resumeCursorJson: null },
     ]);
     expect(owners.get(sessionKey("claude", "s1"))).toBe("a");
     expect(owners.get(sessionKey("codex", "s2"))).toBe("b");
     expect(owners.get(sessionKey("opencode", "s3"))).toBe("c");
     expect(owners.get(sessionKey("deepseek", "s5"))).toBe("f");
-    expect(owners.size).toBe(4);
+    expect(owners.get(sessionKey("antigravity", "s6"))).toBe("g");
+    expect(owners.get(sessionKey("grok", "s7"))).toBe("h");
+    expect(owners.size).toBe(6);
     // The same id under another provider is another session.
     expect(owners.get(sessionKey("codex", "s1"))).toBeUndefined();
+  });
+
+  it("maps provider names to usage provider kinds", () => {
+    expect(usageProviderOf("claudeAgent")).toBe("claude");
+    expect(usageProviderOf("codex")).toBe("codex");
+    expect(usageProviderOf("opencode")).toBe("opencode");
+    expect(usageProviderOf("deepseek")).toBe("deepseek");
+    expect(usageProviderOf("antigravity")).toBe("antigravity");
+    expect(usageProviderOf("grok")).toBe("grok");
+    expect(usageProviderOf("cursor")).toBeNull();
+    expect(usageProviderOf("unknown")).toBeNull();
   });
 });
 
@@ -194,6 +221,41 @@ describe("provider and cost totals", () => {
 
   it("has no provider rows for an empty window", () => {
     expect(windows([])[0]?.providers).toEqual([]);
+  });
+
+  it("folds Antigravity cells into provider row and attributes to the bot", () => {
+    const agyCell = cell({
+      provider: "antigravity",
+      sessionId: "s-backend-agy",
+      model: "gemini-3.8-flash-high",
+      costUsd: 0.75,
+      unpricedTokens: 0,
+      totals: {
+        uncachedInputTokens: 1000,
+        cachedInputTokens: 2000,
+        cacheCreationTokens: 0,
+        outputTokens: 50,
+      },
+    });
+    const owners = new Map([[sessionKey("antigravity", "s-backend-agy"), "bot-backend"]]);
+    const active = new Set(["bot-backend"]);
+    const [today] = computeTokenUsageWindows({
+      cells: [agyCell],
+      owners,
+      activeBotIds: active,
+      today: "2026-10-04",
+    });
+    expect(today?.providers).toHaveLength(1);
+    expect(today?.providers[0]).toMatchObject({
+      provider: "antigravity",
+      costUsd: 0.75,
+      sessions: 1,
+    });
+    expect(tokens(today!.providers[0]!.totals)).toBe(3050);
+    expect(today?.rows).toHaveLength(1);
+    expect(String(today?.rows[0]?.botId)).toBe("bot-backend");
+    expect(today?.rows[0]?.costUsd).toBe(0.75);
+    expect(today?.total.costUsd).toBe(0.75);
   });
 });
 

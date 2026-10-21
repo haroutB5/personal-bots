@@ -55,6 +55,10 @@ export function usageProviderOf(providerName: string): UsageProviderKind | null 
       return "opencode";
     case "deepseek":
       return "deepseek";
+    case "antigravity":
+      return "antigravity";
+    case "grok":
+      return "grok";
     default:
       return null;
   }

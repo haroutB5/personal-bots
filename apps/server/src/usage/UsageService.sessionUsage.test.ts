@@ -3,6 +3,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -14,6 +15,57 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
+
+function encodeVarint(value: number | bigint): Buffer {
+  const bytes: number[] = [];
+  let v = BigInt(value);
+  while (v >= 128n) {
+    bytes.push(Number((v & 127n) | 128n));
+    v >>= 7n;
+  }
+  bytes.push(Number(v));
+  return Buffer.from(bytes);
+}
+
+function encodeField(
+  number: number,
+  wireType: number,
+  value: number | bigint | string | Buffer,
+): Buffer {
+  const tag = encodeVarint((number << 3) | wireType);
+  if (wireType === 0) {
+    return Buffer.concat([tag, encodeVarint(value as number | bigint)]);
+  } else if (wireType === 2) {
+    const buf = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+    return Buffer.concat([tag, encodeVarint(buf.length), buf]);
+  }
+  throw new Error("unsupported wireType");
+}
+
+function makeStepMetadata(
+  model: string,
+  timestampMs: number,
+  uncached: number,
+  cached: number,
+  output: number,
+): Buffer {
+  const usageBuf = Buffer.concat([
+    encodeField(2, 0, uncached),
+    encodeField(5, 0, cached),
+    encodeField(4, 0, 0),
+    encodeField(3, 0, output),
+    encodeField(9, 0, 0),
+  ]);
+  const sec = Math.floor(timestampMs / 1000);
+  const nano = (timestampMs % 1000) * 1_000_000;
+  const timeBuf = Buffer.concat([encodeField(1, 0, sec), encodeField(2, 0, nano)]);
+  const modelBuf = Buffer.concat([encodeField(12, 2, Buffer.from(model, "utf8"))]);
+  return Buffer.concat([
+    encodeField(24, 2, modelBuf),
+    encodeField(9, 2, usageBuf),
+    encodeField(8, 2, timeBuf),
+  ]);
+}
 
 function claudeLine(input: {
   readonly id: number;
@@ -256,6 +308,52 @@ describe("UsageService.readSessionUsage", () => {
       assert.closeTo(cell.costUsd, 100 * 0.15e-6 + 1_000 * 0.003e-6 + 10 * 0.6e-6, 1e-12);
       assert.strictEqual(cell.unpricedTokens, 0);
     }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "counts Antigravity turns from conversation databases, priced at published Gemini rates",
+    () =>
+      Effect.gen(function* () {
+        const { home } = yield* setup;
+        const counters = { http: 0, urls: [] as string[] };
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(layers(home, counters, LITELLM_DOCUMENT)),
+        );
+        const agyDir = NodePath.join(home, "antigravity", "conversations");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(agyDir, { recursive: true });
+          const dbPath = NodePath.join(agyDir, "agy-session-a.db");
+          const db = new NodeSqlite.DatabaseSync(dbPath);
+          db.exec("CREATE TABLE steps (idx INTEGER PRIMARY KEY, metadata BLOB);");
+          const stmt = db.prepare("INSERT INTO steps (idx, metadata) VALUES (?, ?)");
+          stmt.run(
+            1,
+            makeStepMetadata(
+              "gemini-3.8-flash-high",
+              Date.parse("2026-08-01T10:00:00Z"),
+              1_000,
+              2_000,
+              50,
+            ),
+          );
+          db.close();
+        });
+
+        const result = yield* service.readSessionUsage(WINDOW);
+        const cell = result.cells.find((entry) => entry.provider === "antigravity");
+        assert.ok(cell !== undefined, "an antigravity cell");
+        assert.strictEqual(cell.sessionId, "agy-session-a");
+        assert.strictEqual(cell.model, "gemini-3.8-flash-high");
+        assert.deepStrictEqual(cell.totals, {
+          uncachedInputTokens: 1_000,
+          cachedInputTokens: 2_000,
+          cacheCreationTokens: 0,
+          outputTokens: 50,
+        });
+        // 1000 uncached at 0.75e-6, 2000 cached at 0.075e-6, 50 output at 3.75e-6
+        assert.closeTo(cell.costUsd, 1_000 * 0.75e-6 + 2_000 * 0.075e-6 + 50 * 3.75e-6, 1e-12);
+        assert.strictEqual(cell.unpricedTokens, 0);
+      }).pipe(Effect.scoped),
   );
 
   it.live("picks up lines appended to a transcript on the next scan", () =>

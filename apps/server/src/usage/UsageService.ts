@@ -176,6 +176,8 @@ const SESSION_USAGE_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set([
   "codex",
   "opencode",
   "deepseek",
+  "antigravity",
+  "grok",
 ]);
 
 const EMPTY_PRICING: UsagePricing = {
@@ -736,15 +738,11 @@ export const make = Effect.gen(function* () {
     return scanned;
   });
 
-  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+  const collectAntigravityDirs = Effect.fn("UsageService.collectAntigravityDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
-    retentionCutoffMs: number,
   ) {
-    const scanned: ScannedDir[] = [
-      ...(yield* collectTranscriptDirs(windowStartMs, settings, retentionCutoffMs)),
-      ...(yield* collectOpenCodeDirs(windowStartMs)),
-    ];
+    const scanned: ScannedDir[] = [];
     const home = NodeOS.homedir();
     const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
       ...["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"].map((name) =>
@@ -802,6 +800,20 @@ export const make = Effect.gen(function* () {
         ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
       });
     }
+    return scanned;
+  });
+
+  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+    windowStartMs: number,
+    settings: ServerSettingsValue,
+    retentionCutoffMs: number,
+  ) {
+    const scanned: ScannedDir[] = [
+      ...(yield* collectTranscriptDirs(windowStartMs, settings, retentionCutoffMs)),
+      ...(yield* collectOpenCodeDirs(windowStartMs)),
+      ...(yield* collectAntigravityDirs(windowStartMs, settings)),
+    ];
+    const home = NodeOS.homedir();
     const cursorUserHome =
       (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
     const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
@@ -1148,6 +1160,7 @@ export const make = Effect.gen(function* () {
         SESSION_USAGE_PROVIDERS,
       )),
       ...(yield* collectOpenCodeDirs(sinceMs - MTIME_SLACK_MS)),
+      ...(yield* collectAntigravityDirs(sinceMs - MTIME_SLACK_MS, settings)),
     ];
 
     const aggregator = new UsageBotAggregator({

@@ -72,6 +72,52 @@ export const DEEPSEEK_FLASH_PEAK_RATES: ModelRate = {
 };
 
 /**
+ * Gemini-3.8-Flash published list rates, USD per token.
+ * Retrieved 2026-10-21 from Google's published Gemini API price list:
+ * https://ai.google.dev/pricing
+ * https://ai.google.dev/gemini-api/docs/pricing
+ */
+export const GEMINI_38_FLASH_RATES: ModelRate = {
+  inputCostPerToken: 0.75 / 1_000_000,
+  outputCostPerToken: 3.75 / 1_000_000,
+  cacheReadCostPerToken: 0.075 / 1_000_000,
+  cacheCreationCostPerToken: 0.75 / 1_000_000,
+  fast: null,
+  ultrafast: null,
+};
+
+/**
+ * Gemini-4-Argon published list rates, USD per token.
+ * Retrieved 2026-10-21 from Google's published Gemini API price list:
+ * https://ai.google.dev/pricing
+ * https://ai.google.dev/gemini-api/docs/pricing
+ */
+export const GEMINI_4_ARGON_RATES: ModelRate = {
+  inputCostPerToken: 2.0 / 1_000_000,
+  outputCostPerToken: 10.0 / 1_000_000,
+  cacheReadCostPerToken: 0.1 / 1_000_000,
+  cacheCreationCostPerToken: 2.0 / 1_000_000,
+  fast: null,
+  ultrafast: null,
+};
+
+const GEMINI_PUBLISHED_RATES: Readonly<Record<string, ModelRate>> = {
+  "gemini-3.8-flash": GEMINI_38_FLASH_RATES,
+  "gemini-4-argon": GEMINI_4_ARGON_RATES,
+};
+
+/**
+ * Normalizes Gemini model names to match the published rate card by stripping
+ * effort/tier suffixes (e.g. `-high`, `-medium`, `-low`, `-n`).
+ */
+export function normalizeGeminiModel(model: string): string {
+  return model
+    .trim()
+    .toLowerCase()
+    .replace(/(?:-(?:high|medium|low|none|minimal|xhigh|max|n))$/, "");
+}
+
+/**
  * Peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday through Friday.
  * Everything else — weekends included — is off-peak. Chinese public holidays
  * are off-peak in full as well; this ignores them, so their peak-hour records
@@ -289,7 +335,10 @@ export function lookupRate(table: RateTable, model: string): ModelRate | null {
   const key = stripVariantSuffix(normalizeRateKey(model));
   const bareName = bareModelName(key);
   if (bareName.length === 0 || UNPRICEABLE_MODELS.has(bareName)) return null;
-  return table.get(key) ?? null;
+  const fromTable = table.get(key);
+  if (fromTable !== undefined) return fromTable;
+  const normalizedGemini = normalizeGeminiModel(bareName);
+  return GEMINI_PUBLISHED_RATES[normalizedGemini] ?? null;
 }
 
 /** The parts of a transcript record that decide its price. */

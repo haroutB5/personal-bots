@@ -5,8 +5,11 @@ import type { UsageSpeed } from "./usageTranscripts.ts";
 import {
   cacheSavingsUsd,
   createOverrideRateTable,
+  GEMINI_38_FLASH_RATES,
+  GEMINI_4_ARGON_RATES,
   isDeepSeekPeakTime,
   lookupRate,
+  normalizeGeminiModel,
   parseRateTable,
   priceUsage,
 } from "./usagePricing.ts";
@@ -291,5 +294,43 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "provider-a/example-model")?.inputCostPerToken).toBe(1);
     expect(lookupRate(table, "provider-b/example-model")?.inputCostPerToken).toBe(3);
     expect(lookupRate(table, "example-model")).toBeNull();
+  });
+
+  it("normalizes and prices Gemini models at published rates", () => {
+    expect(normalizeGeminiModel("gemini-3.8-flash-high")).toBe("gemini-3.8-flash");
+    expect(normalizeGeminiModel("gemini-3.8-flash-medium")).toBe("gemini-3.8-flash");
+    expect(normalizeGeminiModel("gemini-3.8-flash-low")).toBe("gemini-3.8-flash");
+    expect(normalizeGeminiModel("gemini-3.8-flash-n")).toBe("gemini-3.8-flash");
+    expect(normalizeGeminiModel("gemini-4-argon-high")).toBe("gemini-4-argon");
+
+    const emptyTable = new Map();
+    expect(lookupRate(emptyTable, "gemini-3.8-flash")).toEqual(GEMINI_38_FLASH_RATES);
+    expect(lookupRate(emptyTable, "gemini-3.8-flash-high")).toEqual(GEMINI_38_FLASH_RATES);
+    expect(lookupRate(emptyTable, "gemini-3.8-flash-n")).toEqual(GEMINI_38_FLASH_RATES);
+    expect(lookupRate(emptyTable, "gemini-4-argon")).toEqual(GEMINI_4_ARGON_RATES);
+    expect(lookupRate(emptyTable, "gemini-4-argon-high")).toEqual(GEMINI_4_ARGON_RATES);
+    expect(lookupRate(emptyTable, "antigravity-unknown")).toBeNull();
+
+    const agyRecord = (model: string, overrides: Partial<typeof totals> = {}) => ({
+      provider: "antigravity" as const,
+      model,
+      rateModel: normalizeGeminiModel(model),
+      timestampMs: OFF_PEAK_MS,
+      totals: { ...totals, ...overrides },
+      reportedCostUsd: null,
+      speed: "standard" as const,
+    });
+
+    const flashPrice = priceUsage(emptyTable, agyRecord("gemini-3.8-flash-high"));
+    expect(flashPrice.costSource).toBe("modelPriced");
+    expect(flashPrice.costUsd).toBeCloseTo(0.75 + 0.075 + 0.75 + 3.75, 10);
+    expect(cacheSavingsUsd(emptyTable, agyRecord("gemini-3.8-flash-high"))).toBeCloseTo(
+      0.75 - 0.075,
+      10,
+    );
+
+    const argonPrice = priceUsage(emptyTable, agyRecord("gemini-4-argon"));
+    expect(argonPrice.costSource).toBe("modelPriced");
+    expect(argonPrice.costUsd).toBeCloseTo(2.0 + 0.1 + 2.0 + 10.0, 10);
   });
 });

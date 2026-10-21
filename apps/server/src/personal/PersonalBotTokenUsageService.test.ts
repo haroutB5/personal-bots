@@ -378,3 +378,78 @@ it.effect("never lists a removed bot: its sessions go to other", () => {
     expect(ready.windows[0]?.other.sessions).toBe(2);
   }).pipe(Effect.provide(harness(scanner)));
 });
+
+it.effect("attributes Antigravity sessions to bots through resumeCursorJson", () => {
+  const AGY_CELL: BotUsageCell = {
+    day: "2026-10-04",
+    provider: "antigravity",
+    model: "gemini-3.8-flash-high",
+    sessionId: "agy-session-gemini",
+    totals: {
+      uncachedInputTokens: 500,
+      cachedInputTokens: 1000,
+      cacheCreationTokens: 0,
+      outputTokens: 100,
+    },
+    records: 1,
+    costUsd: 0.75,
+    unpricedTokens: 0,
+  };
+  const scanner = fakeScanner({ cells: [AGY_CELL] });
+  return Effect.gen(function* () {
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const geminiBot = PersonalBotId.make("bot-gemini");
+    yield* repository.createBot(
+      decodeCreateBot({
+        botId: geminiBot,
+        name: "Gemini",
+        title: "Assistant",
+        description: "Helps.",
+        instructions: "Help.",
+        avatarShape: "blob",
+        avatarColor: "#4285F4",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("antigravity"),
+          model: "gemini-3.8-flash-high",
+        },
+        team: "assistant",
+        lead: false,
+        pinned: false,
+        sortOrder: 0,
+        createdAt: "2026-09-13T20:38:00.000Z",
+        updatedAt: "2026-09-13T20:38:00.000Z",
+      }),
+    );
+    const threadId = ThreadId.make("thread-gemini");
+    yield* repository.insertThreadLink(
+      decodeInsertThreadLink({ botId: geminiBot, threadId, createdAt: "2026-09-13T20:38:00.000Z" }),
+    );
+    yield* sql`
+      INSERT INTO provider_session_runtime
+        (thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json)
+      VALUES (${threadId}, 'antigravity', 'antigravity', 'full-access', 'running',
+        '2026-10-04T11:00:00.000Z', '{"schemaVersion":1,"sessionId":"agy-session-gemini"}')
+    `;
+
+    yield* TestClock.setTime(NOW_MS);
+    const service = yield* PersonalBotTokenUsage.PersonalBotTokenUsage;
+    yield* service.read(input);
+    yield* settle;
+    yield* Deferred.succeed(scanner.runs[0]!.release, undefined);
+    yield* settle;
+
+    const ready = yield* service.read(input);
+    expect(ready.status).toBe("ready");
+    const today = ready.windows[0]!;
+    expect(today.rows.map((row) => String(row.botId))).toEqual(["bot-gemini"]);
+    expect(today.rows[0]?.totals.outputTokens).toBe(100);
+    expect(today.providers).toHaveLength(1);
+    expect(today.providers[0]).toMatchObject({
+      provider: "antigravity",
+      costUsd: 0.75,
+      sessions: 1,
+    });
+    expect(today.total.totals.outputTokens).toBe(100);
+  }).pipe(Effect.provide(harness(scanner)));
+});

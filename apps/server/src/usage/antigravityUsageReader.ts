@@ -6,6 +6,7 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
+import { normalizeGeminiModel } from "./usagePricing.ts";
 
 type FieldValue = number | bigint | Uint8Array;
 type Fields = Map<number, FieldValue[]>;
@@ -228,16 +229,18 @@ async function readDatabase(path: string, fallbackTimestamp: number): Promise<Us
             const id = textAt(usage, key);
             return id ? [`antigravity:${key}:${id}`] : [];
           });
+          const model =
+            MODEL_IDS[numberAt(usage, 1)] ||
+            entry.model ||
+            (source === "step" ? generationModels.get(idx) : "") ||
+            modelName("", numberAt(usage, 1)) ||
+            "antigravity-unknown";
           const record: UsageRecord = {
             provider: "antigravity",
             sessionId,
             timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
-            model:
-              MODEL_IDS[numberAt(usage, 1)] ||
-              entry.model ||
-              (source === "step" ? generationModels.get(idx) : "") ||
-              modelName("", numberAt(usage, 1)) ||
-              "antigravity-unknown",
+            model,
+            rateModel: normalizeGeminiModel(model),
             totals,
             reportedCostUsd: null,
             speed: "standard",
