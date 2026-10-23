@@ -548,7 +548,7 @@ export function PersonalSettingsScreen(): JSX.Element {
             <PreferenceRow
               preference="showToolSteps"
               label="Show tool steps"
-              hint='The collapsed "2 steps" rows showing what a bot did between replies.'
+              hint='The compact work rows showing what a bot did between replies, like "Ran 3 commands".'
             />
           </li>
           <li>
