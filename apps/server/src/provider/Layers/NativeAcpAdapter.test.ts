@@ -201,7 +201,6 @@ it.live(
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-busy-" });
       const threadId = ThreadId.make("native-acp-busy-test");
       const seen: ProviderRuntimeEvent[] = [];
