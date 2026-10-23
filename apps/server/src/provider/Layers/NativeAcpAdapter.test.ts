@@ -147,6 +147,7 @@ it.live(
         provider: ProviderDriverKind.make("opencode"),
         instanceId: ProviderInstanceId.make("opencode-test"),
         displayName: "OpenCode",
+        turnNarration: "NARRATE_PROGRESS",
         runtimeOptions: () =>
           Effect.succeed({
             spawn: {
@@ -189,6 +190,58 @@ it.live(
       expect(seen.filter((event) => event.type === "turn.completed")).toHaveLength(2);
       const requests = yield* fs.readFileString(log);
       expect(requests.indexOf("first message")).toBeLessThan(requests.indexOf("second message"));
+      expect(requests).toContain("NARRATE_PROGRESS");
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  30_000,
+);
+
+it.live(
+  "a prompt the agent still calls active is retried instead of failing the turn",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-busy-" });
+      const threadId = ThreadId.make("native-acp-busy-test");
+      const seen: ProviderRuntimeEvent[] = [];
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        displayName: "OpenCode",
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: root,
+              env: { ...process.env, T3_ACP_BUSY_FIRST_PROMPT: "1" },
+            },
+            cwd: root,
+            authMethodId: null,
+            clientInfo: { name: "hbots-test", version: "1" },
+          }),
+      });
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            seen.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      yield* adapter.sendTurn({ threadId, input: "after a steer" });
+      expect(seen.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+      expect(
+        seen.some(
+          (event) => event.type === "turn.completed" && event.payload.state === "completed",
+        ),
+      ).toBe(true);
       yield* adapter.stopAll();
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   30_000,

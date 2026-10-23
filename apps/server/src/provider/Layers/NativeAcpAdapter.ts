@@ -136,6 +136,12 @@ export interface NativeAcpAdapterOptions {
    * Without this the adapter repeats the instructions in every prompt.
    */
   readonly instructionsInSession?: boolean;
+  /**
+   * One short line appended to every turn asking the model to narrate progress
+   * between tool calls. OpenCode 2's DeepSeek stays silent until the end
+   * without it; Claude models already talk while they work.
+   */
+  readonly turnNarration?: string;
 }
 
 export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
@@ -609,31 +615,46 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
               turnId,
               payload: {},
             });
-            const fiber = yield* ctx.runtime
-              .prompt({
-                prompt: [
-                  {
-                    type: "text",
-                    text: [
-                      input.turnContext,
-                      input.input,
-                      options.instructionsInSession === true
-                        ? undefined
-                        : withBotInstructions(
-                            buildRuntimeInstructions({
-                              harness: `${providerName} ACP`,
-                              model: input.modelSelection?.model,
-                            }),
-                            input.systemInstructions,
-                          ),
-                    ]
-                      .filter(Boolean)
-                      .join("\n\n"),
-                  },
-                  ...attachments,
-                ],
-              })
-              .pipe(Effect.forkIn(ctx.scope));
+            const promptPayload = {
+              prompt: [
+                {
+                  type: "text" as const,
+                  text: [
+                    input.turnContext,
+                    input.input,
+                    options.instructionsInSession === true
+                      ? undefined
+                      : withBotInstructions(
+                          buildRuntimeInstructions({
+                            harness: `${providerName} ACP`,
+                            model: input.modelSelection?.model,
+                          }),
+                          input.systemInstructions,
+                        ),
+                    options.turnNarration,
+                  ]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                },
+                ...attachments,
+              ],
+            };
+            // A steer cancels the running prompt and sends this one right
+            // after it. The agent can clear its own "active prompt" a moment
+            // later than its cancelled response, so retry that one refusal
+            // briefly instead of failing the owner's message.
+            const promptWithBusyRetry = (attempt: number): ReturnType<typeof ctx.runtime.prompt> =>
+              ctx.runtime.prompt(promptPayload).pipe(
+                Effect.catch((error) => {
+                  const message = error instanceof Error ? error.message : String(error);
+                  return attempt < 15 && message.includes("already has an active ACP prompt")
+                    ? Effect.sleep("200 millis").pipe(
+                        Effect.flatMap(() => promptWithBusyRetry(attempt + 1)),
+                      )
+                    : Effect.fail(error);
+                }),
+              );
+            const fiber = yield* promptWithBusyRetry(0).pipe(Effect.forkIn(ctx.scope));
             return { ctx, turnId, fiber };
           }),
         );

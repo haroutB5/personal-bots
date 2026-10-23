@@ -74,6 +74,7 @@ const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const busyFirstPrompt = process.env.T3_ACP_BUSY_FIRST_PROMPT === "1";
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -96,6 +97,7 @@ let dshReasoningEffort = "low";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
+let busyPromptsLeft = busyFirstPrompt ? 1 : 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
 
@@ -811,6 +813,12 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+      if (busyPromptsLeft > 0) {
+        busyPromptsLeft -= 1;
+        return yield* AcpError.AcpRequestError.internalError(
+          "Session already has an active ACP prompt: mock",
+        );
+      }
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")

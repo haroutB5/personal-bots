@@ -43,6 +43,13 @@ import {
 } from "./providerUpdateSettings.ts";
 
 const DRIVER = ProviderDriverKind.make("opencode");
+/**
+ * DeepSeek on OpenCode 2 otherwise stays silent until the final answer;
+ * Claude models already narrate. A short line every turn keeps the owner in
+ * the loop without putting a large block back into every prompt.
+ */
+const PROGRESS_NARRATION =
+  "While you work, keep the user in the loop: after each tool call, or before a long step, write one short sentence saying what you found and what you are doing next. Do not wait until the end.";
 const decodeAuth = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -351,6 +358,7 @@ export const makeOpenCode2Instance = Effect.fn("makeOpenCode2Instance")(function
     provider: DRIVER,
     displayName: "OpenCode",
     instructionsInSession: true,
+    turnNarration: PROGRESS_NARRATION,
     needsFreshContext: (session) =>
       session.freshSession !== true &&
       session.resumeCursor != null &&
