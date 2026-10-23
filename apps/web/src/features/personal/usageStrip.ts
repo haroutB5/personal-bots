@@ -14,15 +14,14 @@ export interface UsageStripCell {
 }
 
 /**
- * Cells for the strip, in card order (Claude left, Codex right). Cards that
- * cannot report (`unavailable` / `not-reported`) keep their cell so the
- * provider name stays visible; their figures are null.
+ * Cells for the strip, in card order (Claude, Codex, OpenCode, Antigravity).
+ * Cards that cannot report (`unavailable` / `not-reported`) keep their cell so
+ * the provider name stays visible; their figures are null.
  *
  * A balance card (DeepSeek) gets no cell at all, on purpose: the strip is a
- * two-up row of percent windows with one shared "Session/Weekly percent used"
- * shape, and a third cell would squeeze the existing two (already tuned down
- * to a 280 px desktop column) and read as a window that never fills. The
- * balance with its granted/topped-up split lives one tap away, in the sheet.
+ * row of percent windows with one shared "Session/Weekly percent used" shape,
+ * and a balance has no window to fill. The balance with its granted/topped-up
+ * split lives one tap away, in the sheet.
  */
 export function selectUsageStripCells(cards: ReadonlyArray<UsageCard>): readonly UsageStripCell[] {
   return cards

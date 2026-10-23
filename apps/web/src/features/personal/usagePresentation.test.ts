@@ -167,6 +167,60 @@ describe("selectUsageCards", () => {
     expect(codex!.session).toMatchObject({ usedPercent: 63, resetLabel: "resets in 45m" });
   });
 
+  it("builds an OpenCode card from the Go allowance windows, ignoring the turned-off v1 instance", () => {
+    const goWindows = [
+      window({
+        id: "go_rolling",
+        kind: "session",
+        label: "Go · Session",
+        usedPercent: 4,
+        resetsAt: "2026-09-13T12:56:00Z",
+        windowDurationMins: 300,
+      }),
+      window({
+        id: "go_weekly",
+        kind: "weekly",
+        label: "Go · Weekly",
+        usedPercent: 2,
+        resetsAt: "2026-09-20T00:00:00Z",
+        windowDurationMins: 7 * 24 * 60,
+      }),
+      window({
+        id: "go_monthly",
+        kind: "monthly",
+        label: "Go · Monthly",
+        usedPercent: 1,
+        resetsAt: "2026-10-22T21:45:00Z",
+      }),
+    ];
+    const cards = selectUsageCards(
+      [
+        provider({
+          driver: "opencode",
+          instanceId: "opencode",
+          enabled: false,
+          usageLimits: { checkedAt: "2026-09-13T11:00:00Z", windows: goWindows },
+        }),
+        provider({
+          driver: "opencode",
+          instanceId: "opencode-v2",
+          usageLimits: { checkedAt: "2026-09-13T11:58:00Z", windows: goWindows },
+        }),
+      ],
+      NOW,
+    );
+    expect(cards.map((card) => card.title)).toEqual(["OpenCode"]);
+    expect(cards[0]!.session).toMatchObject({ usedPercent: 4 });
+    expect(cards[0]!.weeklies[0]).toMatchObject({ usedPercent: 2 });
+    // The monthly allowance is only in the sheet's full window list.
+    expect(cards[0]!.windows?.map((row) => row.label)).toEqual([
+      "Go · Session",
+      "Go · Weekly",
+      "Go · Monthly",
+    ]);
+    expect(usageSheetDescription(cards)).toBe("Token windows for OpenCode");
+  });
+
   it("shows a window whose reset has passed as empty, and asks for a new reading", () => {
     // Harout, 19 Oct: Claude still read "100% used, resets now" 12 minutes
     // after the 22:19 reset, because the reading was 32 minutes old.

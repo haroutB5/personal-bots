@@ -16,12 +16,19 @@ import { formatUsd } from "./tokenUsagePresentation";
 const NO_HIDDEN_PROVIDERS: ReadonlySet<string> = new Set();
 
 /** Drivers surfaced as cards, in display order. */
-export const USAGE_CARD_DRIVERS = ["claudeAgent", "codex", "deepseek", "antigravity"] as const;
+export const USAGE_CARD_DRIVERS = [
+  "claudeAgent",
+  "codex",
+  "opencode",
+  "deepseek",
+  "antigravity",
+] as const;
 export type UsageCardDriver = (typeof USAGE_CARD_DRIVERS)[number];
 
 export const USAGE_CARD_TITLES: Record<UsageCardDriver, string> = {
   claudeAgent: "Claude",
   codex: "Codex",
+  opencode: "OpenCode",
   deepseek: "DeepSeek",
   antigravity: "Antigravity",
 };
