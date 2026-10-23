@@ -1,4 +1,8 @@
-import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contracts";
+import type {
+  PersonalBotTokenUsageResult,
+  ServerProvider,
+  ServerProviderUsageWindow,
+} from "@t3tools/contracts";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -11,6 +15,7 @@ import {
   resetCreditsExpiresIn,
   resetCreditsHeadline,
   selectDeepSeekBalanceLine,
+  selectOpenCodeSpendLine,
   selectUsageCards,
   usageAutoProbeDue,
   usageCardEmptyText,
@@ -219,6 +224,73 @@ describe("selectUsageCards", () => {
       "Go · Monthly",
     ]);
     expect(usageSheetDescription(cards)).toBe("Token windows for OpenCode");
+  });
+
+  it("shows the OpenCode API price for the week, and says when some tokens are unpriced", () => {
+    const result = {
+      status: "ready",
+      readAt: null,
+      windows: [
+        {
+          id: "week",
+          sinceDay: "2026-09-07",
+          untilDay: "2026-09-13",
+          rows: [],
+          providers: [
+            {
+              provider: "opencode",
+              totals: {
+                uncachedInputTokens: 0,
+                cachedInputTokens: 0,
+                cacheCreationTokens: 0,
+                outputTokens: 0,
+                reasoningTokens: 0,
+              },
+              costUsd: 0.79,
+              unpricedTokens: 0,
+              sessions: 2,
+            },
+          ],
+          other: {
+            totals: {
+              uncachedInputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              outputTokens: 0,
+              reasoningTokens: 0,
+            },
+            costUsd: 0,
+            unpricedTokens: 0,
+            sessions: 0,
+          },
+          total: {
+            totals: {
+              uncachedInputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              outputTokens: 0,
+              reasoningTokens: 0,
+            },
+            costUsd: 0.79,
+            unpricedTokens: 0,
+            sessions: 2,
+          },
+        },
+      ],
+    } as unknown as PersonalBotTokenUsageResult;
+    expect(selectOpenCodeSpendLine(result)).toBe("API price $0.79 this week");
+    expect(
+      selectOpenCodeSpendLine({
+        ...result,
+        windows: [
+          {
+            ...result.windows[0]!,
+            providers: [{ ...result.windows[0]!.providers[0]!, unpricedTokens: 1200 }],
+          },
+        ],
+      }),
+    ).toBe("API price $0.79 this week, plus unpriced tokens");
+    expect(selectOpenCodeSpendLine(undefined)).toBeNull();
   });
 
   it("shows a window whose reset has passed as empty, and asks for a new reading", () => {

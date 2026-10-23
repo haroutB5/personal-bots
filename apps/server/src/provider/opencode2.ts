@@ -158,13 +158,38 @@ export const openCode2Environment = Effect.fn("openCode2Environment")(function* 
 });
 
 export const configureOpenCode2Turn = (
-  runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setMode" | "setConfigOption">,
+  runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "setMode" | "setConfigOption" | "getConfigOptions"
+  >,
   input: ProviderSendTurnInput,
 ) =>
   Effect.gen(function* () {
     yield* runtime.setMode(input.interactionMode === "plan" ? "plan" : "build");
     for (const option of input.modelSelection?.options ?? []) {
       const id = option.id === "variant" ? "effort" : option.id;
+      if (id === "effort") {
+        // Older bot selections (and the form before 1.66.84) could name an
+        // effort this model does not offer, e.g. "medium" on DeepSeek, which
+        // the agent refuses. Leaving it unset runs the model's own default
+        // instead of failing the whole turn.
+        const configOptions = yield* runtime.getConfigOptions;
+        const effort = configOptions.find((candidate) => candidate.id === "effort");
+        if (effort?.type === "select") {
+          const offered = effort.options.some((entry) =>
+            "value" in entry
+              ? entry.value === option.value
+              : entry.options.some((nested) => nested.value === option.value),
+          );
+          if (!offered) {
+            yield* Effect.logWarning("OpenCode model does not offer this effort", {
+              model: input.modelSelection?.model,
+              effort: option.value,
+            });
+            continue;
+          }
+        }
+      }
       yield* runtime.setConfigOption(id, option.value);
     }
   }).pipe(
@@ -376,40 +401,68 @@ export const makeOpenCode2Instance = Effect.fn("makeOpenCode2Instance")(function
     const runtime = yield* makeRuntime(config.cwd);
     const started = yield* runtime.start();
     const options = started.sessionSetupResult.configOptions ?? [];
-    const descriptors = options
-      .filter(
-        (option) =>
-          option.category !== "model" && option.category !== "mode" && option.type === "select",
-      )
-      .flatMap((option) => {
-        if (option.type !== "select") return [];
-        return [
-          buildSelectOptionDescriptor({
-            id: option.id,
-            label: option.name,
-            options: option.options.flatMap((entry) =>
-              "value" in entry
-                ? [
-                    {
-                      value: entry.value,
-                      label: entry.name,
-                      isDefault: entry.value === option.currentValue,
-                    },
-                  ]
-                : entry.options.map((nested) => ({
-                    value: nested.value,
-                    label: nested.name,
-                    isDefault: nested.value === option.currentValue,
-                  })),
-            ),
-          }),
-        ];
-      });
+    const descriptorsFor = (configOptions: typeof options) =>
+      configOptions
+        .filter(
+          (option) =>
+            option.category !== "model" && option.category !== "mode" && option.type === "select",
+        )
+        .flatMap((option) => {
+          if (option.type !== "select") return [];
+          return [
+            buildSelectOptionDescriptor({
+              id: option.id,
+              label: option.name,
+              options: option.options.flatMap((entry) =>
+                "value" in entry
+                  ? [
+                      {
+                        value: entry.value,
+                        label: entry.name,
+                        isDefault: entry.value === option.currentValue,
+                      },
+                    ]
+                  : entry.options.map((nested) => ({
+                      value: nested.value,
+                      label: nested.name,
+                      isDefault: nested.value === option.currentValue,
+                    })),
+              ),
+            }),
+          ];
+        });
+    const initialDescriptors = descriptorsFor(options);
+    // Effort choices belong to the model, not the agent: DeepSeek offers
+    // low/high/max while Claude and GPT offer more. The session's options
+    // describe only its starting model, so ask each model for its own.
+    const descriptorsByModel = new Map<string, ReturnType<typeof descriptorsFor>>();
+    const modelOption = options.find(
+      (option) => option.category === "model" && option.type === "select",
+    );
+    const modelValues =
+      modelOption?.type === "select"
+        ? modelOption.options.flatMap((entry) =>
+            "value" in entry ? [entry.value] : entry.options.map((nested) => nested.value),
+          )
+        : [];
+    for (const value of modelValues) {
+      const switched = yield* runtime
+        .setConfigOption(modelOption?.id ?? "model", value)
+        .pipe(Effect.option);
+      descriptorsByModel.set(
+        value,
+        Option.isSome(switched)
+          ? descriptorsFor(switched.value.configOptions ?? [])
+          : initialDescriptors,
+      );
+    }
     const models = buildRegistryModels(started.sessionSetupResult).map((model) => ({
       ...model,
       name: model.name.replace(/^[^/]+\//, ""),
       subProvider: model.slug.startsWith("opencode-go/") ? "OpenCode Go" : "OpenCode",
-      capabilities: createModelCapabilities({ optionDescriptors: descriptors }),
+      capabilities: createModelCapabilities({
+        optionDescriptors: descriptorsByModel.get(model.slug) ?? initialDescriptors,
+      }),
     }));
     return buildServerProvider({
       driver: DRIVER,

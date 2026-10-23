@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   providers: [] as unknown[],
   refresh: (() => {}) as (...args: unknown[]) => unknown,
   consume: (() => {}) as (...args: unknown[]) => unknown,
+  tokenUsage: undefined as unknown,
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.providers }));
@@ -43,6 +44,7 @@ vi.mock("~/components/ui/alert-dialog", () => ({
 }));
 vi.mock("./usePersonalBots", () => ({
   usePersonalEnvironmentId: () => "env-1",
+  usePersonalTokenUsage: () => ({ data: state.tokenUsage }),
   // One stable empty set, as the real hook memoizes it.
   useHiddenUsageProviders: (
     (none: ReadonlySet<string>) => () =>

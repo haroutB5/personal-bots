@@ -13,10 +13,15 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { formatRelativeTime } from "./relativeTime";
 import { trackUsageRefresh, useUsageRefreshing } from "./usageRefresh";
-import { useHiddenUsageProviders, usePersonalEnvironmentId } from "./usePersonalBots";
+import {
+  useHiddenUsageProviders,
+  usePersonalEnvironmentId,
+  usePersonalTokenUsage,
+} from "./usePersonalBots";
 import {
   deepSeekSpendText,
   formatBalanceAmount,
+  selectOpenCodeSpendLine,
   selectUsageCards,
   usageCardEmptyText,
   usageAutoProbeDue,
@@ -265,12 +270,15 @@ function UsageCardView({
   checking,
   environmentId,
   onRedeemed,
+  spendLine,
 }: {
   readonly card: UsageCard;
   readonly now: number;
   readonly checking: boolean;
   readonly environmentId: EnvironmentId | null;
   readonly onRedeemed: () => void;
+  /** A dollar line under the windows (OpenCode's API-price value), or null. */
+  readonly spendLine?: string | null;
 }) {
   // Once a credit has been shown, keep the redeem block mounted for the life
   // of the sheet: spending the last one must not take its outcome with it.
@@ -296,24 +304,31 @@ function UsageCardView({
       {card.status === "ready" && card.balance !== null ? (
         <BalanceRows balance={card.balance} now={now} />
       ) : card.status === "ready" ? (
-        <div className="flex flex-col gap-4">
-          {card.windows && card.windows.length > 0 ? (
-            card.windows.map((row) => <WindowRow key={row.id} card={card} row={row} />)
-          ) : (
-            <>
-              {card.session ? (
-                <WindowRow card={card} row={card.session} />
-              ) : (
-                <MissingRow label="5-hour session" />
-              )}
-              {card.weeklies.length > 0 ? (
-                card.weeklies.map((row) => <WindowRow key={row.id} card={card} row={row} />)
-              ) : (
-                <MissingRow label="Weekly" />
-              )}
-            </>
-          )}
-        </div>
+        <>
+          <div className="flex flex-col gap-4">
+            {card.windows && card.windows.length > 0 ? (
+              card.windows.map((row) => <WindowRow key={row.id} card={card} row={row} />)
+            ) : (
+              <>
+                {card.session ? (
+                  <WindowRow card={card} row={card.session} />
+                ) : (
+                  <MissingRow label="5-hour session" />
+                )}
+                {card.weeklies.length > 0 ? (
+                  card.weeklies.map((row) => <WindowRow key={row.id} card={card} row={row} />)
+                ) : (
+                  <MissingRow label="Weekly" />
+                )}
+              </>
+            )}
+          </div>
+          {spendLine ? (
+            <p className="text-[13px] leading-5 text-[var(--personal-text-secondary)]">
+              {spendLine}
+            </p>
+          ) : null}
+        </>
       ) : (
         <p className="text-[14px] text-[var(--personal-text-secondary)]">
           {usageCardEmptyText(card, { checking })}
@@ -350,6 +365,8 @@ function UsageSheetBody({
   readonly now: number;
 }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
+  const tokenUsage = usePersonalTokenUsage(environmentId);
+  const openCodeSpend = selectOpenCodeSpendLine(tokenUsage.data);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -418,6 +435,7 @@ function UsageSheetBody({
             checking={refreshing || probing}
             environmentId={environmentId}
             onRedeemed={() => void onRefresh()}
+            spendLine={card.driver === "opencode" ? openCodeSpend : null}
           />
         ))}
       </div>

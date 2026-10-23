@@ -54,6 +54,19 @@ it.live.skipIf(!process.env.HBOTS_OPENCODE_V2_LIVE)(
         ),
       );
       const snapshot = yield* instance.snapshot.refresh;
+      const deepSeekEffort = snapshot.models
+        .find((model) => model.slug === modelSelection.model)
+        ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "effort");
+      expect(deepSeekEffort?.type).toBe("select");
+      if (deepSeekEffort?.type === "select") {
+        // The agent's own list for this model: no "medium" (it rejects it).
+        expect(deepSeekEffort.options.map((option) => option.id)).toEqual([
+          "low",
+          "high",
+          "max",
+          "default",
+        ]);
+      }
       expect(snapshot.status).toBe("ready");
       expect(snapshot.models.some((model) => model.slug === modelSelection.model)).toBe(true);
       expect(snapshot.usageLimits?.windows.length).toBe(3);

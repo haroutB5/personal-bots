@@ -1,4 +1,5 @@
 import type {
+  PersonalBotTokenUsageResult,
   ProviderConsumeResetCreditInput,
   ServerProvider,
   ServerProviderResetCredits,
@@ -154,6 +155,24 @@ export function usageSheetDescription(cards: readonly UsageCard[]): string {
   const kind =
     balance && windows ? "Token windows and balance" : balance ? "Balance" : "Token windows";
   return `${kind} for ${list}`;
+}
+
+/**
+ * The OpenCode spend line for the week, from the same usage scan the Token
+ * usage card reads: the API-price value of the tokens we recorded, never the
+ * flat Go subscription's charge. Null until the scan has a figure, so the card
+ * shows no invented zero.
+ */
+export function selectOpenCodeSpendLine(
+  result: PersonalBotTokenUsageResult | null | undefined,
+): string | null {
+  const week = result?.windows.find((window) => window.id === "week");
+  const row = week?.providers.find((provider) => provider.provider === "opencode");
+  if (!row || row.costUsd <= 0) return null;
+  const amount = formatUsd(row.costUsd);
+  return row.unpricedTokens > 0
+    ? `API price ${amount} this week, plus unpriced tokens`
+    : `API price ${amount} this week`;
 }
 
 /** "1 reset banked", "2 resets banked". */

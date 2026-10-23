@@ -110,6 +110,15 @@ it.effect("malformed auth cannot leak into config or overwrite another account",
   }),
 );
 
+const effortConfig = (values: ReadonlyArray<string>) => ({
+  id: "effort",
+  name: "Effort",
+  category: "thought_level",
+  type: "select" as const,
+  currentValue: "default",
+  options: values.map((value) => ({ value, name: value })),
+});
+
 it.effect("sets native plan mode and maps saved v1 variant selections to v2 effort", () =>
   Effect.gen(function* () {
     const calls: unknown[] = [];
@@ -124,7 +133,11 @@ it.effect("sets native plan mode and maps saved v1 variant selections to v2 effo
           calls.push([id, value]);
           return { configOptions: [] };
         }),
-    } satisfies Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setMode" | "setConfigOption">;
+      getConfigOptions: Effect.succeed([effortConfig(["low", "high", "max", "default"])]),
+    } satisfies Pick<
+      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      "setMode" | "setConfigOption" | "getConfigOptions"
+    >;
     yield* configureOpenCode2Turn(runtime, {
       threadId: ThreadId.make("test"),
       interactionMode: "plan",
@@ -138,5 +151,36 @@ it.effect("sets native plan mode and maps saved v1 variant selections to v2 effo
       ["mode", "plan"],
       ["effort", "high"],
     ]);
+  }),
+);
+
+it.effect("leaves an effort the model does not offer unset instead of failing the turn", () =>
+  Effect.gen(function* () {
+    const calls: unknown[] = [];
+    const runtime = {
+      setMode: (mode) =>
+        Effect.sync(() => {
+          calls.push(["mode", mode]);
+          return {};
+        }),
+      setConfigOption: (id, value) =>
+        Effect.sync(() => {
+          calls.push([id, value]);
+          return { configOptions: [] };
+        }),
+      getConfigOptions: Effect.succeed([effortConfig(["low", "high", "max", "default"])]),
+    } satisfies Pick<
+      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      "setMode" | "setConfigOption" | "getConfigOptions"
+    >;
+    yield* configureOpenCode2Turn(runtime, {
+      threadId: ThreadId.make("test"),
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("opencode"),
+        model: "opencode-go/deepseek-v4.1-flash",
+        options: [{ id: "effort", value: "medium" }],
+      },
+    });
+    expect(calls).toEqual([["mode", "build"]]);
   }),
 );
