@@ -36,11 +36,12 @@ const pinnedAt = DateTime.makeUnsafe(NOW - 86_400_000);
 const asleep = DateTime.makeUnsafe(NOW + 3_600_000);
 
 /** A task that made the chat (the task rule reads the id and the creation time). */
-const taskOn = (threadId: string, hoursAgo: number): PersonalTask =>
+const taskOn = (threadId: string, hoursAgo: number, status: string = "completed"): PersonalTask =>
   ({
     taskId: `task-${threadId}`,
     threadId,
     createdAt: DateTime.makeUnsafe(NOW - hoursAgo * 3_600_000),
+    status,
   }) as unknown as PersonalTask;
 
 function build(links: PersonalBotThread[], current: string, tasks: PersonalTask[] = []) {

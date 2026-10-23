@@ -53,8 +53,13 @@ const shell = (
     ...overrides,
   }) as unknown as EnvironmentThreadShell;
 
-const task = (taskId: string, threadId: string | null, createdMinute: number): PersonalTask =>
-  ({ taskId, threadId, createdAt: at(createdMinute) }) as unknown as PersonalTask;
+const task = (
+  taskId: string,
+  threadId: string | null,
+  createdMinute: number,
+  status: string = "completed",
+): PersonalTask =>
+  ({ taskId, threadId, createdAt: at(createdMinute), status }) as unknown as PersonalTask;
 
 /**
  * A link whose chat the owner wrote in himself at this minute: the server's
@@ -221,6 +226,28 @@ describe("chat chip list: which chats get a chip", () => {
     expect(model.chips.map((chip) => chip.threadId)).toEqual(
       list.filter((id) => id !== "task-chat"),
     );
+  });
+
+  it("always shows a chat with work still running even when the owner never wrote in it", () => {
+    const links = [link("a", 10), link("b", 20), link("task-chat", 25)];
+    const shells = [activeAt("a", 12), activeAt("b", 40), activeAt("task-chat", 25)];
+    const busy = build({
+      links,
+      shells,
+      tasks: [task("t1", "task-chat", 24, "running")],
+      current: "a",
+    });
+    // Live work is never hidden: it leads the strip, labelled as a task chat.
+    expect(busy.chips.map((chip) => chip.threadId)).toEqual(["task-chat", "b", "a"]);
+    expect(busy.chips[0]?.kind).toBe("task");
+    // Once the task is finished it goes back to being a chat nobody wrote in.
+    const done = build({
+      links,
+      shells,
+      tasks: [task("t1", "task-chat", 24, "completed")],
+      current: "a",
+    });
+    expect(done.chips.map((chip) => chip.threadId)).toEqual(["b", "a"]);
   });
 
   it("is the order of the All chats list, task chats the owner used included", () => {

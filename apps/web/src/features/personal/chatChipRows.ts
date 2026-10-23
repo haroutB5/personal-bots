@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { PERSONAL_TASK_TERMINAL_STATUSES } from "@t3tools/contracts";
 import type { PersonalBotThread, PersonalTask } from "@t3tools/contracts";
 
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
@@ -199,8 +200,25 @@ export function buildChatChips(input: {
     else if (taskRow !== undefined) temporary = toChip(taskRow, "task");
     else if (archivedRow !== undefined) temporary = toChip(archivedRow, "archived");
   }
-  const chips = temporary === null ? ownerChips : [temporary, ...ownerChips];
-  const turnsKey = owner
+  // A task or routine chat with work still running is live work, so the owner must always see it in
+  // the strip even when he has never written in it. Without this a bot can be busy in a chat that
+  // only exists in the All chats list, and the work looks like it went missing.
+  const liveTaskThreadIds = new Set(
+    input.tasks
+      .filter(
+        (task) => task.threadId !== null && !PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status),
+      )
+      .map((task) => task.threadId as string),
+  );
+  const liveRows = active.filter(
+    (row) =>
+      liveTaskThreadIds.has(row.link.threadId) &&
+      row.link.threadId !== input.currentThreadId &&
+      !owner.some((owned) => owned.link.threadId === row.link.threadId),
+  );
+  const liveChips = liveRows.map((row) => toChip(row, "task"));
+  const chips = [...liveChips, ...(temporary === null ? ownerChips : [temporary, ...ownerChips])];
+  const turnsKey = [...owner, ...liveRows]
     .filter((row) => row.link.threadId !== input.currentThreadId)
     .map((row) => `${row.link.threadId}:${row.shell.latestTurn?.completedAt ?? ""}`)
     .join("|");
