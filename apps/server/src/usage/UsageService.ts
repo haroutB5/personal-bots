@@ -713,12 +713,26 @@ export const make = Effect.gen(function* () {
     const scanned: ScannedDir[] = [];
     const home = NodeOS.homedir();
     const dataHome = hostEnvironment["XDG_DATA_HOME"]?.trim();
-    for (const dir of yield* envRoots("OPENCODE_DATA_DIR", [
+    // The app runs OpenCode 2 with its own XDG roots so bots never touch the
+    // owner's store; its database is where Go (and Zen) turns are recorded.
+    const openCode2Root = path.join(config.stateDir, "opencode-v2", "data", "opencode");
+    const openCode2Exists = yield* fileSystem
+      .exists(openCode2Root)
+      .pipe(Effect.catchCause(() => Effect.succeed(false)));
+    const openCodeRoots = yield* envRoots("OPENCODE_DATA_DIR", [
       path.join(
         dataHome && path.isAbsolute(dataHome) ? dataHome : path.join(home, ".local", "share"),
         "opencode",
       ),
-    ])) {
+    ]);
+    if (openCode2Exists) {
+      // Counts even when OPENCODE_DATA_DIR names only the owner's store.
+      const canonical = yield* fileSystem
+        .realPath(openCode2Root)
+        .pipe(Effect.orElseSucceed(() => openCode2Root));
+      if (!openCodeRoots.includes(canonical)) openCodeRoots.push(canonical);
+    }
+    for (const dir of openCodeRoots) {
       const result = yield* Effect.promise(() => readOpenCodeUsage(dir, windowStartMs));
       // Numbers only. Once per scan; nothing when the cap skipped nothing.
       if (result.skippedRows > 0) {

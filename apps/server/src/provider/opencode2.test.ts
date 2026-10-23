@@ -70,6 +70,22 @@ for (const [name, auth, envKey, expected] of [
   );
 }
 
+it.effect("adds the session instructions file to the agent config", () =>
+  Effect.gen(function* () {
+    const env = yield* openCode2Environment({
+      base: { USERPROFILE: "/owner", OPENCODE_AUTH_CONTENT: "{}" },
+      stateDir: "/bots/state",
+      instructionsPath: "/bots/state/opencode-v2/instructions/thread-1.md",
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+      Effect.provide(NodePath.layerPosix),
+    );
+    expect(decodeJson(env.OPENCODE_CONFIG_CONTENT!)).toMatchObject({
+      instructions: ["/bots/state/opencode-v2/instructions/thread-1.md"],
+    });
+  }),
+);
+
 it.effect("malformed auth cannot leak into config or overwrite another account", () =>
   Effect.gen(function* () {
     let pathRead = "";

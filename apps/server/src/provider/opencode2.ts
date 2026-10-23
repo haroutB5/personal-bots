@@ -28,6 +28,7 @@ import {
 import * as AcpSessionRuntime from "./acp/AcpSessionRuntime.ts";
 import { mapAcpToAdapterError } from "./acp/AcpAdapterSupport.ts";
 import { makeNativeAcpAdapter } from "./Layers/NativeAcpAdapter.ts";
+import { buildRuntimeInstructions, withBotInstructions } from "./RuntimeInstructions.ts";
 import { buildRegistryModels } from "./catalog/registryModels.ts";
 import { readOpenCodeGoUsageLimits } from "./Layers/openCodeUsageLimits.ts";
 import { makePendingOpenCodeProvider } from "./Layers/OpenCodeProvider.ts";
@@ -57,6 +58,8 @@ const encodeConfig = Schema.encodeSync(
   Schema.fromJsonString(
     Schema.Struct({
       model: Schema.optionalKey(Schema.String),
+      /** Files the agent reads into its system prompt once, at session start. */
+      instructions: Schema.optionalKey(Schema.Array(Schema.String)),
       plugins: Schema.Array(Schema.String),
       permissions: Schema.Array(
         Schema.Struct({
@@ -91,6 +94,13 @@ export const openCode2Environment = Effect.fn("openCode2Environment")(function* 
   readonly base: NodeJS.ProcessEnv;
   readonly stateDir: string;
   readonly model?: string;
+  /**
+   * A file the agent reads into its session context at start, instead of the
+   * adapter repeating the instructions in every turn's prompt. OpenCode 2 keeps
+   * the file's content for the life of the session, so it is a persona-sized
+   * block, not something that changes per turn.
+   */
+  readonly instructionsPath?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -129,6 +139,7 @@ export const openCode2Environment = Effect.fn("openCode2Environment")(function* 
     OPENCODE_AUTH_CONTENT: "{}",
     OPENCODE_CONFIG_CONTENT: encodeConfig({
       ...(input.model ? { model: input.model } : {}),
+      ...(input.instructionsPath ? { instructions: [input.instructionsPath] } : {}),
       plugins: [
         path.join(
           input.stateDir,
@@ -206,23 +217,48 @@ export const makeOpenCode2Instance = Effect.fn("makeOpenCode2Instance")(function
     accentColor: input.accentColor,
     continuationGroupKey: identity.continuationKey,
   });
-  const environmentFor = (model?: string) =>
+  const instructionsDir = path.join(config.stateDir, "opencode-v2", "instructions");
+  const environmentFor = (model?: string, instructionsPath?: string) =>
     openCode2Environment({
       base: input.environment,
       stateDir: config.stateDir,
       ...(model ? { model } : {}),
+      ...(instructionsPath ? { instructionsPath } : {}),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
+  /**
+   * The persona and runtime notes go into a file OpenCode 2 reads at session
+   * start, so a long chat does not pay for them in every prompt (and its prompt
+   * prefix stays stable, which keeps DeepSeek's context cache hitting).
+   */
+  const prepareInstructions = (
+    session: Pick<ProviderSessionStartInput, "threadId" | "modelSelection" | "systemInstructions">,
+  ) =>
+    Effect.gen(function* () {
+      const text = withBotInstructions(
+        buildRuntimeInstructions({
+          harness: "OpenCode ACP",
+          ...(session.modelSelection?.model ? { model: session.modelSelection.model } : {}),
+        }),
+        session.systemInstructions,
+      );
+      const file = path.join(instructionsDir, `${session.threadId}.md`);
+      yield* fs.makeDirectory(instructionsDir, { recursive: true });
+      const previous = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
+      if (previous !== text) yield* fs.writeFileString(file, text);
+      return file;
+    });
   const runtimeOptions = (
     session: Pick<
       ProviderSessionStartInput,
-      "cwd" | "threadId" | "runtimeMode" | "modelSelection" | "resumeCursor"
+      "cwd" | "threadId" | "runtimeMode" | "modelSelection" | "resumeCursor" | "systemInstructions"
     >,
   ) =>
     Effect.gen(function* () {
-      const environment = yield* environmentFor(session.modelSelection?.model);
+      const instructionsPath = yield* prepareInstructions(session);
+      const environment = yield* environmentFor(session.modelSelection?.model, instructionsPath);
       const mcp = McpProviderSession.readMcpProviderSession(session.threadId);
       const cursor = session.resumeCursor;
       const resumeSessionId =
@@ -289,6 +325,7 @@ export const makeOpenCode2Instance = Effect.fn("makeOpenCode2Instance")(function
     instanceId: input.instanceId,
     provider: DRIVER,
     displayName: "OpenCode",
+    instructionsInSession: true,
     needsFreshContext: (session) =>
       session.freshSession !== true &&
       session.resumeCursor != null &&

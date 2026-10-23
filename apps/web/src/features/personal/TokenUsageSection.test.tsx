@@ -197,7 +197,7 @@ describe("TokenUsageCard", () => {
     const text = textOf(cto);
     // 5.0M out + 100.0M cached + 15.4M in = 120.4M
     expect(text).toContain("120.4M");
-    expect(text).toContain("in 15.4M · cached 100.0M · out 5.0M");
+    expect(text).toContain("in 15.4M · cached 100.0M (87%) · out 5.0M");
     expect(text).toContain("CTO");
     expect(text).toContain("Opus 5.5 · M");
     // 120.4M of the 222.4M the bots used in the week

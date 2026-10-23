@@ -284,6 +284,58 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("counts the app-owned OpenCode 2 store, where Go turns are recorded", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const summary = yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const root = NodePath.join(stateDir, "opencode-v2", "data", "opencode");
+        const row = yield* encodeUnknownJson({
+          model: { id: "deepseek-v4.1-flash", providerID: "opencode-go" },
+          time: { created: Date.parse("2026-08-01T10:00:00Z") },
+          tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 20, write: 0 } },
+        });
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(root, { recursive: true });
+          const db = new NodeSqlite.DatabaseSync(NodePath.join(root, "opencode.db"));
+          try {
+            db.exec(
+              "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
+            );
+            db.prepare(
+              "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ).run(
+              "msg_go_1",
+              "ses_1",
+              "assistant",
+              1,
+              Date.parse("2026-08-01T10:00:00Z"),
+              Date.parse("2026-08-01T10:00:00Z"),
+              row,
+            );
+          } finally {
+            db.close();
+          }
+        });
+        return yield* (yield* UsageService.make).readSummary(WINDOW);
+      }).pipe(Effect.provide(serviceLayers({ prefix: "usage-service-opencode2", home, settings })));
+      const bucket = summary.buckets.find((entry) => entry.provider === "opencode");
+      assert.isDefined(bucket);
+      assert.strictEqual(bucket?.totals.outputTokens, 7);
+      assert.strictEqual(bucket?.totals.cachedInputTokens, 20);
+      assert.strictEqual(
+        summary.sources.find(
+          (source) =>
+            source.fingerprint.provider === "opencode" &&
+            source.fingerprint.resolvedHomePath.endsWith(
+              NodePath.join("opencode-v2", "data", "opencode"),
+            ),
+        )?.status,
+        "ok",
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("counts aliased OpenCode and Antigravity directories once", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;

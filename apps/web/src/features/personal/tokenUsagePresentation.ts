@@ -85,9 +85,21 @@ export function splitOf(totals: PersonalBotTokenUsageTotals): TokenSplit {
   };
 }
 
-/** `in 4.2M · cached 110.0M · out 1.2M` */
+/** `in 4.2M · cached 110.0M (96%) · out 1.2M` */
 export function formatSplit(split: TokenSplit): string {
-  return `in ${formatTokenCount(split.input)} · cached ${formatTokenCount(split.cached)} · out ${formatTokenCount(split.output)}`;
+  const hit = cacheHitShare(split);
+  return `in ${formatTokenCount(split.input)} · cached ${formatTokenCount(split.cached)}${hit === null ? "" : ` (${hit}%)`} · out ${formatTokenCount(split.output)}`;
+}
+
+/**
+ * The share of input served from the cache, 0-100, or null when nothing was
+ * cached. Cheap DeepSeek turns depend on this staying high: only the new part
+ * of a prompt is paid at the full input rate.
+ */
+export function cacheHitShare(split: TokenSplit): number | null {
+  const input = split.input + split.cached;
+  if (split.cached <= 0 || input <= 0) return null;
+  return Math.round((split.cached / input) * 100);
 }
 
 /**

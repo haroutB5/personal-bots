@@ -19,6 +19,8 @@ import {
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import { ModelPlanFilterChips } from "./ModelPlanFilterChips";
+import { filterModelsByPlan, offersModelPlanFilter, type ModelPlanFilter } from "./modelPlanFilter";
 import {
   Combobox,
   ComboboxEmpty,
@@ -191,6 +193,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     onToggleModel,
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
+  const [planFilter, setPlanFilter] = useState<ModelPlanFilter>("all");
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -427,6 +430,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
   const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const planFilterModels =
+    selectedInstanceId === "favorites"
+      ? []
+      : (modelOptionsByInstance.get(selectedInstanceId) ?? []);
+  const showPlanFilter =
+    !isSearching && offersModelPlanFilter(planFilterModels) && !props.lockedProvider;
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -523,6 +532,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       result = result.filter((m) => m.instanceId === selectedInstanceId);
     }
 
+    if (showPlanFilter && planFilter !== "all") {
+      result = [...filterModelsByPlan(result, planFilter)];
+    }
+
     return sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
@@ -533,9 +546,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     flatModels,
     instanceOrder,
     matchesLockedProvider,
+    planFilter,
     props.lockedProvider,
     searchQuery,
     selectedInstanceId,
+    showPlanFilter,
   ]);
 
   const legacySection = useMemo(() => {
@@ -938,6 +953,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             />
+
+            {showPlanFilter ? (
+              <div className="px-2 pb-1.5 pt-0.5">
+                <ModelPlanFilterChips value={planFilter} onChange={setPlanFilter} />
+              </div>
+            ) : null}
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">

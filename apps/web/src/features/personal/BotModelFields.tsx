@@ -4,6 +4,12 @@ import { useRef, useState } from "react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { Check } from "lucide-react";
 
+import { ModelPlanFilterChips } from "../../components/chat/ModelPlanFilterChips";
+import {
+  filterModelsByPlan,
+  offersModelPlanFilter,
+  type ModelPlanFilter,
+} from "../../components/chat/modelPlanFilter";
 import { modelOptionLabel, searchModels } from "./botFormModel";
 
 export const FIELD_CLASS =
@@ -30,11 +36,18 @@ export function ModelSearchField({
   // The list stays folded until the field is tapped, so the form below it
   // is not pushed a screen down by a catalogue nobody asked to browse.
   const [open, setOpen] = useState(false);
+  const [planFilter, setPlanFilter] = useState<ModelPlanFilter>("all");
   const containerRef = useRef<HTMLDivElement>(null);
   const selected = models.find((model) => model.slug === value);
+  const showPlanFilter = offersModelPlanFilter(models);
+  const plannedModels = filterModelsByPlan(models, showPlanFilter ? planFilter : "all");
   const trimmed = query.trim();
   // Browsing shows every model; typing narrows the same list.
-  const results = !open ? [] : trimmed.length === 0 ? models : searchModels(models, trimmed, 80);
+  const results = !open
+    ? []
+    : trimmed.length === 0
+      ? plannedModels
+      : searchModels(plannedModels, trimmed, 80);
   const pick = (slug: string) => {
     onChange(slug);
     setQuery("");
@@ -82,13 +95,16 @@ export function ModelSearchField({
         enterKeyHint="search"
         className={`${FIELD_CLASS} h-11`}
       />
+      {showPlanFilter ? (
+        <ModelPlanFilterChips value={planFilter} onChange={setPlanFilter} className="mt-1.5" />
+      ) : null}
       <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
         {trimmed.length > 0
           ? results.length === 0
             ? `No models match "${trimmed}".`
             : `${results.length} matching`
           : selected === undefined
-            ? `${models.length} models. Pick one, or type to narrow the list.`
+            ? `${plannedModels.length} models. Pick one, or type to narrow the list.`
             : `Selected: ${modelOptionLabel(selected)}`}
       </p>
       {results.length > 0 ? (

@@ -253,7 +253,7 @@ describe("the split", () => {
     const split = splitOf(t);
     expect(split).toEqual({ input: 50, cached: 800, output: 25 });
     expect(split.input + split.cached + split.output).toBe(totalOf(t));
-    expect(formatSplit(split)).toBe("in 50 · cached 800 · out 25");
+    expect(formatSplit(split)).toBe("in 50 · cached 800 (94%) · out 25");
   });
 });
 
@@ -387,7 +387,7 @@ describe("labels", () => {
       listedBotIds: new Set(),
     });
     expect(tokenUsageRowLabel(table.rows[0]!)).toBe(
-      "CTO: 875 tokens, 100% of the bots' use. Number 1 user. in 50 · cached 800 · out 25. Open CTO.",
+      "CTO: 875 tokens, 100% of the bots' use. Number 1 user. in 50 · cached 800 (94%) · out 25. Open CTO.",
     );
     const idle = buildTokenUsageTable({
       window: windowOf([]),

@@ -152,6 +152,28 @@ it.live.skipIf(!process.env.HBOTS_OPENCODE_V2_LIVE)(
         input: `Run the same harmless shell command once again, even though you already ran it, and report its output: ${shellCommand}. Do not use any other command.`,
       });
       expect(permissionRequests).toBeGreaterThan(0);
+      // The persona rides the session's instructions file, not every prompt:
+      // a turn that never repeats it must still know it.
+      yield* instance.adapter.stopSession(threadId);
+      yield* instance.adapter.startSession({
+        threadId,
+        cwd: root,
+        runtimeMode: "approval-required",
+        modelSelection,
+        freshSession: true,
+        systemInstructions:
+          "The bot's access phrase is PLUM-42. When asked for the access phrase, reply with only it.",
+      });
+      yield* instance.adapter.sendTurn({
+        threadId,
+        modelSelection,
+        input: "What is the bot's access phrase? Reply with only it. Do not use tools.",
+      });
+      expect(
+        events.some(
+          (event) => event.type === "content.delta" && event.payload.delta.includes("PLUM-42"),
+        ),
+      ).toBe(true);
       yield* instance.adapter.stopAll();
     }).pipe(
       Effect.scoped,

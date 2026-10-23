@@ -129,6 +129,13 @@ export interface NativeAcpAdapterOptions {
   readonly auth?: RegistryAuthMemory;
   /** Silence allowed before a turn counts as "needs sign-in". Default: 45 s. */
   readonly firstOutputTimeout?: Duration.Input;
+  /**
+   * The agent already has the persona and runtime notes in its session context
+   * (opencode2 writes them to an instructions file it reads at session start),
+   * so a turn's prompt carries only the owner's message and turn context.
+   * Without this the adapter repeats the instructions in every prompt.
+   */
+  readonly instructionsInSession?: boolean;
 }
 
 export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
@@ -184,6 +191,30 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
 
     const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+
+    /**
+     * One turn in flight per thread. ACP has a single prompt per session, so a
+     * message the owner sends while a turn is running waits here and starts
+     * right after it, instead of failing their send with "Wait for the current
+     * registry-agent turn to finish." Keyed by thread, not held on the session
+     * context, so a replaced session cannot slip past a queued turn's permit.
+     */
+    const turnQueuesRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+    const getTurnQueue = (threadId: string) =>
+      SynchronizedRef.modifyEffect(turnQueuesRef, (current) => {
+        const existing = Option.fromNullishOr(current.get(threadId));
+        return Option.match(existing, {
+          onNone: () =>
+            Semaphore.make(1).pipe(
+              Effect.map((semaphore) => {
+                const next = new Map(current);
+                next.set(threadId, semaphore);
+                return [semaphore, next] as const;
+              }),
+            ),
+          onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
+        });
+      });
 
     const settlePendingApprovalsAsCancelled = (
       approvals: Map<ApprovalRequestId, PendingApproval>,
@@ -512,7 +543,7 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
         }),
       );
 
-    const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
+    const runTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const launch = yield* withThreadLock(
           input.threadId,
@@ -586,13 +617,15 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
                     text: [
                       input.turnContext,
                       input.input,
-                      withBotInstructions(
-                        buildRuntimeInstructions({
-                          harness: `${providerName} ACP`,
-                          model: input.modelSelection?.model,
-                        }),
-                        input.systemInstructions,
-                      ),
+                      options.instructionsInSession === true
+                        ? undefined
+                        : withBotInstructions(
+                            buildRuntimeInstructions({
+                              harness: `${providerName} ACP`,
+                              model: input.modelSelection?.model,
+                            }),
+                            input.systemInstructions,
+                          ),
                     ]
                       .filter(Boolean)
                       .join("\n\n"),
@@ -698,6 +731,9 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
         };
         return { threadId: input.threadId, turnId } satisfies ProviderTurnStartResult;
       });
+
+    const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
+      Effect.flatMap(getTurnQueue(input.threadId), (queue) => queue.withPermit(runTurn(input)));
 
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
       threadId,
