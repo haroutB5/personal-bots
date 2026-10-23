@@ -13,7 +13,27 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { makeNativeAcpAdapter, selectAutoApprovedPermissionOption } from "./NativeAcpAdapter.ts";
+import {
+  makeNativeAcpAdapter,
+  selectAutoApprovedPermissionOption,
+  isAcpPromptBusyError,
+} from "./NativeAcpAdapter.ts";
+
+it("recognises the busy-prompt refusal OpenCode actually sends", () => {
+  // Verbatim shape from the OpenCode 2 ACP agent: the id is appended, and the
+  // adapter wraps it as "Internal error: ...".
+  expect(
+    isAcpPromptBusyError(
+      "Internal error: Session already has an active ACP prompt: ses_0f3a9c21e4b7",
+    ),
+  ).toBe(true);
+  // Case and wording changes must not turn a steer into a failed turn.
+  expect(isAcpPromptBusyError("session already has an active acp request")).toBe(true);
+  expect(isAcpPromptBusyError("Session already has an active ACP")).toBe(true);
+  // Everything else still fails at once.
+  expect(isAcpPromptBusyError("Insufficient Balance")).toBe(false);
+  expect(isAcpPromptBusyError("Maximum call stack size exceeded")).toBe(false);
+});
 
 it("full access prefers a one-call grant over a remembered permission", () => {
   expect(

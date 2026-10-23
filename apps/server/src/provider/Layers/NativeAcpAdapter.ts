@@ -67,6 +67,23 @@ import {
 } from "../catalog/registryModels.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 
+/**
+ * An ACP agent refuses a second `session/prompt` on a session whose turn is
+ * still running with "Session already has an active ACP prompt: <id>".
+ *
+ * The match is case-insensitive and does not depend on the suffix, so a
+ * wording change on the agent side cannot turn the wait below back into a
+ * failed turn.
+ */
+const ACP_PROMPT_BUSY_PATTERN = /already has an active acp/i;
+/** 40 attempts, 250 ms apart: a bounded 10 s wait for the flag to clear. */
+const ACP_PROMPT_BUSY_ATTEMPTS = 40;
+const ACP_PROMPT_BUSY_INTERVAL_MS = 250;
+
+/** True when an ACP error is the agent still holding an active prompt. */
+export const isAcpPromptBusyError = (message: string): boolean =>
+  ACP_PROMPT_BUSY_PATTERN.test(message);
+
 interface PendingApproval {
   readonly deferred: Deferred.Deferred<EffectAcpSchema.RequestPermissionResponse>;
   readonly request: EffectAcpSchema.RequestPermissionRequest;
@@ -640,15 +657,17 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
               ],
             };
             // A steer cancels the running prompt and sends this one right
-            // after it. The agent can clear its own "active prompt" a moment
-            // later than its cancelled response, so retry that one refusal
-            // briefly instead of failing the owner's message.
+            // after it. The agent clears its own "active prompt" flag a moment
+            // after its cancelled response, and noticeably later when the
+            // machine is busy, so retry that one refusal for a bounded window
+            // instead of failing the owner's message. Any other error fails at
+            // once.
             const promptWithBusyRetry = (attempt: number): ReturnType<typeof ctx.runtime.prompt> =>
               ctx.runtime.prompt(promptPayload).pipe(
                 Effect.catch((error) => {
                   const message = error instanceof Error ? error.message : String(error);
-                  return attempt < 15 && message.includes("already has an active ACP prompt")
-                    ? Effect.sleep("200 millis").pipe(
+                  return attempt < ACP_PROMPT_BUSY_ATTEMPTS && isAcpPromptBusyError(message)
+                    ? Effect.sleep(`${ACP_PROMPT_BUSY_INTERVAL_MS} millis`).pipe(
                         Effect.flatMap(() => promptWithBusyRetry(attempt + 1)),
                       )
                     : Effect.fail(error);
