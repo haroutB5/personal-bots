@@ -1083,16 +1083,16 @@ export function ConversationScreen({
   );
   // The order holds still while the owner stays in this bot's chats (chatChipOrder.ts).
   const frozenOwner = useFrozenChipOrder(botId, chipModel?.ownerChips ?? null);
-  const chipRow = useMemo<ReadonlyArray<ChatChip>>(
-    () =>
-      chipModel === null
-        ? []
-        : [
-            ...(chipModel.temporary === null ? [] : [chipModel.temporary]),
-            ...(frozenOwner.chips ?? chipModel.ownerChips),
-          ],
-    [chipModel, frozenOwner.chips],
-  );
+  const chipRow = useMemo<ReadonlyArray<ChatChip>>(() => {
+    if (chipModel === null) return [];
+    const ownerIds = new Set(chipModel.ownerChips.map((chip) => chip.threadId));
+    // Keep live task and temporary chips from the model; only owner chats
+    // use the frozen order while the owner stays in this bot's chats.
+    return [
+      ...chipModel.chips.filter((chip) => !ownerIds.has(chip.threadId)),
+      ...(frozenOwner.chips ?? chipModel.ownerChips),
+    ];
+  }, [chipModel, frozenOwner.chips]);
   const chipsShown = bot !== null && chipModel !== null && chipModel.visible;
   useEffect(() => {
     rememberChipsShown(botId, chipsShown);

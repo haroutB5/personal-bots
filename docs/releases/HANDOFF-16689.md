@@ -16,6 +16,7 @@ Two fixes and a launcher fix on top of 1.66.88. The busy-prompt wait added by 1.
 
 - A task or routine chat with work still running now always appears in the chat strip, even when the owner has never written in that chat (`apps/web/src/features/personal/chatChipRows.ts`). Before, such a chat existed only in the All chats list, so a bot could be busy in a chat that looked like it had gone missing while its work was still running.
 - The live task chats are added as task chips ahead of the owner's chips and their turns are part of the strip's ordering key, so the chip stays in place and reorders as the work progresses. It disappears when the task reaches a terminal status, and an owner chat is never duplicated.
+- The conversation screen keeps the model's live task and temporary chips when applying the frozen order to owner chats. A screen regression covers a task appearing and finishing without moving the owner's existing tabs.
 - Web only: no server, schema or provider behaviour changes.
 
 ### Launcher: re-resolve node per start, retry a failed spawn

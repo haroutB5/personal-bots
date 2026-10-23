@@ -1634,6 +1634,29 @@ describe("the chips' order while he stays", () => {
       ],
     );
 
+  it("shows a running task chat ahead of the frozen owner chats and removes it when done", async () => {
+    openChat();
+    state.twoChats = true;
+    state.chipModel = ordered("thread-1", "thread-2");
+    await renderScreen();
+    expect(order()).toBe("thread-1,thread-2");
+
+    const taskChip = { threadId: "task-chat", text: "Task · release", current: false };
+    state.chipModel = {
+      ...ordered("thread-2", "thread-1"),
+      chips: [taskChip, CHIP_TWO, CHIP_ONE],
+      openCount: 3,
+    };
+    await rerender();
+    expect(text()).toContain("Task · release");
+    expect(order()).toBe("task-chat,thread-1,thread-2");
+
+    state.chipModel = ordered("thread-2", "thread-1");
+    await rerender();
+    expect(text()).not.toContain("Task · release");
+    expect(order()).toBe("thread-1,thread-2");
+  });
+
   it("holds the order it took when the chats were entered, and takes a new one on the next entry", async () => {
     state.twoChats = true;
     state.chipModel = ordered("thread-1", "thread-2");
