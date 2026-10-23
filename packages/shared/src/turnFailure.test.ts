@@ -19,6 +19,12 @@ describe("classifyTurnFailure", () => {
     ["fetch failed: getaddrinfo ENOTFOUND api.anthropic.com", "network"],
     ["read ECONNRESET", "network"],
     ["socket hang up", "network"],
+    [
+      "TypeError: EPROTO: The TLS handshake failed. Does the server speak TLS on this port?",
+      "network",
+    ],
+    ["ssl3_get_record:wrong version number", "network"],
+    ["getaddrinfo EAI_AGAIN opencode.ai", "network"],
   ] as const)("calls %j transient (%s)", (raw, kind) => {
     expect(classifyTurnFailure(raw)).toBe(kind);
     expect(isTransientTurnFailure(raw)).toBe(true);

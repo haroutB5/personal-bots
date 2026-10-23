@@ -57,7 +57,7 @@ const PATTERNS: ReadonlyArray<readonly [TurnFailureKind, RegExp]> = [
   ["timeout", /timed? ?out|etimedout|deadline exceeded/],
   [
     "network",
-    /enotfound|econnrefused|econnreset|epipe|socket hang ?up|fetch failed|network error|connection (?:reset|closed|refused|aborted)|dns lookup/,
+    /enotfound|econnrefused|econnreset|epipe|eai_again|eproto|tls handshake|wrong version number|socket hang ?up|fetch failed|network error|connection (?:reset|closed|refused|aborted)|dns lookup/,
   ],
 ];
 
