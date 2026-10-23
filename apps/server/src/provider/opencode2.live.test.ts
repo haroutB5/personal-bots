@@ -21,6 +21,9 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { makeOpenCode2Instance } from "./opencode2.ts";
 
 const decodeSettings = Schema.decodeSync(OpenCodeSettings);
+const encodeEnvironmentProof = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ key: Schema.Boolean, data: Schema.String })),
+);
 // Requires the owner's installed binary and subscription. Normal gates remain credential-free.
 it.live.skipIf(!process.env.HBOTS_OPENCODE_V2_LIVE)(
   "real OpenCode 2 Go Plus answers, resumes, and streams under the app adapter",
@@ -133,7 +136,7 @@ it.live.skipIf(!process.env.HBOTS_OPENCODE_V2_LIVE)(
         .join("");
       expect(yield* fs.exists(path.join(root, "env-proof.txt")), transcript).toBe(true);
       expect(yield* fs.readFileString(path.join(root, "env-proof.txt"))).toBe(
-        JSON.stringify({ key: false, data: process.env.XDG_DATA_HOME || "" }),
+        encodeEnvironmentProof({ key: false, data: process.env.XDG_DATA_HOME || "" }),
       );
       yield* instance.adapter.stopAll();
     }).pipe(
