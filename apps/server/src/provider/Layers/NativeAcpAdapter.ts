@@ -713,17 +713,24 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
             // once. The refusal arrives as a defect from the OpenCode 2 agent,
             // so this matches the whole cause, not only typed failures.
             const promptWithBusyRetry = (attempt: number): ReturnType<typeof ctx.runtime.prompt> =>
-              ctx.runtime
-                .prompt(promptPayload)
-                .pipe(
-                  Effect.catchCause((cause) =>
-                    attempt < ACP_PROMPT_BUSY_ATTEMPTS && isAcpPromptBusyCause(cause)
-                      ? Effect.sleep(`${ACP_PROMPT_BUSY_INTERVAL_MS} millis`).pipe(
-                          Effect.flatMap(() => promptWithBusyRetry(attempt + 1)),
-                        )
-                      : Effect.failCause(cause),
-                  ),
-                );
+              Effect.suspend(() => {
+                // Stop can arrive while the busy retry sleeps, when the runtime
+                // has no in-flight prompt for session/cancel to interrupt.
+                if (ctx.stopped || ctx.activeTurnId !== turnId) {
+                  return Effect.succeed({ stopReason: "cancelled" as const });
+                }
+                return ctx.runtime
+                  .prompt(promptPayload)
+                  .pipe(
+                    Effect.catchCause((cause) =>
+                      attempt < ACP_PROMPT_BUSY_ATTEMPTS && isAcpPromptBusyCause(cause)
+                        ? Effect.sleep(`${ACP_PROMPT_BUSY_INTERVAL_MS} millis`).pipe(
+                            Effect.flatMap(() => promptWithBusyRetry(attempt + 1)),
+                          )
+                        : Effect.failCause(cause),
+                    ),
+                  );
+              });
             const fiber = yield* promptWithBusyRetry(0).pipe(Effect.forkIn(ctx.scope));
             return { ctx, turnId, fiber };
           }),

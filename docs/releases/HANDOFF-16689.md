@@ -10,6 +10,7 @@ Two fixes and a launcher fix on top of 1.66.88. The busy-prompt wait added by 1.
 - Match detail: the fix answers the live message `Session already has an active ACP prompt: <id>` with a case-insensitive match (the session id and any wording after it are ignored) and a bounded 10 s wait instead of the old 3 s. A non-busy refusal still fails at once.
 - The match lives in exported helpers, `isAcpPromptBusyError` and `isAcpPromptBusyCause`, with tests pinning the verbatim OpenCode string, a defect, a wrapped cause, the case and suffix variants, and proving unrelated errors are not retried. The mock agent can now fail a prompt as a defect (`T3_ACP_DEFECT_PROMPT_ERROR`) to reproduce the wire shape.
 - No schema change, no provider settings change, task concurrency stays 5.
+- **Stop also cancels a pending busy retry.** CTO's final review reproduced a second prompt being sent after Stop during the 250 ms wait. Each attempt now checks that the session is open and the same turn still owns it before sending. The regression test observes retry entry, presses Stop, and verifies that the agent receives no second prompt.
 
 ### Chat strip: a chat with work still running always shows
 
