@@ -46,7 +46,6 @@ if ($existing -and (Test-PbServerProcess -ProcessId ([int]$existing.pid) -BinPat
 # Not $release: PowerShell names are case-insensitive, so it would be the
 # [string]$Release parameter and coerce the release object to a string.
 $releaseInfo = Get-PbRelease -Paths $paths -Release $Release
-$nodeExe = Resolve-NodeExe -Node $Node
 $null = Import-RepoDotEnv
 Clear-DevOriginEnv
 $env:T3CODE_ENVIRONMENT_LABEL = $Label
@@ -111,6 +110,10 @@ function Start-PbServerOnce {
     if (Test-Path -LiteralPath $paths.StopMarker) { Remove-Item -LiteralPath $paths.StopMarker -Force }
 
     $launchedAt = Get-Date
+    # Resolve node on every start, not once per supervisor: a Node upgrade or a
+    # removed runtime directory between crashes must not strand every retry on a
+    # stale path (1.66.88 died this way at 16:58 and left T3 Connect offline).
+    $nodeExe = Resolve-NodeExe -Node $Node
     # Reset the logon task's inherited low I/O/memory before creating node,
     # so even cold startup and a later relay respawn get normal priorities.
     if ($env:HBOTS_SERVER_PRIORITY -ne 'legacy') {
@@ -153,6 +156,21 @@ function Start-PbServerOnce {
     return $proc
 }
 
+# A crash-restart gets its own small retry window: one failed spawn (a node
+# upgrade mid-replace, a port still closing) must not take the supervisor down
+# and leave T3 Connect offline until someone logs in.
+function Start-PbServerWithRetry([int]$Attempts = 3) {
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            return Start-PbServerOnce
+        } catch {
+            Write-PbLog ("start attempt {0} of {1} failed: {2}" -f $i, $Attempts, $_.Exception.Message)
+            if ($i -lt $Attempts) { Start-Sleep -Seconds 60 }
+        }
+    }
+    return $null
+}
+
 $proc = Start-PbServerOnce
 if (-not $Wait) { exit 0 }
 
@@ -180,5 +198,9 @@ while ($true) {
         exit 0
     }
     Write-PbLog "restart $restarts of 3"
-    $proc = Start-PbServerOnce
+    $proc = Start-PbServerWithRetry
+    if (-not $proc) {
+        Write-PbLog "giving up after 3 failed starts for restart $restarts"
+        exit 1
+    }
 }

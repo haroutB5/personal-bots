@@ -276,6 +276,13 @@ function Start-PbServeProcess {
         [int]$Port = 0,
         [string]$HostName
     )
+    # A caller may hand us an already-quoted path (a scheduled task argument, a
+    # copied message). Double quoting makes cmd treat the quotes as part of the
+    # program name, which reads as "'node.exe' is not recognized".
+    $NodeExe = $NodeExe.Trim('"')
+    if (-not (Test-Path -LiteralPath $NodeExe -PathType Leaf)) {
+        throw "node.exe not found at $NodeExe. Pass -Node <path to node.exe>."
+    }
     $serveArgs = @('"' + $BinPath + '"', 'serve', '--base-dir', '"' + $BaseDir + '"', '--no-browser')
     if ($Port -gt 0) { $serveArgs += @('--port', [string]$Port) }
     if ($HostName) { $serveArgs += @('--host', $HostName) }

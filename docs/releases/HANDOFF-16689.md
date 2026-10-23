@@ -9,6 +9,15 @@ One fix on top of 1.66.88. The busy-prompt wait added by 1.66.87 was too narrow 
 - The match lives in one exported helper, `isAcpPromptBusyError`, with a test pinning the verbatim OpenCode string and the case and suffix variants, and proving unrelated errors are not retried.
 - No schema change, no provider settings change, task concurrency stays 5.
 
+### Launcher: re-resolve node per start, retry a failed spawn
+
+The 1.66.88 stage was built while Node 24.22.1 replaced `node.exe` mid-run; the supervisor resolved node once and then failed every crash-restart on the stale path, taking T3 Connect offline. Two contained script fixes ship with this release:
+
+- `scripts/personal/start.ps1` resolves `node.exe` inside `Start-PbServerOnce`, so every start (first start and every crash-restart) uses the current node rather than the path captured at supervisor start.
+- A crash-restart now gets `Start-PbServerWithRetry` (3 attempts, 60 s apart). One failed spawn no longer ends the supervisor and leaves the phone offline; a total failure is logged and exits 1 so the logon task can restart it.
+- `scripts/personal/common.ps1` `Start-PbServerProcess` trims surrounding quotes from `-NodeExe` and fails with a clear message when it is not a file, instead of cmd reading the quotes as part of the program name (`'node.exe' is not recognized`).
+- Scripts only: no server, web, schema or provider behaviour changes.
+
 ## Validation
 
 - Adapter tests pass: 6 of 6 in `src/provider/Layers/NativeAcpAdapter.test.ts`, including the new verbatim-string case.
@@ -16,7 +25,7 @@ One fix on top of 1.66.88. The busy-prompt wait added by 1.66.87 was too narrow 
 
 ## Runtime and activation
 
-No migration (112 to 112), no production backup per Harout's 20 Oct rule. Roll back to the previous live release (binary only) if the smoke fails. Only the ACP adapter changed; nothing else in the app is touched.
+No migration (112 to 112), no production backup per Harout's 20 Oct rule. Roll back to the previous live release (binary only) if the smoke fails. Only the ACP adapter and the two launcher scripts changed; nothing else in the app is touched.
 
 ## Gate evidence
 
