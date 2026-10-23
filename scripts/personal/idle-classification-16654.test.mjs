@@ -141,7 +141,7 @@ test("the pre-existing busy reasons still hold", () => {
 function rateLimitedTask(db, input) {
   db.exec(`
     INSERT INTO projection_threads VALUES ('routine-live', NULL);
-    INSERT INTO provider_session_runtime VALUES ('routine-live', 'ready');
+    INSERT INTO provider_session_runtime VALUES ('routine-live', '${input.runtime ?? "ready"}');
   `);
   db.prepare("INSERT INTO projection_thread_sessions VALUES (?, ?, ?)").run(
     "routine-live",
@@ -169,6 +169,23 @@ test("a rate-limited routine parked far ahead or already overdue is not busy", (
     } finally {
       db.close();
     }
+  }
+});
+
+test("a stale runtime row does not hold a rate-limited task whose session is idle", () => {
+  const db = freshDb();
+  try {
+    rateLimitedTask(db, {
+      availableAt: at(NOW + 2 * 24 * 60 * 60_000),
+      session: "stopped",
+      runtime: "running",
+    });
+    const verdict = classify(db, NOW);
+    assert.equal(verdict.blocking, 0);
+    assert.equal(verdict.parked, 1);
+    assert.equal(verdict.idle, true);
+  } finally {
+    db.close();
   }
 });
 

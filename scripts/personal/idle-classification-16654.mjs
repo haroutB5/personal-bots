@@ -114,8 +114,7 @@ export function classify(db, now = Date.now()) {
         row.live_thread &&
         row.deleted_at === null &&
         inactive.has(row.session_status) &&
-        row.active_turn_id === null &&
-        inactive.has(row.runtime_status);
+        row.active_turn_id === null;
       if (safe) parked++;
       else blocking++;
     }
