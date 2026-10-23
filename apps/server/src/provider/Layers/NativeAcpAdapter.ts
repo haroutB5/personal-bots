@@ -733,7 +733,22 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
       });
 
     const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
-      Effect.flatMap(getTurnQueue(input.threadId), (queue) => queue.withPermit(runTurn(input)));
+      Effect.gen(function* () {
+        // ACP has one prompt in flight per session, so a message that arrives
+        // mid-turn cannot be injected into it. A steer therefore ends the
+        // running turn first and continues in a new turn with the context the
+        // agent already has, instead of sitting silently behind a long turn.
+        // `followUp: "queue"` keeps the old wait-for-it behaviour.
+        if (input.followUp !== "queue") {
+          const running = sessions.get(input.threadId);
+          if (running && !running.stopped && running.activeTurnId) {
+            yield* interruptTurn(input.threadId, running.activeTurnId);
+          }
+        }
+        return yield* Effect.flatMap(getTurnQueue(input.threadId), (queue) =>
+          queue.withPermit(runTurn(input)),
+        );
+      });
 
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
       threadId,
