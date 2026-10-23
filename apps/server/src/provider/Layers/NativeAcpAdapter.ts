@@ -74,19 +74,19 @@ interface PendingApproval {
 
 /**
  * Full-access threads approve tools without asking, as the OpenCode v1 driver
- * and the Cursor/Grok ACP adapters do. Prefer a standing allow so a turn does
- * not stop at each request.
+ * and the Cursor/Grok ACP adapters do. Prefer a one-call grant so switching
+ * back to supervised mode does not inherit remembered permissions.
  */
-function selectAutoApprovedPermissionOption(
+export function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
-  const allowAlwaysOption = request.options.find((option) => option.kind === "allow_always");
-  if (typeof allowAlwaysOption?.optionId === "string" && allowAlwaysOption.optionId.trim()) {
-    return allowAlwaysOption.optionId.trim();
-  }
   const allowOnceOption = request.options.find((option) => option.kind === "allow_once");
   if (typeof allowOnceOption?.optionId === "string" && allowOnceOption.optionId.trim()) {
     return allowOnceOption.optionId.trim();
+  }
+  const allowAlwaysOption = request.options.find((option) => option.kind === "allow_always");
+  if (typeof allowAlwaysOption?.optionId === "string" && allowAlwaysOption.optionId.trim()) {
+    return allowAlwaysOption.optionId.trim();
   }
   return undefined;
 }

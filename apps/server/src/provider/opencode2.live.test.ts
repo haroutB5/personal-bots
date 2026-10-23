@@ -118,7 +118,7 @@ it.live.skipIf(!process.env.HBOTS_OPENCODE_V2_LIVE)(
       // Full-access bots run tools without a prompt. If the adapter failed to
       // auto-approve, nothing would answer this request and the turn would hang.
       yield* instance.adapter.stopSession(threadId);
-      yield* instance.adapter.startSession({
+      const fullAccessSession = yield* instance.adapter.startSession({
         threadId,
         cwd: root,
         runtimeMode: "full-access",
@@ -138,6 +138,20 @@ it.live.skipIf(!process.env.HBOTS_OPENCODE_V2_LIVE)(
       expect(yield* fs.readFileString(path.join(root, "env-proof.txt"))).toBe(
         encodeEnvironmentProof({ key: false, data: process.env.XDG_DATA_HOME || "" }),
       );
+      yield* instance.adapter.stopSession(threadId);
+      yield* instance.adapter.startSession({
+        threadId,
+        cwd: root,
+        runtimeMode: "approval-required",
+        modelSelection,
+        resumeCursor: fullAccessSession.resumeCursor,
+      });
+      yield* instance.adapter.sendTurn({
+        threadId,
+        modelSelection,
+        input: `Run the same harmless shell command once again, even though you already ran it, and report its output: ${shellCommand}. Do not use any other command.`,
+      });
+      expect(permissionRequests).toBeGreaterThan(0);
       yield* instance.adapter.stopAll();
     }).pipe(
       Effect.scoped,

@@ -12,7 +12,20 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { makeNativeAcpAdapter } from "./NativeAcpAdapter.ts";
+import { makeNativeAcpAdapter, selectAutoApprovedPermissionOption } from "./NativeAcpAdapter.ts";
+
+it("full access prefers a one-call grant over a remembered permission", () => {
+  expect(
+    selectAutoApprovedPermissionOption({
+      sessionId: "native-test",
+      toolCall: { toolCallId: "tool" },
+      options: [
+        { optionId: "always", name: "Always", kind: "allow_always" },
+        { optionId: "once", name: "Once", kind: "allow_once" },
+      ],
+    }),
+  ).toBe("once");
+});
 
 it.live(
   "native ACP keeps OpenCode identity, MCP, persona and the resumable session across process stops",
