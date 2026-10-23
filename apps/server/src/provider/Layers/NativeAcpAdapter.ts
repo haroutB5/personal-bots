@@ -12,6 +12,7 @@ import {
   TurnId,
   RuntimeRequestId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -83,6 +84,54 @@ const ACP_PROMPT_BUSY_INTERVAL_MS = 250;
 /** True when an ACP error is the agent still holding an active prompt. */
 export const isAcpPromptBusyError = (message: string): boolean =>
   ACP_PROMPT_BUSY_PATTERN.test(message);
+
+/** Readable text from an unknown thrown value, following its cause chain. */
+const describeUnknownError = (value: unknown): string => {
+  if (value instanceof Error) {
+    const cause = value.cause === undefined ? "" : describeUnknownError(value.cause);
+    return [value.message, cause].filter((part) => part.length > 0).join("\n");
+  }
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value !== null) {
+    const record = value as {
+      readonly message?: unknown;
+      readonly detail?: unknown;
+      readonly cause?: unknown;
+    };
+    return [
+      typeof record.message === "string" ? record.message : "",
+      typeof record.detail === "string" ? record.detail : "",
+      record.cause === undefined ? "" : describeUnknownError(record.cause),
+    ]
+      .filter((part) => part.length > 0)
+      .join("\n");
+  }
+  return "";
+};
+
+/**
+ * All readable text in a cause, typed failures and defects alike.
+ *
+ * The OpenCode 2 agent reports the busy refusal through a defect-shaped
+ * JSON-RPC error (Effect's `decodeDefect` path), so matching only typed
+ * `AcpRequestError`s left the retry below and the failed-turn cleanup
+ * unreachable exactly when the agent was busy.
+ */
+export const acpCauseText = (cause: Cause.Cause<unknown>): string => {
+  const reasons = cause.reasons.map((reason) =>
+    Cause.isFailReason(reason)
+      ? describeUnknownError(reason.error)
+      : Cause.isDieReason(reason)
+        ? describeUnknownError(reason.defect)
+        : "",
+  );
+  const text = reasons.filter((part) => part.length > 0).join("\n");
+  return text.length > 0 ? text : Cause.pretty(cause);
+};
+
+/** True when any form of failure in the cause is the agent still holding a prompt. */
+export const isAcpPromptBusyCause = (cause: Cause.Cause<unknown>): boolean =>
+  isAcpPromptBusyError(acpCauseText(cause));
 
 interface PendingApproval {
   readonly deferred: Deferred.Deferred<EffectAcpSchema.RequestPermissionResponse>;
@@ -661,18 +710,20 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
             // after its cancelled response, and noticeably later when the
             // machine is busy, so retry that one refusal for a bounded window
             // instead of failing the owner's message. Any other error fails at
-            // once.
+            // once. The refusal arrives as a defect from the OpenCode 2 agent,
+            // so this matches the whole cause, not only typed failures.
             const promptWithBusyRetry = (attempt: number): ReturnType<typeof ctx.runtime.prompt> =>
-              ctx.runtime.prompt(promptPayload).pipe(
-                Effect.catch((error) => {
-                  const message = error instanceof Error ? error.message : String(error);
-                  return attempt < ACP_PROMPT_BUSY_ATTEMPTS && isAcpPromptBusyError(message)
-                    ? Effect.sleep(`${ACP_PROMPT_BUSY_INTERVAL_MS} millis`).pipe(
-                        Effect.flatMap(() => promptWithBusyRetry(attempt + 1)),
-                      )
-                    : Effect.fail(error);
-                }),
-              );
+              ctx.runtime
+                .prompt(promptPayload)
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    attempt < ACP_PROMPT_BUSY_ATTEMPTS && isAcpPromptBusyCause(cause)
+                      ? Effect.sleep(`${ACP_PROMPT_BUSY_INTERVAL_MS} millis`).pipe(
+                          Effect.flatMap(() => promptWithBusyRetry(attempt + 1)),
+                        )
+                      : Effect.failCause(cause),
+                  ),
+                );
             const fiber = yield* promptWithBusyRetry(0).pipe(Effect.forkIn(ctx.scope));
             return { ctx, turnId, fiber };
           }),
@@ -725,9 +776,15 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
                     mapAcpToAdapterError(DRIVER, input.threadId, "session/prompt", cause),
                   ),
           ),
-          Effect.tapError((cause) =>
-            Effect.gen(function* () {
-              delete ctx.activeTurnId;
+          // Any failure must end this turn's lifecycle, including a defect:
+          // without the turn.completed event the chat stayed "running" on a
+          // turn the agent never started, and every later queued message
+          // waited behind it.
+          Effect.tapCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) return Effect.void;
+            const detailText = silentText ?? acpCauseText(cause);
+            return Effect.gen(function* () {
+              if (ctx.activeTurnId === turnId) delete ctx.activeTurnId;
               ctx.session = {
                 ...ctx.session,
                 status: "ready",
@@ -740,13 +797,31 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
                 provider: DRIVER,
                 threadId: input.threadId,
                 turnId,
-                payload: { state: "failed", errorMessage: silentText ?? cause.message },
+                payload: { state: "failed", errorMessage: detailText },
               });
               // The agent never answered, so its process may be stuck on the prompt.
               // Ending the session frees its files; the next turn starts a fresh one.
+              // A busy refusal does not end the session: its own prompt was
+              // rejected, and an older prompt that is genuinely still running
+              // must not be killed by the cleanup of the turn that lost.
               if (silentText !== undefined) yield* stopSessionInternal(ctx);
-            }),
-          ),
+            });
+          }),
+          // The cleanup above runs for any cause, but the caller still gets a
+          // typed adapter error instead of a defect it cannot describe.
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause) || cause.reasons.some(Cause.isFailReason)) {
+              return Effect.failCause(cause as Cause.Cause<ProviderAdapterError>);
+            }
+            return Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: DRIVER,
+                method: "session/prompt",
+                detail: acpCauseText(cause),
+                cause,
+              }),
+            );
+          }),
         );
         yield* ctx.runtime.drainEvents;
         if (!ctx.stopped && ctx.activeTurnId === turnId) {
@@ -762,13 +837,17 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
             },
           });
         }
-        delete ctx.activeTurnId;
-        ctx.session = {
-          ...ctx.session,
-          status: "ready",
-          activeTurnId: undefined,
-          updatedAt: yield* nowIso,
-        };
+        // Only the turn that still owns the session may settle it. A newer
+        // turn's id must never be cleared by a superseded turn's tail.
+        if (ctx.activeTurnId === turnId) {
+          delete ctx.activeTurnId;
+          ctx.session = {
+            ...ctx.session,
+            status: "ready",
+            activeTurnId: undefined,
+            updatedAt: yield* nowIso,
+          };
+        }
         return { threadId: input.threadId, turnId } satisfies ProviderTurnStartResult;
       });
 

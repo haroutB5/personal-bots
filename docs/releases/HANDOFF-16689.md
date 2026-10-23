@@ -1,12 +1,14 @@
 # hbots 1.66.89: a steer keeps waiting while the agent is still busy
 
-One fix on top of 1.66.88. The busy-prompt wait added by 1.66.87 was too narrow to hold under load.
+One fix on top of 1.66.88. The busy-prompt wait added by 1.66.87 was too narrow to hold under load, and on 23 Oct it left live chats stuck as running.
 
 ## Changes
 
-- **"Internal error: Session already has an active ACP prompt" no longer fails a steer.** 1.66.87 recognised this refusal only in the exact wording and only for 3 s (15 tries, 200 ms apart). The live OpenCode 2 agent actually answers `Session already has an active ACP prompt: <id>`; the trailing id and any wording change slipped past the exact match, and on a busy machine the flag can stay set longer than 3 s. The match is now case-insensitive and suffix-independent (`/already has an active acp/i`), and the bounded wait is 40 tries, 250 ms apart (10 s). A steer therefore waits for the running turn to clear instead of failing and aborting the tool calls that turn had in flight. Any other error still fails at once.
-- Match detail: the fix answers the live message `Session already has an active ACP prompt: <id>` with a case-insensitive match (the session id and any wording after it are ignored) and a bounded 10 s wait instead of the old 3 s.
-- The match lives in one exported helper, `isAcpPromptBusyError`, with a test pinning the verbatim OpenCode string and the case and suffix variants, and proving unrelated errors are not retried.
+- **"Internal error: Session already has an active ACP prompt" no longer fails a steer or strands the chat.** 1.66.87 recognised this refusal only in the exact wording and only for 3 s (15 tries, 200 ms apart). The live OpenCode 2 agent actually answers `Session already has an active ACP prompt: <id>`; the trailing id and any wording change slipped past the exact match, and on a busy machine the flag can stay set longer than 3 s. The match is now case-insensitive and suffix-independent (`/already has an active acp/i`), and the bounded wait is 40 tries, 250 ms apart (10 s).
+- **The refusal arrives as an Effect defect, not a typed ACP error.** OpenCode 2 reports it through the defect-shaped JSON-RPC error path (`decodeDefect`), so 1.66.89's typed-only `Effect.catch` never retried and its `Effect.tapError` cleanup never ran. The prompt therefore failed in milliseconds, no `turn.completed failed` event was emitted, and the `turn.started` already queued for that turn was applied afterwards: the session stayed `running` on a turn that never started, blocking the task queue and checkpoint steers. The wait now matches the whole cause (`isAcpPromptBusyCause`, following nested `Error.cause`), and any failure, typed or defect, settles the turn with a typed `ProviderAdapterRequestError` and one `turn.completed failed`.
+- **The cleanup only settles the rejected turn.** A genuinely running older prompt is not cancelled or stopped; only the turn whose prompt was refused ends. The turn's tail also clears the active turn only when it still owns it, so a superseded turn cannot wipe a newer turn's id.
+- Match detail: the fix answers the live message `Session already has an active ACP prompt: <id>` with a case-insensitive match (the session id and any wording after it are ignored) and a bounded 10 s wait instead of the old 3 s. A non-busy refusal still fails at once.
+- The match lives in exported helpers, `isAcpPromptBusyError` and `isAcpPromptBusyCause`, with tests pinning the verbatim OpenCode string, a defect, a wrapped cause, the case and suffix variants, and proving unrelated errors are not retried. The mock agent can now fail a prompt as a defect (`T3_ACP_DEFECT_PROMPT_ERROR`) to reproduce the wire shape.
 - No schema change, no provider settings change, task concurrency stays 5.
 
 ### Launcher: re-resolve node per start, retry a failed spawn
@@ -20,7 +22,10 @@ The 1.66.88 stage was built while Node 24.22.1 replaced `node.exe` mid-run; the 
 
 ## Validation
 
-- Adapter tests pass: 6 of 6 in `src/provider/Layers/NativeAcpAdapter.test.ts`, including the new verbatim-string case.
+- Adapter tests pass: 11 of 11 in `src/provider/Layers/NativeAcpAdapter.test.ts`. New cases cover a busy refusal delivered as a defect (retried, turn completes), a non-busy defect (fails in under 5 s, settles the turn, next turn runs), a busy refusal that never clears (fails after the 10 s window with one failed completion and no running turn), and a steer whose new prompt is refused as busy (aborted turn plus one completed turn, session left ready).
+- The same defect tests fail against the unfixed adapter (helper missing; no `turn.completed` for either failure), so the regression is reproduced before the correction.
+- `RegistryAcpAdapter.test.ts` and `AcpAdapterSupport.test.ts` pass: 14 of 14.
+- Existing ingestion and reactor tests already cover the rest of the chain: `ProviderRuntimeIngestion.test.ts` settles `turn.started` plus `turn.completed failed` to status `error` with no active turn, and `ProviderCommandReactor.test.ts` "a failed drained send releases the next queued message" proves a queued follow-up still goes out after a failed start.
 - Server typecheck exit 0 (suggestions only, no errors).
 
 ## Runtime and activation

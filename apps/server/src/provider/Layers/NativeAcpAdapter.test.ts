@@ -8,7 +8,10 @@ import {
   ThreadId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -16,8 +19,11 @@ import * as Stream from "effect/Stream";
 import {
   makeNativeAcpAdapter,
   selectAutoApprovedPermissionOption,
+  isAcpPromptBusyCause,
   isAcpPromptBusyError,
 } from "./NativeAcpAdapter.ts";
+
+const BUSY_PROMPT_TEXT = "Internal error: Session already has an active ACP prompt: ses_mock";
 
 it("recognises the busy-prompt refusal OpenCode actually sends", () => {
   // Verbatim shape from the OpenCode 2 ACP agent: the id is appended, and the
@@ -33,6 +39,20 @@ it("recognises the busy-prompt refusal OpenCode actually sends", () => {
   // Everything else still fails at once.
   expect(isAcpPromptBusyError("Insufficient Balance")).toBe(false);
   expect(isAcpPromptBusyError("Maximum call stack size exceeded")).toBe(false);
+});
+
+it("recognises the busy refusal in a defect and in a wrapped cause", () => {
+  // OpenCode 2 delivers this one as an Effect defect, not a typed failure.
+  expect(isAcpPromptBusyCause(Cause.die(new Error(BUSY_PROMPT_TEXT)))).toBe(true);
+  expect(
+    isAcpPromptBusyCause(
+      Cause.die(new Error("ACP request failed", { cause: new Error(BUSY_PROMPT_TEXT) })),
+    ),
+  ).toBe(true);
+  expect(isAcpPromptBusyCause(Cause.fail(new Error("Maximum call stack size exceeded")))).toBe(
+    false,
+  );
+  expect(isAcpPromptBusyCause(Cause.die(new Error("Insufficient Balance")))).toBe(false);
 });
 
 it("full access prefers a one-call grant over a remembered permission", () => {
@@ -261,6 +281,270 @@ it.live(
           (event) => event.type === "turn.completed" && event.payload.state === "completed",
         ),
       ).toBe(true);
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  30_000,
+);
+
+it.live(
+  "a busy refusal that arrives as a defect is retried and its turn still completes",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-defect-busy-" });
+      const threadId = ThreadId.make("native-acp-defect-busy-test");
+      const seen: ProviderRuntimeEvent[] = [];
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        displayName: "OpenCode",
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: root,
+              env: {
+                ...process.env,
+                T3_ACP_DEFECT_PROMPT_ERROR: BUSY_PROMPT_TEXT,
+                T3_ACP_DEFECT_PROMPT_COUNT: "1",
+              },
+            },
+            cwd: root,
+            authMethodId: null,
+            clientInfo: { name: "hbots-test", version: "1" },
+          }),
+      });
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            seen.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      const startedAt = yield* Clock.currentTimeMillis;
+      const result = yield* adapter.sendTurn({ threadId, input: "after a steer" });
+      expect(result.turnId).toBeTruthy();
+      // The one refusal was waited out, not skipped.
+      expect((yield* Clock.currentTimeMillis) - startedAt).toBeGreaterThanOrEqual(200);
+      const completed = seen.filter((event) => event.type === "turn.completed");
+      expect(completed).toHaveLength(1);
+      expect(completed[0]).toMatchObject({ payload: { state: "completed" } });
+      const sessions = yield* adapter.listSessions();
+      expect(sessions[0]).toMatchObject({ status: "ready", activeTurnId: undefined });
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  30_000,
+);
+
+it.live(
+  "a non-busy defect fails the turn promptly, settles it, and lets the next turn run",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-defect-" });
+      const threadId = ThreadId.make("native-acp-defect-test");
+      const seen: ProviderRuntimeEvent[] = [];
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        displayName: "OpenCode",
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: root,
+              env: {
+                ...process.env,
+                T3_ACP_DEFECT_PROMPT_ERROR: "Insufficient Balance",
+                T3_ACP_DEFECT_PROMPT_COUNT: "1",
+              },
+            },
+            cwd: root,
+            authMethodId: null,
+            clientInfo: { name: "hbots-test", version: "1" },
+          }),
+      });
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            seen.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      const startedAt = yield* Clock.currentTimeMillis;
+      const refused = yield* adapter.sendTurn({ threadId, input: "refused" }).pipe(Effect.exit);
+      expect(Exit.isFailure(refused)).toBe(true);
+      // It is not the busy text, so it must not wait the 10 s retry window.
+      expect((yield* Clock.currentTimeMillis) - startedAt).toBeLessThan(5_000);
+      const failed = seen.filter(
+        (event) => event.type === "turn.completed" && event.payload.state === "failed",
+      );
+      expect(failed).toHaveLength(1);
+      expect(failed[0]).toMatchObject({
+        payload: { state: "failed", errorMessage: expect.stringContaining("Insufficient Balance") },
+      });
+      const afterFailure = yield* adapter.listSessions();
+      expect(afterFailure[0]).toMatchObject({ status: "ready", activeTurnId: undefined });
+
+      // The failed turn left nothing behind: the next message starts and completes.
+      const next = yield* adapter.sendTurn({ threadId, input: "next" });
+      expect(next.turnId).toBeTruthy();
+      expect(
+        seen.filter(
+          (event) => event.type === "turn.completed" && event.payload.state === "completed",
+        ),
+      ).toHaveLength(1);
+      const sessions = yield* adapter.listSessions();
+      expect(sessions[0]).toMatchObject({ status: "ready", activeTurnId: undefined });
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  30_000,
+);
+
+it.live(
+  "a busy refusal that never clears fails after the bounded wait and leaves no running turn",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-stuck-" });
+      const threadId = ThreadId.make("native-acp-stuck-test");
+      const seen: ProviderRuntimeEvent[] = [];
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        displayName: "OpenCode",
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: root,
+              env: {
+                ...process.env,
+                T3_ACP_DEFECT_PROMPT_ERROR: BUSY_PROMPT_TEXT,
+                T3_ACP_DEFECT_PROMPT_COUNT: "999",
+              },
+            },
+            cwd: root,
+            authMethodId: null,
+            clientInfo: { name: "hbots-test", version: "1" },
+          }),
+      });
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            seen.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      const startedAt = yield* Clock.currentTimeMillis;
+      const refused = yield* adapter.sendTurn({ threadId, input: "still busy" }).pipe(Effect.exit);
+      expect(Exit.isFailure(refused)).toBe(true);
+      // The whole bounded wait was used before the turn was failed.
+      expect((yield* Clock.currentTimeMillis) - startedAt).toBeGreaterThanOrEqual(9_000);
+      const failed = seen.filter(
+        (event) => event.type === "turn.completed" && event.payload.state === "failed",
+      );
+      expect(failed).toHaveLength(1);
+      expect(failed[0]).toMatchObject({
+        payload: { state: "failed", errorMessage: expect.stringContaining("active ACP prompt") },
+      });
+      // The cleanup must not kill the agent session a genuinely running prompt
+      // could still own; it only settles this rejected turn.
+      const sessions = yield* adapter.listSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({ status: "ready", activeTurnId: undefined });
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  40_000,
+);
+
+it.live(
+  "a steer whose new prompt is refused as busy keeps its turn and never strands the session",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-steer-busy-" });
+      const log = path.join(root, "requests.jsonl");
+      const threadId = ThreadId.make("native-acp-steer-busy-test");
+      const seen: ProviderRuntimeEvent[] = [];
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        displayName: "OpenCode",
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: root,
+              env: {
+                ...process.env,
+                T3_ACP_REQUEST_LOG_PATH: log,
+                T3_ACP_PROMPT_DELAY_MS: "400",
+                T3_ACP_DEFECT_PROMPT_ERROR: BUSY_PROMPT_TEXT,
+                T3_ACP_DEFECT_PROMPT_COUNT: "1",
+                T3_ACP_DEFECT_PROMPT_START: "2",
+              },
+            },
+            cwd: root,
+            authMethodId: null,
+            clientInfo: { name: "hbots-test", version: "1" },
+          }),
+      });
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            seen.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      const first = yield* adapter
+        .sendTurn({ threadId, input: "long first message" })
+        .pipe(Effect.forkChild);
+      yield* Effect.sleep("80 millis");
+      const second = yield* adapter
+        .sendTurn({ threadId, input: "steer message" })
+        .pipe(Effect.forkChild);
+      const [firstTurn, secondTurn] = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+      expect(firstTurn.turnId).not.toBe(secondTurn.turnId);
+      expect(seen.filter((event) => event.type === "turn.aborted")).toHaveLength(1);
+      const completed = seen.filter((event) => event.type === "turn.completed");
+      expect(completed).toHaveLength(1);
+      expect(completed[0]).toMatchObject({ payload: { state: "completed" } });
+      const requests = yield* fs.readFileString(log);
+      expect(requests.indexOf("long first message")).toBeLessThan(
+        requests.indexOf("steer message"),
+      );
+      const sessions = yield* adapter.listSessions();
+      expect(sessions[0]).toMatchObject({ status: "ready", activeTurnId: undefined });
       yield* adapter.stopAll();
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   30_000,
