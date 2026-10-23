@@ -137,3 +137,57 @@ test("the pre-existing busy reasons still hold", () => {
     db.close();
   }
 });
+
+function rateLimitedTask(db, input) {
+  db.exec(`
+    INSERT INTO projection_threads VALUES ('routine-live', NULL);
+    INSERT INTO provider_session_runtime VALUES ('routine-live', 'ready');
+  `);
+  db.prepare("INSERT INTO projection_thread_sessions VALUES (?, ?, ?)").run(
+    "routine-live",
+    input.session ?? "ready",
+    input.turn ?? null,
+  );
+  db.prepare("INSERT INTO personal_tasks VALUES (?, ?, ?, ?, ?)").run(
+    "task-rate-limited",
+    "rate_limited",
+    input.availableAt,
+    "rate_limited",
+    "routine-live",
+  );
+}
+
+test("a rate-limited routine parked far ahead or already overdue is not busy", () => {
+  for (const availableAt of [at(NOW + 2 * 24 * 60 * 60_000), at(NOW - 50 * 60_000)]) {
+    const db = freshDb();
+    try {
+      rateLimitedTask(db, { availableAt });
+      const verdict = classify(db, NOW);
+      assert.equal(verdict.blocking, 0, `parked retry ${availableAt}`);
+      assert.equal(verdict.parked, 1);
+      assert.equal(verdict.idle, true);
+    } finally {
+      db.close();
+    }
+  }
+});
+
+test("a retry due inside the landing window, or an active turn, still holds the gate", () => {
+  const dueSoon = freshDb();
+  try {
+    rateLimitedTask(dueSoon, { availableAt: at(NOW + 5 * 60_000) });
+    assert.equal(classify(dueSoon, NOW).idle, false);
+  } finally {
+    dueSoon.close();
+  }
+  const turning = freshDb();
+  try {
+    rateLimitedTask(turning, {
+      availableAt: at(NOW + 2 * 24 * 60 * 60_000),
+      turn: "turn-in-flight",
+    });
+    assert.equal(classify(turning, NOW).idle, false);
+  } finally {
+    turning.close();
+  }
+});

@@ -30,7 +30,10 @@ import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 export const horizonMs = 10 * 60 * 1000;
 const terminal = new Set(["completed", "failed", "interrupted", "cancelled"]);
-const inactive = new Set(["stopped", "error"]);
+// A "ready" session or runtime is idle: it holds no turn. A rate-limited
+// routine task whose retry is far away, or already overdue (the worker missed
+// it), must not hold a release for days while every bot sits idle.
+const inactive = new Set(["stopped", "error", "ready"]);
 function distant(value, now) {
   return (
     typeof value === "string" &&
@@ -107,7 +110,7 @@ export function classify(db, now = Date.now()) {
       const safe =
         row.status === "rate_limited" &&
         row.error_category === "rate_limited" &&
-        distant(row.available_at, now) &&
+        (distant(row.available_at, now) || stale(row.available_at, now)) &&
         row.live_thread &&
         row.deleted_at === null &&
         inactive.has(row.session_status) &&
