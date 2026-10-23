@@ -278,7 +278,7 @@ describe("selectUsageCards", () => {
         },
       ],
     } as unknown as PersonalBotTokenUsageResult;
-    expect(selectOpenCodeSpendLine(result)).toBe("API price $0.79 this week");
+    expect(selectOpenCodeSpendLine(result)).toBe("Our 7-day estimate: $0.79");
     expect(
       selectOpenCodeSpendLine({
         ...result,
@@ -289,7 +289,7 @@ describe("selectUsageCards", () => {
           },
         ],
       }),
-    ).toBe("API price $0.79 this week, plus unpriced tokens");
+    ).toBe("Our 7-day estimate: $0.79, plus unpriced tokens");
     expect(selectOpenCodeSpendLine(undefined)).toBeNull();
   });
 

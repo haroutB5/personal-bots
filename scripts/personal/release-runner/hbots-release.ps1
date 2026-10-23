@@ -42,8 +42,8 @@ param(
     [string]$SwRevision = '2026-09-30-worker-list',
     # Retention for the fresh PRODUCTION backup: backup.ps1 keeps the newest N timestamp-named backups (its own
     # default is 14) and prunes the rest right after writing. The old per-version waiters passed 2147483647 (no
-    # pruning). 2147483647 keeps every backup. Minimum 3. The tiny fixture backup in -Prepare never prunes.
-    [int]$BackupKeep = 14,
+    # pruning). 2147483647 keeps every backup. Minimum 1. The tiny fixture backup in -Prepare never prunes.
+    [int]$BackupKeep = 1,
     [string]$RepoRoot = 'C:\Claude\AI\personal-bots',
     [string]$AppSheet = 'C:\Claude\AI\dev-team\apps\personal-bots.md',
     [string]$AppHistory = 'C:\Claude\AI\dev-team\apps\personal-bots-history.md',
@@ -277,7 +277,7 @@ function Assert-Params {
     if ($MigrationBefore -notmatch '^\d+$' -or $MigrationAfter -notmatch '^\d+$') { throw '-MigrationBefore and -MigrationAfter are required (max migration id in the backup and after activation).' }
     if ([int]$MigrationAfter -lt [int]$MigrationBefore) { throw '-MigrationAfter is lower than -MigrationBefore.' }
     if ($Release -eq $Rollback -and -not $DryRun) { throw 'Release and rollback are the same sha.' }
-    if ($BackupKeep -lt 3) { throw '-BackupKeep must be at least 3 (newest timestamp backups kept by the production backup; 2147483647 keeps all).' }
+    if ($BackupKeep -lt 1) { throw '-BackupKeep must be at least 1 (newest timestamp backups kept by the production backup; 2147483647 keeps all).' }
     if (($Summary -match '["`$]') -or $Summary.Length -gt 400) { throw '-Summary: plain text, at most 400 characters, no quotes, backticks or $.' }
 }
 

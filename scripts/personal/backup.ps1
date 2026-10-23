@@ -16,7 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\backup.ps1
 [CmdletBinding()]
 param(
     [ValidateSet('dev', 'prod')][string]$Root = 'dev',
-    [ValidateRange(3, 2147483647)][int]$Keep = 3,
+    [ValidateRange(1, 2147483647)][int]$Keep = 1,
     [string]$Node
 )
 

@@ -171,8 +171,8 @@ export function selectOpenCodeSpendLine(
   if (!row || row.costUsd <= 0) return null;
   const amount = formatUsd(row.costUsd);
   return row.unpricedTokens > 0
-    ? `API price ${amount} this week, plus unpriced tokens`
-    : `API price ${amount} this week`;
+    ? `Our 7-day estimate: ${amount}, plus unpriced tokens`
+    : `Our 7-day estimate: ${amount}`;
 }
 
 /** "1 reset banked", "2 resets banked". */

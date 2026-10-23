@@ -1,16 +1,7 @@
 import type { JSX } from "react";
 import { memo } from "react";
 
-import {
-  ChevronRight,
-  CircleAlert,
-  CircleCheck,
-  Eye,
-  Globe,
-  Pencil,
-  Terminal,
-  Wrench,
-} from "lucide-react";
+import { ChevronRight, CircleAlert, CircleCheck, Wrench } from "lucide-react";
 
 import { workEntryDisplayLabel } from "~/components/chat/MessagesTimeline.logic";
 import type { WorkLogEntry } from "~/session-logic";
@@ -42,28 +33,6 @@ function sameToolDetails(previous: ToolDetailsProps, next: ToolDetailsProps): bo
   return true;
 }
 
-function SummaryIcon({ entries }: { readonly entries: ReadonlyArray<WorkLogEntry> }): JSX.Element {
-  const first = entries[0];
-  if (first === undefined) return <Wrench aria-hidden="true" className="size-3.5 shrink-0" />;
-  if (first.tone === "error") {
-    return <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />;
-  }
-  const label = first.label.trim().toLowerCase();
-  if (first.command !== undefined || first.rawCommand !== undefined || label.startsWith("ran ")) {
-    return <Terminal aria-hidden="true" className="size-3.5 shrink-0" />;
-  }
-  if (first.requestKind === "file-read" || label.startsWith("read ")) {
-    return <Eye aria-hidden="true" className="size-3.5 shrink-0" />;
-  }
-  if ((first.changedFiles?.length ?? 0) > 0 || label.startsWith("edited ")) {
-    return <Pencil aria-hidden="true" className="size-3.5 shrink-0" />;
-  }
-  if (first.toolSurface === "browser") {
-    return <Globe aria-hidden="true" className="size-3.5 shrink-0" />;
-  }
-  return <Wrench aria-hidden="true" className="size-3.5 shrink-0" />;
-}
-
 export const ToolDetails = memo(function ToolDetails({
   entries,
   live,
@@ -85,7 +54,6 @@ export const ToolDetails = memo(function ToolDetails({
             className="size-1.5 shrink-0 animate-pulse rounded-full bg-[var(--personal-live)]"
           />
         ) : null}
-        <SummaryIcon entries={entries} />
         <span
           className={
             live ? "min-w-0 flex-1 truncate text-[var(--personal-text)]" : "min-w-0 flex-1 truncate"
