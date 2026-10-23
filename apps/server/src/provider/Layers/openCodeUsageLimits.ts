@@ -15,7 +15,10 @@ import {
   makeUsageLimits,
 } from "../providerUsageLimits.ts";
 
-const AuthFile = Schema.Struct({ "opencode-go": Schema.optionalKey(Schema.Unknown) });
+const AuthFile = Schema.Struct({
+  "opencode-go": Schema.optionalKey(Schema.Unknown),
+  opencode: Schema.optionalKey(Schema.Unknown),
+});
 const ApiAuth = Schema.Struct({ type: Schema.Literal("api"), key: Schema.String });
 const decodeAuthFile = Schema.decodeEffect(Schema.fromJsonString(AuthFile));
 const decodeApiAuth = Schema.decodeUnknownOption(ApiAuth);
@@ -55,8 +58,13 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       ));
     const auth = yield* decodeAuthFile(contents);
     const apiAuth = decodeApiAuth(auth["opencode-go"]);
+    const consoleAuth = decodeApiAuth(auth.opencode);
     // OpenCode overlays stored API credentials after environment credentials.
-    const apiKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
+    const apiKey = (
+      Option.isSome(apiAuth)
+        ? apiAuth.value.key
+        : env.OPENCODE_API_KEY || (Option.isSome(consoleAuth) ? consoleAuth.value.key : undefined)
+    )?.trim();
     if (!apiKey) return unsupported;
 
     const client = yield* HttpClient.HttpClient;

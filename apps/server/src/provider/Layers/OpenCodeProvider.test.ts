@@ -111,6 +111,46 @@ it.effect("does not read local credentials for external or disabled OpenCode ins
   }),
 );
 
+it.effect(
+  "reads Go Plus usage from an existing Console key without requiring a duplicate login",
+  () =>
+    Effect.gen(function* () {
+      let called = false;
+      const limits = yield* readOpenCodeGoUsageLimits({
+        enabled: true,
+        serverUrl: "",
+        environment: {
+          OPENCODE_AUTH_CONTENT: '{"opencode":{"type":"api","key":"console-test-key"}}',
+        },
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            called = true;
+            NodeAssert.equal(request.headers.authorization, "Bearer console-test-key");
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  usage: Object.fromEntries(
+                    ["rolling", "weekly", "monthly"].map((id) => [
+                      id,
+                      { percent: 0, resetsAt: "2026-10-23T12:00:00.000Z" },
+                    ]),
+                  ),
+                }),
+              ),
+            );
+          }),
+        ),
+        Effect.provide(NodeServices.layer),
+      );
+      NodeAssert.equal(called, true);
+      NodeAssert.equal(limits.windows.length, 3);
+      NodeAssert.equal(limits.unavailable, undefined);
+    }),
+);
+
 it.effect("keeps Go entitlement absence distinct from failed or malformed usage responses", () =>
   Effect.gen(function* () {
     for (const [status, reason] of [

@@ -47,6 +47,8 @@ import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { ensurePersonalBotOpenCodeHome } from "../opencodeBotIsolation.ts";
 import { runOpenCodeSmokeTest } from "../providerSmokeTest.ts";
+import { makeOpenCode2Instance } from "../opencode2.ts";
+import { parseGenericCliVersion } from "../providerSnapshot.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -123,6 +125,44 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+      // The v2 CLI serves a different API. Keep v1's SDK path intact and use
+      // the versioned ACP protocol for local v2 sessions.
+      const binaryVersion =
+        effectiveConfig.enabled && !effectiveConfig.serverUrl.trim()
+          ? yield* openCodeRuntime
+              .runOpenCodeCommand({
+                binaryPath: effectiveConfig.binaryPath,
+                args: ["--version"],
+                environment: processEnv,
+              })
+              .pipe(
+                Effect.timeout("10 seconds"),
+                Effect.map((result) =>
+                  result.code === 0 ? parseGenericCliVersion(result.stdout) : null,
+                ),
+                Effect.orElseSucceed(() => null),
+              )
+          : null;
+      if (binaryVersion && Number(binaryVersion.split(".")[0]) >= 2) {
+        return yield* makeOpenCode2Instance({
+          instanceId,
+          displayName,
+          accentColor,
+          config: effectiveConfig,
+          environment: processEnv,
+          version: binaryVersion,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: "Could not prepare the OpenCode 2 provider.",
+                cause,
+              }),
+          ),
+        );
+      }
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
           binaryPath: effectiveConfig.binaryPath,
