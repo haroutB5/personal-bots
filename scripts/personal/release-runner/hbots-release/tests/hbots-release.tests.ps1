@@ -62,6 +62,9 @@ function New-World([string]$Name, [string]$Concurrency = '5') {
     foreach ($f in 'common.ps1', 'background-priority.ps1', 'backup.ps1', 'sqlite-snapshot.cjs', 'sqlite-check.cjs', 'migration-check.cjs') { Copy-Item -LiteralPath (Join-Path $realTools $f) -Destination (Join-Path $repo "scripts\personal\$f") }
     foreach ($f in 'check-release-notes.ps1', 'check-gate-evidence.ps1', 'restart.ps1', 'smoke.ps1', 'notify-release.ps1') { Copy-Item -LiteralPath (Join-Path $stubs $f) -Destination (Join-Path $repo "scripts\personal\$f") }
     Write-File (Join-Path $repo 'apps\server\src\personal\tasks\PersonalTaskService.ts') "export const PERSONAL_TASKS_CONCURRENCY = $Concurrency;`n"
+    # Migration source fixture: the no-backup guard reads the highest id here and requires -MigrationAfter.
+    $migLines = ((1..104) | ForEach-Object { "[$_ , { id: $_ }]" }) -join ",`n"
+    Write-File (Join-Path $repo 'apps\server\src\persistence\Migrations.ts') "export const migrations = [`n$migLines`n];`n"
     Write-File (Join-Path $repo 'docs\releases\HANDOFF-999.md') "notes`n"
     $null = & git -C $repo init -q
     $null = Invoke-TestGit $repo @('add', '-A')
@@ -140,7 +143,7 @@ function Get-Result($w, [string]$Suffix = '') {
     if (Test-Path $p) { return (Get-Content -LiteralPath $p -Raw | ConvertFrom-Json) }
     return $null
 }
-function Invoke-Runner($w, [string[]]$Extra, [hashtable]$Param = @{}) {
+function Invoke-Runner($w, [string[]]$Extra, [hashtable]$Param = @{}, [switch]$NoForceBackup) {
     $p = [ordered]@{
         Release = $Rel; Rollback = $Rb; MainSha = $w.Main; Version = $Ver; NotifyThread = $Thread
         MigrationBefore = '104'; MigrationAfter = '104'; Summary = 'harness change'; RepoRoot = $w.Repo
@@ -149,6 +152,9 @@ function Invoke-Runner($w, [string[]]$Extra, [hashtable]$Param = @{}) {
     foreach ($k in $Param.Keys) { $p[$k] = $Param[$k] }
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner)
     foreach ($k in $p.Keys) { $argList += @("-$k", [string]$p[$k]) }
+    # Every existing scenario models a release whose backup still runs: the harness forces it unless a
+    # scenario is specifically about the no-migration skip.
+    if (-not $NoForceBackup) { $argList += '-ForceBackup' }
     $argList += $Extra
     $envKeep = @{}
     $set = @{
@@ -314,7 +320,7 @@ function Scenario-ParamGuards {
             @{ Id = 'bad-thread'; Param = @{ NotifyThread = 'nope' }; Want = 'NotifyThread' },
             @{ Id = 'bad-migration'; Param = @{ MigrationBefore = 'abc' }; Want = 'MigrationBefore' },
             @{ Id = 'dollar-summary'; Param = @{ Summary = 'costs $5 now' }; Want = 'Summary' },
-            @{ Id = 'keep-too-low'; Param = @{ BackupKeep = '2' }; Want = 'BackupKeep' }
+            @{ Id = 'keep-too-low'; Param = @{ BackupKeep = '0' }; Want = 'BackupKeep' }
         )
         foreach ($c in $cases) {
             Reset-Calls $w
@@ -414,7 +420,7 @@ function Scenario-BackupRetention {
     Write-Host '== s10 backup retention: -BackupKeep prunes only the oldest timestamp backups, after the fresh one is written'
     foreach ($case in @(
         @{ Id = 'keep3'; Param = @{ BackupKeep = '3' }; WantTs = 3; WantPruned = 3 },
-        @{ Id = 'default14'; Param = @{}; WantTs = 6; WantPruned = 0 },
+        @{ Id = 'default1'; Param = @{}; WantTs = 1; WantPruned = 5 },
         @{ Id = 'keepall'; Param = @{ BackupKeep = '2147483647' }; WantTs = 6; WantPruned = 0 }
     )) {
         $w = New-World ("ret-" + $case.Id)
@@ -534,6 +540,60 @@ Set-Content -LiteralPath (Join-Path $target 'backup.json') -Value ($noProof | Co
     } finally { Remove-World $w }
 }
 
+function Scenario-SkipBackup {
+    Write-Host '== s13 no migration: backup skipped, live level checked, release still activates'
+    $w = New-World 'skip'
+    try {
+        $prep = Invoke-Runner $w @('-Prepare') -NoForceBackup
+        Assert ($prep.Exit -eq 0) 'prepare without a plan accepts a live DB at the armed level' $prep.Out
+        Reset-Calls $w
+        $r = Invoke-Runner $w -NoForceBackup
+        Assert ($r.Exit -eq 0) 'the no-backup run exits 0' $r.Out
+        $res = Get-Result $w
+        Assert ($res -and $res.status -eq 'live_verified') 'the release still reaches live_verified' ($res.error)
+        Assert ($res.backupSkipped -eq $true) 'the result records backupSkipped'
+        Assert ($res.backupDecision -eq 'no migration') 'the result records the reason'
+        Assert ((Backups-Count $w) -eq 0) 'no production backup was written'
+        Assert ((Calls-Of $w 'backup').Count -eq 0) 'backup.ps1 was never called'
+        Assert ((Calls-Of $w 'restart').Count -eq 1) 'the release still restarted'
+        $sheet = Get-Content -LiteralPath $w.Sheet -Raw
+        Assert ($sheet -match 'backup skipped \(no migration\)') 'the sheet line says the backup was skipped' $sheet
+        Assert ($sheet -match 'restart/smoke 0/0') 'the sheet line keeps restart and smoke exits'
+    } finally { Remove-World $w }
+}
+
+function Scenario-SkipGuard {
+    Write-Host '== s14 no migration guard: a live level or source mismatch refuses before any restart'
+    $w = New-World 'skipguard'
+    try {
+        $prep = Invoke-Runner $w @('-Prepare') -NoForceBackup
+        Assert ($prep.Exit -eq 0) 'the guard world prepares at the live level' $prep.Out
+        Reset-Calls $w
+        $bad = Invoke-Runner $w -NoForceBackup -Param @{ MigrationBefore = '103'; MigrationAfter = '103' }
+        Assert ($bad.Exit -ne 0) 'an arm below the live level refuses' $bad.Out
+        $badRes = Get-Result $w
+        Assert ($badRes -and $badRes.error -match 'tops out at 104, but -MigrationAfter is 103') 'the refusal names both levels' ($badRes.error)
+        Assert ((Calls-Of $w 'restart').Count -eq 0) 'nothing was restarted'
+        Assert ((Backups-Count $w) -eq 0) 'no backup ran on the refusal'
+
+        # The release source must top out at -MigrationAfter: rewrite Migrations.ts one level lower and
+        # prove -Prepare itself refuses, before a seal exists.
+        $migPath = Join-Path $w.Repo 'apps\server\src\persistence\Migrations.ts'
+        $mig = Get-Content -LiteralPath $migPath -Raw
+        $mig = $mig -replace '(?m)^\[104 , \{ id: 104 \}\]\r?\n?', ''
+        Write-File $migPath $mig
+        $null = Invoke-TestGit $w.Repo @('add', '-A')
+        $null = Invoke-TestGit $w.Repo @('commit', '-q', '-m', 'source one level lower')
+        $w.Main = (Invoke-TestGit $w.Repo @('rev-parse', 'HEAD') | Select-Object -First 1).ToString().Trim()
+        Reset-Calls $w
+        $bad2 = Invoke-Runner $w @('-Prepare') -NoForceBackup
+        Assert ($bad2.Exit -ne 0) 'a source below the armed level refuses' $bad2.Out
+        $bad2Res = Get-Content -LiteralPath (Join-Path $w.Run "restart-$Ver-prepare-result.json") -Raw | ConvertFrom-Json
+        Assert ($bad2Res.error -match 'tops out at 103') 'the refusal names the source level' ($bad2Res.error)
+        Assert ((Calls-Of $w 'restart').Count -eq 0) 'nothing was restarted on the source refusal'
+    } finally { Remove-World $w }
+}
+
 if (Should-Run 's1') { Scenario-Happy }
 if ($Only.Count -eq 0 -or ($Only | Where-Object { $_ -like 's2*' })) { Scenario-Rollbacks }
 if (Should-Run 's3') { Scenario-Refusals }
@@ -546,6 +606,8 @@ if (Should-Run 's9') { Scenario-DryRun }
 if (Should-Run 's10') { Scenario-BackupRetention }
 if (Should-Run 's11') { Scenario-DigestTamper }
 if (Should-Run 's12') { Scenario-PrepareProof }
+if (Should-Run 's13') { Scenario-SkipBackup }
+if (Should-Run 's14') { Scenario-SkipGuard }
 
 Write-Host ''
 Write-Host ("RESULT: {0} checks passed, {1} failed" -f $script:Passed, $script:Failures.Count)

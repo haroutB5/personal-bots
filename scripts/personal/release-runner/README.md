@@ -52,6 +52,35 @@ runner's helper pins are unchanged. Install hashes for the next release's notes
 | `hbots-release/tests/stubs/restart.ps1`                                                        | `1561de620d04a3043fb111b615a849404742a144431f3f982a3bac22bd133ad7` |
 | `hbots-release/release-db-check.cjs`, `tree-hash.cjs`, `make-fixture.cjs`, `proc-priority.ps1` | unchanged from the 1.66.47 table                                   |
 
+## No-migration releases skip the production backup (24 Oct, after 1.66.89)
+
+Harout's 20 Oct rule ("stop doing backups if it isn't a big release") was in the sheet but never
+in the runner: 1.66.89 backed up 3 GB for migration 112 -> 112 and spent 15 minutes on it. The
+runner now skips the production backup when `-MigrationBefore` equals `-MigrationAfter` (the
+result records `backupSkipped` and `backupDecision: no migration`, the live line says "backup
+skipped (no migration)"), and `-ForceBackup` still takes the full backup for a big release with a
+stable level. A changed level always backs up exactly as before.
+
+To keep the skip honest the guards (`-Prepare`, `-GuardsOnly`, `-DryRun` and the real run) now
+prove two things before anything restarts: the LIVE database's `max(migration_id)` equals
+`-MigrationBefore` (new `release-db-check.cjs --live-migration`, a light read-only query, no
+integrity walk on the live file), and `apps/server/src/persistence/Migrations.ts` at `-MainSha`
+tops out at `-MigrationAfter`. Either mismatch refuses and names both levels. The idle recheck
+before restart still runs, and the post-activation memory-row comparison uses the live count read
+before the restart as its baseline.
+
+Tests: `s13` (skip run: no backup, live_verified, sheet text) and `s14` (arm below the live level
+refuses; source below the level refuses; nothing restarts). The other scenarios run with
+`-ForceBackup` so they keep exercising the backup path. Full suite 232 checks, 0 failed (24 Oct).
+Fixes two stale expectations while there: `keep-too-low` (BackupKeep 0, the minimum is 1) and
+`default1` (the default keeps 1, not 14).
+
+| File                                          | sha256                                                             |
+| --------------------------------------------- | ------------------------------------------------------------------ |
+| `hbots-release.ps1`                           | `e27eac75107104eca312fb0ad2d8a5d8b45ccb50462700c1ab268c2c5cae3ac6` |
+| `hbots-release/release-db-check.cjs`          | `d56ff2d52340b7d518a5b08f5c86f6c7b2fdcc8bd43c784e802a59e2a8655268` |
+| `hbots-release/tests/hbots-release.tests.ps1` | `61a063d4f92b09c901aacbf62ea3f97b2d671480df6d4726e37171c2a40dec21` |
+
 ## 1.66.48: dry-run backup estimate 160-420 s
 
 The dry run's fresh-backup line now says `160-420 s` (was 160-300 s): QA measured

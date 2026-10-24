@@ -44,6 +44,8 @@ param(
     # default is 14) and prunes the rest right after writing. The old per-version waiters passed 2147483647 (no
     # pruning). 2147483647 keeps every backup. Minimum 1. The tiny fixture backup in -Prepare never prunes.
     [int]$BackupKeep = 1,
+    # Take the full production backup even when the migration level does not change (CTO marks big releases).
+    [switch]$ForceBackup,
     [string]$RepoRoot = 'C:\Claude\AI\personal-bots',
     [string]$AppSheet = 'C:\Claude\AI\dev-team\apps\personal-bots.md',
     [string]$AppHistory = 'C:\Claude\AI\dev-team\apps\personal-bots-history.md',
@@ -64,7 +66,7 @@ $ErrorActionPreference = 'Stop'
 # installs that file over run\idle-classification-16617.mjs and copies this
 # runner over run\hbots-release.ps1; the two hashes must change together.
 $PinIdleClassifierSha = '636894042CA448C853B429BAE3D7905DB4F9D01065B66F490058F88A79EC899D'
-$PinDbCheckSha = '4B1C6170218FBC1DC04C1ABC3A1C9C6FDF798E2D756A474EC1E88DC9E0065250'
+$PinDbCheckSha = 'D56FF2D52340B7D518A5B08F5C86F6C7B2FDCC8BD43C784E802A59E2A8655268'
 $PinTreeHashSha = '7917214BD75B56FCEF9D8C3BD244C298C12C376B38C7FB4981F972CD3C65428F'
 $PinFixtureSha = '1CAFF1EAC3A7940B320029B04BFB1CEF693F98970ABD0DB8AE1296351BE991FC'
 $PinPrioritySha = 'DED0E38C166B0E755941848D4A376CFBE5189D111F8ADE06B8F5C3DF0F66AC4E'
@@ -281,6 +283,14 @@ function Assert-Params {
     if (($Summary -match '["`$]') -or $Summary.Length -gt 400) { throw '-Summary: plain text, at most 400 characters, no quotes, backticks or $.' }
 }
 
+# Harout's 20 Oct rule: no production backup when nothing changes in the schema. -ForceBackup keeps it
+# for a big release with a stable migration level. A changed level always backs up.
+# Guarded on the shape so a bad -MigrationBefore still fails in Assert-Params with its own message.
+$pbSkipBackup = $false
+if ($MigrationBefore -match '^\d+$' -and $MigrationAfter -match '^\d+$') {
+    $pbSkipBackup = ([int]$MigrationBefore -eq [int]$MigrationAfter) -and -not $ForceBackup
+}
+
 # ---------------------------------------------------------------- seal
 function Get-VersionFields([string]$Text) {
     $f = @{}
@@ -385,6 +395,29 @@ function Test-DiskSpace {
     $pbOutcome['diskNeededBytes'] = $need
     if ($free -lt $need) { throw "Not enough disk space for the backup on ${root}: $([math]::Round($free / 1GB, 1)) GB free, $([math]::Round($need / 1GB, 1)) GB needed." }
 }
+# No-backup release (Harout's 20 Oct rule): prove the live database is exactly at the level the runner
+# was armed with, and that the release source really is at -MigrationAfter, before anything restarts.
+# A changed migration never takes this path (it always backs up).
+function Test-LiveDbLevel {
+    $liveDb = Join-Path $pbStateDir 'state.sqlite'
+    if (-not (Test-Path -LiteralPath $liveDb -PathType Leaf)) { throw "No live database at $liveDb; cannot verify the migration level for a no-backup release." }
+    $r = Invoke-Node @((Join-Path $pbHelpers 'release-db-check.cjs'), $liveDb, '--live-migration')
+    if ($r.Code -ne 0) { throw "Live migration read failed: $($r.Err)" }
+    $j = $r.Out | ConvertFrom-Json
+    if ([int]$j.mig -ne [int]$MigrationBefore) { throw "Live database is at migration $($j.mig); the runner was armed with $MigrationBefore. Back up or re-arm; nothing was restarted." }
+    $script:LiveLevel = $j
+    return $j
+}
+function Test-MigrationsSource {
+    $out = & git -C $RepoRoot show "${MainSha}:apps/server/src/persistence/Migrations.ts" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Cannot read Migrations.ts at $MainSha from $RepoRoot; a no-backup release needs -MigrationAfter checked on the source. Nothing was restarted." }
+    $ids = @([regex]::Matches(($out -join "`n"), '(?m)^\s*\[\s*(\d+)\s*,') | ForEach-Object { [int]$_.Groups[1].Value })
+    if ($ids.Count -eq 0) { throw "No migration ids found in Migrations.ts at $MainSha; cannot verify -MigrationAfter. Nothing was restarted." }
+    $max = ($ids | Measure-Object -Maximum).Maximum
+    if ([int]$max -ne [int]$MigrationAfter) { throw "Migrations.ts at $MainSha tops out at $max, but -MigrationAfter is $MigrationAfter. Nothing was restarted." }
+    return $max
+}
+
 # Proves, on a tiny fixture root, that the copied tools' backup.ps1 (sqlite-snapshot.cjs, common.ps1) works and that
 # release-db-check.cjs reads the result. Replaces the full preflight production backup.
 function Test-ToolsFixtureBackup {
@@ -453,8 +486,21 @@ function Invoke-Guards {
         if ($pbOutcome['evidenceExit'] -ne 0) { throw "check-gate-evidence.ps1 -Release $Release exited $($pbOutcome['evidenceExit']); not arming the restart (nothing was restarted). Run gate-evidence.ps1 on the staged release, commit the notes (docs/releases only), push, and re-arm. See the log." }
     }
     $pbOutcome.status = 'preflight'; Save-Outcome
-    Step 'guards.tools-fixture-backup' { Test-ToolsFixtureBackup }
-    Step 'guards.disk-space' { Test-DiskSpace }
+    if ($pbSkipBackup) {
+        Step 'guards.no-backup-migration' {
+            $srcMax = Test-MigrationsSource
+            $live = Test-LiveDbLevel
+            $pbOutcome['backupSkipped'] = $true
+            $pbOutcome['backupDecision'] = 'no migration'
+            $pbOutcome['liveMaxMigration'] = [int]$live.mig
+            $pbOutcome['liveActivityRows'] = [int]$live.rows
+            $pbOutcome['liveMemoryRowsBefore'] = [int]$live.mem
+            Note "No backup planned (migration $MigrationBefore -> $MigrationAfter): live database is at $($live.mig) with $($live.mem) memory rows, Migrations.ts at $MainSha tops out at $srcMax."
+        }
+    } else {
+        Step 'guards.tools-fixture-backup' { Test-ToolsFixtureBackup }
+        Step 'guards.disk-space' { Test-DiskSpace }
+    }
     Step 'guards.active-release' { $null = Test-ActiveRelease -AllowTarget:$DryRun }
     if ($pbMode -eq 'run') { Step 'guards.no-other-waiter' { Test-NoOtherRunner } }
     $pbOutcome['e2eSource'] = 'gate-evidence (builder run, bound to the sealed artifact)'
@@ -795,8 +841,20 @@ function Invoke-Prepare {
         Note "Seal written: $pbSealPath (dist $($f.Dist.files) files, externals $($f.Externals.files) files, tools $($f.Tools.files) files, e2e $($e2e[0].counts.passed)/$($e2e[0].counts.journeys) journeys in the evidence)."
         $pbOutcome['sealSha256'] = (Get-Sha $pbSealPath)
     }
-    Step 'prepare.tools-fixture-backup' { Test-ToolsFixtureBackup }
-    Step 'prepare.disk-space' { Test-DiskSpace }
+    if ($pbSkipBackup) {
+        Step 'prepare.no-backup-migration' {
+            $srcMax = Test-MigrationsSource
+            $live = Test-LiveDbLevel
+            $pbOutcome['backupSkipped'] = $true
+            $pbOutcome['backupDecision'] = 'no migration'
+            $pbOutcome['liveMaxMigration'] = [int]$live.mig
+            $pbOutcome['liveMemoryRowsBefore'] = [int]$live.mem
+            Note "No backup planned (migration $MigrationBefore -> $MigrationAfter): live database is at $($live.mig) with $($live.mem) memory rows, Migrations.ts at $MainSha tops out at $srcMax."
+        }
+    } else {
+        Step 'prepare.tools-fixture-backup' { Test-ToolsFixtureBackup }
+        Step 'prepare.disk-space' { Test-DiskSpace }
+    }
     $pbOutcome.status = 'prepared'; Save-Outcome
 }
 
@@ -857,14 +915,25 @@ try {
         $guardSeconds = 0.0
         foreach ($k in $script:Timings.Keys) { if ($k -like 'guards.*') { $guardSeconds += [double]$script:Timings[$k] } }
         # A pair is a measured range (low, high); the 3 GB backup took 160-300 s quiet and about 405 s with the server and other builds busy (QA 15 Oct).
-        $planned = [ordered]@{
-            'idle gate: 3 looks 20 s apart (fixed)' = 40
-            'fresh backup: online copy, digest/read-ahead and ONE full check (3.04 GB copy)' = @(160, 420)
-            'backup proof: SHA-256 re-read (full integrity already completed)' = 2
-            'seal re-verify + idle recheck' = 6
-            'restart.ps1 (recent range 9-21 s)' = 15
-            'smoke.ps1 120 s stability window (extended checks A run inside it)' = 123
-            'checks B (log scans, relay) + sheet + notice' = 6
+        $planned = if ($pbSkipBackup) {
+            [ordered]@{
+                'idle gate: 3 looks 20 s apart (fixed)' = 40
+                'no backup: no migration, live DB level checked before restart' = 2
+                'seal re-verify + idle recheck' = 6
+                'restart.ps1 (recent range 9-21 s)' = 15
+                'smoke.ps1 120 s stability window (extended checks A run inside it)' = 123
+                'checks B (log scans, relay) + sheet + notice' = 6
+            }
+        } else {
+            [ordered]@{
+                'idle gate: 3 looks 20 s apart (fixed)' = 40
+                'fresh backup: online copy, digest/read-ahead and ONE full check (3.04 GB copy)' = @(160, 420)
+                'backup proof: SHA-256 re-read (full integrity already completed)' = 2
+                'seal re-verify + idle recheck' = 6
+                'restart.ps1 (recent range 9-21 s)' = 15
+                'smoke.ps1 120 s stability window (extended checks A run inside it)' = 123
+                'checks B (log scans, relay) + sheet + notice' = 6
+            }
         }
         $tsBackups = @(Get-ChildItem -LiteralPath $pbBackups -Directory -ErrorAction SilentlyContinue | Where-Object {
             $_.Name -match '^\d{8}-\d{6}$' -and -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -and
@@ -873,7 +942,11 @@ try {
         $wouldPrune = @($tsBackups | Select-Object -Skip ([math]::Max(0, [int][math]::Min([int64]$BackupKeep - 1, [int]::MaxValue))))
         $pbOutcome['backupKeep'] = $BackupKeep
         $pbOutcome['backupsWouldPrune'] = @($wouldPrune | ForEach-Object { $_.Name })
-        Note "Backup retention: $($tsBackups.Count) timestamp backups now; the fresh one makes $($tsBackups.Count + 1); -BackupKeep $BackupKeep would prune $($wouldPrune.Count)$(if ($wouldPrune.Count) { ': ' + (($wouldPrune | ForEach-Object { $_.Name }) -join ', ') })."
+        if ($pbSkipBackup) {
+            Note "No backup planned (no migration): the live database level is checked before the restart instead; $($tsBackups.Count) timestamp backups stay as they are."
+        } else {
+            Note "Backup retention: $($tsBackups.Count) timestamp backups now; the fresh one makes $($tsBackups.Count + 1); -BackupKeep $BackupKeep would prune $($wouldPrune.Count)$(if ($wouldPrune.Count) { ': ' + (($wouldPrune | ForEach-Object { $_.Name }) -join ', ') })."
+        }
         Save-Outcome
         Note 'Not run in a dry run (they need idle and a restart); copy benchmark estimates, not a production SLA:'
         $sumLow = $guardSeconds; $sumHigh = $guardSeconds
@@ -891,7 +964,18 @@ try {
     Step 'idle.wait' { Wait-Idle }
     $pbOutcome.idleAt = (Get-Date).ToUniversalTime().ToString('o')
     $null = Test-ActiveRelease
-    Note "Idle confirmed; backup then activation -> $Release"
+    Note "Idle confirmed; $(if ($pbSkipBackup) { 'backup skipped (no migration), live level check' } else { 'backup' }) then activation -> $Release"
+    if ($pbSkipBackup) {
+        $pbOutcome.status = 'verifying_db'; Save-Outcome
+        Step 'db.live-level-before-restart' {
+            $live = Test-LiveDbLevel
+            $pbOutcome['liveMemoryRowsBefore'] = [int]$live.mem
+            $pbOutcome['liveActivityRows'] = [int]$live.rows
+        }
+        Note "Backup skipped (no migration): live database verified at migration $MigrationBefore with $($pbOutcome['liveMemoryRowsBefore']) memory rows."
+        $script:bk = [pscustomobject]@{ mig = [int]$MigrationBefore; rows = [int]$pbOutcome['liveActivityRows']; mem = [int]$pbOutcome['liveMemoryRowsBefore'] }
+        Save-Outcome
+    } else {
     $pbOutcome.status = 'backing_up'; Save-Outcome
     $backupStart = (Get-Date).ToUniversalTime()
     $existing = @(Get-ChildItem -LiteralPath $pbBackups -Directory | ForEach-Object { $_.Name })
@@ -924,6 +1008,7 @@ try {
     $pbOutcome['backupMemoryRows'] = [int]$bk.mem
     Note "Verified fresh backup: $($pbOutcome.backupPath) (max migration $($bk.mig), integrity ok, activity rows $($bk.rows), memory rows $($bk.mem))"
     Save-Outcome
+    }
     $look = Get-IdleLook
     if (-not $look.Idle) { throw "Work resumed during backup ($($look.Text)); not restarting. Re-arm after reviewing the log." }
     $null = Test-ActiveRelease
@@ -967,7 +1052,9 @@ try {
     $localStart = [TimeZoneInfo]::ConvertTimeFromUtc($localUtc, $zone).ToString('yyyy-MM-dd HH:mm:ss')
     $zoneName = if ($zone.IsDaylightSavingTime($localUtc)) { 'BST' } else { 'GMT' }
     $what = if ($Summary) { $Summary } else { "see docs/releases/HANDOFF-$($Version -replace '\.', '').md" }
-    $line = "**v$Version** live since $localStart $zoneName (release $Release; $what; gate evidence PASS (e2e run once by the builder, artifact sealed); externals copied; concurrency 5; pushed docs $MainSha; runner hbots-release.ps1; backup $($pbOutcome.backupPath), migration $MigrationBefore -> $MigrationAfter, integrity ok; backup/restart/smoke $($pbOutcome.backupExit)/$($pbOutcome.restartExit)/$($pbOutcome.smokeExit); version/current/server agree; unauthenticated push/sent 401; relay HTTP 200; startup ERROR=0; rollback $Rollback retained, binary only)."
+    $backupText = if ($pbOutcome.backupSkipped) { "backup skipped (no migration), live DB verified at migration $MigrationBefore" } else { "backup $($pbOutcome.backupPath), migration $MigrationBefore -> $MigrationAfter, integrity ok" }
+    $exitText = if ($pbOutcome.backupSkipped) { "restart/smoke $($pbOutcome.restartExit)/$($pbOutcome.smokeExit)" } else { "backup/restart/smoke $($pbOutcome.backupExit)/$($pbOutcome.restartExit)/$($pbOutcome.smokeExit)" }
+    $line = "**v$Version** live since $localStart $zoneName (release $Release; $what; gate evidence PASS (e2e run once by the builder, artifact sealed); externals copied; concurrency 5; pushed docs $MainSha; runner hbots-release.ps1; $backupText; $exitText; version/current/server agree; unauthenticated push/sent 401; relay HTTP 200; startup ERROR=0; rollback $Rollback retained, binary only)."
     $swSheet = [System.Diagnostics.Stopwatch]::StartNew()
     Update-AppSheet $line
     $script:Timings['sheet-update'] = [math]::Round($swSheet.Elapsed.TotalSeconds, 1)
