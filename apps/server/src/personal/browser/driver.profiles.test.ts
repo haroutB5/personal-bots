@@ -43,7 +43,7 @@ beforeEach(() => {
 });
 
 const launch = () =>
-  makePlaywrightDriver().launch({
+  makePlaywrightDriver({ resolveExecutable: () => "C:\\Apps\\Brave\\brave.exe" }).launch({
     userDataDir: "test-profile",
     downloadsDir: "test-downloads",
     headless: true,

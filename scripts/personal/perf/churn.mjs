@@ -19,7 +19,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
-import { chromium, resolveOrigin, authStatePath, quantile, round } from "./lib.mjs";
+import { chromium, launchBrave, resolveOrigin, authStatePath, quantile, round } from "./lib.mjs";
 
 const args = Object.fromEntries(
   process.argv
@@ -56,7 +56,7 @@ function sampleProcess(pid) {
   return { cpuSec, rssMB, at: Date.now() };
 }
 
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await launchBrave({ chromium });
 // The load generator: an unthrottled page that dispatches the streaming turns.
 const generator = await browser.newContext({ storageState: authStatePath(origin) });
 const generatorPage = await generator.newPage();

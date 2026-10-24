@@ -10,6 +10,7 @@ const require = NodeModule.createRequire(
   new URL("../../../apps/desktop/package.json", import.meta.url),
 );
 export const { chromium } = require("playwright-core");
+export { launchBrave } from "../e2e/browser.mjs";
 
 export const PERF_HOME = NodePath.join(NodeOS.homedir(), ".personal-bots", "perf");
 NodeFS.mkdirSync(PERF_HOME, { recursive: true });

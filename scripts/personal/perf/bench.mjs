@@ -30,6 +30,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import {
   chromium,
+  launchBrave,
   enterBackgroundPriority,
   resolveOrigin,
   authStatePath,
@@ -378,7 +379,7 @@ console.log(
   `origin=${originList ? originList.join(" vs ") : origin} runs=${runs} cpu=${cpuRate}x`,
   load,
 );
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await launchBrave({ chromium });
 const results = [];
 const version = await fetch(`${origin}/version.txt`)
   .then((r) => r.text())

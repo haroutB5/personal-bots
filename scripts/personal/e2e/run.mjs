@@ -1,8 +1,9 @@
 // Runs the phone e2e smoke journeys against one throwaway server.
 //   node run.mjs --url <http://127.0.0.1:port> --pair <pairing link> --bin <dist\bin.mjs> --out <dir>
-//                [--journeys id,id] [--channel chrome|msedge]
+//                [--journeys id,id]
 //                [--name <throwaway name> --tw <throwaway-server.ps1> --root <its root>]  (journeys that stop and
 //                restart the server, e.g. offline-queue, need these three; --bin lets a journey mint a fresh pairing link)
+// The browser is Brave, from the installed location or E2E_BROWSER_EXECUTABLE.
 // Normally started by scripts\personal\e2e-smoke.ps1, which owns the server (start, stop, root
 // deletion). Exit code: 0 all passed, 1 a journey failed, 2 setup failed.
 // A journey also fails on any uncaught page error or unhandled rejection that is not on the explicit
@@ -15,6 +16,7 @@ import { JOURNEYS, SELFTEST_JOURNEYS } from "./journeys.mjs";
 import { NETWORK_JOURNEYS } from "./offlineNetwork.mjs";
 import { OFFLINE_JOURNEYS } from "./offlineQueue.mjs";
 import { describePageErrors, splitPageErrors } from "./page-errors.mjs";
+import { launchBrave, resolveBraveExecutable } from "./browser.mjs";
 import {
   JOURNEY_LIMIT_MS,
   loadPlaywright,
@@ -143,7 +145,8 @@ let browser;
 const results = [];
 try {
   const { chromium } = loadPlaywright(args.bin);
-  browser = await chromium.launch({ channel: args.channel ?? "chrome", headless: true });
+  browser = await launchBrave({ chromium });
+  console.log(`browser: Brave at ${resolveBraveExecutable()}`);
   // The ps1 kills this pid (and only this one) if the suite hangs past its limit.
   const cdp = await browser.newBrowserCDPSession();
   const { processInfo } = await cdp.send("SystemInfo.getProcessInfo");

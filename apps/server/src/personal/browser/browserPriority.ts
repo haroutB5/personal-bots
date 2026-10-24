@@ -1,18 +1,18 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Keeps the shared Chrome at Normal priority or higher (Windows).
+ * Keeps the shared Brave at Normal priority or higher (Windows).
  *
  * Bot provider processes now start at BelowNormal (see
- * `provider/botProcessPriority.ts`), so the live view's Chrome only has to
+ * `provider/botProcessPriority.ts`), so the live view's Brave only has to
  * avoid being BelowNormal itself. Normally it is not: the server runs
  * AboveNormal, and a child of such a parent starts at Normal. But a server
  * that was started BelowNormal (the logon task, or a restart run from a bot's
- * shell, before the priority is raised) hands that class to Chrome and every
- * process it starts. After a launch, any Chrome process of ours found below
- * Normal is raised to Normal; processes Chrome starts later inherit from its
+ * shell, before the priority is raised) hands that class to Brave and every
+ * process it starts. After a launch, any Brave process of ours found below
+ * Normal is raised to Normal; processes Brave starts later inherit from its
  * browser process.
  *
- * Only Chrome processes that are direct children of this server, and their
+ * Only Brave processes that are direct children of this server, and their
  * descendants, are touched. A Chrome a bot started from its own shell is a
  * descendant of a provider process and is left alone on purpose.
  *
@@ -25,7 +25,7 @@ import * as NodePath from "node:path";
 import { botProcessPriorityDisabled } from "../../provider/botProcessPriority.ts";
 import { descendantsOf, listProcesses, type ProcessEntry } from "../../provider/processTree.ts";
 
-const CHROME_IMAGE = /^(chrome|msedge|chromium|chrome-headless-shell)(\.exe)?$/i;
+const BROWSER_IMAGE = /^(brave|chrome|msedge|chromium|chrome-headless-shell)(\.exe)?$/i;
 
 export interface BrowserPriorityDeps {
   readonly env?: NodeJS.ProcessEnv;
@@ -63,7 +63,7 @@ export function ourBrowserProcesses(
   const roots = snapshot.filter(
     (entry) =>
       entry.parentPid === serverPid &&
-      (CHROME_IMAGE.test(entry.name) || entry.name.toLowerCase() === configured),
+      (BROWSER_IMAGE.test(entry.name) || entry.name.toLowerCase() === configured),
   );
   const out = new Map<number, ProcessEntry>();
   for (const root of roots) {

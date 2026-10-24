@@ -9,6 +9,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { launchBrave } from "./browser.mjs";
 import { loadPlaywright, openPhone, openBots, pairContext } from "./lib.mjs";
 
 function parseArgs(argv) {
@@ -32,8 +33,8 @@ const check = (what, ok, detail = "") => {
   if (!ok) failures += 1;
 };
 
-const { chromium } = loadPlaywright(args.bin);
-const browser = await chromium.launch({ channel: args.channel ?? "chrome", headless: true });
+const playwright = loadPlaywright(args.bin);
+const browser = await launchBrave(playwright);
 try {
   let storageState;
   if (args.phase === "seed") {

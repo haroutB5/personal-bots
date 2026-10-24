@@ -60,6 +60,14 @@ describe("ourBrowserProcesses", () => {
     );
   });
 
+  it("takes the default Brave tree by its image name", () => {
+    const withBrave = [...snapshot, entry(600, SERVER, "brave.exe"), entry(601, 600, "brave.exe")];
+    assert.deepEqual(
+      ourBrowserProcesses(withBrave, SERVER).map((p) => p.pid),
+      [200, 201, 202, 600, 601],
+    );
+  });
+
   it("also takes a configured executable that is not named chrome", () => {
     const withEdge = [...snapshot, entry(600, SERVER, "brave.exe"), entry(601, 600, "brave.exe")];
     assert.deepEqual(

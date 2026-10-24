@@ -32,6 +32,7 @@
 // JSON is written to <out>\table-swipe-<label>.json.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { launchBrave } from "./browser.mjs";
 import {
   loadPlaywright,
   newChatOnBotScreen,
@@ -110,8 +111,7 @@ let context;
 let pageRef;
 try {
   const playwright = loadPlaywright(args.bin);
-  browser = await playwright.chromium.launch({
-    channel: process.env.E2E_BROWSER_CHANNEL ?? "chrome",
+  browser = await launchBrave(playwright, {
     headless: process.env.E2E_HEADLESS !== "0",
   });
   const storageState = await pairContext(browser, origin, args.pair);

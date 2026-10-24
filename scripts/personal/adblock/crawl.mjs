@@ -10,6 +10,7 @@ const require = NodeModule.createRequire(
 const { chromium } = require("playwright-core");
 const { getDomain } = require("tldts");
 import { acceptConsent } from "./consent.mjs";
+import { resolveBraveExecutable } from "../e2e/browser.mjs";
 const sites = `https://www.bbc.co.uk/news
 https://www.theguardian.com/uk
 https://www.telegraph.co.uk/
@@ -83,7 +84,7 @@ https://www.thetimes.co.uk/
 https://www.hellomagazine.com/
 https://www.glamourmagazine.co.uk/`.split("\n");
 const ctx = await chromium.launchPersistentContext(NodePath.resolve("prof-crawl"), {
-  channel: "chrome",
+  executablePath: resolveBraveExecutable(),
   headless: true,
   viewport: { width: 390, height: 760 },
   deviceScaleFactor: 2,

@@ -16,6 +16,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import {
   chromium,
+  launchBrave,
   resolveOrigin,
   authStatePath,
   median,
@@ -345,7 +346,7 @@ const FIELDS = [
   "clsAfter",
   "messages",
 ];
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await launchBrave({ chromium });
 const results = [];
 for (let i = 0; i < runs; i += 1) {
   const variant = abFlag === null ? null : i % 2 === 0 ? "on" : "off";

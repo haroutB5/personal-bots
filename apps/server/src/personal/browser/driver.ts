@@ -3,8 +3,10 @@
 // @effect-diagnostics globalTimers:off - probe deadlines race plain Playwright promises.
 /**
  * The narrow browser surface the personal browser uses. The Playwright
- * implementation below is the only one that launches Chrome; tests supply a
- * fake so they never start a browser.
+ * implementation below is the only one that launches the browser; tests supply
+ * a fake so they never start one. The launched browser is Brave: an explicit
+ * executable wins, otherwise the installed Brave is discovered. There is no
+ * Chrome fallback (see browserExecutable.ts).
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -17,6 +19,7 @@ import {
   type AdblockCounter,
   type AdblockStats,
 } from "./adblock.ts";
+import { resolveBrowserExecutable } from "./browserExecutable.ts";
 import { keepBrowserPriorityNormal } from "./browserPriority.ts";
 import { jpegSize } from "./jpegSize.ts";
 
@@ -798,18 +801,25 @@ function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): Bro
   };
 }
 
-/** Real Chrome via playwright-core. Loaded lazily so tests never import it. */
-export const makePlaywrightDriver = (): BrowserDriver => ({
+export interface PlaywrightDriverOptions {
+  /** Test seam: resolves the executable without touching this machine's install. */
+  readonly resolveExecutable?: (configured: string | undefined) => string;
+}
+
+/** Real Brave via playwright-core. Loaded lazily so tests never import it. */
+export const makePlaywrightDriver = (driverOptions: PlaywrightDriverOptions = {}): BrowserDriver => ({
   launch: async (options) => {
     const { chromium } = await import("playwright-core");
+    const resolveExecutable =
+      driverOptions.resolveExecutable ??
+      ((configured: string | undefined) => resolveBrowserExecutable({ configured }));
+    const executablePath = resolveExecutable(options.executablePath);
     await NodeFSP.mkdir(options.userDataDir, { recursive: true });
     await NodeFSP.mkdir(options.downloadsDir, { recursive: true });
     const adblockArgs = adblockLaunchArgs();
     const counter = makeAdblockCounter(undefined, adblockArgs.length > 0);
     const context = await chromium.launchPersistentContext(options.userDataDir, {
-      ...(options.executablePath === undefined
-        ? { channel: "chrome" }
-        : { executablePath: options.executablePath }),
+      executablePath,
       headless: options.headless,
       // Follow the real window; per-tab overrides go through CDP emulation.
       viewport: null,
@@ -824,7 +834,7 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
       ],
     });
     // Off the launch path: the process list takes a second or two to read.
-    void keepBrowserPriorityNormal(options.executablePath).catch(() => undefined);
+    void keepBrowserPriorityNormal(executablePath).catch(() => undefined);
     const wrappers = new WeakMap<Playwright.Page, BrowserPage>();
     const wrap = (page: Playwright.Page) => {
       let wrapped = wrappers.get(page);

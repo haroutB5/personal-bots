@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - the Chrome profile-lock probe needs readlink and open flags, and the artifact scan must skip symlinks.
 /**
- * The server-owned persistent Chrome that bots and the user share.
+ * The server-owned persistent Brave that bots and the user share.
  *
- * Chrome launches lazily (first agent op or Take control) on a dedicated
+ * Brave launches lazily (first agent op or Take control) on a dedicated
  * profile under `<baseDir>/personal/browser-profiles/default`, never the
  * user's everyday profile, and the profile is never deleted: a locked profile
  * is reported as `locked`. Agent tabs are opened through PreviewManager so tab
@@ -168,8 +168,10 @@ export interface PersonalBrowserOptions {
 
 /**
  * Headed by default so the user can sign in on the laptop.
- * `T3CODE_PERSONAL_BROWSER_HEADLESS=1` runs headless;
- * `T3CODE_PERSONAL_BROWSER_EXECUTABLE` overrides the system Chrome channel.
+ * `T3CODE_PERSONAL_BROWSER_HEADLESS=1` runs headless. The shared browser is
+ * Brave: the installed Brave is discovered when no path is given, and
+ * `T3CODE_PERSONAL_BROWSER_EXECUTABLE` overrides it with another Brave build.
+ * Chrome is never used as a fallback.
  */
 /** A frame rate from the environment, or undefined for the default. */
 const streamMaxFpsFromEnvironment = (value: string | undefined): number | undefined => {

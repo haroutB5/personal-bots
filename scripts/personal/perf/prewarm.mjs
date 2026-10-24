@@ -12,7 +12,7 @@
 // small model turn per run. To get a "session gone" chat, restart the
 // throwaway server and pass the printed --chat again.
 import * as NodeSqlite from "node:sqlite";
-import { chromium, resolveOrigin, authStatePath, round } from "./lib.mjs";
+import { chromium, launchBrave, resolveOrigin, authStatePath, round } from "./lib.mjs";
 
 const args = Object.fromEntries(
   process.argv
@@ -33,7 +33,7 @@ const settleMs = Number(args.settle ?? 8000);
 const botPath = args.botPath ?? "/bots/personal-seed-assistant";
 const PROMPT = "Reply with just the word OK. Do not use any tools.";
 
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await launchBrave({ chromium });
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
   storageState: authStatePath(origin),

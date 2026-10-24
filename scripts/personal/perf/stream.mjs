@@ -8,7 +8,15 @@
 // layout shifts. Deletes the test chat afterwards. Costs one model turn.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { chromium, resolveOrigin, authStatePath, PERF_HOME, quantile, round } from "./lib.mjs";
+import {
+  chromium,
+  launchBrave,
+  resolveOrigin,
+  authStatePath,
+  PERF_HOME,
+  quantile,
+  round,
+} from "./lib.mjs";
 
 const args = Object.fromEntries(
   process.argv
@@ -29,7 +37,7 @@ const PROMPT =
   "then three fenced code blocks of about 15 lines each (TypeScript, Python, Bash) with a sentence " +
   "before each, then a markdown table with 6 rows and 4 columns, then a two-line summary.";
 
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await launchBrave({ chromium });
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
   deviceScaleFactor: 3,

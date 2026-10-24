@@ -10,7 +10,7 @@
 //   {"name","type":"reload","until"}                  reload the current page
 // `until` is a CSS selector that exists (and has a box) only when the journey
 // is done. Needs playwright-core resolvable from the current directory (or
-// PLAYWRIGHT_CORE=<path>) and a system Chrome.
+// PLAYWRIGHT_CORE=<path>) and an installed Brave. Chrome is not a fallback.
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
@@ -214,9 +214,34 @@ async function oneRun(browser, off) {
 
 const load = await machineLoad();
 console.log(`${config.baseUrl} runs=${runs} cpu=${cpu}x`, load);
+
+/** The configured Brave build, else the ordinary Windows install locations. */
+function braveExecutable() {
+  const configured = config.browserPath ?? config.chromePath;
+  if (configured) {
+    if (!NodeFS.existsSync(configured)) throw new Error(`Brave executable not found: ${configured}`);
+    return configured;
+  }
+  const roots = [
+    process.env.LOCALAPPDATA,
+    process.env.ProgramFiles ?? process.env.PROGRAMFILES,
+    process.env["ProgramFiles(x86)"] ?? process.env["PROGRAMFILES(X86)"],
+  ].filter(Boolean);
+  const candidates = roots.map((root) =>
+    NodePath.win32.join(root, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+  );
+  const found = candidates.find((candidate) => NodeFS.existsSync(candidate));
+  if (!found) {
+    throw new Error(
+      `Brave browser not found. Install Brave or set browserPath in the config. Chrome is not used. Checked: ${candidates.join("; ")}`,
+    );
+  }
+  return found;
+}
+
 const browser = await chromium.launch({
   headless: true,
-  ...(config.chromePath ? { executablePath: config.chromePath } : { channel: "chrome" }),
+  executablePath: braveExecutable(),
 });
 const results = [];
 for (let i = 0; i < runs; i += 1) {

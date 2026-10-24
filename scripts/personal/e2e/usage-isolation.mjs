@@ -13,6 +13,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { launchBrave } from "./browser.mjs";
 import { loadPlaywright, openPhone, pairContext } from "./lib.mjs";
 
 function parseArgs(argv) {
@@ -35,9 +36,9 @@ const check = (what, ok, detail = "") => {
   if (!ok) failures += 1;
 };
 
-// Google Chrome, like the e2e smoke: a Playwright WebKit tap here fires no click.
-const { chromium } = loadPlaywright(args.bin);
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+// Brave, like the e2e smoke: a Playwright WebKit tap here fires no click.
+const playwright = loadPlaywright(args.bin);
+const browser = await launchBrave(playwright);
 try {
   const storageState = await pairContext(browser, args.origin, args.pair);
   const { context, page, errors } = await openPhone(browser, args.origin, storageState);

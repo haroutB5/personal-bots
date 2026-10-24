@@ -4,7 +4,7 @@ Phone e2e smoke suite for a staged hbots release: five journeys in a real browse
 
 .DESCRIPTION
 Starts a fresh throwaway server from the release (scripts\personal\throwaway-server.ps1: fresh root under %TEMP%, fake
-Claude CLIs, Sonnet 5.5 seed, free port), pairs a 390x844 dark touch Chrome with it and runs the journeys in
+Claude CLIs, Sonnet 5.5 seed, free port), pairs a 390x844 dark touch Brave with it and runs the journeys in
 scripts\personal\e2e\journeys.mjs:
 
   bots-list-chat    Bots list -> open a bot's chat -> send a message -> the fake reply -> the chat is a list row
@@ -21,8 +21,8 @@ blocked from every origin except the throwaway server.
 
 Exit code: 0 all journeys passed; 1 a journey failed; 2 setup failed (server, browser, pairing); 3 something was left
 behind (root or port) or the suite hit its time limit. Playwright comes from the release's own node_modules
-(playwright-core is one of its externals), so this works from a release-tools copy of scripts\personal too. Needs Google
-Chrome (set E2E_BROWSER_CHANNEL=msedge for Edge).
+(playwright-core is one of its externals), so this works from a release-tools copy of scripts\personal too. Needs Brave
+(set E2E_BROWSER_EXECUTABLE to another Brave build); Chrome is never used as a fallback.
 
 .PARAMETER Release
 A release folder (has dist\bin.mjs), a built worktree (apps\server\dist\bin.mjs) or a sha12 under ~\.personal-bots\releases.
@@ -51,7 +51,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
-# The journeys, Chrome and the throwaway server run in the background (background-priority.ps1).
+# The journeys, Brave and the throwaway server run in the background (background-priority.ps1).
 Enter-PbBackgroundPriority -Label 'e2e-smoke.ps1' -Quiet:$Json
 
 $twScript = Join-Path $PSScriptRoot 'throwaway-server.ps1'
@@ -102,7 +102,6 @@ try {
     $runnerArgs = @($runner, '--url', $server.URL, '--pair', $server.Pairing, '--bin', [string]$record.bin, '--out', $ArtifactsDir,
         '--name', $Name, '--tw', $twScript, '--root', [string]$server.Root)
     if ($Journey) { $runnerArgs += @('--journeys', $Journey) }
-    if ($env:E2E_BROWSER_CHANNEL) { $runnerArgs += @('--channel', $env:E2E_BROWSER_CHANNEL) }
     $quoted = ($runnerArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
     $proc = Start-Process -FilePath $nodeExe -ArgumentList $quoted -NoNewWindow -PassThru `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr

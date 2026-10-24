@@ -27,7 +27,9 @@ const fake = vi.hoisted(() => {
   };
   context.pages.mockReturnValue([page]);
   context.newPage.mockResolvedValue(page);
-  const launch = vi.fn(async () => context);
+  const launch = vi.fn(
+    async (_profile: string, _options: Record<string, unknown>) => context,
+  );
   return { listeners, send, context, page, launch };
 });
 
@@ -39,8 +41,10 @@ beforeEach(() => {
   fake.listeners.clear();
 });
 
+const BRAVE = "C:\\Apps\\Brave\\brave.exe";
+
 const launch = () =>
-  makePlaywrightDriver().launch({
+  makePlaywrightDriver({ resolveExecutable: () => BRAVE }).launch({
     userDataDir: "test-profile",
     downloadsDir: "test-downloads",
     headless: true,
@@ -49,6 +53,15 @@ const launch = () =>
   });
 
 describe("shared browser driver", () => {
+  it("launches the resolved Brave executable and never a Chrome channel", async () => {
+    await launch();
+    expect(fake.launch).toHaveBeenCalledTimes(1);
+    const [profile, options] = fake.launch.mock.calls[0]!;
+    expect(profile).toBe("test-profile");
+    expect(options).toMatchObject({ executablePath: BRAVE });
+    expect(options).not.toHaveProperty("channel");
+  });
+
   it("maps a shrunken desktop screencast into the page CSS coordinates Chrome accepts", async () => {
     const context = await launch();
     const frame = vi.fn();

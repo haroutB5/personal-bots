@@ -1,7 +1,8 @@
-/** Run with node apps/server/scripts/qa/login-origin-redirect.test.ts (local Chrome required). */
+/** Run with node apps/server/scripts/qa/login-origin-redirect.test.ts (local Brave required). */
 import * as NodeAssert from "node:assert/strict";
 import * as NodeModule from "node:module";
 import * as NodeProcess from "node:process";
+import { resolveBrowserExecutable } from "../../src/personal/browser/browserExecutable.ts";
 import type { BrowserPage } from "../../src/personal/browser/driver.ts";
 import { performFillLogin } from "../../src/personal/browser/pageOperations.ts";
 
@@ -10,7 +11,10 @@ const { chromium } = NodeModule.createRequire(new URL("../../package.json", impo
 ) as typeof import("playwright-core");
 const approvedOrigin = "https://approved.login.test";
 const destinationOrigin = "https://other.login.test";
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await chromium.launch({
+  executablePath: resolveBrowserExecutable(),
+  headless: true,
+});
 try {
   for (const usernameFirst of [false, true]) {
     const page = await browser.newPage();

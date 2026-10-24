@@ -20,6 +20,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { launchBrave } from "./browser.mjs";
 import {
   composer,
   loadPlaywright,
@@ -62,8 +63,8 @@ const waitVisible = async (locator, timeoutMs) => {
   }
 };
 
-const { chromium } = loadPlaywright(args.bin);
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const playwright = loadPlaywright(args.bin);
+const browser = await launchBrave(playwright);
 try {
   const storageState = await pairContext(browser, args.origin, args.pair);
   const { context, page, errors } = await openPhone(browser, args.origin, storageState);

@@ -1,14 +1,13 @@
-// @effect-diagnostics nodeBuiltinImport:off - a throwaway local web server and the installed Chrome's path.
-// @effect-diagnostics globalTimers:off - real Chrome needs real time.
+// @effect-diagnostics nodeBuiltinImport:off - a throwaway local web server needs Node's http module.
+// @effect-diagnostics globalTimers:off - a real browser needs real time.
 /**
- * 1.66.6, proved in a real Chrome: the new bot browser actions run end to end
+ * 1.66.6, proved in a real browser: the new bot browser actions run end to end
  * (tool request, lease, guards, driver, page) against a small local fixture
- * page in a headless Chrome with a throwaway profile folder. Never the shared
+ * page in a headless Brave with a throwaway profile folder. Never the shared
  * browser and never a profile signed into anything.
  *
- * Skipped where Chrome is not installed, and with PB_SKIP_REAL_CHROME=1.
+ * Skipped where Brave is not installed, and with PB_SKIP_REAL_BRAVE=1.
  */
-import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -31,13 +30,16 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as BrowserLease from "./BrowserLease.ts";
+import { discoverBraveExecutable } from "./browserExecutable.ts";
 import { makePlaywrightDriver } from "./driver.ts";
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
 
-const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const chromeAvailable = NodeFS.existsSync(CHROME) && process.env.PB_SKIP_REAL_CHROME !== "1";
+const braveAvailable =
+  discoverBraveExecutable() !== undefined &&
+  process.env.PB_SKIP_REAL_BRAVE !== "1" &&
+  process.env.PB_SKIP_REAL_CHROME !== "1";
 
 const FIXTURE = `<!doctype html>
 <html><head><meta charset="utf-8"><title>fixture</title>
@@ -155,7 +157,7 @@ const startFixtureServer = () =>
       Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
   );
 
-describe.skipIf(!chromeAvailable)("bot browser actions in a real Chrome (1.66.6)", () => {
+describe.skipIf(!braveAvailable)("bot browser actions in a real Brave (1.66.6)", () => {
   it.live(
     "double-click, right-click, ctrl-click, hover, drag and drop, history and closing one tab",
     () =>

@@ -1,6 +1,6 @@
 # hbots phone e2e smoke
 
-Phone journeys in a real Chrome against a throwaway hbots server. It is the release gate's "does the app
+Phone journeys in a real Brave against a throwaway hbots server. It is the release gate's "does the app
 still work on a phone" check: five smoke journeys (a white screen, a chat that cannot send, a broken New chat sheet,
 delegation, search, long-press; about 35 seconds), then, since 1.66.11, the offline journeys: `offline-queue` (the
 server goes away) and the phone-loses-network journeys below (about 4 minutes in all). No real model, no live data.
@@ -25,7 +25,8 @@ server by its recorded PID and deletes the root (`throwaway-server.ps1 -Stop`), 
 port are gone. Only the throwaway server is touched: no live data root, no real Claude account (the fake CLI answers
 everything), and the browser is blocked from every origin except the throwaway server (no Clerk, no CDN).
 
-The browser is 390x844, dark, touch, Google Chrome (`E2E_BROWSER_CHANNEL=msedge` for Edge). It is paired once
+The browser is 390x844, dark, touch, Brave (the installed build, or `E2E_BROWSER_EXECUTABLE` for another Brave
+build; Chrome is never a fallback). It is paired once
 (single-use link); each journey then opens its own clean context from that session, so journeys pass in any order
 and alone, and use the chats they make themselves. Playwright is `playwright-core` from the release's own
 `node_modules` (it is one of the release's copied externals), then the checkout's `apps/desktop`, so the script also

@@ -3,7 +3,7 @@
 //   node scripts/personal/perf/login.mjs "<pairing URL with #token=...>"
 // Mint the URL with scripts\personal\pair.ps1 (relay) or
 // `node <release>\dist\bin.mjs pair --ttl 10m --label perf-bench --base-dir <root>` (local).
-import { chromium, authStatePath } from "./lib.mjs";
+import { chromium, launchBrave, authStatePath } from "./lib.mjs";
 
 const pairUrl = process.argv[2];
 if (!pairUrl || !pairUrl.includes("#token=")) {
@@ -11,7 +11,7 @@ if (!pairUrl || !pairUrl.includes("#token=")) {
   process.exit(2);
 }
 const origin = new URL(pairUrl).origin;
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await launchBrave({ chromium });
 const context = await browser.newContext();
 const page = await context.newPage();
 await page.goto(pairUrl, { waitUntil: "networkidle", timeout: 60000 });
