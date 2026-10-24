@@ -1,6 +1,6 @@
 # hbots 1.66.89: a steer keeps waiting while the agent is still busy
 
-Two fixes and a launcher fix on top of 1.66.88. The busy-prompt wait added by 1.66.87 was too narrow to hold under load, and on 23 Oct it left live chats stuck as running. A chat with work still running now always shows in the chat strip, and the supervisor re-resolves node on every start.
+Two fixes, a launcher fix and the Brave browser switch on top of 1.66.88. The busy-prompt wait added by 1.66.87 was too narrow to hold under load, and on 23 Oct it left live chats stuck as running. A chat with work still running now always shows in the chat strip, the supervisor re-resolves node on every start, and every bot browser now runs on Brave.
 
 ## Changes
 
@@ -28,6 +28,16 @@ The 1.66.88 stage was built while Node 24.22.1 replaced `node.exe` mid-run; the 
 - `scripts/personal/common.ps1` `Start-PbServerProcess` trims surrounding quotes from `-NodeExe` and fails with a clear message when it is not a file, instead of cmd reading the quotes as part of the program name (`'node.exe' is not recognized`).
 - Scripts only: no server, web, schema or provider behaviour changes.
 
+### Browser: Brave only
+
+Harout's rule (23 Oct): Brave is the browser we use from now on, the bots included. The shared browser and every test script followed Chrome before this release.
+
+- `apps/server/src/personal/browser/browserExecutable.ts` discovers the installed Brave (per-user `LOCALAPPDATA`, then both `Program Files` roots on Windows; the usual macOS and Linux paths elsewhere) and is the only executable the shared browser launches. There is no Chrome channel and no Chrome fallback: a missing Brave fails with every path that was checked, so the breakage is visible instead of silently running another browser.
+- `T3CODE_PERSONAL_BROWSER_EXECUTABLE` still overrides the search and `E2E_BROWSER_EXECUTABLE` does the same for scripts, but both refuse anything that is not Brave.
+- The e2e, perf and adblock scripts launch Brave through one new helper, `scripts/personal/e2e/browser.mjs`, and refuse a `channel` option so a caller cannot quietly go back to Chrome.
+- `browserPriority.ts` now recognises `brave.exe` among the browser images whose priority it raises after a launch.
+- Browser only: no schema, task or provider behaviour changes. The shared browser profile is unchanged, so saved logins stay.
+
 ## Validation
 
 - Adapter tests pass: 11 of 11 in `src/provider/Layers/NativeAcpAdapter.test.ts`. New cases cover a busy refusal delivered as a defect (retried, turn completes), a non-busy defect (fails in under 5 s, settles the turn, next turn runs), a busy refusal that never clears (fails after the 10 s window with one failed completion and no running turn), and a steer whose new prompt is refused as busy (aborted turn plus one completed turn, session left ready).
@@ -37,10 +47,11 @@ The 1.66.88 stage was built while Node 24.22.1 replaced `node.exe` mid-run; the 
 - Existing ingestion and reactor tests already cover the rest of the chain: `ProviderRuntimeIngestion.test.ts` settles `turn.started` plus `turn.completed failed` to status `error` with no active turn, and `ProviderCommandReactor.test.ts` "a failed drained send releases the next queued message" proves a queued follow-up still goes out after a failed start.
 - Server typecheck exit 0 (suggestions only, no errors).
 - The chat strip fix is pinned by 31 new assertions in `apps/web/src/features/personal/chatChipRows.test.ts`, updated for the chat-state helper: a running task chat never written in is shown, a finished task chat stays out, an owner chat is not duplicated, and the ordering key includes live rows. The web unit gate passes 3014 tests.
+- Brave migration: the browser suite passes 27 of 27 files and 429 of 429 tests, and server typecheck exits 0. `browserExecutable.test.ts` covers discovery order on all three platforms, the explicit override, a non-Brave path refused, a missing path refused, and the message naming every candidate. The full gate e2e below runs its 12 journeys on Brave, which is the real proof that bot browsing and the phone smoke still work on it.
 
 ## Runtime and activation
 
-No migration (112 to 112), no production backup per Harout's 20 Oct and 23 Oct rules. Roll back to the previous live release 1.66.87 `3a30fe68488b` (binary only) if the smoke fails. The changes are the ACP adapter, the web chat strip and the two launcher scripts; nothing else in the app is touched. Node stays at 24.22.1 (unchanged).
+No migration (112 to 112), no production backup per Harout's 20 Oct and 23 Oct rules. Roll back to the previous live release 1.66.87 `3a30fe68488b` (binary only) if the smoke fails. The changes are the ACP adapter, the web chat strip, the two launcher scripts and the shared browser executable; nothing else in the app is touched. Node stays at 24.22.1 (unchanged).
 
 ## Gate evidence
 
