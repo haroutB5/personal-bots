@@ -1,4 +1,9 @@
-import type { PersonalBotTokenUsageTotals, PersonalBotTokenUsageWindow } from "@t3tools/contracts";
+import type {
+  PersonalBotTokenUsageModel,
+  PersonalBotTokenUsageTotals,
+  PersonalBotTokenUsageWindow,
+  UsageProviderKind,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -41,8 +46,20 @@ const sum = (...parts: PersonalBotTokenUsageTotals[]): PersonalBotTokenUsageTota
     parts.reduce((n, p) => n + p.outputTokens, 0),
   );
 
-const row = (botId: string, t: PersonalBotTokenUsageTotals, sessions = 1) =>
-  ({ botId, totals: t, models: [], sessions }) as never;
+const model = (
+  provider: UsageProviderKind,
+  id: string,
+  t: PersonalBotTokenUsageTotals,
+  costUsd = 0,
+  unpricedTokens = 0,
+): PersonalBotTokenUsageModel => ({ provider, model: id, totals: t, costUsd, unpricedTokens });
+
+const row = (
+  botId: string,
+  t: PersonalBotTokenUsageTotals,
+  sessions = 1,
+  models: ReadonlyArray<PersonalBotTokenUsageModel> = [],
+) => ({ botId, totals: t, models, sessions }) as never;
 
 function windowOf(
   rows: ReadonlyArray<ReturnType<typeof row>>,
@@ -359,6 +376,47 @@ describe("buildTokenUsageTable", () => {
     expect(table.sinceDay).toBe("2026-09-28");
     expect(table.untilDay).toBe("2026-10-04");
   });
+
+  it("splits a bot's total into its provider+model lines, each with its own tokens and price", () => {
+    const table = buildTokenUsageTable({
+      window: windowOf([
+        row("cto", totals(0, 0, 0, 1000), 1, [
+          model("deepseek", "deepseek-flash", totals(0, 0, 0, 800), 12.02),
+          model("claude", "claude-sonnet-5-5", totals(0, 0, 0, 200), 50),
+        ]),
+      ]),
+      bots: BOTS,
+      listedBotIds: new Set(),
+      modelNames: new Map([
+        ["deepseek-flash", "DeepSeek V4.1 Flash"],
+        ["claude-sonnet-5-5", "Claude Sonnet 5.5"],
+      ]),
+    });
+    expect(table.rows[0]!.models.map((entry) => [entry.label, entry.tokens])).toEqual([
+      ["DeepSeek · V4.1 Flash", 800],
+      ["Claude · Sonnet 5.5", 200],
+    ]);
+    expect(formatCostCompact(table.rows[0]!.models[0]!.cost)).toBe("$12.02");
+    expect(table.rows[0]!.models[0]!.sharePercent).toBe(80);
+  });
+
+  it("keeps the same model id apart when two providers ran it", () => {
+    const table = buildTokenUsageTable({
+      window: windowOf([
+        row("cto", totals(0, 0, 0, 1000), 1, [
+          model("claude", "claude-opus-5-5", totals(0, 0, 0, 600), 30),
+          model("opencode", "claude-opus-5-5", totals(0, 0, 0, 400), 1),
+        ]),
+      ]),
+      bots: BOTS,
+      listedBotIds: new Set(),
+      modelNames: new Map([["claude-opus-5-5", "Claude Opus 5.5"]]),
+    });
+    expect(table.rows[0]!.models.map((entry) => [entry.provider, entry.tokens])).toEqual([
+      ["claude", 600],
+      ["opencode", 400],
+    ]);
+  });
 });
 
 describe("labels", () => {
@@ -395,6 +453,21 @@ describe("labels", () => {
       listedBotIds: new Set(["qa"]),
     });
     expect(tokenUsageRowLabel(idle.rows[0]!)).toBe("QA: no tokens used. Open QA.");
+  });
+
+  it("reads the provider+model lines into the row's accessible name", () => {
+    const table = buildTokenUsageTable({
+      window: windowOf([
+        row("cto", totals(0, 0, 0, 500), 1, [
+          model("deepseek", "deepseek-flash", totals(0, 0, 0, 400), 2),
+        ]),
+      ]),
+      bots: BOTS,
+      listedBotIds: new Set(),
+      modelNames: new Map([["deepseek-flash", "DeepSeek V4.1 Flash"]]),
+    });
+    const label = tokenUsageRowLabel(table.rows[0]!);
+    expect(label).toContain("Models: DeepSeek · V4.1 Flash 400 tokens, estimated cost $2.00.");
   });
 
   it("polls while the server is counting, and only then", () => {

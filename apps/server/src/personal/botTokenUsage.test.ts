@@ -34,6 +34,7 @@ function cell(overrides: Partial<BotUsageCell> = {}): BotUsageCell {
 const OWNERS = new Map([
   [sessionKey("claude", "s-ada"), "bot-ada"],
   [sessionKey("claude", "s-ada-2"), "bot-ada"],
+  [sessionKey("opencode", "s-ada"), "bot-ada"],
   [sessionKey("codex", "s-bo"), "bot-bo"],
   [sessionKey("claude", "s-gone"), "bot-removed"],
 ]);
@@ -369,7 +370,7 @@ describe("windows", () => {
     expect(today?.rows[0]?.models.map((entry) => entry.model)).toEqual(["claude-opus-5-5"]);
   });
 
-  it("lists at most five models, most tokens first", () => {
+  it("lists every model a bot used, most tokens first", () => {
     const models = ["m1", "m2", "m3", "m4", "m5", "m6", "m7"];
     const [today] = windows(
       models.map((model, index) => cell({ model, totals: bigTotals((index + 1) * 100) })),
@@ -380,6 +381,36 @@ describe("windows", () => {
       "m5",
       "m4",
       "m3",
+      "m2",
+      "m1",
+    ]);
+  });
+
+  it("keeps each provider and model apart with its own estimate, even with the same model id", () => {
+    const [today] = windows([
+      cell({ model: "claude-opus-5-5", totals: bigTotals(100), costUsd: 2 }),
+      cell({
+        provider: "opencode",
+        model: "claude-opus-5-5",
+        totals: bigTotals(300),
+        costUsd: 0.5,
+      }),
+    ]);
+    expect(today?.rows[0]?.models).toEqual([
+      {
+        provider: "opencode",
+        model: "claude-opus-5-5",
+        totals: bigTotals(300),
+        costUsd: 0.5,
+        unpricedTokens: 0,
+      },
+      {
+        provider: "claude",
+        model: "claude-opus-5-5",
+        totals: bigTotals(100),
+        costUsd: 2,
+        unpricedTokens: 0,
+      },
     ]);
   });
 });

@@ -1,8 +1,10 @@
 import type {
   PersonalBot,
+  PersonalBotTokenUsageModel,
   PersonalBotTokenUsageResult,
   PersonalBotTokenUsageTotals,
   PersonalBotTokenUsageWindow,
+  UsageProviderKind,
 } from "@t3tools/contracts";
 import type { ReactTestInstance } from "react-test-renderer";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
@@ -31,9 +33,9 @@ const BOTS = [
   bot("watcher", "Watcher"),
 ];
 const LISTED = new Set(BOTS.map((b) => b.botId as string));
-const LABELS = new Map<string, string | null>([
-  ["cto", "Opus 5.5 · M"],
-  ["backend", "Sonnet 5.5 · H"],
+const MODEL_NAMES = new Map<string, string>([
+  ["claude-opus-5-5", "Claude Opus 5.5"],
+  ["deepseek-flash", "DeepSeek V4.1 Flash"],
 ]);
 
 const totals = (out: number, cached = 0, input = 0): PersonalBotTokenUsageTotals => ({
@@ -43,9 +45,19 @@ const totals = (out: number, cached = 0, input = 0): PersonalBotTokenUsageTotals
   outputTokens: out,
 });
 
+const modelUsage = (
+  provider: UsageProviderKind,
+  model: string,
+  t: PersonalBotTokenUsageTotals,
+  costUsd = 0,
+  unpricedTokens = 0,
+): PersonalBotTokenUsageModel => ({ provider, model, totals: t, costUsd, unpricedTokens });
+
 function windowOf(
   id: PersonalBotTokenUsageWindow["id"],
-  rows: ReadonlyArray<[string, PersonalBotTokenUsageTotals]>,
+  rows: ReadonlyArray<
+    [string, PersonalBotTokenUsageTotals, ReadonlyArray<PersonalBotTokenUsageModel>?]
+  >,
   other: PersonalBotTokenUsageTotals,
 ): PersonalBotTokenUsageWindow {
   const all = [...rows.map(([, t]) => t), other];
@@ -55,7 +67,9 @@ function windowOf(
     id,
     sinceDay: id === "today" ? "2026-10-04" : id === "week" ? "2026-09-28" : "2026-09-05",
     untilDay: "2026-10-04",
-    rows: rows.map(([botId, t]) => ({ botId, totals: t, models: [], sessions: 2 }) as never),
+    rows: rows.map(
+      ([botId, t, models]) => ({ botId, totals: t, models: models ?? [], sessions: 2 }) as never,
+    ),
     providers: [],
     other: { totals: other, costUsd: 0, unpricedTokens: 0, sessions: 1 },
     total: {
@@ -81,7 +95,19 @@ const READY: PersonalBotTokenUsageResult = {
       "week",
       [
         ["qa", totals(1_000_000, 30_000_000, 1_000_000)],
-        ["cto", totals(5_000_000, 100_000_000, 15_400_000)],
+        [
+          "cto",
+          totals(5_000_000, 100_000_000, 15_400_000),
+          [
+            modelUsage("claude", "claude-opus-5-5", totals(4_000_000, 90_000_000, 10_000_000), 200),
+            modelUsage(
+              "deepseek",
+              "deepseek-flash",
+              totals(1_000_000, 10_000_000, 5_400_000),
+              10.5,
+            ),
+          ],
+        ],
         ["backend", totals(3_000_000, 60_000_000, 2_000_000)],
         ["designer", totals(500_000, 4_000_000, 500_000)],
       ],
@@ -157,7 +183,7 @@ const render = async (
         onRetry={() => undefined}
         bots={BOTS}
         listedBotIds={LISTED}
-        modelLabels={LABELS}
+        modelNames={MODEL_NAMES}
         nowMs={NOW}
         {...props}
       />,
@@ -199,9 +225,25 @@ describe("TokenUsageCard", () => {
     expect(text).toContain("120.4M");
     expect(text).toContain("in 15.4M · cached 100.0M (87%) · out 5.0M");
     expect(text).toContain("CTO");
-    expect(text).toContain("Opus 5.5 · M");
+    expect(text).toContain("Claude · Opus 5.5");
+    expect(text).toContain("DeepSeek · V4.1 Flash");
     // 120.4M of the 222.4M the bots used in the week
     expect(text).toContain("54%");
+  });
+
+  it("names every provider and model a bot used, each with its own tokens and estimate", async () => {
+    const tree = await render({ result: PRICED });
+    const cto = rowsOf(tree)[0]!;
+    expect(textOf(cto)).not.toContain("Opus 5.5 · M");
+    const lines = cto
+      .findAll((node) => node.props["data-testid"] === "token-usage-model")
+      .map(textOf);
+    // 104.0M on Claude (4.0M out + 90.0M cached + 10.0M in), 16.4M on DeepSeek.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("Claude · Opus 5.5");
+    expect(lines[0]).toContain("104.0M · $200.00");
+    expect(lines[1]).toContain("DeepSeek · V4.1 Flash");
+    expect(lines[1]).toContain("16.4M · $10.50");
   });
 
   it("gives the top three a rank chip and a strong bar, and nobody else", async () => {

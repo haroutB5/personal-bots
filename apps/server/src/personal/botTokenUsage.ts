@@ -35,9 +35,6 @@ const TOKEN_USAGE_WEEK_DAYS = 7;
 
 const SYNTHETIC_MODEL = "<synthetic>";
 
-/** Models listed per bot. */
-const MAX_MODELS_PER_ROW = 5;
-
 /** A chat's provider session, as the database stores it. */
 export interface ChatSessionRow {
   readonly botId: string;
@@ -123,9 +120,17 @@ function addInto(into: MutableTotals, cell: BotUsageCell["totals"]): void {
   into.outputTokens += cell.outputTokens;
 }
 
+interface ModelAccumulator {
+  readonly provider: UsageProviderKind;
+  readonly model: string;
+  readonly totals: MutableTotals;
+  costUsd: number;
+  unpricedTokens: number;
+}
+
 interface Accumulator {
   readonly totals: MutableTotals;
-  readonly models: Map<string, number>;
+  readonly models: Map<string, ModelAccumulator>;
   readonly sessions: Set<string>;
   costUsd: number;
   unpricedTokens: number;
@@ -183,13 +188,30 @@ export function computeTokenUsageWindows(input: {
         provider = newAccumulator();
         perProvider.set(cell.provider, provider);
       }
-      const tokens = botUsageTotalTokens(cell.totals);
       for (const accumulator of [target, total, provider]) {
         addInto(accumulator.totals, cell.totals);
         accumulator.costUsd += cell.costUsd;
         accumulator.unpricedTokens += cell.unpricedTokens;
-        accumulator.models.set(cell.model, (accumulator.models.get(cell.model) ?? 0) + tokens);
         if (key !== null) accumulator.sessions.add(key);
+      }
+      if (botId !== null) {
+        // A bot's own models are kept apart with their provider and price, so
+        // a mixed-provider total never reads as if one model used all of it.
+        const modelKey = `${cell.provider}\u0000${cell.model}`;
+        let model = target.models.get(modelKey);
+        if (model === undefined) {
+          model = {
+            provider: cell.provider,
+            model: cell.model,
+            totals: emptyTotals(),
+            costUsd: 0,
+            unpricedTokens: 0,
+          };
+          target.models.set(modelKey, model);
+        }
+        addInto(model.totals, cell.totals);
+        model.costUsd += cell.costUsd;
+        model.unpricedTokens += cell.unpricedTokens;
       }
     }
 
@@ -200,7 +222,7 @@ export function computeTokenUsageWindows(input: {
         totals: accumulator.totals,
         costUsd: accumulator.costUsd,
         unpricedTokens: accumulator.unpricedTokens,
-        models: topModels(accumulator.models),
+        models: modelsOf(accumulator.models),
         sessions: accumulator.sessions.size,
       });
     }
@@ -249,13 +271,24 @@ function toSum(accumulator: Accumulator): PersonalBotTokenUsageSum {
   };
 }
 
-function topModels(models: ReadonlyMap<string, number>): PersonalBotTokenUsageModel[] {
+function modelsOf(models: ReadonlyMap<string, ModelAccumulator>): PersonalBotTokenUsageModel[] {
   return (
-    [...models]
+    [...models.values()]
       // Claude writes "<synthetic>" for the stub replies it makes itself (no model ran).
-      .filter(([model]) => model !== SYNTHETIC_MODEL)
-      .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, MAX_MODELS_PER_ROW)
-      .map(([model, totalTokens]) => ({ model, totalTokens }))
+      .filter((model) => model.model !== SYNTHETIC_MODEL)
+      .filter((model) => botUsageTotalTokens(model.totals) > 0)
+      .toSorted(
+        (a, b) =>
+          botUsageTotalTokens(b.totals) - botUsageTotalTokens(a.totals) ||
+          a.provider.localeCompare(b.provider) ||
+          a.model.localeCompare(b.model),
+      )
+      .map((model) => ({
+        provider: model.provider,
+        model: model.model,
+        totals: model.totals,
+        costUsd: model.costUsd,
+        unpricedTokens: model.unpricedTokens,
+      }))
   );
 }

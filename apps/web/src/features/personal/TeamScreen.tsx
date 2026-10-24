@@ -878,12 +878,20 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
     [chartBots],
   );
   const providers = useAtomValue(primaryServerProvidersAtom);
-  // The short model line the diagram shows, for the token table's rows.
-  const tokenUsageModelLabels = useMemo(
-    () =>
-      new Map(bots.map((bot) => [bot.botId as string, botActiveModelShortLabel(bot, providers)])),
-    [bots, providers],
-  );
+  // Every model the providers list, by slug, for the token table's per-model
+  // lines: "deepseek-flash" is drawn as the picker's "DeepSeek V4.1 Flash".
+  const tokenUsageModelNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const provider of providers) {
+      for (const model of provider.models) {
+        names.set(model.slug, model.name);
+        for (const alias of model.aliases ?? []) {
+          if (!names.has(alias)) names.set(alias, model.name);
+        }
+      }
+    }
+    return names;
+  }, [providers]);
   const feedTasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   const tasks = useTeamHandoffTasks(environmentId, feedTasks, taskFeed !== null);
   const liveBotIds = useMemo(() => {
@@ -1003,7 +1011,7 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
           environmentId={environmentId}
           bots={bots}
           listedBotIds={chartBotIds}
-          modelLabels={tokenUsageModelLabels}
+          modelNames={tokenUsageModelNames}
         />
       ) : null}
     </div>

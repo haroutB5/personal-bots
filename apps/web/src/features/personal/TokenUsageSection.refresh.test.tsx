@@ -99,7 +99,7 @@ describe("token usage refresh", () => {
         environmentId={null}
         bots={[]}
         listedBotIds={new Set()}
-        modelLabels={new Map()}
+        modelNames={new Map()}
       />,
     );
     await advance(TOKEN_USAGE_REFRESH_MS - 1000);
@@ -116,7 +116,7 @@ describe("token usage refresh", () => {
         environmentId={null}
         bots={[]}
         listedBotIds={new Set()}
-        modelLabels={new Map()}
+        modelNames={new Map()}
       />,
     );
     await advance(TOKEN_USAGE_REFRESH_MS);
@@ -138,7 +138,7 @@ describe("token usage refresh", () => {
         environmentId={null}
         bots={[]}
         listedBotIds={new Set()}
-        modelLabels={new Map()}
+        modelNames={new Map()}
       />,
     );
     await advance(TOKEN_USAGE_POLL_MS * 3);
@@ -170,7 +170,7 @@ describe("token usage refresh", () => {
         environmentId={null}
         bots={[]}
         listedBotIds={new Set()}
-        modelLabels={new Map()}
+        modelNames={new Map()}
       />,
     );
     await setVisibility("hidden");

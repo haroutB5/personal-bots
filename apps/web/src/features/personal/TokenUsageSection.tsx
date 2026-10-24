@@ -134,14 +134,15 @@ export function TokenUsageSection({
   environmentId,
   bots,
   listedBotIds,
-  modelLabels,
+  modelNames,
 }: {
   readonly environmentId: EnvironmentId | null;
   /** Every bot the screen can open. */
   readonly bots: ReadonlyArray<PersonalBot>;
   /** The bots shown in the team diagram: they get a row even with no use. */
   readonly listedBotIds: ReadonlySet<string>;
-  readonly modelLabels: ReadonlyMap<string, string | null>;
+  /** Model slug to the name the picker shows, for the per-model lines. */
+  readonly modelNames: ReadonlyMap<string, string>;
 }): JSX.Element {
   const usage = usePersonalTokenUsage(environmentId);
   const nowMs = useMinuteNow();
@@ -171,7 +172,7 @@ export function TokenUsageSection({
       }}
       bots={bots}
       listedBotIds={listedBotIds}
-      modelLabels={modelLabels}
+      modelNames={modelNames}
       nowMs={nowMs}
       balanceLine={balanceLine}
     />
@@ -185,7 +186,7 @@ export function TokenUsageCard({
   onRetry,
   bots,
   listedBotIds,
-  modelLabels,
+  modelNames,
   nowMs,
   balanceLine = null,
 }: {
@@ -194,7 +195,7 @@ export function TokenUsageCard({
   readonly onRetry: () => void;
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly listedBotIds: ReadonlySet<string>;
-  readonly modelLabels: ReadonlyMap<string, string | null>;
+  readonly modelNames: ReadonlyMap<string, string>;
   readonly nowMs: number;
   /** The DeepSeek prepaid balance, when there is a reading to show. */
   readonly balanceLine?: UsageBalanceLine | null;
@@ -212,8 +213,9 @@ export function TokenUsageCard({
             window: selected,
             bots: bots.map((bot) => ({ botId: bot.botId, name: bot.name })),
             listedBotIds,
+            modelNames,
           }),
-    [bots, listedBotIds, selected],
+    [bots, listedBotIds, modelNames, selected],
   );
   const updated = formatUpdated(result?.readAt ?? null, nowMs);
   const refreshing = result?.status === "refreshing";
@@ -321,11 +323,7 @@ export function TokenUsageCard({
               if (bot === undefined) return null;
               return (
                 <li key={row.botId}>
-                  <TokenUsageRow
-                    row={row}
-                    bot={bot}
-                    modelLabel={modelLabels.get(row.botId) ?? null}
-                  />
+                  <TokenUsageRow row={row} bot={bot} />
                 </li>
               );
             })}
@@ -477,11 +475,9 @@ function RetryButton({ onRetry }: { readonly onRetry: () => void }): JSX.Element
 function TokenUsageRow({
   row,
   bot,
-  modelLabel,
 }: {
   readonly row: TokenUsageRowView;
   readonly bot: PersonalBot;
-  readonly modelLabel: string | null;
 }): JSX.Element {
   const top = row.rank !== null;
   const barPercent = row.tokens === 0 ? 0 : Math.max(1.5, Math.min(100, row.sharePercent));
@@ -509,13 +505,26 @@ function TokenUsageRow({
           <span className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
             {bot.name}
           </span>
-          {modelLabel === null ? null : (
-            // Gives way before the name does: it shrinks first and truncates.
-            <span className="ml-1.5 min-w-0 shrink-[100] truncate text-[12px] leading-5 text-[var(--personal-text-tertiary)]">
-              {modelLabel}
-            </span>
-          )}
         </span>
+        {row.models.length === 0 ? null : (
+          <span data-testid="token-usage-models" className="flex min-w-0 flex-col gap-0.5">
+            {row.models.map((model) => (
+              <span
+                key={`${model.provider}:${model.model}`}
+                data-testid="token-usage-model"
+                data-provider={model.provider}
+                className="flex min-w-0 items-baseline gap-2 text-[12px] leading-4"
+              >
+                <span className="min-w-0 truncate text-[var(--personal-text-secondary)]">
+                  {model.label}
+                </span>
+                <span className="ml-auto shrink-0 tabular-nums text-[var(--personal-text-tertiary)]">
+                  {modelAmountLabel(model.tokens, model.cost)}
+                </span>
+              </span>
+            ))}
+          </span>
+        )}
         <span className="block h-[3px] overflow-hidden rounded-full bg-[var(--personal-track)]">
           <span
             data-testid="token-usage-bar"
@@ -548,6 +557,12 @@ function TokenUsageRow({
       </span>
     </Link>
   );
+}
+
+/** The tokens a provider+model used and, when it has one, its own price estimate. */
+function modelAmountLabel(tokens: number, cost: TokenCostView): string {
+  const price = formatCostCompact(cost);
+  return price === "" ? formatTokenCount(tokens) : `${formatTokenCount(tokens)} · ${price}`;
 }
 
 /** The estimate under a count, in the secondary colour; nothing when there is no cost to show. */

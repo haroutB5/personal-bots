@@ -128,7 +128,7 @@ const EFFORT_ABBREVIATIONS: Readonly<Record<string, string>> = {
  * prefix, a plan word ("Free", "Preview", "Beta") and a context-window suffix
  * ("(1M context)", "[1m]", "200k").
  */
-function shortModelName(name: string): string {
+export function shortModelName(name: string): string {
   return name
     .replace(/^Claude\s+/, "")
     .replace(/\s*[([][^)\]]*[)\]]/g, "")

@@ -753,12 +753,6 @@ export const PersonalBotTokenUsageTotals = Schema.Struct({
 });
 export type PersonalBotTokenUsageTotals = typeof PersonalBotTokenUsageTotals.Type;
 
-export const PersonalBotTokenUsageModel = Schema.Struct({
-  model: TrimmedNonEmptyString,
-  totalTokens: NonNegativeInt,
-});
-export type PersonalBotTokenUsageModel = typeof PersonalBotTokenUsageModel.Type;
-
 /**
  * API price estimate for a group of tokens (USD, LiteLLM list rates, cached
  * input at the cached rate; a provider's own reported cost where it gives one).
@@ -772,11 +766,25 @@ export const PersonalBotTokenUsageCost = Schema.Struct({
 });
 export type PersonalBotTokenUsageCost = typeof PersonalBotTokenUsageCost.Type;
 
+/**
+ * What one provider and model did for a bot in the window. A bot can run on
+ * several models (a fallback, the DeepSeek peak switch, a model change), and
+ * the provider is part of the identity: the same model id under OpenCode and
+ * Claude is a different route with a different price.
+ */
+export const PersonalBotTokenUsageModel = Schema.Struct({
+  provider: UsageProviderKind,
+  model: TrimmedNonEmptyString,
+  totals: PersonalBotTokenUsageTotals,
+  ...PersonalBotTokenUsageCost.fields,
+});
+export type PersonalBotTokenUsageModel = typeof PersonalBotTokenUsageModel.Type;
+
 export const PersonalBotTokenUsageRow = Schema.Struct({
   botId: PersonalBotId,
   totals: PersonalBotTokenUsageTotals,
   ...PersonalBotTokenUsageCost.fields,
-  /** Models the bot's chats ran on in the window, most tokens first (at most five). */
+  /** Every provider and model the bot's chats ran on, most tokens first. */
   models: Schema.Array(PersonalBotTokenUsageModel),
   /** Distinct provider sessions that used tokens in the window. */
   sessions: NonNegativeInt,

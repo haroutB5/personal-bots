@@ -1,5 +1,6 @@
 import type {
   PersonalBotTokenUsageCost,
+  PersonalBotTokenUsageModel,
   PersonalBotTokenUsageResult,
   PersonalBotTokenUsageStatus,
   PersonalBotTokenUsageTotals,
@@ -7,6 +8,8 @@ import type {
   PersonalBotTokenUsageWindowId,
   UsageProviderKind,
 } from "@t3tools/contracts";
+
+import { shortModelName } from "./botModelLabel";
 
 /**
  * The Token usage table on the Team screen, as plain data: windows, rows
@@ -187,6 +190,21 @@ export function providerLabel(provider: UsageProviderKind): string {
   return PROVIDER_LABELS[provider];
 }
 
+/** The provider's name on a tight per-model line, where "GPT / Codex" would crowd the model. */
+const SHORT_PROVIDER_LABELS: Readonly<Record<UsageProviderKind, string>> = {
+  claude: "Claude",
+  codex: "Codex",
+  opencode: "OpenCode",
+  cursor: "Cursor",
+  grok: "Grok",
+  antigravity: "Antigravity",
+  deepseek: "DeepSeek",
+};
+
+export function shortProviderLabel(provider: UsageProviderKind): string {
+  return SHORT_PROVIDER_LABELS[provider];
+}
+
 export interface TokenUsageProviderView {
   readonly provider: UsageProviderKind;
   readonly label: string;
@@ -202,6 +220,21 @@ export interface TokenUsageBot {
   readonly name: string;
 }
 
+/** One provider and model a bot used, with what that route alone cost. */
+export interface TokenUsageModelView {
+  readonly provider: UsageProviderKind;
+  /** The provider's short name: "Claude", "Codex", "OpenCode". */
+  readonly providerLabel: string;
+  /** The model as the picker names it, e.g. "Opus 5.5", "V4.1 Flash". */
+  readonly model: string;
+  /** The line as drawn: "DeepSeek · V4.1 Flash". */
+  readonly label: string;
+  readonly tokens: number;
+  /** Share of the bot's own tokens, 0 to 100. */
+  readonly sharePercent: number;
+  readonly cost: TokenCostView;
+}
+
 export interface TokenUsageRowView {
   readonly botId: string;
   readonly name: string;
@@ -211,6 +244,8 @@ export interface TokenUsageRowView {
   /** 1 to 3 for the heaviest users, else null. A bot with no use has no rank. */
   readonly rank: 1 | 2 | 3 | null;
   readonly split: TokenSplit;
+  /** Every provider and model the bot used in the window, most tokens first. */
+  readonly models: ReadonlyArray<TokenUsageModelView>;
   readonly sessions: number;
   readonly cost: TokenCostView;
 }
@@ -258,6 +293,11 @@ export function buildTokenUsageTable(input: {
   readonly window: PersonalBotTokenUsageWindow;
   readonly bots: ReadonlyArray<TokenUsageBot>;
   readonly listedBotIds: ReadonlySet<string>;
+  /**
+   * Model slug to the name the picker shows it by. A model this map does not
+   * know keeps its id, so a retired model never disappears from the table.
+   */
+  readonly modelNames?: ReadonlyMap<string, string>;
 }): TokenUsageTable {
   const { window } = input;
   const byId = new Map(input.bots.map((bot) => [bot.botId, bot]));
@@ -268,6 +308,7 @@ export function buildTokenUsageTable(input: {
     {
       tokens: number;
       totals: PersonalBotTokenUsageTotals;
+      models: ReadonlyArray<PersonalBotTokenUsageModel>;
       sessions: number;
       cost: Partial<PersonalBotTokenUsageCost>;
     }
@@ -280,7 +321,13 @@ export function buildTokenUsageTable(input: {
     const tokens = totalOf(row.totals);
     if (tokens === 0) continue;
     if (byId.has(row.botId)) {
-      used.set(row.botId, { tokens, totals: row.totals, sessions: row.sessions, cost: row });
+      used.set(row.botId, {
+        tokens,
+        totals: row.totals,
+        models: row.models ?? [],
+        sessions: row.sessions,
+        cost: row,
+      });
     } else {
       otherTokens += tokens;
       otherUsd += row.costUsd ?? 0;
@@ -300,6 +347,7 @@ export function buildTokenUsageTable(input: {
       name: bot.name,
       tokens: entry?.tokens ?? 0,
       totals: entry?.totals ?? EMPTY_TOTALS,
+      models: modelViewsOf(entry?.models ?? [], entry?.tokens ?? 0, input.modelNames),
       sessions: entry?.sessions ?? 0,
       cost: costViewOf(entry?.tokens ?? 0, entry?.cost),
     };
@@ -316,6 +364,7 @@ export function buildTokenUsageTable(input: {
       sharePercent: share(entry.tokens, botsTotal),
       rank,
       split: splitOf(entry.totals),
+      models: entry.models,
       sessions: entry.sessions,
       cost: entry.cost,
     };
@@ -349,6 +398,67 @@ export function buildTokenUsageTable(input: {
     sinceDay: window.sinceDay,
     untilDay: window.untilDay,
   };
+}
+
+/** A bot's provider+model lines, heaviest first, each with its own price. */
+function modelViewsOf(
+  models: ReadonlyArray<PersonalBotTokenUsageModel>,
+  botTokens: number,
+  modelNames: ReadonlyMap<string, string> | undefined,
+): ReadonlyArray<TokenUsageModelView> {
+  return models
+    .map((entry): TokenUsageModelView => {
+      const tokens = totalOf(entry.totals);
+      const provider = shortProviderLabel(entry.provider);
+      const model = modelDisplayName(entry.model, modelNames);
+      return {
+        provider: entry.provider,
+        providerLabel: provider,
+        model,
+        label: `${provider} · ${withoutProviderPrefix(provider, model)}`,
+        tokens,
+        sharePercent: share(tokens, botTokens),
+        cost: costViewOf(tokens, entry),
+      };
+    })
+    .filter((entry) => entry.tokens > 0)
+    .toSorted((a, b) => b.tokens - a.tokens || a.label.localeCompare(b.label));
+}
+
+/**
+ * The picker's name for a model id: "claude-opus-5-5" is "Opus 5.5" (the
+ * "Claude" the provider name already says is dropped), "deepseek-flash" is
+ * "V4.1 Flash". OpenCode ids may be prefixed ("opencode/deepseek-v4.1-flash"),
+ * so the last segment is looked up too. An id nobody lists keeps a readable
+ * form of itself rather than disappearing.
+ */
+function modelDisplayName(
+  model: string,
+  modelNames: ReadonlyMap<string, string> | undefined,
+): string {
+  if (modelNames !== undefined) {
+    const base = model.slice(model.lastIndexOf("/") + 1);
+    const listed = modelNames.get(model) ?? modelNames.get(base);
+    if (listed !== undefined) {
+      const short = shortModelName(listed);
+      if (short !== "") return short;
+    }
+  }
+  const base = model.slice(model.lastIndexOf("/") + 1);
+  return (
+    base
+      .replace(/[-_]+/g, " ")
+      .replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
+      .trim() || model
+  );
+}
+
+/** "DeepSeek · V4.1 Flash", not "DeepSeek · DeepSeek V4.1 Flash". */
+function withoutProviderPrefix(providerLabel: string, model: string): string {
+  const prefix = `${providerLabel} `;
+  return model.toLowerCase().startsWith(prefix.toLowerCase())
+    ? model.slice(prefix.length).trim() || model
+    : model;
 }
 
 /** The window named `id`, or null while the server has not sent windows yet. */
@@ -392,7 +502,16 @@ export function tokenUsageRowLabel(row: TokenUsageRowView): string {
   const rank = row.rank === null ? "" : `Number ${row.rank} user. `;
   const cost = costAriaLabel(row.cost);
   const costSentence = cost === "" ? "" : ` ${cost[0]!.toUpperCase()}${cost.slice(1)}.`;
-  return `${row.name}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of the bots' use. ${rank}${formatSplit(row.split)}.${costSentence} Open ${row.name}.`;
+  const models =
+    row.models.length === 0
+      ? ""
+      : `Models: ${row.models
+          .map((model) => {
+            const modelCost = costAriaLabel(model.cost);
+            return `${model.label} ${formatTokenCount(model.tokens)} tokens${modelCost === "" ? "" : `, ${modelCost}`}`;
+          })
+          .join("; ")}. `;
+  return `${row.name}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of the bots' use. ${models}${rank}${formatSplit(row.split)}.${costSentence} Open ${row.name}.`;
 }
 
 /** What a provider row reads as to a screen reader. */
