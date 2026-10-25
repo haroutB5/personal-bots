@@ -437,6 +437,22 @@ export function normalizeModelName(name: string): string {
 }
 
 /**
+ * An unresolved GPT route id keeps its hyphens and title case: a Codex
+ * provider that is offline still names `gpt-6.1-sol` "GPT-6.1-Sol" rather than
+ * "Gpt 6 1 Sol". Null for every other id, which keeps the readable form.
+ */
+function gptModelName(id: string): string | null {
+  const match = /^gpt[-_](.+)$/i.exec(id);
+  if (match === null) return null;
+  const rest = match[1]!
+    .split(/[-_]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => part[0]!.toUpperCase() + part.slice(1))
+    .join("-");
+  return rest === "" ? null : `GPT-${rest}`;
+}
+
+/**
  * The picker's name for a model id: "claude-opus-5-5" is "Opus 5.5" (the
  * "Claude" the provider name already says is dropped), "deepseek-flash" is
  * "V4.1 Flash". OpenCode ids may be prefixed ("opencode/deepseek-v4.1-flash"),
@@ -456,6 +472,8 @@ function modelDisplayName(
     }
   }
   const base = model.slice(model.lastIndexOf("/") + 1);
+  const gpt = gptModelName(base);
+  if (gpt !== null) return normalizeModelName(gpt);
   return normalizeModelName(
     base
       .replace(/[-_]+/g, " ")

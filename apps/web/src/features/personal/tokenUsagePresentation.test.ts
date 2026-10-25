@@ -430,6 +430,7 @@ describe("buildTokenUsageTable", () => {
         row("cto", totals(0, 0, 0, 300), 1, [
           model("opencode", "deepseek-v4.1-flash", totals(0, 0, 0, 200), 2),
           model("antigravity", "unknown", totals(0, 0, 0, 100), 0, 100),
+          model("codex", "gpt-6.1-sol", totals(0, 0, 0, 50), 1),
         ]),
       ]),
       bots: BOTS,
@@ -439,6 +440,7 @@ describe("buildTokenUsageTable", () => {
     expect(table.rows[0]!.models.map((entry) => entry.label)).toEqual([
       "OpenCode · DeepSeek V4.1 Flash",
       "Antigravity · Unknown model",
+      "Codex · GPT-6.1-Sol",
     ]);
   });
 });
