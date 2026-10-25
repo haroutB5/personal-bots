@@ -332,8 +332,9 @@ const main = (): void => {
     previousAt = now;
   };
 
+  // Keep the event loop alive: an unref'd interval lets Node exit as soon as
+  // the hello line is written, which left the sampler with no ticks at all.
   const timer = setInterval(emit, tickMs);
-  timer.unref();
   // The sampler kills this process by PID; either signal ends the loop.
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
