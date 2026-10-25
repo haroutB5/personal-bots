@@ -496,6 +496,15 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
                   return yield* Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
                 }
                 if (ctx.stopped) return;
+                // A steer waits for the cancelled prompt to answer. Its closing
+                // text ("Request cancelled.") must not join the steered reply.
+                if (
+                  event._tag === "ContentDelta" &&
+                  ctx.activeTurnId === undefined &&
+                  ctx.pendingSteers > 0
+                ) {
+                  return;
+                }
                 if (
                   !ctx.turnHeard &&
                   ctx.activeTurnId !== undefined &&
@@ -974,7 +983,10 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
                     // The cancelled prompt's tail no longer owns settlement.
                     delete ctx.activeTurnId;
                     yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
-                    yield* ctx.runtime.cancel.pipe(Effect.ignore);
+                    // Keep the RPC alive: the turn queue must wait for the
+                    // agent's response, including any tool still in flight.
+                    // Stop uses cancel, which also interrupts the local wait.
+                    yield* ctx.runtime.requestCancel.pipe(Effect.ignore);
                   }
                   return { context: ctx, turnId };
                 }),

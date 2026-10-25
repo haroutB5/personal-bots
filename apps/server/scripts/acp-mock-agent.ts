@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
+import * as NodeChildProcess from "node:child_process";
 
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -74,6 +75,8 @@ const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const heldToolReleasePath = process.env.T3_ACP_HELD_TOOL_RELEASE_PATH;
+let heldToolRunning = false;
 const busyFirstPrompt = process.env.T3_ACP_BUSY_FIRST_PROMPT === "1";
 /**
  * Fail prompts as an Effect defect with this text, the way the OpenCode 2 agent
@@ -828,7 +831,55 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (heldToolRunning) {
+        return yield* Effect.die(new Error("Session already has an active ACP prompt: mock"));
+      }
       promptCount += 1;
+      if (heldToolReleasePath && promptCount === 1) {
+        // A real child keeps the remote prompt busy after session/cancel. The
+        // test releases it explicitly, so the race does not depend on timing.
+        heldToolRunning = true;
+        const child = NodeChildProcess.spawn(
+          process.execPath,
+          [
+            "-e",
+            "setInterval(() => { if (require('node:fs').existsSync(process.argv[1])) process.exit(0) }, 10)",
+            heldToolReleasePath,
+          ],
+          { stdio: "ignore", windowsHide: true },
+        );
+        try {
+          const exited = new Promise<void>((resolve, reject) => {
+            child.once("exit", () => resolve());
+            child.once("error", reject);
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "held-shell",
+              title: "Waiting for test command release",
+              kind: "execute",
+              status: "in_progress",
+            },
+          });
+          yield* Effect.promise(() => exited);
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "held-shell",
+              status: "completed",
+            },
+          });
+          return {
+            stopReason: cancelledSessions.delete(requestedSessionId) ? "cancelled" : "end_turn",
+          };
+        } finally {
+          child.kill();
+          heldToolRunning = false;
+        }
+      }
       if (promptCount >= defectPromptStart && defectPromptsLeft > 0) {
         defectPromptsLeft -= 1;
         return yield* Effect.die(new Error(defectPromptError));

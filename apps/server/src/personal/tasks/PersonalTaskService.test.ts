@@ -2043,9 +2043,16 @@ it.live(
       const threadId = threadOf(task);
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-task-steer-acp-" });
+      let releaseCancellation: Effect.Effect<void> = Effect.void;
       const adapter = yield* makeNativeAcpAdapter({
         provider: ProviderDriverKind.make("opencode"),
         instanceId: ProviderInstanceId.make("opencode-v2"),
+        configureTurn: (runtime) =>
+          Effect.sync(() => {
+            releaseCancellation = runtime
+              .request("_test/finish-cancel", {})
+              .pipe(Effect.asVoid, Effect.orDie);
+          }),
         runtimeOptions: () =>
           Effect.succeed({
             spawn: {
@@ -2123,9 +2130,12 @@ it.live(
       const second = yield* adapter
         .sendTurn({ threadId, input: command.message.text })
         .pipe(Effect.forkChild);
-      yield* Fiber.join(first);
       yield* service.drain;
       expect((yield* reload(task.taskId)).status).toBe("running");
+      // A steer now waits for the remote prompt, rather than detaching its
+      // local RPC. Let the mock agent acknowledge the cancellation explicitly.
+      yield* releaseCancellation;
+      yield* Fiber.join(first);
       yield* Fiber.join(second);
       yield* Deferred.await(finished);
       const done = yield* reload(task.taskId);
