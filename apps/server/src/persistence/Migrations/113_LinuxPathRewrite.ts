@@ -4,18 +4,19 @@
  * equivalents, once, while the data root is moved from Windows to Omarchy.
  *
  * Why this exists: projects, worktrees and the event log hold absolute paths
- * (`C:/Claude/AI/...`, `C:/Users/Ht/...`). On Linux every one of them is dead,
- * so a project cannot be opened and a thread's worktree points nowhere.
+ * (`C:/Claude/AI/...`, `C:/Users/Ht/...`, often with backslashes). On Linux
+ * every one of them is dead, so a project cannot be opened and a thread's
+ * worktree points nowhere.
  *
  * The mapping is configuration, not a guess:
  *
  *   T3CODE_PATH_MAP="C:/Users/Ht=/home/harout;C:/Claude/AI=/home/harout/claude"
  *
  * The longest matching prefix wins (so a specific mapping beats a broader one),
- * matching ignores the case of the prefix and accepts either slash, and the
- * remainder is kept and normalised to forward slashes. With the variable unset
- * the migration does nothing - which is what Windows runs, so the shipping
- * Windows install is untouched.
+ * matching ignores the case of the prefix and treats `\` and `/` alike, and the
+ * remainder is kept, normalised to `/`. With the variable unset the migration
+ * does nothing - which is what Windows runs, so the shipping Windows install is
+ * untouched.
  *
  * Idempotent: after the rewrite no stored value starts with a mapped prefix,
  * so a second run (or a re-run after a failed boot) changes nothing.
@@ -38,6 +39,9 @@ const PATH_MAP_ENV = "T3CODE_PATH_MAP";
 
 /** The JSON payload keys that hold a path. Everything else is content. */
 const EVENT_PATH_KEYS = ["workspaceRoot", "worktreePath", "faviconPath", "projectCwd"] as const;
+
+/** `char(92)` is a backslash, spelled this way so no SQL/TS escaping can mangle it. */
+const SLASH = "char(92)";
 
 export interface PathMapping {
   /** Normalised prefix, forward slashes, no trailing slash (e.g. `C:/Users/Ht`). */
@@ -83,30 +87,32 @@ export default Effect.gen(function* () {
   for (const { from, to } of mappings) {
     const length = from.length;
 
+    // Every statement repeats the same three-part match: the prefix, with
+    // backslashes read as slashes and the case folded, then a boundary.
     yield* sql`
       UPDATE projection_projects
-      SET workspace_root = ${to} || substr(workspace_root, ${length + 1})
-      WHERE lower(substr(workspace_root, 1, ${length})) = lower(${from})
+      SET workspace_root = ${to} || replace(substr(workspace_root, ${length + 1}), ${sql.unsafe(SLASH)}, '/')
+      WHERE lower(replace(substr(workspace_root, 1, ${length}), ${sql.unsafe(SLASH)}, '/')) = lower(${from})
         AND (length(workspace_root) = ${length}
-          OR substr(workspace_root, ${length + 1}, 1) IN ('/', '\\'))
+          OR substr(workspace_root, ${length + 1}, 1) IN ('/', ${sql.unsafe(SLASH)}))
     `;
 
     yield* sql`
       UPDATE projection_projects
-      SET favicon_path = ${to} || substr(favicon_path, ${length + 1})
+      SET favicon_path = ${to} || replace(substr(favicon_path, ${length + 1}), ${sql.unsafe(SLASH)}, '/')
       WHERE favicon_path IS NOT NULL
-        AND lower(substr(favicon_path, 1, ${length})) = lower(${from})
+        AND lower(replace(substr(favicon_path, 1, ${length}), ${sql.unsafe(SLASH)}, '/')) = lower(${from})
         AND (length(favicon_path) = ${length}
-          OR substr(favicon_path, ${length + 1}, 1) IN ('/', '\\'))
+          OR substr(favicon_path, ${length + 1}, 1) IN ('/', ${sql.unsafe(SLASH)}))
     `;
 
     yield* sql`
       UPDATE projection_threads
-      SET worktree_path = ${to} || substr(worktree_path, ${length + 1})
+      SET worktree_path = ${to} || replace(substr(worktree_path, ${length + 1}), ${sql.unsafe(SLASH)}, '/')
       WHERE worktree_path IS NOT NULL
-        AND lower(substr(worktree_path, 1, ${length})) = lower(${from})
+        AND lower(replace(substr(worktree_path, 1, ${length}), ${sql.unsafe(SLASH)}, '/')) = lower(${from})
         AND (length(worktree_path) = ${length}
-          OR substr(worktree_path, ${length + 1}, 1) IN ('/', '\\'))
+          OR substr(worktree_path, ${length + 1}, 1) IN ('/', ${sql.unsafe(SLASH)}))
     `;
 
     for (const key of EVENT_PATH_KEYS) {
@@ -117,32 +123,40 @@ export default Effect.gen(function* () {
         SET payload_json = json_set(
           payload_json,
           ${`$.${key}`},
-          ${to} || substr(json_extract(payload_json, ${`$.${key}`}), ${length + 1})
+          ${to} || replace(
+            substr(json_extract(payload_json, ${`$.${key}`}), ${length + 1}),
+            ${sql.unsafe(SLASH)},
+            '/'
+          )
         )
         WHERE json_type(payload_json, ${`$.${key}`}) = 'text'
-          AND lower(substr(json_extract(payload_json, ${`$.${key}`}), 1, ${length})) =
-            lower(${from})
+          AND lower(replace(
+            substr(json_extract(payload_json, ${`$.${key}`}), 1, ${length}),
+            ${sql.unsafe(SLASH)},
+            '/'
+          )) = lower(${from})
           AND (length(json_extract(payload_json, ${`$.${key}`})) = ${length}
-            OR substr(json_extract(payload_json, ${`$.${key}`}), ${length + 1}, 1) IN ('/', '\\'))
+            OR substr(json_extract(payload_json, ${`$.${key}`}), ${length + 1}, 1)
+              IN ('/', ${sql.unsafe(SLASH)}))
       `;
     }
   }
 
-  // A rewritten value may still carry the Windows separator in its remainder;
-  // a POSIX path never contains a backslash, so this is safe.
+  // A value that was already under a target root but still carries Windows
+  // separators is cleaned up too; a POSIX path never contains a backslash.
   yield* sql`
-    UPDATE projection_projects SET workspace_root = replace(workspace_root, '\\', '/')
-    WHERE substr(workspace_root, 1, 1) = '/' AND instr(workspace_root, '\') > 0
+    UPDATE projection_projects SET workspace_root = replace(workspace_root, ${sql.unsafe(SLASH)}, '/')
+    WHERE substr(workspace_root, 1, 1) = '/' AND instr(workspace_root, ${sql.unsafe(SLASH)}) > 0
   `;
   yield* sql`
-    UPDATE projection_projects SET favicon_path = replace(favicon_path, '\\', '/')
+    UPDATE projection_projects SET favicon_path = replace(favicon_path, ${sql.unsafe(SLASH)}, '/')
     WHERE favicon_path IS NOT NULL AND substr(favicon_path, 1, 1) = '/'
-      AND instr(favicon_path, '\') > 0
+      AND instr(favicon_path, ${sql.unsafe(SLASH)}) > 0
   `;
   yield* sql`
-    UPDATE projection_threads SET worktree_path = replace(worktree_path, '\\', '/')
+    UPDATE projection_threads SET worktree_path = replace(worktree_path, ${sql.unsafe(SLASH)}, '/')
     WHERE worktree_path IS NOT NULL AND substr(worktree_path, 1, 1) = '/'
-      AND instr(worktree_path, '\') > 0
+      AND instr(worktree_path, ${sql.unsafe(SLASH)}) > 0
   `;
   for (const key of EVENT_PATH_KEYS) {
     yield* sql`
@@ -150,15 +164,13 @@ export default Effect.gen(function* () {
       SET payload_json = json_set(
         payload_json,
         ${`$.${key}`},
-        replace(json_extract(payload_json, ${`$.${key}`}), '\\', '/')
+        replace(json_extract(payload_json, ${`$.${key}`}), ${sql.unsafe(SLASH)}, '/')
       )
       WHERE json_type(payload_json, ${`$.${key}`}) = 'text'
         AND substr(json_extract(payload_json, ${`$.${key}`}), 1, 1) = '/'
-        AND instr(json_extract(payload_json, ${`$.${key}`}), '\') > 0
+        AND instr(json_extract(payload_json, ${`$.${key}`}), ${sql.unsafe(SLASH)}) > 0
     `;
   }
 
-  yield* Effect.logInfo(
-    `Rewrote stored Windows paths for ${mappings.length} mapping(s).`,
-  );
+  yield* Effect.logInfo(`Rewrote stored Windows paths for ${mappings.length} mapping(s).`);
 });
