@@ -11,6 +11,7 @@
  * is passed in as a function built by the route, which does have them.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFileURL from "node:url";
 import * as NodeFS from "node:fs";
 import * as NodeFSPromises from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -20,6 +21,7 @@ import type { PerformanceStatics } from "@t3tools/contracts";
 
 import { resolveWindowsPowerShell } from "../../provider/processTree.ts";
 import type { HelperChild } from "./counterSample.ts";
+import { LinuxSensorReader } from "./linuxSensors.ts";
 import {
   PerformanceSampler,
   type DiskUsage,
@@ -180,6 +182,101 @@ export function spawnCounterHelper(
 }
 
 /**
+ * The Linux helper script beside this server: the source file in a checkout,
+ * the bundled sibling entry after a release build (the same rule the Claude
+ * history worker uses).
+ */
+export function linuxHelperScriptPath(): string {
+  return NodeFileURL.fileURLToPath(
+    new URL(
+      import.meta.url.endsWith(".ts") ? "../../perf-linux-helper.ts" : "./perf-linux-helper.mjs",
+      import.meta.url,
+    ),
+  );
+}
+
+/**
+ * One long-lived Node process reading `/proc`, the Linux counterpart of
+ * `spawnCounterHelper`. It prints the same JSON lines, so the sampler is
+ * unchanged. `kill()` is by captured PID only, never by pattern.
+ */
+export function spawnLinuxCounterHelper(
+  parentPid: number,
+  tickMs: number,
+  options: { readonly log?: (line: string) => void } = {},
+): HelperHandle {
+  let child: NodeChildProcess.ChildProcess | null = null;
+  let killed = false;
+  let onLine: (line: string) => void = () => undefined;
+  let onExit: () => void = () => undefined;
+  const stderrTail: string[] = [];
+
+  try {
+    const spawned = NodeChildProcess.spawn(
+      process.execPath,
+      [
+        linuxHelperScriptPath(),
+        "--parent-pid",
+        String(parentPid),
+        "--tick-ms",
+        String(tickMs),
+      ],
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+    );
+    child = spawned;
+    spawned.stdout?.setEncoding("utf8");
+    if (spawned.stdout !== null) {
+      const rl = NodeReadline.createInterface({ input: spawned.stdout });
+      rl.on("line", (line) => onLine(line));
+    }
+    spawned.stderr?.setEncoding("utf8");
+    spawned.stderr?.on("data", (chunk: string) => {
+      stderrTail.push(chunk.trim());
+      if (stderrTail.length > 4) stderrTail.shift();
+    });
+    spawned.on("error", () => {
+      options.log?.("performance counter helper failed to start");
+    });
+    spawned.on("exit", () => {
+      child = null;
+      if (stderrTail.length > 0) {
+        options.log?.(
+          `performance counter helper stderr: ${stderrTail.join(" | ").slice(0, 400)}`,
+        );
+        stderrTail.length = 0;
+      }
+      if (!killed) onExit();
+    });
+  } catch {
+    options.log?.("performance counter helper failed to start");
+  }
+
+  return {
+    get pid() {
+      return child?.pid ?? null;
+    },
+    onLine: (listener) => {
+      onLine = listener;
+    },
+    onExit: (listener) => {
+      onExit = listener;
+    },
+    kill: () => {
+      killed = true;
+      const current = child;
+      child = null;
+      if (current !== null && current.pid !== undefined && current.exitCode === null) {
+        try {
+          current.kill();
+        } catch {
+          // Already gone; nothing to end.
+        }
+      }
+    },
+  };
+}
+
+/**
  * The size of a folder in bytes, walking it without following links and at
  * most `dirConcurrency` folders in flight. Null when the folder does not
  * exist. This runs at most every ten minutes, from the slow side of the
@@ -278,16 +375,29 @@ export function buildPerformanceSampler(deps: BuildSamplerDeps): PerformanceSamp
   const log = deps.log ?? (() => undefined);
   const platform = deps.platform ?? process.platform;
   const serverPid = deps.serverPid ?? process.pid;
-  const sensors = new SensorReaders();
+  // Windows asks its two sensor apps over loopback HTTP; Linux reads sysfs.
+  const sensors =
+    platform === "win32"
+      ? new SensorReaders()
+      : new LinuxSensorReader();
   const now = deps.now ?? (() => Date.now());
   sampler = new PerformanceSampler({
     platform,
     now,
     serverPid,
     startHelper: () => {
-      if (platform !== "win32") return null;
-      log("performance counter helper starting");
-      return spawnCounterHelper(deps.baseDir, serverPid, deps.tickMs ?? 2_000, { log });
+      if (platform === "win32") {
+        log("performance counter helper starting");
+        return spawnCounterHelper(deps.baseDir, serverPid, deps.tickMs ?? 2_000, { log });
+      }
+      if (platform === "linux") {
+        // A single-executable release has no sibling script to run; sampling
+        // keeps the os-level CPU fallback instead of spawning nothing forever.
+        if (!NodeFS.existsSync(linuxHelperScriptPath())) return null;
+        log("performance counter helper starting (linux)");
+        return spawnLinuxCounterHelper(serverPid, deps.tickMs ?? 2_000, { log });
+      }
+      return null;
     },
     readSensors: () => sensors.read(),
     attribute: deps.attribute,

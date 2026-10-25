@@ -290,7 +290,10 @@ export class PerformanceSampler {
   }
 
   private ensureHelper(): void {
-    if (this.deps.platform !== "win32" || this.deps.startHelper === undefined) return;
+    // Windows reads counters through PowerShell, Linux through its own Node
+    // helper; every other platform has no counter helper at all.
+    if (this.deps.platform !== "win32" && this.deps.platform !== "linux") return;
+    if (this.deps.startHelper === undefined) return;
     if (this.helper !== null) return;
     const now = this.deps.now();
     if (now < this.restartBlockedUntil) return;
@@ -386,6 +389,7 @@ export class PerformanceSampler {
           attributed: this.attribution,
           serverPid: this.deps.serverPid ?? process.pid,
           logicalProcessors: logical,
+          systemLabel: this.deps.platform === "linux" ? "Linux" : "Windows",
         });
         const top = topGroups(this.latestGroups.groups, 15);
         const event: PerformanceStreamEvent = {

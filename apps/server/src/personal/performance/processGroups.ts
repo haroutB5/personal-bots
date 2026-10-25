@@ -33,6 +33,8 @@ export interface GroupInput {
   readonly attributed: ReadonlyMap<number, BotOwner>;
   readonly serverPid: number;
   readonly logicalProcessors: number;
+  /** The desktop session group's name: "Windows" on Windows, "Linux" elsewhere. */
+  readonly systemLabel?: string;
 }
 
 export interface GroupedProcesses {
@@ -182,7 +184,7 @@ export function groupProcesses(input: GroupInput): GroupedProcesses {
     memGB: 0,
   };
   const windowsAcc: Accumulator = {
-    name: "Windows",
+    name: input.systemLabel ?? "Windows",
     kind: "system",
     botId: null,
     provider: null,
