@@ -16,12 +16,12 @@ export function isValidRootName(root) {
   return typeof root === "string" && /^[a-z0-9][a-z0-9._-]*$/i.test(root);
 }
 
-export function getPaths({ root = "dev", home = pbHome() } = {}) {
+export function getPaths({ root = "dev", home = pbHome(), releasesDir = null } = {}) {
   if (!isValidRootName(root)) throw new Error(`Invalid data root name: ${root}`);
   const base = path.resolve(home);
   const baseDir = path.join(base, root);
   const runDir = path.join(base, "run");
-  const releasesDir = path.join(base, "releases");
+  const releases = releasesDir ? path.resolve(releasesDir) : path.join(base, "releases");
   return {
     root,
     home: base,
@@ -32,8 +32,8 @@ export function getPaths({ root = "dev", home = pbHome() } = {}) {
     pidFile: path.join(runDir, "server.pid"),
     stateFile: path.join(runDir, "server.json"),
     stopMarker: path.join(runDir, "stop-requested"),
-    releasesDir,
-    currentFile: path.join(releasesDir, "current.txt"),
+    releasesDir: releases,
+    currentFile: path.join(releases, "current.txt"),
     backupsDir: path.join(base, "backups"),
     workDir: path.join(base, "workspace"),
   };

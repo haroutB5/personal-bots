@@ -49,6 +49,7 @@ function parse(argv) {
     options: {
       root: { type: "string", default: "dev" },
       home: { type: "string" },
+      "releases-dir": { type: "string" },
       release: { type: "string" },
       port: { type: "string" },
       keep: { type: "string" },
@@ -79,7 +80,7 @@ function parse(argv) {
 
 function pathsFor(values) {
   const home = values.home ? path.resolve(values.home) : pbHome();
-  return getPaths({ root: values.root, home });
+  return getPaths({ root: values.root, home, releasesDir: values["releases-dir"] ?? null });
 }
 
 function assertMutationAllowed(paths) {
