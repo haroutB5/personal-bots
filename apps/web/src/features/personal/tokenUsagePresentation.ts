@@ -428,11 +428,14 @@ function modelViewsOf(
 /**
  * Known brand casing in a model name, and the placeholder name a provider with
  * no model data reports: "Deepseek V4.1 Flash" reads "DeepSeek V4.1 Flash", and
- * a bare "Unknown" reads "Unknown model" rather than looking like a bug.
+ * a name ending in "Unknown" reads "Unknown model" rather than looking like a
+ * bug. Matching the end of the name covers the prefixed forms a real payload
+ * sends ("antigravity-unknown", "Antigravity Unknown"), while a real model that
+ * only mentions Unknown elsewhere is left alone.
  */
 export function normalizeModelName(name: string): string {
   const branded = name.replace(/\bdeepseek\b/gi, "DeepSeek").trim();
-  if (branded.toLowerCase() === "unknown") return "Unknown model";
+  if (/(?:^|[\s\-_/])unknown$/i.test(branded)) return "Unknown model";
   return branded;
 }
 

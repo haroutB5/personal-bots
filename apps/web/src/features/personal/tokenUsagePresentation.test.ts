@@ -423,13 +423,18 @@ describe("buildTokenUsageTable", () => {
     expect(normalizeModelName("Deepseek V4.1 Flash")).toBe("DeepSeek V4.1 Flash");
     expect(normalizeModelName("DeepSeek V4.1 Flash")).toBe("DeepSeek V4.1 Flash");
     expect(normalizeModelName("Unknown")).toBe("Unknown model");
+    expect(normalizeModelName("antigravity-unknown")).toBe("Unknown model");
+    expect(normalizeModelName("Antigravity Unknown")).toBe("Unknown model");
     expect(normalizeModelName(" Opus 5.5 ")).toBe("Opus 5.5");
+    // Only a name that ends in the word is the placeholder.
+    expect(normalizeModelName("Gemini 3.8 Flash N")).toBe("Gemini 3.8 Flash N");
+    expect(normalizeModelName("Unknown Things 2")).toBe("Unknown Things 2");
 
     const table = buildTokenUsageTable({
       window: windowOf([
         row("cto", totals(0, 0, 0, 300), 1, [
           model("opencode", "deepseek-v4.1-flash", totals(0, 0, 0, 200), 2),
-          model("antigravity", "unknown", totals(0, 0, 0, 100), 0, 100),
+          model("antigravity", "antigravity-unknown", totals(0, 0, 0, 100), 0, 100),
           model("codex", "gpt-6.1-sol", totals(0, 0, 0, 50), 1),
         ]),
       ]),
