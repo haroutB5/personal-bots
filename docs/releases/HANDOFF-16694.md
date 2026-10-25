@@ -33,7 +33,7 @@ The second was steering. On `opencode-v2` the ACP adapter cannot inject a messag
 
 ## Before and after
 
-The same three sequences, run through the pre-fix module (`80594c43d2`) and the new one, at the policy layer:
+The wait rows below run through the pre-fix module (`80594c43d2`) and the new one at the policy layer. The steer row runs the real ACP adapter with `PERSONAL_TASK_STEER_CONTINUITY=off` and then with the fix.
 
 | Sequence (from the live tasks)                                                               | Before                           | After                                                  |
 | -------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------ |
