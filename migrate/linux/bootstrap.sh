@@ -8,6 +8,9 @@
 #   ./bootstrap.sh --dry-run --source /mnt/gamingpc/omarchy-migration/plain
 #   ./bootstrap.sh --apply   --source /mnt/gamingpc/omarchy-migration/plain
 #
+# --allow-arch-only is for the Arch WSL proof host: it keeps the Arch check but
+# permits the missing Omarchy marker. Never use it on install night.
+#
 # --dry-run prints every step and changes nothing. --apply does the work.
 # There is no implicit apply.
 #
@@ -55,9 +58,10 @@ SKIP_PACKAGES=0
 SKIP_SECRETS=0
 SKIP_START=0
 SKIP_VERIFY=0
+ALLOW_ARCH_ONLY=0
 
 usage() {
-  sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 log() {
@@ -160,6 +164,10 @@ while [ "$#" -gt 0 ]; do
       SKIP_VERIFY=1
       shift
       ;;
+    --allow-arch-only)
+      ALLOW_ARCH_ONLY=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -248,7 +256,11 @@ else
       ;;
   esac
   if ! command -v omarchy >/dev/null 2>&1 && [ ! -d /usr/share/omarchy ]; then
-    die "Omarchy is not installed (no omarchy command and no /usr/share/omarchy)."
+    if [ "$ALLOW_ARCH_ONLY" -eq 1 ]; then
+      warn "this is plain Arch, not Omarchy (--allow-arch-only: proof host only)"
+    else
+      die "Omarchy is not installed (no omarchy command and no /usr/share/omarchy)."
+    fi
   fi
   info "Omarchy/Arch detected"
 fi

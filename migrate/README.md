@@ -173,6 +173,8 @@ Options:
 - `--secrets-bundle PATH`: default `<home>/omarchy-secrets.bundle`
 - `--skip-restore`, `--skip-packages`, `--skip-secrets`, `--skip-start`,
   `--skip-verify`: only for repair runs or a base-host proof.
+- `--allow-arch-only`: proof-only switch for plain Arch (WSL); it keeps the Arch
+  check and permits the missing Omarchy marker. Never use it on install night.
 
 The script never deletes: rsync runs without `--delete`, and no cleanup step is
 destructive.
