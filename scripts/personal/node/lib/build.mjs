@@ -32,9 +32,9 @@ function runVp(repoRoot, args, nodeExe, env) {
   if (!vp) {
     throw new Error("vite-plus (vp) is not installed in this checkout. Run the repo install first (vp i).");
   }
-  const first = readText(vp) || "";
-  const isScript = first.startsWith("#!");
-  const command = isScript && first.includes("node") ? nodeExe : vp;
+  const firstLine = (readText(vp) || "").split(/\r?\n/, 1)[0] || "";
+  const isScript = firstLine.startsWith("#!");
+  const command = isScript && /node/.test(firstLine) ? nodeExe : vp;
   const commandArgs = command === vp ? args : [vp, ...args];
   const result = spawnSync(command, commandArgs, {
     cwd: repoRoot,

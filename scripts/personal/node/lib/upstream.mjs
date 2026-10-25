@@ -21,12 +21,12 @@ function vp(repoRoot, args, nodeExe, label, { cwd = repoRoot } = {}) {
   if (!fs.existsSync(bin)) throw new Error("vite-plus (vp) is not installed in this checkout.");
   const head = (() => {
     try {
-      return fs.readFileSync(bin, "utf8").slice(0, 200);
+      return fs.readFileSync(bin, "utf8").split(/\r?\n/, 1)[0] || "";
     } catch {
       return "";
     }
   })();
-  const useNode = head.startsWith("#!") && head.includes("node");
+  const useNode = head.startsWith("#!") && /node/.test(head);
   const command = useNode ? nodeExe : bin;
   process.stdout.write(`\n== ${label}: vp ${args.join(" ")} (${cwd})\n`);
   const result = spawnSync(command, useNode ? [bin, ...args] : args, { cwd, stdio: "inherit", windowsHide: true });
