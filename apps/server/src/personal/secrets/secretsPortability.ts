@@ -226,7 +226,7 @@ const writePrivateFile = (file: string, bytes: Uint8Array, overwrite: boolean): 
 };
 
 export interface SecretsExportOptions {
-  /** The store's `secrets` folder (Ã¢â‚¬Â¦/userdata/secrets). */
+  /** The store's `secrets` folder (ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/userdata/secrets). */
   readonly secretsDir: string;
   readonly outFile: string;
   readonly passphrase: string;
@@ -434,26 +434,40 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
     } catch {
       previousKeyBytes = null;
     }
+    // Existing portable entries would be stranded by a key swap.
+    const strandedCount = NodeFS.existsSync(options.secretsDir)
+      ? NodeFS.readdirSync(options.secretsDir).filter(
+          (entry) => entry.endsWith(".bin") && isPortableName(entry.slice(0, -".bin".length)),
+        ).length
+      : 0;
     let dataKeyWritten = true;
     if (previousKeyBytes !== null) {
       try {
-        const existing = unwrapDataKey(
-          parseWrappedDataKey(new TextDecoder().decode(previousKeyBytes)),
-        );
+        const parsedKey = parseWrappedDataKey(new TextDecoder().decode(previousKeyBytes));
+        const existingMaterial = resolve(parsedKey.source);
+        if (existingMaterial === null) throw new Error("material unavailable");
+        const existing = unwrapDataKey(parsedKey, existingMaterial);
         const same =
           existing.byteLength === dataKey.byteLength &&
           existing.every((byte, index) => byte === dataKey[index]);
         existing.fill(0);
-        if (!same && options.force !== true) {
-          throw new SecretsPortabilityError(
-            "target-key-differs",
-            `This machine already has a different secret key (${keyPath}). Pass force to replace it.`,
-          );
+        if (!same) {
+          // Replacing the key would leave every saved login on this machine
+          // sealed with a key nothing can open. Only an empty store may be
+          // re-keyed, and only when the caller asked for it.
+          if (options.force !== true || strandedCount > 0) {
+            throw new SecretsPortabilityError(
+              "target-key-differs",
+              strandedCount > 0
+                ? `This machine already has ${strandedCount} saved secret(s) under a different key (${keyPath}). Move that store aside before importing.`
+                : `This machine already has a different secret key (${keyPath}). Pass force to replace it.`,
+            );
+          }
         }
         dataKeyWritten = !same;
       } catch (error) {
         if (error instanceof SecretsPortabilityError) throw error;
-        if (options.force !== true) {
+        if (options.force !== true || strandedCount > 0) {
           throw new SecretsPortabilityError(
             "target-key-differs",
             `This machine already has a secret key that does not open (${keyPath}). Pass force to replace it.`,
@@ -544,7 +558,7 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
   }
 }
 
-/** The store's `secrets` folder for a data root (`Ã¢â‚¬Â¦/dev/userdata`, `Ã¢â‚¬Â¦/dev` or `Ã¢â‚¬Â¦`). */
+/** The store's `secrets` folder for a data root (`ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/dev/userdata`, `ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/dev` or `ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦`). */
 export function secretsDirForDataRoot(dataRoot: string): string {
   return NodePath.join(dataRoot, "secrets");
 }

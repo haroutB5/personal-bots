@@ -21,7 +21,7 @@ import * as NodeOS from "node:os";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
-/** "T3SEC1" — distinguishes a sealed file from a legacy plaintext one. */
+/** "T3SEC1" â€” distinguishes a sealed file from a legacy plaintext one. */
 const ENVELOPE_MAGIC = Uint8Array.from([0x54, 0x33, 0x53, 0x45, 0x43, 0x31]);
 const IV_BYTES = 12;
 const TAG_BYTES = 16;

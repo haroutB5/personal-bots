@@ -169,7 +169,7 @@ describe("secretsPortability", () => {
     }
   });
 
-  it("does not silently replace a machine that already has another key", () => {
+  it("never strands saved secrets on a machine that already has another key", () => {
     const source = makeStore(WINDOWS, secrets);
     const bundleFile = NodePath.join(NodeOS.tmpdir(), `bundle-key-${Date.now()}.json`);
     exportSecretsBundle({
@@ -179,26 +179,42 @@ describe("secretsPortability", () => {
       deps: { resolveMachineMaterial: material(WINDOWS) },
     });
     const target = makeStore(LINUX, { "personal-secret-old": "old-value" });
-    try {
-      importSecretsBundle({
-        secretsDir: target.dir,
-        bundleFile,
-        passphrase: PASSPHRASE,
-        deps: { resolveMachineMaterial: material(LINUX) },
-      });
-      throw new Error("the import should have refused");
-    } catch (error) {
-      expect((error as SecretsPortabilityError).code).toBe("target-key-differs");
-    }
+    const attempt = (force: boolean): string => {
+      try {
+        importSecretsBundle({
+          secretsDir: target.dir,
+          bundleFile,
+          passphrase: PASSPHRASE,
+          force,
+          deps: { resolveMachineMaterial: material(LINUX) },
+        });
+        return "ok";
+      } catch (error) {
+        return (error as SecretsPortabilityError).code;
+      }
+    };
+    // Without force, and again with it: the old store must not be orphaned.
+    expect(attempt(false)).toBe("target-key-differs");
+    expect(attempt(true)).toBe("target-key-differs");
+    expect(readSecrets(target.dir, LINUX)).toEqual(new Map([["personal-secret-old", "old-value"]]));
+
+    // A key file with no saved secrets behind it may be replaced with force.
+    const stray = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-stray-"));
+    const strayKey = createWrappedDataKey(LINUX);
+    NodeFS.writeFileSync(
+      NodePath.join(stray, DATA_KEY_FILE_NAME),
+      serializeWrappedDataKey(strayKey.file),
+    );
+    strayKey.dataKey.fill(0);
     const forced = importSecretsBundle({
-      secretsDir: target.dir,
+      secretsDir: stray,
       bundleFile,
       passphrase: PASSPHRASE,
       force: true,
       deps: { resolveMachineMaterial: material(LINUX) },
     });
     expect(forced.imported).toBe(3);
-    expect(readSecrets(target.dir, LINUX)).toEqual(new Map(Object.entries(secrets)));
+    expect(readSecrets(stray, LINUX)).toEqual(new Map(Object.entries(secrets)));
   });
 
   it("validates the passphrase and refuses to overwrite a bundle by accident", () => {
