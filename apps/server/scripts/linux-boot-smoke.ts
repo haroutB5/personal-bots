@@ -197,12 +197,14 @@ const main = async (): Promise<void> => {
   }
   controller.abort();
   if (hello === null) fail("the stream sent no hello");
-  if (statics === null) fail("the stream sent no statics");
-  if (typeof statics["pcCpu"] !== "string" || statics["pcCpu"] === "") fail("no CPU name");
-  if (typeof statics["pcThreads"] !== "number" || statics["pcThreads"] < 1) fail("no thread count");
+  // Bound through `?? fail`, because TS drops the narrowing of a variable that
+  // the stream callback assigns.
+  const machine = statics ?? fail("the stream sent no statics");
+  if (typeof machine["pcCpu"] !== "string" || machine["pcCpu"] === "") fail("no CPU name");
+  if (typeof machine["pcThreads"] !== "number" || machine["pcThreads"] < 1) fail("no thread count");
   pass(
     "machine statics",
-    `${String(statics["pcCpu"])}, ${String(statics["pcCores"])} cores/${String(statics["pcThreads"])} threads, ${String(statics["ramGB"])} GB, gpu ${String(statics["pcGpu"])}`,
+    `${String(machine["pcCpu"])}, ${String(machine["pcCores"])} cores/${String(machine["pcThreads"])} threads, ${String(machine["ramGB"])} GB, gpu ${String(machine["pcGpu"])}`,
   );
   if (samples.length < 2) fail(`only ${samples.length} samples arrived`);
   const latest = samples[samples.length - 1]!;
