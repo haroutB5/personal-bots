@@ -74,7 +74,9 @@ describe("linuxSensors", () => {
     NodeFS.rmSync(root, { force: true, recursive: true });
   });
 
-  it("turns a wrapping RAPL counter into watts", () => {
+  // The RAPL directory is named `intel-rapl:0`; a colon cannot exist in a
+  // Windows file name, so this fixture is POSIX-only (the reader is Linux-only).
+  it.skipIf(process.platform === "win32")("turns a wrapping RAPL counter into watts", () => {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-rapl-"));
     const dir = NodePath.join(root, "class/powercap/intel-rapl/intel-rapl:0");
     NodeFS.mkdirSync(dir, { recursive: true });
