@@ -487,9 +487,9 @@ function TokenUsageRow({
       params={{ botId: bot.botId }}
       aria-label={tokenUsageRowLabel(row)}
       data-bot-usage-row={bot.botId}
-      className="flex min-h-[60px] items-center gap-3 rounded-[10px] px-1 py-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+      className="flex min-h-[60px] items-start gap-3 rounded-[10px] px-1 py-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
     >
-      <span aria-hidden="true" className="relative shrink-0">
+      <span aria-hidden="true" className="relative mt-0.5 shrink-0">
         <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={32} label="" />
         {row.rank === null ? null : (
           <span
@@ -501,9 +501,27 @@ function TokenUsageRow({
         )}
       </span>
       <span aria-hidden="true" className="flex min-w-0 flex-1 flex-col gap-1.25">
-        <span className="flex min-w-0 items-baseline">
-          <span className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+        {/* Name and totals headline the row together; the model lines below
+            use the whole column so a long provider+model can wrap. */}
+        <span className="flex min-w-0 items-start gap-2">
+          <span className="min-w-0 flex-1 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
             {bot.name}
+          </span>
+          <span className="flex shrink-0 flex-col items-end">
+            <span
+              className={cn(
+                "text-[16px] leading-5 tabular-nums",
+                row.tokens === 0
+                  ? "font-medium text-[var(--personal-text-tertiary)]"
+                  : "font-semibold text-[var(--personal-text)]",
+              )}
+            >
+              {formatTokenCount(row.tokens)}
+            </span>
+            <span className="text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
+              {formatShare(row.sharePercent)}
+            </span>
+            <CostLine cost={row.cost} testId="token-usage-row-cost" />
           </span>
         </span>
         {row.models.length === 0 ? null : (
@@ -513,12 +531,14 @@ function TokenUsageRow({
                 key={`${model.provider}:${model.model}`}
                 data-testid="token-usage-model"
                 data-provider={model.provider}
-                className="flex min-w-0 items-baseline gap-2 text-[12px] leading-4"
+                className="flex min-w-0 items-start gap-2 text-[12px] leading-4"
               >
-                <span className="min-w-0 truncate text-[var(--personal-text-secondary)]">
+                {/* Two lines at most, so "OpenCode · DeepSeek V4.1 Flash"
+                    keeps its defining words; the values never truncate. */}
+                <span className="line-clamp-2 min-w-0 flex-1 text-[var(--personal-text-secondary)] [overflow-wrap:anywhere]">
                   {model.label}
                 </span>
-                <span className="ml-auto shrink-0 tabular-nums text-[var(--personal-text-tertiary)]">
+                <span className="shrink-0 whitespace-nowrap tabular-nums text-[var(--personal-text-tertiary)]">
                   {modelAmountLabel(model.tokens, model.cost)}
                 </span>
               </span>
@@ -538,22 +558,6 @@ function TokenUsageRow({
         <span className="truncate text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
           {row.tokens === 0 ? "No use in this period" : formatSplit(row.split)}
         </span>
-      </span>
-      <span aria-hidden="true" className="flex w-[64px] shrink-0 flex-col items-end">
-        <span
-          className={cn(
-            "text-[16px] leading-5 tabular-nums",
-            row.tokens === 0
-              ? "font-medium text-[var(--personal-text-tertiary)]"
-              : "font-semibold text-[var(--personal-text)]",
-          )}
-        >
-          {formatTokenCount(row.tokens)}
-        </span>
-        <span className="text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
-          {formatShare(row.sharePercent)}
-        </span>
-        <CostLine cost={row.cost} testId="token-usage-row-cost" />
       </span>
     </Link>
   );

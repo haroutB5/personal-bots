@@ -145,6 +145,7 @@ import {
   serverTurnLabel,
   waitingLabelsByThread,
 } from "./delegationModel";
+import { ChatFilePreviewProvider } from "./ChatFilePreview";
 import { MessageList, type PendingOutgoingMessage, QueuedMessageList } from "./MessageList";
 import {
   deriveQuestionCards,
@@ -1627,66 +1628,71 @@ export function ConversationScreen({
 
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>
-          <MessageList
+          <ChatFilePreviewProvider
             environmentId={environmentId}
-            threadRef={threadRef}
-            showContextUsed
-            items={items}
-            pending={visiblePending}
-            queued={queuedMessages.rows}
-            onCancelQueued={archived ? undefined : queuedMessages.onCancel}
-            onEditQueued={archived ? undefined : queuedMessages.onEdit}
-            onRetryQueued={archived ? undefined : queuedMessages.onRetry}
-            latestMessageStatus={latestMessageStatus}
-            working={working}
-            botName={botName ?? "Bot"}
-            workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
-            approvals={approvals}
-            respondingIds={respondingIds}
-            approvalRespondingIds={connectionApprovals.respondingIds}
-            onDecideLeadBotChange={leadBotChanges.decide}
-            leadBotChangeRespondingIds={leadBotChanges.respondingIds}
-            onDecideMemoryChange={memoryChanges.decide}
-            memoryChangeRespondingIds={memoryChanges.respondingIds}
-            memoryBotName={memoryChanges.botName}
-            onRespondToApproval={(requestId, decision) =>
-              void onRespondToApproval(requestId, decision)
-            }
-            onAnswerQuestion={(requestId, answers) => void onAnswerQuestion(requestId, answers)}
-            onDismissQuestion={(requestId) => void onDismissQuestion(requestId)}
-            onProvideSecret={(...args) => void onProvideSecret(...args)}
-            onDeclineSecret={(requestId) => void onDeclineSecret(requestId)}
-            onProvideLogin={loginRequests.provide}
-            onCancelLogin={(requestId) => void loginRequests.cancel(requestId)}
-            onDecideConnectionApproval={(approvalId, decision) =>
-              void onDecideConnectionApproval(approvalId, decision)
-            }
-            approvalsNowMs={now.getTime()}
-            errorText={actionError ?? turnNotice?.message ?? null}
-            errorDetail={actionError === null ? (turnNotice?.detail ?? null) : null}
-            errorTone={actionError === null ? (turnNotice?.tone ?? "danger") : "danger"}
-            errorRetry={
-              turnNotice?.canRetry === true && !turnBusy && !archived
-                ? {
-                    onRetry: () => {
-                      void failedTurnRetry.retry().then((ok) => {
-                        setActionError(ok ? null : "Couldn't retry that message. Try again.");
-                      });
-                    },
-                    busy: failedTurnRetry.busy,
-                  }
-                : null
-            }
-            loadEarlier={loadEarlier}
-            now={now}
-            describeTurn={describeTurn}
-            renderDelegation={renderDelegation}
-            renderCallCard={renderCallCard}
-            readOnly={archived}
-            onReply={archived ? undefined : onReply}
-            onChoose={archived ? undefined : onChoose}
-            choicesBusy={turnBusy || sendBlockedReason !== null}
-          />
+            cwd={thread.worktreePath ?? project?.workspaceRoot}
+          >
+            <MessageList
+              environmentId={environmentId}
+              threadRef={threadRef}
+              showContextUsed
+              items={items}
+              pending={visiblePending}
+              queued={queuedMessages.rows}
+              onCancelQueued={archived ? undefined : queuedMessages.onCancel}
+              onEditQueued={archived ? undefined : queuedMessages.onEdit}
+              onRetryQueued={archived ? undefined : queuedMessages.onRetry}
+              latestMessageStatus={latestMessageStatus}
+              working={working}
+              botName={botName ?? "Bot"}
+              workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
+              approvals={approvals}
+              respondingIds={respondingIds}
+              approvalRespondingIds={connectionApprovals.respondingIds}
+              onDecideLeadBotChange={leadBotChanges.decide}
+              leadBotChangeRespondingIds={leadBotChanges.respondingIds}
+              onDecideMemoryChange={memoryChanges.decide}
+              memoryChangeRespondingIds={memoryChanges.respondingIds}
+              memoryBotName={memoryChanges.botName}
+              onRespondToApproval={(requestId, decision) =>
+                void onRespondToApproval(requestId, decision)
+              }
+              onAnswerQuestion={(requestId, answers) => void onAnswerQuestion(requestId, answers)}
+              onDismissQuestion={(requestId) => void onDismissQuestion(requestId)}
+              onProvideSecret={(...args) => void onProvideSecret(...args)}
+              onDeclineSecret={(requestId) => void onDeclineSecret(requestId)}
+              onProvideLogin={loginRequests.provide}
+              onCancelLogin={(requestId) => void loginRequests.cancel(requestId)}
+              onDecideConnectionApproval={(approvalId, decision) =>
+                void onDecideConnectionApproval(approvalId, decision)
+              }
+              approvalsNowMs={now.getTime()}
+              errorText={actionError ?? turnNotice?.message ?? null}
+              errorDetail={actionError === null ? (turnNotice?.detail ?? null) : null}
+              errorTone={actionError === null ? (turnNotice?.tone ?? "danger") : "danger"}
+              errorRetry={
+                turnNotice?.canRetry === true && !turnBusy && !archived
+                  ? {
+                      onRetry: () => {
+                        void failedTurnRetry.retry().then((ok) => {
+                          setActionError(ok ? null : "Couldn't retry that message. Try again.");
+                        });
+                      },
+                      busy: failedTurnRetry.busy,
+                    }
+                  : null
+              }
+              loadEarlier={loadEarlier}
+              now={now}
+              describeTurn={describeTurn}
+              renderDelegation={renderDelegation}
+              renderCallCard={renderCallCard}
+              readOnly={archived}
+              onReply={archived ? undefined : onReply}
+              onChoose={archived ? undefined : onChoose}
+              choicesBusy={turnBusy || sendBlockedReason !== null}
+            />
+          </ChatFilePreviewProvider>
           <ConversationDesktopLine
             environmentId={environmentId}
             status={desktopStatus}

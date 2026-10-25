@@ -19,6 +19,7 @@ import {
   formatUsd,
   formatWindowRange,
   isTokenUsagePending,
+  normalizeModelName,
   providerLabel,
   splitOf,
   tokenUsageProviderLabel,
@@ -415,6 +416,29 @@ describe("buildTokenUsageTable", () => {
     expect(table.rows[0]!.models.map((entry) => [entry.provider, entry.tokens])).toEqual([
       ["claude", 600],
       ["opencode", 400],
+    ]);
+  });
+
+  it("normalises brand casing and names an unresolved Unknown model", () => {
+    expect(normalizeModelName("Deepseek V4.1 Flash")).toBe("DeepSeek V4.1 Flash");
+    expect(normalizeModelName("DeepSeek V4.1 Flash")).toBe("DeepSeek V4.1 Flash");
+    expect(normalizeModelName("Unknown")).toBe("Unknown model");
+    expect(normalizeModelName(" Opus 5.5 ")).toBe("Opus 5.5");
+
+    const table = buildTokenUsageTable({
+      window: windowOf([
+        row("cto", totals(0, 0, 0, 300), 1, [
+          model("opencode", "deepseek-v4.1-flash", totals(0, 0, 0, 200), 2),
+          model("antigravity", "unknown", totals(0, 0, 0, 100), 0, 100),
+        ]),
+      ]),
+      bots: BOTS,
+      listedBotIds: new Set(),
+      modelNames: new Map([["deepseek-v4.1-flash", "Deepseek V4.1 Flash"]]),
+    });
+    expect(table.rows[0]!.models.map((entry) => entry.label)).toEqual([
+      "OpenCode · DeepSeek V4.1 Flash",
+      "Antigravity · Unknown model",
     ]);
   });
 });

@@ -426,6 +426,17 @@ function modelViewsOf(
 }
 
 /**
+ * Known brand casing in a model name, and the placeholder name a provider with
+ * no model data reports: "Deepseek V4.1 Flash" reads "DeepSeek V4.1 Flash", and
+ * a bare "Unknown" reads "Unknown model" rather than looking like a bug.
+ */
+export function normalizeModelName(name: string): string {
+  const branded = name.replace(/\bdeepseek\b/gi, "DeepSeek").trim();
+  if (branded.toLowerCase() === "unknown") return "Unknown model";
+  return branded;
+}
+
+/**
  * The picker's name for a model id: "claude-opus-5-5" is "Opus 5.5" (the
  * "Claude" the provider name already says is dropped), "deepseek-flash" is
  * "V4.1 Flash". OpenCode ids may be prefixed ("opencode/deepseek-v4.1-flash"),
@@ -441,15 +452,15 @@ function modelDisplayName(
     const listed = modelNames.get(model) ?? modelNames.get(base);
     if (listed !== undefined) {
       const short = shortModelName(listed);
-      if (short !== "") return short;
+      if (short !== "") return normalizeModelName(short);
     }
   }
   const base = model.slice(model.lastIndexOf("/") + 1);
-  return (
+  return normalizeModelName(
     base
       .replace(/[-_]+/g, " ")
       .replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
-      .trim() || model
+      .trim() || model,
   );
 }
 

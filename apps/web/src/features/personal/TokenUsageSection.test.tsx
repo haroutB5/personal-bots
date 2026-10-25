@@ -449,11 +449,24 @@ describe("TokenUsageCard", () => {
       expect(cto.props["aria-label"]).toContain("Estimated cost $210.50.");
     });
 
-    it("keeps the right column the width it was", async () => {
+    it("top-aligns the name and totals and wraps a long model label instead of truncating it", async () => {
       const tree = await render({ result: PRICED });
       const cto = rowsOf(tree).find((row) => row.props["data-bot-usage-row"] === "cto")!;
-      const column = cto.findAll((n) => n.props.className?.toString().includes("w-[64px]"));
-      expect(column).toHaveLength(1);
+      expect(cto.props.className).toContain("items-start");
+      const line = cto.findAll((node) => node.props["data-testid"] === "token-usage-model")[0]!;
+      const label = line.findAll(
+        (node) =>
+          typeof node.props.className === "string" && node.props.className.includes("line-clamp-2"),
+      )[0]!;
+      // The defining words wrap; only the token count and price stay on one line.
+      expect(label.props.className).toContain("line-clamp-2");
+      expect(label.props.className).not.toContain("truncate");
+      const amount = line.findAll(
+        (node) =>
+          typeof node.props.className === "string" &&
+          node.props.className.includes("whitespace-nowrap"),
+      )[0]!;
+      expect(textOf(amount)).toBe("104.0M · $200.00");
     });
 
     it("gives Outside Bots and the total their own estimate", async () => {

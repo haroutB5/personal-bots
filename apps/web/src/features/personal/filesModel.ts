@@ -73,6 +73,29 @@ export function filePreviewKind(
   return "download";
 }
 
+export type ChatFilePreviewKind = "markdown" | "text";
+
+/**
+ * Whether a file chip in a chat opens in the in-chat preview sheet, by file
+ * extension only: markdown renders, source and other text files show as
+ * preformatted source, and everything else (images, PDFs, binaries) keeps its
+ * existing action.
+ */
+export function chatFilePreviewKind(path: string): ChatFilePreviewKind | null {
+  const normalized = path.replaceAll("\\", "/");
+  const name = normalized.slice(normalized.lastIndexOf("/") + 1);
+  const extension = extensionOf(name);
+  if (MARKDOWN_EXTENSIONS.has(extension)) return "markdown";
+  if (TEXT_EXTENSIONS.has(extension)) return "text";
+  return null;
+}
+
+/** The final segment of a workspace or host path, for a preview header. */
+export function fileNameFromPath(path: string): string {
+  const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized.slice(normalized.lastIndexOf("/") + 1) || normalized;
+}
+
 /** "512 B", "1.4 KB", "23 KB", "4.2 MB" (1024-based, one decimal under 10). */
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

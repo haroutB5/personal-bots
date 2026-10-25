@@ -233,12 +233,33 @@ interface ChatMarkdownProps {
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
+  /** Claims a file chip before the right panel: return true when a host shell
+      has opened the file itself (the personal chat preview sheet). Absent, the
+      chip keeps its existing editor/panel/media behaviour. */
+  onOpenFile?: ((request: ChatMarkdownFileOpenRequest) => boolean) | undefined;
 }
 
 export interface ChatMarkdownContextReference {
   kind: string;
   contextId: string;
   label: string;
+}
+
+export interface ChatMarkdownFileOpenRequest {
+  path: string;
+  line: number | undefined;
+  label: string;
+}
+
+/**
+ * Hands a file chip to a host shell. True means the shell opened the file
+ * itself (the personal chat preview sheet), so the right panel is skipped.
+ */
+export function openFileThroughChatPreview(
+  onOpenFile: ((request: ChatMarkdownFileOpenRequest) => boolean) | undefined,
+  request: ChatMarkdownFileOpenRequest,
+): boolean {
+  return onOpenFile?.(request) === true;
 }
 
 export function canUseMarkdownFileShellActions(
@@ -1282,7 +1303,7 @@ interface MarkdownFileLinkProps {
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
   onOpen?: ((targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
-  onOpenInPanel: (panelPath: string, line: number | undefined) => void;
+  onOpenInPanel: (panelPath: string, line: number | undefined, label: string) => void;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
@@ -2068,7 +2089,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
   const handleOpenInFilePreview = useCallback(() => {
     if (threadRef && panelPath) {
-      onOpenInPanel(panelPath, line);
+      onOpenInPanel(panelPath, line, label);
       return;
     }
     if (onOpenMedia) {
@@ -2076,7 +2097,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       return;
     }
     handleOpenInEditor();
-  }, [handleOpenInEditor, line, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
+  }, [handleOpenInEditor, label, line, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -2386,6 +2407,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  onOpenFile,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2663,14 +2685,18 @@ function useChatMarkdownState({
   );
   // A bare filename resolves to the workspace root, which is rarely where the
   // file is, so ask the index before opening. Absolute host paths open as-is.
+  // A host shell that can show the file (the personal chat preview sheet)
+  // claims it first; the desktop right panel is untouched unless it declines.
   const openFileInPanel = useCallback(
-    (panelPath: string, line: number | undefined) => {
+    (panelPath: string, line: number | undefined, label: string) => {
       if (!threadRef) return;
       // Claimed on every open so a synchronous one supersedes a lookup already
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
-      const openAt = (path: string) =>
+      const openAt = (path: string) => {
+        if (openFileThroughChatPreview(onOpenFile, { path, line, label })) return;
         useRightPanelStore.getState().openFile(threadRef, path, line);
+      };
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
         openAt(panelPath);
         return;
@@ -2681,7 +2707,7 @@ function useChatMarkdownState({
         openAt(match ?? panelPath);
       })();
     },
-    [cwd, findWorkspaceBasenameMatch, threadRef],
+    [cwd, findWorkspaceBasenameMatch, onOpenFile, threadRef],
   );
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {

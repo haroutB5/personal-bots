@@ -23,6 +23,7 @@ import { isFileAttachment, type ChatMessage } from "~/types";
 import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
 
 import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
+import { useChatFilePreview } from "./ChatFilePreview";
 import {
   type ConversationItem,
   type VoiceCallCardItem,
@@ -499,6 +500,7 @@ const AssistantMessage = memo(function AssistantMessage({
     [message.streaming, message.text],
   );
   const sentAt = useMemo(() => parseSentAt(message.createdAt), [message.createdAt]);
+  const openFile = useChatFilePreview();
   if (message.text.length === 0) return null;
   // Without a state to draw them in, a block is left as the code block it is.
   const hasState = choices !== null && choices !== undefined;
@@ -516,6 +518,7 @@ const AssistantMessage = memo(function AssistantMessage({
           threadRef={threadRef}
           isStreaming={message.streaming}
           lineBreaks={shouldPreserveAssistantLineBreaks(body)}
+          onOpenFile={openFile ?? undefined}
         />
       ) : null}
       {options !== null && hasState ? (
@@ -916,6 +919,7 @@ export function MessageList({
   /** The chat cannot take a message now (the bot is busy, offline, ...): open choices wait. */
   choicesBusy?: boolean;
 }): JSX.Element {
+  const openFile = useChatFilePreview();
   const choicesById = useMemo(() => choicesStates(items, choicesBusy), [items, choicesBusy]);
   const turnStarts = useMemo(
     () => (showContextUsed ? turnStartByAssistantItem(items) : new Map<string, string>()),
@@ -1742,6 +1746,7 @@ export function MessageList({
                           text={item.plan.planMarkdown}
                           cwd={workspaceRoot}
                           threadRef={threadRef}
+                          onOpenFile={openFile ?? undefined}
                         />
                       </div>
                     );

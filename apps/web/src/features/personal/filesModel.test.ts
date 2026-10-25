@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  chatFilePreviewKind,
+  fileNameFromPath,
   filePreviewKind,
   formatFileSize,
   groupFilesByBot,
@@ -92,6 +94,36 @@ describe("formatFileSize", () => {
     expect(formatFileSize(23 * 1024)).toBe("23 KB");
     expect(formatFileSize(4.2 * 1024 * 1024)).toBe("4.2 MB");
     expect(formatFileSize(3 * 1024 * 1024 * 1024)).toBe("3 GB");
+  });
+});
+
+describe("chatFilePreviewKind", () => {
+  it("renders markdown and shows other text as source", () => {
+    expect(chatFilePreviewKind("C:\\Claude\\reports\\REPORT.md")).toBe("markdown");
+    expect(chatFilePreviewKind("docs/HANDOFF.markdown")).toBe("markdown");
+    expect(chatFilePreviewKind("notes/plan.mdx")).toBe("markdown");
+    expect(chatFilePreviewKind("logs/server.log")).toBe("text");
+    expect(chatFilePreviewKind("data/result.json")).toBe("text");
+    expect(chatFilePreviewKind("src/app.ts")).toBe("text");
+    expect(chatFilePreviewKind("README.TXT")).toBe("text");
+  });
+
+  it("leaves every non-text kind to its own action", () => {
+    expect(chatFilePreviewKind("shots/screen.png")).toBeNull();
+    expect(chatFilePreviewKind("docs/spec.pdf")).toBeNull();
+    expect(chatFilePreviewKind("bin/app.exe")).toBeNull();
+    expect(chatFilePreviewKind("src/a-b.md.bak")).toBeNull();
+    expect(chatFilePreviewKind("Makefile")).toBeNull();
+    expect(chatFilePreviewKind("")).toBeNull();
+  });
+});
+
+describe("fileNameFromPath", () => {
+  it("takes the last segment of host and workspace paths", () => {
+    expect(fileNameFromPath("C:\\Claude\\reports\\REPORT.md")).toBe("REPORT.md");
+    expect(fileNameFromPath("docs/reports/REPORT.md")).toBe("REPORT.md");
+    expect(fileNameFromPath("REPORT.md")).toBe("REPORT.md");
+    expect(fileNameFromPath("C:\\Claude\\reports\\")).toBe("reports");
   });
 });
 

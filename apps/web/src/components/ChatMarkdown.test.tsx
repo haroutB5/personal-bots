@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 
 import { EnvironmentId } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
@@ -741,8 +741,8 @@ describe("ChatMarkdown file option chips", () => {
       />,
     );
 
-    expect(html).toContain("index.ts · project/src");
-    expect(html).toContain("index.ts · project/test");
+    expect(html).toContain("index.ts Â· project/src");
+    expect(html).toContain("index.ts Â· project/test");
   });
 
   it("preserves rejected citations created by over-indented list recovery", () => {
@@ -953,8 +953,8 @@ describe("ChatMarkdown Windows file links", () => {
         />,
       );
 
-      expect(html).toContain("index.ts · project/src");
-      expect(html).toContain("index.ts · project/test");
+      expect(html).toContain("index.ts Â· project/src");
+      expect(html).toContain("index.ts Â· project/test");
     },
   );
 
@@ -973,7 +973,7 @@ describe("ChatMarkdown Windows file links", () => {
       );
 
       expect(html.match(/chat-markdown-file-link/g)).toHaveLength(2);
-      expect(html).not.toContain("main.ts ·");
+      expect(html).not.toContain("main.ts Â·");
     },
   );
 
