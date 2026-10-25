@@ -165,6 +165,20 @@ check_units() {
       add_check "systemd: $unit" "PASS" "active"
     fi
   done
+
+  # Migration 113 reads this on the first Linux boot; without both mappings the
+  # restored Windows paths stay unrewritten and the migration is already spent.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    add_check "path map" "SKIP" "would check T3CODE_PATH_MAP in hbots.service"
+  elif [ ! -f "$INSTALLED_UNIT_DIR/hbots.service" ]; then
+    add_check "path map" "SKIP" "hbots.service is not installed"
+  elif grep -qF 'T3CODE_PATH_MAP=' "$INSTALLED_UNIT_DIR/hbots.service" \
+    && grep -qF 'C:/Users/Ht=' "$INSTALLED_UNIT_DIR/hbots.service" \
+    && grep -qF 'C:/Claude/AI=' "$INSTALLED_UNIT_DIR/hbots.service"; then
+    add_check "path map" "PASS" "both Windows prefixes mapped in hbots.service"
+  else
+    add_check "path map" "FAIL" "T3CODE_PATH_MAP is missing a mapping in $INSTALLED_UNIT_DIR/hbots.service"
+  fi
 }
 
 check_hbots() {

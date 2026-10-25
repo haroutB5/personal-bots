@@ -12,8 +12,9 @@ typed confirmation. Nothing here prints or stores a secret value.
 | File | Runs on | Purpose |
 | --- | --- | --- |
 | `windows/prewipe.ps1` | Windows PowerShell 5.1 | Stop hbots, copy `C:\Claude`, `%USERPROFILE%\.personal-bots`, `~\.ssh` and `~\.cloudflared`, verify SHA256, inventory the machine |
-| `windows/make-installer.ps1` | Windows PowerShell 5.1 | Download and verify the Omarchy ISO, write the ISO stick, build and write the CIDATA stick |
-| `linux/bootstrap.sh` | Omarchy (Arch), root over SSH | Restore data, rewrite paths, import secrets, install packages and units, open firewall ports, set update policy, run verify |
+| `windows/make-installer.ps1` | Windows PowerShell 5.1 | Verify the Omarchy ISO against the published SHA256 and, when asked, write the ISO stick. ISO only: no answer file, no second stick |
+| `linux/enable-ssh.sh` | Omarchy (Arch) | Print (or apply) the one-line first-login command that enables sshd and adds the team's public keys |
+| `linux/bootstrap.sh` | Omarchy (Arch), root over SSH | Restore data, install packages and units with the path map, import secrets, start hbots, open firewall ports, set update policy, run verify |
 | `linux/verify.sh` | Omarchy | Read-only PASS/FAIL health table, `--json` optional |
 | `tests/run-tests.mjs` | Windows or Linux, Node 24 | Offline tests for all of the above |
 
@@ -75,6 +76,12 @@ example `Z:\omarchy-migration`) if you want the check to run against the share.
 
 ## make-installer.ps1
 
+ISO only. Harout's Omarchy installer stick is already written and verified from
+`C:/Users/Ht/Downloads/omarchy/`, and he answers the installer's few questions
+himself. This script is now the verification and recovery path: check the ISO,
+and rewrite the stick only if it is lost or damaged. The old second stick and
+answer file are gone.
+
 Default is a dry run. It resolves the current Omarchy version from the GitHub
 release, fetches the published checksum, lists every disk with model, size,
 bus, system flag and partition count, and prints what it would write.
@@ -86,27 +93,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\make-install
 Real run:
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\make-installer.ps1 -Apply -IsoDiskNumber 3 -CidataDiskNumber 4 -EraseDisk
+powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\make-installer.ps1 -Apply -IsoDiskNumber 3 -EraseDisk
 ```
 
-For each stick, type that stick's exact model string when prompted. The script
-prompts for the Omarchy password first, builds and verifies the cidata image in
-memory, and only then asks for the model confirmations before erasing anything.
-The script refuses the system disk, the disk holding C:, and any disk holding
-this repo. A non-USB bus is refused unless `-AllowFixed` is passed; that flag is
-only for a throwaway image-file test.
-
-### Two sticks are required
-
-The Omarchy ISO is written raw to the whole device. That destroys any second
-partition on the same stick, so the supported layout is two sticks:
-
-1. stick 1: the ISO, at least 8 GB
-2. stick 2: a small FAT32 volume labelled `CIDATA`, 64 MB is enough
-
-Omarchy looks for `/dev/disk/by-label/cidata` on a second drive. A partition on
-the same stick is not supported by this flow. Do not try to save a stick by
-combining them.
+Type that stick's exact model string when prompted. The script refuses the
+system disk, the disk holding C:, and any disk holding this repo. A non-USB bus
+is refused unless `-AllowFixed` is passed; that flag is only for a throwaway
+image-file test.
 
 ### ISO verification
 
@@ -123,64 +116,45 @@ ISO is reused only when it matches the published checksum. The published GPG
 signature is a stronger check; see the omarchy-iso README if you want to verify
 it manually with `gpg --verify`.
 
-### cidata
-
-`user_configuration.json` matches the configurator output used by the Omarchy
-ISO integration tests, including the `omarchy_install` block:
-
-- disk: full disk wipe, one 2 GiB FAT32 ESP at `/boot`, the rest Btrfs with
-  `@`, `@home`, `@log`, `@pkg`
-- device: `/dev/nvme0n1` by default; `-DiskDevice` overrides it
-- size: 512110190592 bytes by default; pass `-DiskBytes` with the exact
-  `lsblk -b -dn -o SIZE /dev/nvme0n1` value if the disk differs
-- hostname, timezone (`Europe/London`), keyboard (`gb`), locale
-- packages `base-devel`, `git`, `omarchy-keyring`, `omarchy-settings`,
-  `omarchy`
-- no encryption block, and `user_encrypt_installation.txt` is `false`
-
-`user_credentials.json` carries the username and one SHA-512 crypt hash for both
-root and the user. The password is typed into `Read-Host -AsSecureString`, sent
-to `openssl.exe passwd -6 -stdin` on stdin (never argv), and only the `$6$...`
-hash is written. On this machine openssl comes from Git for Windows at
-`C:\Program Files\Git\usr\bin\openssl.exe`.
-
-`authorized_keys` is required and must contain the CTO laptop and gaming PC
-public keys, one per line. The default path is
-`%USERPROFILE%\.ssh\authorized_keys`; pass `-AuthorizedKeysPath` or create the
-file first. An empty file is refused because Omarchy fails an unattended
-install whose key file is empty.
-
-The script also writes a plain `hostname` file containing the hostname. Omarchy's
-documented loader does not read that file; the effective hostname is the
-`hostname` key in `user_configuration.json`. The extra file is informational and
-is safe on the cidata volume.
-
-`user_configuration.json` is the archinstall schema, not a custom one. The
-`version` field is the archinstall config version (`3.0.9` in the Omarchy 4.0.6
-harness). If Omarchy changes that schema, update this script against a fresh
-interactive install's `/root/user_configuration.json`.
-
 ### Test modes
 
 ```
-# cidata only, dry run, then apply to a plain image file
-powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\make-installer.ps1 -BuildCidataOnly -ImageFile C:\Temp\cidata.img
-powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\make-installer.ps1 -BuildCidataOnly -ImageFile C:\Temp\cidata.img -Apply
-
 # offline test suite (never prompts, never touches real media)
 powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\make-installer.ps1 -SelfTest
 ```
 
-`-ImageFile` is the full-flow test switch for the ISO: with it, the ISO is
-written to a plain file instead of a physical disk. In full-flow test mode the
-cidata image defaults to `<ImageFile>.cidata.img`; `-CidataImage` overrides it.
-Tests use `-BuildCidataOnly -ImageFile ... -SelfTest` so no real media is
-touched.
+`-ImageFile` is the full-flow test switch: with it, the ISO is written to a
+plain file instead of a physical disk.
+
+## First login: SSH access
+
+A fresh Omarchy install does not enable sshd. `enable-ssh.sh` prints one line
+that Harout pastes in a terminal at the laptop on first login. It installs
+openssh, enables and starts sshd, adds the team's public keys to
+`~/.ssh/authorized_keys`, opens port 22 when a local firewall is active, and
+prints the LAN address.
+
+```
+bash migrate/linux/enable-ssh.sh            # print the one-liner (default)
+bash migrate/linux/enable-ssh.sh --apply    # run it here, on this machine
+bash migrate/linux/enable-ssh.sh --keys extra.pub
+```
+
+The line carries public keys only. From the gaming PC:
+
+```
+ssh -i C:\Users\harou\.ssh\hbots-migrate_ed25519 harout@<printed-ip>
+```
+
+The keys trusted on the laptop are `hbots-cto@laptop` and
+`hbots-migrate@gamingpc`. Add more with `--keys <file.pub>`; never add a
+private key.
 
 ## bootstrap.sh
 
-Run as root over SSH after the first Omarchy boot and after the laptop is on the
-network. Both modes are explicit; there is no implicit apply.
+Run as root over SSH after the first Omarchy boot, the laptop is on the network
+and the `enable-ssh.sh` one-liner has been pasted. Both modes are explicit;
+there is no implicit apply.
 
 ```
 ./bootstrap.sh --dry-run --source /mnt/gamingpc/omarchy-migration/plain
@@ -197,43 +171,59 @@ Options:
 - `--data-dir PATH`: default `<home>/.personal-bots`
 - `--user NAME`: default `$SUDO_USER`, else `harout`
 - `--secrets-bundle PATH`: default `<home>/omarchy-secrets.bundle`
-- `--skip-restore`, `--skip-packages`, `--skip-verify`: only for repair runs.
-  `--skip-restore` also skips the path rewrite, because there is no freshly
-  restored Windows data to rewrite.
+- `--skip-restore`, `--skip-packages`, `--skip-secrets`, `--skip-start`,
+  `--skip-verify`: only for repair runs or a base-host proof.
 
 The script never deletes: rsync runs without `--delete`, and no cleanup step is
 destructive.
 
-Order inside the script is the order on install night: OS check, restore, path
-rewrite, secrets import, packages, units, firewall, update policy, verify.
+Order inside the script is the order on install night: SSH check, OS check,
+restore, packages, units with the path map, secrets import, start hbots,
+firewall, update policy, verify.
 
-### Interfaces expected from Backend
+### Path rewrite (Backend migration 113)
 
-The bootstrap calls these when present and says exactly what is missing when
-not:
+Backend replaced the separate `migrate-paths.mjs` with server migration 113.
+On the first Linux boot it rewrites `projection_projects.workspace_root` and
+`favicon_path`, `projection_threads.worktree_path`, and the matching event
+payloads, using `T3CODE_PATH_MAP`. The bootstrap renders this into
+`hbots.service` before anything starts:
 
-- path rewrite: `scripts/personal/node/migrate-paths.mjs`, invoked as
-  `node migrate-paths.mjs --data-dir <dir> --repo <dir> --apply`. If the file is
-  absent, apply stops before packages. This is deliberate: running on
-  unrewritten Windows paths is worse than stopping.
-- secrets import: one of
-  `scripts/personal/node/secrets-import.mjs`,
-  `scripts/personal/node/import-secrets.mjs`, or
-  `migrate/linux/import-secrets.sh`, invoked with `--bundle <path> --data-dir
-  <dir>` (or the bundle as the first argument for the shell version). The
-  importer prompts for its passphrase itself; the bootstrap never sees it.
-  If no importer is present, the step warns and continues so the rest of the
-  machine can still be verified. Re-approve provider logins afterwards.
-- units: `scripts/personal/linux/install-units.sh`. If absent, the step warns
-  and continues. `loginctl enable-linger` is set when the installer is present.
-  The installer is called with `--repo`, `--ai-dir` and the pinned `--node` so
-  the unit templates can render the restored paths.
+```
+T3CODE_PATH_MAP=C:/Users/Ht=<home>;C:/Claude/AI=<home>/Claude/AI
+```
 
-### Packages
+The migration is recorded as applied on that first boot. If the server ever
+boots without the map, the log says
+`T3CODE_PATH_MAP is not set; no stored paths rewritten.` and the paths stay
+Windows-shaped; restore the copied DB and boot again with the map set. The
+bootstrap refuses to finish if the deployed unit lacks the mapping, and it fails
+the start step if that warning appears in the journal.
 
-The bootstrap syncs the package database once (`pacman -Sy --noconfirm`) and
-installs `base-devel git python nodejs mise-bin rsync cloudflared lm_sensors
-ollama`, then as the user:
+### Secrets import
+
+The sealed bundle is imported with Backend's CLI:
+
+```
+node <release>/bin.mjs secrets import --secrets-dir <data>/dev/userdata/secrets --in <bundle>
+```
+
+The passphrase comes from `HBOTS_SECRETS_PASSPHRASE`, or one line on stdin, and
+never from an argument. When bootstrap runs interactively it prompts with
+`read -rs`; over a non-interactive SSH session it prints the exact command for
+Harout to run at the laptop terminal instead of pretending the import happened.
+Secret values are never printed.
+
+### Units and packages
+
+The bootstrap calls `scripts/personal/linux/install-units.sh` with `--repo`,
+`--ai-dir`, the pinned `--node` and `--path-map`, then sets
+`loginctl enable-linger`. If the installer is absent, the step warns and
+continues.
+
+It syncs the package database once (`pacman -Sy --noconfirm`) and installs
+`base-devel git python nodejs mise-bin rsync cloudflared lm_sensors ollama`,
+then as the user:
 
 - `mise install node@24.22.1` and `mise use -g node@24.22.1`
 - `corepack enable` and `corepack prepare pnpm@11.10.0 --activate`
@@ -283,6 +273,8 @@ Checks:
 - every `scripts/personal/linux/systemd/*.service` (or `.service.in`) is installed
   under `~/.config/systemd/user` and active as the user; a unit whose systemd
   condition is not met (its app is not restored yet) is SKIP, not FAIL
+- `T3CODE_PATH_MAP` in the installed `hbots.service` maps both `C:/Users/Ht` and
+  `C:/Claude/AI`, because migration 113 only runs once, on the first boot
 - hbots answers `GET http://127.0.0.1:38472/.well-known/t3/environment`
 - Kino answers on 5186 and the docs server on 8765; if the app directory is not
   restored yet, that check is SKIP
@@ -305,39 +297,39 @@ Kino and docs as SKIP, for a base-host check before those apps are restored.
    `-StopServer` stops the app that hosts the bots, so start this step from a
    normal PowerShell window or a detached task, not from a bot session you need
    to keep alive.
-3. Run `make-installer.ps1` dry. Confirm the Omarchy version, the published
-   SHA256 and the two USB sticks in the disk table.
-4. Run `make-installer.ps1 -Apply -IsoDiskNumber <n> -CidataDiskNumber <m>
-   -EraseDisk` and type each stick's model. Plug both sticks into the laptop.
+3. Optional: run `make-installer.ps1` dry to confirm the ISO that is already on
+   Harout's stick matches the published SHA256. Rewrite the stick only if it
+   needs it.
+4. Plug the Omarchy stick into the laptop.
 5. At power-on, press F2, turn Secure Boot off, save and exit. Press F12 and
-   boot the ISO stick, with the CIDATA stick still plugged in.
-6. The installer wipes the internal disk and installs with no wizard. It also
-   installs `authorized_keys`, enables sshd and opens SSH in ufw. It reboots
-   into Omarchy by itself.
-7. From the gaming PC or CTO laptop, SSH in as `harout`. Run
+   boot the ISO stick.
+6. Answer the installer's few questions. It wipes the internal disk and reboots
+   into Omarchy.
+7. On first login, paste the one line printed by `enable-ssh.sh`.
+8. From the gaming PC, SSH in as `harout` with
+   `-i C:\Users\harou\.ssh\hbots-migrate_ed25519`. Run
    `bootstrap.sh --dry-run --source <restore path>` first, then
    `bootstrap.sh --apply --source <restore path>`.
-8. Run `verify.sh` if the bootstrap did not already. Fix any FAIL before handing
+9. Run `verify.sh` if the bootstrap did not already. Fix any FAIL before handing
    the laptop over.
-9. Re-approve the provider sign-ins from links on the phone: Claude, Codex,
-   OpenCode, Antigravity, GitHub, Vercel, Cloudflare. Keep the data copy and its
-   manifests on the gaming PC for at least one week.
+10. Re-approve the provider sign-ins from links on the phone: Claude, Codex,
+    OpenCode, Antigravity, GitHub, Vercel, Cloudflare. Keep the data copy and its
+    manifests on the gaming PC for at least one week.
 
 ## Manual steps that stay with Harout
 
-- Plug in the two USB sticks the bots prepare.
+- Plug in the Omarchy USB stick (already written).
 - F2 at power-on: Secure Boot off.
 - F12: boot the ISO stick.
-- Type the disk password at first boot only if encryption was enabled. This
-  script does not enable LUKS; if you add it, the LUKS passphrase prompt is the
-  one step that cannot be unattended.
+- Answer the installer's questions, including the disk password if he enables
+  encryption.
+- Paste the `enable-ssh.sh` one-liner at first login.
 - Approve provider sign-ins from the links on his phone.
-- Do not unplug the CIDATA stick until the installer has rebooted into Omarchy.
 
 ## Safety notes
 
-- No secret values in files, logs, commits or chat. The cidata volume carries
-  only a password hash and public keys.
+- No secret values in files, logs, commits or chat. The laptop's
+  `authorized_keys` carries public keys only.
 - `-Apply` plus a typed confirmation is required for every destructive action.
   There are no force flags and no `-Yes`.
 - The scripts never delete data. An existing ISO with a bad hash is left in
@@ -354,9 +346,9 @@ From the repo root on Windows:
 node migrate/tests/run-tests.mjs
 ```
 
-The suite runs both PowerShell self-tests, builds a CIDATA image and reads it
-back with an independent FAT32 reader, checks JSON keys and the absence of the
-plaintext test password, runs `bash -n` and `shellcheck` (when installed) on both
-shell scripts, runs `bootstrap.sh --dry-run` plus `verify.sh --dry-run` and
-`--json` against a temp directory, and proves `verify.sh` exits 0 and 1 with fake
-healthy and broken services.
+The suite runs both PowerShell self-tests, proves `make-installer.ps1` is
+ISO-only, checks the `enable-ssh.sh` one-liner and its keys, runs `bash -n` and
+`shellcheck` (when installed) on every shell script, runs
+`bootstrap.sh --dry-run` plus `verify.sh --dry-run` and `--json` against a temp
+directory, and proves `verify.sh` exits 0 and 1 with fake healthy and broken
+services.

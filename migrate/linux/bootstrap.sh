@@ -2,7 +2,8 @@
 #
 # bootstrap.sh - bring a fresh Omarchy install up to the hbots baseline.
 #
-# Run over SSH as root on the new machine. Both modes are explicit:
+# Run over SSH as root on the new machine, after Harout pasted the one-liner
+# from enable-ssh.sh on its first login. Both modes are explicit:
 #
 #   ./bootstrap.sh --dry-run --source /mnt/gamingpc/omarchy-migration/plain
 #   ./bootstrap.sh --apply   --source /mnt/gamingpc/omarchy-migration/plain
@@ -11,20 +12,24 @@
 # There is no implicit apply.
 #
 # Steps, in order:
+#   0. check SSH access (the team reaches this machine over SSH; if sshd is
+#      down, print the enable-ssh.sh one-liner and carry on)
 #   1. verify this is Omarchy on Arch
-#   2. restore C:\Claude and C:\Users\Ht\.personal-bots from the gaming PC
-#   3. rewrite stored Windows paths with Backend's migrate-paths.mjs
-#   4. import the sealed secrets bundle, if Backend's importer is present
-#   5. install packages: base-devel, git, python, nodejs + mise node 24.22.1,
+#   2. restore Claude/ and personal-bots/ from the gaming PC
+#   3. install packages: base-devel, git, python, nodejs + mise node 24.22.1,
 #      pnpm 11.10.0 via corepack, brave-bin (AUR), cloudflared, lm_sensors,
 #      ollama
-#   6. install the systemd user units, if their install script is present
+#   4. install the systemd user units, with T3CODE_PATH_MAP set in the hbots
+#      unit so migration 113 rewrites stored Windows paths on the first boot
+#   5. import the sealed secrets bundle with `bin.mjs secrets import`
+#   6. start hbots and wait for its health endpoint
 #   7. open 38472 (hbots), 5186 (Kino), 8765 (docs) on the active firewall
 #   8. keep updates manual and print the snapshot-before-update guidance
 #   9. run verify.sh
 #
 # Nothing is deleted. rsync runs without --delete. Secret values are never
-# printed: the importer prompts on the terminal and only its status is logged.
+# printed or passed as arguments: the importer reads the passphrase from
+# HBOTS_SECRETS_PASSPHRASE or from one line on stdin.
 #
 # Defaults:
 #   --source /mnt/gamingpc/omarchy-migration/plain
@@ -47,10 +52,12 @@ USER_ARG=""
 SECRETS_ARG=""
 SKIP_RESTORE=0
 SKIP_PACKAGES=0
+SKIP_SECRETS=0
+SKIP_START=0
 SKIP_VERIFY=0
 
 usage() {
-  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 log() {
@@ -141,6 +148,14 @@ while [ "$#" -gt 0 ]; do
       SKIP_PACKAGES=1
       shift
       ;;
+    --skip-secrets)
+      SKIP_SECRETS=1
+      shift
+      ;;
+    --skip-start)
+      SKIP_START=1
+      shift
+      ;;
     --skip-verify)
       SKIP_VERIFY=1
       shift
@@ -185,6 +200,10 @@ REPO="${REPO_ARG:-$TARGET_HOME/Claude/AI/personal-bots}"
 DATA_DIR="${DATA_ARG:-$TARGET_HOME/.personal-bots}"
 SECRETS_BUNDLE="${SECRETS_ARG:-$TARGET_HOME/omarchy-secrets.bundle}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+RELEASES_DIR="$DATA_DIR/releases"
+CURRENT_FILE="$RELEASES_DIR/current.txt"
+SECRETS_DIR="$DATA_DIR/dev/userdata/secrets"
+PATH_MAP="C:/Users/Ht=$TARGET_HOME;C:/Claude/AI=$TARGET_HOME/Claude/AI"
 
 log "hbots Omarchy bootstrap"
 info "mode:       $([ "$APPLY" -eq 1 ] && echo APPLY || echo DRY-RUN)"
@@ -193,9 +212,25 @@ info "repo:       $REPO"
 info "data:       $DATA_DIR"
 info "restore:    $SOURCE"
 info "secrets:    $SECRETS_BUNDLE"
+info "path map:   $PATH_MAP"
 
 if [ "$APPLY" -eq 1 ]; then
   [ "$(id -u)" -eq 0 ] || die "--apply must run as root (over SSH)."
+fi
+
+# ---------------------------------------------------------------- 0. SSH access
+
+log "0/9 SSH access"
+SSH_ENABLE_LINE="bash $SCRIPT_DIR/enable-ssh.sh --apply"
+if [ "$DRY_RUN" -eq 1 ]; then
+  info "would check sshd is active"
+  info "if not, the first-login one-liner is printed by: bash $SCRIPT_DIR/enable-ssh.sh"
+elif systemctl is-active --quiet sshd 2>/dev/null; then
+  info "sshd is active"
+else
+  warn "sshd is not active on this machine."
+  warn "Harout can paste this once at the laptop console: $SSH_ENABLE_LINE"
+  warn "or run: bash $SCRIPT_DIR/enable-ssh.sh --apply"
 fi
 
 # ---------------------------------------------------------------- 1. OS check
@@ -258,79 +293,9 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------- 3. paths
+# ---------------------------------------------------------------- 3. packages
 
-log "3/9 Rewrite stored Windows paths"
-if [ "$SKIP_RESTORE" -eq 1 ]; then
-  # No restored Windows data means there is nothing to rewrite. This keeps a
-  # base-host or VM proof from stopping on Backend's migrator being absent.
-  info "path rewrite skipped (--skip-restore: no Windows data was restored)"
-else
-MIGRATE_PATHS="$REPO/scripts/personal/node/migrate-paths.mjs"
-if [ ! -f "$MIGRATE_PATHS" ]; then
-  if [ "$DRY_RUN" -eq 1 ]; then
-    warn "MISSING $MIGRATE_PATHS (apply would stop here)"
-    info "expected interface: node migrate-paths.mjs --data-dir <dir> --repo <dir> --apply"
-  else
-    die "Backend's path migration is missing: $MIGRATE_PATHS. Expected: node migrate-paths.mjs --data-dir <dir> --repo <dir> --apply. Nothing after this step ran."
-  fi
-else
-  if command -v node >/dev/null 2>&1; then
-    run_as_user node "$MIGRATE_PATHS" --data-dir "$DATA_DIR" --repo "$REPO" --apply
-  elif command -v mise >/dev/null 2>&1; then
-    run_as_user mise exec node@24.22.1 -- node "$MIGRATE_PATHS" --data-dir "$DATA_DIR" --repo "$REPO" --apply
-  else
-    if [ "$DRY_RUN" -eq 1 ]; then
-      warn "neither node nor mise is available yet; apply would stop here"
-    else
-      die "node is not installed and mise is missing. Install node or mise, then rerun (packages come after this step by design)."
-    fi
-  fi
-fi
-fi
-
-# ---------------------------------------------------------------- 4. secrets
-
-log "4/9 Import sealed secrets"
-IMPORTER=""
-for candidate in \
-  "$REPO/scripts/personal/node/secrets-import.mjs" \
-  "$REPO/scripts/personal/node/import-secrets.mjs" \
-  "$REPO/migrate/linux/import-secrets.sh"
-do
-  if [ -f "$candidate" ]; then
-    IMPORTER="$candidate"
-    break
-  fi
-done
-
-if [ -z "$IMPORTER" ]; then
-  warn "no secrets importer found. The sealed bundle was not imported; logins will need re-approval."
-  info "looked for scripts/personal/node/secrets-import.mjs, import-secrets.mjs and migrate/linux/import-secrets.sh"
-else
-  if [ ! -f "$SECRETS_BUNDLE" ]; then
-    warn "secrets bundle not found at $SECRETS_BUNDLE; pass --secrets-bundle. Import skipped."
-  else
-    info "importer: $IMPORTER"
-    info "bundle:   $SECRETS_BUNDLE (contents are never printed)"
-    case "$IMPORTER" in
-      *.mjs)
-        if command -v node >/dev/null 2>&1; then
-          run_as_user node "$IMPORTER" --bundle "$SECRETS_BUNDLE" --data-dir "$DATA_DIR"
-        else
-          run_as_user mise exec node@24.22.1 -- node "$IMPORTER" --bundle "$SECRETS_BUNDLE" --data-dir "$DATA_DIR"
-        fi
-        ;;
-      *.sh)
-        run_as_user bash "$IMPORTER" "$SECRETS_BUNDLE"
-        ;;
-    esac
-  fi
-fi
-
-# ---------------------------------------------------------------- 5. packages
-
-log "5/9 Install packages"
+log "3/9 Install packages"
 if [ "$SKIP_PACKAGES" -eq 1 ]; then
   warn "packages skipped (--skip-packages)"
 else
@@ -372,17 +337,107 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------- 6. units
+# ---------------------------------------------------------------- 4. units
 
-log "6/9 Install systemd user units"
+log "4/9 Install systemd user units"
 UNIT_INSTALL="$REPO/scripts/personal/linux/install-units.sh"
 if [ -f "$UNIT_INSTALL" ]; then
   info "installer: $UNIT_INSTALL"
-  run_as_user bash "$UNIT_INSTALL" --repo "$REPO" --ai-dir "$TARGET_HOME/Claude/AI" --node "$TARGET_HOME/.local/share/mise/installs/node/24.22.1/bin/node"
+  info "T3CODE_PATH_MAP goes into hbots.service before its first start"
+  run_as_user bash "$UNIT_INSTALL" --repo "$REPO" --ai-dir "$TARGET_HOME/Claude/AI" --node "$TARGET_HOME/.local/share/mise/installs/node/24.22.1/bin/node" --path-map "$PATH_MAP"
   run loginctl enable-linger "$TARGET_USER"
+  if [ "$DRY_RUN" -eq 0 ]; then
+    installed_unit="$TARGET_HOME/.config/systemd/user/hbots.service"
+    [ -f "$installed_unit" ] || die "hbots.service was not written to $installed_unit."
+    grep -qF "T3CODE_PATH_MAP=$PATH_MAP" "$installed_unit" \
+      || die "T3CODE_PATH_MAP is missing from $installed_unit; the first boot would not rewrite Windows paths."
+    info "path map present in hbots.service"
+  fi
 else
   warn "no unit installer at $UNIT_INSTALL. User units were not installed."
   info "expected scripts/personal/linux/install-units.sh from the ops branch"
+fi
+
+# ---------------------------------------------------------------- 5. secrets
+
+log "5/9 Import sealed secrets"
+RELEASE_BIN=""
+if [ -r "$CURRENT_FILE" ]; then
+  current_name="$(tr -d '[:space:]' < "$CURRENT_FILE")"
+  if [ -n "$current_name" ] && [ -f "$RELEASES_DIR/$current_name/bin.mjs" ]; then
+    RELEASE_BIN="$RELEASES_DIR/$current_name/bin.mjs"
+  fi
+fi
+if [ -z "$RELEASE_BIN" ] && [ -d "$RELEASES_DIR" ]; then
+  RELEASE_BIN="$(find "$RELEASES_DIR" -mindepth 2 -maxdepth 2 -name bin.mjs -type f -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2- || true)"
+fi
+
+if [ "$SKIP_SECRETS" -eq 1 ]; then
+  warn "secrets import skipped (--skip-secrets)"
+elif [ -z "$RELEASE_BIN" ]; then
+  warn "no release bin.mjs found under $RELEASES_DIR; secrets were not imported."
+  info "build or restore a release, then run: node <release>/bin.mjs secrets import ..."
+elif [ ! -f "$SECRETS_BUNDLE" ]; then
+  warn "secrets bundle not found at $SECRETS_BUNDLE; pass --secrets-bundle. Import skipped."
+  info "Harout can run the import himself after copying the bundle to this machine."
+else
+  info "release: $RELEASE_BIN"
+  info "bundle:  $SECRETS_BUNDLE (contents are never printed)"
+  info "target:  $SECRETS_DIR"
+  import_args=(secrets import --secrets-dir "$SECRETS_DIR" --in "$SECRETS_BUNDLE")
+  if [ "$DRY_RUN" -eq 1 ]; then
+    info "would run: node $RELEASE_BIN ${import_args[*]}"
+    info "passphrase: HBOTS_SECRETS_PASSPHRASE or one line on stdin"
+  elif [ -n "${HBOTS_SECRETS_PASSPHRASE:-}" ]; then
+    run_as_user node "$RELEASE_BIN" "${import_args[@]}"
+    info "secrets imported"
+  elif [ -t 0 ]; then
+    printf '    Secrets passphrase (not echoed): ' >&2
+    IFS= read -rs SECRETS_PASSPHRASE
+    printf '\n' >&2
+    [ -n "$SECRETS_PASSPHRASE" ] || die "empty passphrase; nothing imported."
+    if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" != "root" ]; then
+      run printf '%s\n' "$SECRETS_PASSPHRASE" | runuser -u "$TARGET_USER" -- env "HOME=$TARGET_HOME" "USER=$TARGET_USER" "LOGNAME=$TARGET_USER" "XDG_RUNTIME_DIR=/run/user/$(id -u "$TARGET_USER")" node "$RELEASE_BIN" "${import_args[@]}"
+    else
+      printf '%s\n' "$SECRETS_PASSPHRASE" | env "HOME=$TARGET_HOME" node "$RELEASE_BIN" "${import_args[@]}"
+    fi
+    unset SECRETS_PASSPHRASE
+    info "secrets imported"
+  else
+    warn "no passphrase available in this non-interactive session; secrets were not imported."
+    info "Harout runs this himself at the laptop terminal:"
+    info "  HBOTS_SECRETS_PASSPHRASE='<his passphrase>' node $RELEASE_BIN ${import_args[*]}"
+  fi
+fi
+
+# ---------------------------------------------------------------- 6. start
+
+log "6/9 Start hbots"
+if [ "$SKIP_START" -eq 1 ]; then
+  warn "start skipped (--skip-start)"
+elif [ "$DRY_RUN" -eq 1 ]; then
+  info "would start hbots.service and wait for http://127.0.0.1:38472/.well-known/t3/environment"
+  info "would fail if the log shows 'T3CODE_PATH_MAP is not set; no stored paths rewritten.'"
+else
+  run_as_user systemctl --user start hbots.service
+  healthy=0
+  for _ in $(seq 1 45); do
+    if curl -fsS --max-time 3 http://127.0.0.1:38472/.well-known/t3/environment >/dev/null 2>&1; then
+      healthy=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$healthy" -ne 1 ]; then
+    warn "hbots did not answer on 38472 within 90 s."
+    run_as_user journalctl --user -u hbots.service -b --no-pager -n 40 || true
+    die "hbots failed to start; fix the log above before continuing."
+  fi
+  info "hbots is answering on 38472"
+  if run_as_user journalctl --user -u hbots.service -b --no-pager 2>/dev/null | grep -q 'T3CODE_PATH_MAP is not set'; then
+    die "hbots booted without T3CODE_PATH_MAP. Restore the DB copy (prewipe copy is unmodified) and start again with the map set; migration 113 will not run twice."
+  fi
+  info "path map was present on the first boot"
 fi
 
 # ---------------------------------------------------------------- 7. firewall

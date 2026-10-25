@@ -11,6 +11,9 @@ Type=simple
 WorkingDirectory=@REPO@
 EnvironmentFile=-%h/.config/hbots/env
 Environment=NODE_ENV=production
+# Migration 113 rewrites the stored Windows paths on the first Linux boot and
+# is recorded as applied. It must be set before the server ever starts.
+Environment="T3CODE_PATH_MAP=@PATH_MAP@"
 ExecStart=@NODE@ @REPO@/scripts/personal/node/hbots.mjs serve --root dev
 Restart=on-failure
 RestartSec=15

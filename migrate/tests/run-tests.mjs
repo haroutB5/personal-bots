@@ -23,10 +23,9 @@ const prewipe = path.join(windowsDir, 'prewipe.ps1');
 const makeInstaller = path.join(windowsDir, 'make-installer.ps1');
 const bootstrap = path.join(linuxDir, 'bootstrap.sh');
 const verify = path.join(linuxDir, 'verify.sh');
-const testPassword = 'SELFTEST-ONLY-password-9f3a';
+const enableSsh = path.join(linuxDir, 'enable-ssh.sh');
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hbots-migrate-tests-'));
-const cidataImage = path.join(tempRoot, 'cidata.img');
 let passed = 0;
 let failed = 0;
 let powershell = null;
@@ -174,147 +173,6 @@ function assertManifestUnchanged(before, after, label) {
   }
 }
 
-function readFat32(imagePath) {
-  const bytes = fs.readFileSync(imagePath);
-  const u16 = (offset) => bytes.readUInt16LE(offset);
-  const u32 = (offset) => bytes.readUInt32LE(offset);
-
-  assert.equal(u16(510), 0xaa55, 'cidata boot sector signature');
-  const bytesPerSector = u16(11);
-  assert.equal(bytesPerSector, 512, 'cidata sector size');
-  const sectorsPerCluster = bytes[13];
-  const reservedSectors = u16(14);
-  const fatCount = bytes[16];
-  const fatSectors = u32(36);
-  const rootCluster = u32(44);
-  const clusterSize = bytesPerSector * sectorsPerCluster;
-  const dataStartSector = reservedSectors + fatCount * fatSectors;
-  const volumeLabel = bytes.subarray(71, 82).toString('ascii').trim();
-  const fsType = bytes.subarray(82, 90).toString('ascii').trim();
-  assert.equal(volumeLabel, 'CIDATA', 'cidata volume label');
-  assert.equal(fsType, 'FAT32', 'cidata filesystem type');
-
-  const fatEntries = Math.floor((fatSectors * bytesPerSector) / 4);
-  const fatOffset = reservedSectors * bytesPerSector;
-  const fat = (cluster) => {
-    if (cluster < 0 || cluster >= fatEntries) {
-      throw new Error(`FAT cluster out of range: ${cluster}`);
-    }
-    return u32(fatOffset + cluster * 4) & 0x0fffffff;
-  };
-
-  const clusterOffset = (cluster) => (dataStartSector + (cluster - 2) * sectorsPerCluster) * bytesPerSector;
-
-  function chain(start) {
-    const result = [];
-    const seen = new Set();
-    let cluster = start;
-    while (cluster >= 2 && cluster < fatEntries && !seen.has(cluster)) {
-      seen.add(cluster);
-      result.push(cluster);
-      const next = fat(cluster);
-      if (next >= 0x0ffffff8) {
-        break;
-      }
-      cluster = next;
-    }
-    return result;
-  }
-
-  function lfnChunk(entry) {
-    const positions = [1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30];
-    let text = '';
-    for (const position of positions) {
-      const unit = entry.readUInt16LE(position);
-      if (unit === 0 || unit === 0xffff) {
-        continue;
-      }
-      text += String.fromCharCode(unit);
-    }
-    return text;
-  }
-
-  function shortName(entry) {
-    const base = entry.subarray(0, 8).toString('ascii').trim();
-    const ext = entry.subarray(8, 11).toString('ascii').trim();
-    return ext ? `${base}.${ext}` : base;
-  }
-
-  const files = new Map();
-  let lfn = new Map();
-  let done = false;
-
-  for (const cluster of chain(rootCluster)) {
-    if (done) {
-      break;
-    }
-    const base = clusterOffset(cluster);
-    for (let offset = 0; offset < clusterSize; offset += 32) {
-      const entry = bytes.subarray(base + offset, base + offset + 32);
-      if (entry[0] === 0) {
-        done = true;
-        break;
-      }
-      const attr = entry[11];
-      if (attr === 0x0f) {
-        const order = entry[0] & 0x3f;
-        lfn.set(order, lfnChunk(entry));
-        continue;
-      }
-      if (attr === 0x08) {
-        continue;
-      }
-      if ((attr & 0x10) !== 0 || attr !== 0x20) {
-        continue;
-      }
-
-      let name = shortName(entry);
-      if (lfn.size > 0) {
-        name = [...lfn.keys()].sort((a, b) => a - b).map((key) => lfn.get(key)).join('');
-        lfn = new Map();
-      }
-
-      const high = entry.readUInt16LE(20);
-      const low = entry.readUInt16LE(26);
-      const startCluster = (high << 16) | low;
-      const size = entry.readUInt32LE(28);
-      const data = Buffer.alloc(size);
-      let written = 0;
-      if (size > 0) {
-        for (const fileCluster of chain(startCluster)) {
-          const fileOffset = clusterOffset(fileCluster);
-          const take = Math.min(clusterSize, size - written);
-          bytes.copy(data, written, fileOffset, fileOffset + take);
-          written += take;
-          if (written >= size) {
-            break;
-          }
-        }
-      }
-      assert.equal(written, size, `cidata file ${name} is complete`);
-      files.set(name, data);
-    }
-  }
-
-  return { volumeLabel, fsType, files, imageSize: bytes.length };
-}
-
-function assertNoPlaintextPassword(buffer, label) {
-  const ascii = buffer.toString('latin1');
-  if (ascii.includes(testPassword)) {
-    throw new Error(`${label}: plaintext test password found as ASCII`);
-  }
-  if (buffer.includes(Buffer.from(testPassword, 'utf16le'))) {
-    throw new Error(`${label}: plaintext test password found as UTF-16LE`);
-  }
-}
-
-function parseJsonFile(files, name) {
-  assert.ok(files.has(name), `cidata has ${name}`);
-  const text = files.get(name).toString('utf8');
-  return JSON.parse(text);
-}
-
 async function test(name, fn) {
   try {
     await fn();
@@ -350,85 +208,38 @@ async function main() {
     assert.doesNotMatch(result.stdout, /SELFTEST FAIL/);
   });
 
-  await test('make-installer builds a readable CIDATA image with no plaintext password', () => {
-    const result = runPwsh(makeInstaller, ['-ImageFile', cidataImage, '-BuildCidataOnly', '-SelfTest']);
-    assert.match(result.stdout, /SELFTEST PASS/);
-    assert.doesNotMatch(result.stdout, new RegExp(testPassword));
-    assert.ok(fs.existsSync(cidataImage), 'cidata image exists');
-    assert.ok(fs.statSync(cidataImage).size >= 48 * 1024 * 1024, 'cidata image is at least 48 MB');
-
-    const image = readFat32(cidataImage);
-    assert.equal(image.volumeLabel, 'CIDATA');
-    assert.equal(image.fsType, 'FAT32');
-
-    for (const name of [
-      'user_configuration.json',
-      'user_credentials.json',
-      'user_encrypt_installation.txt',
-      'authorized_keys',
-      'hostname',
-    ]) {
-      assert.ok(image.files.has(name), `cidata image contains ${name}`);
-    }
-
-    const config = parseJsonFile(image.files, 'user_configuration.json');
-    for (const key of [
-      'hostname',
-      'disk_config',
-      'omarchy_install',
-      'bootloader_config',
-      'locale_config',
-      'timezone',
-      'kernels',
-      'version',
-      'packages',
-      'mirror_config',
-      'network_config',
-      'swap',
-    ]) {
-      assert.ok(Object.prototype.hasOwnProperty.call(config, key), `user_configuration.json has ${key}`);
-    }
-    assert.equal(config.hostname, 'hbots');
-    assert.equal(config.timezone, 'Europe/London');
-    assert.equal(config.locale_config.kb_layout, 'gb');
-    assert.equal(config.bootloader_config.bootloader, 'Limine');
-    assert.equal(config.omarchy_install.mode, 'full_disk');
-    assert.equal(config.omarchy_install.storage.kernel, 'linux-omarchy');
-    assert.equal(config.disk_config.device_modifications[0].device, '/dev/nvme0n1');
-    assert.equal(config.disk_config.device_modifications[0].wipe, true);
-    assert.equal(config.disk_config.device_modifications[0].partitions.length, 2);
-    assert.ok(Array.isArray(config.packages));
-    assert.ok(config.packages.includes('base-devel'));
-    assert.ok(config.kernels.includes('linux-omarchy'));
-    assert.doesNotMatch(JSON.stringify(config), /"password"/i);
-    assert.doesNotMatch(JSON.stringify(config), new RegExp(testPassword));
-
-    const credentials = parseJsonFile(image.files, 'user_credentials.json');
-    assert.ok(Array.isArray(credentials.users));
-    assert.equal(credentials.users.length, 1);
-    assert.equal(credentials.users[0].username, 'harout');
-    assert.equal(credentials.users[0].sudo, true);
-    assert.match(credentials.users[0].enc_password, /^\$6\$/);
-    assert.match(credentials.root_enc_password, /^\$6\$/);
-    assert.ok(!String(credentials.users[0].enc_password).includes(testPassword));
-
-    const keys = image.files.get('authorized_keys').toString('utf8');
-    assert.match(keys, /^ssh-ed25519 /);
-    assert.match(keys, /selftest@example/);
-
-    const hostname = image.files.get('hostname').toString('utf8').trim();
-    assert.equal(hostname, 'hbots');
-
-    const encrypt = image.files.get('user_encrypt_installation.txt').toString('utf8').trim();
-    assert.equal(encrypt, 'false');
-
-    const raw = fs.readFileSync(cidataImage);
-    assertNoPlaintextPassword(raw, 'cidata image');
+  await test('make-installer is ISO-only: no cidata and no password prompt', () => {
+    const source = fs.readFileSync(makeInstaller, 'utf8');
+    assert.doesNotMatch(source, /cidata/i, 'make-installer still mentions cidata');
+    assert.doesNotMatch(source, /unattended/i, 'make-installer still mentions unattended installs');
+    assert.doesNotMatch(source, /Read-Host\s+-AsSecureString/, 'make-installer still prompts for a password');
+    assert.match(source, /-IsoDiskNumber/, 'make-installer keeps the ISO write path');
+    assert.match(source, /published checksum/, 'make-installer keeps the checksum check');
   });
 
-  await test('bash -n accepts bootstrap.sh and verify.sh', () => {
+  await test('enable-ssh.sh --print gives one line with sshd and the team keys', () => {
+    const result = runBash([enableSsh, '--print']);
+    assert.match(result.stdout, /systemctl enable --now sshd/);
+    assert.match(result.stdout, /hbots-cto@laptop/);
+    assert.match(result.stdout, /hbots-migrate@gamingpc/);
+    assert.match(result.stdout, /authorized_keys/);
+    assert.doesNotMatch(result.stdout, /PRIVATE KEY/);
+    const line = result.stdout.split('\n').find((candidate) => candidate.startsWith('sudo pacman'));
+    assert.ok(line, 'the pasteable line is printed');
+    assert.equal(line.split('\n').length, 1, 'the pasteable line is one line');
+  });
+
+  await test('enable-ssh.sh --apply exists and is consistent with --print', () => {
+    const source = fs.readFileSync(enableSsh, 'utf8');
+    assert.match(source, /--apply/);
+    assert.match(source, /systemctl enable --now sshd/);
+    assert.doesNotMatch(source, /PRIVATE KEY/);
+  });
+
+  await test('bash -n accepts bootstrap.sh, verify.sh and enable-ssh.sh', () => {
     runBash(['-n', bootstrap]);
     runBash(['-n', verify]);
+    runBash(['-n', enableSsh]);
   });
 
   await test('shellcheck passes when installed', () => {
@@ -437,7 +248,7 @@ async function main() {
       log('     shellcheck not installed; skipped');
       return;
     }
-    run('shellcheck', ['-x', '-S', 'warning', bootstrap, verify], { timeout: 120000 });
+    run('shellcheck', ['-x', '-S', 'warning', bootstrap, verify, enableSsh], { timeout: 120000 });
   });
 
   await test('bootstrap.sh --dry-run changes nothing outside temp', () => {
@@ -494,7 +305,7 @@ async function main() {
     const fakeRepo = path.join(tempRoot, 'fake-repo');
     const unitDir = path.join(fakeRepo, 'scripts', 'personal', 'linux', 'systemd');
     fs.mkdirSync(unitDir, { recursive: true });
-    fs.writeFileSync(path.join(unitDir, 'hbots.service'), '[Service]\nExecStart=/bin/true\n');
+    fs.writeFileSync(path.join(unitDir, 'hbots.service'), '[Service]\nEnvironment="T3CODE_PATH_MAP=C:/Users/Ht=/home/fake;C:/Claude/AI=/home/fake/claude"\nExecStart=/bin/true\n');
     fs.writeFileSync(path.join(unitDir, 'cloudflared.service'), '[Service]\nExecStart=/bin/true\n');
 
     const fakeBin = path.join(tempRoot, 'fakebin-healthy');
@@ -549,6 +360,7 @@ async function main() {
       path.join(windowsDir, 'make-installer.ps1'),
       bootstrap,
       verify,
+      enableSsh,
       path.join(repoRoot, 'migrate', 'README.md'),
       path.join(here, 'run-tests.mjs'),
     ];

@@ -5,7 +5,9 @@
 #
 # Usage:
 #   bash scripts/personal/linux/install-units.sh [--dry-run]
-#        [--repo DIR] [--ai-dir DIR] [--node PATH] [--python PATH] [--no-enable]
+#        [--repo DIR] [--ai-dir DIR] [--node PATH] [--python PATH]
+#        [--path-map "C:/Users/Ht=/home/harout;C:/Claude/AI=/home/harout/claude"]
+#        [--no-enable]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,6 +19,8 @@ AI_DIR="${HBOTS_AI_DIR:-$HOME/AI}"
 NODE_BIN="${HBOTS_NODE:-$(command -v node || true)}"
 PYTHON_BIN="${HBOTS_PYTHON:-$(command -v python3 || true)}"
 HOME_DIR="$HOME"
+PATH_MAP="${HBOTS_PATH_MAP:-C:/Users/Ht=$HOME;C:/Claude/AI=$AI_DIR}"
+PATH_MAP_EXPLICIT=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -26,10 +30,17 @@ while [ $# -gt 0 ]; do
     --ai-dir) AI_DIR="$2"; shift 2 ;;
     --node) NODE_BIN="$2"; shift 2 ;;
     --python) PYTHON_BIN="$2"; shift 2 ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    --path-map) PATH_MAP="$2"; PATH_MAP_EXPLICIT=1; shift 2 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# --ai-dir can come after --path-map on the command line; recompute the default
+# unless the caller set the map explicitly.
+if [ -z "${HBOTS_PATH_MAP:-}" ] && [ "${PATH_MAP_EXPLICIT:-0}" -eq 0 ]; then
+  PATH_MAP="C:/Users/Ht=$HOME;C:/Claude/AI=$AI_DIR"
+fi
 
 if [ -z "$NODE_BIN" ] || [ ! -x "$NODE_BIN" ]; then
   echo "node not found; pass --node <path> or set HBOTS_NODE" >&2
@@ -54,6 +65,7 @@ render() {
       -e "s|@AI@|$AI_DIR|g" \
       -e "s|@NODE@|$NODE_BIN|g" \
       -e "s|@PYTHON@|$PYTHON_BIN|g" \
+      -e "s|@PATH_MAP@|$PATH_MAP|g" \
       -e "s|@HOME@|$HOME_DIR|g" "$1"
 }
 
@@ -61,6 +73,7 @@ echo "repo   $REPO"
 echo "ai     $AI_DIR"
 echo "node   $NODE_BIN"
 echo "python $PYTHON_BIN"
+echo "map    $PATH_MAP"
 echo "target $TARGET"
 [ "$DRY_RUN" = 1 ] && echo "DRY RUN: nothing is written, reloaded or enabled"
 
