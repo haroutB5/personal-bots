@@ -157,6 +157,8 @@ export async function serveForeground({ paths, repoRoot, releaseName = null, nod
     supervised: true,
   });
 
+  const exited = new Promise((resolve) => child.once("exit", (exitCode, signal) => resolve({ exitCode, signal })));
+  let requestedStop = false;
   const forward = (signal) => {
     requestedStop = true;
     try {
@@ -165,7 +167,6 @@ export async function serveForeground({ paths, repoRoot, releaseName = null, nod
       /* gone */
     }
   };
-  let requestedStop = false;
   process.on("SIGTERM", () => forward("SIGTERM"));
   process.on("SIGINT", () => forward("SIGINT"));
 
@@ -173,7 +174,8 @@ export async function serveForeground({ paths, repoRoot, releaseName = null, nod
   if (ready.ready) log(`Personal Bots ready: pid ${child.pid}, release ${release.name}, root ${paths.root}`);
   else if (ready.exited) process.stderr.write(`Server exited during startup. See ${logFile}.\n`);
 
-  const code = await new Promise((resolve) => child.once("exit", (exitCode, signal) => resolve(exitCode ?? (signal ? 1 : 0))));
+  const { exitCode, signal } = await exited;
+  const code = exitCode ?? (signal ? 1 : 0);
   if (!fs.existsSync(paths.stopMarker)) proc.clearState(paths);
   return requestedStop ? 0 : code;
 }
