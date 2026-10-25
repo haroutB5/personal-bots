@@ -202,6 +202,15 @@ function Assert-SafeTarget {
     if ($full -match '^[A-Za-z]:\\' -and $full.Substring(0, 1) -ieq 'C') {
         throw "Refusing target on C:. A disk image of C: must not live on C:. Target: $full"
     }
+    if ($full -match '^([A-Za-z]):\\') {
+        $targetLetter = $Matches[1]
+        $targetPartition = Get-Partition -DriveLetter $targetLetter -ErrorAction SilentlyContinue | Select-Object -First 1
+        $systemPartition = Get-Partition -DriveLetter C -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $targetPartition -and $null -ne $systemPartition -and
+            [int]$targetPartition.DiskNumber -eq [int]$systemPartition.DiskNumber) {
+            throw "Refusing target on the same physical disk as C:. Target: $full"
+        }
+    }
 
     foreach ($source in $Sources) {
         if ([string]::IsNullOrWhiteSpace($source)) { continue }

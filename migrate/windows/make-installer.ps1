@@ -98,6 +98,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 $script:SelfTestPassword = 'SELFTEST-ONLY-password-9f3a'
 $script:DefaultIsoOrigin = 'https://iso.omarchy.org'
@@ -577,6 +578,11 @@ function Write-CidataImage {
         [System.Collections.Specialized.OrderedDictionary]$Files,
         [int]$SizeMB = 64
     )
+
+    $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
 
     $sectorSize = 512
     $totalBytes = [long]$SizeMB * 1MB
@@ -1123,7 +1129,19 @@ function Write-RawImage {
             throw 'Refusing a raw device write without -Apply.'
         }
         if ($PhysicalDiskNumber -lt 0) { throw 'No physical disk number for the raw write.' }
-        $target = [System.IO.File]::Open("\\.\PhysicalDrive$PhysicalDiskNumber", [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $target = $null
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+                $target = [System.IO.File]::Open("\\.\PhysicalDrive$PhysicalDiskNumber", [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                break
+            }
+            catch {
+                if ($attempt -eq 5) {
+                    throw "Cannot open \\.\PhysicalDrive$PhysicalDiskNumber for writing after 5 attempts. Run as Administrator and use -EraseDisk. $($_.Exception.Message)"
+                }
+                Start-Sleep -Seconds 1
+            }
+        }
     }
 
     try {
