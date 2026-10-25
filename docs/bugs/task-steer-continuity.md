@@ -27,6 +27,24 @@ continued producing events after the task attempt had ended. The source was
 opened read-only for one consistent, indexed copy (94,208 bytes, integrity
 check `ok`); analysis used only that copy. No live DB write was made.
 
+## Second incident (this task)
+
+The same shape hit task `cc4b4103-a436-493c-8244-04adb3dc0b23`, thread
+`a9b5e3e5-4bd8-449c-a529-ab76f6cf47bc`, on the same `opencode-v2` instance.
+The live DB, read-only, records:
+
+| UTC time     | Evidence                                                                     |
+| ------------ | ---------------------------------------------------------------------------- |
+| 18:01:14.371 | Steer note and `thread.turn-start-requested`, sequence 1242774.              |
+| 18:01:14.574 | `thread.session-set` interrupted, no active turn, sequence 1242778.          |
+| 18:01:14.582 | `thread.session-set` running, replacement turn `d01e6145`, sequence 1242780. |
+| 18:01:14.612 | Attempt 1 ended with `error_category=interrupted`, `resumable=1`.            |
+
+The replacement turn was already running 8 ms after the interruption, yet the
+attempt had been settled. There is no WARN or ERROR line for this path: the
+steer's own cancellation is the terminal event. The fix removes that event
+from the steer path, so the task sees one logical turn and one completion.
+
 The adapter now cancels only the ACP prompt and retains the logical turn ID
 and running session across replacement prompts. It publishes one start and
 one final completion. Steer admission and settlement use the same thread lock;
