@@ -1,5 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - builds provider activity rows
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeURL from "node:url";
 import {
   CommandId,
   CorrelationId,
@@ -13,6 +14,7 @@ import {
   PersonalTaskResult,
   PersonalTaskStatus,
   ProviderInstanceId,
+  ProviderDriverKind,
   TurnId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -22,7 +24,9 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -47,6 +51,7 @@ import {
   type ProjectionThreadMessageRepositoryShape,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { makeNativeAcpAdapter } from "../../provider/Layers/NativeAcpAdapter.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
@@ -1971,14 +1976,15 @@ const claudeOpus = {
   options: [{ id: "effort", value: "medium" }],
 };
 
-it.effect(
-  "steer delivers into the running turn with the bot's selection and keeps the task",
-  () => {
+it.effect.each(["claudeAgent", "codex", "opencode-v2"])(
+  "steer delivers into a running %s turn and finishes with its real result",
+  (provider) => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       yield* seedBots;
       const bots = yield* PersonalBotService.PersonalBotService;
-      yield* bots.update({ botId: botId("assistant"), modelSelection: claudeOpus });
+      const selection = { ...claudeOpus, instanceId: ProviderInstanceId.make(provider) };
+      yield* bots.update({ botId: botId("assistant"), modelSelection: selection });
       const service = yield* PersonalTaskService.PersonalTaskService;
       const root = yield* createRoot("steer-running");
       const thread = threadOf(root);
@@ -1997,7 +2003,7 @@ it.effect(
       expect(steer.threadId).toBe(thread);
       expect(steer.message.text).toBe("Update from CTO: Only check the login page.");
       expect(steer.message.messageId.startsWith("personal-task-steer-")).toBe(true);
-      expect(steer.modelSelection).toEqual(claudeOpus);
+      expect(steer.modelSelection).toEqual(selection);
       // Not a new attempt: the same task keeps running on the same turn.
       const detail = yield* service.get({ taskId: root.taskId });
       expect(detail.task.status).toBe("running");
@@ -2016,6 +2022,121 @@ it.effect(
       expect(turnStarts(harness).length).toBe(startsBefore + 1);
     }).pipe(Effect.provide(makeLayer(harness)));
   },
+);
+
+it.live(
+  "OpenCode V2 ACP steer keeps the task running through cancellation and returns its reply",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* bots.update({
+        botId: botId("assistant"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode-v2"),
+          model: "opencode/deepseek-v4.1-flash-free",
+        },
+      });
+      const task = yield* createRoot("acp-steer-continuity");
+      const threadId = threadOf(task);
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-task-steer-acp-" });
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-v2"),
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: dir,
+              env: {
+                ...process.env,
+                T3_ACP_PROMPT_DELAY_MS: "400",
+                T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1",
+                T3_ACP_PROMPT_RESPONSE_TEXT: "Steered work finished.",
+              },
+            },
+            cwd: dir,
+            authMethodId: null,
+            clientInfo: { name: "steer-task-test", version: "1" },
+          }),
+      });
+      const started = yield* Deferred.make<void>();
+      const finished = yield* Deferred.make<void>();
+      let reply = "";
+      const terminalStates: string[] = [];
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            if (event.type === "content.delta" && event.payload.streamKind === "assistant_text") {
+              reply += event.payload.delta;
+            }
+            if (event.type === "turn.started") {
+              yield* setSession(harness, {
+                ...makeSession({
+                  threadId,
+                  status: "running",
+                  activeTurnId: event.turnId!,
+                  updatedAt: event.createdAt,
+                }),
+                providerName: "opencode",
+                providerInstanceId: ProviderInstanceId.make("opencode-v2"),
+              });
+            }
+            if (event.type === "item.updated" && event.itemId === "native-cancel-tool") {
+              // Prove the first prompt is in a tool, rather than relying on a
+              // sleep between turn admission and the ACP request.
+              yield* Deferred.succeed(started, undefined);
+            }
+            if (event.type === "turn.aborted" || event.type === "turn.completed") {
+              const status =
+                event.type === "turn.aborted" || event.payload.state === "interrupted"
+                  ? "interrupted"
+                  : "ready";
+              terminalStates.push(status);
+              yield* endTurn(harness, threadId, event.turnId!, reply, { status });
+              yield* Deferred.succeed(finished, undefined);
+            }
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: dir, runtimeMode: "full-access" });
+      const first = yield* adapter
+        .sendTurn({ threadId, input: "Start work." })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const steered = yield* service.steer({
+        taskId: task.taskId,
+        fromName: "CTO",
+        message: "Finish the updated work.",
+      });
+      expect(steered.outcome).toBe("steered");
+      const command = turnStarts(harness).at(-1)!;
+      const second = yield* adapter
+        .sendTurn({ threadId, input: command.message.text })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(first);
+      yield* service.drain;
+      expect((yield* reload(task.taskId)).status).toBe("running");
+      yield* Fiber.join(second);
+      yield* Deferred.await(finished);
+      const done = yield* reload(task.taskId);
+      expect(terminalStates).toEqual(["ready"]);
+      expect(done.status).toBe("completed");
+      expect(done.result?.summary).toBe("Steered work finished.");
+      expect((yield* service.get({ taskId: task.taskId })).attempts).toHaveLength(1);
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(makeLayer(harness)));
+  },
+  30_000,
 );
 
 it.effect("steer keeps a prefix the sender already wrote instead of doubling it", () => {

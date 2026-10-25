@@ -163,6 +163,7 @@ interface RegistryAcpSessionContext {
   readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
   session: ProviderSession;
   activeTurnId?: TurnId;
+  pendingSteers: number;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   /** What the agent offered when the session opened; models and how to switch them. */
   readonly setup: AcpSessionRuntime.AcpSessionRuntimeStartResult["sessionSetupResult"];
@@ -482,6 +483,7 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
               setup: started.sessionSetupResult,
               appliedModel: registryCurrentModel(started.sessionSetupResult),
               turnHeard: false,
+              pendingSteers: 0,
               stopped: false,
               needsFreshContext: options.needsFreshContext?.(input) ?? false,
             };
@@ -512,7 +514,7 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
                   stamp: yield* makeEventStamp(),
                   provider: DRIVER,
                   threadId: ctx.threadId,
-                  turnId: ctx.activeTurnId,
+                  turnId: ctx.activeTurnId ?? ctx.session.activeTurnId,
                 };
                 switch (event._tag) {
                   case "ContentDelta":
@@ -615,12 +617,21 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
         }),
       );
 
-    const runTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
+    const runTurn = (
+      input: ProviderSendTurnInput,
+      continuation?: { readonly context: RegistryAcpSessionContext; readonly turnId: TurnId },
+    ) =>
       Effect.gen(function* () {
+        let supersededLaunchFailure = false;
         const launch = yield* withThreadLock(
           input.threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(input.threadId);
+            const continuing = continuation !== undefined && continuation.context === ctx;
+            if (continuing) ctx.pendingSteers -= 1;
+            if (continuing && ctx.session.activeTurnId !== continuation.turnId) {
+              return yield* Effect.interrupt;
+            }
             if (ctx.needsFreshContext)
               return yield* new ProviderAdapterRequestError({
                 provider: DRIVER,
@@ -664,7 +675,9 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
             const attachments = options.promptAttachments
               ? yield* options.promptAttachments(input)
               : [];
-            const turnId = TurnId.make(yield* randomUUIDv4);
+            // ACP needs a new prompt after cancellation, but a steer is still
+            // the same logical turn. Its old prompt must not finish the task.
+            const turnId = continuing ? continuation.turnId : TurnId.make(yield* randomUUIDv4);
             ctx.activeTurnId = turnId;
             ctx.turnHeard = false;
             ctx.session = {
@@ -673,14 +686,15 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
               activeTurnId: turnId,
               updatedAt: yield* nowIso,
             };
-            yield* offerRuntimeEvent({
-              type: "turn.started",
-              ...(yield* makeEventStamp()),
-              provider: DRIVER,
-              threadId: input.threadId,
-              turnId,
-              payload: {},
-            });
+            if (!continuing)
+              yield* offerRuntimeEvent({
+                type: "turn.started",
+                ...(yield* makeEventStamp()),
+                provider: DRIVER,
+                threadId: input.threadId,
+                turnId,
+                payload: {},
+              });
             const promptPayload = {
               prompt: [
                 {
@@ -734,7 +748,49 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
             const fiber = yield* promptWithBusyRetry(0).pipe(Effect.forkIn(ctx.scope));
             return { ctx, turnId, fiber };
           }),
+        ).pipe(
+          Effect.tapCause((cause) => {
+            if (!continuation || Cause.hasInterruptsOnly(cause)) return Effect.void;
+            const ctx = continuation.context;
+            // A replacement prompt can fail during model/persona setup too.
+            // That is a real failure, never a silent wait on a cancelled prompt.
+            return withThreadLock(
+              input.threadId,
+              Effect.gen(function* () {
+                if (
+                  ctx.stopped ||
+                  ctx.pendingSteers > 0 ||
+                  ctx.session.activeTurnId !== continuation.turnId
+                ) {
+                  supersededLaunchFailure = true;
+                  return;
+                }
+                ctx.session = {
+                  ...ctx.session,
+                  status: "ready",
+                  activeTurnId: undefined,
+                  updatedAt: yield* nowIso,
+                };
+                yield* offerRuntimeEvent({
+                  type: "turn.completed",
+                  ...(yield* makeEventStamp()),
+                  provider: DRIVER,
+                  threadId: input.threadId,
+                  turnId: continuation.turnId,
+                  payload: { state: "failed", errorMessage: acpCauseText(cause) },
+                });
+              }),
+            );
+          }),
+          Effect.catchCause((cause) =>
+            supersededLaunchFailure ? Effect.succeed(undefined) : Effect.failCause(cause),
+          ),
         );
+        if (!launch)
+          return {
+            threadId: input.threadId,
+            turnId: continuation!.turnId,
+          } satisfies ProviderTurnStartResult;
         const { ctx, turnId, fiber } = launch;
         // An agent that lists sign-in options and has not produced output yet may
         // be waiting for a sign-in it never announces; give it a deadline.
@@ -744,6 +800,7 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
           authState.methods.length > 0 &&
           authState.verdict !== "signedIn";
         let silentText: string | undefined;
+        let supersededPromptFailure = false;
         const answered = Fiber.await(fiber).pipe(Effect.flatMap((exit) => exit));
         const response = yield* (
           watched
@@ -756,6 +813,14 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
               })
             : answered
         ).pipe(
+          Effect.catchCause((cause) =>
+            !Cause.hasInterruptsOnly(cause) &&
+            (ctx.activeTurnId !== turnId || ctx.pendingSteers > 0)
+              ? // Do not let the reactor turn a cancelled prompt's rejection
+                // into a session error after the steer took ownership.
+                Effect.succeed({ stopReason: "cancelled" as const })
+              : Effect.failCause(cause),
+          ),
           Effect.catch((cause) =>
             isRegistryTurnSilent(cause)
               ? Effect.gen(function* () {
@@ -790,33 +855,44 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
           Effect.tapCause((cause) => {
             if (Cause.hasInterruptsOnly(cause)) return Effect.void;
             const detailText = silentText ?? acpCauseText(cause);
-            return Effect.gen(function* () {
-              if (ctx.activeTurnId === turnId) delete ctx.activeTurnId;
-              ctx.session = {
-                ...ctx.session,
-                status: "ready",
-                activeTurnId: undefined,
-                updatedAt: yield* nowIso,
-              };
-              yield* offerRuntimeEvent({
-                type: "turn.completed",
-                ...(yield* makeEventStamp()),
-                provider: DRIVER,
-                threadId: input.threadId,
-                turnId,
-                payload: { state: "failed", errorMessage: detailText },
-              });
-              // The agent never answered, so its process may be stuck on the prompt.
-              // Ending the session frees its files; the next turn starts a fresh one.
-              // A busy refusal does not end the session: its own prompt was
-              // rejected, and an older prompt that is genuinely still running
-              // must not be killed by the cleanup of the turn that lost.
-              if (silentText !== undefined) yield* stopSessionInternal(ctx);
-            });
+            return withThreadLock(
+              input.threadId,
+              Effect.gen(function* () {
+                // Cancellation can reject the old prompt instead of returning
+                // a stop reason. Its error cannot settle an admitted steer.
+                if (ctx.stopped || ctx.activeTurnId !== turnId || ctx.pendingSteers > 0) {
+                  supersededPromptFailure = true;
+                  return;
+                }
+                delete ctx.activeTurnId;
+                ctx.session = {
+                  ...ctx.session,
+                  status: "ready",
+                  activeTurnId: undefined,
+                  updatedAt: yield* nowIso,
+                };
+                yield* offerRuntimeEvent({
+                  type: "turn.completed",
+                  ...(yield* makeEventStamp()),
+                  provider: DRIVER,
+                  threadId: input.threadId,
+                  turnId,
+                  payload: { state: "failed", errorMessage: detailText },
+                });
+                // The agent never answered, so its process may be stuck on the prompt.
+                // Ending the session frees its files; the next turn starts a fresh one.
+                // A busy refusal does not end the session: its own prompt was
+                // rejected, and an older prompt that is genuinely still running
+                // must not be killed by the cleanup of the turn that lost.
+                if (silentText !== undefined) yield* stopSessionInternal(ctx);
+              }),
+            );
           }),
           // The cleanup above runs for any cause, but the caller still gets a
           // typed adapter error instead of a defect it cannot describe.
           Effect.catchCause((cause) => {
+            if (supersededPromptFailure)
+              return Effect.succeed({ stopReason: "cancelled" as const });
             if (Cause.hasInterruptsOnly(cause) || cause.reasons.some(Cause.isFailReason)) {
               return Effect.failCause(cause as Cause.Cause<ProviderAdapterError>);
             }
@@ -831,48 +907,80 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
           }),
         );
         yield* ctx.runtime.drainEvents;
-        if (!ctx.stopped && ctx.activeTurnId === turnId) {
-          yield* offerRuntimeEvent({
-            type: "turn.completed",
-            ...(yield* makeEventStamp()),
-            provider: DRIVER,
-            threadId: input.threadId,
-            turnId,
-            payload: {
-              state: response.stopReason === "cancelled" ? "interrupted" : "completed",
-              stopReason: response.stopReason,
-            },
-          });
-        }
-        // Only the turn that still owns the session may settle it. A newer
-        // turn's id must never be cleared by a superseded turn's tail.
-        if (ctx.activeTurnId === turnId) {
-          delete ctx.activeTurnId;
-          ctx.session = {
-            ...ctx.session,
-            status: "ready",
-            activeTurnId: undefined,
-            updatedAt: yield* nowIso,
-          };
-        }
+        yield* withThreadLock(
+          input.threadId,
+          Effect.gen(function* () {
+            // Admission and settlement share the lock: a steer cannot arrive
+            // between the pending-steer check and the terminal event.
+            if (!ctx.stopped && ctx.activeTurnId === turnId && ctx.pendingSteers === 0) {
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: DRIVER,
+                threadId: input.threadId,
+                turnId,
+                payload: {
+                  state: response.stopReason === "cancelled" ? "interrupted" : "completed",
+                  stopReason: response.stopReason,
+                },
+              });
+            }
+            // Only the prompt that still owns the session may settle it.
+            if (ctx.activeTurnId === turnId) {
+              delete ctx.activeTurnId;
+              if (ctx.pendingSteers === 0)
+                ctx.session = {
+                  ...ctx.session,
+                  status: "ready",
+                  activeTurnId: undefined,
+                  updatedAt: yield* nowIso,
+                };
+            }
+          }),
+        );
         return { threadId: input.threadId, turnId } satisfies ProviderTurnStartResult;
       });
 
     const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
       Effect.gen(function* () {
-        // ACP has one prompt in flight per session, so a message that arrives
-        // mid-turn cannot be injected into it. A steer therefore ends the
-        // running turn first and continues in a new turn with the context the
-        // agent already has, instead of sitting silently behind a long turn.
-        // `followUp: "queue"` keeps the old wait-for-it behaviour.
-        if (input.followUp !== "queue") {
+        // Cancel only the ACP prompt, retaining the logical turn and its
+        // running session. Stop alone emits turn.aborted. Publishing that
+        // event for a steer used to settle delegated tasks as interrupted
+        // before their replacement prompt could run.
+        if (input.followUp !== "queue" && process.env.PERSONAL_TASK_STEER_CONTINUITY === "off") {
           const running = sessions.get(input.threadId);
           if (running && !running.stopped && running.activeTurnId) {
             yield* interruptTurn(input.threadId, running.activeTurnId);
           }
         }
+        const continuation =
+          input.followUp === "queue" || process.env.PERSONAL_TASK_STEER_CONTINUITY === "off"
+            ? undefined
+            : yield* withThreadLock(
+                input.threadId,
+                Effect.gen(function* () {
+                  const ctx = sessions.get(input.threadId);
+                  if (
+                    !ctx ||
+                    ctx.stopped ||
+                    ctx.session.status !== "running" ||
+                    !ctx.session.activeTurnId
+                  ) {
+                    return undefined;
+                  }
+                  const turnId = ctx.session.activeTurnId;
+                  ctx.pendingSteers += 1;
+                  if (ctx.activeTurnId) {
+                    // The cancelled prompt's tail no longer owns settlement.
+                    delete ctx.activeTurnId;
+                    yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+                    yield* ctx.runtime.cancel.pipe(Effect.ignore);
+                  }
+                  return { context: ctx, turnId };
+                }),
+              );
         return yield* Effect.flatMap(getTurnQueue(input.threadId), (queue) =>
-          queue.withPermit(runTurn(input)),
+          queue.withPermit(runTurn(input, continuation)),
         );
       });
 
@@ -882,7 +990,7 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
     ) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
-        const resolvedTurnId = turnId ?? ctx.activeTurnId;
+        const resolvedTurnId = turnId ?? ctx.activeTurnId ?? ctx.session.activeTurnId;
         delete ctx.activeTurnId;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* ctx.runtime.cancel.pipe(Effect.ignore);
