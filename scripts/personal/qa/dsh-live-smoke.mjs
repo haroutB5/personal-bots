@@ -21,6 +21,7 @@ import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
 import {
+  DSH_PINNED_VERSION,
   buildDshLaunchPatch,
   serializeDshLaunchPatch,
 } from "../../../apps/server/src/provider/acp/DshAcpSupport.ts";
@@ -30,7 +31,7 @@ const runtimeDir = NodePath.join(
   process.env.USERPROFILE ?? "",
   ".personal-bots",
   "runtimes",
-  "dsh-0.2.1-rc.2",
+  `dsh-${DSH_PINNED_VERSION}`,
 );
 const binJs = NodePath.join(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
 const denyPlugin = NodePath.join(runtimeDir, "hbots-deny-plugin.mjs");

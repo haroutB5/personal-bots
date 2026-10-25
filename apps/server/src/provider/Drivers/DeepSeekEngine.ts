@@ -15,7 +15,7 @@ import type { DeepSeekEngine, DeepSeekSettings } from "@t3tools/contracts";
 export const DEEPSEEK_ENGINE_ENV = "PERSONAL_DEEPSEEK_ENGINE";
 
 /** Install directory name the pinned runtime lives under, and its version. */
-export const DSH_PINNED_VERSION = "0.2.1-rc.2";
+export const DSH_PINNED_VERSION = "0.2.1-rc.3";
 export const DSH_RUNTIME_DIR_NAME = `dsh-${DSH_PINNED_VERSION}`;
 
 /** The harness home inside a data root: `<stateDir>/dsh`. */

@@ -25,6 +25,7 @@ import {
   serializeDshLaunchPatch,
   escapeDshPersonaText,
   DSH_COLON_STUB_MAX_LENGTH,
+  DSH_PINNED_VERSION,
   DSH_PLUGIN_INVENTORY_ROW_ID,
   DSH_SESSION_LOG_ROW_ID,
   DSH_TELEMETRY_ROW_ID,
@@ -349,9 +350,9 @@ it.layer(layer)("DshAcpSupport", (it) => {
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const pinned = yield* resolveDshRuntime({ dshRuntimePath: "" });
-      expect(pinned.version).toBe("0.2.1-rc.2");
+      expect(pinned.version).toBe(DSH_PINNED_VERSION);
       expect(pinned.runtimeDir.replace(/\\/g, "/")).toContain(
-        "/.personal-bots/runtimes/dsh-0.2.1-rc.2",
+        `/.personal-bots/runtimes/dsh-${DSH_PINNED_VERSION}`,
       );
       expect(
         pinned.binJs.replace(/\\/g, "/").endsWith("/node_modules/@deepseek-ai/dsh/lib/bin.js"),
