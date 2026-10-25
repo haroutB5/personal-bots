@@ -125,11 +125,6 @@ async function main() {
     case "build": {
       assertMutationAllowed(paths);
       ensureDirs([paths.releasesDir, paths.runDir, paths.logsDir, paths.workDir]);
-      const running = proc.readState(paths);
-      if (!values["allow-dirty"] && running && proc.isServerProcess(Number(running.pid), running)) {
-        const dirty = proc.commandLine(Number(running.pid)) || "";
-        if (!dirty) warn("Could not read the running process command line; continuing.");
-      }
       const staged = stageRelease({
         repoRoot,
         paths,

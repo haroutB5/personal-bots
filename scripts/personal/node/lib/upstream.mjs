@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { runSmoke } from "./smoke.mjs";
 import { stageRelease } from "./build.mjs";
 import { activeReleaseName } from "./release.mjs";
-import { restartServer, startServer, stopServer } from "./server.mjs";
+import { restartServer } from "./server.mjs";
 
 function git(repoRoot, args, { allowFail = false } = {}) {
   const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });

@@ -9,7 +9,6 @@ import { defaultPort } from "./paths.mjs";
 import * as proc from "./proc.mjs";
 import { activeReleaseName, pruneReleases, resolveRelease, setActiveRelease } from "./release.mjs";
 import { ensureDirs, loadRepoEnv, log, readJson, utcStamp } from "./util.mjs";
-
 export function logFileName(date = new Date()) {
   const p = (n) => String(n).padStart(2, "0");
   return `server-${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}.log`;
