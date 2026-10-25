@@ -329,6 +329,15 @@ export interface PersonalTaskResumeNote {
  */
 export const PERSONAL_TASK_STEER_NOTE_PREFIX = "steer:";
 
+/**
+ * Resume notes whose id starts with this are the task runner telling a
+ * delegating lead that a child task is still waiting. They share the
+ * resume-notes table and reach the lead in its next turn, but they must never
+ * wake a task that is waiting for the user (the same reason steer notes do
+ * not): they are information, not a reason to resume.
+ */
+export const PERSONAL_TASK_NOTICE_NOTE_PREFIX = "notice:";
+
 export interface PersonalTaskSteerNote {
   readonly noteId: string;
   readonly text: string;
@@ -863,6 +872,7 @@ export const make = Effect.gen(function* () {
               SELECT task_id FROM personal_task_resume_notes
               WHERE delivered_at IS NULL
                 AND note_id NOT LIKE ${`${PERSONAL_TASK_STEER_NOTE_PREFIX}%`}
+                AND note_id NOT LIKE ${`${PERSONAL_TASK_NOTICE_NOTE_PREFIX}%`}
             )
           ORDER BY created_at ASC, rowid ASC
         `,

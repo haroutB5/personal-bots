@@ -20,6 +20,7 @@ import {
   heldReplyTexts,
   isWaitingOnBackground,
   newBackgroundWait,
+  saysItIsWaiting,
   stepBackgroundWait,
   type BackgroundWait,
 } from "./taskBackgroundPolicy.ts";
@@ -32,10 +33,15 @@ import {
 } from "./taskLimitPolicy.ts";
 import {
   BACKGROUND_SESSION_ENDED_NOTE,
+  STATED_WAIT_SESSION_ENDED_NOTE,
   backgroundCapNote,
   composeTaskReplies,
+  statedWaitCapNote,
+  waitNoticeMinutes,
+  waitNoticeText,
   withNote,
 } from "./taskResultPolicy.ts";
+import { PERSONAL_TASK_NOTICE_NOTE_PREFIX } from "./PersonalTaskRepository.ts";
 import { isWaitingForUser, sessionIsAlive } from "./taskSessionPolicy.ts";
 import type { TaskCore } from "./taskCore.ts";
 import type { TaskDispatch } from "./taskDispatch.ts";
@@ -156,40 +162,98 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   });
 
   /**
+   * A wait has run long enough that the delegating lead should know. It is a
+   * note on the lead's task, delivered in its next turn, and never closes
+   * either task: Harout's rule is that only the bot's own finish or failure,
+   * or the orchestrator, ends a task. A root task has no lead; the log line
+   * is all there is.
+   */
+  const notifyWaitLead = Effect.fn("PersonalTaskService.notifyWaitLead")(function* (
+    attempt: PersonalTaskAttempt,
+    stated: boolean,
+  ) {
+    const task = yield* repository.getTask(attempt.taskId);
+    if (Option.isNone(task)) return;
+    const handoff = yield* repository.getHandoffByChild(attempt.taskId);
+    if (Option.isNone(handoff)) {
+      yield* Effect.logWarning("personal task still waiting; it has no delegating lead to tell", {
+        taskId: attempt.taskId,
+        threadId: attempt.providerThreadId,
+        statedWait: stated,
+      });
+      return;
+    }
+    yield* repository.insertResumeNote({
+      noteId: `${PERSONAL_TASK_NOTICE_NOTE_PREFIX}waiting:${attempt.taskId}:${attempt.attempt}`,
+      taskId: handoff.value.parentTaskId,
+      text: waitNoticeText({
+        title: task.value.title,
+        taskId: attempt.taskId,
+        minutes: waitNoticeMinutes(),
+        stated,
+      }),
+      restartSession: false,
+      createdAt: yield* DateTime.now,
+    });
+    yield* Effect.logWarning("personal task still waiting; told its delegating lead", {
+      taskId: attempt.taskId,
+      parentTaskId: handoff.value.parentTaskId,
+      threadId: attempt.providerThreadId,
+      statedWait: stated,
+    });
+  });
+
+  /**
    * Whether a Claude turn that just ended cleanly is the task's last. Claude
    * Code lets a turn end while commands it started in the background run on,
    * then runs a new turn by itself when they finish; the bot's report is in
    * that turn. So the attempt stays active while such work is live, remembers
    * the reply of every turn that ended with work left (`last` is the turn that
-   * just ended), and finishes on the turn that ends after it. Returns "wait",
-   * or the note to add to the result (empty when there is nothing to say).
+   * just ended), and finishes on the turn that ends after it. The same holds
+   * when the turn's own reply says it is still waiting on something the app
+   * cannot see run (another chat's push, the heavy-job lock): no follow-up
+   * turn comes for that, so the words have to keep the task open. Returns
+   * "wait", or the note to add to the result (empty when there is nothing to
+   * say).
    */
   const backgroundOutcome = Effect.fn("PersonalTaskService.backgroundOutcome")(function* (
     attempt: PersonalTaskAttempt,
     session: OrchestrationSession,
     last: ProjectionThreadMessage | undefined,
   ) {
-    const pending =
-      session.providerName === BACKGROUND_WAIT_PROVIDER
-        ? liveness
-            .getThreadLiveTaskIds(attempt.providerThreadId)
-            .filter((taskId) => !backgroundFor(attempt).baseline.has(taskId))
-        : [];
+    const claude = session.providerName === BACKGROUND_WAIT_PROVIDER;
+    const pending = claude
+      ? liveness
+          .getThreadLiveTaskIds(attempt.providerThreadId)
+          .filter((taskId) => !backgroundFor(attempt).baseline.has(taskId))
+      : [];
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const step = stepBackgroundWait(backgroundFor(attempt), {
       pending,
       sessionUpdatedAt: session.updatedAt,
       nowMs,
       last: last === undefined ? undefined : { messageId: last.messageId, text: last.text },
+      statedWait: claude && last !== undefined && saysItIsWaiting(last.text),
     });
     backgroundByThread.set(attempt.providerThreadId, step.state);
     if (step.kind === "wait") {
       if (step.started) {
-        yield* Effect.logInfo("personal task waiting on background work", {
+        yield* Effect.logInfo("personal task waiting for its work to finish", {
           taskId: attempt.taskId,
           threadId: attempt.providerThreadId,
           backgroundTasks: pending,
+          statedWait: step.stated,
         });
+      }
+      if (step.noticeDue) {
+        yield* notifyWaitLead(attempt, step.stated).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("personal task could not tell its delegating lead it is waiting", {
+              taskId: attempt.taskId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
       }
       if (step.publishPreview) {
         yield* publishWaitingPreview(attempt, step.state).pipe(
@@ -204,7 +268,15 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
       return "wait" as const;
     }
     if (step.capped) {
-      yield* Effect.logWarning("personal task closed with background work still running", {
+      if (step.capSource === "stated") {
+        yield* Effect.logWarning("personal task closed after a runaway stated wait", {
+          taskId: attempt.taskId,
+          threadId: attempt.providerThreadId,
+          statedForMs: nowMs - (step.state.statedWaitSinceMs ?? nowMs),
+        });
+        return statedWaitCapNote();
+      }
+      yield* Effect.logWarning("personal task closed after a runaway background command", {
         taskId: attempt.taskId,
         threadId: attempt.providerThreadId,
         backgroundTasks: pending,
@@ -321,9 +393,17 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
         // the bot had already replied, so its replies are the result.
         if (session.status === "stopped" && waitingOnBackground(attempt)) {
           const last = yield* latestReply();
+          const wait = backgroundByThread.get(attempt.providerThreadId);
+          const statedOnly =
+            wait?.attemptKey === backgroundAttemptKey(attempt) &&
+            wait.pendingReadyAt === null &&
+            wait.statedWaitMessageId !== null;
           yield* finishAttempt(attempt, {
             kind: "completed",
-            summary: withNote(composeAttemptReplies(attempt, last), BACKGROUND_SESSION_ENDED_NOTE),
+            summary: withNote(
+              composeAttemptReplies(attempt, last),
+              statedOnly ? STATED_WAIT_SESSION_ENDED_NOTE : BACKGROUND_SESSION_ENDED_NOTE,
+            ),
           });
           return;
         }

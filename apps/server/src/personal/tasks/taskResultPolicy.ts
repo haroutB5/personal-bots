@@ -1,6 +1,9 @@
 import type { PersonalTask } from "@t3tools/contracts";
 
-import { PERSONAL_TASK_BACKGROUND_WAIT_MS } from "./taskBackgroundPolicy.ts";
+import {
+  PERSONAL_TASK_WAIT_HARD_CAP_MS,
+  PERSONAL_TASK_WAIT_NOTICE_MS,
+} from "./taskBackgroundPolicy.ts";
 
 /**
  * How a task's result is put together and what lists show of it: the reply of
@@ -8,12 +11,46 @@ import { PERSONAL_TASK_BACKGROUND_WAIT_MS } from "./taskBackgroundPolicy.ts";
  * feed carries instead of the full text. Pure.
  */
 
-/** Added to the result of a task closed by the background-work cap. */
+/** A length of time as a person reads it: "20 minutes", "8 hours", "1 hour 30 minutes". */
+const durationWords = (ms: number): string => {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  const hourWords = `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  return rest === 0 ? hourWords : `${hourWords} ${rest} minutes`;
+};
+
+/** Added to the result of a task closed by the runaway background-work cap. */
 export const backgroundCapNote = (count: number) =>
-  `(Closed by the task runner: ${count === 1 ? "a background command" : `${count} background commands`} the bot started ${count === 1 ? "was" : "were"} still running ${Math.round(PERSONAL_TASK_BACKGROUND_WAIT_MS / 60_000)} minutes after this reply. Anything the bot reports later is in its chat, not here.)`;
+  `(Closed by the task runner: ${count === 1 ? "a background command" : `${count} background commands`} the bot started ${count === 1 ? "was" : "were"} still running ${durationWords(PERSONAL_TASK_WAIT_HARD_CAP_MS)} after this reply. Anything the bot reports later is in its chat, not here.)`;
+
+/** Added to the result of a task closed while its own reply said it was still waiting. */
+export const statedWaitCapNote = () =>
+  `(Closed by the task runner: the bot's reply still said it was waiting ${durationWords(PERSONAL_TASK_WAIT_HARD_CAP_MS)} after it was written, and no turn has run since. Anything the bot reports later is in its chat, not here.)`;
+
+/**
+ * The notice a waiting task's delegating lead gets after
+ * {@link PERSONAL_TASK_WAIT_NOTICE_MS}. It never closes the task: the lead
+ * decides whether to let it run or stop it.
+ */
+export const waitNoticeText = (input: {
+  readonly title: string;
+  readonly taskId: string;
+  readonly minutes: number;
+  readonly stated: boolean;
+}) =>
+  `Task "${input.title}" (${input.taskId}) has been running ${input.minutes === 1 ? "1 minute" : `${input.minutes} minutes`} waiting on ${input.stated ? "work its own reply says it is still waiting for" : "background work it started"}. It has not been closed and keeps its slot: it ends when the bot reports, fails, or you stop or steer it. Use get_task to see its replies, or stop_task if it is stuck.`;
+
+/** The minutes in a wait notice, at least one. */
+export const waitNoticeMinutes = () =>
+  Math.max(1, Math.round(PERSONAL_TASK_WAIT_NOTICE_MS / 60_000));
 
 export const BACKGROUND_SESSION_ENDED_NOTE =
   "(Closed by the task runner: the bot's session ended while background work it started was still running.)";
+
+export const STATED_WAIT_SESSION_ENDED_NOTE =
+  "(Closed by the task runner: the bot's session ended while its reply still said it was waiting for work to finish.)";
 
 /** `summary` followed by `note` on its own paragraph; either may be empty. */
 export const withNote = (summary: string, note: string) =>

@@ -2757,7 +2757,7 @@ it.effect(
 );
 
 it.effect(
-  "background work that never finishes closes the task after the cap, with its latest reply and a note",
+  "background work is never closed at the notice mark; only the runaway cap closes it, with a note",
   () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -2769,8 +2769,25 @@ it.effect(
       yield* backgroundStarted(thread, "dev-server");
       yield* endClaudeTurn(harness, thread, turnId, "The dev server is up on :3000.");
 
+      // Harout's rule (25 Oct): no time-based close while the bot's work runs.
+      // 20 minutes in is only the point where the delegating lead is told.
       yield* TestClock.adjust(
-        `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_WAIT_MS - 60_000} millis`,
+        `${PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS - 60_000} millis`,
+      );
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      yield* TestClock.adjust("1 minute");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      yield* TestClock.adjust("10 minutes");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // A runaway command is the one thing the hard cap catches.
+      yield* TestClock.adjust(
+        `${PersonalTaskService.PERSONAL_TASK_WAIT_HARD_CAP_MS - 31 * 60_000} millis`,
       );
       yield* sweepNow;
       expect((yield* reload(root.taskId)).status).toBe("running");
@@ -2783,7 +2800,7 @@ it.effect(
         summary: `The dev server is up on :3000.\n\n${PersonalTaskService.backgroundCapNote(1)}`,
       });
       expect(PersonalTaskService.backgroundCapNote(1)).toContain(
-        "a background command the bot started was still running 20 minutes after this reply",
+        "a background command the bot started was still running 8 hours after this reply",
       );
     }).pipe(Effect.provide(makeLayer(harness)));
   },
@@ -2871,6 +2888,209 @@ it.effect("a steer reaches a task that is waiting on background work, and its tu
         "Server gates green; web gates skipped.",
       ]),
     });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// 25 Oct 2026: three Frontend tasks delegated by the CTO ended "completed" with
+// a mid-work result. The wait on tracked background work starts fine (the log
+// shows it), and so does the follow-up turn. What ended them was a turn whose
+// own reply said it was still waiting, with nothing left for the app to track:
+// Claude Code starts no further turn for a push by another chat, the heavy-job
+// lock, or a detached proof run.
+
+it.effect(
+  "a follow-up turn that still says it is waiting keeps the task running; its report completes it",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("bg-stated-follow-up");
+      const thread = threadOf(root);
+
+      const first = yield* beginClaudeTurn(harness, thread);
+      yield* backgroundStarted(thread, "b-gates");
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        first,
+        "Waiting on the gates; I'll report when they finish.",
+      );
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // The gates end and Claude Code runs the follow-up turn by itself; its
+      // reply says a new wait (the proof) that nothing tracks.
+      yield* TestClock.adjust("1 minute");
+      yield* backgroundFinished(thread, "b-gates");
+      const followUp = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        followUp,
+        "Still running the Brave proof; I'll report when it finishes.",
+      );
+      // Before the fix this turn completed the task with the mid-work sentence.
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // Past the one-minute follow-up grace, and still not a report.
+      yield* TestClock.adjust(
+        `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS + 1} millis`,
+      );
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // The bot's own report, in a turn the app did not have to wait for.
+      yield* TestClock.adjust("2 minutes");
+      const report = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        report,
+        "## Branch ready: all gates and the proof green.",
+      );
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({
+        summary: PersonalTaskService.composeTaskReplies([
+          "Waiting on the gates; I'll report when they finish.",
+          "Still running the Brave proof; I'll report when it finishes.",
+          "## Branch ready: all gates and the proof green.",
+        ]),
+      });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a wait is told to the delegating lead once, and neither task is closed", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const repository = yield* PersonalTaskRepository.PersonalTaskRepository;
+    const parent = yield* createRoot("bg-notice-parent");
+    const child = yield* service.delegate({
+      parentTaskId: parent.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Notice child"),
+    });
+    yield* service.drain;
+    const childTask = yield* reload(child.taskId);
+    const thread = threadOf(childTask);
+
+    // The lead is parked waiting for the user while its child waits. The notice
+    // must reach it in a later turn but never wake it (a resume needs the user).
+    const parentThread = threadOf(parent);
+    const parentTurn = yield* beginTurn(harness, parentThread);
+    yield* service.waitForUser({ taskId: parent.taskId });
+    yield* endTurn(harness, parentThread, parentTurn, "I need the API key first.");
+    expect((yield* reload(parent.taskId)).status).toBe("waiting_for_user");
+
+    const turnId = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundStarted(thread, "b-gates");
+    yield* endClaudeTurn(harness, thread, turnId, "Started the gates.");
+
+    yield* TestClock.adjust(`${PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS - 60_000} millis`);
+    yield* sweepNow;
+    expect(yield* repository.listUndeliveredNotes(parent.taskId)).toHaveLength(0);
+
+    yield* TestClock.adjust("1 minute");
+    yield* sweepNow;
+    const notes = yield* repository.listUndeliveredNotes(parent.taskId);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.noteId.startsWith("notice:")).toBe(true);
+    expect(notes[0]!.text).toContain("has been running 20 minutes waiting on background work");
+    expect(notes[0]!.text).toContain("It has not been closed");
+    // The notice is information for the lead; the child keeps running and the
+    // lead stays parked for the user, not woken by a notice.
+    expect((yield* reload(child.taskId)).status).toBe("running");
+    expect((yield* reload(parent.taskId)).status).toBe("waiting_for_user");
+    expect(yield* repository.listTasksAwaitingResume()).toEqual([]);
+
+    // One notice per attempt, however long the wait goes on.
+    yield* TestClock.adjust("30 minutes");
+    yield* sweepNow;
+    expect(yield* repository.listUndeliveredNotes(parent.taskId)).toHaveLength(1);
+    expect((yield* reload(child.taskId)).status).toBe("running");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a task whose own reply waits on the heavy-job lock stays running, takes a steer, and reports",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("bg-stated-lock");
+      const thread = threadOf(root);
+
+      const first = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        first,
+        "The build is queued behind another job that holds the machine-wide heavy lock. I'll pick the work up again when it starts and finishes.",
+      );
+      // Nothing was left running for the app to track: the words have to hold it.
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      expect((yield* reload(root.taskId)).result?.waitingOnBackgroundSince).toBeDefined();
+
+      yield* TestClock.adjust("5 minutes");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // A waiting task is still between turns, so the CTO can steer it.
+      const steered = yield* service.steer({
+        taskId: root.taskId,
+        fromName: "CTO",
+        message: "Skip the web gates.",
+      });
+      expect(steered.outcome).toBe("steered");
+      const steerTurn = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(harness, thread, steerTurn, "Build done; web gates skipped.");
+
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({
+        summary: PersonalTaskService.composeTaskReplies([
+          "The build is queued behind another job that holds the machine-wide heavy lock. I'll pick the work up again when it starts and finishes.",
+          "Build done; web gates skipped.",
+        ]),
+      });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a stated wait is held past the notice mark and closes only at the runaway cap", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("bg-stated-cap");
+    const thread = threadOf(root);
+    const first = yield* beginClaudeTurn(harness, thread);
+    yield* endClaudeTurn(harness, thread, first, "I'll wait for the push from the other chat.");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    yield* TestClock.adjust(`${PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS - 60_000} millis`);
+    yield* sweepNow;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    yield* TestClock.adjust(
+      `${PersonalTaskService.PERSONAL_TASK_WAIT_HARD_CAP_MS - PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS} millis`,
+    );
+    yield* sweepNow;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    yield* TestClock.adjust("1 minute");
+    yield* sweepNow;
+    const done = yield* reload(root.taskId);
+    expect(done.status).toBe("completed");
+    expect(done.result).toEqual({
+      summary: `I'll wait for the push from the other chat.\n\n${PersonalTaskService.statedWaitCapNote()}`,
+    });
+    expect(PersonalTaskService.statedWaitCapNote()).toContain(
+      "still said it was waiting 8 hours after it was written",
+    );
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
@@ -3065,7 +3285,7 @@ it.effect("a task closed by the background cap keeps the report and its follow-u
     yield* endClaudeTurn(harness, thread, second, "Server still up.");
 
     yield* TestClock.adjust(
-      `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_WAIT_MS - 60_000} millis`,
+      `${PersonalTaskService.PERSONAL_TASK_WAIT_HARD_CAP_MS - 60_000} millis`,
     );
     yield* sweepNow;
     expect((yield* reload(root.taskId)).status).toBe("running");

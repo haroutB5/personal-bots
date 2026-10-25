@@ -4,10 +4,12 @@ import * as DateTime from "effect/DateTime";
 import {
   BACKGROUND_WAIT_PROVIDER,
   PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS,
-  PERSONAL_TASK_BACKGROUND_WAIT_MS,
+  PERSONAL_TASK_WAIT_HARD_CAP_MS,
+  PERSONAL_TASK_WAIT_NOTICE_MS,
   heldReplyTexts,
   isWaitingOnBackground,
   newBackgroundWait,
+  saysItIsWaiting,
   stepBackgroundWait,
   type BackgroundWait,
 } from "./taskBackgroundPolicy.ts";
@@ -31,7 +33,10 @@ import {
   TASK_SUMMARY_RESULT_PREVIEW_CHARS,
   backgroundCapNote,
   composeTaskReplies,
+  statedWaitCapNote,
   toTaskSummary,
+  waitNoticeMinutes,
+  waitNoticeText,
   withNote,
   withoutWaitingMarker,
 } from "./taskResultPolicy.ts";
@@ -267,10 +272,20 @@ describe("result policy", () => {
     expect(withNote("a", "n")).toBe("a\n\nn");
   });
 
-  it("names the minutes of the background cap in the note", () => {
+  it("names the runaway cap in the note and the notice's minutes in its text", () => {
     expect(backgroundCapNote(1)).toContain("a background command");
     expect(backgroundCapNote(3)).toContain("3 background commands");
-    expect(backgroundCapNote(1)).toContain(`${PERSONAL_TASK_BACKGROUND_WAIT_MS / 60_000} minutes`);
+    expect(backgroundCapNote(1)).toContain("8 hours");
+    expect(statedWaitCapNote()).toContain("8 hours");
+    expect(
+      waitNoticeText({
+        title: "Swipe tabs",
+        taskId: "t1",
+        minutes: waitNoticeMinutes(),
+        stated: true,
+      }),
+    ).toContain("waiting on work its own reply says it is still waiting for");
+    expect(waitNoticeMinutes()).toBe(20);
   });
 
   it("drops the waiting mark only", () => {
@@ -422,6 +437,7 @@ describe("background policy", () => {
     sessionUpdatedAt: iso(NOW),
     nowMs: NOW,
     last: { messageId: "m1", text: "Started the build." },
+    statedWait: false,
     ...overrides,
   });
 
@@ -458,13 +474,13 @@ describe("background policy", () => {
     expect(blank.state.replies).toEqual([]);
   });
 
-  it("closes with a note once nothing has run for the whole wait", () => {
+  it("closes with a note only once the runaway cap is reached", () => {
     const first = stepBackgroundWait(newBackgroundWait(key), input());
     const late = stepBackgroundWait(
       first.state,
-      input({ nowMs: NOW + PERSONAL_TASK_BACKGROUND_WAIT_MS, last: undefined }),
+      input({ nowMs: NOW + PERSONAL_TASK_WAIT_HARD_CAP_MS, last: undefined }),
     );
-    expect(late).toMatchObject({ kind: "finish", capped: true });
+    expect(late).toMatchObject({ kind: "finish", capped: true, capSource: "background" });
   });
 
   it("when the work ends, waits for the turn that reports it, then lets the latest reply stand", () => {
@@ -517,5 +533,269 @@ describe("background policy", () => {
     const before = newBackgroundWait(key);
     stepBackgroundWait(before, input());
     expect(before).toEqual(newBackgroundWait(key));
+  });
+});
+
+describe("stated wait: the bot's own words", () => {
+  const key = "task:1";
+  const input = (overrides: Partial<Parameters<typeof stepBackgroundWait>[1]> = {}) => ({
+    pending: [] as ReadonlyArray<string>,
+    sessionUpdatedAt: iso(NOW),
+    nowMs: NOW,
+    last: { messageId: "m1", text: "Started the build." },
+    statedWait: false,
+    ...overrides,
+  });
+  const waiting = (text: string, messageId = "m1") => ({
+    messageId,
+    text,
+  });
+
+  it("recognises the replies the live tasks ended on, and not a final report", () => {
+    // 25 Oct, Frontend tasks that settled mid-work.
+    for (const text of [
+      "The build is queued behind another job that holds the machine-wide heavy lock. I'll pick the work up again when it starts and finishes.",
+      "Typecheck and lint are queued behind the other job. I'll continue with vitest and the build once they finish.",
+      "The swipe branch isn't pushed yet, and its other chat is still running its proof script. I'll wait for the push.",
+      "The swipe branch is still not on origin after about 10 more minutes. I've re-armed the watch on the remote ref. I'll merge the branch, rerun the gate and report as soon as it appears.",
+      "The Brave proof is running against the fresh build; I'll report when it finishes.",
+      "Still running the Brave proof; I'll read the results once it finishes.",
+      "The full vitest run is still going in the background, so I have no result yet. I'll pick this up when it finishes.",
+      "I'm waiting on it and have changed nothing since 389d7e32.",
+      "Waiting for the commit hook and the evidence check to finish.",
+    ]) {
+      expect(saysItIsWaiting(text), text).toBe(true);
+    }
+    for (const text of [
+      "**Report to CTO: 0.205.4 build is ready for QA. Nothing is deployed.** Head is 389d7e32, working tree clean.",
+      "**hbots 1.66.93 is built, gated, staged and pushed, not activated. DevOps can deploy it.**",
+      "Done, gates green.",
+      "Merged cleanly. Updating the CHANGELOG entry now.",
+      "The dev server is up on :3000.",
+      "The dev server is still running on :3000 for QA.",
+      "Server stopped, port 3902 free, tree clean, HEAD pushed.",
+      "Nothing else is still running.",
+      "No background work is left waiting.",
+    ]) {
+      expect(saysItIsWaiting(text), text).toBe(false);
+    }
+  });
+
+  it("reads only the newest line, so an old phrase in a long report cannot hold it", () => {
+    expect(saysItIsWaiting("I'll wait for the push.\n\nAll done now: gates green.")).toBe(false);
+    expect(saysItIsWaiting("Gates green.\n\nI'll wait for the push.")).toBe(true);
+  });
+
+  it("holds a task whose own reply says it waits on work the app cannot see", () => {
+    const step = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({
+        last: waiting(
+          "The build is queued behind the heavy lock. I'll pick it up when it finishes.",
+        ),
+        statedWait: true,
+      }),
+    );
+    expect(step).toMatchObject({ kind: "wait", stated: true });
+    expect(step.state.statedWaitSinceMs).toBe(NOW);
+    expect(isWaitingOnBackground(step.state, key)).toBe(true);
+    expect(step.state.replies).toEqual([
+      {
+        messageId: "m1",
+        text: "The build is queued behind the heavy lock. I'll pick it up when it finishes.",
+      },
+    ]);
+  });
+
+  it("holds a follow-up turn that itself says it is still waiting", () => {
+    const first = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({ pending: ["bg-1"], last: waiting("Waiting on the gates."), statedWait: true }),
+    );
+    // The tracked work ends; the turn that follows still says it is waiting.
+    const followUp = stepBackgroundWait(
+      first.state,
+      input({
+        nowMs: NOW + 60_000,
+        sessionUpdatedAt: iso(NOW + 60_000),
+        last: waiting("Still running the Brave proof; I'll report when it finishes.", "m2"),
+        statedWait: true,
+      }),
+    );
+    expect(followUp).toMatchObject({ kind: "wait", stated: true });
+    // Without the words this is exactly the path that ended the live tasks.
+    const silent = stepBackgroundWait(
+      first.state,
+      input({
+        nowMs: NOW + 60_000,
+        sessionUpdatedAt: iso(NOW + 60_000),
+        last: waiting("Progress: half done.", "m2"),
+        statedWait: false,
+      }),
+    );
+    expect(silent).toMatchObject({ kind: "finish", capped: false });
+    // A real report after the wait still ends the task.
+    const report = stepBackgroundWait(
+      followUp.state,
+      input({
+        nowMs: NOW + 120_000,
+        sessionUpdatedAt: iso(NOW + 120_000),
+        last: waiting("All gates green; pushed 389d7e32.", "m3"),
+        statedWait: false,
+      }),
+    );
+    expect(report).toMatchObject({ kind: "finish", capped: false, capSource: null });
+  });
+
+  it("keeps waiting past the one-minute follow-up grace while the reply says it waits", () => {
+    const waitingState = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({ pending: ["bg-1"], last: waiting("Waiting on the gates."), statedWait: true }),
+    );
+    const cleared = stepBackgroundWait(
+      waitingState.state,
+      input({
+        nowMs: NOW + 30_000,
+        sessionUpdatedAt: waitingState.state.pendingReadyAt!,
+        statedWait: true,
+      }),
+    );
+    expect(cleared).toMatchObject({ kind: "wait" });
+    const afterGrace = stepBackgroundWait(
+      cleared.state,
+      input({
+        nowMs: NOW + 30_000 + PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS + 1,
+        sessionUpdatedAt: waitingState.state.pendingReadyAt!,
+        last: undefined,
+        statedWait: false,
+      }),
+    );
+    // The last reply still says it waits, so the one-minute clock no longer ends it.
+    expect(afterGrace).toMatchObject({ kind: "wait", stated: true });
+    const reportTurn = stepBackgroundWait(
+      afterGrace.state,
+      input({
+        nowMs: NOW + 400_000,
+        sessionUpdatedAt: iso(NOW + 400_000),
+        last: waiting("Gates green.", "m2"),
+        statedWait: false,
+      }),
+    );
+    expect(reportTurn).toMatchObject({ kind: "finish", capped: false });
+  });
+
+  it("never closes a stated wait at the notice mark, and closes it only at the runaway cap", () => {
+    const waitingState = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({ last: waiting("I'll wait for the push."), statedWait: true }),
+    );
+    const notice = stepBackgroundWait(
+      waitingState.state,
+      input({
+        nowMs: NOW + PERSONAL_TASK_WAIT_NOTICE_MS,
+        sessionUpdatedAt: iso(NOW + PERSONAL_TASK_WAIT_NOTICE_MS),
+        last: undefined,
+        statedWait: false,
+      }),
+    );
+    expect(notice).toMatchObject({ kind: "wait", stated: true, noticeDue: true });
+    const again = stepBackgroundWait(
+      notice.state,
+      input({
+        nowMs: NOW + PERSONAL_TASK_WAIT_NOTICE_MS + 30_000,
+        sessionUpdatedAt: iso(NOW + PERSONAL_TASK_WAIT_NOTICE_MS + 30_000),
+        last: undefined,
+        statedWait: false,
+      }),
+    );
+    expect(again).toMatchObject({ kind: "wait", noticeDue: false });
+    const beforeCap = stepBackgroundWait(
+      again.state,
+      input({
+        nowMs: NOW + PERSONAL_TASK_WAIT_HARD_CAP_MS - 1,
+        sessionUpdatedAt: iso(NOW + PERSONAL_TASK_WAIT_HARD_CAP_MS - 1),
+        last: undefined,
+        statedWait: false,
+      }),
+    );
+    expect(beforeCap).toMatchObject({ kind: "wait" });
+    const afterCap = stepBackgroundWait(
+      beforeCap.state,
+      input({
+        nowMs: NOW + PERSONAL_TASK_WAIT_HARD_CAP_MS,
+        sessionUpdatedAt: iso(NOW + PERSONAL_TASK_WAIT_HARD_CAP_MS),
+        last: undefined,
+        statedWait: false,
+      }),
+    );
+    expect(afterCap).toMatchObject({ kind: "finish", capped: true, capSource: "stated" });
+  });
+
+  it("a later waiting reply does not restart the runaway clock", () => {
+    const first = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({ last: waiting("I'll wait for the push."), statedWait: true }),
+    );
+    const second = stepBackgroundWait(
+      first.state,
+      input({
+        nowMs: NOW + 30 * 60_000,
+        sessionUpdatedAt: iso(NOW + 30 * 60_000),
+        last: waiting("Still waiting; I re-armed the watch for it.", "m2"),
+        statedWait: true,
+      }),
+    );
+    expect(second).toMatchObject({ kind: "wait" });
+    expect(second.state.statedWaitSinceMs).toBe(NOW);
+    expect(second.state.statedWaitMessageId).toBe("m2");
+  });
+
+  it("holds tracked work through the notice mark and only the runaway cap closes it", () => {
+    const first = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({
+        pending: ["bg-1"],
+        last: waiting("The gate is queued behind the lock."),
+        statedWait: true,
+      }),
+    );
+    const notice = stepBackgroundWait(
+      first.state,
+      input({
+        pending: ["bg-1"],
+        nowMs: NOW + PERSONAL_TASK_WAIT_NOTICE_MS,
+        last: undefined,
+        statedWait: false,
+      }),
+    );
+    expect(notice).toMatchObject({ kind: "wait", noticeDue: true });
+    const longRun = stepBackgroundWait(
+      notice.state,
+      input({
+        pending: ["bg-1"],
+        nowMs: NOW + PERSONAL_TASK_WAIT_HARD_CAP_MS - 1,
+        last: undefined,
+        statedWait: false,
+      }),
+    );
+    expect(longRun).toMatchObject({ kind: "wait" });
+    const runaway = stepBackgroundWait(
+      longRun.state,
+      input({
+        pending: ["bg-1"],
+        nowMs: NOW + PERSONAL_TASK_WAIT_HARD_CAP_MS,
+        last: undefined,
+        statedWait: false,
+      }),
+    );
+    expect(runaway).toMatchObject({ kind: "finish", capped: true, capSource: "background" });
+  });
+
+  it("ends a silent task with no tracked work exactly as it always has", () => {
+    const step = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({ last: waiting("The dev server is up on :3000."), statedWait: false }),
+    );
+    expect(step).toMatchObject({ kind: "finish", capped: false, capSource: null });
   });
 });
