@@ -14,24 +14,20 @@ import {
   threadPercent,
 } from "./linuxCounters.ts";
 
-const procStat = (cpu: ReadonlyArray<number>, cpu0: ReadonlyArray<number>) => `cpu  ${cpu.join(" ")}
-${cpu0.map((value, index) => `cpu${index} ${value} 0 0 0 0 0 0 0 0`).join("\n")}
-intr 0
-btime 1700000000
-processes 1
-`;
+const procStat = (total: string, threads: ReadonlyArray<string>): string =>
+  `cpu  ${total}\n${threads.map((line, index) => `cpu${index} ${line}`).join("\n")}\nintr 0\nbtime 1700000000\nprocesses 1\n`;
 
 describe("linuxCounters", () => {
   it("reads the total, every thread and the boot time from /proc/stat", () => {
-    const parsed = parseProcStat(procStat([100, 0, 50, 800, 50, 0, 0, 0], [10, 0, 5, 80, 5]));
+    const parsed = parseProcStat(procStat("100 0 50 800 50 0 0 0", ["10 0 5 80 5 0 0 0"]));
     expect(parsed.total).toEqual({ name: "cpu", busy: 150, total: 1000 });
     expect(parsed.threads).toEqual([{ name: "cpu0", busy: 15, total: 100 }]);
     expect(parsed.bootAtMs).toBe(1_700_000_000_000);
   });
 
   it("computes whole-machine and per-thread percentages from two readings", () => {
-    const first = parseProcStat(procStat([100, 0, 0, 100, 0, 0, 0, 0], [10, 0, 0, 10]));
-    const second = parseProcStat(procStat([150, 0, 0, 150, 0, 0, 0, 0], [20, 0, 0, 20]));
+    const first = parseProcStat(procStat("100 0 0 100 0 0 0 0", ["10 0 0 10 0 0 0 0"]));
+    const second = parseProcStat(procStat("150 0 0 150 0 0 0 0", ["20 0 0 20 0 0 0 0"]));
     expect(cpuPercent(first.total, second.total)).toBe(50);
     expect(threadPercent(first.threads, second.threads)).toEqual([["0,0", 50]]);
   });
@@ -61,9 +57,11 @@ describe("linuxCounters", () => {
 
   it("turns two disk readings into throughput and busy percent", () => {
     const previous = parseDiskStats(
-      " 259 0 nvme0n1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0",
+      " 259 0 nvme0n1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0",
     );
-    const next = parseDiskStats(" 259 0 nvme0n1 0 0 2000 0 0 0 4000 0 0 0 500 0 0 0 0");
+    // major minor name reads merged sectorsRead msReading writes merged
+    // sectorsWritten msWriting inProgress io_ticks weighted
+    const next = parseDiskStats(" 259 0 nvme0n1 0 0 2000 0 0 0 4000 0 0 500 0 0 0 0");
     const rates = diskRates(previous, next, 2_000);
     expect(rates).not.toBeNull();
     // 2000 sectors * 512 bytes over 2 s.
