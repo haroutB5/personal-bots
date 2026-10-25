@@ -46,9 +46,20 @@ export function releaseFolders(baseDir: string): {
   readonly backups: string;
   readonly releases: string;
 } {
-  const base = NodePath.basename(baseDir).toLowerCase();
-  const parent = base === "dev" || base === "prod" ? NodePath.dirname(baseDir) : baseDir;
-  return { backups: NodePath.join(parent, "backups"), releases: NodePath.join(parent, "releases") };
+  const trimmed = baseDir.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const base = (cut >= 0 ? trimmed.slice(cut + 1) : trimmed).toLowerCase();
+  if (base !== "dev" && base !== "prod") {
+    return {
+      backups: NodePath.join(trimmed, "backups"),
+      releases: NodePath.join(trimmed, "releases"),
+    };
+  }
+  // Keep the input's own separator, so a Windows path stays a Windows path
+  // even when this runs on Linux (tests) and the other way round.
+  const root = cut > 0 ? trimmed.slice(0, cut) : cut === 0 ? trimmed.slice(0, 1) : ".";
+  const sep = cut > 0 ? trimmed[cut]! : cut === 0 ? "" : NodePath.sep;
+  return { backups: `${root}${sep}backups`, releases: `${root}${sep}releases` };
 }
 
 /** The session id a provider CLI process carries on its command line. */

@@ -265,9 +265,9 @@ function primaryMonitor(info: Record<string, unknown>): DesktopRect {
 }
 
 export const overlayText = (botName: string) =>
-  `${botName} is using your PC  ·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} to take it back`;
+  `${botName} is using your PC  Â·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} to take it back`;
 
-export const REMOTE_OVERLAY_TEXT = `You are controlling this PC remotely  ·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} here to end it`;
+export const REMOTE_OVERLAY_TEXT = `You are controlling this PC remotely  Â·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} here to end it`;
 
 const isUser = (holder: DesktopClaimant | null | undefined) => holder?.kind === "user";
 

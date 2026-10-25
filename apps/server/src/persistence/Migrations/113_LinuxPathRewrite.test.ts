@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import Migration0113, { parsePathMap } from "./113_LinuxPathRewrite.ts";
+import Migration0113, { parsePathMap, rewriteStoredPath } from "./113_LinuxPathRewrite.ts";
 import { runMigrations } from "../Migrations.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
@@ -117,7 +117,8 @@ layer("113_LinuxPathRewrite", (it) => {
           "/home/harout/.personal-bots/dev/userdata/project-icons/p1.png",
         );
         assert.strictEqual(payload("e2").worktreePath, "/home/harout/claude/_wt/hbots-linux-server");
-        assert.strictEqual(payload("e2").projectCwd, "/home/harout/claude/personal-bots/apps/server");
+        // Not one of the three structural event keys: content stays as it was.
+        assert.strictEqual(payload("e2").projectCwd, "C:/Claude/AI/personal-bots/apps/server");
         assert.strictEqual(
           payload("e3").text,
           "the old path was C:/Claude/AI/personal-bots and it stays in history",
@@ -150,6 +151,24 @@ layer("113_LinuxPathRewrite", (it) => {
       );
       assert.deepStrictEqual(parsePathMap(undefined), []);
       assert.deepStrictEqual(parsePathMap("  "), []);
+    }),
+  );
+
+  it.effect("rewrites only whole path segments, on either separator", () =>
+    Effect.sync(() => {
+      const mappings = parsePathMap(MAP);
+      assert.strictEqual(
+        rewriteStoredPath("C:\\Claude\\AI\\_wt\\x", mappings),
+        "/home/harout/claude/_wt/x",
+      );
+      assert.strictEqual(
+        rewriteStoredPath("c:/users/ht/.personal-bots", mappings),
+        "/home/harout/.personal-bots",
+      );
+      // A longer sibling name is not under the mapped folder.
+      assert.strictEqual(rewriteStoredPath("C:/Users/Htx/file", mappings), null);
+      assert.strictEqual(rewriteStoredPath("/home/harout/keep", mappings), null);
+      assert.strictEqual(rewriteStoredPath("C:\\Claude\\AI", mappings), "/home/harout/claude");
     }),
   );
 });

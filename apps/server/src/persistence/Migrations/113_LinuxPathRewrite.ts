@@ -29,16 +29,21 @@
  * Touched storage:
  *   - projection_projects.workspace_root, favicon_path
  *   - projection_threads.worktree_path
- *   - orchestration_events.payload_json: workspaceRoot, worktreePath,
- *     faviconPath, projectCwd (structured keys only, never message text)
+ *   - orchestration_events.payload_json: workspaceRoot, worktreePath and
+ *     faviconPath on project/thread create and meta-update events only
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 const PATH_MAP_ENV = "T3CODE_PATH_MAP";
 
-/** The JSON payload keys that hold a path. Everything else is content. */
-const EVENT_PATH_KEYS = ["workspaceRoot", "worktreePath", "faviconPath", "projectCwd"] as const;
+/**
+ * The only event payloads that hold a path. Every other event (messages, tool
+ * output, titles) is content and must not be rewritten. Restricting to these
+ * types keeps the migration off a 1.25M-row JSON scan: on the live database the
+ * set is a few thousand rows, and each is parsed once.
+ */
+const EVENT_PATH_KEYS = ["workspaceRoot", "worktreePath", "faviconPath"] as const;
 
 /** `char(92)` is a backslash, spelled this way so no SQL/TS escaping can mangle it. */
 const SLASH = "char(92)";
@@ -70,6 +75,53 @@ export function parsePathMap(raw: string | undefined): ReadonlyArray<PathMapping
     mappings.push({ from, to });
   }
   return mappings.sort((a, b) => b.from.length - a.from.length);
+}
+
+/**
+ * A stored path under a mapped prefix becomes the target prefix plus the
+ * remainder, with every separator normalised. Anything else is returned
+ * untouched, including a path that only shares a partial segment
+ * (`C:/Users/Htx` is not under `C:/Users/Ht`).
+ */
+export function rewriteStoredPath(
+  value: string,
+  mappings: ReadonlyArray<PathMapping>,
+): string | null {
+  const slashy = value.replace(/\\/g, "/");
+  for (const { from, to } of mappings) {
+    if (slashy.length < from.length) continue;
+    if (slashy.slice(0, from.length).toLowerCase() !== from.toLowerCase()) continue;
+    const boundary = slashy.slice(from.length, from.length + 1);
+    if (boundary !== "" && boundary !== "/") continue;
+    return `${to}${slashy.slice(from.length)}`;
+  }
+  return null;
+}
+
+/** Rewrites every path-valued key of one event payload; returns null if unchanged. */
+export function rewriteEventPayload(
+  payloadJson: string,
+  mappings: ReadonlyArray<PathMapping>,
+): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payloadJson);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  let changed = false;
+  for (const key of EVENT_PATH_KEYS) {
+    const value = record[key];
+    if (typeof value !== "string") continue;
+    const rewritten = rewriteStoredPath(value, mappings);
+    if (rewritten !== null) {
+      record[key] = rewritten;
+      changed = true;
+    }
+  }
+  return changed ? JSON.stringify(record) : null;
 }
 
 export default Effect.gen(function* () {
@@ -114,32 +166,24 @@ export default Effect.gen(function* () {
         AND (length(worktree_path) = ${length}
           OR substr(worktree_path, ${length + 1}, 1) IN ('/', ${sql.unsafe(SLASH)}))
     `;
+  }
 
-    for (const key of EVENT_PATH_KEYS) {
-      // json_set keeps the rest of the payload untouched, so message text is
-      // never rewritten; only these four structural keys are paths.
-      yield* sql`
-        UPDATE orchestration_events
-        SET payload_json = json_set(
-          payload_json,
-          ${`$.${key}`},
-          ${to} || replace(
-            substr(json_extract(payload_json, ${`$.${key}`}), ${length + 1}),
-            ${sql.unsafe(SLASH)},
-            '/'
-          )
-        )
-        WHERE json_type(payload_json, ${`$.${key}`}) = 'text'
-          AND lower(replace(
-            substr(json_extract(payload_json, ${`$.${key}`}), 1, ${length}),
-            ${sql.unsafe(SLASH)},
-            '/'
-          )) = lower(${from})
-          AND (length(json_extract(payload_json, ${`$.${key}`})) = ${length}
-            OR substr(json_extract(payload_json, ${`$.${key}`}), ${length + 1}, 1)
-              IN ('/', ${sql.unsafe(SLASH)}))
-      `;
-    }
+  // The event log is 1.25M rows on the live database, and reading every payload
+  // cost 169 s in a `LIKE` scan. Only these four event types can carry a path,
+  // so only they are read, and the keys are rewritten in TypeScript instead of
+  // in SQL: one pass over a few thousand rows.
+  const events = yield* sql<{ readonly sequence: number; readonly payload_json: string }>`
+    SELECT sequence, payload_json FROM orchestration_events
+    WHERE event_type IN ('project.created', 'project.meta-updated', 'thread.created', 'thread.meta-updated')
+  `.pipe(Effect.orElseSucceed(() => []));
+  let rewrittenEvents = 0;
+  for (const event of events) {
+    const rewritten = rewriteEventPayload(event.payload_json, mappings);
+    if (rewritten === null) continue;
+    yield* sql`
+      UPDATE orchestration_events SET payload_json = ${rewritten} WHERE sequence = ${event.sequence}
+    `;
+    rewrittenEvents += 1;
   }
 
   // A value that was already under a target root but still carries Windows
@@ -158,19 +202,8 @@ export default Effect.gen(function* () {
     WHERE worktree_path IS NOT NULL AND substr(worktree_path, 1, 1) = '/'
       AND instr(worktree_path, ${sql.unsafe(SLASH)}) > 0
   `;
-  for (const key of EVENT_PATH_KEYS) {
-    yield* sql`
-      UPDATE orchestration_events
-      SET payload_json = json_set(
-        payload_json,
-        ${`$.${key}`},
-        replace(json_extract(payload_json, ${`$.${key}`}), ${sql.unsafe(SLASH)}, '/')
-      )
-      WHERE json_type(payload_json, ${`$.${key}`}) = 'text'
-        AND substr(json_extract(payload_json, ${`$.${key}`}), 1, 1) = '/'
-        AND instr(json_extract(payload_json, ${`$.${key}`}), ${sql.unsafe(SLASH)}) > 0
-    `;
-  }
 
-  yield* Effect.logInfo(`Rewrote stored Windows paths for ${mappings.length} mapping(s).`);
+  yield* Effect.logInfo(
+    `Rewrote stored Windows paths for ${mappings.length} mapping(s) (${rewrittenEvents} event(s), ${events.length} scanned).`,
+  );
 });

@@ -328,7 +328,7 @@ describe("PerformanceSampler lifecycle", () => {
     vi.useFakeTimers();
     try {
       const startHelper = vi.fn(() => null as never);
-      const { sampler, advance } = make({ platform: "linux", startHelper }, fakeHelper());
+      const { sampler, advance } = make({ platform: "darwin", startHelper }, fakeHelper());
       const subscription = sampler.subscribe(() => undefined);
       expect(startHelper).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(2_000);
@@ -336,6 +336,21 @@ describe("PerformanceSampler lifecycle", () => {
       const sample = sampler.lastSampleForTest();
       expect(sample).not.toBeNull();
       expect(sample?.memTotalGB).not.toBeNull();
+      subscription.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts the counter helper on Linux too", async () => {
+    vi.useFakeTimers();
+    try {
+      const helper = fakeHelper();
+      const startHelper = vi.fn(() => helper.handle);
+      const { sampler } = make({ platform: "linux", startHelper }, helper);
+      const subscription = sampler.subscribe(() => undefined);
+      expect(startHelper).toHaveBeenCalledTimes(1);
+      expect(sampler.state().helperPid).toBe(helper.handle.pid);
       subscription.unsubscribe();
     } finally {
       vi.useRealTimers();
