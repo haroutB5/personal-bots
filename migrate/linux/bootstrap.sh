@@ -334,7 +334,10 @@ log "5/9 Install packages"
 if [ "$SKIP_PACKAGES" -eq 1 ]; then
   warn "packages skipped (--skip-packages)"
 else
-  run pacman -S --needed --noconfirm base-devel git python nodejs mise rsync cloudflared lm_sensors ollama
+  # A fresh Omarchy ISO only carries the ISO's package database, and the mise
+  # package is named mise-bin. brave-bin is in Omarchy's repo; AUR only when not.
+  run pacman -Sy --noconfirm
+  run pacman -S --needed --noconfirm base-devel git python nodejs mise-bin rsync cloudflared lm_sensors ollama
 
   info "mise node 24.22.1"
   run_as_user mise install node@24.22.1
@@ -349,11 +352,13 @@ else
     run_as_user mise exec node@24.22.1 -- corepack prepare pnpm@11.10.0 --activate
   fi
 
-  info "brave-bin from the AUR"
-  if command -v pacman >/dev/null 2>&1 && pacman -Qq brave-bin >/dev/null 2>&1; then
+  info "brave-bin"
+  if pacman -Qq brave-bin >/dev/null 2>&1; then
     info "brave-bin already installed"
   elif [ "$DRY_RUN" -eq 1 ]; then
-    info "would use yay or paru as $TARGET_USER: yay -S --needed --noconfirm brave-bin"
+    info "would install brave-bin from the Omarchy repo (yay only as a fallback)"
+  elif pacman -Ssq '^brave-bin$' | grep -q .; then
+    run pacman -S --needed --noconfirm brave-bin
   elif command -v yay >/dev/null 2>&1; then
     if ! run_as_user yay -S --needed --noconfirm brave-bin; then
       warn "brave-bin install failed; install it manually with: yay -S brave-bin"
@@ -370,15 +375,14 @@ fi
 # ---------------------------------------------------------------- 6. units
 
 log "6/9 Install systemd user units"
-UNIT_DIR="$REPO/scripts/personal/linux/systemd"
-UNIT_INSTALL="$UNIT_DIR/install-units.sh"
+UNIT_INSTALL="$REPO/scripts/personal/linux/install-units.sh"
 if [ -f "$UNIT_INSTALL" ]; then
   info "installer: $UNIT_INSTALL"
-  run_as_user bash "$UNIT_INSTALL"
+  run_as_user bash "$UNIT_INSTALL" --repo "$REPO" --ai-dir "$TARGET_HOME/Claude/AI" --node "$TARGET_HOME/.local/share/mise/installs/node/24.22.1/bin/node"
   run loginctl enable-linger "$TARGET_USER"
 else
   warn "no unit installer at $UNIT_INSTALL. User units were not installed."
-  info "expected scripts/personal/linux/systemd/install-units.sh from the ops branch"
+  info "expected scripts/personal/linux/install-units.sh from the ops branch"
 fi
 
 # ---------------------------------------------------------------- 7. firewall
@@ -493,7 +497,7 @@ if [ "$SKIP_VERIFY" -eq 1 ]; then
   warn "verify skipped (--skip-verify)"
 else
   [ -f "$SCRIPT_DIR/verify.sh" ] || die "verify.sh is missing next to bootstrap.sh."
-  run bash "$SCRIPT_DIR/verify.sh" --user "$TARGET_USER"
+  run bash "$SCRIPT_DIR/verify.sh" --user "$TARGET_USER" --repo "$REPO"
 fi
 
 log "Done"

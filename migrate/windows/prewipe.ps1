@@ -8,11 +8,19 @@
 
     What -Apply does, in order:
       1. Optionally stops hbots (scripts/personal/stop.ps1) when -StopServer is given.
-      2. Full disk image of C: with wbadmin (VSS-consistent), to -Target.
-      3. Plain copies of C:\Claude and C:\Users\Ht\.personal-bots into -Target\plain.
+      2. Optionally takes a full VSS disk image of C: with wbadmin when -FullImage is given.
+      3. Plain copies of C:\Claude, C:\Users\Ht\.personal-bots, ~/.ssh and
+         ~/.cloudflared into -Target\plain. Regenerable folders (node_modules,
+         build output, caches, old releases, runtimes, workspace, backups) are
+         left behind and listed in the inventory.
       4. SHA256 verification of every copied file, plus a manifest CSV.
       5. Inventory: winget list, node/git/python versions, scheduled tasks,
-         firewall allow rules and listening ports, Brave profiles, system info.
+         firewall allow rules and listening ports, Brave profiles, system info,
+         and the excluded/left-behind folders.
+
+    The default is data-only (Harout, 25 Oct: only our data and what hbots
+    needs). -FullImage opts back into the whole-C: wbadmin capture when that is
+    explicitly wanted; it is not the default because it is hundreds of GB.
 
     -Scope Small copies and hashes only a fixture tree under -FixtureRoot. It is
     for tests; it never copies a real user profile or a whole disk.
@@ -26,20 +34,23 @@
 
 .PARAMETER Target
     Destination SMB or local path. Default \\GAMINGPC\Backups\omarchy-migration.
-    The share must exist and be writable. A UNC path is fine for wbadmin file
-    recovery, but bare-metal recovery needs a local disk on the gaming PC, so
-    prefer a drive that is physically in the gaming PC (or its D: volume) for
-    the full image. The free-space check runs before anything is written.
+    The share must exist and be writable. The free-space check runs before
+    anything is written.
 
 .PARAMETER StopServer
     Stop hbots cleanly before copying its SQLite database. Without this the copy
     can catch the database mid-write. Only the documented stop.ps1 is used.
 
+.PARAMETER FullImage
+    Also take a VSS-consistent wbadmin image of C: before the plain copies.
+    Default off (data-only). Requires Windows Server Backup and a target that is
+    not C: or the disk holding C:.
+
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1
 
 .EXAMPLE
-    powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1 -Apply -StopServer
+    powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1 -Apply -StopServer -FullImage
 #>
 [CmdletBinding()]
 param(
@@ -56,6 +67,8 @@ param(
 
     [switch]$StopServer,
 
+    [switch]$FullImage,
+
     [switch]$Apply,
 
     [string]$ConfirmText = '',
@@ -68,6 +81,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:ConfirmPhrase = 'WIPE-LAPTOP-CONFIRMED'
 $script:RepoRoot = $RepoRoot
+
+# Regenerable folders are not copied: bootstrap rebuilds them (pnpm install,
+# builds, caches). personal-bots keeps only the live release; old releases,
+# backups, runtimes and the workspace are regenerable.
+$script:ExcludeDirNames = @(
+    'node_modules', 'dist', 'build', 'out', '.next', '.turbo', '.venv',
+    '__pycache__', '.cache', '.pnpm-store', 'playwright-browsers', 'coverage',
+    'backups', 'runtimes', 'workspace'
+)
+$script:ExcludeDirs = @()
 
 function Write-Step {
     param([string]$Message)
@@ -108,6 +131,35 @@ function Get-Sha256 {
     }
 }
 
+function Test-ExcludedDir {
+    param([string]$Path)
+    $leaf = [System.IO.Path]::GetFileName($Path)
+    foreach ($name in $script:ExcludeDirNames) {
+        if ($leaf -ieq $name) { return $true }
+    }
+    $full = [System.IO.Path]::GetFullPath($Path)
+    foreach ($excluded in $script:ExcludeDirs) {
+        if ($full -ieq [System.IO.Path]::GetFullPath($excluded)) { return $true }
+    }
+    return $false
+}
+
+function Get-ReleaseExclusions {
+    param([string]$Source)
+    # Keep only the live release from a personal-bots tree.
+    $result = @()
+    $releases = Join-Path $Source 'releases'
+    $current = Join-Path $releases 'current.txt'
+    if (-not (Test-Path -LiteralPath $current -PathType Leaf)) { return $result }
+    $active = (Get-Content -LiteralPath $current -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($active)) { return $result }
+    foreach ($dir in [System.IO.Directory]::EnumerateDirectories((ConvertTo-LongPath $releases))) {
+        $name = [System.IO.Path]::GetFileName($dir)
+        if ($name -ine $active) { $result += $dir }
+    }
+    return $result
+}
+
 function Get-TreeFiles {
     param([string]$Root)
     $result = New-Object System.Collections.Generic.List[object]
@@ -124,6 +176,7 @@ function Get-TreeFiles {
                         continue
                     }
                     if (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                        if (Test-ExcludedDir $entry) { continue }
                         $stack.Push($entry)
                     }
                     else {
@@ -200,7 +253,7 @@ function Assert-SafeTarget {
 
     $full = [System.IO.Path]::GetFullPath($TargetPath)
     if ($full -match '^[A-Za-z]:\\' -and $full.Substring(0, 1) -ieq 'C') {
-        throw "Refusing target on C:. A disk image of C: must not live on C:. Target: $full"
+        throw "Refusing target on C:. Backups must not live on the drive being wiped. Target: $full"
     }
     if ($full -match '^([A-Za-z]):\\') {
         $targetLetter = $Matches[1]
@@ -235,7 +288,12 @@ function Resolve-Confirmation {
     }
 
     Write-Host ''
-    Write-Host 'This will image C:, copy your data, and change files on the target.' -ForegroundColor Red
+    if ($FullImage) {
+        Write-Host 'This will image C:, copy your data, leave regenerable folders behind, and change files on the target.' -ForegroundColor Red
+    }
+    else {
+        Write-Host 'This will copy your data, leave regenerable folders behind, and change files on the target.' -ForegroundColor Red
+    }
     Write-Host "Type $($script:ConfirmPhrase) to continue (anything else aborts):"
     $typed = Read-Host
     if ($typed -ne $script:ConfirmPhrase) {
@@ -330,8 +388,11 @@ function Copy-TreeAndVerify {
             '/NDL',
             '/NP',
             '/NJH',
-            '/NJS'
+            '/NJS',
+            '/XD'
         )
+        $robocopyArgs += $script:ExcludeDirNames
+        if ($script:ExcludeDirs.Count -gt 0) { $robocopyArgs += $script:ExcludeDirs }
         & $robocopy.Source @robocopyArgs | Out-Null
         $code = $LASTEXITCODE
         if ($code -ge 8) {
@@ -387,7 +448,7 @@ function Invoke-WbadminImage {
 
     $wbadmin = Get-Command wbadmin.exe -ErrorAction SilentlyContinue
     if ($null -eq $wbadmin) {
-        throw 'wbadmin.exe is not available. Windows Server Backup (the wbadmin feature) is missing on this Windows edition. Enable it, or use a Windows edition that ships it. This script will not pretend a non-VSS copy is a full disk image.'
+        throw 'wbadmin.exe is not available. Windows Server Backup is missing; enable it or use a Windows edition that ships it. No image was written.'
     }
 
     $arguments = @(
@@ -400,7 +461,7 @@ function Invoke-WbadminImage {
     )
 
     Write-Host "    wbadmin $($arguments -join ' ')"
-    Write-Host '    (wbadmin creates a VSS-consistent image; the VSS writer quiesces SQLite and other writers.)'
+    Write-Host '    (VSS quiesces the writers, including SQLite.)'
     & $wbadmin.Source @arguments
     $code = $LASTEXITCODE
     if ($code -ne 0) {
@@ -566,8 +627,10 @@ function Get-SourcePlan {
     }
 
     return @(
-        [pscustomobject]@{ Name = 'Claude'; Source = $Claude; DestinationName = 'Claude' },
-        [pscustomobject]@{ Name = 'personal-bots'; Source = $Data; DestinationName = 'personal-bots' }
+        [pscustomobject]@{ Name = 'Claude'; Source = $Claude; DestinationName = 'Claude'; Optional = $false },
+        [pscustomobject]@{ Name = 'personal-bots'; Source = $Data; DestinationName = 'personal-bots'; Optional = $false },
+        [pscustomobject]@{ Name = 'ssh'; Source = (Join-Path $env:USERPROFILE '.ssh'); DestinationName = 'ssh'; Optional = $true },
+        [pscustomobject]@{ Name = 'cloudflared'; Source = (Join-Path $env:USERPROFILE '.cloudflared'); DestinationName = 'cloudflared'; Optional = $true }
     )
 }
 
@@ -660,13 +723,18 @@ if ($SelfTest) {
 
 try {
     $script:RepoRoot = Resolve-RepoRoot
+    if ($FullImage -and $Scope -ne 'Full') {
+        throw '-FullImage requires -Scope Full. A fixture copy never includes a disk image.'
+    }
     $sources = Get-SourcePlan -Fixture $FixtureRoot -Claude $SourceClaude -Data $SourceData
 
     foreach ($item in $sources) {
         if (-not (Test-Path -LiteralPath $item.Source -PathType Container)) {
+            if ($item.Optional) { continue }
             throw "Source folder does not exist: $($item.Source)"
         }
     }
+    $sources = @($sources | Where-Object { Test-Path -LiteralPath $_.Source -PathType Container })
 
     Assert-SafeTarget -TargetPath $Target -Sources @($sources | ForEach-Object { $_.Source })
 
@@ -692,25 +760,26 @@ try {
     }
 
     $targetFree = Get-FreeSpaceBytes -Path $Target
-    if ($Scope -eq 'Full') {
+    $needed = [long]0
+    foreach ($item in $sources) {
+        $script:ExcludeDirs = @(Get-ReleaseExclusions -Source $item.Source)
+        $needed += (Get-PathSizeBytes -Path $item.Source)
+    }
+    $script:ExcludeDirs = @()
+    if ($FullImage) {
         $cDrive = New-Object System.IO.DriveInfo('C:\')
-        $used = [long]$cDrive.TotalSize - [long]$cDrive.TotalFreeSpace
-        # Conservative: the image is roughly used bytes; plain copies are
-        # budgeted at 25% of used plus 10 GB instead of walking millions of
-        # files in a dry run. Apply uses the same preflight, so it can never
-        # start an image it cannot finish.
-        $needed = [long](($used * 1.25) + 10GB)
+        $needed += ([long]$cDrive.TotalSize - [long]$cDrive.TotalFreeSpace)
     }
-    else {
-        $needed = [long]0
-        foreach ($item in $sources) {
-            $needed += (Get-PathSizeBytes -Path $item.Source)
-        }
-        $needed = [long]($needed * 1.10)
-    }
+    # 10% margin for file-system overhead and the manifests.
+    $needed = [long]($needed * 1.10)
 
     Write-Step 'Free-space check'
-    Write-Host ("    estimated need (image + plain copies + margin): {0}" -f (Format-Bytes $needed))
+    if ($FullImage) {
+        Write-Host ("    estimated need (C: image + data copies + margin): {0}" -f (Format-Bytes $needed))
+    }
+    else {
+        Write-Host ("    estimated need (data copies + manifests + margin): {0}" -f (Format-Bytes $needed))
+    }
     Write-Host '    estimate is conservative; Apply uses the same number as its gate'
     if ($null -eq $targetFree) {
         Write-Host '    target free space: unknown (unmapped UNC path); check the share before -Apply' -ForegroundColor Yellow
@@ -723,11 +792,8 @@ try {
         Write-Host '    PASS free space'
     }
 
-    Write-Step 'Full disk image (wbadmin)'
-    if ($Scope -eq 'Small') {
-        Write-Host '    Small scope: no disk image is taken.'
-    }
-    else {
+    Write-Step 'Data scope'
+    if ($FullImage) {
         $wbadmin = Get-Command wbadmin.exe -ErrorAction SilentlyContinue
         if ($null -eq $wbadmin) {
             if ($Apply) {
@@ -739,6 +805,16 @@ try {
             Write-Host "    wbadmin.exe: $($wbadmin.Source)"
         }
         Write-DryCommand "wbadmin start backup -backupTarget:$Target -include:C: -allCritical -quiet"
+    }
+    else {
+        Write-Host '    no full disk image (default; pass -FullImage to capture C: with wbadmin)'
+    }
+    Write-Host ("    excluded regenerable folders: {0}" -f ($script:ExcludeDirNames -join ', '))
+    foreach ($item in $sources) {
+        $skipped = @(Get-ReleaseExclusions -Source $item.Source)
+        foreach ($dir in $skipped) {
+            Write-Host "    old release left behind: $dir"
+        }
     }
 
     Write-Step 'Plain copies and SHA256 verification'
@@ -753,7 +829,7 @@ try {
 
     if (-not $Apply) {
         Write-Step 'Dry run complete'
-        Write-Host '    Nothing was stopped, copied, written or imaged.' -ForegroundColor Green
+        Write-Host '    Nothing was stopped, copied or written.' -ForegroundColor Green
         Write-Host "    To apply: add -Apply (and -StopServer for a consistent SQLite copy), then type $($script:ConfirmPhrase)." -ForegroundColor Green
         exit 0
     }
@@ -773,11 +849,8 @@ try {
         Write-Host '    WARNING: the SQLite database may be copied mid-write. Pass -StopServer.' -ForegroundColor Yellow
     }
 
-    Write-Step 'Full disk image'
-    if ($Scope -eq 'Small') {
-        Write-Host '    Small scope: no disk image is taken.'
-    }
-    else {
+    if ($FullImage) {
+        Write-Step 'Full disk image'
         Invoke-WbadminImage -TargetPath $Target
     }
 
@@ -786,16 +859,28 @@ try {
     foreach ($item in $sources) {
         $destination = Join-Path $plainRoot $item.DestinationName
         $manifestPath = Join-Path (Join-Path $Target 'inventory') ("hash-" + $item.Name + ".csv")
+        $script:ExcludeDirs = @(Get-ReleaseExclusions -Source $item.Source)
         $manifest = Copy-TreeAndVerify -Source $item.Source -Destination $destination -ManifestPath $manifestPath
         Write-Host ("    {0}: {1} files verified" -f $item.Name, $manifest.Count)
     }
 
     Write-Step 'Inventory'
     Write-Inventory -TargetPath $Target -Root $script:RepoRoot
+    $leftBehind = New-Object System.Collections.Generic.List[string]
+    $leftBehind.Add('Left behind on purpose (regenerable): ' + ($script:ExcludeDirNames -join ', '))
+    foreach ($item in $sources) {
+        $leftBehind.Add("source: $($item.Source)")
+        foreach ($dir in @(Get-ReleaseExclusions -Source $item.Source)) {
+            $leftBehind.Add("  old release not copied: $dir")
+        }
+    }
+    $leftBehind.Add('Provider sign-ins (Claude, Codex, OpenCode, Antigravity, GitHub) are re-approved after install; their token stores are not copied.')
+    $leftBehind.Add('Browser profiles hbots owns live under .personal-bots data roots and are copied with them; Harout''s own Brave profile is not.')
+    Set-Content -LiteralPath (Join-Path (Join-Path $Target 'inventory') 'left-behind.txt') -Value $leftBehind -Encoding ASCII
 
     Write-Step 'Done'
-    Write-Host "    Image, plain copies and inventory are under $Target" -ForegroundColor Green
-    Write-Host '    Keep the image for at least one week after Omarchy is live.' -ForegroundColor Green
+    Write-Host "    Data, manifests and inventory are under $Target" -ForegroundColor Green
+    Write-Host '    Keep the copy for at least one week after Omarchy is live.' -ForegroundColor Green
     exit 0
 }
 catch {

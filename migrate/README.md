@@ -11,7 +11,7 @@ typed confirmation. Nothing here prints or stores a secret value.
 
 | File | Runs on | Purpose |
 | --- | --- | --- |
-| `windows/prewipe.ps1` | Windows PowerShell 5.1 | Stop hbots, image C: with wbadmin, copy `C:\Claude` and `%USERPROFILE%\.personal-bots`, verify SHA256, inventory the machine |
+| `windows/prewipe.ps1` | Windows PowerShell 5.1 | Stop hbots, copy `C:\Claude`, `%USERPROFILE%\.personal-bots`, `~\.ssh` and `~\.cloudflared`, verify SHA256, inventory the machine |
 | `windows/make-installer.ps1` | Windows PowerShell 5.1 | Download and verify the Omarchy ISO, write the ISO stick, build and write the CIDATA stick |
 | `linux/bootstrap.sh` | Omarchy (Arch), root over SSH | Restore data, rewrite paths, import secrets, install packages and units, open firewall ports, set update policy, run verify |
 | `linux/verify.sh` | Omarchy | Read-only PASS/FAIL health table, `--json` optional |
@@ -19,8 +19,8 @@ typed confirmation. Nothing here prints or stores a secret value.
 
 ## prewipe.ps1
 
-Default is a dry run. It prints the wbadmin command, the copy plan, the hash
-plan, the inventory plan and a free-space gate, then exits without writing.
+Default is a dry run. It prints the data scope, the copy plan, the hash plan,
+the inventory plan and a free-space gate, then exits without writing.
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1
@@ -35,37 +35,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1 
 Then type `WIPE-LAPTOP-CONFIRMED` exactly. `-Apply` alone is not enough.
 
 - `-Target` defaults to `\\GAMINGPC\Backups\omarchy-migration`. Override it with
-  a local drive or another share. A UNC target is fine for wbadmin file
-  recovery; bare-metal recovery needs a disk physically attached to the gaming
-  PC, so prefer a local volume on the gaming PC for the image. The script
-  refuses a target on `C:`.
+  a local drive or another share. The script refuses a target on `C:` and a
+  target on the same physical disk as C:.
 - `-StopServer` calls the existing `scripts/personal/stop.ps1` and waits for
   port 38472 to close. Without it the SQLite database can be copied mid-write;
   the script warns but still runs if you choose that.
-- `-Scope Full` (default) images C: and copies the two real trees. `-Scope Small
-  -FixtureRoot <dir>` copies and hashes only a fixture tree, for tests. Small
-  never touches a real profile and never runs wbadmin; it copies the fixture
-  only.
-- `-SelfTest` runs argument validation, a copy/hash round trip, tamper
-  detection, a C: target refusal, overlap refusal and confirmation checks in
-  `%TEMP%`, then exits 0 or 1.
-- The image uses `wbadmin start backup -backupTarget:<target> -include:C:
-  -allCritical -quiet`, which is VSS-consistent. If `wbadmin.exe` is missing
-  (some Windows Home editions), apply fails with a clear message instead of
-  pretending a plain file copy is a system image.
-- The plain copy is `robocopy /E /COPY:DAT /XJ` plus a full source-to-copy
+- `-Scope Full` (default) copies `C:\Claude`, `C:\Users\Ht\.personal-bots`,
+  `~\.ssh` and `~\.cloudflared`. `-Scope Small -FixtureRoot <dir>` copies and
+  hashes only a fixture tree, for tests; it never touches a real profile.
+- `-FullImage` also takes a VSS-consistent `wbadmin` image of C: before the
+  copies, using `wbadmin start backup -backupTarget:<target> -include:C:
+  -allCritical -quiet`. It is off by default. Harout's 25 Oct decision is to
+  keep only the data hbots needs, not the whole Windows install, so the default
+  is data-only. If you enable it, Windows Server Backup must be installed and
+  the target must not be C: or the same physical disk; a UNC target works for
+  file recovery but bare-metal recovery wants a disk in the gaming PC.
+- Regenerable folders are excluded and listed in the inventory: `node_modules`,
+  `dist`, `build`, `out`, `.next`, `.turbo`, `.venv`, `__pycache__`, `.cache`,
+  `.pnpm-store`, `playwright-browsers`, `coverage`, `backups`, `runtimes` and
+  `workspace`. From `.personal-bots\releases`, only the release named by
+  `current.txt` is copied; older release folders are left behind and listed.
+- The copy is `robocopy /E /COPY:DAT /XJ /XD ...` plus a full source-to-copy
   SHA256 comparison and a CSV manifest under `<target>\inventory\hash-*.csv`.
   Junction points are skipped (`/XJ`), matching the verification walk.
 - Inventory goes to `<target>\inventory`: winget list, node/npm/pnpm/git/python
   versions, scheduled tasks, inbound firewall allow rules, listening ports,
-  Brave profile folders, system info, ipconfig, routes and global git config.
+  Brave profile folders, system info, ipconfig, routes and `left-behind.txt`.
 - `.env` files and `secrets\` contents are copied as opaque bytes and hashed,
   but never opened, parsed or printed. Manifests hold names and hashes only.
+  `~\.ssh` and `~\.cloudflared` contain private keys and tunnel credentials;
+  they are copied only because the Linux host needs them, and the target copy
+  must be protected like the originals.
 
-Free-space estimate: C: used bytes times 1.25 plus 10 GB. This covers the image
-and the plain copies with margin without walking millions of files during a dry
-run. Apply uses the same number as its gate. If the target is an unmapped UNC
-path the free space is reported as unknown; pass the mapped drive path (for
+Free-space estimate: the included file sizes times 1.10, measured with the same
+exclusions as the copy. With `-FullImage`, the used bytes of C: are added before
+the margin. Apply uses the same number as its gate. If the target is an unmapped
+UNC path the free space is reported as unknown; pass the mapped drive path (for
 example `Z:\omarchy-migration`) if you want the check to run against the share.
 
 ## make-installer.ps1
@@ -219,21 +224,24 @@ not:
   importer prompts for its passphrase itself; the bootstrap never sees it.
   If no importer is present, the step warns and continues so the rest of the
   machine can still be verified. Re-approve provider logins afterwards.
-- units: `scripts/personal/linux/systemd/install-units.sh`. If absent, the step
-  warns and continues. `loginctl enable-linger` is set when the installer is
-  present.
+- units: `scripts/personal/linux/install-units.sh`. If absent, the step warns
+  and continues. `loginctl enable-linger` is set when the installer is present.
+  The installer is called with `--repo`, `--ai-dir` and the pinned `--node` so
+  the unit templates can render the restored paths.
 
 ### Packages
 
-`pacman -S --needed --noconfirm base-devel git python nodejs mise rsync
-cloudflared lm_sensors ollama`, then as the user:
+The bootstrap syncs the package database once (`pacman -Sy --noconfirm`) and
+installs `base-devel git python nodejs mise-bin rsync cloudflared lm_sensors
+ollama`, then as the user:
 
 - `mise install node@24.22.1` and `mise use -g node@24.22.1`
 - `corepack enable` and `corepack prepare pnpm@11.10.0 --activate`
-- `brave-bin` from the AUR through `yay` or `paru`
+- `brave-bin` from the Omarchy repository when it is there, otherwise from the
+  AUR through `yay` or `paru`
 
-If no AUR helper is installed, brave is reported as a manual step instead of
-half-installing it. Everything else is fatal on failure.
+If brave is in neither place or no AUR helper is installed, it is reported as a
+manual step instead of half-installing it. Everything else is fatal on failure.
 
 ### Firewall
 
@@ -293,7 +301,7 @@ Kino and docs as SKIP, for a base-host check before those apps are restored.
 1. On Windows, run `prewipe.ps1` dry. Read the target, the estimate and the disk
    list. Fix the target or free space before going on.
 2. Run `prewipe.ps1 -Apply -StopServer`, type `WIPE-LAPTOP-CONFIRMED`, and wait
-   for the image, both plain copies, the hash manifests and the inventory.
+   for the data copies, the hash manifests and the inventory.
    `-StopServer` stops the app that hosts the bots, so start this step from a
    normal PowerShell window or a detached task, not from a bot session you need
    to keep alive.
@@ -312,8 +320,8 @@ Kino and docs as SKIP, for a base-host check before those apps are restored.
 8. Run `verify.sh` if the bootstrap did not already. Fix any FAIL before handing
    the laptop over.
 9. Re-approve the provider sign-ins from links on the phone: Claude, Codex,
-   OpenCode, Antigravity, GitHub, Vercel, Cloudflare. Keep the Windows image on
-   the gaming PC for at least one week.
+   OpenCode, Antigravity, GitHub, Vercel, Cloudflare. Keep the data copy and its
+   manifests on the gaming PC for at least one week.
 
 ## Manual steps that stay with Harout
 
@@ -334,8 +342,8 @@ Kino and docs as SKIP, for a base-host check before those apps are restored.
   There are no force flags and no `-Yes`.
 - The scripts never delete data. An existing ISO with a bad hash is left in
   place for the operator to remove.
-- The full image is kept on the gaming PC for at least one week after Omarchy is
-  live.
+- The data copy and its manifests are kept on the gaming PC for at least one
+  week after Omarchy is live. There is no Windows system image by design.
 
 ## Tests
 
