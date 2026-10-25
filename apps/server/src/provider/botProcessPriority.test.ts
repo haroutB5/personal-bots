@@ -48,9 +48,23 @@ describe("lowerBotProcessPriority", () => {
     }
   });
 
-  it("does nothing off Windows, where a child's priority is its own business", () => {
+  it("lowers a Linux bot with nice and the idle I/O class, by PID", () => {
     const { calls, setPriority } = recorder();
-    const result = lowerBotProcessPriority(4242, { env: {}, platform: "linux", setPriority });
+    const io: number[] = [];
+    const result = lowerBotProcessPriority(4242, {
+      env: {},
+      platform: "linux",
+      setPriority,
+      applyIoPriority: (pid) => io.push(pid),
+    });
+    assert.deepEqual(result, { status: "applied" });
+    assert.deepEqual(calls, [{ pid: 4242, priority: BELOW_NORMAL }]);
+    assert.deepEqual(io, [4242]);
+  });
+
+  it("does nothing on a platform with no priority control", () => {
+    const { calls, setPriority } = recorder();
+    const result = lowerBotProcessPriority(4242, { env: {}, platform: "darwin", setPriority });
     assert.deepEqual(result, { status: "skipped", reason: "unsupported-platform" });
     assert.deepEqual(calls, []);
   });
