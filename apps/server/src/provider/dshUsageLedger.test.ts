@@ -35,8 +35,15 @@ it.layer(layer)("dshUsageLedger", (it) => {
   const CWD = "C:\\Users\\Ht\\.personal-bots\\qa\\dsh-harness\\probe\\work";
 
   /** One dsh event as its own zstd frame, exactly as the agent appends them. */
-  const frame = (event: Record<string, unknown>): Buffer =>
-    NodeZlib.zstdCompressSync(Buffer.from(`${JSON.stringify(event)}\n`, "utf8"));
+  const frame = (
+    event: Record<string, unknown>,
+    options?: { readonly checksum?: boolean },
+  ): Buffer =>
+    NodeZlib.zstdCompressSync(Buffer.from(`${JSON.stringify(event)}\n`, "utf8"), {
+      ...(options?.checksum === true
+        ? { params: { [NodeZlib.constants.ZSTD_c_checksumFlag]: 1 } }
+        : {}),
+    });
 
   const header = {
     type: "session",
@@ -105,6 +112,27 @@ it.layer(layer)("dshUsageLedger", (it) => {
         inputTokens: 5896,
         cacheReadTokens: 128,
       });
+    }),
+  );
+
+  it.effect("decodes the zstd checksum dsh writes on every frame", () =>
+    Effect.sync(() => {
+      // dsh's writer enables the frame checksum; a decoder that stops at the
+      // last block cuts four bytes off and zstd refuses the frame (the bug
+      // that silently emptied the usage ledger on 25 Oct).
+      const headerFrame = frame(header, { checksum: true });
+      const stepFrame = frame(step(1, "m1", usage), { checksum: true });
+      const complete = Buffer.concat([headerFrame, stepFrame]);
+      const decoded = decodeDshSessionFrames(complete, 0);
+      expect(decoded.lines).toHaveLength(2);
+      expect(decoded.offset).toBe(complete.length);
+      expect(parseDshSessionHeader(decoded.lines[0]!)).toEqual({ id: SESSION_ID });
+      expect(parseDshAssistantStep(decoded.lines[1]!)).toMatchObject({ seq: 1, messageId: "m1" });
+      // A frame whose checksum has not arrived is held, not lost.
+      const torn = Buffer.concat([headerFrame, stepFrame.subarray(0, stepFrame.length - 4)]);
+      const held = decodeDshSessionFrames(torn, 0);
+      expect(held.lines).toHaveLength(1);
+      expect(held.offset).toBe(headerFrame.length);
     }),
   );
 

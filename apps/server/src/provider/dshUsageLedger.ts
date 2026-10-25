@@ -86,6 +86,7 @@ function zstdFrameLength(buffer: Buffer, start: number): number | undefined {
   const descriptor = buffer[start + 4]!;
   const contentSizeFlag = (descriptor >> 6) & 0b11;
   const singleSegment = ((descriptor >> 5) & 0b1) === 1;
+  const checksum = ((descriptor >> 2) & 0b1) === 1;
   const dictionaryFlag = descriptor & 0b11;
   const contentSizeBytes =
     contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : ([2, 4, 8] as const)[contentSizeFlag - 1]!;
@@ -109,6 +110,12 @@ function zstdFrameLength(buffer: Buffer, start: number): number | undefined {
     // written, last block or not.
     if (cursor > buffer.length) return undefined;
     if (lastBlock) break;
+  }
+  // dsh's writer enables the frame checksum: four bytes after the last block.
+  // A frame whose checksum has not arrived yet is still being written.
+  if (checksum) {
+    if (cursor + 4 > buffer.length) return undefined;
+    cursor += 4;
   }
   return cursor - start;
 }
