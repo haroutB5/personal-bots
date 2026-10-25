@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly tennis booking (Friday 12:05 local)
+
+[Timer]
+OnCalendar=Fri *-*-* 12:05:00
+Persistent=true
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,29 @@
+[Unit]
+Description=Personal Bots (hbots) server
+Documentation=file://@REPO@/scripts/personal/README.md
+After=network-online.target
+Wants=network-online.target
+# One server per data root: never start beside a manual start.
+ConditionPathExists=@REPO@/scripts/personal/node/hbots.mjs
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/hbots/env
+Environment=NODE_ENV=production
+ExecStart=@NODE@ @REPO@/scripts/personal/node/hbots.mjs serve --root dev
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=120
+TimeoutStopSec=45
+KillMode=control-group
+# The server shares the disk with its own SQLite writes: keep it ahead of
+# builds and test runs rather than renicing it by hand.
+CPUWeight=200
+IOSchedulingClass=best-effort
+IOSchedulingPriority=2
+Nice=-5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Personal Bots upstream sync (weekly, gated, binary rollback on failure)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/hbots/env
+ExecStart=@NODE@ @REPO@/scripts/personal/node/hbots.mjs sync --mode upstream --apply
+TimeoutStartSec=7200
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target
