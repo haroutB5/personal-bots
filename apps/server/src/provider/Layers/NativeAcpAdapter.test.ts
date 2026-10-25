@@ -16,6 +16,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import { ProviderAdapterValidationError } from "../Errors.ts";
 import {
   makeNativeAcpAdapter,
   selectAutoApprovedPermissionOption,
@@ -534,8 +535,8 @@ it.live(
         .sendTurn({ threadId, input: "steer message" })
         .pipe(Effect.forkChild);
       const [firstTurn, secondTurn] = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
-      expect(firstTurn.turnId).not.toBe(secondTurn.turnId);
-      expect(seen.filter((event) => event.type === "turn.aborted")).toHaveLength(1);
+      expect(firstTurn.turnId).toBe(secondTurn.turnId);
+      expect(seen.filter((event) => event.type === "turn.aborted")).toHaveLength(0);
       const completed = seen.filter((event) => event.type === "turn.completed");
       expect(completed).toHaveLength(1);
       expect(completed[0]).toMatchObject({ payload: { state: "completed" } });
@@ -550,67 +551,101 @@ it.live(
   30_000,
 );
 
-it.live(
-  "a steer ends the running turn and continues in a new one",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-steer-" });
-      const log = path.join(root, "requests.jsonl");
-      const threadId = ThreadId.make("native-acp-steer-test");
-      const seen: ProviderRuntimeEvent[] = [];
-      const adapter = yield* makeNativeAcpAdapter({
-        provider: ProviderDriverKind.make("opencode"),
-        instanceId: ProviderInstanceId.make("opencode-test"),
-        displayName: "OpenCode",
-        runtimeOptions: () =>
-          Effect.succeed({
-            spawn: {
-              command: process.execPath,
-              args: [
-                NodeURL.fileURLToPath(
-                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-                ),
-              ],
-              cwd: root,
-              env: {
-                ...process.env,
-                T3_ACP_REQUEST_LOG_PATH: log,
-                T3_ACP_PROMPT_DELAY_MS: "400",
+for (const failSetup of ["none", "middle", "final", "prompt"] as const) {
+  it.live(
+    `concurrent steers retain one logical turn, including setup failure=${failSetup}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-steer-" });
+        const log = path.join(root, "requests.jsonl");
+        const threadId = ThreadId.make("native-acp-steer-test");
+        const seen: ProviderRuntimeEvent[] = [];
+        const adapter = yield* makeNativeAcpAdapter({
+          provider: ProviderDriverKind.make("opencode"),
+          instanceId: ProviderInstanceId.make("opencode-test"),
+          displayName: "OpenCode",
+          configureTurn: (_runtime, input) =>
+            (failSetup === "middle" && input.input === "steer message") ||
+            (failSetup === "final" && input.input === "another steer")
+              ? Effect.fail(
+                  new ProviderAdapterValidationError({
+                    provider: ProviderDriverKind.make("opencode"),
+                    operation: "sendTurn",
+                    issue: "Setup refused",
+                  }),
+                )
+              : Effect.void,
+          runtimeOptions: () =>
+            Effect.succeed({
+              spawn: {
+                command: process.execPath,
+                args: [
+                  NodeURL.fileURLToPath(
+                    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                  ),
+                ],
+                cwd: root,
+                env: {
+                  ...process.env,
+                  T3_ACP_REQUEST_LOG_PATH: log,
+                  T3_ACP_PROMPT_DELAY_MS: "400",
+                  ...(failSetup === "prompt" ? { T3_ACP_FAIL_PROMPT: "1" } : {}),
+                },
               },
-            },
-            cwd: root,
-            authMethodId: null,
-            clientInfo: { name: "hbots-test", version: "1" },
-          }),
-      });
-      yield* adapter.streamEvents.pipe(
-        Stream.runForEach((event) =>
-          Effect.sync(() => {
-            seen.push(event);
-          }),
-        ),
-        Effect.forkChild,
-      );
-      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
-      const first = yield* adapter
-        .sendTurn({ threadId, input: "long first message" })
-        .pipe(Effect.forkChild);
-      yield* Effect.sleep("80 millis");
-      const second = yield* adapter
-        .sendTurn({ threadId, input: "steer message" })
-        .pipe(Effect.forkChild);
-      const [firstTurn, secondTurn] = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
-      expect(firstTurn.turnId).not.toBe(secondTurn.turnId);
-      // The first turn is ended as a steer, the second runs to completion.
-      expect(seen.filter((event) => event.type === "turn.aborted")).toHaveLength(1);
-      expect(seen.filter((event) => event.type === "turn.completed")).toHaveLength(1);
-      const requests = yield* fs.readFileString(log);
-      expect(requests.indexOf("long first message")).toBeLessThan(
-        requests.indexOf("steer message"),
-      );
-      yield* adapter.stopAll();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  30_000,
-);
+              cwd: root,
+              authMethodId: null,
+              clientInfo: { name: "hbots-test", version: "1" },
+            }),
+        });
+        yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              seen.push(event);
+            }),
+          ),
+          Effect.forkChild,
+        );
+        yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+        const first = yield* adapter
+          .sendTurn({ threadId, input: "long first message" })
+          .pipe(Effect.forkChild);
+        yield* Effect.sleep("80 millis");
+        const second = yield* adapter
+          .sendTurn({ threadId, input: "steer message" })
+          .pipe(Effect.exit, Effect.forkChild);
+        const third = yield* adapter
+          .sendTurn({ threadId, input: "another steer" })
+          .pipe(Effect.exit, Effect.forkChild);
+        const [firstTurn, secondTurn, thirdTurn] = yield* Effect.all([
+          Fiber.join(first),
+          Fiber.join(second),
+          Fiber.join(third),
+        ]);
+        expect(Exit.isSuccess(secondTurn)).toBe(true);
+        if (Exit.isSuccess(secondTurn)) expect(firstTurn.turnId).toBe(secondTurn.value.turnId);
+        expect(Exit.isFailure(thirdTurn)).toBe(failSetup === "final" || failSetup === "prompt");
+        if (Exit.isSuccess(thirdTurn)) expect(firstTurn.turnId).toBe(thirdTurn.value.turnId);
+        expect(seen.filter((event) => event.type === "turn.started")).toHaveLength(1);
+        expect(seen.filter((event) => event.type === "turn.aborted")).toHaveLength(0);
+        expect(seen.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+        expect(seen.find((event) => event.type === "turn.completed")).toMatchObject({
+          payload: {
+            state: failSetup === "final" || failSetup === "prompt" ? "failed" : "completed",
+          },
+        });
+        expect((yield* adapter.listSessions())[0]).toMatchObject({
+          status: "ready",
+          activeTurnId: undefined,
+        });
+        const requests = yield* fs.readFileString(log);
+        if (failSetup !== "middle")
+          expect(requests.indexOf("long first message")).toBeLessThan(
+            requests.indexOf("steer message"),
+          );
+        yield* adapter.stopAll();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    30_000,
+  );
+}
