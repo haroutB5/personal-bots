@@ -65,7 +65,8 @@ Then type `WIPE-LAPTOP-CONFIRMED` exactly. `-Apply` alone is not enough.
 Free-space estimate: C: used bytes times 1.25 plus 10 GB. This covers the image
 and the plain copies with margin without walking millions of files during a dry
 run. Apply uses the same number as its gate. If the target is an unmapped UNC
-path the free space is reported as unknown; check the share before apply.
+path the free space is reported as unknown; pass the mapped drive path (for
+example `Z:\omarchy-migration`) if you want the check to run against the share.
 
 ## make-installer.ps1
 
@@ -84,9 +85,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\make-install
 ```
 
 For each stick, type that stick's exact model string when prompted. The script
-refuses the system disk, the disk holding C:, and any disk holding this repo. A
-non-USB bus is refused unless `-AllowFixed` is passed; that flag is only for a
-throwaway image-file test.
+prompts for the Omarchy password first, builds and verifies the cidata image in
+memory, and only then asks for the model confirmations before erasing anything.
+The script refuses the system disk, the disk holding C:, and any disk holding
+this repo. A non-USB bus is refused unless `-AllowFixed` is passed; that flag is
+only for a throwaway image-file test.
 
 ### Two sticks are required
 
@@ -262,20 +265,26 @@ available.
 ./verify.sh
 ./verify.sh --json
 ./verify.sh --user harout --repo /home/harout/Claude/AI/personal-bots
+./verify.sh --skip-apps
 ```
 
 Checks:
 
-- every `scripts/personal/linux/systemd/*.service` is active as the user
+- every `scripts/personal/linux/systemd/*.service` (or `.service.in`) is installed
+  under `~/.config/systemd/user` and active as the user; a unit whose systemd
+  condition is not met (its app is not restored yet) is SKIP, not FAIL
 - hbots answers `GET http://127.0.0.1:38472/.well-known/t3/environment`
-- Kino answers on 5186 and the docs server on 8765
+- Kino answers on 5186 and the docs server on 8765; if the app directory is not
+  restored yet, that check is SKIP
 - `sensors` is installed
-- cloudflared has an active user or system unit
+- cloudflared: PASS when a tunnel process or a user/system unit is active,
+  otherwise SKIP because hbots starts its own tunnel once T3 Connect is linked
 - at least 5 GiB free on `/`
 
-Exit 0 only when every check passed. `--json` emits
+Exit 0 only when no check is FAIL. `--json` emits
 `{"ok":...,"dryRun":...,"user":...,"repo":...,"checks":[...]}`. `--dry-run`
-prints the checks as SKIP and exits 0 without probing.
+prints the checks as SKIP and exits 0 without probing. `--skip-apps` reports
+Kino and docs as SKIP, for a base-host check before those apps are restored.
 
 ## Install night: order of operations
 

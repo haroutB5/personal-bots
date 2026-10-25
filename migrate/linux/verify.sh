@@ -6,10 +6,13 @@
 #   ./verify.sh --json
 #   ./verify.sh --user harout --repo /home/harout/Claude/AI/personal-bots
 #   ./verify.sh --dry-run
+#   ./verify.sh --skip-apps        # base host only: Kino and docs are not installed yet
 #
 # Prints a PASS/FAIL table and exits 0 only when every check passed.
 # --json prints machine-readable JSON instead of the table.
 # --dry-run lists the checks without touching the machine and exits 0.
+# A unit whose systemd condition is not met (its app is not installed yet) is
+# reported as SKIP, not FAIL.
 #
 # Read-only: this script never restarts, writes or deletes anything.
 #
@@ -17,6 +20,7 @@ set -u
 
 DRY_RUN=0
 JSON=0
+SKIP_APPS=0
 USER_ARG=""
 REPO_ARG=""
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +37,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --skip-apps)
+      SKIP_APPS=1
       shift
       ;;
     --user)
@@ -70,6 +78,9 @@ else
   REPO="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 fi
 
+TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6 || true)"
+[ -n "$TARGET_HOME" ] || TARGET_HOME="/home/$TARGET_USER"
+
 UNIT_DIR="$REPO/scripts/personal/linux/systemd"
 # Command overrides exist so the test suite can run the whole script against
 # fakes. They default to the normal commands and are not needed in production.
@@ -77,6 +88,7 @@ CURL_BIN="${VERIFY_CURL:-curl}"
 SYSTEMCTL_BIN="${VERIFY_SYSTEMCTL:-systemctl}"
 DF_BIN="${VERIFY_DF:-df}"
 SENSORS_BIN="${VERIFY_SENSORS:-sensors}"
+INSTALLED_UNIT_DIR="${VERIFY_INSTALLED_UNIT_DIR:-$TARGET_HOME/.config/systemd/user}"
 CHECK_NAMES=()
 CHECK_STATUS=()
 CHECK_DETAIL=()
@@ -116,18 +128,19 @@ user_systemctl() {
 
 check_units() {
   local -a units=()
-  local unit
+  local unit installed rendered
   if [ -d "$UNIT_DIR" ]; then
     while IFS= read -r unit; do
-      units+=("$(basename "$unit")")
-    done < <(find "$UNIT_DIR" -maxdepth 1 -type f -name '*.service' | sort)
+      rendered="$(basename "$unit")"
+      units+=("${rendered%.in}")
+    done < <(find "$UNIT_DIR" -maxdepth 1 -type f \( -name '*.service' -o -name '*.service.in' \) | sort)
   fi
 
   if [ "${#units[@]}" -eq 0 ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
-      add_check "systemd user units" "SKIP" "no *.service under $UNIT_DIR (dry run)"
+      add_check "systemd user units" "SKIP" "no *.service(.in) under $UNIT_DIR (dry run)"
     else
-      add_check "systemd user units" "FAIL" "no *.service under $UNIT_DIR"
+      add_check "systemd user units" "FAIL" "no *.service(.in) under $UNIT_DIR"
     fi
     return
   fi
@@ -135,10 +148,21 @@ check_units() {
   for unit in "${units[@]}"; do
     if [ "$DRY_RUN" -eq 1 ]; then
       add_check "systemd: $unit" "SKIP" "would check systemctl --user is-active"
-    elif user_systemctl is-active --quiet "$unit"; then
-      add_check "systemd: $unit" "PASS" "active"
+      continue
+    fi
+    installed="$INSTALLED_UNIT_DIR/$unit"
+    if [ ! -f "$installed" ]; then
+      add_check "systemd: $unit" "FAIL" "not installed ($installed)"
+    elif ! user_systemctl is-active --quiet "$unit"; then
+      # An unmet ConditionPathExists means the app is not restored yet: that is
+      # a skip on a base host, not a failed service.
+      if [ "$(user_systemctl show "$unit" -p ConditionResult --value 2>/dev/null)" = "no" ]; then
+        add_check "systemd: $unit" "SKIP" "condition not met (app not installed)"
+      else
+        add_check "systemd: $unit" "FAIL" "not active as $TARGET_USER"
+      fi
     else
-      add_check "systemd: $unit" "FAIL" "not active as $TARGET_USER"
+      add_check "systemd: $unit" "PASS" "active"
     fi
   done
 }
@@ -162,7 +186,11 @@ check_hbots() {
 }
 
 check_http_port() {
-  local name="$1" port="$2"
+  local name="$1" port="$2" app_dir="${3:-}"
+  if [ -n "$app_dir" ] && [ ! -d "$app_dir" ]; then
+    add_check "$name HTTP $port" "SKIP" "app not installed ($app_dir)"
+    return
+  fi
   if [ "$DRY_RUN" -eq 1 ]; then
     add_check "$name HTTP $port" "SKIP" "would probe 127.0.0.1:$port"
     return
@@ -194,7 +222,13 @@ check_sensors() {
 
 check_cloudflared() {
   if [ "$DRY_RUN" -eq 1 ]; then
-    add_check "cloudflared active" "SKIP" "would check user and system units"
+    add_check "cloudflared active" "SKIP" "would check the process and user/system units"
+    return
+  fi
+  # hbots spawns and supervises its own tunnel, so a process is the normal
+  # state; a separate unit only exists when hbots does not manage one.
+  if pgrep -f 'cloudflared.*tunnel' >/dev/null 2>&1; then
+    add_check "cloudflared active" "PASS" "tunnel process running (managed by hbots)"
     return
   fi
   if user_systemctl is-active --quiet cloudflared.service 2>/dev/null; then
@@ -205,7 +239,7 @@ check_cloudflared() {
     add_check "cloudflared active" "PASS" "system unit active"
     return
   fi
-  add_check "cloudflared active" "FAIL" "no active cloudflared user or system unit"
+  add_check "cloudflared active" "SKIP" "no tunnel running (hbots starts one once T3 Connect is linked)"
 }
 
 check_disk() {
@@ -229,8 +263,13 @@ check_disk() {
 
 check_units
 check_hbots
-check_http_port "Kino" 5186
-check_http_port "docs" 8765
+if [ "$SKIP_APPS" -eq 1 ]; then
+  add_check "Kino HTTP 5186" "SKIP" "--skip-apps"
+  add_check "docs HTTP 8765" "SKIP" "--skip-apps"
+else
+  check_http_port "Kino" 5186 "$TARGET_HOME/Claude/AI/kino-der-toten"
+  check_http_port "docs" 8765 "$TARGET_HOME/Claude/AI/dev-team"
+fi
 check_sensors
 check_cloudflared
 check_disk

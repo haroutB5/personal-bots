@@ -1387,16 +1387,6 @@ try {
         throw 'Apply needs -CidataDiskNumber <n> (second stick) or -CidataImage <path> for a file.'
     }
 
-    if ($null -ne $isoDisk -and [string]::IsNullOrWhiteSpace($ImageFile)) {
-        Resolve-DiskConfirmation -Disk $isoDisk -Supplied $ConfirmText
-        Clear-TargetDisk -Disk $isoDisk -Erase:$EraseDisk
-    }
-
-    if ([string]::IsNullOrWhiteSpace($CidataImage)) {
-        $cidataDisk = Get-Disk -Number $CidataDiskNumber -ErrorAction Stop
-        Resolve-DiskConfirmation -Disk $cidataDisk -Supplied $ConfirmText
-    }
-
     if (-not (Test-Path -LiteralPath $iso.Path)) {
         Write-Step 'Downloading ISO'
         $iso = Resolve-OmarchyIso -RequestedVersion $Version -Path $iso.Path -DownloadUrl $iso.Url -ChecksumAddress $ChecksumUrl -Download
@@ -1407,24 +1397,40 @@ try {
         if ($isoFileSize -gt $isoDisk.Size) { throw "The ISO ($isoFileSize bytes) does not fit on disk $IsoDiskNumber ($($isoDisk.Size) bytes)." }
     }
 
-    Write-Step 'Writing ISO'
-    if ([string]::IsNullOrWhiteSpace($ImageFile)) {
-        Write-RawImage -ImagePath $iso.Path -PhysicalDiskNumber $IsoDiskNumber -ApplyImage
-    }
-    else {
-        Write-Info "test mode: ISO -> $ImageFile"
-        Write-RawImage -ImagePath $iso.Path -TargetFile $ImageFile
-    }
-
-    Write-Step 'Writing cidata'
+    Write-Step 'Preparing cidata'
     $keys = Read-AuthorizedKeys -Path $AuthorizedKeysPath
     $password = Read-OperatorPassword -User $Username
     $hash = Get-CryptHash -Secure $password -OpenSsl (Find-OpenSsl)
     $payload = New-CidataPayload -User $Username -Machine $Hostname -Zone $Timezone -Layout $Keyboard -Device $DiskDevice -Bytes $DiskBytes -PasswordHash $hash -AuthorizedKeys $keys
     $cidataTemp = Join-Path $env:TEMP ('cidata-' + [guid]::NewGuid().ToString('N') + '.img')
+    $cidataDisk = $null
+
     try {
         Write-CidataImage -Path $cidataTemp -Files $payload -SizeMB $CidataSizeMB
         $null = Test-CidataImage -Path $cidataTemp
+
+        if ($null -ne $isoDisk -and [string]::IsNullOrWhiteSpace($ImageFile)) {
+            Resolve-DiskConfirmation -Disk $isoDisk -Supplied $ConfirmText
+            Clear-TargetDisk -Disk $isoDisk -Erase:$EraseDisk
+        }
+
+        if ([string]::IsNullOrWhiteSpace($CidataImage)) {
+            $cidataDisk = Get-Disk -Number $CidataDiskNumber -ErrorAction Stop
+            if ($cidataDisk.Size -lt (64MB)) { throw "Disk $CidataDiskNumber is smaller than 64 MB." }
+            Resolve-DiskConfirmation -Disk $cidataDisk -Supplied $ConfirmText
+            Clear-TargetDisk -Disk $cidataDisk -Erase:$EraseDisk
+        }
+
+        Write-Step 'Writing ISO'
+        if ([string]::IsNullOrWhiteSpace($ImageFile)) {
+            Write-RawImage -ImagePath $iso.Path -PhysicalDiskNumber $IsoDiskNumber -ApplyImage
+        }
+        else {
+            Write-Info "test mode: ISO -> $ImageFile"
+            Write-RawImage -ImagePath $iso.Path -TargetFile $ImageFile
+        }
+
+        Write-Step 'Writing cidata'
         if (-not [string]::IsNullOrWhiteSpace($CidataImage)) {
             $cidataParent = Split-Path -Parent ([System.IO.Path]::GetFullPath($CidataImage))
             if (-not [string]::IsNullOrWhiteSpace($cidataParent)) {
@@ -1434,9 +1440,6 @@ try {
             Write-Info "test mode: cidata -> $CidataImage"
         }
         else {
-            $cidataDisk = Get-Disk -Number $CidataDiskNumber -ErrorAction Stop
-            if ($cidataDisk.Size -lt (64MB)) { throw "Disk $CidataDiskNumber is smaller than 64 MB." }
-            Clear-TargetDisk -Disk $cidataDisk -Erase:$EraseDisk
             Write-RawImage -ImagePath $cidataTemp -PhysicalDiskNumber $CidataDiskNumber -ApplyImage
         }
     }

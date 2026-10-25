@@ -504,12 +504,13 @@ async function main() {
     writeStub(fakeBin, 'sensors', 'exit 0');
     writeStub(fakeBin, 'df', "printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' '/dev/fake 100000000 1 10000000 1% /'");
 
-    const result = runBash([verify, '--repo', fakeRepo, '--user', user], {
+    const result = runBash([verify, '--skip-apps', '--repo', fakeRepo, '--user', user], {
       env: {
         VERIFY_SYSTEMCTL: toPosix(path.join(fakeBin, 'systemctl')),
         VERIFY_CURL: toPosix(path.join(fakeBin, 'curl')),
         VERIFY_DF: toPosix(path.join(fakeBin, 'df')),
         VERIFY_SENSORS: toPosix(path.join(fakeBin, 'sensors')),
+        VERIFY_INSTALLED_UNIT_DIR: toPosix(unitDir),
       },
     });
     assert.match(result.stdout, /PASS/);
@@ -529,7 +530,7 @@ async function main() {
     writeStub(fakeBin, 'curl', 'exit 7');
     writeStub(fakeBin, 'df', "printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' '/dev/fake 100000000 1 1000 100% /'");
 
-    const result = spawnSync(bash, [verify, '--repo', fakeRepo, '--user', user], {
+    const result = spawnSync(bash, [verify, '--skip-apps', '--repo', fakeRepo, '--user', user], {
       encoding: 'utf8',
       env: {
         ...process.env,

@@ -261,6 +261,11 @@ fi
 # ---------------------------------------------------------------- 3. paths
 
 log "3/9 Rewrite stored Windows paths"
+if [ "$SKIP_RESTORE" -eq 1 ]; then
+  # No restored Windows data means there is nothing to rewrite. This keeps a
+  # base-host or VM proof from stopping on Backend's migrator being absent.
+  info "path rewrite skipped (--skip-restore: no Windows data was restored)"
+else
 MIGRATE_PATHS="$REPO/scripts/personal/node/migrate-paths.mjs"
 if [ ! -f "$MIGRATE_PATHS" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -281,6 +286,7 @@ else
       die "node is not installed and mise is missing. Install node or mise, then rerun (packages come after this step by design)."
     fi
   fi
+fi
 fi
 
 # ---------------------------------------------------------------- 4. secrets
