@@ -131,16 +131,20 @@ const androidSdk = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
   const explicit = environment.ANDROID_HOME?.trim() || environment.ANDROID_SDK_ROOT?.trim();
+  // Android Studio's default SDK location per host: %LOCALAPPDATA%\Android\Sdk
+  // on Windows, ~/Library/Android/sdk on macOS and ~/Android/Sdk on Linux. A
+  // Linux host has no %LOCALAPPDATA%, so inventing one there only points the
+  // "SDK was not found" message at a folder that cannot exist.
+  const localAppData =
+    platform === "win32"
+      ? environment.LOCALAPPDATA?.trim() || path.join(home, "AppData", "Local")
+      : null;
   const candidates = explicit
     ? [explicit]
     : [
         path.join(home, "Library", "Android", "sdk"),
         path.join(home, "Android", "Sdk"),
-        path.join(
-          environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
-          "Android",
-          "Sdk",
-        ),
+        ...(localAppData === null ? [] : [path.join(localAppData, "Android", "Sdk")]),
       ];
   if (!explicit) {
     for (const directory of (environment.PATH ?? "").split(platform === "win32" ? ";" : ":")) {

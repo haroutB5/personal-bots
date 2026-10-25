@@ -35,6 +35,30 @@ const diagnose = (
     Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
   );
 
+/** The same diagnosis, plus every path the SDK search looked at. */
+const diagnoseChecked = (
+  files: ReadonlyArray<string>,
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = "darwin",
+) => {
+  const checked: string[] = [];
+  return LocalDeviceHost.__testing.platformReason("android").pipe(
+    Effect.provideService(HostProcessEnvironment, environment),
+    Effect.provideService(HostProcessPlatform, platform),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: (file) => {
+          checked.push(file);
+          return Effect.succeed(files.includes(file));
+        },
+      }),
+    ),
+    Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
+    Effect.map((reason) => ({ reason, checked })),
+  );
+};
+
 describe("Android SDK availability", () => {
   it.effect("explains that adb alone is insufficient to launch an emulator", () =>
     Effect.gen(function* () {
@@ -117,6 +141,41 @@ describe("Android SDK availability", () => {
       expect(yield* diagnose([], { HOME: "/test/home" })).toContain("Android SDK was not found");
     }),
   );
+
+  it.effect("looks in the Linux home folder, never an AppData path that cannot exist", () =>
+    Effect.gen(function* () {
+      const root = "/home/harout/Android/Sdk";
+      const { reason, checked } = yield* diagnoseChecked(
+        [
+          `${root}/platform-tools/adb`,
+          `${root}/emulator/emulator`,
+          `${root}/cmdline-tools/latest/bin/avdmanager`,
+        ],
+        { HOME: "/home/harout" },
+        "linux",
+      );
+      expect(reason).toBeNull();
+      expect(checked.some((file) => file.includes("AppData"))).toBe(false);
+      expect(checked).toContain(`${root}/platform-tools/adb`);
+    }),
+  );
+
+  it.effect("keeps the Windows %LOCALAPPDATA% SDK fallback", () =>
+    Effect.gen(function* () {
+      const root = "C:\\Users\\Ht\\AppData\\Local\\Android\\Sdk";
+      const { reason, checked } = yield* diagnoseChecked(
+        [
+          `${root}\\platform-tools\\adb.exe`,
+          `${root}\\emulator\\emulator.exe`,
+          `${root}\\cmdline-tools\\latest\\bin\\avdmanager.bat`,
+        ],
+        { USERPROFILE: "C:\\Users\\Ht" },
+        "win32",
+      );
+      expect(reason).toBeNull();
+      expect(checked).toContain(`${root}\\platform-tools\\adb.exe`);
+    }),
+  );
 });
 
 it.effect("puts detected Android tools on the helper PATH without losing existing commands", () =>
@@ -131,7 +190,7 @@ it.effect("puts detected Android tools on the helper PATH without losing existin
     expect(environment.PATH).toBe("/sdk/platform-tools:/sdk/emulator:/usr/bin");
     expect(environment.ANDROID_HOME).toBe("/sdk");
     expect(environment.HOME).toBe("/test/home");
-  }).pipe(Effect.provide(NodePath.layer)),
+  }).pipe(Effect.provide(NodePath.layerPosix)),
 );
 
 it.effect(
