@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off - a standalone smoke: it spawns the real server and polls it with plain fetch.
+// @effect-diagnostics globalFetch:off - the point is the network exactly as the phone uses it.
+// @effect-diagnostics globalTimers:off - a test script, not a service.
+// @effect-diagnostics globalDate:off - elapsed-time guard for the stream reader.
+// @effect-diagnostics globalRandom:off - picks a free test port.
 /**
  * Live boot smoke for a Linux hbots server (migration milestone 1).
  *
@@ -136,8 +141,10 @@ const main = async (): Promise<void> => {
     headers: { authorization: `Bearer ${token}` },
     signal: controller.signal,
   });
-  if (stream.status !== 200 || stream.body === null) fail(`stream returned ${stream.status}`);
-  const reader = stream.body.getReader();
+  if (stream.status !== 200) fail(`stream returned ${stream.status}`);
+  const body = stream.body;
+  if (body === null) fail("the stream has no body");
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let hello: any = null;
