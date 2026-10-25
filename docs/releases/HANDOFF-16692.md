@@ -12,10 +12,11 @@ Live QA of 1.66.91 failed one wording criterion on the Team token usage card: a 
 
 ## Validation
 
-- Targeted web unit tests: `tokenUsagePresentation.test.ts` passes, including the new cases.
-- Full personal web suite and web `tsc --noEmit` were run from a clean tree for this release; the exact counts and exit codes are recorded in the Gate evidence section written by `gate-evidence.ps1`.
-- Throwaway server from the staged release, 390x844 dark, fresh isolated root, usage fixture with provider `antigravity` and model `antigravity-unknown`: the token card reads exactly `Antigravity · Unknown model` with `1.1M · not priced`, every other row is unchanged, and the page has no horizontal overflow. Screenshot: `C:\Users\Ht\.personal-bots\qa\hbots-16692\01-token-unknown-model-390-dark.png`.
-- Live 1.66.91 was not touched: no deploy, no restart, no change to `releases\current.txt` or the 1.66.90/1.66.91 release folders.
+- Targeted web unit tests: `tokenUsagePresentation.test.ts` 31 of 31, exit 0, including bare `Unknown`, `antigravity-unknown`, `Antigravity Unknown`, `Gemini 3.8 Flash N` and `Unknown Things 2`, plus the full table build asserting `Antigravity · Unknown model`.
+- Full personal web suite: 3032 of 3032 tests in 266 files, exit 0. Web `tsc --noEmit`: exit 0. Both were run again by the gate from a clean tree; the gate counts are in its section below.
+- Throwaway server from the staged release `e906462e6c37`, 390x844 dark, fresh isolated root `%TEMP%\hbots-tw-16692`, the exact live 1.66.91 Frontend 7-day payload fed through the real `personalBots.tokenUsage` RPC (provider `antigravity`, model `antigravity-unknown`, 1.1M tokens, unpriced). The card reads exactly `Antigravity · Unknown model` with `1.1M · not priced`; the other six rows are byte-identical to live (`Claude · Sonnet 5.5 992.0M · $143.00`, `OpenCode · DeepSeek V4.1 Flash 458.1M · $2.88`, `Antigravity · Gemini 3.8 Flash N 219.1M · $23.42`, `Codex · GPT-6-Luna 208.0M · $3.35`, `Codex · GPT-6.1-Sol 76.5M · $11.04`, `Antigravity · Gemini 3.8 Flash High 49.6k · $0.01`), there is no bare `Antigravity · Unknown` anywhere, the page has no horizontal overflow, and there are no uncaught page errors. 12 of 12 checks pass (`C:\Users\Ht\.personal-bots\qa\hbots-16692\VERIFY.json`).
+- Screenshots (dark 390x844): `C:\Users\Ht\.personal-bots\qa\hbots-16692\01-token-unknown-model-390-dark.png` (card at the Frontend row), `02-token-card-390-dark.png`, `03-frontend-row-390-dark.png`.
+- Live 1.66.91 was not touched: `releases\current.txt` was `35579bd5ae65` before and after this work, no deploy or restart ran, and the 1.66.90/1.66.91 release folders were not modified.
 
 ## Runtime and activation
 
