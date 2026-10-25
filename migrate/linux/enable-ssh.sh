@@ -68,7 +68,7 @@ one_liner() {
   done
   line+=" && chmod 600 ~/.ssh/authorized_keys"
   line+=" && { command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q active && sudo ufw allow 22/tcp || true; }"
-  line+=" && ip -4 -o addr show scope global | awk '{print \$2, \$4}'"
+  line+=" && ip -4 -o addr show scope global | awk '\$2 != \"lo\" {print \$2, \$4}'"
   printf '%s\n' "$line"
 }
 
@@ -127,7 +127,7 @@ echo "==> sshd status"
 systemctl is-active sshd
 
 echo "==> addresses"
-ip -4 -o addr show scope global | awk '{print "    " $2, $4}'
+ip -4 -o addr show scope global | awk '$2 != "lo" {print "    " $2, $4}'
 echo
 echo "SSH is ready. From the gaming PC:"
 echo "  ssh -i C:\\Users\\harou\\.ssh\\hbots-migrate_ed25519 ${USER}@<address above>"
