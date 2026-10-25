@@ -346,7 +346,8 @@ From the repo root on Windows:
 node migrate/tests/run-tests.mjs
 ```
 
-The suite runs both PowerShell self-tests, proves `make-installer.ps1` is
+The suite runs both PowerShell self-tests (they SKIP on a Linux host without
+Windows PowerShell), proves `make-installer.ps1` is
 ISO-only, checks the `enable-ssh.sh` one-liner and its keys, runs `bash -n` and
 `shellcheck` (when installed) on every shell script, runs
 `bootstrap.sh --dry-run` plus `verify.sh --dry-run` and `--json` against a temp

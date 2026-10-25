@@ -28,6 +28,7 @@ const enableSsh = path.join(linuxDir, 'enable-ssh.sh');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hbots-migrate-tests-'));
 let passed = 0;
 let failed = 0;
+let skipped = 0;
 let powershell = null;
 let bash = null;
 
@@ -173,6 +174,11 @@ function assertManifestUnchanged(before, after, label) {
   }
 }
 
+function skip(name, reason) {
+  skipped++;
+  log(`SKIP ${name} (${reason})`);
+}
+
 async function test(name, fn) {
   try {
     await fn();
@@ -196,17 +202,25 @@ async function main() {
 
   const migrateBefore = manifest(path.join(repoRoot, 'migrate'));
 
-  await test('prewipe.ps1 -SelfTest exits 0', () => {
-    const result = runPwsh(prewipe, ['-SelfTest']);
-    assert.match(result.stdout, /SELFTEST PASS/);
-    assert.doesNotMatch(result.stdout, /SELFTEST FAIL/);
-  });
+  if (powershell) {
+    await test('prewipe.ps1 -SelfTest exits 0', () => {
+      const result = runPwsh(prewipe, ['-SelfTest']);
+      assert.match(result.stdout, /SELFTEST PASS/);
+      assert.doesNotMatch(result.stdout, /SELFTEST FAIL/);
+    });
+  } else {
+    skip('prewipe.ps1 -SelfTest exits 0', 'Windows PowerShell 5.1 is not available on this host');
+  }
 
-  await test('make-installer.ps1 -SelfTest exits 0', () => {
-    const result = runPwsh(makeInstaller, ['-SelfTest']);
-    assert.match(result.stdout, /SELFTEST PASS/);
-    assert.doesNotMatch(result.stdout, /SELFTEST FAIL/);
-  });
+  if (powershell) {
+    await test('make-installer.ps1 -SelfTest exits 0', () => {
+      const result = runPwsh(makeInstaller, ['-SelfTest']);
+      assert.match(result.stdout, /SELFTEST PASS/);
+      assert.doesNotMatch(result.stdout, /SELFTEST FAIL/);
+    });
+  } else {
+    skip('make-installer.ps1 -SelfTest exits 0', 'Windows PowerShell 5.1 is not available on this host');
+  }
 
   await test('make-installer is ISO-only: no cidata and no password prompt', () => {
     const source = fs.readFileSync(makeInstaller, 'utf8');
@@ -378,7 +392,7 @@ async function main() {
   assertManifestUnchanged(migrateBefore, migrateAfter, 'migrate tree');
 
   log('');
-  log(`${passed} passed, ${failed} failed`);
+  log(`${passed} passed, ${skipped} skipped, ${failed} failed`);
   log(`temp: ${tempRoot}`);
 
   if (failed > 0) {
