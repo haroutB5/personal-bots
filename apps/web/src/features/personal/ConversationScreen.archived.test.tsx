@@ -311,6 +311,12 @@ vi.mock("./MessageList", () => ({
     return <div data-message-list="" />;
   },
 }));
+// The chat file-preview provider is covered by its own suite; mocking it keeps
+// this archived-chat test off the connection runtime graph.
+vi.mock("./ChatFilePreview", () => ({
+  ChatFilePreviewProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useChatFilePreview: () => null,
+}));
 vi.mock("./questionCards", () => ({
   deriveQuestionCards: () => [],
   deriveUserInputResolutions: () => new Map(),
