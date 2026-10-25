@@ -163,10 +163,14 @@ const main = async (): Promise<void> => {
   let hello: any = null;
   let statics: Record<string, unknown> | null = null;
   const samples: any[] = [];
-  const deadline = Date.now() + 25_000;
+  const deadline = Date.now() + 30_000;
+  const hasRates = () =>
+    samples.some(
+      (sample) => sample.diskActivePct !== null && sample.diskReadMBps !== null,
+    );
   while (
     Date.now() < deadline &&
-    (samples.length < 3 || statics === null || typeof statics["pcCpu"] !== "string")
+    (samples.length < 5 || statics === null || typeof statics["pcCpu"] !== "string" || !hasRates())
   ) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -204,14 +208,15 @@ const main = async (): Promise<void> => {
   const latest = samples[samples.length - 1]!;
   if (typeof latest.cpuPct !== "number") fail("no CPU percent in the sample");
   if (typeof latest.memTotalGB !== "number" || latest.memTotalGB <= 0) fail("no memory in the sample");
-  if (typeof latest.diskActivePct !== "number") fail("no disk activity in the sample");
+  if (!hasRates()) fail("no disk activity in any sample");
   const sensorFields = ["cpuTempC", "ssdC", "fan1Rpm", "powerCpuW", "memFreeGB"] as const;
   const present = sensorFields.filter((field) => latest[field] !== null && latest[field] !== undefined);
   if (present.length === 0) fail("no sensor field has a value");
   pass(
     "live samples",
     `${samples.length} samples; cpu ${latest.cpuPct}%, mem ${latest.memUsedGB}/${latest.memTotalGB} GB, ` +
-      `disk ${latest.diskReadMBps}/${latest.diskWriteMBps} MB/s, net ${latest.netDownMbps} Mb/s, ` +
+      `disk busy ${latest.diskActivePct}% (${latest.diskReadMBps}/${latest.diskWriteMBps} MB/s), ` +
+      `net ${latest.netDownMbps}/${latest.netUpMbps} Mb/s, ` +
       `sensors ${present.join(",")}, fan ${String(latest.fanStatus)}`,
   );
   if (latest.cpuTempC === null && latest.ssdC === null) {
