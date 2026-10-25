@@ -1221,7 +1221,7 @@ function Invoke-SelfTest {
         if ($creds.users[0].username -ne 'harout') { throw 'username did not round-trip' }
         Write-Host 'PASS cidata FAT32 image and JSON schema'
 
-        $all = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($cidataPath))
+        $all = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes((ConvertTo-LongPath $cidataPath)))
         if ($all.Contains($script:SelfTestPassword)) { throw 'the plaintext test password appears in the cidata image' }
         Write-Host 'PASS no plaintext password in the cidata image'
 
@@ -1234,7 +1234,7 @@ function Invoke-SelfTest {
         # 5. Disk guards with synthetic disks.
         $system = [pscustomobject]@{ Number = 0; FriendlyName = 'System Disk'; Size = 512GB; BusType = 'NVMe'; IsSystem = $true; IsBoot = $true }
         $fixed = [pscustomobject]@{ Number = 1; FriendlyName = 'Fixed Disk'; Size = 512GB; BusType = 'NVMe'; IsSystem = $false; IsBoot = $false }
-        $removable = [pscustomobject]@{ Number = 2; FriendlyName = 'USB Test'; Size = 32GB; BusType = 'USB'; IsSystem = $false; IsBoot = $false }
+        $removable = [pscustomobject]@{ Number = 99; FriendlyName = 'USB Test'; Size = 32GB; BusType = 'USB'; IsSystem = $false; IsBoot = $false }
         $rejected = $false
         try { Assert-DiskSafe -Disk $system -Purpose 'test' -RepoRoot '' } catch { $rejected = $true }
         if (-not $rejected) { throw 'system disk was accepted' }
