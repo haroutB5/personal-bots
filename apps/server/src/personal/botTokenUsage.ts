@@ -35,6 +35,20 @@ const TOKEN_USAGE_WEEK_DAYS = 7;
 
 const SYNTHETIC_MODEL = "<synthetic>";
 
+/**
+ * Antigravity can route a call to a Claude or a GPT model. Harout's rule
+ * (21 Oct): those tokens are not shown in usage stats, and the same tokens are
+ * counted nowhere either (every total, provider row, bot row and share), so
+ * every number on the card adds up. Gemini and an Antigravity row with no
+ * model id stay counted. Matches a whole word, so only a model named Claude or
+ * GPT-something is dropped.
+ */
+const ROUTED_CLAUDE_OR_GPT = /(?:^|[^a-z])(?:claude|gpt)(?:[^a-z]|$)/i;
+
+export function isHiddenAntigravityModel(provider: UsageProviderKind, model: string): boolean {
+  return provider === "antigravity" && ROUTED_CLAUDE_OR_GPT.test(model);
+}
+
 /** A chat's provider session, as the database stores it. */
 export interface ChatSessionRow {
   readonly botId: string;
@@ -152,7 +166,8 @@ function newAccumulator(): Accumulator {
  * `activeBotIds` are the bots that still exist; a session owned by any other
  * bot (removed since) is "other", as is one with no owner or no session id.
  * Every counted token is in exactly one of the rows or `other`, so `total` is
- * their sum.
+ * their sum. Antigravity's Claude and GPT routes are not counted at all (see
+ * `isHiddenAntigravityModel`), so the provider rows add up to `total` too.
  */
 export function computeTokenUsageWindows(input: {
   readonly cells: ReadonlyArray<BotUsageCell>;
@@ -168,6 +183,7 @@ export function computeTokenUsageWindows(input: {
 
     for (const cell of input.cells) {
       if (cell.day < range.sinceDay || cell.day > range.untilDay) continue;
+      if (isHiddenAntigravityModel(cell.provider, cell.model)) continue;
       const key = cell.sessionId.length === 0 ? null : sessionKey(cell.provider, cell.sessionId);
       const owner = key === null ? undefined : input.owners.get(key);
       const botId = owner !== undefined && input.activeBotIds.has(owner) ? owner : null;

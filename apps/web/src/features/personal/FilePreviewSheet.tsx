@@ -8,6 +8,7 @@ import { FileTextPreview } from "./FileTextPreview";
 import { Sheet, SheetClose, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui/sheet";
 
 import { filePreviewKind, formatFileSize, TEXT_PREVIEW_MAX_BYTES } from "./filesModel";
+import { useSheetDragDismiss } from "./useSheetDragDismiss";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -91,6 +92,7 @@ export function FilePreviewSheet({
 }): JSX.Element {
   const kind = file === null ? null : filePreviewKind(file);
   const [deleting, setDeleting] = useState(false);
+  const dragRef = useSheetDragDismiss(onClose);
   const deleteFile = async () => {
     if (deleting) return;
     setDeleting(true);
@@ -108,6 +110,7 @@ export function FilePreviewSheet({
       }}
     >
       <SheetPopup
+        ref={dragRef}
         side="bottom"
         showCloseButton={false}
         forceBackdrop
@@ -116,7 +119,10 @@ export function FilePreviewSheet({
       >
         {file !== null ? (
           <>
-            <div className="flex items-center gap-1 py-2 pr-2 pl-5">
+            <div
+              data-sheet-drag-zone=""
+              className="flex touch-none items-center gap-1 py-2 pr-2 pl-5"
+            >
               <div className="min-w-0 flex-1">
                 <SheetTitle className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
                   {file.name}

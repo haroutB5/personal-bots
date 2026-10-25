@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, UsageProviderKind } from "@t3tools/contracts";
 import { isLowProviderBalance } from "@t3tools/contracts";
 import { lazy, Suspense, useEffect, useRef, useState, type JSX } from "react";
 import { RefreshCw, X } from "lucide-react";
@@ -41,6 +41,14 @@ import {
   usageStripAriaLabel,
   type UsageStripCell,
 } from "./usageStrip";
+
+import { providerColor } from "./tokenUsagePresentation";
+import { useSheetDragDismiss } from "./useSheetDragDismiss";
+
+/** The token-usage provider a limits card belongs to, so its dot matches the Team card's. */
+function usageProviderOfDriver(driver: UsageCard["driver"]): UsageProviderKind {
+  return driver === "claudeAgent" ? "claude" : driver;
+}
 
 // Upstream's reset-credit module brings the whole Limits tab with it; load it
 // only once a sheet shows a banked credit.
@@ -294,7 +302,16 @@ function UsageCardView({
       className="flex shrink-0 flex-col gap-4 overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4"
     >
       <div className="flex min-w-0 flex-col">
-        <h3 className="text-[16px] font-semibold text-[var(--personal-text)]">{card.title}</h3>
+        <h3 className="flex items-center gap-2 text-[16px] font-semibold text-[var(--personal-text)]">
+          <span
+            aria-hidden="true"
+            data-testid="usage-provider-dot"
+            data-provider={usageProviderOfDriver(card.driver)}
+            className="size-2 shrink-0 rounded-full"
+            style={{ backgroundColor: providerColor(usageProviderOfDriver(card.driver)) }}
+          />
+          <span className="min-w-0">{card.title}</span>
+        </h3>
         {card.plan ? (
           <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
             {card.plan}
@@ -399,7 +416,7 @@ function UsageSheetBody({
 
   return (
     <>
-      <div className="flex items-center gap-1 py-2 pr-2 pl-5">
+      <div data-sheet-drag-zone="" className="flex touch-none items-center gap-1 py-2 pr-2 pl-5">
         <div className="min-w-0 flex-1">
           <SheetTitle className="text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
             Usage
@@ -462,6 +479,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
   });
   const [open, setOpen] = useState(false);
   const hidden = useHiddenUsageProviders(environmentId);
+  const dragRef = useSheetDragDismiss(() => setOpen(false));
 
   // The bars should not wait for the sheet to be opened: ask for the reading
   // the sheet would ask for, once, when the list first has providers (and again
@@ -552,6 +570,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
       </button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetPopup
+          ref={dragRef}
           side="bottom"
           showCloseButton={false}
           forceBackdrop

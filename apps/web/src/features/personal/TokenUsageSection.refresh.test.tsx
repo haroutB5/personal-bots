@@ -33,6 +33,14 @@ vi.mock("./usePersonalBots", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ Link: () => null }));
 vi.mock("./BotAvatar", () => ({ BotAvatar: () => null }));
+vi.mock("./usageSheetRoute", () => ({
+  useUsageSheetRoute: () => ({
+    openBotId: null,
+    open: () => undefined,
+    close: () => undefined,
+    openChat: () => undefined,
+  }),
+}));
 
 const page = {
   visibility: "visible" as "visible" | "hidden",

@@ -5,6 +5,7 @@ import {
   buildSessionOwners,
   computeTokenUsageWindows,
   dayInZone,
+  isHiddenAntigravityModel,
   sessionIdFromResumeCursor,
   sessionKey,
   shiftDay,
@@ -276,6 +277,111 @@ describe("provider and cost totals", () => {
     expect(String(today?.rows[0]?.botId)).toBe("bot-backend");
     expect(today?.rows[0]?.costUsd).toBe(0.75);
     expect(today?.total.costUsd).toBe(0.75);
+  });
+});
+
+describe("Antigravity's Claude and GPT routes", () => {
+  const agy = (model: string, sessionId: string, out: number, costUsd: number) =>
+    cell({
+      provider: "antigravity",
+      sessionId,
+      model,
+      costUsd,
+      unpricedTokens: 0,
+      totals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: out,
+      },
+    });
+  const owners = new Map([
+    [sessionKey("claude", "s-ada"), "bot-ada"],
+    [sessionKey("antigravity", "agy-ada"), "bot-ada"],
+    [sessionKey("antigravity", "agy-only-hidden"), "bot-ada"],
+    [sessionKey("antigravity", "agy-bo"), "bot-bo"],
+  ]);
+  const fixture = [
+    // Counted: a real Claude session, a Gemini route and an unknown Antigravity row.
+    cell({ costUsd: 2 }),
+    agy("gemini-3.8-flash-high", "agy-ada", 1000, 0.5),
+    agy("antigravity-unknown", "agy-bo", 40, 0),
+    // Hidden: Antigravity's Claude and GPT routes, in every spelling the reader produces.
+    agy("claude-opus-4-6", "agy-ada", 90_000, 9),
+    agy("claude-sonnet-4-5", "agy-only-hidden", 70_000, 7),
+    agy("Claude Sonnet 4.6 (Thinking)", "agy-bo", 5_000, 5),
+    agy("gpt-oss-120b-medium", "agy-ada", 60_000, 6),
+    agy("GPT-OSS 120B", "agy-other", 2_000, 2),
+  ];
+  const [today] = computeTokenUsageWindows({
+    cells: fixture,
+    owners,
+    activeBotIds: ACTIVE,
+    today: "2026-10-04",
+  });
+  const counted = tokens(cell().totals) + 1000 + 40;
+
+  it("recognises the routes by provider and by whole word", () => {
+    expect(isHiddenAntigravityModel("antigravity", "claude-opus-4-6")).toBe(true);
+    expect(isHiddenAntigravityModel("antigravity", "gpt-oss-120b-medium")).toBe(true);
+    expect(isHiddenAntigravityModel("antigravity", "GPT-OSS 120B")).toBe(true);
+    expect(isHiddenAntigravityModel("antigravity", "gemini-3.8-flash-high")).toBe(false);
+    expect(isHiddenAntigravityModel("antigravity", "antigravity-unknown")).toBe(false);
+    expect(isHiddenAntigravityModel("antigravity", "antigravity-model-77")).toBe(false);
+    // Only Antigravity: the real Claude and Codex providers are untouched.
+    expect(isHiddenAntigravityModel("claude", "claude-opus-5-5")).toBe(false);
+    expect(isHiddenAntigravityModel("codex", "gpt-6.1-sol")).toBe(false);
+  });
+
+  it("leaves them out of the total, the providers, the bots and Outside Bots", () => {
+    expect(tokens(today!.total.totals)).toBe(counted);
+    const providerSum = today!.providers.reduce((n, row) => n + tokens(row.totals), 0);
+    expect(providerSum).toBe(counted);
+    const antigravity = today!.providers.find((row) => row.provider === "antigravity")!;
+    expect(tokens(antigravity.totals)).toBe(1040);
+    const rowSum = today!.rows.reduce((n, row) => n + tokens(row.totals), 0);
+    expect(rowSum + tokens(today!.other.totals)).toBe(counted);
+    expect(tokens(today!.other.totals)).toBe(0);
+  });
+
+  it("leaves them out of every bot's models, so the models add up to the bot", () => {
+    for (const row of today!.rows) {
+      const modelSum = row.models.reduce((n, model) => n + tokens(model.totals), 0);
+      expect(modelSum).toBe(tokens(row.totals));
+      expect(
+        row.models.some((model) => isHiddenAntigravityModel(model.provider, model.model)),
+      ).toBe(false);
+    }
+    const ada = today!.rows.find((row) => String(row.botId) === "bot-ada")!;
+    expect(ada.models.map((model) => model.model).toSorted()).toEqual([
+      "claude-opus-5-5",
+      "gemini-3.8-flash-high",
+    ]);
+    // Bo has only an unknown Antigravity row left, and it stays.
+    const bo = today!.rows.find((row) => String(row.botId) === "bot-bo")!;
+    expect(bo.models.map((model) => model.model)).toEqual(["antigravity-unknown"]);
+  });
+
+  it("leaves them out of the estimate and the session count", () => {
+    expect(today!.total.costUsd).toBeCloseTo(2.5, 9);
+    expect(today!.providers.reduce((n, row) => n + row.costUsd, 0)).toBeCloseTo(2.5, 9);
+    // A session that only used a hidden route is not a session of the bot.
+    const ada = today!.rows.find((row) => String(row.botId) === "bot-ada")!;
+    expect(ada.sessions).toBe(2);
+    expect(ada.costUsd).toBeCloseTo(2.5, 9);
+    expect(today!.total.sessions).toBe(3);
+  });
+
+  it("a window with only hidden routes is empty", () => {
+    const [empty] = computeTokenUsageWindows({
+      cells: [agy("claude-opus-4-6", "agy-ada", 50, 1)],
+      owners,
+      activeBotIds: ACTIVE,
+      today: "2026-10-04",
+    });
+    expect(empty?.providers).toEqual([]);
+    expect(empty?.rows).toEqual([]);
+    expect(tokens(empty!.total.totals)).toBe(0);
   });
 });
 

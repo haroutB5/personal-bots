@@ -79,6 +79,13 @@
    * behind text and therefore only 1.2:1 against the dark page — the track
    * vanished and the bar read as a floating stub with no scale behind it. */
   --personal-track: #f3f3f1;
+  /* Provider colours, light theme: the same hues, so a dot means the same in
+   * both. They are validated on the dark surface; the app ships dark only. */
+  --personal-provider-claude: #c98500;
+  --personal-provider-opencode: #d55181;
+  --personal-provider-antigravity: #3987e5;
+  --personal-provider-codex: #008300;
+  --personal-provider-other: #8c8c88;
   /* Inline form/error text ("Couldn't save your name"), and the error status
    * dot. Was hardcoded #b3261e / #B3261E in 16 places. 6.9:1 on
    * --personal-bg, 7.2:1 on --personal-surface. */
@@ -163,6 +170,15 @@
    * (--personal-text-tertiary) keeps 3.1:1 against it, which is the ratio that
    * actually carries "how much is used". */
   --personal-track: #3f3f3c;
+  /* Who a token count belongs to: dots and bar segments next to a provider
+   * name, never text and never a status. Checked together on the dark surface
+   * (lightness band, colour-blind separation, 3:1 graphic contrast). Any other
+   * provider folds into the grey rather than getting a fifth hue. */
+  --personal-provider-claude: #c98500;
+  --personal-provider-opencode: #d55181;
+  --personal-provider-antigravity: #3987e5;
+  --personal-provider-codex: #008300;
+  --personal-provider-other: #8c8c88;
   --personal-live: #3ecf6b; /* status dot, 9.5:1 on bg (needs 3:1) */
   --personal-review: #e3b855; /* 8.8:1 on --personal-review-bg */
   /* Dark already clears AA with the bright amber: 10.3:1 on bg, 9.3:1 on
