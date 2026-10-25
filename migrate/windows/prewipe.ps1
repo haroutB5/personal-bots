@@ -339,7 +339,7 @@ function Copy-TreeAndVerify {
         }
     }
     else {
-        Copy-Item -LiteralPath (Join-Path $Source '*') -Destination $Destination -Recurse -Force
+        Copy-Item -Path (Join-Path $Source '*') -Destination $Destination -Recurse -Force
     }
 
     $manifest = Test-TreeHashes -Source $Source -Destination $Destination

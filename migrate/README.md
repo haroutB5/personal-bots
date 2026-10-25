@@ -345,5 +345,6 @@ node migrate/tests/run-tests.mjs
 The suite runs both PowerShell self-tests, builds a CIDATA image and reads it
 back with an independent FAT32 reader, checks JSON keys and the absence of the
 plaintext test password, runs `bash -n` and `shellcheck` (when installed) on both
-shell scripts, and runs `bootstrap.sh --dry-run` plus `verify.sh --dry-run` and
-`--json` against a temp directory.
+shell scripts, runs `bootstrap.sh --dry-run` plus `verify.sh --dry-run` and
+`--json` against a temp directory, and proves `verify.sh` exits 0 and 1 with fake
+healthy and broken services.
