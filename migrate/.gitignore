@@ -1,0 +1,9 @@
+# Operator-supplied public keys for the cidata stick. Never commit them.
+authorized_keys
+windows/authorized_keys
+
+# Local downloads and test images.
+*.iso
+*.iso.partial
+*.img
+.cache/

@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly Personal Bots upstream sync (Saturday 09:00 local)
+
+[Timer]
+OnCalendar=Sat *-*-* 09:00:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
