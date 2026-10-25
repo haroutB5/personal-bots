@@ -8,6 +8,7 @@ import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
 import { Sheet, SheetClose, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui/sheet";
 
 import { chatFilePreviewKind, fileNameFromPath } from "./filesModel";
+import { useSheetDragDismiss } from "./useSheetDragDismiss";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -106,6 +107,7 @@ export function ChatFilePreviewProvider({
     [cwd],
   );
   const close = useCallback(() => setRequest(null), []);
+  const dragRef = useSheetDragDismiss(close);
   const contextValue = useMemo(() => openFile, [openFile]);
   const name = request === null ? "" : fileNameFromPath(request.path);
   return (
@@ -118,6 +120,7 @@ export function ChatFilePreviewProvider({
         }}
       >
         <SheetPopup
+          ref={dragRef}
           side="bottom"
           showCloseButton={false}
           forceBackdrop
@@ -127,7 +130,10 @@ export function ChatFilePreviewProvider({
         >
           {request !== null && cwd !== undefined ? (
             <>
-              <div className="flex items-center gap-1 py-2 pr-2 pl-5">
+              <div
+                data-sheet-drag-zone=""
+                className="flex touch-none items-center gap-1 py-2 pr-2 pl-5"
+              >
                 <div className="min-w-0 flex-1">
                   <SheetTitle className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
                     {name}

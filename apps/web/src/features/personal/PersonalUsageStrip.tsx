@@ -43,6 +43,7 @@ import {
 } from "./usageStrip";
 
 import { providerColor } from "./tokenUsagePresentation";
+import { useSheetDragDismiss } from "./useSheetDragDismiss";
 
 /** The token-usage provider a limits card belongs to, so its dot matches the Team card's. */
 function usageProviderOfDriver(driver: UsageCard["driver"]): UsageProviderKind {
@@ -415,7 +416,7 @@ function UsageSheetBody({
 
   return (
     <>
-      <div className="flex items-center gap-1 py-2 pr-2 pl-5">
+      <div data-sheet-drag-zone="" className="flex touch-none items-center gap-1 py-2 pr-2 pl-5">
         <div className="min-w-0 flex-1">
           <SheetTitle className="text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
             Usage
@@ -478,6 +479,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
   });
   const [open, setOpen] = useState(false);
   const hidden = useHiddenUsageProviders(environmentId);
+  const dragRef = useSheetDragDismiss(() => setOpen(false));
 
   // The bars should not wait for the sheet to be opened: ask for the reading
   // the sheet would ask for, once, when the list first has providers (and again
@@ -568,6 +570,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
       </button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetPopup
+          ref={dragRef}
           side="bottom"
           showCloseButton={false}
           forceBackdrop

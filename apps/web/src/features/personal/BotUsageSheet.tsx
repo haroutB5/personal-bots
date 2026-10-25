@@ -23,6 +23,7 @@ import {
   type TokenUsageTable,
 } from "./tokenUsagePresentation";
 import { UsageRangeControl } from "./UsageRangeControl";
+import { useSheetDragDismiss } from "./useSheetDragDismiss";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -55,9 +56,11 @@ export function BotUsageSheet({
   readonly onOpenChat: (botId: string) => void;
 }): JSX.Element {
   const shown = open && bot !== null && row !== null && table !== null;
+  const dragRef = useSheetDragDismiss(onClose);
   return (
     <Sheet open={shown} onOpenChange={(next) => !next && onClose()}>
       <SheetPopup
+        ref={dragRef}
         side="bottom"
         showCloseButton={false}
         forceBackdrop
@@ -98,11 +101,17 @@ function BotUsageSheetBody({
   const used = row.tokens > 0;
   return (
     <>
-      <span
+      <div
+        data-sheet-drag-zone=""
         aria-hidden="true"
-        className="mx-auto mt-1.5 h-[5px] w-9 shrink-0 rounded-full bg-[var(--personal-border-strong)]"
-      />
-      <div className="flex shrink-0 items-center gap-3 py-2 pr-3 pl-5">
+        className="flex h-[11px] shrink-0 touch-none justify-center pt-1.5"
+      >
+        <span className="h-[5px] w-9 rounded-full bg-[var(--personal-border-strong)]" />
+      </div>
+      <div
+        data-sheet-drag-zone=""
+        className="flex shrink-0 touch-none items-center gap-3 py-2 pr-3 pl-5"
+      >
         <span className="grid size-10 shrink-0 place-items-center">
           <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={32} label="" />
         </span>
