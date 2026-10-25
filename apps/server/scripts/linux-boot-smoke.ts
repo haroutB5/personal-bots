@@ -143,7 +143,7 @@ const main = async (): Promise<void> => {
   });
   if (stream.status !== 200) fail(`stream returned ${stream.status}`);
   const body = stream.body;
-  if (body === null) fail("the stream has no body");
+  if (body === null) throw new Error("the stream has no body");
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
