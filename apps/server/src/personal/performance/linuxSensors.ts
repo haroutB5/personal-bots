@@ -10,6 +10,8 @@
  *
  * - temperatures and fans: `/sys/class/hwmon/*` (`coretemp` on this laptop's
  *   i7-12700H, `nvme` for the SSD, `dell_smm` for the fans);
+ * - P/E core strips: `coretemp` leaves split by `/sys/devices/cpu_core` and
+ *   `/sys/devices/cpu_atom`, the hybrid CPUs of each cluster;
  * - CPU package and platform power: Intel RAPL (`/sys/class/powercap`);
  * - GPU power: the card's own hwmon node, when the driver exposes one;
  * - battery: `/sys/class/power_supply/BAT*`.
@@ -94,6 +96,97 @@ function temperatureLeaves(node: HwmonNode): ReadonlyArray<TempLeaf> {
 
 const CPU_CHIPS = new Set(["coretemp", "k10temp", "zenpower", "cpu_thermal", "soc_thermal"]);
 const SSD_CHIPS = new Set(["nvme", "drivetemp", "nvme-pci"]);
+
+/** `0-11,14` -> [0..11, 14]; the kernel's cpulist format. */
+function parseCpuList(text: string | null): ReadonlyArray<number> {
+  if (text === null) return [];
+  const cpus: number[] = [];
+  for (const part of text.split(",")) {
+    const match = /^(\d+)(?:-(\d+))?$/.exec(part.trim());
+    if (match === null) continue;
+    const first = Number.parseInt(match[1]!, 10);
+    const last = match[2] === undefined ? first : Number.parseInt(match[2]!, 10);
+    for (let cpu = first; cpu <= last && cpus.length < 4096; cpu++) cpus.push(cpu);
+  }
+  return cpus;
+}
+
+type CoreKind = "p" | "e";
+
+/**
+ * The order coretemp numbers its per-core leaves, as P/E classes.
+ *
+ * `cpu_core`/`cpu_atom` list the CPUs of each hybrid cluster. Walking CPUs in
+ * ascending order and keeping the first of each (package, core) pair gives the
+ * order the coretemp driver registers its "Core N" devices in (first thread of
+ * each physical core, P cluster first on Alder Lake). Null - never a guess -
+ * when the hybrid PMUs or topology files are absent (non-hybrid CPU, a VM), or
+ * when the shapes do not line up.
+ */
+function hybridCoreOrder(sysRoot: string): ReadonlyArray<CoreKind> | null {
+  const pCpus = parseCpuList(readText(NodePath.join(sysRoot, "devices", "cpu_core", "cpus")));
+  const eCpus = parseCpuList(readText(NodePath.join(sysRoot, "devices", "cpu_atom", "cpus")));
+  if (pCpus.length === 0 || eCpus.length === 0) return null;
+  const pSet = new Set(pCpus);
+  const seen = new Set<string>();
+  const kinds: CoreKind[] = [];
+  const all = [...new Set([...pCpus, ...eCpus])].sort((a, b) => a - b);
+  for (const cpu of all) {
+    const topology = NodePath.join(sysRoot, "devices", "system", "cpu", `cpu${cpu}`, "topology");
+    const coreId = readText(NodePath.join(topology, "core_id"));
+    if (coreId === null) return null;
+    const packageId = readText(NodePath.join(topology, "physical_package_id")) ?? "0";
+    const key = `${packageId}:${coreId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kinds.push(pSet.has(cpu) ? "p" : "e");
+  }
+  if (!kinds.includes("p") || !kinds.includes("e")) return null;
+  return kinds;
+}
+
+interface CoreStrips {
+  readonly pCoreC: ReadonlyArray<number> | null;
+  readonly eCoreC: ReadonlyArray<number> | null;
+}
+
+const NO_CORE_STRIPS: CoreStrips = { pCoreC: null, eCoreC: null };
+
+/**
+ * Per-core temperatures split into P and E strips, the arrays Windows gets from
+ * LibreHardwareMonitor. The split is only returned on an exact match: every
+ * coretemp leaf is "Core N", the labels are exactly 0..n-1, and n equals the
+ * number of physical cores the hybrid PMUs report. A kernel that labels cores
+ * differently yields null instead of a mislabelled strip.
+ */
+function coreStrips(
+  nodes: ReadonlyArray<HwmonNode>,
+  order: ReadonlyArray<CoreKind> | null,
+): CoreStrips {
+  if (order === null || order.length === 0) return NO_CORE_STRIPS;
+  for (const node of nodes) {
+    if (!CPU_CHIPS.has(node.name)) continue;
+    const leaves: { readonly index: number; readonly c: number }[] = [];
+    for (const leaf of temperatureLeaves(node)) {
+      const match = /^Core\s+(\d+)$/i.exec(leaf.label ?? "");
+      if (match === null) continue;
+      leaves.push({ index: Number.parseInt(match[1]!, 10), c: leaf.c });
+    }
+    if (leaves.length !== order.length) return NO_CORE_STRIPS;
+    leaves.sort((a, b) => a.index - b.index);
+    for (const [position, leaf] of leaves.entries()) {
+      if (leaf.index !== position) return NO_CORE_STRIPS;
+    }
+    const p: number[] = [];
+    const e: number[] = [];
+    for (const [position, leaf] of leaves.entries()) {
+      if (order[position] === "p") p.push(leaf.c);
+      else e.push(leaf.c);
+    }
+    return p.length > 0 && e.length > 0 ? { pCoreC: p, eCoreC: e } : NO_CORE_STRIPS;
+  }
+  return NO_CORE_STRIPS;
+}
 
 /** The package sensor, else the hottest CPU leaf: both are honest readings. */
 function cpuTemperature(
@@ -296,9 +389,16 @@ const EMPTY_SENSORS: LhmSensors = {
 export class LinuxSensorReader {
   private readonly sysRoot: string;
   private previousEnergy = new Map<string, { readonly microJoules: number; readonly atMs: number }>();
+  /** The hybrid core order never changes; read once, then reused every tick. */
+  private coreOrder: ReadonlyArray<CoreKind> | null | undefined = undefined;
 
   constructor(roots: LinuxSensorRoots = {}) {
     this.sysRoot = roots.sysRoot ?? "/";
+  }
+
+  private coreOrderOnce(): ReadonlyArray<CoreKind> | null {
+    if (this.coreOrder === undefined) this.coreOrder = hybridCoreOrder(this.sysRoot);
+    return this.coreOrder;
   }
 
   /** Watts since the previous read, from a wrapping microjoule counter. */
@@ -319,6 +419,7 @@ export class LinuxSensorReader {
   read(nowMs = Date.now()): SensorsReading {
     const nodes = hwmonNodes(this.sysRoot);
     const cpu = cpuTemperature(nodes);
+    const strips = coreStrips(nodes, this.coreOrderOnce());
     const battery = readLinuxBattery(this.sysRoot);
     const domains = raplDomains(this.sysRoot);
     let powerCpuW: number | null = null;
@@ -334,6 +435,8 @@ export class LinuxSensorReader {
     const sensors: LhmSensors = {
       ...EMPTY_SENSORS,
       cpuTempC: cpu.packageC,
+      pCoreC: strips.pCoreC,
+      eCoreC: strips.eCoreC,
       ssdC: ssdTemperature(nodes),
       ramC: memoryTemperature(nodes),
       powerCpuW,

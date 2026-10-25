@@ -35,14 +35,45 @@ function fakeSysfs(): string {
   return root;
 }
 
+/**
+ * The laptop's shape on a hybrid kernel: two P threads (one physical core, two
+ * siblings) and two E threads, with coretemp numbering its leaves by core.
+ */
+function fakeHybridSysfs(coreLabels: ReadonlyArray<number>): string {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-hybrid-"));
+  const write = (relative: string, text: string) => {
+    const file = NodePath.join(root, relative);
+    NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+    NodeFS.writeFileSync(file, text);
+  };
+  write("devices/cpu_core/cpus", "0-1\n");
+  write("devices/cpu_atom/cpus", "12-13\n");
+  for (const [cpu, core] of [
+    [0, "0"],
+    [1, "0"],
+    [12, "4"],
+    [13, "4"],
+  ] as const) {
+    write(`devices/system/cpu/cpu${cpu}/topology/core_id`, `${core}\n`);
+    write(`devices/system/cpu/cpu${cpu}/topology/physical_package_id`, "0\n");
+  }
+  write("class/hwmon/hwmon0/name", "coretemp\n");
+  write("class/hwmon/hwmon0/temp1_label", "Package id 0\n");
+  write("class/hwmon/hwmon0/temp1_input", "60000\n");
+  coreLabels.forEach((label, position) => {
+    write(`class/hwmon/hwmon0/temp${position + 2}_label`, `Core ${label}\n`);
+    write(`class/hwmon/hwmon0/temp${position + 2}_input`, `${55000 + position * 1000}\n`);
+  });
+  return root;
+}
+
 describe("linuxSensors", () => {
   it("reads the package and SSD temperatures, both fans and the battery", () => {
     const root = fakeSysfs();
     const reading = new LinuxSensorReader({ sysRoot: root }).read(1_000);
     expect(reading.lhm).toBe("ok");
     expect(reading.sensors.cpuTempC).toBe(61);
-    // P/E core strips are a LibreHardwareMonitor detail the kernel does not
-    // expose; they stay null instead of being guessed at.
+    // This fixture has no hybrid PMU directories, so there is no honest split.
     expect(reading.sensors.pCoreC).toBeNull();
     expect(reading.sensors.eCoreC).toBeNull();
     expect(reading.sensors.ssdC).toBe(38.5);
@@ -51,6 +82,33 @@ describe("linuxSensors", () => {
     expect(reading.sensors.batteryRateW).toBe(9.5);
     expect(reading.sensors.batteryFullWh).toBe(54);
     expect(reading.sensors.batteryDesignWh).toBe(60);
+    NodeFS.rmSync(root, { force: true, recursive: true });
+  });
+
+  it("splits coretemp leaves into P and E strips when the hybrid PMUs agree", () => {
+    const root = fakeHybridSysfs([0, 1]);
+    const reading = new LinuxSensorReader({ sysRoot: root }).read();
+    expect(reading.sensors.cpuTempC).toBe(60);
+    expect(reading.sensors.pCoreC).toEqual([55]);
+    expect(reading.sensors.eCoreC).toEqual([56]);
+    NodeFS.rmSync(root, { force: true, recursive: true });
+  });
+
+  it("leaves the strips null when core labels are not the core indexes", () => {
+    // Some kernels label leaves by CPU id (0, 12) rather than core index; the
+    // split would be wrong, so it is not returned at all.
+    const root = fakeHybridSysfs([0, 12]);
+    const reading = new LinuxSensorReader({ sysRoot: root }).read();
+    expect(reading.sensors.pCoreC).toBeNull();
+    expect(reading.sensors.eCoreC).toBeNull();
+    NodeFS.rmSync(root, { force: true, recursive: true });
+  });
+
+  it("leaves the strips null when the core count does not match the topology", () => {
+    const root = fakeHybridSysfs([0]);
+    const reading = new LinuxSensorReader({ sysRoot: root }).read();
+    expect(reading.sensors.pCoreC).toBeNull();
+    expect(reading.sensors.eCoreC).toBeNull();
     NodeFS.rmSync(root, { force: true, recursive: true });
   });
 

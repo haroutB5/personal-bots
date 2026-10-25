@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the test sets the same process environment the migration reads.
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -81,11 +82,20 @@ layer("113_LinuxPathRewrite", (it) => {
     Effect.gen(function* () {
       yield* seed;
       const previous = process.env.T3CODE_PATH_MAP;
-      // First boot on the new machine before the mapping is configured: no-op.
+      // First boot on the new machine before the mapping is configured.
       delete process.env.T3CODE_PATH_MAP;
-      yield* runMigrations({ toMigrationInclusive: 113 });
-      const unmapped = yield* readPaths;
-      assert.strictEqual(unmapped.projects[0]?.workspace_root, "C:/Claude/AI/personal-bots");
+      if (process.platform === "linux") {
+        // Linux refuses to record this migration with Windows paths and no
+        // map (the fail-safe case in the companion test file); the Windows
+        // no-op is asserted on Windows only.
+        const exit = yield* runMigrations({ toMigrationInclusive: 113 }).pipe(Effect.exit);
+        assert.strictEqual(Exit.isFailure(exit), true);
+      } else {
+        // Windows: the shipping install needs no map and stays a no-op.
+        yield* runMigrations({ toMigrationInclusive: 113 });
+        const unmapped = yield* readPaths;
+        assert.strictEqual(unmapped.projects[0]?.workspace_root, "C:/Claude/AI/personal-bots");
+      }
 
       process.env.T3CODE_PATH_MAP = MAP;
       try {
