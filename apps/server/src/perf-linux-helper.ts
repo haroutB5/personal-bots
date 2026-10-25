@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - this is the Linux counter helper: plain /proc reads, no services.
+// @effect-diagnostics globalDate:off - a standalone helper process; Effect's Clock does not apply.
+// @effect-diagnostics globalTimers:off - it prints a line on its own interval, outside any Effect runtime.
 /**
  * The Linux counter helper: the counterpart of `perf-helper.ps1`, printing the
  * same JSON lines (`hello`, then one tick every `--tick-ms`, with the slow

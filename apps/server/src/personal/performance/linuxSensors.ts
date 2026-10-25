@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - sysfs is plain files; the reads are tiny and local.
+// @effect-diagnostics globalDate:off - the sampler passes its own clock; the default argument is a plain timestamp.
 /**
  * The Linux sensor reader behind the Performance tab, the counterpart of the
  * Windows `SensorReaders` (which asks LibreHardwareMonitor and the Dell fan
