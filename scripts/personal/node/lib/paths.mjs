@@ -1,8 +1,10 @@
 // Path layout shared with the PowerShell tools. Linux is the supported target;
 // the same layout is used on Windows so a backup or release made by either
 // toolchain is readable by the other.
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const ROOT_NAMES = ["dev", "prod"];
 
@@ -44,6 +46,14 @@ export function defaultPort(root) {
 }
 
 export function repoRootFromScript(scriptUrl) {
-  // scripts/personal/node/lib/paths.mjs -> repo root
-  return path.resolve(path.dirname(scriptUrl), "..", "..", "..", "..");
+  // Walk up from the caller's directory to the checkout root. Robust whether
+  // the caller lives in node/ or node/lib/.
+  let current = path.dirname(fileURLToPath(scriptUrl));
+  for (let depth = 0; depth < 8; depth++) {
+    if (fs.existsSync(path.join(current, "scripts", "personal", "app-version.txt"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  throw new Error(`Could not find the hbots repo root above ${path.dirname(fileURLToPath(scriptUrl))}.`);
 }
