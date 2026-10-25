@@ -10,7 +10,7 @@ import {
   type PersonalBot,
   type PersonalBotTeam,
 } from "@t3tools/contracts";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 
 import { Sheet, SheetPopup, SheetTitle } from "~/components/ui/sheet";
@@ -861,11 +861,14 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
   const allShells = useThreadShells();
   // How the screen was left the last time a page was opened from it. Read once:
   // a later visit that is not a Back starts at the top.
-  const savedView = useLocation({
-    select: (location) =>
-      parseTeamView((location.state as unknown as Record<string, unknown>)[TEAM_VIEW_STATE_KEY]),
-  });
-  const [initialView] = useState(savedView);
+  // Not subscribed to the location: opening and closing a bot's usage sheet
+  // changes the search on this same page, and must not re-render the screen.
+  const router = useRouter();
+  const [initialView] = useState(() =>
+    parseTeamView(
+      (router.state.location.state as unknown as Record<string, unknown>)[TEAM_VIEW_STATE_KEY],
+    ),
+  );
   const bots = useMemo(
     () => (list.data?.bots ?? NO_BOTS).toSorted((left, right) => left.sortOrder - right.sortOrder),
     [list.data],

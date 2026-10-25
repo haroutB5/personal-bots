@@ -205,6 +205,29 @@ export function shortProviderLabel(provider: UsageProviderKind): string {
   return SHORT_PROVIDER_LABELS[provider];
 }
 
+/**
+ * The colour a provider wears wherever usage is drawn: a dot, a bar segment.
+ * It follows the provider, never its rank, and is never used for text. Four
+ * providers have a hue; any other (DeepSeek direct, Cursor, Grok) folds into
+ * one grey rather than inventing a fifth.
+ */
+const PROVIDER_COLORS: Readonly<Partial<Record<UsageProviderKind, string>>> = {
+  claude: "var(--personal-provider-claude)",
+  opencode: "var(--personal-provider-opencode)",
+  antigravity: "var(--personal-provider-antigravity)",
+  codex: "var(--personal-provider-codex)",
+};
+
+export function providerColor(provider: UsageProviderKind): string {
+  return PROVIDER_COLORS[provider] ?? "var(--personal-provider-other)";
+}
+
+/** One provider's part of a bar: how many tokens it carries. */
+export interface TokenUsageMixSegment {
+  readonly provider: UsageProviderKind;
+  readonly tokens: number;
+}
+
 export interface TokenUsageProviderView {
   readonly provider: UsageProviderKind;
   readonly label: string;
@@ -233,6 +256,8 @@ export interface TokenUsageModelView {
   /** Share of the bot's own tokens, 0 to 100. */
   readonly sharePercent: number;
   readonly cost: TokenCostView;
+  /** New input, cached input and output of this route. They add up to `tokens`. */
+  readonly split: TokenSplit;
 }
 
 export interface TokenUsageRowView {
@@ -246,8 +271,12 @@ export interface TokenUsageRowView {
   readonly split: TokenSplit;
   /** Every provider and model the bot used in the window, most tokens first. */
   readonly models: ReadonlyArray<TokenUsageModelView>;
+  /** The bot's tokens by provider, in the card's provider order. They add up to the models' tokens. */
+  readonly mix: ReadonlyArray<TokenUsageMixSegment>;
   readonly sessions: number;
   readonly cost: TokenCostView;
+  /** Tokens of this row with no price, for "1.1M not priced". */
+  readonly unpricedTokens: number;
 }
 
 export interface TokenUsageTable {
@@ -260,7 +289,17 @@ export interface TokenUsageTable {
    * Outside Bots: tokens of sessions no bot owns (the owner's own Claude Code,
    * older and deleted sessions), plus any bot this screen does not list.
    */
-  readonly other: { readonly tokens: number; readonly cost: TokenCostView };
+  readonly other: {
+    readonly tokens: number;
+    readonly cost: TokenCostView;
+    /**
+     * Outside Bots by provider: what each provider counted beyond the bots'
+     * own models, scaled to `tokens` so the bar is exactly as long as the row.
+     */
+    readonly mix: ReadonlyArray<TokenUsageMixSegment>;
+  };
+  /** Names of the listed bots with no use in the window, for the "No use" line. */
+  readonly idleBotNames: ReadonlyArray<string>;
   /** What the listed bots used. Rows' shares and bars are over this. */
   readonly botsTotal: number;
   /** Everything counted: the bots plus Outside Bots. */
@@ -350,25 +389,10 @@ export function buildTokenUsageTable(input: {
       models: modelViewsOf(entry?.models ?? [], entry?.tokens ?? 0, input.modelNames),
       sessions: entry?.sessions ?? 0,
       cost: costViewOf(entry?.tokens ?? 0, entry?.cost),
+      unpricedTokens: entry?.cost.unpricedTokens ?? 0,
     };
   });
   unranked.sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
-
-  const rows = unranked.map((entry, index): TokenUsageRowView => {
-    const rank =
-      entry.tokens > 0 && index < TOKEN_USAGE_TOP_COUNT ? ((index + 1) as 1 | 2 | 3) : null;
-    return {
-      botId: entry.botId,
-      name: entry.name,
-      tokens: entry.tokens,
-      sharePercent: share(entry.tokens, botsTotal),
-      rank,
-      split: splitOf(entry.totals),
-      models: entry.models,
-      sessions: entry.sessions,
-      cost: entry.cost,
-    };
-  });
 
   const providers = (window.providers ?? [])
     .map((entry): TokenUsageProviderView => {
@@ -384,6 +408,51 @@ export function buildTokenUsageTable(input: {
     })
     .filter((entry) => entry.tokens > 0)
     .toSorted((a, b) => b.tokens - a.tokens || a.label.localeCompare(b.label));
+  const providerOrder = providers.map((entry) => entry.provider);
+
+  const rows = unranked.map((entry, index): TokenUsageRowView => {
+    const rank =
+      entry.tokens > 0 && index < TOKEN_USAGE_TOP_COUNT ? ((index + 1) as 1 | 2 | 3) : null;
+    return {
+      botId: entry.botId,
+      name: entry.name,
+      tokens: entry.tokens,
+      sharePercent: share(entry.tokens, botsTotal),
+      rank,
+      split: splitOf(entry.totals),
+      models: entry.models,
+      mix: mixOf(entry.models, providerOrder),
+      sessions: entry.sessions,
+      cost: entry.cost,
+      unpricedTokens: entry.unpricedTokens,
+    };
+  });
+
+  // What each provider counted beyond the listed bots' own models is Outside
+  // Bots'. The tokens shown stay `other`; the bar is scaled to match them.
+  const botTokensByProvider = new Map<UsageProviderKind, number>();
+  for (const row of rows) {
+    for (const segment of row.mix) {
+      botTokensByProvider.set(
+        segment.provider,
+        (botTokensByProvider.get(segment.provider) ?? 0) + segment.tokens,
+      );
+    }
+  }
+  const derivedOther = providers
+    .map((entry) => ({
+      provider: entry.provider,
+      tokens: Math.max(0, entry.tokens - (botTokensByProvider.get(entry.provider) ?? 0)),
+    }))
+    .filter((segment) => segment.tokens > 0);
+  const derivedOtherTotal = derivedOther.reduce((sum, segment) => sum + segment.tokens, 0);
+  const otherMix =
+    otherTokens > 0 && derivedOtherTotal > 0
+      ? derivedOther.map((segment) => ({
+          provider: segment.provider,
+          tokens: (segment.tokens / derivedOtherTotal) * otherTokens,
+        }))
+      : [];
 
   return {
     rows,
@@ -392,7 +461,9 @@ export function buildTokenUsageTable(input: {
     other: {
       tokens: otherTokens,
       cost: costViewOf(otherTokens, { costUsd: otherUsd, unpricedTokens: otherUnpriced }),
+      mix: otherMix,
     },
+    idleBotNames: rows.filter((row) => row.tokens === 0).map((row) => row.name),
     botsTotal,
     total,
     sinceDay: window.sinceDay,
@@ -419,10 +490,33 @@ function modelViewsOf(
         tokens,
         sharePercent: share(tokens, botTokens),
         cost: costViewOf(tokens, entry),
+        split: splitOf(entry.totals),
       };
     })
     .filter((entry) => entry.tokens > 0)
     .toSorted((a, b) => b.tokens - a.tokens || a.label.localeCompare(b.label));
+}
+
+/**
+ * A bot's tokens by provider, in the card's provider order (the order the
+ * legend shows), so a provider keeps its place in every bar. A provider the bot
+ * did not use has no segment.
+ */
+function mixOf(
+  models: ReadonlyArray<TokenUsageModelView>,
+  providerOrder: ReadonlyArray<UsageProviderKind>,
+): ReadonlyArray<TokenUsageMixSegment> {
+  const byProvider = new Map<UsageProviderKind, number>();
+  for (const model of models) {
+    byProvider.set(model.provider, (byProvider.get(model.provider) ?? 0) + model.tokens);
+  }
+  const ordered = providerOrder.filter((provider) => byProvider.has(provider));
+  // A provider the window list lacks (it cannot happen on a real payload) goes last.
+  const rest = [...byProvider.keys()].filter((provider) => !providerOrder.includes(provider));
+  return [...ordered, ...rest].map((provider) => ({
+    provider,
+    tokens: byProvider.get(provider) ?? 0,
+  }));
 }
 
 /**
@@ -528,49 +622,67 @@ export const TOKEN_USAGE_POLL_MS = 4_000;
 /** Stops polling a count that never lands; the ten-minute refresh takes over. */
 export const TOKEN_USAGE_MAX_POLLS = 30;
 
-/** What the row reads as to a screen reader: the visible parts, in the order they are read. */
-export function tokenUsageRowLabel(row: TokenUsageRowView): string {
-  if (row.tokens === 0) return `${row.name}: no tokens used. Open ${row.name}.`;
-  const rank = row.rank === null ? "" : `Number ${row.rank} user. `;
-  const cost = costAriaLabel(row.cost);
-  const costSentence = cost === "" ? "" : ` ${cost[0]!.toUpperCase()}${cost.slice(1)}.`;
-  const models =
-    row.models.length === 0
-      ? ""
-      : `Models: ${row.models
-          .map((model) => {
-            const modelCost = costAriaLabel(model.cost);
-            return `${model.label} ${formatTokenCount(model.tokens)} tokens${modelCost === "" ? "" : `, ${modelCost}`}`;
-          })
-          .join("; ")}. `;
-  return `${row.name}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of the bots' use. ${models}${rank}${formatSplit(row.split)}.${costSentence} Open ${row.name}.`;
-}
-
 /** What a provider row reads as to a screen reader. */
 export function tokenUsageProviderLabel(row: TokenUsageProviderView): string {
   const cost = costAriaLabel(row.cost);
   return `${row.label}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of all use${cost === "" ? "" : `, ${cost}`}.`;
 }
 
-/** `5 Sep to 4 Oct`, or `4 Oct` for a single day: what the window covers, for the hint line. */
-export function formatWindowRange(sinceDay: string, untilDay: string): string {
-  const label = (day: string) => {
-    const [, month, date] = day.split("-").map(Number);
-    const months = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-    return `${date} ${months[(month ?? 1) - 1] ?? ""}`;
-  };
-  return sinceDay === untilDay ? label(untilDay) : `${label(sinceDay)} to ${label(untilDay)}`;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function dayParts(day: string): { readonly date: number; readonly month: string } {
+  const [, month, date] = day.split("-").map(Number);
+  return { date: date ?? 0, month: MONTHS[(month ?? 1) - 1] ?? "" };
+}
+
+/**
+ * What the window covers, for the card header: `25 Oct` for one day, `19–25 Oct`
+ * inside a month, `26 Sep – 25 Oct` across two.
+ */
+export function formatWindowSpan(sinceDay: string, untilDay: string): string {
+  const since = dayParts(sinceDay);
+  const until = dayParts(untilDay);
+  if (sinceDay === untilDay) return `${until.date} ${until.month}`;
+  if (since.month === until.month) return `${since.date}–${until.date} ${until.month}`;
+  return `${since.date} ${since.month} – ${until.date} ${until.month}`;
+}
+
+/** The bot row's middle line: `7 models · 32%`, `1 model · 7%`. */
+export function formatModelsAndShare(row: TokenUsageRowView): string {
+  const count = row.models.length;
+  return `${count} ${count === 1 ? "model" : "models"} · ${formatShare(row.sharePercent)}`;
+}
+
+/** The "No use: Astra, QA" line under the bot rows. */
+export function formatIdleBots(names: ReadonlyArray<string>): string {
+  return `No use: ${names.join(", ")}`;
+}
+
+/** The distinct providers a bot used, for "4 providers" and the single-provider note. */
+export function providersOf(row: TokenUsageRowView): ReadonlyArray<UsageProviderKind> {
+  return row.mix.map((segment) => segment.provider);
+}
+
+/** `64 sessions · 7 models · 4 providers`, each part left out when its count is zero. */
+export function formatBotMeta(row: TokenUsageRowView): string {
+  const plural = (count: number, one: string, many: string) =>
+    `${count} ${count === 1 ? one : many}`;
+  const parts = [
+    row.sessions > 0 ? plural(row.sessions, "session", "sessions") : null,
+    row.models.length > 0 ? plural(row.models.length, "model", "models") : null,
+    row.mix.length > 0 ? plural(row.mix.length, "provider", "providers") : null,
+  ].filter((part): part is string => part !== null);
+  return parts.join(" · ");
+}
+
+/** Width of a bot's bar against the heaviest bot, as a 0-100 percentage (at least 2). */
+export function barWidthPercent(tokens: number, topTokens: number): number {
+  if (tokens <= 0 || topTokens <= 0) return 0;
+  return Math.max(2, Math.min(100, (tokens / topTokens) * 100));
+}
+
+/** "Frontend, 1.9B tokens, 32% of bots, $183.33+. Show models" */
+export function tokenUsageBotButtonLabel(row: TokenUsageRowView): string {
+  const cost = formatCostCompact(row.cost);
+  return `${row.name}, ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of bots${cost === "" ? "" : `, ${cost}`}. Show models`;
 }

@@ -8,13 +8,17 @@ import type {
   PersonalBotTokenUsageResult,
   PersonalBotTokenUsageWindowId,
 } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { ChevronRight, Info, Laptop } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { primaryServerProvidersAtom } from "~/state/server";
 
 import { BotAvatar } from "./BotAvatar";
+import { BotUsageSheet } from "./BotUsageSheet";
+import { ProviderDot, ProviderMixBar } from "./ProviderMixBar";
 import { formatRelativeTime } from "./relativeTime";
+import { UsageRangeControl } from "./UsageRangeControl";
+import { useUsageSheetRoute } from "./usageSheetRoute";
 import { useMinuteNow } from "./useMinuteNow";
 import { usePersonalTokenUsage } from "./usePersonalBots";
 import {
@@ -25,33 +29,33 @@ import {
   type UsageBalanceLine,
 } from "./usagePresentation";
 import {
+  barWidthPercent,
   buildTokenUsageTable,
   DEFAULT_TOKEN_USAGE_WINDOW,
   findTokenUsageWindow,
   formatCostCompact,
-  formatCostFull,
+  formatIdleBots,
+  formatModelsAndShare,
   formatShare,
   formatSplit,
   formatTokenCount,
   formatUpdated,
-  formatWindowRange,
+  formatWindowSpan,
   isTokenUsagePending,
   splitOf,
   TOKEN_USAGE_MAX_POLLS,
   TOKEN_USAGE_POLL_MS,
-  TOKEN_USAGE_WINDOWS,
+  tokenUsageBotButtonLabel,
   tokenUsageProviderLabel,
-  tokenUsageRowLabel,
-  type TokenCostView,
-  type TokenUsageProviderView,
   type TokenUsageRowView,
+  type TokenUsageTable,
 } from "./tokenUsagePresentation";
 
 /**
- * Token usage per bot, under the team diagram: who used how many tokens over
- * Today, 7 days or 30 days, heaviest first. The three heaviest carry a rank
- * chip and a strong bar, so the top is plain without colour. A tap opens the
- * bot, the same link the diagram's nodes use, so Back lands on this screen.
+ * Token usage on the Team screen, under the team diagram: the total, who it
+ * belongs to by provider, and one row per bot, heaviest first. A bot row opens
+ * that bot's sheet (BotUsageSheet) with every model in full; the sheet is
+ * driven by `?usage=<botId>` so Back closes it and stays on Team.
  */
 /** The refresh while the card is open: what is shown is never older than this by much. */
 export const TOKEN_USAGE_REFRESH_MS = 10 * 60_000;
@@ -162,8 +166,14 @@ export function TokenUsageSection({
     [providers, nowMs],
   );
 
+  const sheet = useUsageSheetRoute();
+
   return (
     <TokenUsageCard
+      openBotId={sheet.openBotId}
+      onOpenBot={sheet.open}
+      onCloseBot={sheet.close}
+      onOpenChat={sheet.openChat}
       result={usage.data}
       error={usage.error}
       onRetry={() => {
@@ -189,6 +199,10 @@ export function TokenUsageCard({
   modelNames,
   nowMs,
   balanceLine = null,
+  openBotId = null,
+  onOpenBot = NO_OP,
+  onCloseBot = NO_OP,
+  onOpenChat = NO_OP,
 }: {
   readonly result: PersonalBotTokenUsageResult | null;
   readonly error: string | null;
@@ -199,10 +213,20 @@ export function TokenUsageCard({
   readonly nowMs: number;
   /** The DeepSeek prepaid balance, when there is a reading to show. */
   readonly balanceLine?: UsageBalanceLine | null;
+  /** The bot whose sheet is open (`?usage=<botId>`), if any. */
+  readonly openBotId?: string | null;
+  /** A bot row was tapped. */
+  readonly onOpenBot?: (botId: string) => void;
+  /** The sheet was dismissed by any route (Back, swipe, ×, scrim, Esc). */
+  readonly onCloseBot?: () => void;
+  /** "Open chat" in the sheet. */
+  readonly onOpenChat?: (botId: string) => void;
 }): JSX.Element {
+  // One range for the card and the sheet: both draw from this state.
   const [windowId, setWindowId] = useState<PersonalBotTokenUsageWindowId>(
     DEFAULT_TOKEN_USAGE_WINDOW,
   );
+  const [noteOpen, setNoteOpen] = useState(false);
   const selected = findTokenUsageWindow(result, windowId);
   const botById = useMemo(() => new Map(bots.map((bot) => [bot.botId as string, bot])), [bots]);
   const table = useMemo(
@@ -220,6 +244,12 @@ export function TokenUsageCard({
   const updated = formatUpdated(result?.readAt ?? null, nowMs);
   const refreshing = result?.status === "refreshing";
   const counting = result?.status === "warming";
+  const sheetBot = openBotId === null ? null : (botById.get(openBotId) ?? null);
+  const sheetRow =
+    openBotId === null || table === null
+      ? null
+      : (table.rows.find((row) => row.botId === openBotId) ?? null);
+  const periodWord = windowId === "today" ? "today" : "in this period";
 
   return (
     <section
@@ -233,130 +263,72 @@ export function TokenUsageCard({
           Token usage
         </h2>
         {table === null ? null : (
-          <span className="shrink-0 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-            {formatWindowRange(table.sinceDay, table.untilDay)}
+          <span
+            data-testid="token-usage-span"
+            className="shrink-0 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
+          >
+            {formatWindowSpan(table.sinceDay, table.untilDay)}
           </span>
         )}
       </div>
 
-      <div
-        role="radiogroup"
-        aria-label="Time range"
-        className="grid grid-cols-3 gap-1 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] p-1"
-      >
-        {TOKEN_USAGE_WINDOWS.map((option) => {
-          const on = option.id === windowId;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              onClick={() => setWindowId(option.id)}
-              className={cn(
-                "min-h-11 rounded-[8px] px-2 text-[15px] leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
-                on
-                  ? "bg-[var(--personal-primary)] font-semibold text-[var(--personal-primary-text)]"
-                  : "font-medium text-[var(--personal-text-secondary)]",
-              )}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
+      <UsageRangeControl windowId={windowId} onChange={setWindowId} />
 
       {table !== null ? (
-        <>
-          {table.providers.length > 0 ? (
-            <div
-              data-testid="token-usage-providers"
-              className="flex flex-col gap-1 border-b border-[var(--personal-border)] pb-3"
-            >
-              <h3 className="text-[13px] leading-[18px] font-medium text-[var(--personal-text-secondary)]">
-                By provider
-              </h3>
-              <ul className="flex flex-col">
-                {table.providers.map((provider) => (
-                  <li key={provider.provider}>
-                    <TokenUsageProviderRow row={provider} />
-                  </li>
-                ))}
-              </ul>
-              <div
-                data-testid="token-usage-providers-total"
-                className="flex flex-col gap-0.5 border-t border-[var(--personal-border)] pt-2"
-              >
-                <span className="flex items-baseline justify-between gap-3 text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
-                  <span>All providers</span>
-                  <span className="tabular-nums">{formatTokenCount(table.total)}</span>
-                </span>
+        table.total === 0 ? (
+          <>
+            <div className="flex items-end justify-between gap-3">
+              <div className="flex min-w-0 flex-col">
                 <span
-                  data-testid="token-usage-providers-total-cost"
-                  className="text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums"
+                  data-testid="token-usage-total"
+                  className="text-[32px] leading-9 font-bold tracking-[-0.02em] text-[var(--personal-text)] tabular-nums"
                 >
-                  {formatCostFull(table.totalCost)}
+                  0
+                </span>
+                <span className="text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+                  tokens {periodWord}
                 </span>
               </div>
-              <p
-                data-testid="token-usage-price-note"
-                className="text-[12px] leading-4 text-[var(--personal-text-secondary)]"
-              >
-                API price estimate: what these tokens would cost at list API prices, not money
-                charged (subscriptions are flat). + means some tokens have no price.
-              </p>
             </div>
-          ) : null}
-          {table.providers.length > 0 ? (
-            <h3 className="-mb-1 text-[13px] leading-[18px] font-medium text-[var(--personal-text-secondary)]">
-              By bot
-            </h3>
-          ) : null}
-          {table.botsTotal === 0 ? (
-            <p className="py-1 text-[15px] leading-snug text-[var(--personal-text-secondary)]">
-              No bot used tokens {windowId === "today" ? "today" : "in this period"}.
+            <p className="text-[15px] leading-5 text-[var(--personal-text-secondary)]">
+              No bot used tokens {periodWord}.
+              {windowId === "today" ? " Pick 7 days or 30 days to see recent use." : ""}
             </p>
-          ) : null}
-          <ul className="-mx-1 flex flex-col">
-            {table.rows.map((row) => {
-              const bot = botById.get(row.botId);
-              if (bot === undefined) return null;
-              return (
-                <li key={row.botId}>
-                  <TokenUsageRow row={row} bot={bot} />
-                </li>
-              );
-            })}
-          </ul>
-          <div className="flex flex-col gap-1.5 border-t border-[var(--personal-border)] pt-3">
-            <div className="flex items-baseline justify-between gap-3 text-[14px] leading-5 text-[var(--personal-text-secondary)]">
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate">Outside Bots</span>
-                <span className="truncate text-[12px] leading-4 text-[var(--personal-text-tertiary)]">
-                  your own Claude Code and older sessions
-                </span>
-              </span>
-              <span className="flex shrink-0 flex-col items-end tabular-nums">
-                <span data-testid="token-usage-outside">
-                  {formatTokenCount(table.other.tokens)}
-                </span>
-                <CostLine cost={table.other.cost} testId="token-usage-outside-cost" />
-              </span>
-            </div>
-            <div className="flex items-baseline justify-between gap-3 text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
-              <span>Total</span>
-              <span className="flex flex-col items-end tabular-nums">
-                <span data-testid="token-usage-total">{formatTokenCount(table.total)}</span>
-                <CostLine cost={table.totalCost} testId="token-usage-total-cost" />
-              </span>
-            </div>
-            {selected === null ? null : (
-              <p className="text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
-                {formatSplit(splitOf(selected.total.totals))}
+          </>
+        ) : (
+          <>
+            <UsageHero
+              table={table}
+              noteOpen={noteOpen}
+              onToggleNote={() => setNoteOpen((open) => !open)}
+            />
+            <ProviderMix table={table} />
+            <div className="border-t border-[var(--personal-border)]" />
+            <h3 className="flex items-baseline justify-between gap-3 text-[13px] leading-[18px] font-medium text-[var(--personal-text-secondary)]">
+              <span>By bot</span>
+              <span>tap a bot for its models</span>
+            </h3>
+            <BotRows table={table} botById={botById} onOpenBot={onOpenBot} openBotId={openBotId} />
+            {table.idleBotNames.length === 0 ? null : (
+              <p
+                data-testid="token-usage-idle"
+                className="text-[12px] leading-4 text-[var(--personal-text-tertiary)]"
+              >
+                {formatIdleBots(table.idleBotNames)}
               </p>
             )}
-          </div>
-        </>
+            <div className="flex flex-col gap-2.5 border-t border-[var(--personal-border)] pt-3">
+              {selected === null ? null : (
+                <p
+                  data-testid="token-usage-split"
+                  className="text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums"
+                >
+                  {formatSplit(splitOf(selected.total.totals))}
+                </p>
+              )}
+            </div>
+          </>
+        )
       ) : error !== null ? (
         <div role="alert" className="flex items-center justify-between gap-3">
           <p className="min-w-0 text-[15px] leading-snug text-[var(--personal-text)]">
@@ -372,14 +344,7 @@ export function TokenUsageCard({
           <RetryButton onRetry={onRetry} />
         </div>
       ) : (
-        <p
-          role="status"
-          className="py-1 text-[15px] leading-snug text-[var(--personal-text-secondary)]"
-        >
-          {counting
-            ? "Counting tokens. The first count after a restart takes up to a minute."
-            : "Loading token usage…"}
-        </p>
+        <UsageSkeleton counting={counting} />
       )}
 
       {balanceLine !== null ? <DeepSeekBalanceRow line={balanceLine} nowMs={nowMs} /> : null}
@@ -393,7 +358,335 @@ export function TokenUsageCard({
           {[updated, refreshing ? "Updating…" : null].filter(Boolean).join(" · ")}
         </p>
       ) : null}
+
+      <BotUsageSheet
+        open={openBotId !== null}
+        bot={sheetBot}
+        row={sheetRow}
+        table={table}
+        windowId={windowId}
+        onWindowChange={setWindowId}
+        onClose={onCloseBot}
+        onOpenChat={onOpenChat}
+      />
     </section>
+  );
+}
+
+function NO_OP(): void {}
+
+/** The total, its API estimate (tap for what that means), and the note. */
+function UsageHero({
+  table,
+  noteOpen,
+  onToggleNote,
+}: {
+  readonly table: TokenUsageTable;
+  readonly noteOpen: boolean;
+  readonly onToggleNote: () => void;
+}): JSX.Element {
+  const cost = formatCostCompact(table.totalCost);
+  return (
+    <>
+      <div className="flex items-end justify-between gap-3">
+        <div className="flex min-w-0 flex-col">
+          <span
+            data-testid="token-usage-total"
+            className="text-[32px] leading-9 font-bold tracking-[-0.02em] text-[var(--personal-text)] tabular-nums"
+          >
+            {formatTokenCount(table.total)}
+          </span>
+          <span className="text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+            tokens, all providers
+          </span>
+        </div>
+        {cost === "" ? null : (
+          <button
+            type="button"
+            aria-expanded={noteOpen}
+            aria-controls="usage-price-note"
+            onClick={onToggleNote}
+            className="flex min-h-11 shrink-0 flex-col items-end justify-center rounded-[10px] px-1 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          >
+            <span
+              data-testid="token-usage-total-cost"
+              className="text-[20px] leading-6 font-semibold text-[var(--personal-text)] tabular-nums"
+            >
+              {cost}
+            </span>
+            <span className="flex items-center gap-1 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+              API estimate
+              <Info aria-hidden="true" className="size-3.5" strokeWidth={2} />
+            </span>
+          </button>
+        )}
+      </div>
+      {noteOpen ? (
+        <p
+          id="usage-price-note"
+          data-testid="token-usage-price-note"
+          className="rounded-lg bg-[var(--personal-fill-muted)] px-2.5 py-2 text-[12px] leading-4 text-[var(--personal-text-secondary)]"
+        >
+          What these tokens would cost at list API prices. Not money charged: subscriptions are
+          flat. + means some tokens have no price.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** The provider bar over everything counted, and its legend: one cell per provider. */
+function ProviderMix({ table }: { readonly table: TokenUsageTable }): JSX.Element | null {
+  if (table.providers.length === 0) return null;
+  return (
+    <>
+      <ProviderMixBar
+        segments={table.providers.map((entry) => ({
+          provider: entry.provider,
+          tokens: entry.tokens,
+        }))}
+        heightClass="h-2.5"
+        testId="token-usage-provider-bar"
+      />
+      <ul data-testid="token-usage-providers" className="grid grid-cols-2 gap-x-5 gap-y-1.5">
+        {table.providers.map((entry) => (
+          <li
+            key={entry.provider}
+            role="group"
+            aria-label={tokenUsageProviderLabel(entry)}
+            data-provider-usage-row={entry.provider}
+            className="flex min-h-11 min-w-0 flex-col justify-center"
+          >
+            <span aria-hidden="true" className="flex items-center gap-1.5">
+              <ProviderDot provider={entry.provider} />
+              <span className="min-w-0 truncate text-[14px] leading-5 font-semibold text-[var(--personal-text)]">
+                {entry.label}
+              </span>
+              <span className="ml-auto shrink-0 text-[14px] leading-5 font-semibold text-[var(--personal-text)] tabular-nums">
+                {formatTokenCount(entry.tokens)}
+              </span>
+            </span>
+            <span
+              aria-hidden="true"
+              data-testid="token-usage-provider-cost"
+              className="pl-3.5 text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums"
+            >
+              {[formatShare(entry.sharePercent), formatCostCompact(entry.cost)]
+                .filter((part) => part !== "")
+                .join(" · ")}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/** Bots with use (each opens its sheet), then Outside Bots. Idle bots are one line below. */
+function BotRows({
+  table,
+  botById,
+  onOpenBot,
+  openBotId,
+}: {
+  readonly table: TokenUsageTable;
+  readonly botById: ReadonlyMap<string, PersonalBot>;
+  readonly onOpenBot: (botId: string) => void;
+  readonly openBotId: string | null;
+}): JSX.Element {
+  const used = table.rows.filter((row) => row.tokens > 0);
+  const topTokens = used[0]?.tokens ?? 0;
+  return (
+    <ul className="-mx-2 flex flex-col">
+      {used.map((row) => {
+        const bot = botById.get(row.botId);
+        if (bot === undefined) return null;
+        return (
+          <li key={row.botId}>
+            <TokenUsageRow
+              row={row}
+              bot={bot}
+              topTokens={topTokens}
+              expanded={openBotId === row.botId}
+              onOpen={onOpenBot}
+            />
+          </li>
+        );
+      })}
+      {table.other.tokens > 0 ? (
+        <li>
+          <OutsideBotsRow table={table} topTokens={topTokens} />
+        </li>
+      ) : null}
+    </ul>
+  );
+}
+
+const ROW_GRID =
+  "grid min-h-16 w-full grid-cols-[40px_1fr_16px] items-center gap-x-2.5 rounded-[10px] p-2 text-left";
+
+function TokenUsageRow({
+  row,
+  bot,
+  topTokens,
+  expanded,
+  onOpen,
+}: {
+  readonly row: TokenUsageRowView;
+  readonly bot: PersonalBot;
+  readonly topTokens: number;
+  readonly expanded: boolean;
+  readonly onOpen: (botId: string) => void;
+}): JSX.Element {
+  const cost = formatCostCompact(row.cost);
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(bot.botId)}
+      aria-label={tokenUsageBotButtonLabel(row)}
+      aria-haspopup="dialog"
+      aria-expanded={expanded}
+      data-bot-usage-row={bot.botId}
+      className={cn(
+        ROW_GRID,
+        "outline-none active:bg-[var(--personal-fill-muted)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+      )}
+    >
+      <span aria-hidden="true" className="relative grid size-10 place-items-center">
+        <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={32} label="" />
+        {row.rank === null ? null : (
+          <span
+            data-testid="token-usage-rank"
+            className="absolute top-[-2px] left-[-2px] grid size-[18px] place-items-center rounded-full bg-[var(--personal-primary)] text-[11px] leading-none font-bold text-[var(--personal-primary-text)] ring-2 ring-[var(--personal-surface)]"
+          >
+            {row.rank}
+          </span>
+        )}
+      </span>
+      <span aria-hidden="true" className="flex min-w-0 flex-col gap-[5px]">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+            {bot.name}
+          </span>
+          <span className="shrink-0 text-[16px] leading-5 font-semibold text-[var(--personal-text)] tabular-nums">
+            {formatTokenCount(row.tokens)}
+          </span>
+        </span>
+        <ProviderMixBar
+          segments={row.mix}
+          heightClass="h-1.5"
+          widthPercent={barWidthPercent(row.tokens, topTokens)}
+          testId="token-usage-bar"
+        />
+        <span className="flex items-baseline justify-between gap-2 text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
+          <span data-testid="token-usage-row-meta">{formatModelsAndShare(row)}</span>
+          {cost === "" ? null : (
+            <span
+              data-testid="token-usage-row-cost"
+              className={cn(
+                "shrink-0",
+                row.cost.kind === "unpriced" ? "text-[var(--personal-text-tertiary)]" : "",
+              )}
+            >
+              {cost}
+            </span>
+          )}
+        </span>
+      </span>
+      <ChevronRight
+        aria-hidden="true"
+        className="size-4 text-[var(--personal-text-tertiary)]"
+        strokeWidth={2}
+      />
+    </button>
+  );
+}
+
+/** Sessions no bot owns. Not tappable: there is no bot to open. */
+function OutsideBotsRow({
+  table,
+  topTokens,
+}: {
+  readonly table: TokenUsageTable;
+  readonly topTokens: number;
+}): JSX.Element {
+  const cost = formatCostCompact(table.other.cost);
+  return (
+    <div className={ROW_GRID} data-testid="token-usage-outside-row">
+      <span aria-hidden="true" className="grid size-10 place-items-center">
+        <span className="grid size-8 place-items-center rounded-full bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)]">
+          <Laptop className="size-[18px]" strokeWidth={1.8} />
+        </span>
+      </span>
+      <span className="flex min-w-0 flex-col gap-[5px]">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+            Outside Bots
+          </span>
+          <span
+            data-testid="token-usage-outside"
+            className="shrink-0 text-[16px] leading-5 font-semibold text-[var(--personal-text)] tabular-nums"
+          >
+            {formatTokenCount(table.other.tokens)}
+          </span>
+        </span>
+        <ProviderMixBar
+          segments={table.other.mix}
+          heightClass="h-1.5"
+          widthPercent={barWidthPercent(
+            table.other.tokens,
+            Math.max(topTokens, table.other.tokens),
+          )}
+          testId="token-usage-outside-bar"
+        />
+        <span className="flex items-baseline justify-between gap-2 text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
+          <span className="min-w-0">your own Claude Code and older sessions</span>
+          {cost === "" ? null : (
+            <span
+              data-testid="token-usage-outside-cost"
+              className={cn(
+                "shrink-0",
+                table.other.cost.kind === "unpriced" ? "text-[var(--personal-text-tertiary)]" : "",
+              )}
+            >
+              {cost}
+            </span>
+          )}
+        </span>
+      </span>
+      <span />
+    </div>
+  );
+}
+
+/** While the first count lands: the card's shape in grey, so nothing jumps when it arrives. */
+function UsageSkeleton({ counting }: { readonly counting: boolean }): JSX.Element {
+  const block = "animate-pulse rounded-md bg-[var(--personal-fill-muted)]";
+  return (
+    <>
+      <div aria-hidden="true" className="flex items-end justify-between gap-3">
+        <div className="flex flex-col gap-1.5">
+          <div className={cn(block, "h-[34px] w-[120px]")} />
+          <div className={cn(block, "h-3 w-[90px]")} />
+        </div>
+        <div className={cn(block, "h-6 w-20")} />
+      </div>
+      <div aria-hidden="true" className={cn(block, "h-2.5")} />
+      <p role="status" className="text-[12px] leading-4 text-[var(--personal-text-secondary)]">
+        {counting
+          ? "Counting tokens. The first count after a restart takes up to a minute."
+          : "Loading token usage…"}
+      </p>
+      {[0, 1, 2].map((index) => (
+        <div key={index} aria-hidden="true" className="flex min-h-16 items-center gap-3 px-0">
+          <div className={cn(block, "size-8 shrink-0 rounded-full")} />
+          <div className="flex flex-1 flex-col gap-[7px]">
+            <div className={cn(block, "h-3.5 w-3/5")} />
+            <div className={cn(block, "h-1.5 w-[85%]")} />
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -469,166 +762,5 @@ function RetryButton({ onRetry }: { readonly onRetry: () => void }): JSX.Element
     >
       Try again
     </button>
-  );
-}
-
-function TokenUsageRow({
-  row,
-  bot,
-}: {
-  readonly row: TokenUsageRowView;
-  readonly bot: PersonalBot;
-}): JSX.Element {
-  const top = row.rank !== null;
-  const barPercent = row.tokens === 0 ? 0 : Math.max(1.5, Math.min(100, row.sharePercent));
-  return (
-    <Link
-      to="/bots/$botId"
-      params={{ botId: bot.botId }}
-      aria-label={tokenUsageRowLabel(row)}
-      data-bot-usage-row={bot.botId}
-      className="flex min-h-[60px] items-start gap-3 rounded-[10px] px-1 py-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-    >
-      <span aria-hidden="true" className="relative mt-0.5 shrink-0">
-        <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={32} label="" />
-        {row.rank === null ? null : (
-          <span
-            data-testid="token-usage-rank"
-            className="absolute -top-1.5 -left-1.5 grid size-[18px] place-items-center rounded-full bg-[var(--personal-primary)] text-[11px] leading-none font-bold text-[var(--personal-primary-text)] ring-2 ring-[var(--personal-surface)]"
-          >
-            {row.rank}
-          </span>
-        )}
-      </span>
-      <span aria-hidden="true" className="flex min-w-0 flex-1 flex-col gap-1.25">
-        {/* Name and totals headline the row together; the model lines below
-            use the whole column so a long provider+model can wrap. */}
-        <span className="flex min-w-0 items-start gap-2">
-          <span className="min-w-0 flex-1 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
-            {bot.name}
-          </span>
-          <span className="flex shrink-0 flex-col items-end">
-            <span
-              className={cn(
-                "text-[16px] leading-5 tabular-nums",
-                row.tokens === 0
-                  ? "font-medium text-[var(--personal-text-tertiary)]"
-                  : "font-semibold text-[var(--personal-text)]",
-              )}
-            >
-              {formatTokenCount(row.tokens)}
-            </span>
-            <span className="text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
-              {formatShare(row.sharePercent)}
-            </span>
-            <CostLine cost={row.cost} testId="token-usage-row-cost" />
-          </span>
-        </span>
-        {row.models.length === 0 ? null : (
-          <span data-testid="token-usage-models" className="flex min-w-0 flex-col gap-0.5">
-            {row.models.map((model) => (
-              <span
-                key={`${model.provider}:${model.model}`}
-                data-testid="token-usage-model"
-                data-provider={model.provider}
-                className="flex min-w-0 items-start gap-2 text-[12px] leading-4"
-              >
-                {/* Two lines at most, so "OpenCode · DeepSeek V4.1 Flash"
-                    keeps its defining words; the values never truncate. */}
-                <span className="line-clamp-2 min-w-0 flex-1 text-[var(--personal-text-secondary)] [overflow-wrap:anywhere]">
-                  {model.label}
-                </span>
-                <span className="shrink-0 whitespace-nowrap tabular-nums text-[var(--personal-text-tertiary)]">
-                  {modelAmountLabel(model.tokens, model.cost)}
-                </span>
-              </span>
-            ))}
-          </span>
-        )}
-        <span className="block h-[3px] overflow-hidden rounded-full bg-[var(--personal-track)]">
-          <span
-            data-testid="token-usage-bar"
-            className={cn(
-              "block h-full rounded-full",
-              top ? "bg-[var(--personal-primary)]" : "bg-[var(--personal-text-tertiary)]",
-            )}
-            style={{ width: `${barPercent}%` }}
-          />
-        </span>
-        <span className="truncate text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums">
-          {row.tokens === 0 ? "No use in this period" : formatSplit(row.split)}
-        </span>
-      </span>
-    </Link>
-  );
-}
-
-/** The tokens a provider+model used and, when it has one, its own price estimate. */
-function modelAmountLabel(tokens: number, cost: TokenCostView): string {
-  const price = formatCostCompact(cost);
-  return price === "" ? formatTokenCount(tokens) : `${formatTokenCount(tokens)} · ${price}`;
-}
-
-/** The estimate under a count, in the secondary colour; nothing when there is no cost to show. */
-function CostLine({
-  cost,
-  testId,
-}: {
-  readonly cost: TokenCostView;
-  readonly testId: string;
-}): JSX.Element | null {
-  const text = formatCostCompact(cost);
-  if (text === "") return null;
-  return (
-    <span
-      data-testid={testId}
-      className={cn(
-        "text-[12px] leading-4 tabular-nums",
-        cost.kind === "unpriced"
-          ? "text-[var(--personal-text-tertiary)]"
-          : "text-[var(--personal-text-secondary)]",
-      )}
-    >
-      {text}
-    </span>
-  );
-}
-
-/** One provider: name and tokens, a bar over everything counted, then the estimate and the share. */
-function TokenUsageProviderRow({ row }: { readonly row: TokenUsageProviderView }): JSX.Element {
-  const barPercent = Math.max(1.5, Math.min(100, row.sharePercent));
-  return (
-    <div
-      role="group"
-      aria-label={tokenUsageProviderLabel(row)}
-      data-provider-usage-row={row.provider}
-      className="flex min-h-11 flex-col justify-center gap-1 py-1.5"
-    >
-      <span aria-hidden="true" className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
-          {row.label}
-        </span>
-        <span className="shrink-0 text-[16px] leading-5 font-semibold text-[var(--personal-text)] tabular-nums">
-          {formatTokenCount(row.tokens)}
-        </span>
-      </span>
-      <span
-        aria-hidden="true"
-        className="block h-[3px] overflow-hidden rounded-full bg-[var(--personal-track)]"
-      >
-        <span
-          data-testid="token-usage-provider-bar"
-          className="block h-full rounded-full bg-[var(--personal-primary)]"
-          style={{ width: `${barPercent}%` }}
-        />
-      </span>
-      <span
-        aria-hidden="true"
-        className="flex items-baseline justify-between gap-3 text-[12px] leading-4 text-[var(--personal-text-secondary)] tabular-nums"
-      >
-        <span data-testid="token-usage-provider-cost">{formatCostFull(row.cost)}</span>
-        <span>{formatShare(row.sharePercent)}</span>
-      </span>
-    </div>
   );
 }

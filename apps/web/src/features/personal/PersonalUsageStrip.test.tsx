@@ -577,6 +577,26 @@ describe("PersonalUsageStrip", () => {
     });
   });
 
+  it("puts a provider-coloured dot before each provider title in the sheet, bars unchanged", async () => {
+    state.providers = [CLAUDE, CODEX];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    await act(async () => {
+      renderer!.root.findAllByType("button")[0]!.props.onClick();
+    });
+    const dots = renderer!.root.findAll((n) => n.props["data-testid"] === "usage-provider-dot");
+    expect(dots.map((dot) => dot.props["data-provider"])).toEqual(["claude", "codex"]);
+    expect(dots.map((dot) => dot.props.style.backgroundColor)).toEqual([
+      "var(--personal-provider-claude)",
+      "var(--personal-provider-codex)",
+    ]);
+    for (const dot of dots) {
+      expect(dot.props["aria-hidden"]).toBe("true");
+      expect(dot.props.className).toContain("size-2");
+    }
+  });
+
   /**
    * The reported bug: "Session 0% . Weekly 100% used" beside an empty bar,
    * because the bar tracked the 5-hour window alone. It now fills to the

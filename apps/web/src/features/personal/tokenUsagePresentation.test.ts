@@ -7,23 +7,28 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  barWidthPercent,
   buildTokenUsageTable,
   costViewOf,
   findTokenUsageWindow,
   formatCostCompact,
+  formatBotMeta,
   formatCostFull,
+  formatIdleBots,
+  formatModelsAndShare,
   formatShare,
   formatSplit,
   formatTokenCount,
   formatUpdated,
   formatUsd,
-  formatWindowRange,
+  formatWindowSpan,
   isTokenUsagePending,
   normalizeModelName,
+  providerColor,
   providerLabel,
   splitOf,
+  tokenUsageBotButtonLabel,
   tokenUsageProviderLabel,
-  tokenUsageRowLabel,
   totalOf,
 } from "./tokenUsagePresentation";
 
@@ -250,7 +255,9 @@ describe("providers in the table", () => {
       "Claude: 600 tokens, 60% of all use, estimated cost $6.00.",
     );
     expect(tokenUsageProviderLabel(table.providers[1]!)).toContain("estimated cost not priced");
-    expect(tokenUsageRowLabel(table.rows[0]!)).toContain("Estimated cost $6.00.");
+    expect(tokenUsageBotButtonLabel(table.rows[0]!)).toBe(
+      "CTO, 600 tokens, 67% of bots, $6.00. Show models",
+    );
   });
 });
 
@@ -464,41 +471,22 @@ describe("labels", () => {
     expect(formatUpdated(ago(-5_000), now)).toBe("Updated just now");
   });
 
-  it("names the days a window covers", () => {
-    expect(formatWindowRange("2026-09-05", "2026-10-04")).toBe("5 Sep to 4 Oct");
-    expect(formatWindowRange("2026-10-04", "2026-10-04")).toBe("4 Oct");
+  it("names the days a window covers for the card header", () => {
+    expect(formatWindowSpan("2026-10-25", "2026-10-25")).toBe("25 Oct");
+    expect(formatWindowSpan("2026-10-19", "2026-10-25")).toBe("19–25 Oct");
+    expect(formatWindowSpan("2026-09-26", "2026-10-25")).toBe("26 Sep – 25 Oct");
+    expect(formatWindowSpan("2026-10-28", "2026-11-03")).toBe("28 Oct – 3 Nov");
   });
 
-  it("reads a row to a screen reader with its rank, share and split", () => {
+  it("reads a bot row to a screen reader as the button it is", () => {
     const table = buildTokenUsageTable({
       window: windowOf([row("cto", totals(10, 800, 40, 25))]),
       bots: BOTS,
       listedBotIds: new Set(),
     });
-    expect(tokenUsageRowLabel(table.rows[0]!)).toBe(
-      "CTO: 875 tokens, 100% of the bots' use. Number 1 user. in 50 · cached 800 (94%) · out 25. Open CTO.",
+    expect(tokenUsageBotButtonLabel(table.rows[0]!)).toBe(
+      "CTO, 875 tokens, 100% of bots. Show models",
     );
-    const idle = buildTokenUsageTable({
-      window: windowOf([]),
-      bots: BOTS,
-      listedBotIds: new Set(["qa"]),
-    });
-    expect(tokenUsageRowLabel(idle.rows[0]!)).toBe("QA: no tokens used. Open QA.");
-  });
-
-  it("reads the provider+model lines into the row's accessible name", () => {
-    const table = buildTokenUsageTable({
-      window: windowOf([
-        row("cto", totals(0, 0, 0, 500), 1, [
-          model("deepseek", "deepseek-flash", totals(0, 0, 0, 400), 2),
-        ]),
-      ]),
-      bots: BOTS,
-      listedBotIds: new Set(),
-      modelNames: new Map([["deepseek-flash", "DeepSeek V4.1 Flash"]]),
-    });
-    const label = tokenUsageRowLabel(table.rows[0]!);
-    expect(label).toContain("Models: DeepSeek · V4.1 Flash 400 tokens, estimated cost $2.00.");
   });
 
   it("polls while the server is counting, and only then", () => {
@@ -521,5 +509,189 @@ describe("labels", () => {
         "week",
       ),
     ).toBe(week);
+  });
+});
+
+describe("the data behind the mix bars and the bot sheet", () => {
+  const listed = new Set(BOTS.map((bot) => bot.botId));
+  const priced = (
+    provider: UsageProviderKind,
+    id: string,
+    t: PersonalBotTokenUsageTotals,
+    costUsd: number,
+    unpricedTokens = 0,
+  ) => model(provider, id, t, costUsd, unpricedTokens);
+
+  // What a payload looks like once the server has applied the Antigravity rule
+  // (its Claude and GPT routes are counted nowhere): the provider rows, the
+  // bots' models and the totals all agree. Claude 8,600 (7,000 CTO + 1,600
+  // outside), OpenCode 2,200, Codex 600, Antigravity 50 = 11,450.
+  const fixture = (): PersonalBotTokenUsageWindow => {
+    const ctoModels = [
+      priced("claude", "claude-opus-5-5", totals(100, 6000, 400, 500), 40),
+      priced("opencode", "deepseek-v4.1-flash", totals(50, 2000, 0, 150), 2),
+      priced("antigravity", "gemini-3.8-flash-lite-preview", totals(10, 0, 0, 40), 0, 50),
+    ];
+    const qaModels = [priced("codex", "gpt-6.1-sol", totals(20, 500, 0, 80), 3)];
+    const cto = totals(160, 8000, 400, 690);
+    const qa = totals(20, 500, 0, 80);
+    const outside = totals(30, 1500, 0, 70);
+    const providerRow = (provider: UsageProviderKind, t: PersonalBotTokenUsageTotals) => ({
+      provider,
+      totals: t,
+      costUsd: 0,
+      unpricedTokens: 0,
+      sessions: 1,
+    });
+    return {
+      id: "week",
+      sinceDay: "2026-10-19",
+      untilDay: "2026-10-25",
+      rows: [
+        {
+          botId: "cto",
+          totals: cto,
+          models: ctoModels,
+          sessions: 64,
+          costUsd: 42,
+          unpricedTokens: 50,
+        },
+        { botId: "qa", totals: qa, models: qaModels, sessions: 2, costUsd: 3, unpricedTokens: 0 },
+      ],
+      providers: [
+        providerRow("claude", sum(totals(100, 6000, 400, 500), outside)),
+        providerRow("opencode", totals(50, 2000, 0, 150)),
+        providerRow("codex", qa),
+        providerRow("antigravity", totals(10, 0, 0, 40)),
+      ],
+      other: { totals: outside, costUsd: 1, unpricedTokens: 0, sessions: 4 },
+      total: { totals: sum(cto, qa, outside), costUsd: 46, unpricedTokens: 50, sessions: 70 },
+    } as unknown as PersonalBotTokenUsageWindow;
+  };
+
+  const build = () =>
+    buildTokenUsageTable({
+      window: fixture(),
+      bots: BOTS,
+      listedBotIds: listed,
+      modelNames: new Map([["claude-opus-5-5", "Claude Opus 5.5"]]),
+    });
+
+  it("gives every model its split, and the three parts add up to the model's tokens", () => {
+    const table = build();
+    const cto = table.rows.find((r) => r.botId === "cto")!;
+    for (const entry of cto.models) {
+      expect(entry.split.input + entry.split.cached + entry.split.output).toBe(entry.tokens);
+    }
+    expect(cto.models[0]!.split).toEqual({ input: 500, cached: 6000, output: 500 });
+    expect(formatSplit(cto.models[0]!.split)).toBe("in 500 · cached 6.0k (92%) · out 500");
+  });
+
+  it("makes each bot's mix out of its models, in the provider order of the card", () => {
+    const table = build();
+    expect(table.providers.map((p) => p.provider)).toEqual([
+      "claude",
+      "opencode",
+      "codex",
+      "antigravity",
+    ]);
+    const cto = table.rows.find((r) => r.botId === "cto")!;
+    expect(cto.mix.map((s) => [s.provider, s.tokens])).toEqual([
+      ["claude", 7000],
+      ["opencode", 2200],
+      ["antigravity", 50],
+    ]);
+    // A provider the bot did not use is skipped; the others keep their order.
+    const qa = table.rows.find((r) => r.botId === "qa")!;
+    expect(qa.mix.map((s) => s.provider)).toEqual(["codex"]);
+  });
+
+  it("reconciles: a bot's mix and models add up to its total, providers add up to the grand total", () => {
+    const table = build();
+    for (const entry of table.rows.filter((r) => r.tokens > 0)) {
+      expect(entry.mix.reduce((n, s) => n + s.tokens, 0)).toBe(entry.tokens);
+      expect(entry.models.reduce((n, m) => n + m.tokens, 0)).toBe(entry.tokens);
+    }
+    expect(table.total).toBe(11_450);
+    expect(table.providers.reduce((n, p) => n + p.tokens, 0)).toBe(table.total);
+    expect(table.botsTotal + table.other.tokens).toBe(table.total);
+    // Whatever the providers counted beyond the bots is Outside Bots, to the token.
+    expect(table.other.mix.reduce((n, s) => n + s.tokens, 0)).toBeCloseTo(table.other.tokens, 6);
+    expect(table.other.mix.map((s) => s.provider)).toEqual(["claude"]);
+  });
+
+  it("scales Outside Bots' mix to its own tokens when the derived parts disagree", () => {
+    const table = buildTokenUsageTable({
+      window: {
+        ...fixture(),
+        // The server says Outside Bots used 1,000; the providers' leftovers are 1,600.
+        other: { totals: totals(0, 0, 0, 1000), costUsd: 0, unpricedTokens: 0, sessions: 1 },
+      },
+      bots: BOTS,
+      listedBotIds: listed,
+    });
+    expect(table.other.mix.reduce((n, s) => n + s.tokens, 0)).toBeCloseTo(1000, 6);
+  });
+
+  it("has no Outside mix when there is nothing outside, or nothing to derive it from", () => {
+    const none = buildTokenUsageTable({
+      window: windowOf([row("cto", totals(0, 0, 0, 10))]),
+      bots: BOTS,
+      listedBotIds: listed,
+    });
+    expect(none.other.mix).toEqual([]);
+  });
+
+  it("lists the idle bots by name for the one-line fold, and nothing when everyone used tokens", () => {
+    const table = build();
+    expect(table.idleBotNames).toEqual(["Backend", "Designer", "Watcher"]);
+    expect(formatIdleBots(table.idleBotNames)).toBe("No use: Backend, Designer, Watcher");
+    const everyone = buildTokenUsageTable({
+      window: fixture(),
+      bots: BOTS.filter((bot) => bot.botId === "cto" || bot.botId === "qa"),
+      listedBotIds: listed,
+    });
+    expect(everyone.idleBotNames).toEqual([]);
+  });
+
+  it("counts the tokens with no price on the row, for the sheet's tile", () => {
+    const table = build();
+    const cto = table.rows.find((r) => r.botId === "cto")!;
+    expect(cto.unpricedTokens).toBe(50);
+    expect(cto.cost).toEqual({ kind: "partial", usd: 42 });
+    expect(table.rows.find((r) => r.botId === "qa")!.unpricedTokens).toBe(0);
+  });
+
+  it("says how many models and how big a share on the bot's row", () => {
+    const table = build();
+    expect(formatModelsAndShare(table.rows[0]!)).toBe("3 models · 94%");
+    expect(formatModelsAndShare(table.rows[1]!)).toBe("1 model · 6%");
+  });
+
+  it("shows the session count because the data has it, and drops a part that is zero", () => {
+    const table = build();
+    expect(table.rows[0]!.sessions).toBe(64);
+    expect(formatBotMeta(table.rows[0]!)).toBe("64 sessions · 3 models · 3 providers");
+    expect(formatBotMeta(table.rows[1]!)).toBe("2 sessions · 1 model · 1 provider");
+    expect(formatBotMeta({ ...table.rows[1]!, sessions: 0 })).toBe("1 model · 1 provider");
+  });
+
+  it("sizes a bot's bar against the heaviest bot, never under 2% and never over 100%", () => {
+    expect(barWidthPercent(1000, 1000)).toBe(100);
+    expect(barWidthPercent(500, 1000)).toBe(50);
+    expect(barWidthPercent(1, 1000)).toBe(2);
+    expect(barWidthPercent(2000, 1000)).toBe(100);
+    expect(barWidthPercent(0, 1000)).toBe(0);
+    expect(barWidthPercent(10, 0)).toBe(0);
+  });
+
+  it("gives four providers a hue and folds the rest into one grey", () => {
+    expect(providerColor("claude")).toBe("var(--personal-provider-claude)");
+    expect(providerColor("opencode")).toBe("var(--personal-provider-opencode)");
+    expect(providerColor("antigravity")).toBe("var(--personal-provider-antigravity)");
+    expect(providerColor("codex")).toBe("var(--personal-provider-codex)");
+    for (const provider of ["deepseek", "cursor", "grok"] as const) {
+      expect(providerColor(provider)).toBe("var(--personal-provider-other)");
+    }
   });
 });
