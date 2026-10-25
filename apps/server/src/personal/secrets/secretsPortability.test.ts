@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the fixtures are real secret-store files.
+// @effect-diagnostics globalDate:off - test fixtures name their temp files by wall clock.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";

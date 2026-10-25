@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off - a standalone proof script: it runs the real CLI and reads the store with plain fs.
 /**
  * End-to-end proof of the secrets export/import path (migration milestone 1).
  *
@@ -90,7 +91,7 @@ process.stdout.write("PASS import through the CLI\n");
 
 // Read it back the way ServerSecretStore does, with this machine's material.
 const material = resolveMachineMaterial();
-if (material === null) fail("no machine material");
+if (material === null) throw new Error("no machine material on this computer");
 const keyFile = parseWrappedDataKey(NodeFS.readFileSync(NodePath.join(target, "data-encryption-key.json"), "utf8"));
 const opened = unwrapDataKey(keyFile, material);
 try {

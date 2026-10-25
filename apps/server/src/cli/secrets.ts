@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the CLI reads one stdin line with plain fs.
 /**
  * `t3 secrets export|import`: move the saved secrets from the Windows install
  * to the Linux one without any plaintext on disk (see

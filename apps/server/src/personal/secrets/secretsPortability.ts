@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - a migration/CLI path: plain fs and crypto with no Effect runtime.
+// @effect-diagnostics globalDate:off - the bundle's createdAt is a plain ISO timestamp for records, not scheduling.
 /**
  * Moving saved secrets from one machine to another without ever writing them
  * in plaintext.
@@ -225,7 +226,7 @@ const writePrivateFile = (file: string, bytes: Uint8Array, overwrite: boolean): 
 };
 
 export interface SecretsExportOptions {
-  /** The store's `secrets` folder (…/userdata/secrets). */
+  /** The store's `secrets` folder (â€¦/userdata/secrets). */
   readonly secretsDir: string;
   readonly outFile: string;
   readonly passphrase: string;
@@ -542,7 +543,7 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
   }
 }
 
-/** The store's `secrets` folder for a data root (`…/dev/userdata`, `…/dev` or `…`). */
+/** The store's `secrets` folder for a data root (`â€¦/dev/userdata`, `â€¦/dev` or `â€¦`). */
 export function secretsDirForDataRoot(dataRoot: string): string {
   return NodePath.join(dataRoot, "secrets");
 }
