@@ -6,14 +6,12 @@ import * as Exit from "effect/Exit";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import {
-  linuxPathMapMissingMessage,
-  storedWindowsPathInPayload,
-} from "./113_LinuxPathRewrite.ts";
+import { linuxPathMapMissingMessage, storedWindowsPathInPayload } from "./113_LinuxPathRewrite.ts";
 import { runMigrations } from "../Migrations.ts";
 
 const MAP = "C:/Users/Ht=/home/harout;C:/Claude/AI=/home/harout/claude";
 
+/** A fresh in-memory database per suite: each case starts at migration 112. */
 const client = () => NodeSqliteClient.layer({ filename: ":memory:" });
 
 /**
@@ -21,10 +19,10 @@ const client = () => NodeSqliteClient.layer({ filename: ":memory:" });
  * reads it. The property is configurable, so the test can be the Linux host
  * while the suite itself runs on Windows.
  */
-const withPlatform = <A, E>(
+const withPlatform = <A, E, R>(
   platform: NodeJS.Platform,
-  effect: Effect.Effect<A, E>,
-): Effect.Effect<A, E> => {
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> => {
   const original = Object.getOwnPropertyDescriptor(process, "platform")!;
   return Effect.acquireUseRelease(
     Effect.sync(() =>
@@ -35,7 +33,10 @@ const withPlatform = <A, E>(
   );
 };
 
-const withPathMap = <A, E>(raw: string | undefined, effect: Effect.Effect<A, E>): Effect.Effect<A, E> => {
+const withPathMap = <A, E, R>(
+  raw: string | undefined,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> => {
   const previous = process.env.T3CODE_PATH_MAP;
   return Effect.acquireUseRelease(
     Effect.sync(() => {
@@ -82,9 +83,10 @@ const latestMigration = Effect.gen(function* () {
 
 const storedPaths = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const projects = yield* sql<{ readonly workspace_root: string; readonly favicon_path: string | null }>`
-    SELECT workspace_root, favicon_path FROM projection_projects ORDER BY project_id
-  `;
+  const projects = yield* sql<{
+    readonly workspace_root: string;
+    readonly favicon_path: string | null;
+  }>`SELECT workspace_root, favicon_path FROM projection_projects ORDER BY project_id`;
   const threads = yield* sql<{ readonly worktree_path: string | null }>`
     SELECT worktree_path FROM projection_threads ORDER BY thread_id
   `;
@@ -94,74 +96,91 @@ const storedPaths = Effect.gen(function* () {
   return { projects, threads, events };
 });
 
-it("fails the boot on Linux with stored Windows paths and no map, and records nothing", () =>
-  Effect.gen(function* () {
-    yield* seedWindowsPaths;
-    const exit = yield* withPlatform(
-      "linux",
-      withPathMap(undefined, runMigrations({ toMigrationInclusive: 113 })),
-    ).pipe(Effect.exit);
+it.layer(client())("113 fail-safe on Linux", (it) => {
+  it.effect("stops the boot with stored Windows paths and no map, and records nothing", () =>
+    Effect.gen(function* () {
+      yield* seedWindowsPaths;
+      const exit = yield* withPlatform(
+        "linux",
+        withPathMap(undefined, runMigrations({ toMigrationInclusive: 113 })),
+      ).pipe(Effect.exit);
 
-    assert.strictEqual(Exit.isFailure(exit), true);
-    if (Exit.isFailure(exit)) {
-      const error = Cause.squash(exit.cause);
-      assert.ok(error instanceof Error);
-      assert.strictEqual(error.name, "LinuxPathMapMissingError");
-      assert.match(error.message, /T3CODE_PATH_MAP/);
-      // It names a real stored path so the operator knows which data root moved.
-      assert.match(error.message, /C:\/Claude\/AI\/personal-bots/);
-      assert.match(error.message, /not recorded/);
-    }
-    // The whole migration transaction rolled back: 113 is still pending, so
-    // the next boot with the variable set rewrites the paths.
-    assert.strictEqual(yield* latestMigration, 112);
-    const paths = yield* storedPaths;
-    assert.strictEqual(paths.projects[0]?.workspace_root, "C:/Claude/AI/personal-bots");
-    assert.strictEqual(paths.threads[0]?.worktree_path, "C:\\Claude\\AI\\_wt\\hbots-linux-server");
-  }).pipe(Effect.provide(client())),
-);
+      assert.strictEqual(Exit.isFailure(exit), true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.squash(exit.cause);
+        assert.ok(error instanceof Error);
+        assert.strictEqual(error.name, "LinuxPathMapMissingError");
+        assert.match(error.message, /T3CODE_PATH_MAP/);
+        // It names a real stored path so the operator knows which data root moved.
+        assert.match(error.message, /C:\/Claude\/AI\/personal-bots/);
+        assert.match(error.message, /not recorded/);
+      }
+      // The migration transaction rolled back: 113 is still pending, so the
+      // next boot with the variable set rewrites the paths.
+      assert.strictEqual(yield* latestMigration, 112);
+      const paths = yield* storedPaths;
+      assert.strictEqual(paths.projects[0]?.workspace_root, "C:/Claude/AI/personal-bots");
+      assert.strictEqual(
+        paths.threads[0]?.worktree_path,
+        "C:\\Claude\\AI\\_wt\\hbots-linux-server",
+      );
+    }),
+  );
+});
 
-it("boots on Linux without the map when the database holds no Windows paths", () =>
-  Effect.gen(function* () {
-    yield* runMigrations({ toMigrationInclusive: 112 });
-    const exit = yield* withPlatform(
-      "linux",
-      withPathMap(undefined, runMigrations({ toMigrationInclusive: 113 })),
-    ).pipe(Effect.exit);
-    assert.strictEqual(Exit.isFailure(exit), false);
-    assert.strictEqual(yield* latestMigration, 113);
-  }).pipe(Effect.provide(client())),
-);
+it.layer(client())("113 on Linux without Windows paths", (it) => {
+  it.effect("boots without the map when the database holds nothing to rewrite", () =>
+    Effect.gen(function* () {
+      yield* runMigrations({ toMigrationInclusive: 112 });
+      const exit = yield* withPlatform(
+        "linux",
+        withPathMap(undefined, runMigrations({ toMigrationInclusive: 113 })),
+      ).pipe(Effect.exit);
+      assert.strictEqual(Exit.isFailure(exit), false);
+      assert.strictEqual(yield* latestMigration, 113);
+    }),
+  );
+});
 
-it("keeps the Windows no-op exactly as it was, with or without the map", () =>
-  Effect.gen(function* () {
-    yield* seedWindowsPaths;
-    const exit = yield* withPlatform(
-      "win32",
-      withPathMap(undefined, runMigrations({ toMigrationInclusive: 113 })),
-    ).pipe(Effect.exit);
-    assert.strictEqual(Exit.isFailure(exit), false);
-    assert.strictEqual(yield* latestMigration, 113);
-    const paths = yield* storedPaths;
-    assert.strictEqual(paths.projects[0]?.workspace_root, "C:/Claude/AI/personal-bots");
-    assert.strictEqual(paths.threads[0]?.worktree_path, "C:\\Claude\\AI\\_wt\\hbots-linux-server");
-  }).pipe(Effect.provide(client())),
-);
+it.layer(client())("113 on Windows", (it) => {
+  it.effect("keeps the no-op exactly as it was, with the map unset", () =>
+    Effect.gen(function* () {
+      yield* seedWindowsPaths;
+      const exit = yield* withPlatform(
+        "win32",
+        withPathMap(undefined, runMigrations({ toMigrationInclusive: 113 })),
+      ).pipe(Effect.exit);
+      assert.strictEqual(Exit.isFailure(exit), false);
+      assert.strictEqual(yield* latestMigration, 113);
+      const paths = yield* storedPaths;
+      assert.strictEqual(paths.projects[0]?.workspace_root, "C:/Claude/AI/personal-bots");
+      assert.strictEqual(
+        paths.threads[0]?.worktree_path,
+        "C:\\Claude\\AI\\_wt\\hbots-linux-server",
+      );
+    }),
+  );
+});
 
-it("still rewrites on Linux when the map is set", () =>
-  Effect.gen(function* () {
-    yield* seedWindowsPaths;
-    const exit = yield* withPlatform(
-      "linux",
-      withPathMap(MAP, runMigrations({ toMigrationInclusive: 113 })),
-    ).pipe(Effect.exit);
-    assert.strictEqual(Exit.isFailure(exit), false);
-    assert.strictEqual(yield* latestMigration, 113);
-    const paths = yield* storedPaths;
-    assert.strictEqual(paths.projects[0]?.workspace_root, "/home/harout/claude/personal-bots");
-    assert.strictEqual(paths.threads[0]?.worktree_path, "/home/harout/claude/_wt/hbots-linux-server");
-  }).pipe(Effect.provide(client())),
-);
+it.layer(client())("113 with the map", (it) => {
+  it.effect("still rewrites on Linux when the map is set", () =>
+    Effect.gen(function* () {
+      yield* seedWindowsPaths;
+      const exit = yield* withPlatform(
+        "linux",
+        withPathMap(MAP, runMigrations({ toMigrationInclusive: 113 })),
+      ).pipe(Effect.exit);
+      assert.strictEqual(Exit.isFailure(exit), false);
+      assert.strictEqual(yield* latestMigration, 113);
+      const paths = yield* storedPaths;
+      assert.strictEqual(paths.projects[0]?.workspace_root, "/home/harout/claude/personal-bots");
+      assert.strictEqual(
+        paths.threads[0]?.worktree_path,
+        "/home/harout/claude/_wt/hbots-linux-server",
+      );
+    }),
+  );
+});
 
 it("names the columns in the failure and reads paths only from the structural event keys", () => {
   assert.match(
