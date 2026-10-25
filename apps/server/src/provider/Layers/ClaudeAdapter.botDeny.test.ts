@@ -179,8 +179,11 @@ describe("personal bot deny rules reach the Claude CLI", () => {
           "keybindings-help",
           "loop",
           "plugin-authoring",
+          "run",
           "schedule",
+          "security-review",
           "simplify",
+          "workflow-authoring",
         ]);
         assert.deepEqual(
           new Set(Object.values(bot.settings?.skillOverrides ?? {})),
