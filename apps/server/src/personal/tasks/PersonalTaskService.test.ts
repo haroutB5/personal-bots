@@ -1,5 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - builds provider activity rows
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeURL from "node:url";
 import {
   CommandId,
   CorrelationId,
@@ -13,6 +14,7 @@ import {
   PersonalTaskResult,
   PersonalTaskStatus,
   ProviderInstanceId,
+  ProviderDriverKind,
   TurnId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -22,7 +24,9 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -47,6 +51,7 @@ import {
   type ProjectionThreadMessageRepositoryShape,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { makeNativeAcpAdapter } from "../../provider/Layers/NativeAcpAdapter.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
@@ -1971,14 +1976,15 @@ const claudeOpus = {
   options: [{ id: "effort", value: "medium" }],
 };
 
-it.effect(
-  "steer delivers into the running turn with the bot's selection and keeps the task",
-  () => {
+it.effect.each(["claudeAgent", "codex", "opencode-v2"])(
+  "steer delivers into a running %s turn and finishes with its real result",
+  (provider) => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       yield* seedBots;
       const bots = yield* PersonalBotService.PersonalBotService;
-      yield* bots.update({ botId: botId("assistant"), modelSelection: claudeOpus });
+      const selection = { ...claudeOpus, instanceId: ProviderInstanceId.make(provider) };
+      yield* bots.update({ botId: botId("assistant"), modelSelection: selection });
       const service = yield* PersonalTaskService.PersonalTaskService;
       const root = yield* createRoot("steer-running");
       const thread = threadOf(root);
@@ -1997,7 +2003,7 @@ it.effect(
       expect(steer.threadId).toBe(thread);
       expect(steer.message.text).toBe("Update from CTO: Only check the login page.");
       expect(steer.message.messageId.startsWith("personal-task-steer-")).toBe(true);
-      expect(steer.modelSelection).toEqual(claudeOpus);
+      expect(steer.modelSelection).toEqual(selection);
       // Not a new attempt: the same task keeps running on the same turn.
       const detail = yield* service.get({ taskId: root.taskId });
       expect(detail.task.status).toBe("running");
@@ -2016,6 +2022,131 @@ it.effect(
       expect(turnStarts(harness).length).toBe(startsBefore + 1);
     }).pipe(Effect.provide(makeLayer(harness)));
   },
+);
+
+it.live(
+  "OpenCode V2 ACP steer keeps the task running through cancellation and returns its reply",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* bots.update({
+        botId: botId("assistant"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode-v2"),
+          model: "opencode/deepseek-v4.1-flash-free",
+        },
+      });
+      const task = yield* createRoot("acp-steer-continuity");
+      const threadId = threadOf(task);
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-task-steer-acp-" });
+      let releaseCancellation: Effect.Effect<void> = Effect.void;
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-v2"),
+        configureTurn: (runtime) =>
+          Effect.sync(() => {
+            releaseCancellation = runtime
+              .request("_test/finish-cancel", {})
+              .pipe(Effect.asVoid, Effect.orDie);
+          }),
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: dir,
+              env: {
+                ...process.env,
+                T3_ACP_PROMPT_DELAY_MS: "400",
+                T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1",
+                T3_ACP_PROMPT_RESPONSE_TEXT: "Steered work finished.",
+              },
+            },
+            cwd: dir,
+            authMethodId: null,
+            clientInfo: { name: "steer-task-test", version: "1" },
+          }),
+      });
+      const started = yield* Deferred.make<void>();
+      const finished = yield* Deferred.make<void>();
+      let reply = "";
+      const terminalStates: string[] = [];
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            if (event.type === "content.delta" && event.payload.streamKind === "assistant_text") {
+              reply += event.payload.delta;
+            }
+            if (event.type === "turn.started") {
+              yield* setSession(harness, {
+                ...makeSession({
+                  threadId,
+                  status: "running",
+                  activeTurnId: event.turnId!,
+                  updatedAt: event.createdAt,
+                }),
+                providerName: "opencode",
+                providerInstanceId: ProviderInstanceId.make("opencode-v2"),
+              });
+            }
+            if (event.type === "item.updated" && event.itemId === "native-cancel-tool") {
+              // Prove the first prompt is in a tool, rather than relying on a
+              // sleep between turn admission and the ACP request.
+              yield* Deferred.succeed(started, undefined);
+            }
+            if (event.type === "turn.aborted" || event.type === "turn.completed") {
+              const status =
+                event.type === "turn.aborted" || event.payload.state === "interrupted"
+                  ? "interrupted"
+                  : "ready";
+              terminalStates.push(status);
+              yield* endTurn(harness, threadId, event.turnId!, reply, { status });
+              yield* Deferred.succeed(finished, undefined);
+            }
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: dir, runtimeMode: "full-access" });
+      const first = yield* adapter
+        .sendTurn({ threadId, input: "Start work." })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const steered = yield* service.steer({
+        taskId: task.taskId,
+        fromName: "CTO",
+        message: "Finish the updated work.",
+      });
+      expect(steered.outcome).toBe("steered");
+      const command = turnStarts(harness).at(-1)!;
+      const second = yield* adapter
+        .sendTurn({ threadId, input: command.message.text })
+        .pipe(Effect.forkChild);
+      yield* service.drain;
+      expect((yield* reload(task.taskId)).status).toBe("running");
+      // A steer now waits for the remote prompt, rather than detaching its
+      // local RPC. Let the mock agent acknowledge the cancellation explicitly.
+      yield* releaseCancellation;
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      yield* Deferred.await(finished);
+      const done = yield* reload(task.taskId);
+      expect(terminalStates).toEqual(["ready"]);
+      expect(done.status).toBe("completed");
+      expect(done.result?.summary).toBe("Steered work finished.");
+      expect((yield* service.get({ taskId: task.taskId })).attempts).toHaveLength(1);
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(makeLayer(harness)));
+  },
+  30_000,
 );
 
 it.effect("steer keeps a prefix the sender already wrote instead of doubling it", () => {
@@ -2757,7 +2888,7 @@ it.effect(
 );
 
 it.effect(
-  "background work that never finishes closes the task after the cap, with its latest reply and a note",
+  "background work is never closed at the notice mark; only the runaway cap closes it, with a note",
   () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -2769,8 +2900,25 @@ it.effect(
       yield* backgroundStarted(thread, "dev-server");
       yield* endClaudeTurn(harness, thread, turnId, "The dev server is up on :3000.");
 
+      // Harout's rule (25 Oct): no time-based close while the bot's work runs.
+      // 20 minutes in is only the point where the delegating lead is told.
       yield* TestClock.adjust(
-        `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_WAIT_MS - 60_000} millis`,
+        `${PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS - 60_000} millis`,
+      );
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      yield* TestClock.adjust("1 minute");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      yield* TestClock.adjust("10 minutes");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // A runaway command is the one thing the hard cap catches.
+      yield* TestClock.adjust(
+        `${PersonalTaskService.PERSONAL_TASK_WAIT_HARD_CAP_MS - 31 * 60_000} millis`,
       );
       yield* sweepNow;
       expect((yield* reload(root.taskId)).status).toBe("running");
@@ -2783,7 +2931,7 @@ it.effect(
         summary: `The dev server is up on :3000.\n\n${PersonalTaskService.backgroundCapNote(1)}`,
       });
       expect(PersonalTaskService.backgroundCapNote(1)).toContain(
-        "a background command the bot started was still running 20 minutes after this reply",
+        "a background command the bot started was still running 8 hours after this reply",
       );
     }).pipe(Effect.provide(makeLayer(harness)));
   },
@@ -2871,6 +3019,209 @@ it.effect("a steer reaches a task that is waiting on background work, and its tu
         "Server gates green; web gates skipped.",
       ]),
     });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// 25 Oct 2026: three Frontend tasks delegated by the CTO ended "completed" with
+// a mid-work result. The wait on tracked background work starts fine (the log
+// shows it), and so does the follow-up turn. What ended them was a turn whose
+// own reply said it was still waiting, with nothing left for the app to track:
+// Claude Code starts no further turn for a push by another chat, the heavy-job
+// lock, or a detached proof run.
+
+it.effect(
+  "a follow-up turn that still says it is waiting keeps the task running; its report completes it",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("bg-stated-follow-up");
+      const thread = threadOf(root);
+
+      const first = yield* beginClaudeTurn(harness, thread);
+      yield* backgroundStarted(thread, "b-gates");
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        first,
+        "Waiting on the gates; I'll report when they finish.",
+      );
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // The gates end and Claude Code runs the follow-up turn by itself; its
+      // reply says a new wait (the proof) that nothing tracks.
+      yield* TestClock.adjust("1 minute");
+      yield* backgroundFinished(thread, "b-gates");
+      const followUp = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        followUp,
+        "Still running the Brave proof; I'll report when it finishes.",
+      );
+      // Before the fix this turn completed the task with the mid-work sentence.
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // Past the one-minute follow-up grace, and still not a report.
+      yield* TestClock.adjust(
+        `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS + 1} millis`,
+      );
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // The bot's own report, in a turn the app did not have to wait for.
+      yield* TestClock.adjust("2 minutes");
+      const report = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        report,
+        "## Branch ready: all gates and the proof green.",
+      );
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({
+        summary: PersonalTaskService.composeTaskReplies([
+          "Waiting on the gates; I'll report when they finish.",
+          "Still running the Brave proof; I'll report when it finishes.",
+          "## Branch ready: all gates and the proof green.",
+        ]),
+      });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a wait is told to the delegating lead once, and neither task is closed", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const repository = yield* PersonalTaskRepository.PersonalTaskRepository;
+    const parent = yield* createRoot("bg-notice-parent");
+    const child = yield* service.delegate({
+      parentTaskId: parent.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Notice child"),
+    });
+    yield* service.drain;
+    const childTask = yield* reload(child.taskId);
+    const thread = threadOf(childTask);
+
+    // The lead is parked waiting for the user while its child waits. The notice
+    // must reach it in a later turn but never wake it (a resume needs the user).
+    const parentThread = threadOf(parent);
+    const parentTurn = yield* beginTurn(harness, parentThread);
+    yield* service.waitForUser({ taskId: parent.taskId });
+    yield* endTurn(harness, parentThread, parentTurn, "I need the API key first.");
+    expect((yield* reload(parent.taskId)).status).toBe("waiting_for_user");
+
+    const turnId = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundStarted(thread, "b-gates");
+    yield* endClaudeTurn(harness, thread, turnId, "Started the gates.");
+
+    yield* TestClock.adjust(`${PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS - 60_000} millis`);
+    yield* sweepNow;
+    expect(yield* repository.listUndeliveredNotes(parent.taskId)).toHaveLength(0);
+
+    yield* TestClock.adjust("1 minute");
+    yield* sweepNow;
+    const notes = yield* repository.listUndeliveredNotes(parent.taskId);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.noteId.startsWith("notice:")).toBe(true);
+    expect(notes[0]!.text).toContain("has been running 20 minutes waiting on background work");
+    expect(notes[0]!.text).toContain("It has not been closed");
+    // The notice is information for the lead; the child keeps running and the
+    // lead stays parked for the user, not woken by a notice.
+    expect((yield* reload(child.taskId)).status).toBe("running");
+    expect((yield* reload(parent.taskId)).status).toBe("waiting_for_user");
+    expect(yield* repository.listTasksAwaitingResume()).toEqual([]);
+
+    // One notice per attempt, however long the wait goes on.
+    yield* TestClock.adjust("30 minutes");
+    yield* sweepNow;
+    expect(yield* repository.listUndeliveredNotes(parent.taskId)).toHaveLength(1);
+    expect((yield* reload(child.taskId)).status).toBe("running");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a task whose own reply waits on the heavy-job lock stays running, takes a steer, and reports",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("bg-stated-lock");
+      const thread = threadOf(root);
+
+      const first = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        first,
+        "The build is queued behind another job that holds the machine-wide heavy lock. I'll pick the work up again when it starts and finishes.",
+      );
+      // Nothing was left running for the app to track: the words have to hold it.
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      expect((yield* reload(root.taskId)).result?.waitingOnBackgroundSince).toBeDefined();
+
+      yield* TestClock.adjust("5 minutes");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // A waiting task is still between turns, so the CTO can steer it.
+      const steered = yield* service.steer({
+        taskId: root.taskId,
+        fromName: "CTO",
+        message: "Skip the web gates.",
+      });
+      expect(steered.outcome).toBe("steered");
+      const steerTurn = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(harness, thread, steerTurn, "Build done; web gates skipped.");
+
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({
+        summary: PersonalTaskService.composeTaskReplies([
+          "The build is queued behind another job that holds the machine-wide heavy lock. I'll pick the work up again when it starts and finishes.",
+          "Build done; web gates skipped.",
+        ]),
+      });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a stated wait is held past the notice mark and closes only at the runaway cap", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("bg-stated-cap");
+    const thread = threadOf(root);
+    const first = yield* beginClaudeTurn(harness, thread);
+    yield* endClaudeTurn(harness, thread, first, "I'll wait for the push from the other chat.");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    yield* TestClock.adjust(`${PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS - 60_000} millis`);
+    yield* sweepNow;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    yield* TestClock.adjust(
+      `${PersonalTaskService.PERSONAL_TASK_WAIT_HARD_CAP_MS - PersonalTaskService.PERSONAL_TASK_WAIT_NOTICE_MS} millis`,
+    );
+    yield* sweepNow;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    yield* TestClock.adjust("1 minute");
+    yield* sweepNow;
+    const done = yield* reload(root.taskId);
+    expect(done.status).toBe("completed");
+    expect(done.result).toEqual({
+      summary: `I'll wait for the push from the other chat.\n\n${PersonalTaskService.statedWaitCapNote()}`,
+    });
+    expect(PersonalTaskService.statedWaitCapNote()).toContain(
+      "still said it was waiting 8 hours after it was written",
+    );
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
@@ -3065,7 +3416,7 @@ it.effect("a task closed by the background cap keeps the report and its follow-u
     yield* endClaudeTurn(harness, thread, second, "Server still up.");
 
     yield* TestClock.adjust(
-      `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_WAIT_MS - 60_000} millis`,
+      `${PersonalTaskService.PERSONAL_TASK_WAIT_HARD_CAP_MS - 60_000} millis`,
     );
     yield* sweepNow;
     expect((yield* reload(root.taskId)).status).toBe("running");

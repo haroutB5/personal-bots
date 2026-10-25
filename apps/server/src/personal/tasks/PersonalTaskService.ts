@@ -78,7 +78,8 @@ export {
 } from "./taskLimitPolicy.ts";
 export {
   PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS,
-  PERSONAL_TASK_BACKGROUND_WAIT_MS,
+  PERSONAL_TASK_WAIT_HARD_CAP_MS,
+  PERSONAL_TASK_WAIT_NOTICE_MS,
 } from "./taskBackgroundPolicy.ts";
 export {
   BACKGROUND_FOLLOW_UP_MARKER,
@@ -87,7 +88,10 @@ export {
   TASK_SUMMARY_RESULT_PREVIEW_CHARS,
   backgroundCapNote,
   composeTaskReplies,
+  statedWaitCapNote,
   toTaskSummary,
+  waitNoticeMinutes,
+  waitNoticeText,
 } from "./taskResultPolicy.ts";
 export { FRESH_SESSION_NOTE, reopenNote } from "./taskTurnPolicy.ts";
 

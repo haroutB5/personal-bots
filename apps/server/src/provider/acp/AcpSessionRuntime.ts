@@ -269,6 +269,12 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
     /**
+     * Requests cancellation without interrupting the local prompt RPC. A steer
+     * must retain that RPC until the agent responds, so a queued replacement
+     * cannot overtake a tool that is still finishing remotely.
+     */
+    readonly requestCancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /**
      * Selects the active mode through the negotiated `mode` configuration option.
      * This is a no-op when the requested mode is already active.
      * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
@@ -1124,6 +1130,12 @@ export const make = (
         options.cancelBehavior === "wait-for-prompt"
           ? promptDispatchSemaphore.withPermit(cancel)
           : cancel,
+      requestCancel: promptDispatchSemaphore.withPermit(
+        Effect.gen(function* () {
+          const started = yield* getStartedState;
+          yield* acp.agent.cancel({ sessionId: started.sessionId });
+        }),
+      ),
       setMode: (modeId) =>
         Ref.get(modeStateRef).pipe(
           Effect.flatMap((modeState) => {
