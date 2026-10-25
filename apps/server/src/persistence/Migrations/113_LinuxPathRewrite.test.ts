@@ -29,10 +29,10 @@ const seed = Effect.gen(function* () {
            ('p3', 'already-linux', '/home/harout/keep', '[]', '2026-01-01', '2026-01-01')
   `;
   yield* sql`
-    INSERT INTO projection_threads (thread_id, project_id, title, model, worktree_path, created_at, updated_at)
-    VALUES ('t1', 'p1', 'worktree', 'claude-opus-5', 'C:\\Claude\\AI\\_wt\\hbots-linux-server', '2026-01-01', '2026-01-01'),
-           ('t2', 'p1', 'plain', 'claude-opus-5', NULL, '2026-01-01', '2026-01-01'),
-           ('t3', 'p3', 'linux', 'claude-opus-5', '/home/harout/keep', '2026-01-01', '2026-01-01')
+    INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, worktree_path, created_at, updated_at, runtime_mode, interaction_mode, pending_approval_count, pending_user_input_count, has_actionable_proposed_plan)
+    VALUES ('t1', 'p1', 'worktree', NULL, 'C:\\Claude\\AI\\_wt\\hbots-linux-server', '2026-01-01', '2026-01-01', 'full-access', 'default', 0, 0, 0),
+           ('t2', 'p1', 'plain', NULL, NULL, '2026-01-01', '2026-01-01', 'full-access', 'default', 0, 0, 0),
+           ('t3', 'p3', 'linux', NULL, '/home/harout/keep', '2026-01-01', '2026-01-01', 'full-access', 'default', 0, 0, 0)
   `;
 
   const event = (id: string, type: string, payload: unknown) => sql`
@@ -143,8 +143,8 @@ layer("113_LinuxPathRewrite", (it) => {
       assert.deepStrictEqual(
         parsePathMap("C:\\Claude\\AI=/home/h/claude;C:/Users/Ht=/home/h;C:/Bad=;D:/x=D:/y"),
         [
-          { from: "C:/Users/Ht", to: "/home/h" },
           { from: "C:/Claude/AI", to: "/home/h/claude" },
+          { from: "C:/Users/Ht", to: "/home/h" },
           { from: "D:/x", to: "D:/y" },
         ],
       );
