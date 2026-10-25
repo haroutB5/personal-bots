@@ -143,6 +143,27 @@ export interface WrappedDataKeyFile {
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const fromBase64 = (value: string) => Uint8Array.from(Buffer.from(value, "base64"));
 
+/**
+ * Wraps an EXISTING data key with the machine's material. A migration import
+ * must keep the same key: a fresh one would leave every saved secret sealed
+ * with a key nothing can open.
+ */
+export const wrapDataKey = (dataKey: Uint8Array, resolved: MachineMaterial): WrappedDataKeyFile => {
+  const salt = NodeCrypto.randomBytes(SALT_BYTES);
+  const wrappingKey = deriveWrappingKey(resolved.material, salt);
+  const iv = NodeCrypto.randomBytes(IV_BYTES);
+  const cipher = NodeCrypto.createCipheriv("aes-256-gcm", wrappingKey, iv);
+  const body = Buffer.concat([cipher.update(dataKey), cipher.final()]);
+  return {
+    v: 1,
+    source: resolved.source,
+    salt: base64(salt),
+    iv: base64(iv),
+    tag: base64(cipher.getAuthTag()),
+    key: base64(body),
+  };
+};
+
 export const createWrappedDataKey = (
   material?: MachineMaterial,
 ): {
@@ -152,22 +173,7 @@ export const createWrappedDataKey = (
   const resolved = material ?? resolveMachineMaterial();
   if (resolved === null) throw new Error("No machine material is available to protect secrets.");
   const dataKey = Uint8Array.from(NodeCrypto.randomBytes(KEY_BYTES));
-  const salt = NodeCrypto.randomBytes(SALT_BYTES);
-  const wrappingKey = deriveWrappingKey(resolved.material, salt);
-  const iv = NodeCrypto.randomBytes(IV_BYTES);
-  const cipher = NodeCrypto.createCipheriv("aes-256-gcm", wrappingKey, iv);
-  const body = Buffer.concat([cipher.update(dataKey), cipher.final()]);
-  return {
-    dataKey,
-    file: {
-      v: 1,
-      source: resolved.source,
-      salt: base64(salt),
-      iv: base64(iv),
-      tag: base64(cipher.getAuthTag()),
-      key: base64(body),
-    },
-  };
+  return { dataKey, file: wrapDataKey(dataKey, resolved) };
 };
 
 export const unwrapDataKey = (file: WrappedDataKeyFile, material?: MachineMaterial): Uint8Array => {

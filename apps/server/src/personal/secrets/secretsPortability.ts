@@ -27,7 +27,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
-  createWrappedDataKey,
+  wrapDataKey,
   isSealedSecret,
   openSecret,
   parseWrappedDataKey,
@@ -226,7 +226,7 @@ const writePrivateFile = (file: string, bytes: Uint8Array, overwrite: boolean): 
 };
 
 export interface SecretsExportOptions {
-  /** The store's `secrets` folder (â€¦/userdata/secrets). */
+  /** The store's `secrets` folder (Ã¢â‚¬Â¦/userdata/secrets). */
   readonly secretsDir: string;
   readonly outFile: string;
   readonly passphrase: string;
@@ -468,11 +468,12 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
     let unchanged = 0;
     try {
       if (dataKeyWritten) {
-        const wrapped = createWrappedDataKey(target);
-        wrapped.dataKey.fill(0);
+        // Keep the imported data key: a new one would leave every saved secret
+        // sealed with a key nothing can open.
+        const wrapped = wrapDataKey(dataKey, target);
         writePrivateFile(
           keyPath,
-          new TextEncoder().encode(serializeWrappedDataKey(wrapped.file)),
+          new TextEncoder().encode(serializeWrappedDataKey(wrapped)),
           true,
         );
         try {
@@ -543,7 +544,7 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
   }
 }
 
-/** The store's `secrets` folder for a data root (`â€¦/dev/userdata`, `â€¦/dev` or `â€¦`). */
+/** The store's `secrets` folder for a data root (`Ã¢â‚¬Â¦/dev/userdata`, `Ã¢â‚¬Â¦/dev` or `Ã¢â‚¬Â¦`). */
 export function secretsDirForDataRoot(dataRoot: string): string {
   return NodePath.join(dataRoot, "secrets");
 }
