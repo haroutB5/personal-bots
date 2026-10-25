@@ -311,11 +311,24 @@ log "3/9 Install packages"
 if [ "$SKIP_PACKAGES" -eq 1 ]; then
   warn "packages skipped (--skip-packages)"
 else
-  # A fresh Omarchy ISO only carries the ISO's package database, and the mise
-  # package is named mise-bin. brave-bin is in Omarchy's repo; AUR only when not.
+  # A fresh Omarchy ISO only carries the ISO's package database. mise is
+  # `mise-bin` on Omarchy and `mise` on plain Arch, so try both names. brave-bin
+  # is in Omarchy's repo; AUR only when not.
   run pacman -Sy --noconfirm
-  run pacman -S --needed --noconfirm base-devel git python nodejs mise-bin rsync cloudflared lm_sensors ollama
+  run pacman -S --needed --noconfirm base-devel git python nodejs rsync cloudflared lm_sensors ollama
 
+  info "mise"
+  if command -v mise >/dev/null 2>&1; then
+    info "mise already installed: $(command -v mise)"
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    info "would install mise-bin (Omarchy) or mise (plain Arch)"
+  elif pacman -Ssq '^mise-bin$' | grep -q .; then
+    run pacman -S --needed --noconfirm mise-bin
+  elif pacman -Ssq '^mise$' | grep -q .; then
+    run pacman -S --needed --noconfirm mise
+  else
+    die "mise is not installed and neither mise-bin nor mise is in the package database. Install mise, then rerun."
+  fi
   info "mise node 24.22.1"
   run_as_user mise install node@24.22.1
   run_as_user mise use -g node@24.22.1

@@ -224,8 +224,9 @@ The bootstrap calls `scripts/personal/linux/install-units.sh` with `--repo`,
 continues.
 
 It syncs the package database once (`pacman -Sy --noconfirm`) and installs
-`base-devel git python nodejs mise-bin rsync cloudflared lm_sensors ollama`,
-then as the user:
+`base-devel git python nodejs rsync cloudflared lm_sensors ollama`, then mise
+(`mise-bin` on Omarchy, `mise` on plain Arch, or an existing mise), then as the
+user:
 
 - `mise install node@24.22.1` and `mise use -g node@24.22.1`
 - `corepack enable` and `corepack prepare pnpm@11.10.0 --activate`
