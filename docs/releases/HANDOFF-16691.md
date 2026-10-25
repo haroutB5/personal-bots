@@ -37,8 +37,6 @@ No migration (112 to 112), so no production backup per Harout's 20 Oct and 23 Oc
 
 ## Gate evidence
 
-## Gate evidence
-
 <!-- gate-evidence:begin sha=b597c04b5f4635d2478bf0aa907c95c50335e3a4 release=b597c04b5f46 json-sha256=8cd76b115fa0a06590f8579fe852f2c3c732e1988ff64f22ca30ee7f60557f86 result=PASS -->
 
 Written by `scripts/personal/gate-evidence.ps1` at 2026-10-25T00:45:36Z. Version 1.66.91, release `b597c04b5f46`, commit `b597c04b5f4635d2478bf0aa907c95c50335e3a4` on `release/hbots-16691`, working tree clean, result **PASS**.
