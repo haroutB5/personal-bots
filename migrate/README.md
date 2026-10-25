@@ -192,7 +192,9 @@ Options:
 - `--data-dir PATH`: default `<home>/.personal-bots`
 - `--user NAME`: default `$SUDO_USER`, else `harout`
 - `--secrets-bundle PATH`: default `<home>/omarchy-secrets.bundle`
-- `--skip-restore`, `--skip-packages`, `--skip-verify`: only for repair runs
+- `--skip-restore`, `--skip-packages`, `--skip-verify`: only for repair runs.
+  `--skip-restore` also skips the path rewrite, because there is no freshly
+  restored Windows data to rewrite.
 
 The script never deletes: rsync runs without `--delete`, and no cleanup step is
 destructive.
