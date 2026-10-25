@@ -294,6 +294,9 @@ Kino and docs as SKIP, for a base-host check before those apps are restored.
    list. Fix the target or free space before going on.
 2. Run `prewipe.ps1 -Apply -StopServer`, type `WIPE-LAPTOP-CONFIRMED`, and wait
    for the image, both plain copies, the hash manifests and the inventory.
+   `-StopServer` stops the app that hosts the bots, so start this step from a
+   normal PowerShell window or a detached task, not from a bot session you need
+   to keep alive.
 3. Run `make-installer.ps1` dry. Confirm the Omarchy version, the published
    SHA256 and the two USB sticks in the disk table.
 4. Run `make-installer.ps1 -Apply -IsoDiskNumber <n> -CidataDiskNumber <m>
