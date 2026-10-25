@@ -24,6 +24,16 @@ The app could see work it started itself, but had no concept of a bot saying in 
 - Gate (`gate-evidence.ps1`, from a clean tree at commit `5b45fce3696b`): PASS. server-tests 2989 passed / 0 failed / 4 skipped in 216 files; server-tsc 0; web-tests 3032 passed / 0 failed in 266 files; web-tsc 0; ps-tests 289 checks ok; e2e 12/12 journeys. Numbers and logs are in the gate section below.
 - Live tasks were not touched and nothing was deployed or restarted; `releases\current.txt` stays at 1.66.92.
 
+## Before and after
+
+The same three sequences, run through the pre-fix module (`80594c43d2`) and the new one, at the policy layer:
+
+| Sequence (from the live tasks)                                                               | Before                           | After                          |
+| -------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------ |
+| The turn after tracked work ends still says the Brave proof is running                       | `finish` -> completed            | `wait` -> running              |
+| The tracked gate ends and the 60-second grace passes on "I'll continue ... once they finish" | `finish` -> completed            | `wait` -> running              |
+| The tracked watch is still live 20 minutes after the reply                                   | `finish` (cap note) -> completed | `wait` (notice due) -> running |
+
 ## Behaviour that changes for the orchestrator
 
 - A child task that says it is waiting, or has tracked work running, now stays `running` for hours instead of ending at 20 minutes. `list_tasks` shows it with `waitingOnBackgroundSince`; a notice arrives in the lead's next turn after 20 minutes, once. If the work is genuinely stuck, `stop_task` (or `steer_task`) is the decision, not a timer.
