@@ -143,11 +143,13 @@ export interface WrappedDataKeyFile {
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const fromBase64 = (value: string) => Uint8Array.from(Buffer.from(value, "base64"));
 
-export const createWrappedDataKey = (): {
+export const createWrappedDataKey = (
+  material?: MachineMaterial,
+): {
   readonly dataKey: Uint8Array;
   readonly file: WrappedDataKeyFile;
 } => {
-  const resolved = resolveMachineMaterial();
+  const resolved = material ?? resolveMachineMaterial();
   if (resolved === null) throw new Error("No machine material is available to protect secrets.");
   const dataKey = Uint8Array.from(NodeCrypto.randomBytes(KEY_BYTES));
   const salt = NodeCrypto.randomBytes(SALT_BYTES);
@@ -168,9 +170,9 @@ export const createWrappedDataKey = (): {
   };
 };
 
-export const unwrapDataKey = (file: WrappedDataKeyFile): Uint8Array => {
+export const unwrapDataKey = (file: WrappedDataKeyFile, material?: MachineMaterial): Uint8Array => {
   if (file.v !== 1) throw new Error(`Unsupported secret key file version ${String(file.v)}.`);
-  const resolved = resolveMachineMaterial(file.source);
+  const resolved = material ?? resolveMachineMaterial(file.source);
   if (resolved === null) {
     throw new Error(`Machine material "${file.source}" is not available on this machine.`);
   }
