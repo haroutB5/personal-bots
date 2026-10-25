@@ -2,11 +2,13 @@
 #
 # bootstrap.sh - bring a fresh Omarchy install up to the hbots baseline.
 #
-# Run over SSH as root on the new machine, after Harout pasted the one-liner
-# from enable-ssh.sh on its first login. Both modes are explicit:
+# Normal path: Harout pastes the one line from PASTE.txt on first login. The
+# line mounts his SanDisk SSD read-only and runs first-login.sh, which verifies
+# the payload and calls this script. Nothing here needs a second machine.
 #
-#   ./bootstrap.sh --dry-run --source /mnt/gamingpc/omarchy-migration/plain
-#   ./bootstrap.sh --apply   --source /mnt/gamingpc/omarchy-migration/plain
+# Run by hand (repair runs only), as root:
+#   ./bootstrap.sh --dry-run --source /mnt/hbots-backup/plain
+#   ./bootstrap.sh --apply   --source /mnt/hbots-backup/plain
 #
 # --allow-arch-only is for the Arch WSL proof host: it keeps the Arch check but
 # permits the missing Omarchy marker. Never use it on install night.
@@ -15,13 +17,12 @@
 # There is no implicit apply.
 #
 # Steps, in order:
-#   0. check SSH access (the team reaches this machine over SSH; if sshd is
-#      down, print the enable-ssh.sh one-liner and carry on)
+#   0. check SSH access (the team watches over SSH; if sshd is down, print the
+#      one-liner and carry on)
 #   1. verify this is Omarchy on Arch
-#   2. restore Claude/ and personal-bots/ from the gaming PC
+#   2. restore Claude/ and personal-bots/ from the external SSD
 #   3. install packages: base-devel, git, python, nodejs + mise node 24.22.1,
-#      pnpm 11.10.0 via corepack, brave-bin (AUR), cloudflared, lm_sensors,
-#      ollama
+#      pnpm 11.10.0 via mise, brave-bin (AUR), cloudflared, lm_sensors, ollama
 #   4. install the systemd user units, with T3CODE_PATH_MAP set in the hbots
 #      unit so migration 113 rewrites stored Windows paths on the first boot
 #   5. import the sealed secrets bundle with `bin.mjs secrets import`
@@ -35,14 +36,15 @@
 # HBOTS_SECRETS_PASSPHRASE or from one line on stdin.
 #
 # Defaults:
-#   --source /mnt/gamingpc/omarchy-migration/plain
+#   --source /mnt/hbots-backup/plain
 #   --repo   <target home>/Claude/AI/personal-bots
 #   --data-dir <target home>/.personal-bots
 #   --user   $SUDO_USER, else harout
+#   --secrets-bundle /mnt/hbots-backup/secrets.bundle
 #
 # The restore source must contain Claude/ and personal-bots/, which is the
-# layout prewipe.ps1 writes under <target>/plain. Mount the SMB share or use an
-# rsync-over-SSH source such as harout@gamingpc:/srv/omarchy-restore/plain/.
+# layout prewipe.ps1 writes under <ssd folder>\plain. Any other path works with
+# --source (a test fixture, for example).
 #
 set -euo pipefail
 
@@ -61,7 +63,7 @@ SKIP_VERIFY=0
 ALLOW_ARCH_ONLY=0
 
 usage() {
-  sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 log() {
@@ -203,10 +205,10 @@ if [ -z "$TARGET_HOME" ]; then
 fi
 TARGET_GROUP="$(id -gn "$TARGET_USER" 2>/dev/null || printf '%s' "$TARGET_USER")"
 
-SOURCE="${SOURCE_ARG:-/mnt/gamingpc/omarchy-migration/plain}"
+SOURCE="${SOURCE_ARG:-/mnt/hbots-backup/plain}"
 REPO="${REPO_ARG:-$TARGET_HOME/Claude/AI/personal-bots}"
 DATA_DIR="${DATA_ARG:-$TARGET_HOME/.personal-bots}"
-SECRETS_BUNDLE="${SECRETS_ARG:-$TARGET_HOME/omarchy-secrets.bundle}"
+SECRETS_BUNDLE="${SECRETS_ARG:-/mnt/hbots-backup/secrets.bundle}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RELEASES_DIR="$DATA_DIR/releases"
 CURRENT_FILE="$RELEASES_DIR/current.txt"
@@ -267,7 +269,7 @@ fi
 
 # ---------------------------------------------------------------- 2. restore
 
-log "2/9 Restore data from the gaming PC"
+log "2/9 Restore data from the external SSD"
 if [ "$SKIP_RESTORE" -eq 1 ]; then
   warn "restore skipped (--skip-restore)"
 else
@@ -284,7 +286,7 @@ else
     if [ "$DRY_RUN" -eq 1 ]; then
       warn "source not mounted: $SOURCE"
     else
-      die "restore source is not available: $SOURCE. Mount the gaming PC share and pass --source."
+      die "restore source is not available: $SOURCE. Plug in the SanDisk and run the first-login line, or pass --source."
     fi
   fi
 
@@ -432,7 +434,8 @@ else
   else
     warn "no passphrase available in this non-interactive session; secrets were not imported."
     info "Harout runs this himself at the laptop terminal:"
-    info "  HBOTS_SECRETS_PASSPHRASE='<his passphrase>' node $RELEASE_BIN ${import_args[*]}"
+    info "  put the passphrase in HBOTS_SECRETS_PASSPHRASE in his own shell, then:"
+    info "  node $RELEASE_BIN ${import_args[*]}"
   fi
 fi
 

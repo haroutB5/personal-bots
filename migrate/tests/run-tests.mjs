@@ -24,6 +24,8 @@ const makeInstaller = path.join(windowsDir, 'make-installer.ps1');
 const bootstrap = path.join(linuxDir, 'bootstrap.sh');
 const verify = path.join(linuxDir, 'verify.sh');
 const enableSsh = path.join(linuxDir, 'enable-ssh.sh');
+const firstLogin = path.join(linuxDir, 'first-login.sh');
+const pasteTxt = path.join(linuxDir, 'PASTE.txt');
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hbots-migrate-tests-'));
 let passed = 0;
@@ -250,10 +252,90 @@ async function main() {
     assert.doesNotMatch(source, /PRIVATE KEY/);
   });
 
-  await test('bash -n accepts bootstrap.sh, verify.sh and enable-ssh.sh', () => {
+  await test('bash -n accepts bootstrap.sh, verify.sh, enable-ssh.sh and first-login.sh', () => {
     runBash(['-n', bootstrap]);
     runBash(['-n', verify]);
     runBash(['-n', enableSsh]);
+    runBash(['-n', firstLogin]);
+  });
+
+  await test('first-login.sh --print-line is the one paste: mount SSD read-only, run the payload', () => {
+    const result = runBash([firstLogin, '--print-line']);
+    const lines = result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+    assert.equal(lines.length, 1, 'exactly one line is printed');
+    const line = lines[0];
+    assert.match(line, /^sudo bash -c /);
+    assert.match(line, /SanDisk Extreme/);
+    assert.match(line, /mount -t ntfs3 -o ro/);
+    assert.match(line, /payload\/first-login\.sh/);
+    assert.doesNotMatch(line, /mkfs|format|rm -/, 'the paste line never formats or deletes');
+    const file = fs.readFileSync(pasteTxt, 'utf8').replace(/\r\n/g, '\n').trim();
+    assert.equal(file, line, 'PASTE.txt and --print-line are the same line');
+  });
+
+  await test('first-login.sh verifies the payload and refuses a tampered copy', () => {
+    const mountRoot = path.join(tempRoot, 'fake-mount');
+    const payloadDir = path.join(mountRoot, 'payload');
+    fs.mkdirSync(payloadDir, { recursive: true });
+    fs.mkdirSync(path.join(mountRoot, 'plain', 'Claude'), { recursive: true });
+    fs.mkdirSync(path.join(mountRoot, 'plain', 'personal-bots'), { recursive: true });
+    const names = ['first-login.sh', 'bootstrap.sh', 'verify.sh', 'enable-ssh.sh'];
+    const entries = [];
+    for (const name of names) {
+      const dest = path.join(payloadDir, name);
+      fs.copyFileSync(path.join(linuxDir, name), dest);
+      entries.push(`${sha256File(dest)}  payload/${name}`);
+    }
+    entries.push(`${sha256File(path.join(linuxDir, 'PASTE.txt'))}  payload/PASTE.txt`);
+    fs.copyFileSync(pasteTxt, path.join(payloadDir, 'PASTE.txt'));
+    fs.writeFileSync(path.join(mountRoot, 'payload.sha256'), `${entries.join('\n')}\n`);
+
+    const currentUser = spawnSync(bash, ['-c', 'id -un'], { encoding: 'utf8' }).stdout.trim();
+    const before = manifest(mountRoot);
+    const ok = runBash([
+      firstLogin,
+      '--check-only',
+      '--skip-volume-check',
+      '--user', currentUser,
+      '--mount', mountRoot,
+      '--source', path.join(mountRoot, 'plain'),
+    ]);
+    assert.match(ok.stdout, /Check complete/);
+    assert.match(ok.stdout, /5 payload files match their hashes/);
+    assertManifestUnchanged(before, manifest(mountRoot), 'first-login check-only');
+
+    fs.appendFileSync(path.join(payloadDir, 'bootstrap.sh'), '\n# tampered\n');
+    const tampered = spawnSync(bash, [
+      firstLogin,
+      '--check-only',
+      '--skip-volume-check',
+      '--user', currentUser,
+      '--mount', mountRoot,
+      '--source', path.join(mountRoot, 'plain'),
+    ], { encoding: 'utf8' });
+    assert.notEqual(tampered.status, 0, 'a tampered payload exits non-zero');
+    assert.match(`${tampered.stdout}${tampered.stderr}`, /payload hash check failed/);
+  });
+
+  await test('bootstrap.sh restores from the SSD and has no gaming-PC path', () => {
+    const source = fs.readFileSync(bootstrap, 'utf8');
+    assert.match(source, /\/mnt\/hbots-backup\/plain/, 'the default restore root is the SSD');
+    assert.match(source, /\/mnt\/hbots-backup\/secrets\.bundle/, 'the default bundle is on the SSD');
+    assert.doesNotMatch(source, /gamingpc|gaming PC/i, 'no gaming-PC restore path is left');
+    assert.doesNotMatch(source, /HBOTS_SECRETS_PASSPHRASE=['"]/, 'the passphrase is never assigned on a command line');
+    assert.match(source, /read -rs/, 'the passphrase is read silently from the terminal');
+  });
+
+  await test('prewipe.ps1 is SSD-only, live-database safe and image-free', () => {
+    const source = fs.readFileSync(prewipe, 'utf8');
+    assert.match(source, /SanDisk Extreme 55AE/);
+    assert.match(source, /2306CQ402457/);
+    assert.match(source, /hbots-omarchy-backup/);
+    assert.match(source, /sqlite-snapshot\.cjs/, 'the live database uses the online backup helper');
+    assert.doesNotMatch(source, /wbadmin|FullImage/, 'there is no disk image path any more');
+    assert.doesNotMatch(source, /GAMINGPC|\\\\GAMINGPC/i, 'there is no gaming-PC target');
+    assert.match(source, /payload\.sha256/, 'the payload carries a hash manifest');
+    assert.match(source, /PASTE-ME\.txt/, 'the paste file is written for Harout');
   });
 
   await test('shellcheck passes when installed', () => {
@@ -262,7 +344,7 @@ async function main() {
       log('     shellcheck not installed; skipped');
       return;
     }
-    run('shellcheck', ['-x', '-S', 'warning', bootstrap, verify, enableSsh], { timeout: 120000 });
+    run('shellcheck', ['-x', '-S', 'warning', bootstrap, verify, enableSsh, firstLogin], { timeout: 120000 });
   });
 
   await test('bootstrap.sh --dry-run changes nothing outside temp', () => {
@@ -378,6 +460,8 @@ async function main() {
       bootstrap,
       verify,
       enableSsh,
+      firstLogin,
+      pasteTxt,
       path.join(repoRoot, 'migrate', 'README.md'),
       path.join(here, 'run-tests.mjs'),
     ];
