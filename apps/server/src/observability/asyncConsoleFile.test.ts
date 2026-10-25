@@ -28,6 +28,21 @@ const waitForLines = async (filePath: string, count: number) => {
   return NodeFS.readFileSync(filePath, "utf8");
 };
 
+/** Waits until the writer has drained far enough to hold `needle`. */
+const waitForText = async (filePath: string, needle: string) => {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      const text = NodeFS.readFileSync(filePath, "utf8");
+      if (text.includes(needle)) return text;
+    } catch {
+      // not written yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return NodeFS.readFileSync(filePath, "utf8");
+};
+
 describe("installAsyncConsoleFileRedirect", () => {
   const cleanups: Array<() => void> = [];
   afterEach(() => {
@@ -113,9 +128,10 @@ describe("installAsyncConsoleFileRedirect", () => {
     }
     expect(writer?.droppedLineCount).toBeGreaterThan(0);
     expect(writer?.backlogBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
-    const text = await waitForLines(filePath, 100);
+    // The drained queue still holds most of the burst when the first 100 lines
+    // land, so wait for the newest line itself instead of a fixed line count.
+    const text = await waitForText(filePath, "line 11999 ");
     expect(text).toContain("[async-console] dropped ");
-    expect(text).toContain("line 11999 ");
   });
 
   it("is a no-op with the kill switch set", () => {
