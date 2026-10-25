@@ -343,7 +343,8 @@ Kino and docs as SKIP, for a base-host check before those apps are restored.
 - The scripts never delete data. An existing ISO with a bad hash is left in
   place for the operator to remove.
 - The data copy and its manifests are kept on the gaming PC for at least one
-  week after Omarchy is live. There is no Windows system image by design.
+  week after Omarchy is live. There is no Windows system image by default; pass
+  `-FullImage` if you want the wbadmin capture as well.
 
 ## Tests
 
