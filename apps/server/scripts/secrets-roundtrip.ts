@@ -33,6 +33,9 @@ const PASS = "roundtrip test passphrase 12345";
 const here = NodePath.dirname(fileURLToPath(import.meta.url));
 const serverDir = NodePath.dirname(here);
 const bin = NodePath.join(serverDir, "src", "bin.ts");
+// --keep leaves the bundle (and its store) on disk and prints its path, so the
+// same bundle can be imported on the other machine as a cross-machine proof.
+const keepBundle = process.argv.includes("--keep");
 
 const fail = (message: string): never => {
   process.stderr.write(`FAIL ${message}\n`);
@@ -135,6 +138,11 @@ if (NodeFS.readdirSync(wrongTarget).length !== 0) fail("a failed import left fil
 process.stdout.write("PASS wrong passphrase refused, target untouched\n");
 
 for (const dir of [source, target, wrongTarget, NodePath.dirname(bundle)]) {
+  if (keepBundle && dir === NodePath.dirname(bundle)) continue;
   NodeFS.rmSync(dir, { recursive: true, force: true });
+}
+if (keepBundle) {
+  process.stdout.write(`KEEP_BUNDLE=${bundle}\n`);
+  process.stdout.write(`KEEP_STORE=${target}\n`);
 }
 process.stdout.write("PASS secrets round trip complete\n");
