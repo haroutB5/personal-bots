@@ -123,8 +123,14 @@ const main = async (): Promise<void> => {
 
   const anonymous = await fetchJson("/api/personal/performance/summary", false);
   if (anonymous.status !== 401) fail(`unauthenticated summary returned ${anonymous.status}`);
-  const anonymousPush = await fetchJson("/api/personal/push/sent", false);
-  if (anonymousPush.status !== 401) fail(`unauthenticated push/sent returned ${anonymousPush.status}`);
+  const anonymousPush = await fetch(`${base}/api/personal/push/sent`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  if (anonymousPush.status !== 401) {
+    fail(`unauthenticated POST push/sent returned ${anonymousPush.status}`);
+  }
   pass("unauthenticated API", "summary and push/sent both 401");
 
   const summaryResponse = await fetchJson("/api/personal/performance/summary");
