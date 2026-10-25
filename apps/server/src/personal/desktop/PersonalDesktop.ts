@@ -704,7 +704,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         if (driver === null) {
           return yield* new PersonalDesktopActionError({
             kind: "unavailable",
-            reason: "Desktop control only works when the bots server runs on Windows.",
+            reason: "Desktop control is not available on this server (Windows only, until the Hyprland version lands).",
           });
         }
         yield* acquire(claimant);
@@ -803,7 +803,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
           if (driver === null) {
             throw new PersonalDesktopActionError({
               kind: "unavailable",
-              reason: "Remote control only works when the bots server runs on Windows.",
+              reason: "Remote control is not available on this server (Windows only, until the Hyprland version lands).",
             });
           }
           const info = await driver.request("info");
