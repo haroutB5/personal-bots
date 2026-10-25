@@ -389,12 +389,12 @@ log "5/9 Import sealed secrets"
 RELEASE_BIN=""
 if [ -r "$CURRENT_FILE" ]; then
   current_name="$(tr -d '[:space:]' < "$CURRENT_FILE")"
-  if [ -n "$current_name" ] && [ -f "$RELEASES_DIR/$current_name/bin.mjs" ]; then
-    RELEASE_BIN="$RELEASES_DIR/$current_name/bin.mjs"
+  if [ -n "$current_name" ] && [ -f "$RELEASES_DIR/$current_name/dist/bin.mjs" ]; then
+    RELEASE_BIN="$RELEASES_DIR/$current_name/dist/bin.mjs"
   fi
 fi
 if [ -z "$RELEASE_BIN" ] && [ -d "$RELEASES_DIR" ]; then
-  RELEASE_BIN="$(find "$RELEASES_DIR" -mindepth 2 -maxdepth 2 -name bin.mjs -type f -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2- || true)"
+  RELEASE_BIN="$(find "$RELEASES_DIR" -mindepth 3 -maxdepth 3 -path '*/dist/bin.mjs' -type f -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2- || true)"
 fi
 
 if [ "$SKIP_SECRETS" -eq 1 ]; then

@@ -288,6 +288,9 @@ async function main() {
     assert.match(result.stdout, /DRY-RUN/);
     assert.match(result.stdout, /would detect the active firewall/);
     assert.match(result.stdout, /Updates are manual/);
+    const source = fs.readFileSync(bootstrap, 'utf8');
+    assert.match(source, /dist\/bin\.mjs/, 'bootstrap resolves the release CLI at dist/bin.mjs');
+    assert.doesNotMatch(source, /\$current_name\/bin\.mjs/, 'bootstrap does not assume a root bin.mjs');
     assert.ok(!fs.existsSync(data), 'dry run did not create the data dir');
     const after = manifest(tempRoot);
     assertManifestUnchanged(before, after, 'bootstrap dry run');

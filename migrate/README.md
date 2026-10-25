@@ -211,7 +211,7 @@ the start step if that warning appears in the journal.
 The sealed bundle is imported with Backend's CLI:
 
 ```
-node <release>/bin.mjs secrets import --secrets-dir <data>/dev/userdata/secrets --in <bundle>
+node <release>/dist/bin.mjs secrets import --secrets-dir <data>/dev/userdata/secrets --in <bundle>
 ```
 
 The passphrase comes from `HBOTS_SECRETS_PASSPHRASE`, or one line on stdin, and
