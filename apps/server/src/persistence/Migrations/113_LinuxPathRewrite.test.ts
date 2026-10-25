@@ -35,26 +35,26 @@ const seed = Effect.gen(function* () {
            ('t3', 'p3', 'linux', NULL, '/home/harout/keep', '2026-01-01', '2026-01-01', 'full-access', 'default', 0, 0, 0)
   `;
 
-  const event = (id: string, type: string, payload: unknown) => sql`
+  const event = (id: string, version: number, type: string, payload: unknown) => sql`
     INSERT INTO orchestration_events
       (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
-    VALUES (${id}, 'project', 'p1', 1, ${type}, '2026-01-01T00:00:00.000Z', 'user',
+    VALUES (${id}, 'project', 'p1', ${version}, ${type}, '2026-01-01T00:00:00.000Z', 'user',
             ${JSON.stringify(payload)}, '{}')
   `;
-  yield* event("e1", "project.created", {
+  yield* event("e1", 1, "project.created", {
     workspaceRoot: "C:\\Claude\\AI\\personal-bots",
     faviconPath: "C:/Users/Ht/.personal-bots/dev/userdata/project-icons/p1.png",
     scripts: [],
   });
-  yield* event("e2", "thread.created", {
+  yield* event("e2", 2, "thread.created", {
     worktreePath: "C:/Claude/AI/_wt/hbots-linux-server",
     projectCwd: "C:/Claude/AI/personal-bots/apps/server",
   });
   // Two rows the migration must not touch: message content and an unmapped root.
-  yield* event("e3", "thread.message-sent", {
+  yield* event("e3", 3, "thread.message-sent", {
     text: "the old path was C:/Claude/AI/personal-bots and it stays in history",
   });
-  yield* event("e4", "project.meta-updated", { workspaceRoot: "D:/Games/Mods" });
+  yield* event("e4", 4, "project.meta-updated", { workspaceRoot: "D:/Games/Mods" });
 });
 
 const readPaths = Effect.gen(function* () {
