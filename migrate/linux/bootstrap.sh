@@ -444,21 +444,30 @@ elif [ "$DRY_RUN" -eq 1 ]; then
   info "would start hbots.service and wait for http://127.0.0.1:38472/.well-known/t3/environment"
   info "would fail if the log shows 'T3CODE_PATH_MAP is not set; no stored paths rewritten.'"
 else
-  run_as_user systemctl --user start hbots.service
+  if run_as_user systemctl --user is-active --quiet hbots.service; then
+    info "hbots.service is already active"
+  else
+    if curl -fsS --max-time 3 http://127.0.0.1:38472/.well-known/t3/environment >/dev/null 2>&1; then
+      die "something already answers on 38472 before the unit started. Stop that server first: the hbots.service start would fail on the busy port."
+    fi
+    run_as_user systemctl --user start hbots.service
+  fi
   healthy=0
   for _ in $(seq 1 45); do
-    if curl -fsS --max-time 3 http://127.0.0.1:38472/.well-known/t3/environment >/dev/null 2>&1; then
+    if run_as_user systemctl --user is-active --quiet hbots.service \
+      && curl -fsS --max-time 3 http://127.0.0.1:38472/.well-known/t3/environment >/dev/null 2>&1; then
       healthy=1
       break
     fi
     sleep 2
   done
   if [ "$healthy" -ne 1 ]; then
-    warn "hbots did not answer on 38472 within 90 s."
+    warn "hbots.service did not become active and answer on 38472 within 90 s."
+    run_as_user systemctl --user status hbots.service --no-pager -l || true
     run_as_user journalctl --user -u hbots.service -b --no-pager -n 40 || true
     die "hbots failed to start; fix the log above before continuing."
   fi
-  info "hbots is answering on 38472"
+  info "hbots.service is active and answering on 38472"
   if run_as_user journalctl --user -u hbots.service -b --no-pager 2>/dev/null | grep -q 'T3CODE_PATH_MAP is not set'; then
     die "hbots booted without T3CODE_PATH_MAP. Restore the DB copy (prewipe copy is unmodified) and start again with the map set; migration 113 will not run twice."
   fi

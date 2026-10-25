@@ -179,6 +179,10 @@ Options:
 The script never deletes: rsync runs without `--delete`, and no cleanup step is
 destructive.
 
+The start step refuses to run when something else already answers on 38472,
+then waits for `hbots.service` to be active and healthy, so a stale manual
+server cannot be mistaken for a successful unit start.
+
 Order inside the script is the order on install night: SSH check, OS check,
 restore, packages, units with the path map, secrets import, start hbots,
 firewall, update policy, verify.
