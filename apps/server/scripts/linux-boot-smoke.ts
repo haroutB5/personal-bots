@@ -161,9 +161,13 @@ const main = async (): Promise<void> => {
   const decoder = new TextDecoder();
   let buffer = "";
   let hello: any = null;
+  let statics: Record<string, unknown> | null = null;
   const samples: any[] = [];
   const deadline = Date.now() + 25_000;
-  while (Date.now() < deadline && samples.length < 3) {
+  while (
+    Date.now() < deadline &&
+    (samples.length < 3 || statics === null || typeof statics["pcCpu"] !== "string")
+  ) {
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -173,7 +177,13 @@ const main = async (): Promise<void> => {
       buffer = buffer.slice(newline + 2);
       try {
         const event = JSON.parse(chunk);
-        if (event.kind === "hello") hello = event;
+        if (event.kind === "hello") {
+          hello = event;
+          statics = event.statics;
+        }
+        // The helper's machine details arrive a moment after the subscriber's
+        // own hello (the sampler broadcasts them when the helper answers).
+        if (event.kind === "statics") statics = event.statics;
         if (event.kind === "sample") samples.push(event.sample);
       } catch {
         // A partial frame: keep reading.
@@ -183,7 +193,7 @@ const main = async (): Promise<void> => {
   }
   controller.abort();
   if (hello === null) fail("the stream sent no hello");
-  const statics = hello.statics as Record<string, unknown>;
+  if (statics === null) fail("the stream sent no statics");
   if (typeof statics["pcCpu"] !== "string" || statics["pcCpu"] === "") fail("no CPU name");
   if (typeof statics["pcThreads"] !== "number" || statics["pcThreads"] < 1) fail("no thread count");
   pass(
