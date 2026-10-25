@@ -137,7 +137,9 @@ function Test-ExcludedDir {
     foreach ($name in $script:ExcludeDirNames) {
         if ($leaf -ieq $name) { return $true }
     }
-    $full = [System.IO.Path]::GetFullPath($Path)
+    $full = $Path
+    if ($full.StartsWith('\\?\')) { $full = $full.Substring(4) }
+    $full = [System.IO.Path]::GetFullPath($full)
     foreach ($excluded in $script:ExcludeDirs) {
         if ($full -ieq [System.IO.Path]::GetFullPath($excluded)) { return $true }
     }
@@ -155,7 +157,11 @@ function Get-ReleaseExclusions {
     if ([string]::IsNullOrWhiteSpace($active)) { return $result }
     foreach ($dir in [System.IO.Directory]::EnumerateDirectories((ConvertTo-LongPath $releases))) {
         $name = [System.IO.Path]::GetFileName($dir)
-        if ($name -ine $active) { $result += $dir }
+        if ($name -ine $active) {
+            # Strip the \\?\ prefix: robocopy's /XD does not match it.
+            if ($dir.StartsWith('\\?\')) { $result += $dir.Substring(4) }
+            else { $result += $dir }
+        }
     }
     return $result
 }
@@ -651,16 +657,32 @@ function Invoke-SelfTest {
         (New-Object System.Random(42)).NextBytes($bytes)
         [System.IO.File]::WriteAllBytes((Join-Path $source 'nested\binary.bin'), $bytes)
 
+        # Regenerable folders and old releases must be left behind; the live
+        # release is kept.
+        New-Item -ItemType Directory -Path (Join-Path $source 'node_modules') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $source 'node_modules\junk.bin') -Value 'junk' -Encoding ASCII
+        New-Item -ItemType Directory -Path (Join-Path $source 'releases\old') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $source 'releases\live') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $source 'releases\current.txt') -Value 'live' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $source 'releases\old\junk.bin') -Value 'old' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $source 'releases\live\keep.txt') -Value 'keep' -Encoding ASCII
+        $script:ExcludeDirs = @(Get-ReleaseExclusions -Source $source)
+
         $plan = Get-SourcePlan -Fixture $root -Claude 'C:\Claude' -Data (Join-Path $env:USERPROFILE '.personal-bots')
         if ($null -eq $plan) { throw 'source plan was empty' }
 
         $manifest = Copy-TreeAndVerify -Source $source -Destination $dest -ManifestPath $manifestPath
-        if ($manifest.Count -ne 5) { throw "expected 5 files, got $($manifest.Count)" }
+        if ($manifest.Count -ne 7) { throw "expected 7 files (exclusions applied), got $($manifest.Count)" }
         if (-not (Test-Path -LiteralPath $manifestPath)) { throw 'manifest was not written' }
         Write-Host 'PASS copy and SHA256 verification'
 
+        if (Test-Path -LiteralPath (Join-Path $dest 'node_modules')) { throw 'node_modules was copied' }
+        if (Test-Path -LiteralPath (Join-Path $dest 'releases\old')) { throw 'an old release was copied' }
+        if (-not (Test-Path -LiteralPath (Join-Path $dest 'releases\live\keep.txt'))) { throw 'the live release was not copied' }
+        Write-Host 'PASS regenerable folders and old releases are left behind'
+
         $bad = Test-TreeHashes -Source $source -Destination $dest -Quiet
-        if ($bad.Count -ne 5) { throw 'second verification changed the file count' }
+        if ($bad.Count -ne 7) { throw 'second verification changed the file count' }
         Write-Host 'PASS repeat verification is stable'
 
         Add-Content -LiteralPath (Join-Path $dest 'a.txt') -Value 'tampered'
