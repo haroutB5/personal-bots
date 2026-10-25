@@ -403,6 +403,7 @@ elif [ -z "$RELEASE_BIN" ]; then
   warn "no release bin.mjs found under $RELEASES_DIR; secrets were not imported."
   info "build or restore a release, then run: node <release>/bin.mjs secrets import ..."
 elif [ ! -f "$SECRETS_BUNDLE" ]; then
+  info "release: $RELEASE_BIN"
   warn "secrets bundle not found at $SECRETS_BUNDLE; pass --secrets-bundle. Import skipped."
   info "Harout can run the import himself after copying the bundle to this machine."
 else
