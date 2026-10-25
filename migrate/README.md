@@ -229,7 +229,7 @@ It syncs the package database once (`pacman -Sy --noconfirm`) and installs
 user:
 
 - `mise install node@24.22.1` and `mise use -g node@24.22.1`
-- `corepack enable` and `corepack prepare pnpm@11.10.0 --activate`
+- `mise use -g pnpm@11.10.0` (no corepack dependency)
 - `brave-bin` from the Omarchy repository when it is there, otherwise from the
   AUR through `yay` or `paru`
 

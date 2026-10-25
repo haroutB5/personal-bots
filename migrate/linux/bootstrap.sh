@@ -333,13 +333,13 @@ else
   run_as_user mise install node@24.22.1
   run_as_user mise use -g node@24.22.1
 
-  info "pnpm 11.10.0 via corepack"
-  if command -v corepack >/dev/null 2>&1; then
-    run_as_user corepack enable
-    run_as_user corepack prepare pnpm@11.10.0 --activate
+  info "pnpm 11.10.0 via mise"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    info "would run: mise use -g pnpm@11.10.0"
+  elif run_as_user mise use -g pnpm@11.10.0; then
+    info "pnpm shim: $TARGET_HOME/.local/share/mise/shims/pnpm"
   else
-    run_as_user mise exec node@24.22.1 -- corepack enable
-    run_as_user mise exec node@24.22.1 -- corepack prepare pnpm@11.10.0 --activate
+    warn "could not install pnpm with mise; run 'mise use -g pnpm@11.10.0' later"
   fi
 
   info "brave-bin"
