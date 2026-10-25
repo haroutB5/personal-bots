@@ -185,11 +185,3 @@ export function dataRootOwner(baseDir) {
   return { pid: Number(runtime.pid), origin: runtime.origin };
 }
 
-export function assertSafeMutation({ mutating, home }) {
-  if (!mutating) return;
-  if (isWindows && path.resolve(home) === path.resolve(pbHome({ HBOTS_HOME: "" }))) {
-    throw new Error(
-      "Refusing to change the live Windows install from the Node tooling. The Windows release flow is still PowerShell; set HBOTS_HOME to a throwaway root for a test.",
-    );
-  }
-}
