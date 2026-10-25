@@ -1,29 +1,42 @@
 <#
 .SYNOPSIS
-    Capture the laptop before Omarchy replaces Windows.
+    Capture the laptop before Omarchy replaces Windows, onto Harout's SanDisk SSD.
 
 .DESCRIPTION
     Default is a DRY RUN: every command is printed, nothing is written.
-    Real work needs BOTH -Apply and the typed confirmation WIPE-LAPTOP-CONFIRMED.
+    Install night needs -Apply and the typed confirmation WIPE-LAPTOP-CONFIRMED.
+    -Practice does the same copy without the phrase, while hbots keeps running;
+    that copy becomes the seed for install night, which only syncs changes.
 
-    What -Apply does, in order:
-      1. Optionally stops hbots (scripts/personal/stop.ps1) when -StopServer is given.
-      2. Optionally takes a full VSS disk image of C: with wbadmin when -FullImage is given.
-      3. Plain copies of C:\Claude, C:\Users\Ht\.personal-bots, ~/.ssh and
-         ~/.cloudflared into -Target\plain. Regenerable folders (node_modules,
-         build output, caches, old releases, runtimes, workspace, backups) are
-         left behind and listed in the inventory.
-      4. SHA256 verification of every copied file, plus a manifest CSV.
-      5. Inventory: winget list, node/git/python versions, scheduled tasks,
-         firewall allow rules and listening ports, Brave profiles, system info,
-         and the excluded/left-behind folders.
+    The destination is Harout's external SSD (SanDisk Extreme, NTFS), found by
+    model and serial, never by drive letter. The script writes ONLY inside
+    <drive>:\hbots-omarchy-backup. It never formats, moves or deletes anything
+    else on the drive, and it refuses the drive when the identity does not
+    match. No second copy is made anywhere (Harout, 25 Oct).
+
+    What -Apply -Practice do, in order:
+      1. Resolve and verify the SSD (model, serial, label, NTFS, USB, free space).
+      2. Copy C:\Claude, ~\.personal-bots, ~\.ssh and ~\.cloudflared into
+         <folder>\plain. Regenerable folders (node_modules, build output,
+         caches, old releases, runtimes, workspace, backups) are left behind.
+      3. Snapshot the live hbots database with SQLite's ONLINE backup API
+         (node:sqlite backup plus a full integrity check), so hbots keeps
+         running. No stop is needed; robocopy skips the live database files.
+      4. SHA256 verification of every copied file, plus a manifest CSV. A file
+         that changes while it is copied (live logs) is re-copied once and, if it
+         still changes, listed in inventory\unstable.txt instead of failing.
+      5. Inventory: winget list, tool versions, scheduled tasks, firewall rules
+         and ports, Brave profiles, system info, disk identity, and exactly what
+         is left behind.
+      6. Payload for the one-paste first login: the Linux scripts, the sealed
+         secrets bundle when it exists, a hash manifest, PASTE-ME.txt, and the
+         restore copy itself. first-login.sh verifies all of it on the laptop.
 
     The default is data-only (Harout, 25 Oct: only our data and what hbots
-    needs). -FullImage opts back into the whole-C: wbadmin capture when that is
-    explicitly wanted; it is not the default because it is hundreds of GB.
+    needs). There is no disk image at all: data only, by Harout's decision.
 
-    -Scope Small copies and hashes only a fixture tree under -FixtureRoot. It is
-    for tests; it never copies a real user profile or a whole disk.
+    -Scope Small copies and hashes only a fixture tree under -FixtureRoot with
+    -AllowAnyTarget. It is for tests; it never touches a real profile or disk.
 
     -SelfTest runs argument validation plus a copy/hash round trip in a temp
     folder and exits 0 or 1. It touches nothing outside %TEMP%.
@@ -33,43 +46,67 @@
     every other file. Hash manifests contain file names and hashes only.
 
 .PARAMETER Target
-    Destination SMB or local path. Default \\GAMINGPC\Backups\omarchy-migration.
-    The share must exist and be writable. The free-space check runs before
-    anything is written.
+    Destination folder. Empty (default) resolves the SSD by serial to
+    <drive>:\hbots-omarchy-backup. A different explicit path is refused unless
+    -AllowAnyTarget is given (tests only).
+
+.PARAMETER Practice
+    Do the real copy now without the install-night confirmation phrase. hbots
+    keeps running. Safe to repeat: the copy is incremental.
 
 .PARAMETER StopServer
-    Stop hbots cleanly before copying its SQLite database. Without this the copy
-    can catch the database mid-write. Only the documented stop.ps1 is used.
+    Also stop hbots with scripts/personal/stop.ps1. Not needed: the database is
+    snapshotted with the online backup API.
 
-.PARAMETER FullImage
-    Also take a VSS-consistent wbadmin image of C: before the plain copies.
-    Default off (data-only). Requires Windows Server Backup and a target that is
-    not C: or the disk holding C:.
+.PARAMETER SkipDatabase
+    Do not refresh the database snapshot. Only for a repair run.
+
+.PARAMETER SkipPayload
+    Do not write the one-paste payload or PASTE-ME.txt.
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1
 
 .EXAMPLE
-    powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1 -Apply -StopServer -FullImage
+    powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1 -Practice
+
+.EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1 -Apply
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('Full', 'Small')]
     [string]$Scope = 'Full',
 
-    [string]$Target = '\\GAMINGPC\Backups\omarchy-migration',
+    [string]$Target = '',
+
+    [string]$BackupFolderName = 'hbots-omarchy-backup',
+
+    [string]$VolumeSerial = '2306CQ402457',
+
+    [string]$VolumeModel = 'SanDisk Extreme 55AE',
+
+    [string]$VolumeLabel = 'New Volume',
 
     [string]$SourceClaude = 'C:\Claude',
 
     [string]$SourceData = (Join-Path $env:USERPROFILE '.personal-bots'),
 
+    [string]$SecretsBundle = 'C:\Claude\AI\dev-team\omarchy-secrets.bundle',
+
     [string]$RepoRoot = '',
 
     [switch]$StopServer,
 
-    [switch]$FullImage,
+    [switch]$SkipDatabase,
+
+    [switch]$SkipPayload,
+
+    [switch]$Practice,
 
     [switch]$Apply,
+
+    [switch]$AllowAnyTarget,
 
     [string]$ConfirmText = '',
 
@@ -81,6 +118,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:ConfirmPhrase = 'WIPE-LAPTOP-CONFIRMED'
 $script:RepoRoot = $RepoRoot
+$script:Started = Get-Date
+$script:Timings = [ordered]@{}
+$script:Unstable = New-Object System.Collections.Generic.List[string]
+$script:VolumeInfo = $null
 
 # Regenerable folders are not copied: bootstrap rebuilds them (pnpm install,
 # builds, caches). personal-bots keeps only the live release; old releases,
@@ -250,11 +291,69 @@ function Test-IsUnderPath {
     return $c.StartsWith($p + '\', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-BackupVolumeCandidates {
+    $result = @()
+    foreach ($volume in (Get-Volume -ErrorAction SilentlyContinue)) {
+        if ([string]::IsNullOrWhiteSpace([string]$volume.DriveLetter)) { continue }
+        $partition = Get-Partition -DriveLetter $volume.DriveLetter -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $partition) { continue }
+        $disk = Get-Disk -Number $partition.DiskNumber -ErrorAction SilentlyContinue
+        $result += [pscustomobject]@{
+            DriveLetter     = [string]$volume.DriveLetter
+            Root            = ([string]$volume.DriveLetter + ':\')
+            FileSystemLabel = [string]$volume.FileSystemLabel
+            FileSystem      = [string]$volume.FileSystem
+            Size            = [long]$volume.Size
+            SizeRemaining   = [long]$volume.SizeRemaining
+            Disk            = $disk
+        }
+    }
+    return $result
+}
+
+function Select-BackupVolume {
+    param(
+        [object[]]$Volumes,
+        [string]$Serial,
+        [string]$Model,
+        [string]$Label
+    )
+
+    $found = @()
+    foreach ($volume in $Volumes) {
+        if ($null -eq $volume.Disk) { continue }
+        $serialOk = ([string]$volume.Disk.SerialNumber).Trim() -eq $Serial.Trim()
+        $modelOk = ([string]$volume.Disk.FriendlyName) -like ('*' + $Model + '*')
+        $labelOk = ([string]$volume.FileSystemLabel) -eq $Label
+        $fsOk = ([string]$volume.FileSystem) -eq 'NTFS'
+        $busOk = ([string]$volume.Disk.BusType) -eq 'USB'
+        if ($serialOk -and $modelOk -and $labelOk -and $fsOk -and $busOk) { $found += $volume }
+    }
+
+    if ($found.Count -eq 0) {
+        $seen = @($Volumes | ForEach-Object {
+            '{0}: {1} {2} {3} serial={4}' -f $_.DriveLetter, $_.FileSystemLabel, $_.FileSystem, $_.Disk.FriendlyName, ([string]$_.Disk.SerialNumber).Trim()
+        })
+        throw ("The external SSD was not found (want {0}, serial {1}, label {2}, NTFS, USB). Plug it in. Volumes seen:`n  {3}" -f $Model, $Serial, $Label, ($seen -join "`n  "))
+    }
+    if ($found.Count -gt 1) {
+        throw "More than one volume matches the SSD identity ($Model / $Serial). Refusing to guess."
+    }
+    return $found[0]
+}
+
+function Resolve-BackupVolume {
+    param([string]$Serial, [string]$Model, [string]$Label)
+    $selected = Select-BackupVolume -Volumes (Get-BackupVolumeCandidates) -Serial $Serial -Model $Model -Label $Label
+    $script:VolumeInfo = $selected
+    return $selected
+}
+
 function Assert-SafeTarget {
     param([string]$TargetPath, [string[]]$Sources)
 
     if ([string]::IsNullOrWhiteSpace($TargetPath)) {
-        throw 'Target is empty. Pass -Target <SMB or local path>.'
+        throw 'Target is empty. Pass -Target <folder>.'
     }
 
     $full = [System.IO.Path]::GetFullPath($TargetPath)
@@ -263,11 +362,24 @@ function Assert-SafeTarget {
     }
     if ($full -match '^([A-Za-z]):\\') {
         $targetLetter = $Matches[1]
-        $targetPartition = Get-Partition -DriveLetter $targetLetter -ErrorAction SilentlyContinue | Select-Object -First 1
-        $systemPartition = Get-Partition -DriveLetter C -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($null -ne $targetPartition -and $null -ne $systemPartition -and
-            [int]$targetPartition.DiskNumber -eq [int]$systemPartition.DiskNumber) {
-            throw "Refusing target on the same physical disk as C:. Target: $full"
+        try {
+            $targetPartition = Get-Partition -DriveLetter $targetLetter -ErrorAction SilentlyContinue | Select-Object -First 1
+            $systemPartition = Get-Partition -DriveLetter C -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $targetPartition -and $null -ne $systemPartition -and
+                [int]$targetPartition.DiskNumber -eq [int]$systemPartition.DiskNumber) {
+                throw "Refusing target on the same physical disk as C:. Target: $full"
+            }
+        }
+        catch {
+            if ($_.Exception.Message -like 'Refusing target on the same physical disk*') { throw }
+        }
+    }
+
+    if ($null -ne $script:VolumeInfo) {
+        $allowed = ($script:VolumeInfo.Root.TrimEnd('\') + '\' + $BackupFolderName)
+        $allowed = [System.IO.Path]::GetFullPath($allowed).TrimEnd('\')
+        if (-not $full.TrimEnd('\').Equals($allowed, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw ("Refusing to write outside the one approved folder on the SSD.`n  allowed: $allowed`n  target:  $full")
         }
     }
 
@@ -294,12 +406,7 @@ function Resolve-Confirmation {
     }
 
     Write-Host ''
-    if ($FullImage) {
-        Write-Host 'This will image C:, copy your data, leave regenerable folders behind, and change files on the target.' -ForegroundColor Red
-    }
-    else {
-        Write-Host 'This will copy your data, leave regenerable folders behind, and change files on the target.' -ForegroundColor Red
-    }
+    Write-Host 'This will copy your data to the SSD, leave regenerable folders behind, and change files in the backup folder only.' -ForegroundColor Red
     Write-Host "Type $($script:ConfirmPhrase) to continue (anything else aborts):"
     $typed = Read-Host
     if ($typed -ne $script:ConfirmPhrase) {
@@ -322,12 +429,13 @@ function Test-TreeHashes {
     param(
         [string]$Source,
         [string]$Destination,
-        [switch]$Quiet
+        [switch]$Quiet,
+        [switch]$AllowUnstable
     )
 
     $sourceFiles = Get-TreeFiles -Root $Source
     $destFiles = Get-TreeFiles -Root $Destination
-    if ($sourceFiles.Count -ne $destFiles.Count) {
+    if (-not $AllowUnstable -and $sourceFiles.Count -ne $destFiles.Count) {
         throw "File count mismatch. Source $($sourceFiles.Count), destination $($destFiles.Count)."
     }
 
@@ -339,27 +447,71 @@ function Test-TreeHashes {
     foreach ($file in $sourceFiles) {
         $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\')
         $destPath = $destRoot + '\' + $relative
-        if (-not [System.IO.File]::Exists((ConvertTo-LongPath $destPath))) {
-            throw "Missing copy: $relative"
+        $destFull = $destPath
+        if ($destFull.StartsWith('\\?\')) { $destFull = $destFull.Substring(4) }
+
+        $sourceHash = $null
+        $destHash = $null
+        try {
+            if ([System.IO.File]::Exists((ConvertTo-LongPath $destPath))) {
+                $destItem = [System.IO.FileInfo]::new((ConvertTo-LongPath $destPath))
+                if ($destItem.Length -eq $file.Length) {
+                    $sourceHash = Get-Sha256 -Path $file.FullName
+                    $destHash = Get-Sha256 -Path $destPath
+                }
+            }
         }
-        $destItem = [System.IO.FileInfo]::new((ConvertTo-LongPath $destPath))
-        if ($destItem.Length -ne $file.Length) {
-            throw "Size mismatch: $relative"
+        catch {
+            $sourceHash = $null
+            $destHash = $null
         }
-        $sourceHash = Get-Sha256 -Path $file.FullName
-        $destHash = Get-Sha256 -Path $destPath
-        if ($sourceHash -ne $destHash) {
+
+        if ($null -ne $sourceHash -and $sourceHash -eq $destHash) {
+            $manifest.Add([pscustomobject]@{
+                RelativePath = $relative
+                Bytes        = [long]$file.Length
+                Sha256       = $sourceHash
+            })
+            $checked++
+            if (-not $Quiet -and ($checked % 500) -eq 0) {
+                Write-Host "    verified $checked files..."
+            }
+            continue
+        }
+
+        if (-not $AllowUnstable) {
+            foreach ($suffix in @('', '-wal', '-shm')) {
+                if ((Split-Path -Leaf $relative) -eq ('state.sqlite' + $suffix)) {
+                    throw "Live database file was copied: $relative. The snapshot step must exclude it."
+                }
+            }
+            if (-not [System.IO.File]::Exists((ConvertTo-LongPath $destPath))) {
+                throw "Missing copy: $relative"
+            }
             throw "SHA256 mismatch: $relative"
         }
-        $manifest.Add([pscustomobject]@{
-            RelativePath = $relative
-            Bytes        = [long]$file.Length
-            Sha256       = $sourceHash
-        })
-        $checked++
-        if (-not $Quiet -and ($checked % 500) -eq 0) {
-            Write-Host "    verified $checked files..."
+
+        # A live tree changes while it is copied (logs, settings). Re-copy this
+        # one file once and compare again, then record it as unstable instead of
+        # failing the whole run.
+        [System.IO.File]::Copy($file.FullName, (ConvertTo-LongPath $destPath), $true)
+        try {
+            $sourceHash = Get-Sha256 -Path $file.FullName
+            $destHash = Get-Sha256 -Path $destPath
         }
+        catch {
+            $script:Unstable.Add($relative)
+            continue
+        }
+        if ($sourceHash -eq $destHash) {
+            $manifest.Add([pscustomobject]@{
+                RelativePath = $relative
+                Bytes        = [long]$file.Length
+                Sha256       = $sourceHash
+            })
+            continue
+        }
+        $script:Unstable.Add($relative)
     }
 
     return $manifest
@@ -369,7 +521,9 @@ function Copy-TreeAndVerify {
     param(
         [string]$Source,
         [string]$Destination,
-        [string]$ManifestPath = ''
+        [string]$ManifestPath = '',
+        [string[]]$ExcludeFiles = @(),
+        [switch]$AllowUnstable
     )
 
     if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
@@ -399,6 +553,10 @@ function Copy-TreeAndVerify {
         )
         $robocopyArgs += $script:ExcludeDirNames
         if ($script:ExcludeDirs.Count -gt 0) { $robocopyArgs += $script:ExcludeDirs }
+        if ($ExcludeFiles.Count -gt 0) {
+            $robocopyArgs += '/XF'
+            $robocopyArgs += $ExcludeFiles
+        }
         & $robocopy.Source @robocopyArgs | Out-Null
         $code = $LASTEXITCODE
         if ($code -ge 8) {
@@ -409,7 +567,17 @@ function Copy-TreeAndVerify {
         Copy-Item -Path (Join-Path $Source '*') -Destination $Destination -Recurse -Force
     }
 
-    $manifest = Test-TreeHashes -Source $Source -Destination $Destination
+    $manifest = Test-TreeHashes -Source $Source -Destination $Destination -AllowUnstable:$AllowUnstable
+
+    if ($script:Unstable.Count -gt 25) {
+        throw "Too many files changed while copying ($($script:Unstable.Count)). The target or the source is unstable; stop and investigate."
+    }
+    foreach ($relative in $script:Unstable) {
+        $candidate = Join-Path $Source $relative
+        if ((Test-Path -LiteralPath $candidate -PathType Leaf) -and ((Get-Item -LiteralPath $candidate -Force).Length -gt 50MB)) {
+            throw "A large file kept changing while copying: $relative. Stop hbots with -StopServer and rerun."
+        }
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($ManifestPath)) {
         $dir = Split-Path -Parent $ManifestPath
@@ -449,31 +617,138 @@ function Invoke-StopServer {
     throw 'hbots port 38472 is still listening 60 seconds after stop.ps1.'
 }
 
-function Invoke-WbadminImage {
-    param([string]$TargetPath)
-
-    $wbadmin = Get-Command wbadmin.exe -ErrorAction SilentlyContinue
-    if ($null -eq $wbadmin) {
-        throw 'wbadmin.exe is not available. Windows Server Backup is missing; enable it or use a Windows edition that ships it. No image was written.'
+function Resolve-NodeExe {
+    foreach ($name in @('node.exe', 'node')) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($null -ne $command) { return $command.Source }
     }
+    return $null
+}
 
-    $arguments = @(
-        'start',
-        'backup',
-        "-backupTarget:$TargetPath",
-        '-include:C:',
-        '-allCritical',
-        '-quiet'
+function Invoke-DatabaseSnapshot {
+    param(
+        [string]$DataRoot,
+        [string]$DestinationRoot,
+        [string]$RepoRoot,
+        [string]$NodeExe
     )
 
-    Write-Host "    wbadmin $($arguments -join ' ')"
-    Write-Host '    (VSS quiesces the writers, including SQLite.)'
-    & $wbadmin.Source @arguments
-    $code = $LASTEXITCODE
-    if ($code -ne 0) {
-        throw "wbadmin failed with exit code $code."
+    $source = Join-Path (Join-Path $DataRoot 'dev\userdata') 'state.sqlite'
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        throw "No database at $source. The data root layout is not what prewipe expects."
     }
-    Write-Host '    disk image complete'
+    $helper = Join-Path $RepoRoot 'scripts\personal\sqlite-snapshot.cjs'
+    if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+        throw "Snapshot helper missing: $helper"
+    }
+    if ([string]::IsNullOrWhiteSpace($NodeExe)) {
+        throw 'node.exe was not found. Node 24 is needed for the live SQLite snapshot.'
+    }
+
+    $destDir = Join-Path $DestinationRoot 'dev\userdata'
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    $target = Join-Path $destDir 'state.sqlite'
+    $proof = "$target.integrity.json"
+    foreach ($stale in @($target, "$target-wal", "$target-shm", $proof)) {
+        if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force }
+    }
+
+    $sourceBytes = (Get-Item -LiteralPath $source -Force).Length
+    Write-Host ("    online backup of {0} ({1}) while hbots keeps running" -f $source, (Format-Bytes $sourceBytes))
+    $started = Get-Date
+    $env:PB_SNAPSHOT_SOURCE = $source
+    $env:PB_SNAPSHOT_TARGET = $target
+    try {
+        & $NodeExe '--disable-warning=ExperimentalWarning' $helper
+        $code = $LASTEXITCODE
+    }
+    finally {
+        Remove-Item Env:PB_SNAPSHOT_SOURCE -ErrorAction SilentlyContinue
+        Remove-Item Env:PB_SNAPSHOT_TARGET -ErrorAction SilentlyContinue
+    }
+    if ($code -ne 0) {
+        throw "SQLite online snapshot failed (exit $code). Nothing was left in place."
+    }
+    if (-not (Test-Path -LiteralPath $proof -PathType Leaf)) {
+        throw "Snapshot integrity proof is missing: $proof"
+    }
+    $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+    $bytes = (Get-Item -LiteralPath $target -Force).Length
+    $script:Timings.databaseSeconds = $seconds
+    $script:Timings.databaseBytes = $bytes
+    Write-Host ("    database snapshot verified: {0}, {1:N1} s" -f (Format-Bytes $bytes), $seconds)
+    return [pscustomobject]@{ Path = $target; Proof = $proof; Bytes = $bytes; Seconds = $seconds }
+}
+
+function ConvertTo-LfText {
+    param([string]$Path)
+    $text = [System.IO.File]::ReadAllText($Path)
+    $text = $text -replace "`r`n", "`n"
+    [System.IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Write-Payload {
+    param(
+        [string]$TargetPath,
+        [string]$RepoRoot,
+        [string]$SecretsBundle
+    )
+
+    $payload = Join-Path $TargetPath 'payload'
+    New-Item -ItemType Directory -Path $payload -Force | Out-Null
+    $linuxDir = Join-Path $RepoRoot 'migrate\linux'
+    $files = @('first-login.sh', 'bootstrap.sh', 'verify.sh', 'enable-ssh.sh', 'PASTE.txt')
+
+    $manifestLines = New-Object System.Collections.Generic.List[string]
+    foreach ($name in $files) {
+        $src = Join-Path $linuxDir $name
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+            throw "payload source missing: $src (merge the Linux branch first)"
+        }
+        $dst = Join-Path $payload $name
+        Copy-Item -LiteralPath $src -Destination $dst -Force
+        ConvertTo-LfText -Path $dst
+        $hash = Get-Sha256 -Path $dst
+        $manifestLines.Add("$hash  payload/$name")
+        $copyCheck = Get-Sha256 -Path $dst
+        if ($copyCheck -ne $hash) { throw "payload copy changed bytes: $name" }
+    }
+
+    $hasBundle = $false
+    if (-not [string]::IsNullOrWhiteSpace($SecretsBundle) -and (Test-Path -LiteralPath $SecretsBundle -PathType Leaf)) {
+        $bundleTarget = Join-Path $TargetPath 'secrets.bundle'
+        Copy-Item -LiteralPath $SecretsBundle -Destination $bundleTarget -Force
+        $bundleHash = Get-Sha256 -Path $bundleTarget
+        $manifestLines.Add("$bundleHash  secrets.bundle")
+        $hasBundle = $true
+        Write-Host "    secrets bundle copied ($(Format-Bytes (Get-Item -LiteralPath $bundleTarget -Force).Length)); contents not read"
+    }
+
+    $manifestPath = Join-Path $TargetPath 'payload.sha256'
+    [System.IO.File]::WriteAllText($manifestPath, (($manifestLines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+
+    $paste = [System.IO.File]::ReadAllText((Join-Path $linuxDir 'PASTE.txt')).Trim()
+    $pasteText = @(
+        'HBOTS OMARCHY - FIRST LOGIN',
+        '',
+        'The SanDisk is plugged in. On the new Omarchy desktop:',
+        '  1. Press Super, open Terminal.',
+        '  2. Paste this ONE line (copy it from this file), then press Enter:',
+        '',
+        $paste,
+        '',
+        'It mounts the SSD read-only, checks every file, restores your data, installs',
+        'everything, starts hbots and runs the health check by itself. It asks once for',
+        'your secrets passphrase (typing is hidden). Nothing else is needed.',
+        '',
+        'It prints SUCCESS or FAILED at the end. If it fails it leaves the SSD mounted',
+        'and names the log file; do not reinstall, send us that log.',
+        ''
+    ) -join "`n"
+    [System.IO.File]::WriteAllText((Join-Path $TargetPath 'PASTE-ME.txt'), $pasteText, (New-Object System.Text.UTF8Encoding($false)))
+
+    Write-Host "    payload: $($files.Count) scripts, paste line, hashes$(if ($hasBundle) { ', secrets bundle' } else { ', NO secrets bundle' })"
+    return [pscustomobject]@{ HasBundle = $hasBundle; Hashes = $manifestLines.Count }
 }
 
 function Write-CommandCapture {
@@ -603,6 +878,22 @@ function Write-Inventory {
         Set-Content -LiteralPath (Join-Path $inventory 'system-info.json') -Value ("failed: " + $_.Exception.Message) -Encoding ASCII
     }
 
+    if ($null -ne $script:VolumeInfo) {
+        $backupVolume = [ordered]@{
+            drive         = $script:VolumeInfo.DriveLetter
+            label         = $script:VolumeInfo.FileSystemLabel
+            fileSystem    = $script:VolumeInfo.FileSystem
+            model         = $script:VolumeInfo.Disk.FriendlyName
+            serial        = ([string]$script:VolumeInfo.Disk.SerialNumber).Trim()
+            busType       = $script:VolumeInfo.Disk.BusType
+            sizeGB        = [math]::Round($script:VolumeInfo.Size / 1GB, 1)
+            freeGB        = [math]::Round($script:VolumeInfo.SizeRemaining / 1GB, 1)
+            target        = $Target
+            approvedFolder = $BackupFolderName
+        }
+        $backupVolume | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $inventory 'backup-volume.json') -Encoding ASCII
+    }
+
     Write-CommandCapture -Path (Join-Path $inventory 'ipconfig.txt') -FilePath 'ipconfig.exe' -Arguments @('/all')
     Write-CommandCapture -Path (Join-Path $inventory 'route-print.txt') -FilePath 'route.exe' -Arguments @('print')
 }
@@ -708,6 +999,64 @@ function Invoke-SelfTest {
         if (-not $rejected) { throw 'overlapping target was not refused' }
         Write-Host 'PASS target inside source is refused'
 
+        # The SSD is identified by model, serial, label, NTFS and USB - never by
+        # drive letter - and writing outside the one approved folder is refused.
+        $goodVolume = [pscustomobject]@{
+            DriveLetter = 'F'; Root = 'F:\'; FileSystemLabel = 'New Volume'; FileSystem = 'NTFS'
+            Size = 1000GB; SizeRemaining = 700GB
+            Disk = [pscustomobject]@{ FriendlyName = 'SanDisk Extreme 55AE'; SerialNumber = '2306CQ402457  '; BusType = 'USB' }
+        }
+        $wrongSerial = [pscustomobject]@{
+            DriveLetter = 'G'; Root = 'G:\'; FileSystemLabel = 'New Volume'; FileSystem = 'NTFS'
+            Size = 1000GB; SizeRemaining = 700GB
+            Disk = [pscustomobject]@{ FriendlyName = 'SanDisk Extreme 55AE'; SerialNumber = '9999XX999999'; BusType = 'USB' }
+        }
+        $notUsb = [pscustomobject]@{
+            DriveLetter = 'H'; Root = 'H:\'; FileSystemLabel = 'New Volume'; FileSystem = 'NTFS'
+            Size = 1000GB; SizeRemaining = 700GB
+            Disk = [pscustomobject]@{ FriendlyName = 'SanDisk Extreme 55AE'; SerialNumber = '2306CQ402457'; BusType = 'SATA' }
+        }
+        $picked = Select-BackupVolume -Volumes @($goodVolume) -Serial '2306CQ402457' -Model 'SanDisk Extreme 55AE' -Label 'New Volume'
+        if ($picked.DriveLetter -ne 'F') { throw 'the matching SSD was not selected' }
+        foreach ($case in @(@{ Name = 'wrong serial'; Volume = $wrongSerial }, @{ Name = 'non-USB bus'; Volume = $notUsb })) {
+            $refused = $false
+            try { Select-BackupVolume -Volumes @($case.Volume) -Serial '2306CQ402457' -Model 'SanDisk Extreme 55AE' -Label 'New Volume' | Out-Null }
+            catch { $refused = $true }
+            if (-not $refused) { throw "an SSD with a $($case.Name) was accepted" }
+        }
+        $duplicate = [pscustomobject]@{
+            DriveLetter = 'G'; Root = 'G:\'; FileSystemLabel = 'New Volume'; FileSystem = 'NTFS'
+            Size = 1000GB; SizeRemaining = 700GB
+            Disk = [pscustomobject]@{ FriendlyName = 'SanDisk Extreme 55AE'; SerialNumber = '2306CQ402457'; BusType = 'USB' }
+        }
+        $refused = $false
+        try { Select-BackupVolume -Volumes @($goodVolume, $duplicate) -Serial '2306CQ402457' -Model 'SanDisk Extreme 55AE' -Label 'New Volume' | Out-Null }
+        catch { $refused = $true }
+        if (-not $refused) { throw 'two matching SSDs were accepted instead of refused' }
+        Write-Host 'PASS SSD identity is matched by model, serial, label, NTFS and USB'
+
+        $script:VolumeInfo = $goodVolume
+        $refused = $false
+        try { Assert-SafeTarget -TargetPath 'F:\somewhere-else' -Sources @($source) }
+        catch { $refused = $true }
+        if (-not $refused) { throw 'writing outside the approved SSD folder was accepted' }
+        Write-Host 'PASS a folder outside the approved SSD folder is refused'
+        Assert-SafeTarget -TargetPath 'F:\hbots-omarchy-backup' -Sources @($source)
+        Write-Host 'PASS the approved SSD folder is accepted'
+        $script:VolumeInfo = $null
+
+        $payloadRoot = Join-Path $root 'payload-target'
+        New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
+        $payload = Write-Payload -TargetPath $payloadRoot -RepoRoot (Resolve-RepoRoot) -SecretsBundle ''
+        if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot 'payload\first-login.sh'))) { throw 'first-login.sh was not written to the payload' }
+        if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot 'PASTE-ME.txt'))) { throw 'PASTE-ME.txt was not written' }
+        if ($payload.HasBundle) { throw 'a bundle was reported when none was passed' }
+        $hashLines = @(Get-Content -LiteralPath (Join-Path $payloadRoot 'payload.sha256') | Where-Object { $_ -match '\S' })
+        if ($hashLines.Count -lt 5) { throw "payload.sha256 has $($hashLines.Count) entries, expected at least 5" }
+        $pasteLine = @(Get-Content -LiteralPath (Join-Path $payloadRoot 'PASTE-ME.txt') | Where-Object { $_ -like 'sudo bash -*' })
+        if ($pasteLine.Count -ne 1) { throw "PASTE-ME.txt has $($pasteLine.Count) paste lines, expected exactly 1" }
+        Write-Host 'PASS payload, paste line and hash manifest are written'
+
         $rejected = $false
         try { Resolve-Confirmation -Supplied 'wrong' -Quiet }
         catch { $rejected = $true }
@@ -726,6 +1075,9 @@ function Invoke-SelfTest {
     }
     catch {
         Write-Host ('SELFTEST FAIL: ' + $_.Exception.Message) -ForegroundColor Red
+        if (-not [string]::IsNullOrWhiteSpace($_.ScriptStackTrace)) {
+            Write-Host $_.ScriptStackTrace
+        }
         return 1
     }
     finally {
@@ -745,11 +1097,36 @@ if ($SelfTest) {
 
 try {
     $script:RepoRoot = Resolve-RepoRoot
-    if ($FullImage -and $Scope -ne 'Full') {
-        throw '-FullImage requires -Scope Full. A fixture copy never includes a disk image.'
+    if ($Apply -and $Practice) {
+        throw 'choose -Apply or -Practice, not both.'
     }
-    $sources = Get-SourcePlan -Fixture $FixtureRoot -Claude $SourceClaude -Data $SourceData
+    if ($Scope -eq 'Small') { $AllowAnyTarget = $true }
 
+    # ---------------------------------------------------------------- target
+
+    if ($Scope -eq 'Full' -and -not $AllowAnyTarget) {
+        $volume = Resolve-BackupVolume -Serial $VolumeSerial -Model $VolumeModel -Label $VolumeLabel
+        $expected = [System.IO.Path]::GetFullPath(($volume.Root.TrimEnd('\') + '\' + $BackupFolderName))
+        if ([string]::IsNullOrWhiteSpace($Target)) {
+            $Target = $expected
+        }
+        elseif (-not [System.IO.Path]::GetFullPath($Target).TrimEnd('\').Equals([System.IO.Path]::GetFullPath($expected).TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing -Target '$Target'. The only approved destination on this SSD is '$expected'."
+        }
+        Write-Step 'Backup destination'
+        Write-Host ("    drive:       {0}: ({1})" -f $volume.DriveLetter, $volume.FileSystemLabel)
+        Write-Host ("    disk:        {0}, serial {1}, {2}" -f $volume.Disk.FriendlyName, ([string]$volume.Disk.SerialNumber).Trim(), $volume.Disk.BusType)
+        Write-Host ("    free:        {0} of {1}" -f (Format-Bytes $volume.SizeRemaining), (Format-Bytes $volume.Size))
+        Write-Host "    folder:      $Target"
+        Write-Host '    writes stay inside this folder; nothing else on the drive is touched'
+    }
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        throw 'Target is empty. Pass -Target <folder> (tests only) or plug in the SSD.'
+    }
+
+    # ---------------------------------------------------------------- sources
+
+    $sources = Get-SourcePlan -Fixture $FixtureRoot -Claude $SourceClaude -Data $SourceData
     foreach ($item in $sources) {
         if (-not (Test-Path -LiteralPath $item.Source -PathType Container)) {
             if ($item.Optional) { continue }
@@ -760,26 +1137,55 @@ try {
 
     Assert-SafeTarget -TargetPath $Target -Sources @($sources | ForEach-Object { $_.Source })
 
+    $nodeExe = Resolve-NodeExe
+    $snapshotHelper = Join-Path $script:RepoRoot 'scripts\personal\sqlite-snapshot.cjs'
+    if (-not $SkipDatabase) {
+        if ($null -eq $nodeExe) {
+            throw 'node.exe was not found. Node 24 (node:sqlite) is needed for the live database snapshot.'
+        }
+        if (-not (Test-Path -LiteralPath $snapshotHelper -PathType Leaf)) {
+            throw "Snapshot helper missing: $snapshotHelper"
+        }
+    }
+
+    $hasBundle = (-not [string]::IsNullOrWhiteSpace($SecretsBundle)) -and (Test-Path -LiteralPath $SecretsBundle -PathType Leaf)
+    if (-not $SkipPayload -and -not $hasBundle -and $Scope -eq 'Full') {
+        if ($Apply) {
+            throw "The sealed secrets bundle is missing: $SecretsBundle. Export it before install night (or pass -SkipPayload if that is deliberate)."
+        }
+        Write-Host "    WARNING: no secrets bundle at $SecretsBundle. The payload would restore data without keys." -ForegroundColor Yellow
+    }
+
+    # ---------------------------------------------------------------- plan
+
     Write-Step 'Plan'
-    Write-Host "    mode:        $(if ($Apply) { 'APPLY' } else { 'DRY RUN (default)' })"
+    $mode = 'DRY RUN (default)'
+    if ($Apply) { $mode = 'APPLY (install night)' }
+    if ($Practice) { $mode = 'PRACTICE (real copy, keeps hbots running, no phrase)' }
+    Write-Host "    mode:        $mode"
     Write-Host "    scope:       $Scope"
     Write-Host "    target:      $Target"
     Write-Host "    repo:        $script:RepoRoot"
     foreach ($item in $sources) {
-        if ($Scope -eq 'Small') {
-            $size = Get-PathSizeBytes -Path $item.Source
-            Write-Host ("    source:      {0} ({1})" -f $item.Source, (Format-Bytes $size))
-        }
-        else {
-            Write-Host ("    source:      {0} (size covered by the estimate below)" -f $item.Source)
-        }
+        Write-Host ("    source:      {0}" -f $item.Source)
     }
-    if ($StopServer) {
-        Write-Host '    stop server: yes (scripts/personal/stop.ps1)'
+    if ($SkipDatabase) {
+        Write-Host '    database:    kept from the previous run (--skip-database)' -ForegroundColor Yellow
     }
     else {
-        Write-Host '    stop server: no (copying a live SQLite database is not consistent)'
+        Write-Host "    database:    live SQLite online backup (node:sqlite + full integrity check)"
     }
+    if ($SkipPayload) {
+        Write-Host '    payload:     not written (--skip-payload)'
+    }
+    else {
+        Write-Host ("    payload:     scripts, one-paste line, hashes{0}" -f $(if ($hasBundle) { ', sealed secrets bundle' } else { ', NO secrets bundle' }))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:VolumeInfo.DriveLetter)) {
+        Write-Host "    second copy: no (Harout: the SSD folder is the only copy)"
+    }
+
+    # ---------------------------------------------------------------- space
 
     $targetFree = Get-FreeSpaceBytes -Path $Target
     $needed = [long]0
@@ -788,23 +1194,14 @@ try {
         $needed += (Get-PathSizeBytes -Path $item.Source)
     }
     $script:ExcludeDirs = @()
-    if ($FullImage) {
-        $cDrive = New-Object System.IO.DriveInfo('C:\')
-        $needed += ([long]$cDrive.TotalSize - [long]$cDrive.TotalFreeSpace)
-    }
+    # The database is snapshotted separately, so it is in the estimate above.
     # 10% margin for file-system overhead and the manifests.
     $needed = [long]($needed * 1.10)
 
     Write-Step 'Free-space check'
-    if ($FullImage) {
-        Write-Host ("    estimated need (C: image + data copies + margin): {0}" -f (Format-Bytes $needed))
-    }
-    else {
-        Write-Host ("    estimated need (data copies + manifests + margin): {0}" -f (Format-Bytes $needed))
-    }
-    Write-Host '    estimate is conservative; Apply uses the same number as its gate'
+    Write-Host ("    estimated need (data + database + manifests + margin): {0}" -f (Format-Bytes $needed))
     if ($null -eq $targetFree) {
-        Write-Host '    target free space: unknown (unmapped UNC path); check the share before -Apply' -ForegroundColor Yellow
+        Write-Host '    target free space: unknown; check the drive before -Apply' -ForegroundColor Yellow
     }
     else {
         Write-Host ("    target free space: {0}" -f (Format-Bytes $targetFree))
@@ -815,22 +1212,7 @@ try {
     }
 
     Write-Step 'Data scope'
-    if ($FullImage) {
-        $wbadmin = Get-Command wbadmin.exe -ErrorAction SilentlyContinue
-        if ($null -eq $wbadmin) {
-            if ($Apply) {
-                throw 'wbadmin.exe is not available. Windows Server Backup is missing; enable it before -Apply. No image was written and no data was copied.'
-            }
-            Write-Host '    wbadmin.exe: NOT AVAILABLE (Apply would fail with a clear message)' -ForegroundColor Yellow
-        }
-        else {
-            Write-Host "    wbadmin.exe: $($wbadmin.Source)"
-        }
-        Write-DryCommand "wbadmin start backup -backupTarget:$Target -include:C: -allCritical -quiet"
-    }
-    else {
-        Write-Host '    no full disk image (default; pass -FullImage to capture C: with wbadmin)'
-    }
+    Write-Host '    no disk image, data only (Harout, 25 Oct)'
     Write-Host ("    excluded regenerable folders: {0}" -f ($script:ExcludeDirNames -join ', '))
     foreach ($item in $sources) {
         $skipped = @(Get-ReleaseExclusions -Source $item.Source)
@@ -847,16 +1229,18 @@ try {
     }
 
     Write-Step 'Inventory'
-    Write-Plan "winget list, node/npm/pnpm/git/python versions, scheduled tasks, firewall rules and ports, Brave profiles, system info -> $Target\inventory"
+    Write-Plan "winget list, tool versions, scheduled tasks, firewall rules and ports, Brave profiles, system info, SSD identity -> $Target\inventory"
 
-    if (-not $Apply) {
+    if (-not $Apply -and -not $Practice) {
         Write-Step 'Dry run complete'
         Write-Host '    Nothing was stopped, copied or written.' -ForegroundColor Green
-        Write-Host "    To apply: add -Apply (and -StopServer for a consistent SQLite copy), then type $($script:ConfirmPhrase)." -ForegroundColor Green
+        Write-Host "    Practice now: add -Practice. Install night: add -Apply and type $($script:ConfirmPhrase)." -ForegroundColor Green
         exit 0
     }
 
-    Resolve-Confirmation -Supplied $ConfirmText
+    if ($Apply) {
+        Resolve-Confirmation -Supplied $ConfirmText
+    }
 
     if (-not (Test-Path -LiteralPath $Target)) {
         New-Item -ItemType Directory -Path $Target -Force | Out-Null
@@ -866,25 +1250,60 @@ try {
         Write-Step 'Stopping hbots'
         Invoke-StopServer -Root $script:RepoRoot
     }
-    else {
-        Write-Step 'Stopping hbots (skipped)'
-        Write-Host '    WARNING: the SQLite database may be copied mid-write. Pass -StopServer.' -ForegroundColor Yellow
-    }
 
-    if ($FullImage) {
-        Write-Step 'Full disk image'
-        Invoke-WbadminImage -TargetPath $Target
-    }
+    # ---------------------------------------------------------------- copy
 
     Write-Step 'Plain copies'
     $plainRoot = Join-Path $Target 'plain'
+    $copiedAlready = Test-Path -LiteralPath (Join-Path $Target 'inventory')
+    if ($copiedAlready) {
+        Write-Host '    an earlier copy exists; robocopy only updates what changed (this is the seed)'
+    }
+    $totals = @{ Bytes = [long]0; Files = 0 }
+    $sourceSummaries = @()
     foreach ($item in $sources) {
+        $copyStarted = Get-Date
         $destination = Join-Path $plainRoot $item.DestinationName
         $manifestPath = Join-Path (Join-Path $Target 'inventory') ("hash-" + $item.Name + ".csv")
         $script:ExcludeDirs = @(Get-ReleaseExclusions -Source $item.Source)
-        $manifest = Copy-TreeAndVerify -Source $item.Source -Destination $destination -ManifestPath $manifestPath
-        Write-Host ("    {0}: {1} files verified" -f $item.Name, $manifest.Count)
+        $script:Unstable.Clear()
+        $excludeFiles = @()
+        if ($item.Name -eq 'personal-bots') {
+            $excludeFiles = @('state.sqlite', 'state.sqlite-wal', 'state.sqlite-shm')
+        }
+        $manifest = Copy-TreeAndVerify -Source $item.Source -Destination $destination -ManifestPath $manifestPath -ExcludeFiles $excludeFiles -AllowUnstable
+        $bytes = [long]0
+        foreach ($entry in $manifest) { $bytes += [long]$entry.Bytes }
+        $seconds = [math]::Round(((Get-Date) - $copyStarted).TotalSeconds, 1)
+        foreach ($unstable in $script:Unstable) {
+            Write-Host "    changed while copying (listed, not failed): $unstable" -ForegroundColor Yellow
+        }
+        Write-Host ("    {0}: {1} files, {2}, {3:N1} s" -f $item.Name, $manifest.Count, (Format-Bytes $bytes), $seconds)
+        $totals.Bytes += $bytes
+        $totals.Files += $manifest.Count
+        $sourceSummaries += [pscustomobject]@{ Name = $item.Name; Files = $manifest.Count; Bytes = $bytes; Seconds = $seconds }
     }
+
+    # ---------------------------------------------------------------- database
+
+    $database = $null
+    if (-not $SkipDatabase) {
+        Write-Step 'Live database snapshot'
+        $database = Invoke-DatabaseSnapshot -DataRoot $SourceData -DestinationRoot (Join-Path $plainRoot 'personal-bots') -RepoRoot $script:RepoRoot -NodeExe $nodeExe
+    }
+
+    # ---------------------------------------------------------------- payload
+
+    $payload = $null
+    if (-not $SkipPayload) {
+        Write-Step 'First-login payload'
+        $payload = Write-Payload -TargetPath $Target -RepoRoot $script:RepoRoot -SecretsBundle $SecretsBundle
+        if (-not $payload.HasBundle -and $Scope -eq 'Full' -and $Apply) {
+            throw 'The payload has no secrets.bundle. Refusing to finish install night without it.'
+        }
+    }
+
+    # ---------------------------------------------------------------- inventory
 
     Write-Step 'Inventory'
     Write-Inventory -TargetPath $Target -Root $script:RepoRoot
@@ -896,13 +1315,59 @@ try {
             $leftBehind.Add("  old release not copied: $dir")
         }
     }
+    if ($script:Unstable.Count -gt 0) {
+        $leftBehind.Add('Changed while being copied (re-copied once, then listed):')
+        foreach ($relative in $script:Unstable) { $leftBehind.Add("  unstable: $relative") }
+    }
+    $leftBehind.Add('The live database was copied with SQLite''s online backup API; state.sqlite-wal/-shm are not part of the copy.')
     $leftBehind.Add('Provider sign-ins (Claude, Codex, OpenCode, Antigravity, GitHub) are re-approved after install; their token stores are not copied.')
     $leftBehind.Add('Browser profiles hbots owns live under .personal-bots data roots and are copied with them; Harout''s own Brave profile is not.')
+    $leftBehind.Add('There is no second copy on the gaming PC (Harout, 25 Oct). This folder is the only backup.')
+    $leftBehind.Add('Nothing outside this folder on the SSD was written, moved or deleted.')
     Set-Content -LiteralPath (Join-Path (Join-Path $Target 'inventory') 'left-behind.txt') -Value $leftBehind -Encoding ASCII
 
+    # ---------------------------------------------------------------- summary
+
+    $finished = Get-Date
+    $totalSeconds = [math]::Round(($finished - $script:Started).TotalSeconds, 1)
+    $summary = [ordered]@{
+        schema        = 1
+        mode          = $(if ($Apply) { 'apply' } elseif ($Practice) { 'practice' } else { 'dry-run' })
+        startedAt     = $script:Started.ToString('o')
+        finishedAt    = $finished.ToString('o')
+        seconds       = $totalSeconds
+        target        = $Target
+        volume        = $null
+        sources       = $sourceSummaries
+        database      = $database
+        payload       = $payload
+        unstable      = @($script:Unstable)
+        totals        = @{ files = $totals.Files; bytes = $totals.Bytes }
+    }
+    if ($null -ne $script:VolumeInfo) {
+        $summary.volume = [ordered]@{
+            drive  = $script:VolumeInfo.DriveLetter
+            label  = $script:VolumeInfo.FileSystemLabel
+            model  = $script:VolumeInfo.Disk.FriendlyName
+            serial = ([string]$script:VolumeInfo.Disk.SerialNumber).Trim()
+            bus    = $script:VolumeInfo.Disk.BusType
+        }
+    }
+    $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path (Join-Path $Target 'inventory') 'run-summary.json') -Encoding ASCII
+
     Write-Step 'Done'
-    Write-Host "    Data, manifests and inventory are under $Target" -ForegroundColor Green
-    Write-Host '    Keep the copy for at least one week after Omarchy is live.' -ForegroundColor Green
+    Write-Host ("    {0} files, {1} in {2:N1} s" -f $totals.Files, (Format-Bytes $totals.Bytes), $totalSeconds) -ForegroundColor Green
+    if ($null -ne $database) {
+        Write-Host ("    database snapshot: {0} in {1:N1} s" -f (Format-Bytes $database.Bytes), $database.Seconds) -ForegroundColor Green
+    }
+    Write-Host "    Everything is under $Target (this folder only)" -ForegroundColor Green
+    if ($Practice) {
+        Write-Host '    This is the seed. Install night runs the same command with -Apply and only syncs changes.' -ForegroundColor Green
+    }
+    else {
+        Write-Host '    First login: open hbots-omarchy-backup\PASTE-ME.txt and paste its one line.' -ForegroundColor Green
+    }
+    Write-Host '    Keep the SSD until Omarchy is verified and QA is done.' -ForegroundColor Green
     exit 0
 }
 catch {

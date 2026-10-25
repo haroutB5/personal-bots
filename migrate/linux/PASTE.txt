@@ -1,0 +1,1 @@
+sudo bash -c 'm=/mnt/hbots-backup; mkdir -p "$m"; d=/dev/$(lsblk -dpno NAME,MODEL | grep -i "SanDisk Extreme" | cut -d" " -f1); [ -b "$d" ] || { echo "SSD not found. Plug in the SanDisk and run this line again."; exit 1; }; mountpoint -q "$m" || mount -t ntfs3 -o ro "$d" "$m"; exec bash "$m/payload/first-login.sh"'
