@@ -18,7 +18,9 @@
     "kind": "vitest",
     "title": "Web fork gate",
     "cwd": "apps/web",
-    "commands": ["vp test run --project unit src/features/personal src/authBootstrap.test.ts"]
+    "commands": [
+      "NODE_ENV=development vp test run --project unit src/features/personal src/authBootstrap.test.ts"
+    ]
   },
   {
     "id": "web-tsc",

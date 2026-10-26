@@ -68,5 +68,20 @@ still the heavy-job limit and is still greppable by the Windows runner; the norm
 - Gates: server vitest (personal, mcp, persistence, preview), server tsc, web vitest (personal +
   auth bootstrap), web tsc, and the five phone e2e journeys, all on Linux, recorded in
   `releases/<sha12>/gate-evidence.json` and the Gate evidence section below.
+- The web gate runs with `NODE_ENV=development`: a bot's shell inherits the server's
+  `NODE_ENV=production`, and with that Vitest resolves React's production build, which has no `act`
+  and fails 1040 test-renderer tests. The tests themselves are untouched.
 - Not changed: `PERSONAL_TASKS_CONCURRENCY` stays 5; no systemd unit, HANDBOOK text or dev-team
   tool was touched; the live database was never opened from another process.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=a4c9059bfe52def725a6f910b2a66b6f69a7a287 release=a4c9059bfe52 json-sha256=3a8fcd80712da4f741a7caafce25d5f0a493ac9182abc1aa9d63d00e4480f072 result=FAIL -->
+
+- server-tests: FAIL, exit 1
+- server-tsc: PASS, exit 0
+- web-tests: FAIL, exit 1
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
