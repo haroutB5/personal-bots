@@ -1,4 +1,8 @@
 // @effect-diagnostics preferSchemaOverJson:off - builds provider activity rows
+// These tests assert the five-slot cap and how work queues behind it, so the
+// heavy-job probe is pinned to "held" for the whole file. The 8/5 policy itself
+// is covered in heavyJobLock.test.ts.
+process.env.PERSONAL_TASKS_HEAVY_PROBE = "held";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeURL from "node:url";
 import {

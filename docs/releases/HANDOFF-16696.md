@@ -38,7 +38,8 @@ the probe reads `/proc/locks` for the held flock and never takes, writes or unli
 running turn is never stopped when the limit drops: new turns simply wait until the count is under
 5 again. On Windows, or with no lock file, the limit stays 8. `PERSONAL_TASKS_CONCURRENCY = 5` is
 still the heavy-job limit and is still greppable by the Windows runner; the normal limit is the new
-`PERSONAL_TASKS_CONCURRENCY_NORMAL = 8`.
+`PERSONAL_TASKS_CONCURRENCY_NORMAL = 8`. `PERSONAL_TASKS_HEAVY_PROBE=held|free` is tests only: it pins
+the probe so a suite that asserts the five-slot queueing is deterministic.
 
 ## Release tooling on Linux
 
@@ -76,11 +77,11 @@ still the heavy-job limit and is still greppable by the Windows runner; the norm
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=a4c9059bfe52def725a6f910b2a66b6f69a7a287 release=a4c9059bfe52 json-sha256=3a8fcd80712da4f741a7caafce25d5f0a493ac9182abc1aa9d63d00e4480f072 result=FAIL -->
+<!-- gate-evidence:begin sha=a049a3c0d053f73b34fdc7dbe51797beb202dd87 release=a049a3c0d053 json-sha256=ed25478f837c30c1d75d811431ccaeff1912f655e29ef80c3073500458d1beaa result=FAIL -->
 
 - server-tests: FAIL, exit 1
 - server-tsc: PASS, exit 0
-- web-tests: FAIL, exit 1
+- web-tests: PASS, exit 0
 - web-tsc: PASS, exit 0
 - e2e: PASS, exit 0
 

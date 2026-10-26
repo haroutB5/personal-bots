@@ -26,8 +26,10 @@ export const HEAVY_JOB_LOCK_PATH = "/home/harout/.personal-bots/run/omarchy-heav
 
 /** glibc's `dev_t` encoding, the one `/proc/locks` prints as `major:minor`. */
 export function devMajorMinor(dev: number): { readonly major: number; readonly minor: number } {
-  const major = ((dev >> 8) & 0xfff) | ((dev >> 32) & ~0xfff);
-  const minor = (dev & 0xff) | ((dev >> 12) & ~0xff);
+  // 32-bit dev_t, the Linux kernel's own encoding (minors over 8 bits live in
+  // bits 20-31). Node's st_dev is that number.
+  const major = (dev >>> 8) & 0xfff;
+  const minor = (dev & 0xff) | ((dev >>> 12) & 0xfff00);
   return { major, minor };
 }
 
@@ -57,14 +59,25 @@ export function lockHeldInProcLocks(
 }
 
 export interface HeavyJobProbeDeps {
+  readonly env?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
   readonly lockPath?: string;
   readonly readFile?: (path: string) => string;
   readonly stat?: (path: string) => { readonly dev: number; readonly ino: number };
 }
 
+/**
+ * Tests only: `held`/`free` force the answer so a suite that depends on the
+ * five-slot cap is deterministic on a machine where no heavy job runs. Read on
+ * every probe, so no restart applies it.
+ */
+export const HEAVY_JOB_PROBE_ENV = "PERSONAL_TASKS_HEAVY_PROBE";
+
 /** Read-only: true while a heavy job holds the shared lock. */
 export function heavyJobLockHeld(deps: HeavyJobProbeDeps = {}): boolean {
+  const forced = (deps.env ?? process.env)[HEAVY_JOB_PROBE_ENV]?.trim().toLowerCase();
+  if (forced === "held") return true;
+  if (forced === "free") return false;
   // oxlint-disable-next-line t3code/no-global-process-runtime -- the host platform decides whether /proc exists; tests inject it.
   const platform = deps.platform ?? NodeOS.platform();
   if (platform !== "linux") return false;
