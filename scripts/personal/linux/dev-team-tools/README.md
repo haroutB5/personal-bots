@@ -44,3 +44,32 @@ support isolated tests. Missing arguments fail immediately, never prompt.
 
 Run `node --test tools.test.mjs` for synthetic Git release, tamper, lock and
 staging-wrapper checks. These tests never touch the live database or server.
+
+## Ported Windows tools
+
+Install `ab.sh`, `ab.py`, `install-skill.sh`, `install-skill.py`, `ops-common.mjs`,
+`throwaway-server.mjs`, `notify-release.mjs`, `check-release-notes.mjs`,
+`restore-test.mjs`, `reset-browser-profile.mjs` and `pair.mjs` beside the runtime files.
+None of them restarts or deploys the live app, and none opens the live database.
+
+```
+bash tools/ab.sh --check
+bash tools/ab.sh --session frontend-ab12cd34 --steps steps.txt --out run.log
+node tools/throwaway-server.mjs start|up|down|stop|pair|list --name n --release <sha12> --repo-root <repo> [--port n] [--no-pair] [--schedulers-off]
+node tools/pair.mjs --release <sha12> --base-dir <throwaway-root> [--connect] [--ttl 15m]
+node tools/notify-release.mjs --thread-id <id> --version <x.y.z> --release <sha12> --outcome <text> --base-dir <root>
+node tools/check-release-notes.mjs --version <x.y.z> --repo-root <repo> --commit <sha>
+node tools/restore-test.mjs --backup <dir> --release <sha12> --repo-root <repo>
+node tools/reset-browser-profile.mjs --root dev|prod --owner-approved [--cancel] [--base-dir <test-root>]
+bash tools/install-skill.sh [--check]
+```
+
+`ab.py` launches `/usr/bin/brave` headless from a clean config literal, one isolated
+HOME per session under `~/.cache/hbots-agent-browser`, and exits 0 ok, 2 refused,
+3 failed, 4 timeout, 5 internal. Schedulers stay on in a throwaway root so release
+notices are consumed; pass `--schedulers-off` to stop that. `--connect` pairing needs
+a real T3 Connect URL and cannot work on a throwaway.
+
+Run `node --test linux-ports.test.mjs` for the fixture tests and
+`node smoke-linux-ports.mjs <repo-root> <sha12>` for the real-Brave, real-server smoke.
+The phone E2E harness still depends on release 1.66.96.
