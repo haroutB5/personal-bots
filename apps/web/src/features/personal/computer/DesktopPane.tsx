@@ -167,6 +167,8 @@ export function DesktopPane(props: {
   readonly onHandBack?: () => void;
   /** Draw this instead of the live socket (the mock layer). */
   readonly stand?: ReactNode;
+  /** Not on screen for a while: let go of the socket. */
+  readonly paused?: boolean;
 }): JSX.Element {
   const { environmentId, fullScreen } = props;
   const ownStatus = useDesktopStatus(props.status === undefined ? environmentId : null);
@@ -358,7 +360,7 @@ export function DesktopPane(props: {
         ) : environmentId !== null && available ? (
           <LiveDesktop
             environmentId={environmentId}
-            active={pageVisible}
+            active={pageVisible && props.paused !== true}
             fit={fullScreen}
             controlWanted={controlActive}
             interactive={inControl}

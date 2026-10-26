@@ -91,3 +91,22 @@ export function useComputerData(environmentId: EnvironmentId | null): ComputerDa
     [override, feed, error, loading, desktop, commands],
   );
 }
+
+export const MOCK_STORAGE_KEY = "hbots.computer.mock";
+
+/**
+ * The scenario the mock layer plays, from `?computerMock=<name>` or the
+ * `hbots.computer.mock` storage key, or null for the real server. Inert unless
+ * one of the two is set.
+ */
+export function readMockScenario(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get("computerMock");
+    if (fromUrl !== null && fromUrl !== "") return fromUrl;
+    const stored = window.localStorage.getItem(MOCK_STORAGE_KEY);
+    return stored !== null && stored !== "" ? stored : null;
+  } catch {
+    return null;
+  }
+}
