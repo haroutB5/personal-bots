@@ -19,7 +19,7 @@ import type { PersonalTaskService } from "./PersonalTaskService.ts";
 
 export const makeTaskCallers = (
   core: TaskCore,
-  concurrency: number,
+  concurrency: number | (() => number),
   glue: { readonly worker: { readonly enqueue: (item: WorkItem) => Effect.Effect<void> } },
 ) => {
   const {
@@ -138,7 +138,8 @@ export const makeTaskCallers = (
         Effect.gen(function* () {
           if (externalSlots.has(key)) return true;
           const active = yield* repository.listActiveAttempts();
-          if (active.length + externalSlots.size >= concurrency) return false;
+          const limit = typeof concurrency === "function" ? concurrency() : concurrency;
+          if (active.length + externalSlots.size >= limit) return false;
           externalSlots.add(key);
           return true;
         }),

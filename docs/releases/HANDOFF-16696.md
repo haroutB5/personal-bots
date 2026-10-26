@@ -5,11 +5,16 @@ platform supports it: every new path is either Linux-only or comes after an expl
 
 ## Fixed for Linux
 
-- **Shared browser starts again.** A Linux server started by systemd has no `DISPLAY` or
-  `WAYLAND_DISPLAY`, so Brave refused to launch headed ("launched a headed browser without having
-  a XServer running") and every `preview_*` tool failed. The launcher now runs headless when the
-  host has no graphical session; Windows, macOS and a Linux desktop session stay headed.
-  `T3CODE_PERSONAL_BROWSER_HEADLESS=1` and the new `T3CODE_PERSONAL_BROWSER_HEADED=1` still win.
+- **Shared browser starts again.** hbots starts at boot through linger, before Hyprland exists, so
+  the service environment has no `DISPLAY`, `WAYLAND_DISPLAY` or `DBUS_SESSION_BUS_ADDRESS`; Brave
+  refused to launch headed ("launched a headed browser without having a XServer running") and every
+  `preview_*` tool failed. The environment is no longer frozen at service start: at each launch the
+  browser finds the live session itself (the `wayland-N` socket in `XDG_RUNTIME_DIR`, the Hyprland
+  instance signature under `XDG_RUNTIME_DIR/hypr`, the user bus) and passes it to Brave. When no
+  session exists it falls back to headless instead of failing; Windows, macOS and a Linux desktop
+  session stay headed. `T3CODE_PERSONAL_BROWSER_HEADLESS=1` and the new
+  `T3CODE_PERSONAL_BROWSER_HEADED=1` still win, and a launch failure now says "needs a graphical
+  session" instead of Chrome's wrapper text.
 - **A dead browser profile no longer reports "Locked by pid".** When Brave is killed it leaves
   `SingletonLock`/`SingletonCookie`/`SingletonSocket` naming a PID that has exited; the launcher
   read that as a live second instance and masked the real error. It now checks whether the PID is
@@ -23,6 +28,17 @@ platform supports it: every new path is either Linux-only or comes after an expl
 - **Preview port discovery works without `lsof`.** Arch's base install has no `lsof`, so every scan
   fell back to a short curated port list with no process names. The scanner now parses `ss -ltnpH`
   (iproute2 is always present), keeping the pid, process name and terminal attribution.
+
+## Task concurrency follows the machine (Harout, 26 Oct)
+
+At most **8 bot turns** run at once normally, and **5 while a heavy job holds**
+`~/.personal-bots/run/omarchy-heavy.lock` (a build, a full typecheck, the e2e suite). The limit is
+read on every dispatch pass, so it is re-checked when a turn finishes and by the 30-second sweep;
+the probe reads `/proc/locks` for the held flock and never takes, writes or unlinks the lock. A
+running turn is never stopped when the limit drops: new turns simply wait until the count is under
+5 again. On Windows, or with no lock file, the limit stays 8. `PERSONAL_TASKS_CONCURRENCY = 5` is
+still the heavy-job limit and is still greppable by the Windows runner; the normal limit is the new
+`PERSONAL_TASKS_CONCURRENCY_NORMAL = 8`.
 
 ## Release tooling on Linux
 

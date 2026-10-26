@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the test writes a temp profile/lock; there is no Effect file API in a unit test.
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
@@ -42,7 +43,7 @@ const makeLayer = (input: { readonly ssWorks: boolean }) =>
                 ? Effect.succeed({
                     stdout: SS_OUTPUT,
                     stderr: "",
-                    code: 0,
+                    code: null,
                     timedOut: false,
                     stdoutTruncated: false,
                     stderrTruncated: false,

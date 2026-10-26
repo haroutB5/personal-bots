@@ -53,7 +53,12 @@ import type { TaskCore } from "./taskCore.ts";
 
 export const makeTaskDispatch = (
   core: TaskCore,
-  concurrency: number,
+  /**
+   * The slot limit, read on every pass: the machine-aware limit drops to 5
+   * while a heavy job holds the shared lock and returns to 8 when it ends, and
+   * a running turn is never stopped for it (only new starts wait).
+   */
+  concurrency: number | (() => number),
   /** T3CODE_PERSONAL_SCHEDULERS=off (a restored test copy): the pump never starts a task. */
   options: { readonly startsTasks: boolean } = { startsTasks: true },
 ) => {
@@ -532,9 +537,10 @@ export const makeTaskDispatch = (
   // waiting on children has ended its attempt and holds nothing.
   const pump = Effect.fn("PersonalTaskService.pump")(function* () {
     if (!options.startsTasks) return;
+    const limitNow = typeof concurrency === "function" ? concurrency : () => concurrency;
     while (true) {
       const active = yield* repository.listActiveAttempts();
-      if (active.length + externalSlots.size >= concurrency) {
+      if (active.length + externalSlots.size >= limitNow()) {
         return;
       }
       const busyThreads = new Set<string>(active.map((attempt) => attempt.providerThreadId));

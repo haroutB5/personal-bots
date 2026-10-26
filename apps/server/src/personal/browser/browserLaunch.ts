@@ -30,9 +30,14 @@ import {
   clearStaleProfileLock,
   detectProfileLock,
   encodeViewerMessage,
-  firstLine,
 } from "./browserShared.ts";
 import type { BrowserCore } from "./browserCore.ts";
+import {
+  browserModePinned,
+  describeLaunchFailure as launchFailureDetail,
+  discoverGraphicalSession,
+  resolveBrowserHeadless,
+} from "./headlessMode.ts";
 
 export const makeBrowserLaunch = (core: BrowserCore) =>
   Effect.gen(function* () {
@@ -304,8 +309,17 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
         if (clearedStaleLock) {
           yield* Effect.logInfo("Cleared a stale browser profile lock (its process had exited).");
         }
+        // hbots starts at boot, before the desktop session exists: the live
+        // session is looked up now, never frozen at service start.
+        const session = discoverGraphicalSession();
+        const headless =
+          options.headlessAuto === true
+            ? resolveBrowserHeadless(process.env, undefined, session.available)
+            : options.headless;
+        const launchEnv = { ...process.env, ...session.env };
         yield* Effect.logInfo("Starting the shared browser", {
-          headless: options.headless,
+          headless,
+          session: session.detail,
           executablePath: options.executablePath ?? "(discovered)",
         });
         const exit = yield* Effect.exit(
@@ -313,7 +327,8 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
             try: () =>
               options.driver.launch({
                 userDataDir: profileDir,
-                headless: options.headless,
+                headless,
+                env: launchEnv,
                 executablePath: options.executablePath,
                 downloadsDir,
                 onDownloadSaved: (file) =>
@@ -345,7 +360,7 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
             ? lock.pid === null
               ? "The browser profile is in use by another Chrome process."
               : `Locked by pid ${lock.pid}`
-            : `Chrome failed to start: ${firstLine(message)}`;
+            : launchFailureDetail(message);
           runtime.phase = lock.locked ? "locked" : "crashed";
           runtime.lockedByPid = lock.locked ? lock.pid : null;
           runtime.detail = detail;

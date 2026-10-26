@@ -43,7 +43,7 @@ import { makeBrowserLifecycle } from "./browserLifecycle.ts";
 import { makeBrowserOperations } from "./browserOperations.ts";
 import { makeBrowserTabs } from "./browserTabs.ts";
 import { makeBrowserViewers } from "./browserViewers.ts";
-import { resolveBrowserHeadless } from "./headlessMode.ts";
+import { browserModePinned, resolveBrowserHeadless } from "./headlessMode.ts";
 
 export {
   CONTROL_GRACE_MS,
@@ -136,6 +136,12 @@ export class PersonalBrowser extends Context.Service<
 export interface PersonalBrowserOptions {
   readonly driver: BrowserDriver;
   readonly headless: boolean;
+  /**
+   * True when nothing pinned the mode, so the launch may decide from the
+   * session it finds (headless when a boot-started service has no display).
+   * Left undefined by tests and callers that set `headless` on purpose.
+   */
+  readonly headlessAuto?: boolean;
   readonly executablePath: string | undefined;
   /** Stream telemetry log lines (default on). */
   readonly streamTelemetry?: boolean;
@@ -201,6 +207,7 @@ const controlGraceMsFromEnvironment = (value: string | undefined): number | unde
 export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   driver: makePlaywrightDriver(),
   headless: resolveBrowserHeadless(process.env),
+  headlessAuto: !browserModePinned(),
   executablePath: process.env.T3CODE_PERSONAL_BROWSER_EXECUTABLE?.trim() || undefined,
   // Kill switch: T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY=off stops the stream log lines.
   streamTelemetry: process.env.T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY?.trim() !== "off",

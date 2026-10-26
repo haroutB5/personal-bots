@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the test writes a temp profile/lock; there is no Effect file API in a unit test.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
