@@ -123,7 +123,17 @@ function startProxy() {
 
 /** Decoded JSON the page received: HTTP JSON bodies and WebSocket text frames. */
 function watchJson(cdp, origin) {
-  const state = { http: 0, ws: 0, requests: [], frames: new Map(), sent: 0, sentSamples: [] };
+  const state = {
+    http: 0,
+    ws: 0,
+    requests: [],
+    frames: new Map(),
+    sent: 0,
+    sentSamples: [],
+    t0: performance.now(),
+  };
+  const since = () => Math.round(performance.now() - state.t0);
+  const started = new Map();
   const json = new Map();
   const methods = new Map();
   const uploads = new Map();
@@ -140,6 +150,8 @@ function watchJson(cdp, origin) {
       cached: Boolean(e.response.fromServiceWorker || e.response.fromDiskCache),
       type: e.type,
       postKB: round((uploads.get(e.requestId) ?? 0) / 1024, 1),
+      startMs: started.get(e.requestId) ?? since(),
+      endMs: null,
     };
     json.set(e.requestId, entry);
     state.requests.push(entry);
@@ -152,7 +164,9 @@ function watchJson(cdp, origin) {
   });
   cdp.on("Network.loadingFinished", (e) => {
     const entry = json.get(e.requestId);
-    if (entry) entry.wire = e.encodedDataLength ?? 0;
+    if (!entry) return;
+    entry.wire = e.encodedDataLength ?? 0;
+    entry.endMs = since();
   });
   cdp.on("Network.webSocketFrameReceived", (e) => {
     if (e.response?.opcode !== 1) return;
@@ -163,7 +177,12 @@ function watchJson(cdp, origin) {
     const tag = (text.match(/"_tag":"([^"]{1,60})"/) ?? [])[1] ?? "?";
     const id = (text.match(/"requestId":"?([^",]{1,40})/) ?? [])[1] ?? "";
     const key = `${methods.get(id) ?? "?"} ${tag}`;
-    const f = state.frames.get(key) ?? { frames: 0, bytes: 0, sample: text.slice(0, 160) };
+    const f = state.frames.get(key) ?? {
+      frames: 0,
+      bytes: 0,
+      sample: text.slice(0, 160),
+      firstMs: since(),
+    };
     f.frames += 1;
     f.bytes += bytes;
     state.frames.set(key, f);
@@ -179,6 +198,7 @@ function watchJson(cdp, origin) {
   cdp.on("Network.requestWillBeSent", (e) => {
     if (!e.request.url.startsWith(origin)) return;
     uploads.set(e.requestId, e.request.postData ? Buffer.byteLength(e.request.postData) : 0);
+    if (!started.has(e.requestId)) started.set(e.requestId, since());
   });
   return {
     reset() {
@@ -187,6 +207,8 @@ function watchJson(cdp, origin) {
       state.requests = [];
       state.frames = new Map();
       state.sent = 0;
+      state.t0 = performance.now();
+      started.clear();
     },
     read: () => ({
       jsonKB: round((state.http + state.ws) / 1024, 1),
@@ -214,6 +236,8 @@ function watchJson(cdp, origin) {
               encoding: r.encoding,
               cached: r.cached,
               postKB: r.postKB,
+              startMs: r.startMs,
+              endMs: r.endMs,
             })),
             frames: [...state.frames.entries()]
               .sort((a, b) => b[1].bytes - a[1].bytes)
@@ -223,6 +247,7 @@ function watchJson(cdp, origin) {
                 frames: f.frames,
                 KB: round(f.bytes / 1024, 1),
                 sample: f.sample,
+                firstMs: f.firstMs,
               })),
           }
         : {}),
@@ -263,6 +288,11 @@ async function journey(page, proxy, watcher, mark, start) {
   const visible = performance.now() - wallStart;
   const visibleWireKB = round((proxy.meter.down - m0.down + proxy.meter.up - m0.up) / 1024, 1);
   const settled = await waitQuiet(proxy, wallStart);
+  // The probe's own marks (page clock: ms since that page's navigation, so
+  // only comparable with visibleMs for full loads such as cold and reconnect).
+  const pageMarks = await page
+    .evaluate(() => Object.fromEntries(Object.entries(window.__perf?.marks ?? {})))
+    .catch(() => ({}));
   return {
     visibleMs: round(visible),
     settledMs: round(Math.max(settled, visible)),
@@ -271,6 +301,9 @@ async function journey(page, proxy, watcher, mark, start) {
     downKB: round((proxy.meter.down - m0.down) / 1024, 1),
     upKB: round((proxy.meter.up - m0.up) / 1024, 1),
     ...watcher.read(),
+    pageMarks: Object.fromEntries(
+      Object.entries(pageMarks).map(([name, at]) => [name, round(Number(at))]),
+    ),
   };
 }
 
