@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the test writes a temp profile/lock; there is no Effect file API in a unit test.
+import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import { expect, it } from "vite-plus/test";
+import { expect } from "vite-plus/test";
 
 import * as Net from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -71,30 +72,26 @@ const makeLayer = (input: { readonly ssWorks: boolean }) =>
     ),
   );
 
-it("falls back to ss when lsof is not installed, with pid and process name", async () => {
-  const program = Effect.gen(function* () {
+it.effect("falls back to ss when lsof is not installed, with pid and process name", () =>
+  Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    return yield* scanner.scan();
-  }).pipe(Effect.provide(makeLayer({ ssWorks: true })));
+    const found = yield* scanner.scan();
+    const server = found.find((entry) => entry.port === SS_PORT);
+    expect(server).toBeDefined();
+    expect(server?.processName).toBe("node");
+    expect(server?.pid).toBe(1234);
+    // The v6 loopback listener is local too.
+    expect(found.some((entry) => entry.port === 4000)).toBe(true);
+    // systemd-resolved's 127.0.0.53%lo is not a loopback dev server.
+    expect(found.some((entry) => entry.port === 53)).toBe(false);
+  }).pipe(Effect.provide(makeLayer({ ssWorks: true }))),
+);
 
-  const found = await Effect.runPromise(program);
-  const server = found.find((entry) => entry.port === SS_PORT);
-  expect(server).toBeDefined();
-  expect(server?.processName).toBe("node");
-  expect(server?.pid).toBe(1234);
-  // The v6 loopback listener is local too.
-  expect(found.some((entry) => entry.port === 4000)).toBe(true);
-  // systemd-resolved's 127.0.0.53%lo is not a loopback dev server.
-  expect(found.some((entry) => entry.port === 53)).toBe(false);
-});
-
-it("still probes common ports when neither lsof nor ss exists", async () => {
-  const program = Effect.gen(function* () {
+it.effect("still probes common ports when neither lsof nor ss exists", () =>
+  Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    return yield* scanner.scan();
-  }).pipe(Effect.provide(makeLayer({ ssWorks: false })));
-
-  // No listener is open on the curated ports in this test, so the answer is
-  // empty; what matters is that the scan completes instead of failing.
-  await expect(Effect.runPromise(program)).resolves.toEqual([]);
-});
+    // No listener is open on the curated ports in this test, so the answer is
+    // empty; what matters is that the scan completes instead of failing.
+    expect(yield* scanner.scan()).toEqual([]);
+  }).pipe(Effect.provide(makeLayer({ ssWorks: false }))),
+);

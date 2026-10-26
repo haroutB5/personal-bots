@@ -13,21 +13,21 @@
 // model is Sonnet 5.5, every provider home points inside the root, and the
 // server listens on 127.0.0.1 only. PIDs are only touched after
 // /proc/<pid>/cmdline still names the recorded binary and root.
-import fs from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 
 import * as proc from "./lib/proc.mjs";
 import { getPaths } from "./lib/paths.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
+const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const ROOT_PREFIX = "hbots-tw-";
 const RECORD = "throwaway.json";
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
-const FAKE_SOURCE = path.join(HERE, "..", "testing", "fake-claude");
+const FAKE_SOURCE = NodePath.join(HERE, "..", "testing", "fake-claude");
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -48,26 +48,26 @@ function rootFor(name) {
       `Name '${name}' must be 1 to 31 characters: lower-case letters, digits and dashes, starting with a letter or digit.`,
     );
   }
-  return path.join(os.tmpdir(), ROOT_PREFIX + name);
+  return NodePath.join(NodeOS.tmpdir(), ROOT_PREFIX + name);
 }
 
 const readRecord = (root) => {
   try {
-    return JSON.parse(fs.readFileSync(path.join(root, RECORD), "utf8"));
+    return JSON.parse(NodeFS.readFileSync(NodePath.join(root, RECORD), "utf8"));
   } catch {
     return null;
   }
 };
 const writeRecord = (root, value) =>
-  fs.writeFileSync(path.join(root, RECORD), `${JSON.stringify(value, null, 2)}\n`);
+  NodeFS.writeFileSync(NodePath.join(root, RECORD), `${JSON.stringify(value, null, 2)}\n`);
 
 function resolveBin(where) {
   const bases = [where];
-  if (/^[0-9a-f]{7,40}$/.test(where)) bases.push(path.join(getPaths({}).releasesDir, where));
+  if (/^[0-9a-f]{7,40}$/.test(where)) bases.push(NodePath.join(getPaths({}).releasesDir, where));
   for (const base of bases) {
     for (const relative of ["dist/bin.mjs", "apps/server/dist/bin.mjs"]) {
-      const candidate = path.resolve(base, relative);
-      if (fs.existsSync(candidate)) return candidate;
+      const candidate = NodePath.resolve(base, relative);
+      if (NodeFS.existsSync(candidate)) return candidate;
     }
   }
   throw new Error(
@@ -81,7 +81,7 @@ const isRunning = (record) =>
 
 function freePort() {
   return new Promise((resolve, reject) => {
-    const server = net.createServer();
+    const server = NodeNet.createServer();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address();
@@ -93,23 +93,26 @@ function freePort() {
 function writeFakeClaude(root) {
   const nodeExe = process.execPath;
   for (const persona of ["fakeok", "fakelimit"]) {
-    const dir = path.join(root, "fake", persona);
-    const pkg = path.join(dir, "node_modules", "@anthropic-ai", "claude-code");
-    fs.mkdirSync(pkg, { recursive: true });
-    fs.copyFileSync(path.join(FAKE_SOURCE, "cli.js"), path.join(pkg, "cli.js"));
-    fs.copyFileSync(path.join(FAKE_SOURCE, "package.json"), path.join(pkg, "package.json"));
-    const launcher = path.join(dir, "claude");
-    fs.writeFileSync(
-      launcher,
-      `#!/bin/sh\nexec ${JSON.stringify(nodeExe)} ${JSON.stringify(path.join(pkg, "cli.js"))} "$@"\n`,
+    const dir = NodePath.join(root, "fake", persona);
+    const pkg = NodePath.join(dir, "node_modules", "@anthropic-ai", "claude-code");
+    NodeFS.mkdirSync(pkg, { recursive: true });
+    NodeFS.copyFileSync(NodePath.join(FAKE_SOURCE, "cli.js"), NodePath.join(pkg, "cli.js"));
+    NodeFS.copyFileSync(
+      NodePath.join(FAKE_SOURCE, "package.json"),
+      NodePath.join(pkg, "package.json"),
     );
-    fs.chmodSync(launcher, 0o755);
+    const launcher = NodePath.join(dir, "claude");
+    NodeFS.writeFileSync(
+      launcher,
+      `#!/bin/sh\nexec ${JSON.stringify(nodeExe)} ${JSON.stringify(NodePath.join(pkg, "cli.js"))} "$@"\n`,
+    );
+    NodeFS.chmodSync(launcher, 0o755);
   }
 }
 
 function writeSettings(root) {
-  const fake = (persona) => path.join(root, "fake", persona, "claude");
-  const home = (name) => path.join(root, "homes", name);
+  const fake = (persona) => NodePath.join(root, "fake", persona, "claude");
+  const home = (name) => NodePath.join(root, "homes", name);
   const settings = {
     providers: {
       claudeAgent: { binaryPath: fake("fakeok"), homePath: home("claude") },
@@ -127,9 +130,9 @@ function writeSettings(root) {
       },
     },
   };
-  fs.mkdirSync(path.join(root, "userdata"), { recursive: true });
-  fs.writeFileSync(
-    path.join(root, "userdata", "settings.json"),
+  NodeFS.mkdirSync(NodePath.join(root, "userdata"), { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(root, "userdata", "settings.json"),
     `${JSON.stringify(settings, null, 2)}\n`,
   );
 }
@@ -138,13 +141,13 @@ function serverEnv(name, root, schedulersOff) {
   const env = {
     ...process.env,
     PERSONAL_SEED_MODEL: "claude-sonnet-5-5",
-    FAKE_CLAUDE_PID_DIR: path.join(root, "fake-pids"),
+    FAKE_CLAUDE_PID_DIR: NodePath.join(root, "fake-pids"),
     T3CODE_PERSONAL_BROWSER_HEADLESS: "1",
     T3CODE_AUTO_CONNECT: "false",
     T3CODE_ENVIRONMENT_LABEL: `throwaway ${name}`,
-    GROK_HOME: path.join(root, "homes", "grok"),
-    OPENCODE_DATA_DIR: path.join(root, "homes", "opencode"),
-    ANTIGRAVITY_DATA_DIR: path.join(root, "homes", "antigravity"),
+    GROK_HOME: NodePath.join(root, "homes", "grok"),
+    OPENCODE_DATA_DIR: NodePath.join(root, "homes", "opencode"),
+    ANTIGRAVITY_DATA_DIR: NodePath.join(root, "homes", "antigravity"),
   };
   if (schedulersOff) env.T3CODE_PERSONAL_SCHEDULERS = "off";
   return env;
@@ -168,11 +171,11 @@ async function waitUp(origin, pid, timeoutMs) {
 }
 
 function startServer({ name, root, bin, port, schedulersOff }) {
-  fs.mkdirSync(path.join(root, "fake-pids"), { recursive: true });
+  NodeFS.mkdirSync(NodePath.join(root, "fake-pids"), { recursive: true });
   for (const home of ["claude", "codex", "deepseek", "grok", "opencode", "antigravity"]) {
-    fs.mkdirSync(path.join(root, "homes", home), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(root, "homes", home), { recursive: true });
   }
-  const logFile = path.join(root, "server.log");
+  const logFile = NodePath.join(root, "server.log");
   const child = proc.spawnServe({
     nodeExe: process.execPath,
     binPath: bin,
@@ -188,10 +191,14 @@ function startServer({ name, root, bin, port, schedulersOff }) {
 
 function pairingLink(record) {
   const origin = `http://127.0.0.1:${record.port}`;
-  const result = spawnSync(process.execPath, [record.bin, "pair", "--base-dir", record.root], {
-    encoding: "utf8",
-    timeout: 60_000,
-  });
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [record.bin, "pair", "--base-dir", record.root],
+    {
+      encoding: "utf8",
+      timeout: 60_000,
+    },
+  );
   const token = /^\s*Token:\s*(\S+)/m.exec(`${result.stdout}\n${result.stderr}`);
   if (!token) {
     const text = `${result.stdout}\n${result.stderr}`.trim();
@@ -208,14 +215,14 @@ async function stopRecorded(record) {
 }
 
 function removeRoot(root) {
-  // fs.rmSync does not follow symlinks it removes, so a linked node_modules
+  // NodeFS.rmSync does not follow symlinks it removes, so a linked node_modules
   // inside the root is unlinked, never emptied.
-  fs.rmSync(root, { recursive: true, force: true });
+  NodeFS.rmSync(root, { recursive: true, force: true });
 }
 
 async function start({ name, release, port, json, schedulersOff, startTimeout = 300 }) {
   const root = rootFor(name);
-  if (fs.existsSync(root)) {
+  if (NodeFS.existsSync(root)) {
     throw new Error(
       `${root} already exists. Run stop --name ${name} first: every throwaway starts fresh.`,
     );
@@ -223,7 +230,7 @@ async function start({ name, release, port, json, schedulersOff, startTimeout = 
   const bin = resolveBin(release);
   const chosenPort = Number(port) > 0 ? Number(port) : await freePort();
   const origin = `http://127.0.0.1:${chosenPort}`;
-  fs.mkdirSync(root, { recursive: true });
+  NodeFS.mkdirSync(root, { recursive: true });
   writeFakeClaude(root);
   writeSettings(root);
   const { pid, logFile } = startServer({ name, root, bin, port: chosenPort, schedulersOff });
@@ -238,8 +245,8 @@ async function start({ name, release, port, json, schedulersOff, startTimeout = 
   };
   writeRecord(root, record);
   if (!(await waitUp(origin, pid, startTimeout * 1000))) {
-    const tail = fs.existsSync(logFile)
-      ? fs.readFileSync(logFile, "utf8").split(/\r?\n/).slice(-8).join("\n")
+    const tail = NodeFS.existsSync(logFile)
+      ? NodeFS.readFileSync(logFile, "utf8").split(/\r?\n/).slice(-8).join("\n")
       : "";
     if (proc.isAlive(pid)) await proc.stopProcessTree(pid);
     removeRoot(root);
@@ -264,7 +271,7 @@ async function start({ name, release, port, json, schedulersOff, startTimeout = 
     pairing,
     pid,
     version,
-    stop: `node ${path.join(HERE, "throwaway.mjs")} stop --name ${name}`,
+    stop: `node ${NodePath.join(HERE, "throwaway.mjs")} stop --name ${name}`,
   };
   if (json) console.log(JSON.stringify(info));
   else for (const [key, value] of Object.entries(info)) console.log(`${key}: ${value}`);
@@ -287,7 +294,7 @@ async function main() {
       return;
     case "stop": {
       const root = rootFor(name);
-      if (!fs.existsSync(root)) {
+      if (!NodeFS.existsSync(root)) {
         console.log(`No throwaway root for '${name}' (${root}). Nothing to do.`);
         return;
       }
@@ -347,10 +354,10 @@ async function main() {
     }
     case "list": {
       const rows = fs
-        .readdirSync(os.tmpdir())
+        .readdirSync(NodeOS.tmpdir())
         .filter((entry) => entry.startsWith(ROOT_PREFIX))
         .map((entry) => {
-          const root = path.join(os.tmpdir(), entry);
+          const root = NodePath.join(NodeOS.tmpdir(), entry);
           const record = readRecord(root);
           return {
             name: entry.slice(ROOT_PREFIX.length),
@@ -378,7 +385,7 @@ async function main() {
 
 function portListening(port) {
   return new Promise((resolve) => {
-    const socket = net.connect({ port, host: "127.0.0.1" });
+    const socket = NodeNet.connect({ port, host: "127.0.0.1" });
     socket.setTimeout(500);
     socket.once("connect", () => {
       socket.destroy();

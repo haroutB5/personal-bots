@@ -120,6 +120,9 @@ export default defineConfig({
       "dist-electron",
       "node_modules",
       "pnpm-lock.yaml",
+      // Vendored Linux release tooling (Astra's): plain-node style, with its
+      // own test suite in tools.test.mjs.
+      "scripts/personal/linux/dev-team-tools/**",
       "*.tsbuildinfo",
       "**/routeTree.gen.ts",
       "apps/mobile/android/**",
@@ -145,6 +148,9 @@ export default defineConfig({
       "dist-electron",
       "node_modules",
       "pnpm-lock.yaml",
+      // Vendored Linux release tooling (Astra's): plain-node style, with its
+      // own test suite in tools.test.mjs.
+      "scripts/personal/linux/dev-team-tools/**",
       "*.tsbuildinfo",
       "**/routeTree.gen.ts",
       "apps/mobile/android/**",

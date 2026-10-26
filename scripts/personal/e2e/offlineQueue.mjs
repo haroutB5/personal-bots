@@ -12,7 +12,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import * as NodeSqlite from "node:sqlite";
 
 import { expect } from "./expect.mjs";
 import { composer, newChatOnBotScreen, openBots, transcript } from "./lib.mjs";
@@ -76,7 +76,7 @@ function openDatabase(root) {
     }
   }
   return {
-    db: new DatabaseSync(NodePath.join(copyDir, "state.sqlite"), { readOnly: true }),
+    db: new NodeSqlite.DatabaseSync(NodePath.join(copyDir, "state.sqlite"), { readOnly: true }),
     copyDir,
   };
 }

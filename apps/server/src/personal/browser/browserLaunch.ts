@@ -33,7 +33,6 @@ import {
 } from "./browserShared.ts";
 import type { BrowserCore } from "./browserCore.ts";
 import {
-  browserModePinned,
   describeLaunchFailure as launchFailureDetail,
   discoverGraphicalSession,
   resolveBrowserHeadless,

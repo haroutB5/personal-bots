@@ -11,15 +11,15 @@
 // 3 something was left behind or the suite timed out. `--json` prints one line
 // with `journeys: [{id, ok, ms}]` and `failed`, the shape gate-evidence.mjs
 // reads.
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const THROWAWAY = path.join(HERE, "throwaway.mjs");
-const RUNNER = path.join(HERE, "..", "e2e", "run.mjs");
+const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const THROWAWAY = NodePath.join(HERE, "throwaway.mjs");
+const RUNNER = NodePath.join(HERE, "..", "e2e", "run.mjs");
 const SMOKE_FIVE = new Set([
   "bots-list-chat",
   "new-chat-named",
@@ -49,17 +49,19 @@ const args = parseArgs(process.argv.slice(2));
  * the wrong artifact.
  */
 function stagedReleaseForHead() {
-  const head = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout?.trim();
+  const head = NodeChildProcess.spawnSync("git", ["rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).stdout?.trim();
   if (!head) throw new Error("Not in a git checkout; pass --release.");
-  const releases = path.join(os.homedir(), ".personal-bots", "releases");
-  const candidates = fs.existsSync(releases)
-    ? fs.readdirSync(releases, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+  const releases = NodePath.join(NodeOS.homedir(), ".personal-bots", "releases");
+  const candidates = NodeFS.existsSync(releases)
+    ? NodeFS.readdirSync(releases, { withFileTypes: true }).filter((entry) => entry.isDirectory())
     : [];
   for (const entry of candidates) {
-    const dir = path.join(releases, entry.name);
-    const version = path.join(dir, "VERSION");
-    if (!fs.existsSync(version)) continue;
-    const text = fs.readFileSync(version, "utf8");
+    const dir = NodePath.join(releases, entry.name);
+    const version = NodePath.join(dir, "VERSION");
+    if (!NodeFS.existsSync(version)) continue;
+    const text = NodeFS.readFileSync(version, "utf8");
     if (!/^dirty=false$/m.test(text)) continue;
     if (!new RegExp(`^sha=${head.slice(0, 12)}`, "m").test(text)) continue;
     return dir;
@@ -83,7 +85,7 @@ const name =
     .toISOString()
     .replace(/[-:TZ.]/g, "")
     .slice(0, 14)}-${process.pid}`;
-const artifacts = args["artifacts-dir"] ?? path.join(os.tmpdir(), "hbots-e2e", name);
+const artifacts = args["artifacts-dir"] ?? NodePath.join(NodeOS.tmpdir(), "hbots-e2e", name);
 const wanted = args.journey
   ? args.journey
       .split(",")
@@ -104,7 +106,7 @@ const leftovers = [];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function runNode(script, scriptArgs, { timeout = 300_000 } = {}) {
-  return spawnSync(process.execPath, [script, ...scriptArgs], {
+  return NodeChildProcess.spawnSync(process.execPath, [script, ...scriptArgs], {
     encoding: "utf8",
     timeout,
     env: process.env,
@@ -113,8 +115,8 @@ function runNode(script, scriptArgs, { timeout = 300_000 } = {}) {
 
 const portListening = (port) =>
   new Promise((resolve) => {
-    const net = spawnSync("ss", ["-ltnH"], { encoding: "utf8" }).stdout ?? "";
-    resolve(net.split(/\r?\n/).some((line) => new RegExp(`[:.]${port}\\s`).test(line)));
+    const net = NodeChildProcess.spawnSync("ss", ["-ltnH"], { encoding: "utf8" }).stdout ?? "";
+    resolve(NodeNet.split(/\r?\n/).some((line) => new RegExp(`[:.]${port}\\s`).test(line)));
   });
 
 async function main() {
@@ -139,10 +141,12 @@ async function main() {
     server = JSON.parse(jsonLine);
     console.log(`e2e server ${name} at ${server.url} (release ${args.release})`);
 
-    const record = JSON.parse(fs.readFileSync(path.join(server.root, "throwaway.json"), "utf8"));
-    fs.mkdirSync(artifacts, { recursive: true });
-    const stdout = path.join(artifacts, "runner.out.txt");
-    const stderr = path.join(artifacts, "runner.err.txt");
+    const record = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(server.root, "throwaway.json"), "utf8"),
+    );
+    NodeFS.mkdirSync(artifacts, { recursive: true });
+    const stdout = NodePath.join(artifacts, "runner.out.txt");
+    const stderr = NodePath.join(artifacts, "runner.err.txt");
     const runnerArgs = [
       RUNNER,
       "--url",
@@ -161,14 +165,14 @@ async function main() {
       String(server.root),
     ];
     if (wanted) runnerArgs.push("--journeys", wanted.join(","));
-    const outFd = fs.openSync(stdout, "w");
-    const errFd = fs.openSync(stderr, "w");
-    const child = spawn(process.execPath, runnerArgs, {
+    const outFd = NodeFS.openSync(stdout, "w");
+    const errFd = NodeFS.openSync(stderr, "w");
+    const child = NodeChildProcess.spawn(process.execPath, runnerArgs, {
       stdio: ["ignore", outFd, errFd],
       env: process.env,
     });
-    fs.closeSync(outFd);
-    fs.closeSync(errFd);
+    NodeFS.closeSync(outFd);
+    NodeFS.closeSync(errFd);
     const runnerPid = child.pid;
 
     const finished = await Promise.race([
@@ -177,9 +181,9 @@ async function main() {
     ]);
     if (finished.timeout) {
       console.warn(`e2e suite is past ${suiteTimeout} s; stopping the runner and its browser.`);
-      const browserPidFile = path.join(artifacts, "browser.pid");
-      if (fs.existsSync(browserPidFile)) {
-        const browserPid = Number(fs.readFileSync(browserPidFile, "utf8").trim());
+      const browserPidFile = NodePath.join(artifacts, "browser.pid");
+      if (NodeFS.existsSync(browserPidFile)) {
+        const browserPid = Number(NodeFS.readFileSync(browserPidFile, "utf8").trim());
         if (Number.isInteger(browserPid) && browserPid > 0) {
           try {
             process.kill(-browserPid, "SIGKILL");
@@ -206,12 +210,12 @@ async function main() {
     } else {
       exit = finished.code ?? 2;
     }
-    if (fs.existsSync(stdout)) console.log(fs.readFileSync(stdout, "utf8").trimEnd());
-    if (fs.existsSync(stderr) && fs.statSync(stderr).size > 0) {
-      console.log(fs.readFileSync(stderr, "utf8").trimEnd());
+    if (NodeFS.existsSync(stdout)) console.log(NodeFS.readFileSync(stdout, "utf8").trimEnd());
+    if (NodeFS.existsSync(stderr) && NodeFS.statSync(stderr).size > 0) {
+      console.log(NodeFS.readFileSync(stderr, "utf8").trimEnd());
     }
-    const resultFile = path.join(artifacts, "result.json");
-    if (fs.existsSync(resultFile)) result = JSON.parse(fs.readFileSync(resultFile, "utf8"));
+    const resultFile = NodePath.join(artifacts, "result.json");
+    if (NodeFS.existsSync(resultFile)) result = JSON.parse(NodeFS.readFileSync(resultFile, "utf8"));
     if (exit !== 3) {
       if (!result) exit = 2;
       else if (result.ok) exit = 0;
@@ -227,8 +231,8 @@ async function main() {
       const line = `${stop.stdout}`.trim().split(/\r?\n/).filter(Boolean).slice(-2).join(" | ");
       if (line) console.log(line);
     }
-    const root = path.join(os.tmpdir(), `hbots-tw-${name}`);
-    if (fs.existsSync(root)) leftovers.push(`root ${root} still exists`);
+    const root = NodePath.join(NodeOS.tmpdir(), `hbots-tw-${name}`);
+    if (NodeFS.existsSync(root)) leftovers.push(`root ${root} still exists`);
     if (server) {
       if (await portListening(Number(new URL(server.url).port))) {
         leftovers.push(`port ${new URL(server.url).port} still listening`);
@@ -240,13 +244,13 @@ async function main() {
     console.log(`e2e LEFTOVERS: ${leftovers.join("; ")}`);
     if (exit === 0 || exit === 1) exit = 3;
   }
-  if (exit === 0 && fs.existsSync(artifacts)) {
-    fs.rmSync(artifacts, { recursive: true, force: true });
-    const parent = path.dirname(artifacts);
-    if (path.basename(parent) === "hbots-e2e" && fs.readdirSync(parent).length === 0) {
-      fs.rmSync(parent, { recursive: true, force: true });
+  if (exit === 0 && NodeFS.existsSync(artifacts)) {
+    NodeFS.rmSync(artifacts, { recursive: true, force: true });
+    const parent = NodePath.dirname(artifacts);
+    if (NodePath.basename(parent) === "hbots-e2e" && NodeFS.readdirSync(parent).length === 0) {
+      NodeFS.rmSync(parent, { recursive: true, force: true });
     }
-  } else if (fs.existsSync(artifacts)) {
+  } else if (NodeFS.existsSync(artifacts)) {
     console.log(`e2e artifacts kept for the failure: ${artifacts}`);
   }
   const seconds = Math.round(((Date.now() - startedAt) / 1000) * 10) / 10;
