@@ -10,6 +10,7 @@
 //  4. a send whose reply is lost on the way back (the server got it, the phone never heard) is not posted twice
 // "Exactly once" is checked in the server's own database, not only on screen.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -54,16 +55,35 @@ async function routeSocket(page) {
   return wire;
 }
 
-/** Reads the server's own database (read only): what actually reached the bot. */
+/**
+ * Reads the server's own database: what actually reached the bot.
+ *
+ * Never by opening the live files. On Linux a second process opening a WAL
+ * database that the server has mapped crashes the server (SIGBUS inside
+ * node:sqlite's `walFindFrame`), which is what happened to the live server on
+ * 26 Oct when another process opened it read-only. The three files are copied
+ * first and the copy is read, so the server's mapping is never touched.
+ */
 function openDatabase(root) {
   const file = NodePath.join(root, "userdata", "state.sqlite");
   if (!NodeFS.existsSync(file)) throw new Error(`no database at ${file}`);
-  return new DatabaseSync(file, { readOnly: true });
+  const copyDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-e2e-db-"));
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try {
+      NodeFS.copyFileSync(`${file}${suffix}`, NodePath.join(copyDir, `state.sqlite${suffix}`));
+    } catch {
+      // A missing -shm/-wal is normal on a just-checkpointed database.
+    }
+  }
+  return {
+    db: new DatabaseSync(NodePath.join(copyDir, "state.sqlite"), { readOnly: true }),
+    copyDir,
+  };
 }
 
 /** User messages of the chat with this title, oldest first, and how many turns each started. */
 export function userMessages(root, threadTitle) {
-  const db = openDatabase(root);
+  const { db, copyDir } = openDatabase(root);
   try {
     const thread = db
       .prepare(
@@ -91,6 +111,7 @@ export function userMessages(root, threadTitle) {
     }));
   } finally {
     db.close();
+    NodeFS.rmSync(copyDir, { recursive: true, force: true });
   }
 }
 
