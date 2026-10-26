@@ -108,13 +108,19 @@ describe("chatFilePreviewKind", () => {
     expect(chatFilePreviewKind("README.TXT")).toBe("text");
   });
 
-  it("leaves every non-text kind to its own action", () => {
-    expect(chatFilePreviewKind("shots/screen.png")).toBeNull();
-    expect(chatFilePreviewKind("docs/spec.pdf")).toBeNull();
-    expect(chatFilePreviewKind("bin/app.exe")).toBeNull();
-    expect(chatFilePreviewKind("src/a-b.md.bak")).toBeNull();
-    expect(chatFilePreviewKind("Makefile")).toBeNull();
-    expect(chatFilePreviewKind("")).toBeNull();
+  it("picks a view for every other kind instead of leaving it to fail", () => {
+    expect(chatFilePreviewKind("shots/screen.png")).toBe("image");
+    expect(chatFilePreviewKind("shots/photo.JPG")).toBe("image");
+    expect(chatFilePreviewKind("shots/a.webp")).toBe("image");
+    expect(chatFilePreviewKind("shots/a.gif")).toBe("image");
+    expect(chatFilePreviewKind("shots/logo.svg")).toBe("image");
+    expect(chatFilePreviewKind("docs/spec.pdf")).toBe("pdf");
+    expect(chatFilePreviewKind("out/page.html")).toBe("html");
+    expect(chatFilePreviewKind("bin/app.exe")).toBe("download");
+    expect(chatFilePreviewKind("backup.zip")).toBe("download");
+    expect(chatFilePreviewKind("src/a-b.md.bak")).toBe("other");
+    expect(chatFilePreviewKind("Makefile")).toBe("other");
+    expect(chatFilePreviewKind("")).toBe("other");
   });
 });
 

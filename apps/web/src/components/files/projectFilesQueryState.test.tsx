@@ -281,6 +281,66 @@ describe("project query refresh", () => {
     }
   });
 
+  it("reports a binary file so the preview can offer a download", async () => {
+    const readAtom = Atom.make(
+      Effect.fail(
+        new ProjectReadFileError({
+          cwd: "/repo",
+          relativePath: "file",
+          failure: "binary_file",
+        }),
+      ),
+    );
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(readAtom);
+    projectMocks.readFile.mockReturnValue(readAtom);
+    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+    atomHooks.registry = registry;
+
+    try {
+      await flushEffects();
+      reactHooks.beginRender();
+      const query = useProjectFileQuery(environmentId, "/repo", "file");
+      expect(query.isBinary).toBe(true);
+      expect(query.isProtected).toBe(false);
+      expect(query.isNotFile).toBe(false);
+    } finally {
+      unmount();
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
+
+  it("reports a protected file separately from a missing one", async () => {
+    const readAtom = Atom.make(
+      Effect.fail(
+        new ProjectReadFileError({
+          cwd: "/repo",
+          relativePath: "file",
+          failure: "protected_file",
+        }),
+      ),
+    );
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(readAtom);
+    projectMocks.readFile.mockReturnValue(readAtom);
+    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+    atomHooks.registry = registry;
+
+    try {
+      await flushEffects();
+      reactHooks.beginRender();
+      const query = useProjectFileQuery(environmentId, "/repo", "file");
+      expect(query.isProtected).toBe(true);
+      expect(query.isBinary).toBe(false);
+      expect(query.isNotFile).toBe(false);
+    } finally {
+      unmount();
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
+
   it("reports a directory read as not a file", async () => {
     const readAtom = Atom.make(
       Effect.fail(
