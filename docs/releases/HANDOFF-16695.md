@@ -27,7 +27,7 @@ No migration (112 to 112). Build staged with copied externals; nothing was activ
 
 ## Gate evidence
 
-- Commit: `ed294fbcf3dd22f82e9208a8cd9c26e6d8a574ac`.
-- Staged release: `ed294fbcf3dd` in `/home/harout/.personal-bots/releases/ed294fbcf3dd`, `1.66.95`, `externals=copied`, not active (`current.txt` stayed `da7ce4163864`). `dist/bin.mjs --version` prints `t3 v0.0.42`; `VERSION` records the same commit and branch.
-- Gate (`runGate` from `scripts/personal/node/lib/upstream.mjs`, `NODE_ENV=test`): PASS, exit 0. Server personal tests 2660 passed, 6 skipped, 0 failed in 196 files; server `tsc --noEmit` 0 errors; web personal tests 3055 passed, 0 failed in 267 files. Log: `/tmp/opencode/hbots-16695-gate.log`.
-- Build log: `/tmp/opencode/hbots-16695-build.log`, exit 0. Release notes are a docs-only commit after the build, so they do not change the staged artifact.
+- Commit: `39210b923e48` on `feat/hbots-linux-ops` (full: `39210b923e483cbb10c93b0111800f2f898a7eb6`).
+- Staged release: `39210b923e48` in `/home/harout/.personal-bots/releases/39210b923e48`, `1.66.95`, `externals=copied`, not active (`current.txt` stayed `da7ce4163864`). `VERSION` records `branch=feat/hbots-linux-ops`, `repo=/home/harout/Claude/AI/_wt/hbots-linux-ops`, `dirty=false`.
+- Gate (`runGate` from `scripts/personal/node/lib/upstream.mjs`, `NODE_ENV=test`, live source checkout at the commit): PASS, exit 0. Server personal tests 2660 passed, 6 skipped, 0 failed in 196 files; server `tsc --noEmit` 0 errors; web personal tests 3055 passed, 0 failed in 267 files. Log: `/tmp/opencode/hbots-16695-gate-final.log`.
+- Build log: `/tmp/opencode/hbots-16695-build-final.log`, exit 0. The release was built from the live source checkout so its `VERSION` names the real branch and repo for the next nightly preflight. Release notes are a docs-only commit after the build, so they do not change the staged artifact.
