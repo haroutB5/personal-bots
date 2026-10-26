@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { maybeApplyThreadTextPreviews } from "../personal/threadTextPreviews.ts";
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
 import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./Normalizer.ts";
 import {
@@ -92,9 +93,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           if (Option.isNone(snapshot)) {
             return yield* failEnvironmentNotFound("thread_not_found");
           }
-          return projectThreadDetailSnapshot(
-            snapshot.value,
-            args.payload.reasoningMessages === "true",
+          return maybeApplyThreadTextPreviews(
+            projectThreadDetailSnapshot(snapshot.value, args.payload.reasoningMessages === "true"),
+            args.payload.textPreviews === "true",
           );
         }),
       )

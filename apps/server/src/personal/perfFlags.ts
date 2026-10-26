@@ -22,7 +22,9 @@ export type ServerPerfOptimization =
   /** The Bots app's shell leaves out idle archived bot chats (personalShellSlim.ts). */
   | "shell-omit-archived"
   /** Thread snapshots drop a tool update whose completion has the same timestamp (ActivityPayloadProjection.ts). */
-  | "tool-update-tie-dedup";
+  | "tool-update-tie-dedup"
+  /** Thread reads that opt in send previews of finished reasoning and long tool commands (threadTextPreviews.ts). */
+  | "text-previews";
 
 export function serverPerfOptimizationOn(
   name: ServerPerfOptimization,

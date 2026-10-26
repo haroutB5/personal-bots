@@ -508,6 +508,8 @@ const EnvironmentOrchestrationShellSnapshotQuery = {
 
 const EnvironmentOrchestrationThreadSnapshotQuery = {
   reasoningMessages: Schema.optional(Schema.Literal("true")),
+  /** Like the thread subscription's `textPreviews`. */
+  textPreviews: Schema.optional(Schema.Literal("true")),
   turnLimit: Schema.optional(
     Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   ),

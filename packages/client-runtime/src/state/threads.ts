@@ -266,6 +266,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // pre-pagination server never sends unsupported window parameters.
   const paginationSupported = yield* Ref.make(false);
   const reasoningMessagesSupported = yield* Ref.make(false);
+  // Whether this subscription asked for previews (server capability and the
+  // loader's opt-in); older-page loads ask the same.
+  const textPreviewsWanted = yield* Ref.make(false);
   // An older page whose thread watermark is ahead of the live state, parked
   // until the subscription catches up (see mergeOlderPage's caller). At most
   // one can exist because loadOlderTurns no-ops while loadingOlder is true.
@@ -345,6 +348,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // finding). makeSubscribeInput re-sets it from the next session's config.
     yield* Ref.set(paginationSupported, false);
     yield* Ref.set(reasoningMessagesSupported, false);
+    yield* Ref.set(textPreviewsWanted, false);
     yield* SubscriptionRef.update(state, (current) => ({
       ...current,
       status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
@@ -669,6 +673,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       threadId,
       window,
       yield* Ref.get(reasoningMessagesSupported),
+      yield* Ref.get(textPreviewsWanted),
     );
     // Staleness check and merge run under the same lock as stream-item
     // application, so a revert/snapshot cannot land between them (TOCTOU
@@ -762,6 +767,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 threadResumeCompletionMarker?: boolean;
                 threadSnapshotPagination?: boolean;
                 reasoningMessages?: boolean;
+                textPreviews?: boolean;
               },
           ),
         );
@@ -772,6 +778,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         const supportsPagination = config.threadSnapshotPagination === true;
         const supportsReasoningMessages = config.reasoningMessages === true;
         yield* Ref.set(reasoningMessagesSupported, supportsReasoningMessages);
+        const wantsTextPreviews =
+          config.textPreviews === true && snapshotLoader.textPreviews?.() === true;
+        yield* Ref.set(textPreviewsWanted, wantsTextPreviews);
         yield* Ref.set(paginationSupported, supportsPagination);
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* markSynchronizing;
@@ -819,6 +828,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             threadId,
             supportsPagination ? { turnLimit: INITIAL_THREAD_USER_TURN_LIMIT } : undefined,
             supportsReasoningMessages,
+            wantsTextPreviews,
           );
           if (Option.isSome(httpSnapshot)) {
             yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
@@ -841,6 +851,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ...(canResume ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
           ...(supportsReasoningMessages ? { reasoningMessages: true as const } : {}),
+          ...(wantsTextPreviews ? { textPreviews: true as const } : {}),
           // The WS fallback snapshot (sent when afterSequence is missing or
           // the gap is too large) should be windowed the same as the HTTP
           // path; without this a resume failure re-downloads the full thread.

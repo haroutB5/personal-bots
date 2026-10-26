@@ -402,9 +402,16 @@ export function applyThreadDetailEvent(
       };
 
       let found = false;
-      const messages = thread.messages.map((entry) => {
-        if (entry.id !== message.id) return entry;
+      const messages = thread.messages.map((current) => {
+        if (current.id !== message.id) return current;
         found = true;
+        // A finished message with text is the whole text, so a preview a
+        // thread read sent (`textTruncated`) is replaced, not kept.
+        let entry = current;
+        if (entry.textTruncated !== undefined && !message.streaming && message.text.length > 0) {
+          const { textTruncated: _replaced, ...rest } = entry;
+          entry = rest;
+        }
         return {
           ...entry,
           text: message.streaming

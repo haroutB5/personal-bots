@@ -78,7 +78,11 @@ export type PerfOptimization =
   // The shell loaded at connect leaves out idle archived bot chats; a bot's chat
   // list, an open archived chat and search load theirs on demand
   // (lazyThreadShells.ts, 1.67.x); off: the full shell at every connect, as before.
-  | "shell-omit-archived";
+  | "shell-omit-archived"
+  // Chat opens get previews of finished reasoning and long tool commands
+  // outside a running turn; the classic timeline loads the rest on expand
+  // (threadFullText.ts, 1.67.x); off: whole text in every chat open, as before.
+  | "text-previews";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

@@ -1,6 +1,6 @@
 import { Connection } from "@t3tools/client-runtime/connection";
 import { makeShellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
-import { threadSnapshotLoaderLayer } from "@t3tools/client-runtime/state/threads";
+import { makeThreadSnapshotLoaderLayer } from "@t3tools/client-runtime/state/threads";
 import { pullRequestDiffLoaderLayer } from "@t3tools/client-runtime/state/pull-requests";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
@@ -19,7 +19,9 @@ const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
 );
 
 const snapshotLoaderLayer = Layer.mergeAll(
-  threadSnapshotLoaderLayer,
+  // Finished reasoning and long tool commands arrive as previews; the classic
+  // timeline loads the rest on expand (threadFullText.ts).
+  makeThreadSnapshotLoaderLayer({ textPreviews: () => perfOptimizationOn("text-previews") }),
   // The Bots app loads idle archived bot chats on demand (lazyThreadShells.ts).
   makeShellSnapshotLoaderLayer({
     omitArchivedBotChats: () => perfOptimizationOn("shell-omit-archived"),

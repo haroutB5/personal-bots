@@ -222,6 +222,8 @@ import {
   maybeSlimShellSnapshot,
   pickThreadShells,
 } from "./personal/personalShellSlim.ts";
+import { serverPerfOptimizationOn } from "./personal/perfFlags.ts";
+import { maybeApplyThreadTextPreviews, readThreadFullText } from "./personal/threadTextPreviews.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalVoiceSampleService from "./personal/voiceCalls/PersonalVoiceSampleService.ts";
@@ -2032,6 +2034,7 @@ const makeWsRpcLayer = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
+            ...(serverPerfOptimizationOn("text-previews") ? { textPreviews: true } : {}),
           };
         });
 
@@ -2528,9 +2531,9 @@ const makeWsRpcLayer = (
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
-                  snapshot: projectThreadDetailSnapshot(
-                    snapshot.value,
-                    input.reasoningMessages === true,
+                  snapshot: maybeApplyThreadTextPreviews(
+                    projectThreadDetailSnapshot(snapshot.value, input.reasoningMessages === true),
+                    input.textPreviews === true,
                   ),
                 }),
                 afterSnapshot,
@@ -3465,6 +3468,21 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new PersonalBotsError({
                     message: "Could not load the bot's chats.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalBotsThreadFullText]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsThreadFullText,
+            readThreadFullText(input).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.mapError(
+                (cause) =>
+                  new PersonalBotsError({
+                    message: "Could not load the full text.",
                     cause,
                   }),
               ),

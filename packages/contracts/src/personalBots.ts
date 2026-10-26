@@ -610,6 +610,27 @@ export const PersonalBotThreadShellsResult = Schema.Struct({
 });
 export type PersonalBotThreadShellsResult = typeof PersonalBotThreadShellsResult.Type;
 
+/** The whole text behind previews a thread read sent (see `textPreviews`). */
+export const PERSONAL_THREAD_FULL_TEXT_MAX = 50;
+
+export const PersonalThreadFullTextInput = Schema.Struct({
+  threadId: ThreadId,
+  messageIds: Schema.optionalKey(
+    Schema.Array(MessageId).check(Schema.isMaxLength(PERSONAL_THREAD_FULL_TEXT_MAX)),
+  ),
+  activityIds: Schema.optionalKey(
+    Schema.Array(Schema.String).check(Schema.isMaxLength(PERSONAL_THREAD_FULL_TEXT_MAX)),
+  ),
+});
+export type PersonalThreadFullTextInput = typeof PersonalThreadFullTextInput.Type;
+
+export const PersonalThreadFullTextResult = Schema.Struct({
+  messages: Schema.Array(Schema.Struct({ messageId: MessageId, text: Schema.String })),
+  /** Each activity's payload, slimmed like a thread read but without previews. */
+  activities: Schema.Array(Schema.Struct({ activityId: Schema.String, payload: Schema.Unknown })),
+});
+export type PersonalThreadFullTextResult = typeof PersonalThreadFullTextResult.Type;
+
 /** Deletes several chats, one at a time, each exactly as `deleteThread` would. */
 export const PersonalBotDeleteThreadsInput = Schema.Struct({
   threadIds: PersonalBotThreadIdBatch,
