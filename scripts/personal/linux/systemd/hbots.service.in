@@ -14,6 +14,11 @@ Environment=NODE_ENV=production
 # Migration 113 rewrites the stored Windows paths on the first Linux boot and
 # is recorded as applied. It must be set before the server ever starts.
 Environment="T3CODE_PATH_MAP=@PATH_MAP@"
+# The real OpenCode install comes first: ~/.local/bin/opencode is a mise
+# wrapper that calls `mise use -g` and fails under hbots' isolated XDG dirs.
+# The real Claude and Codex binaries come next for the same reason: a rewritten
+# mise config loses its trust record and every shim then refuses to start.
+Environment="PATH=@OPENCODE_BIN@@HOME@/.local/share/mise/installs/claude/latest:@HOME@/.local/share/mise/installs/codex/latest/bin:@HOME@/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:@HOME@/.local/bin"
 ExecStart=@NODE@ @REPO@/scripts/personal/node/hbots.mjs serve --root dev
 Restart=on-failure
 RestartSec=15

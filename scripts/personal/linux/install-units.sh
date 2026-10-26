@@ -19,6 +19,16 @@ AI_DIR="${HBOTS_AI_DIR:-$HOME/AI}"
 NODE_BIN="${HBOTS_NODE:-$(command -v node || true)}"
 PYTHON_BIN="${HBOTS_PYTHON:-$(command -v python3 || true)}"
 HOME_DIR="$HOME"
+# OpenCode 2's ~/.local/bin/opencode wrapper runs `mise use -g`, which rewrites
+# ~/.config/mise/config.toml; under the isolated XDG dirs hbots gives the agent
+# mise then has no trust record and the session dies. Prefer the real installed
+# binary on PATH so a fresh install never resolves to that wrapper.
+OPENCODE_BIN_DIR=""
+for candidate in \
+  "$HOME/.local/share/mise/installs/opencode/latest/node_modules/.bin" \
+  "$HOME/.local/share/mise/installs/opencode/current/node_modules/.bin"; do
+  if [ -x "$candidate/opencode" ]; then OPENCODE_BIN_DIR="$candidate:"; break; fi
+done
 PATH_MAP="${HBOTS_PATH_MAP:-C:/Users/Ht=$HOME;C:/Claude/AI=$AI_DIR}"
 PATH_MAP_EXPLICIT=0
 
@@ -66,6 +76,7 @@ render() {
       -e "s|@NODE@|$NODE_BIN|g" \
       -e "s|@PYTHON@|$PYTHON_BIN|g" \
       -e "s|@PATH_MAP@|$PATH_MAP|g" \
+      -e "s|@OPENCODE_BIN@|$OPENCODE_BIN_DIR|g" \
       -e "s|@HOME@|$HOME_DIR|g" "$1"
 }
 
@@ -102,14 +113,16 @@ done
 
 if [ "$DRY_RUN" = 1 ]; then
   echo "would run: systemctl --user daemon-reload"
-  [ "$ENABLE" = 1 ] && echo "would enable: ${CORE_UNITS[*]}"
+  [ "$ENABLE" = 1 ] && echo "would enable and start: ${CORE_UNITS[*]}"
   exit 0
 fi
 
 systemctl --user daemon-reload
 if [ "$ENABLE" = 1 ]; then
-  systemctl --user enable "${CORE_UNITS[@]}"
-  echo "Enabled: ${CORE_UNITS[*]}"
+  # --now matters: without it the timers and the docs server stay inactive
+  # until the next login, so scheduled work silently does not run after an
+  # install (26 Oct: docs-server and all four timers were enabled but dead).
+  systemctl --user enable --now "${CORE_UNITS[@]}"
+  echo "Enabled and started: ${CORE_UNITS[*]}"
   echo "Left disabled on purpose: ${OPTIONAL_UNITS[*]}"
-  echo "Start now with: systemctl --user start hbots.service"
 fi
