@@ -78,6 +78,7 @@ export function ConversationSidePanel({
       <ComputerScreen
         variant="panel"
         origin={{ botId, threadId }}
+        onOpenFiles={() => void navigate({ to: "/files" })}
         // No Back in the panel; kept for the screen's contract.
         onBackToChat={(target) =>
           void (target === null

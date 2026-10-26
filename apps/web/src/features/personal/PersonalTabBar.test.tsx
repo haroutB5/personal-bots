@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { PersonalTabBar } from "./PersonalTabBar";
 
+const ask = vi.hoisted(() => ({ open: false }));
+vi.mock("./computer/useComputerAsk", () => ({ useComputerAsk: () => ask.open }));
+
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, ...props }: { children: ReactNode }) => <a {...props}>{children}</a>,
 }));
@@ -36,6 +39,7 @@ describe("PersonalTabBar", () => {
   });
 
   afterEach(() => {
+    ask.open = false;
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -60,5 +64,17 @@ describe("PersonalTabBar", () => {
       "page",
       undefined,
     ]);
+  });
+
+  it("dots only the Computer tab while a bot is waiting on the owner there", () => {
+    expect(
+      renderBar("chats").filter((n) => n.props["data-testid"] === "computer-ask-dot"),
+    ).toHaveLength(0);
+    ask.open = true;
+    const nodes = renderBar("chats");
+    const links = nodes.filter((node) => node.type === "a");
+    expect(JSON.stringify(links[2])).toContain("computer-ask-dot");
+    expect(JSON.stringify(links[2])).toContain("a bot needs you");
+    expect(JSON.stringify([links[0], links[1], links[3]])).not.toContain("computer-ask-dot");
   });
 });
