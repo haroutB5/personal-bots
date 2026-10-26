@@ -37,6 +37,7 @@ import {
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
+import { readOtlpJsonBody } from "./observability/otlpRequestBody.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import {
@@ -328,7 +329,7 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
     const browserTraceCollector = yield* BrowserTraceCollector.BrowserTraceCollector;
     const httpClient = yield* HttpClient.HttpClient;
     const serialization = yield* OtlpSerialization.OtlpSerialization;
-    const bodyJson = cast<unknown, OtlpTracer.TraceData>(yield* request.json);
+    const bodyJson = cast<unknown, OtlpTracer.TraceData>(yield* readOtlpJsonBody(request));
 
     yield* Effect.try({
       try: () => decodeOtlpTraceRecords(bodyJson),
@@ -370,6 +371,8 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
       EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
       EnvironmentInternalError: HttpServerRespondable.toResponse,
       EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+      OtlpRequestBodyError: () =>
+        Effect.succeed(HttpServerResponse.text("Unreadable trace body.", { status: 400 })),
     }),
   ),
 );

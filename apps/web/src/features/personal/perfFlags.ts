@@ -82,7 +82,9 @@ export type PerfOptimization =
   // Chat opens get previews of finished reasoning and long tool commands
   // outside a running turn; the classic timeline loads the rest on expand
   // (threadFullText.ts, 1.67.x); off: whole text in every chat open, as before.
-  | "text-previews";
+  | "text-previews"
+  // Trace exports are sent gzipped (traceGzip.ts, 1.67.x); off: plain JSON.
+  | "trace-gzip";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {
