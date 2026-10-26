@@ -105,12 +105,12 @@ from that file, so the reported memory peaks are the lean ones.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=bc35dbc0b5107bf524b236fa4b5e4d2724cd6871 release=bc35dbc0b510 json-sha256=a8a30bc65f3912ccf72687a9129d109578756b2ab95a61432222b2d7bf516acf result=FAIL -->
+<!-- gate-evidence:begin sha=52d5ed1cc18b613cd52b1a61ae5bf10b0b349d00 release=52d5ed1cc18b json-sha256=6bc54cf93e8a9f8d5a6f59fd1713d33314c7b6b635ddc2aecfd9be733f3fe9f4 result=PASS -->
 
 - server-tests: PASS, exit 0
-- server-tsc: FAIL, exit 1
+- server-tsc: PASS, exit 0
 - web-tests: PASS, exit 0
-- web-tsc: FAIL, exit 1
+- web-tsc: PASS, exit 0
 - e2e: PASS, exit 0
 
 <!-- gate-evidence:end -->
