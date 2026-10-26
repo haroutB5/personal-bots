@@ -654,4 +654,60 @@ describe("BrowserLease", () => {
       }),
     );
   });
+
+  it.effect("a second bot waits in line instead of taking the lease", () =>
+    Effect.gen(function* () {
+      const lease = yield* BrowserLease.BrowserLease;
+      // A holds the browser.
+      yield* lease.runAgentOp(
+        { threadId: "thread-a", operation: "snapshot" },
+        Effect.succeed("a"),
+      );
+      // B's call starts, finds A's live lease, and takes its place in line.
+      const queued = yield* lease
+        .runAgentOp({ threadId: "thread-b", operation: "click" }, Effect.succeed("b"))
+        .pipe(Effect.exit, Effect.forkChild);
+      for (let turn = 0; turn < 100; turn++) {
+        if ((yield* lease.waiting).length > 0) break;
+        yield* Effect.yieldNow;
+      }
+      expect((yield* lease.waiting).map((entry) => entry.threadId)).toEqual(["thread-b"]);
+      // It never steals: A still owns the page.
+      expect((yield* lease.view).ownerId).toBe("thread-a");
+      // The 45 s call wait runs out with a sentence that says where it stands.
+      yield* TestClock.adjust(BrowserLease.BROWSER_QUEUE_WAIT_MS + 1);
+      const timedOut = yield* Fiber.join(queued);
+      expect(Exit.isFailure(timedOut)).toBe(true);
+      expect(rejectionReason(timedOut)).toBe("busy");
+      if (Exit.isFailure(timedOut)) {
+        const error = Cause.squash(timedOut.cause) as BrowserLease.BrowserLeaseRejected;
+        expect(error.message).toContain("number 1 in line");
+      }
+      // Its place survives the timeout, so a quick retry keeps it.
+      expect((yield* lease.waiting).map((entry) => entry.threadId)).toEqual(["thread-b"]);
+      // A's turn ends: the lease is released at once, not after 90 s.
+      yield* lease.releaseIfOwner("thread-a");
+      expect((yield* lease.view).ownerId).toBeNull();
+      // The retry now runs, and B owns the browser.
+      expect(
+        yield* lease.runAgentOp(
+          { threadId: "thread-b", operation: "snapshot" },
+          Effect.succeed("b-now"),
+        ),
+      ).toBe("b-now");
+      expect((yield* lease.view).ownerId).toBe("thread-b");
+    }).pipe(Effect.provide(leaseLayer)),
+  );
+
+  it.effect("releaseIfOwner never touches another thread's lease", () =>
+    Effect.gen(function* () {
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* lease.runAgentOp(
+        { threadId: "thread-a", operation: "snapshot" },
+        Effect.succeed("a"),
+      );
+      yield* lease.releaseIfOwner("thread-b");
+      expect((yield* lease.view).ownerId).toBe("thread-a");
+    }).pipe(Effect.provide(leaseLayer)),
+  );
 });

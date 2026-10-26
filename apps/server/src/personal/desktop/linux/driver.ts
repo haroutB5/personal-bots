@@ -80,6 +80,8 @@ export interface LinuxDesktopDriverOptions {
   readonly tempDir: string;
   /** Register the runtime stop chord (off in tests and throwaway roots). */
   readonly stopChord?: boolean;
+  /** A prebuilt helper; production builds it from the embedded source. */
+  readonly helperBinary?: string;
   readonly log?: (line: string) => void;
 }
 
@@ -118,7 +120,12 @@ export class LinuxDesktopDriver implements DesktopDriver {
     this.options = options;
     this.log = options.log ?? (() => undefined);
     this.capture = new LinuxScreenCapture(session, options.tempDir);
-    this.helper = new LinuxDesktopHelper(session, options.helperDir, this.layout);
+    this.helper = new LinuxDesktopHelper(
+      session,
+      options.helperDir,
+      this.layout,
+      options.helperBinary ?? null,
+    );
     // A helper crash is not the user taking control: the action fails and the
     // next one starts a fresh helper with a panic release. Only the stop chord
     // and the app's Stop end a bot.

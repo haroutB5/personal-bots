@@ -41,11 +41,14 @@ export class LinuxDesktopHelper {
 
   private readonly session: LinuxSession;
   private readonly dir: string;
+  /** A prebuilt or fake binary; production builds it from source once. */
+  private readonly binary: string | null;
 
-  constructor(session: LinuxSession, dir: string, layout = "us") {
+  constructor(session: LinuxSession, dir: string, layout = "us", binary: string | null = null) {
     this.session = session;
     this.dir = dir;
     this.layout = layout;
+    this.binary = binary;
   }
 
   onKill(listener: () => void): void {
@@ -65,7 +68,7 @@ export class LinuxDesktopHelper {
     this.ready = new Promise<void>((resolve, reject) => {
       let binary: string;
       try {
-        binary = ensureLinuxHelperBuilt(this.dir);
+        binary = this.binary ?? ensureLinuxHelperBuilt(this.dir);
       } catch (error) {
         this.ready = null;
         reject(error);
