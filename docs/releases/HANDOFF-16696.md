@@ -77,9 +77,9 @@ the probe so a suite that asserts the five-slot queueing is deterministic.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=a049a3c0d053f73b34fdc7dbe51797beb202dd87 release=a049a3c0d053 json-sha256=ed25478f837c30c1d75d811431ccaeff1912f655e29ef80c3073500458d1beaa result=FAIL -->
+<!-- gate-evidence:begin sha=a09cf35b6fc0056f0f57b0f50f50341e1dc64907 release=a09cf35b6fc0 json-sha256=5a825c7963c58483f6e83d523d0678d7ec0d46d8643f90ca652e645293af2478 result=PASS -->
 
-- server-tests: FAIL, exit 1
+- server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
 - web-tests: PASS, exit 0
 - web-tsc: PASS, exit 0
