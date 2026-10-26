@@ -59,7 +59,9 @@ shards cover exactly the files of `tsconfig.json`. Server shards keep `gitignore
 between runs. Both app `typecheck` scripts call `scripts/personal/node/typecheck-lean.mjs`; plain
 `tsc --noEmit` still works, exactly as strict, and still peaks at 6.6 GiB. Kill switches:
 `HBOTS_TYPECHECK=full`, `HBOTS_TYPECHECK_CHECKERS=N`, `HBOTS_TEST_WORKERS=default|N`.
-The build-diet report is `dev-team/qa/build-diet-20261026/RESULT.md`.
+The web config omits `maxWorkers` rather than passing `undefined` (the sharded typecheck is
+as strict as `tsc`, so `exactOptionalPropertyTypes` caught it). The build-diet report is
+`dev-team/qa/build-diet-20261026/RESULT.md`.
 
 ## Heavy jobs in their own memory scope (`perf/heavy-job-memory-scope`)
 
@@ -100,3 +102,15 @@ from that file, so the reported memory peaks are the lean ones.
   restarted by this work.
 - The full gates are recorded in the Gate evidence section below, on the staged release of this
   exact commit.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=bc35dbc0b5107bf524b236fa4b5e4d2724cd6871 release=bc35dbc0b510 json-sha256=a8a30bc65f3912ccf72687a9129d109578756b2ab95a61432222b2d7bf516acf result=FAIL -->
+
+- server-tests: PASS, exit 0
+- server-tsc: FAIL, exit 1
+- web-tests: PASS, exit 0
+- web-tsc: FAIL, exit 1
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
