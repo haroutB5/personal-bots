@@ -15,7 +15,7 @@ node tools/check-gate-evidence.mjs --version 1.2.3 --release 0123456789ab --repo
 --copy-externals` under the lock. It never activates. `heavy-job.sh` accepts an
 argument vector after `--`; use `bash -o pipefail -c '...'` for shell syntax.
 `--wait-seconds` defaults to 10800; timeout exits 75. All checkouts share
-`/tmp/hbots-heavy-job.lock` on this single-user laptop. Do not unlink it: a job
+`/home/harout/.personal-bots/run/omarchy-heavy.lock` on this single-user laptop. Do not unlink it: a job
 inherits the locked descriptor, preventing overlap even if its wrapper exits.
 The file's text identifies the last holder; it is current only while locked.
 The wrapper sets absolute nice 10 and ionice idle. Nested calls retaining fd 9

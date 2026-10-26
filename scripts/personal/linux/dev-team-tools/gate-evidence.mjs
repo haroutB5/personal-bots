@@ -7,7 +7,7 @@ import {options,git,hash,gatePass,validate} from './gate-common.mjs';
 let v;
 try {v=options()} catch(e){console.error(e.message);process.exit(2)}
 const here=path.dirname(fileURLToPath(import.meta.url));
-if(process.env.HBOTS_HEAVY_JOB_HELD!=='1' || (()=>{try{return fs.readlinkSync('/proc/self/fd/9')!=='/tmp/hbots-heavy-job.lock'}catch{return true}})()) {
+if(process.env.HBOTS_HEAVY_JOB_HELD!=='1' || (()=>{try{return fs.readlinkSync('/proc/self/fd/9')!=='/home/harout/.personal-bots/run/omarchy-heavy.lock'}catch{return true}})()) {
   const r=spawnSync('bash',[path.join(here,'heavy-job.sh'),'--label',`gate evidence ${v.release}`,'--',process.execPath,fileURLToPath(import.meta.url),...process.argv.slice(2)],{stdio:'inherit'});
   process.exit(r.status??1);
 }

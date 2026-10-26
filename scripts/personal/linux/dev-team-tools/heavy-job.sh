@@ -14,7 +14,7 @@ done
 [[ -n "$label" && $# -gt 0 && "$wait_seconds" =~ ^[0-9]+$ ]] || { echo 'Label and command required; wait must be seconds.' >&2; exit 2; }
 cd -- "$workdir"
 # A single machine path, independent of HOME, cwd, repo and XDG isolation.
-lock=/tmp/hbots-heavy-job.lock
+lock=/home/harout/.personal-bots/run/omarchy-heavy.lock
 if [[ -L "$lock" || ( -e "$lock" && ! -O "$lock" ) ]]; then
   echo 'Unsafe lock owner or symlink; ask the owner to provision the shared lock.' >&2; exit 2
 fi
