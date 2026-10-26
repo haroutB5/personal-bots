@@ -8,7 +8,11 @@ equivalent, used once the hbots laptop runs Omarchy (Arch + Hyprland).
 ```
 node/hbots.mjs            one CLI: build, activate, start, serve, stop, restart,
                           status, smoke, backup, prune, sync, units
-node/lib/*.mjs            paths, process identity, releases, build, smoke, backup
+throwaway.mjs            fresh-root throwaway server (start|stop|down|up|pair|list)
+e2e-smoke.mjs            the five phone journeys against a staged release
+gates-linux.json         the Linux fork gate definitions for gate-evidence.mjs
+lib/evidence.mjs         release guard: notes check + gate-evidence check
+lib/*.mjs                paths, process identity, releases, build, smoke, backup
 node/test/*.test.mjs      node:test suites (18 tests, no network, temp roots)
 linux/systemd/*.in        user unit templates (all laptop services)
 linux/install-units.sh    renders the templates with this machine's paths
@@ -21,6 +25,8 @@ made by either toolchain is readable by the other.
 ## Everyday commands
 
 ```
+node scripts/personal/node/throwaway.mjs start --name t1 --release <sha12> --json
+node scripts/personal/node/e2e-smoke.mjs --release <sha12> --json
 node scripts/personal/node/hbots.mjs status
 node scripts/personal/node/hbots.mjs build --copy-externals
 node scripts/personal/node/hbots.mjs restart --release <sha12>
@@ -28,6 +34,10 @@ node scripts/personal/node/hbots.mjs smoke --expect-release <sha12>
 node scripts/personal/node/hbots.mjs backup --keep 1
 node scripts/personal/node/hbots.mjs prune --keep 5          # dry run
 ```
+
+`activate` and `restart --release` refuse a release whose gate evidence or
+release notes do not pass; `release --version x.y.z --release <sha12> [--activate]`
+is the explicit guard-then-activate path. A rollback is exempt.
 
 `build` only stages. `activate` (or `restart --release`) is the one switch that
 writes `releases/current.txt`, exactly like the PowerShell tools.
@@ -64,16 +74,16 @@ cycle plus `serve` against a fake server on a free port.
 
 `bash scripts/personal/linux/install-units.sh` renders and enables the core set:
 
-| Unit | Schedule / behaviour |
-|---|---|
-| `hbots.service` | server, restarts on failure, `Nice=-5`, CPUWeight 200 |
-| `hbots-upstream-sync.timer` | Saturday 09:00 local, oneshot with binary rollback |
-| `hbots-nightly-updates.timer` | daily 04:00 local, dependency update with rollback |
-| `tennis-poll.timer` / `tennis-book.timer` | Friday 12:00 / 12:05 local |
-| `matchday-sofascore-fetcher.service` | long-running, restarts, same SS_* env as Windows |
-| `docs-server.service` | dev-team pages on 8765, read-only |
-| `urgot.service` | optional: skipped until the `urgot` launcher exists |
-| `cloudflared.service` | optional: skipped when hbots runs its own tunnel |
+| Unit                                      | Schedule / behaviour                                  |
+| ----------------------------------------- | ----------------------------------------------------- |
+| `hbots.service`                           | server, restarts on failure, `Nice=-5`, CPUWeight 200 |
+| `hbots-upstream-sync.timer`               | Saturday 09:00 local, oneshot with binary rollback    |
+| `hbots-nightly-updates.timer`             | daily 04:00 local, dependency update with rollback    |
+| `tennis-poll.timer` / `tennis-book.timer` | Friday 12:00 / 12:05 local                            |
+| `matchday-sofascore-fetcher.service`      | long-running, restarts, same SS_* env as Windows      |
+| `docs-server.service`                     | dev-team pages on 8765, read-only                     |
+| `urgot.service`                           | optional: skipped until the `urgot` launcher exists   |
+| `cloudflared.service`                     | optional: skipped when hbots runs its own tunnel      |
 
 Install with explicit paths when they differ from `~/AI` and PATH:
 

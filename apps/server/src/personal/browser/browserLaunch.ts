@@ -27,6 +27,7 @@ import {
   PAGE_INFO_REFRESH_MS,
   PHONE_DEVICE_SCALE_FACTOR,
   PersonalBrowserLaunchError,
+  clearStaleProfileLock,
   detectProfileLock,
   encodeViewerMessage,
   firstLine,
@@ -294,6 +295,19 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
         runtime.detail = null;
         runtime.lockedByPid = null;
         yield* notify;
+        // A killed Chrome (a crash, or the server's own teardown) leaves the
+        // POSIX singleton files behind; clear them only when the process they
+        // name has exited, so a real second instance is still reported.
+        const clearedStaleLock = yield* Effect.promise(() =>
+          clearStaleProfileLock(profileDir).catch(() => false),
+        );
+        if (clearedStaleLock) {
+          yield* Effect.logInfo("Cleared a stale browser profile lock (its process had exited).");
+        }
+        yield* Effect.logInfo("Starting the shared browser", {
+          headless: options.headless,
+          executablePath: options.executablePath ?? "(discovered)",
+        });
         const exit = yield* Effect.exit(
           Effect.tryPromise({
             try: () =>

@@ -11,9 +11,24 @@ import { fileURLToPath } from "node:url";
 import { defaultPort, getPaths, pbHome, repoRootFromScript } from "./lib/paths.mjs";
 import { ensureDirs, loadRepoEnv, log, readJson, warn } from "./lib/util.mjs";
 import * as proc from "./lib/proc.mjs";
-import { activeReleaseName, pruneReleases, resolveRelease, selectPrunable, setActiveRelease } from "./lib/release.mjs";
+import {
+  activeReleaseName,
+  pruneReleases,
+  resolveRelease,
+  selectPrunable,
+  setActiveRelease,
+} from "./lib/release.mjs";
+import { assertReleaseReady, isOlderRelease } from "./lib/evidence.mjs";
 import { backupRoot } from "./lib/backup.mjs";
-import { describeStatus, formatVersionFile, restartServer, serveForeground, startServer, stopServer, systemdUnitActive } from "./lib/server.mjs";
+import {
+  describeStatus,
+  formatVersionFile,
+  restartServer,
+  serveForeground,
+  startServer,
+  stopServer,
+  systemdUnitActive,
+} from "./lib/server.mjs";
 import { runSmoke } from "./lib/smoke.mjs";
 import { stageRelease } from "./lib/build.mjs";
 import { upstreamSync } from "./lib/upstream.mjs";
@@ -26,7 +41,8 @@ const COMMANDS = `
 hbots ops CLI
 
   build      stage a release (default: no activation)
-  activate   point current.txt at a release
+  activate   point current.txt at a release (refused without gate evidence)
+  release    check a staged release's notes and gate evidence, then activate it
   start      start the server detached against a data root
   serve      run the server in the foreground (systemd ExecStart)
   stop       stop the recorded server
@@ -68,6 +84,9 @@ function parse(argv) {
       "log-file": { type: "string" },
       "log-from-byte": { type: "string", default: "-1" },
       "expect-release": { type: "string" },
+      version: { type: "string" },
+      "main-sha": { type: "string" },
+      "no-evidence-check": { type: "boolean", default: false },
       dryrun: { type: "boolean", default: true },
       apply: { type: "boolean", default: false },
       mode: { type: "string", default: "upstream" },
@@ -94,6 +113,42 @@ function assertMutationAllowed(paths) {
   }
 }
 
+/**
+ * Refuses to activate a release that has no clean notes and no passing gate
+ * evidence for its own commit and artifact. A rollback (an older version than
+ * the active one) is exempt: refusing it would keep a bad release live, and an
+ * older release predates the Linux evidence format. `--no-evidence-check` is
+ * the explicit override, never the default.
+ */
+function assertActivationAllowed(values, paths) {
+  if (values["no-evidence-check"] || !values.release) return;
+  const current = activeReleaseName(paths);
+  if (current === values.release) return;
+  const releaseVersion = formatVersionFile(path.join(paths.releasesDir, values.release, "VERSION"));
+  const version =
+    values.version ??
+    releaseVersion.version ??
+    (() => {
+      throw new Error(`Release ${values.release} has no version in VERSION; pass --version x.y.z.`);
+    })();
+  if (current) {
+    const currentVersion = formatVersionFile(
+      path.join(paths.releasesDir, current, "VERSION"),
+    ).version;
+    if (currentVersion && isOlderRelease(version, currentVersion)) {
+      log(`Rollback to ${values.release} (${version}); evidence check not required.`);
+      return;
+    }
+  }
+  assertReleaseReady({
+    repoRoot,
+    version,
+    release: values.release,
+    commit: values["main-sha"],
+  });
+  log(`Gate evidence PASS for ${values.release} (${version}).`);
+}
+
 function printStatus(status, asJson) {
   if (asJson) {
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
@@ -105,10 +160,15 @@ function printStatus(status, asJson) {
   log(`active      ${status.active ?? "(none)"}`);
   log(`running     ${status.alive ? `yes, pid ${state.pid}, release ${state.release}` : "no"}`);
   if (state) log(`state       ${pathsFor({ root: status.root, home: status.home }).stateFile}`);
-  if (status.runtime) log(`origin      ${status.runtime.origin ?? "?"} (started ${status.runtime.startedAt ?? "?"})`);
+  if (status.runtime)
+    log(`origin      ${status.runtime.origin ?? "?"} (started ${status.runtime.startedAt ?? "?"})`);
   if (status.version) {
-    log(`version     ${status.version.version ?? "?"}  release ${status.version.release ?? "?"}  sha ${status.version.sha ?? "?"}`);
-    log(`built       ${status.version.builtAt ?? "?"}  externals ${status.version.externals ?? "?"}`);
+    log(
+      `version     ${status.version.version ?? "?"}  release ${status.version.release ?? "?"}  sha ${status.version.sha ?? "?"}`,
+    );
+    log(
+      `built       ${status.version.builtAt ?? "?"}  externals ${status.version.externals ?? "?"}`,
+    );
   }
 }
 
@@ -138,13 +198,42 @@ async function main() {
       }
       log("");
       log(`Release staged: ${staged.dir}`);
-      log(`  ${staged.version}, ${staged.branch}@${staged.sha}, built ${staged.builtAt}, externals=${staged.externalsMode}`);
-      log(values.activate ? "  Active release updated (--activate)." : `  Staged, not activated. Activate with: activate --release ${staged.name}`);
+      log(
+        `  ${staged.version}, ${staged.branch}@${staged.sha}, built ${staged.builtAt}, externals=${staged.externalsMode}`,
+      );
+      log(
+        values.activate
+          ? "  Active release updated (--activate)."
+          : `  Staged, not activated. Activate with: activate --release ${staged.name}`,
+      );
+      return 0;
+    }
+    case "release": {
+      assertMutationAllowed(paths);
+      if (!values.release) throw new Error("release needs --release <name>.");
+      if (!values.version) throw new Error("release needs --version x.y.z.");
+      assertActivationAllowed({ ...values, "no-evidence-check": false }, paths);
+      if (!values.activate) {
+        log(
+          `Guards PASS for ${values.release} (${values.version}); not activated. Pass --activate to switch to it.`,
+        );
+        return 0;
+      }
+      const result = await restartServer({
+        paths,
+        repoRoot,
+        releaseName: values.release,
+        keepReleases: values.keep ? Number(values.keep) : 5,
+        viaSystemd: values["no-systemd"] ? false : null,
+        nodeExe,
+      });
+      log(`Personal Bots restarted: pid ${result.state.pid}, release ${result.state.release}.`);
       return 0;
     }
     case "activate": {
       assertMutationAllowed(paths);
       if (!values.release) throw new Error("activate needs --release <name>.");
+      assertActivationAllowed(values, paths);
       const release = setActiveRelease(paths, values.release);
       log(`Active release set to ${release.name}.`);
       return 0;
@@ -152,11 +241,22 @@ async function main() {
     case "start": {
       assertMutationAllowed(paths);
       const port = values.port ? Number(values.port) : defaultPort(paths.root);
-      const result = await startServer({ paths, repoRoot, releaseName: values.release, nodeExe, port, waitMs: 60000 });
+      const result = await startServer({
+        paths,
+        repoRoot,
+        releaseName: values.release,
+        nodeExe,
+        port,
+        waitMs: 60000,
+      });
       if (result.alreadyRunning) {
-        log(`Personal Bots is already running (pid ${result.state.pid}, release ${result.state.release}).`);
+        log(
+          `Personal Bots is already running (pid ${result.state.pid}, release ${result.state.release}).`,
+        );
       } else {
-        log(`Personal Bots started: pid ${result.state.pid}, release ${result.state.release}, root ${paths.root}, ready=${result.ready}`);
+        log(
+          `Personal Bots started: pid ${result.state.pid}, release ${result.state.release}, root ${paths.root}, ready=${result.ready}`,
+        );
         log(`Log: ${result.logFile}`);
       }
       return 0;
@@ -168,12 +268,14 @@ async function main() {
     case "stop": {
       assertMutationAllowed(paths);
       const result = await stopServer({ paths });
-      if (result.stopped) log(`Stopped Personal Bots (pid ${result.pid}, release ${result.release}).`);
+      if (result.stopped)
+        log(`Stopped Personal Bots (pid ${result.pid}, release ${result.release}).`);
       else log(`Personal Bots is not running (${result.reason}).`);
       return 0;
     }
     case "restart": {
       assertMutationAllowed(paths);
+      assertActivationAllowed(values, paths);
       const result = await restartServer({
         paths,
         repoRoot,
@@ -207,8 +309,15 @@ async function main() {
     }
     case "backup": {
       assertMutationAllowed(paths);
-      const result = backupRoot({ paths, keep: values.keep ? Number(values.keep) : 1, nodeExe, snapshotScript: SNAPSHOT_SCRIPT });
-      log(`Backup written: ${result.target} (${result.timings.sizeMb} MB; ${result.items.join(", ")})`);
+      const result = backupRoot({
+        paths,
+        keep: values.keep ? Number(values.keep) : 1,
+        nodeExe,
+        snapshotScript: SNAPSHOT_SCRIPT,
+      });
+      log(
+        `Backup written: ${result.target} (${result.timings.sizeMb} MB; ${result.items.join(", ")})`,
+      );
       if (result.pruned.length) log(`Pruned: ${result.pruned.join(", ")}`);
       return 0;
     }
@@ -223,13 +332,15 @@ async function main() {
         dryRun: !values.apply,
       });
       if (!prunable.length) log("No releases to prune.");
-      else if (!values.apply) log(`Dry run: ${prunable.length} release(s) would be removed. Add --apply to remove them.`);
+      else if (!values.apply)
+        log(`Dry run: ${prunable.length} release(s) would be removed. Add --apply to remove them.`);
       return 0;
     }
     case "sync": {
       assertMutationAllowed(paths);
       const dryRun = !values.apply;
-      if (!["upstream", "updates"].includes(values.mode)) throw new Error("--mode must be upstream or updates.");
+      if (!["upstream", "updates"].includes(values.mode))
+        throw new Error("--mode must be upstream or updates.");
       const result = await upstreamSync({
         repoRoot,
         paths,
@@ -247,7 +358,9 @@ async function main() {
       const script = path.join(repoRoot, "scripts", "personal", "linux", "install-units.sh");
       if (!fs.existsSync(script)) throw new Error(`Missing ${script}`);
       const { spawnSync } = await import("node:child_process");
-      const result = spawnSync("bash", [script, ...(values.apply ? [] : ["--dry-run"])], { stdio: "inherit" });
+      const result = spawnSync("bash", [script, ...(values.apply ? [] : ["--dry-run"])], {
+        stdio: "inherit",
+      });
       return result.status ?? 1;
     }
     case "version": {

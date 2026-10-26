@@ -1,11 +1,13 @@
 // Runs the phone e2e smoke journeys against one throwaway server.
-//   node run.mjs --url <http://127.0.0.1:port> --pair <pairing link> --bin <dist\bin.mjs> --out <dir>
+//   node run.mjs --url <http://127.0.0.1:port> --pair <pairing link> --bin <dist/bin.mjs> --out <dir>
 //                [--journeys id,id]
-//                [--name <throwaway name> --tw <throwaway-server.ps1> --root <its root>]  (journeys that stop and
-//                restart the server, e.g. offline-queue, need these three; --bin lets a journey mint a fresh pairing link)
+//                [--name <throwaway name> --tw <throwaway-server.ps1> --root <its root>]  (Windows)
+//                [--name <throwaway name> --tw-node <throwaway.mjs> --root <its root>]    (Linux)
+//                (journeys that stop and restart the server, e.g. offline-queue, need these three;
+//                --bin lets a journey mint a fresh pairing link)
 // The browser is Brave, from the installed location or E2E_BROWSER_EXECUTABLE.
-// Normally started by scripts\personal\e2e-smoke.ps1, which owns the server (start, stop, root
-// deletion). Exit code: 0 all passed, 1 a journey failed, 2 setup failed.
+// Normally started by scripts/personal/e2e-smoke.ps1 (Windows) or node/e2e-smoke.mjs (Linux), which
+// own the server (start, stop, root deletion). Exit code: 0 all passed, 1 a journey failed, 2 setup failed.
 // A journey also fails on any uncaught page error or unhandled rejection that is not on the explicit
 // allowlist in page-errors.mjs (empty by default).
 import * as NodeFS from "node:fs";
@@ -69,23 +71,38 @@ const selected = wanted
 
 /**
  * Takes the throwaway server away and brings it back (same root, same port) for a journey that needs the
- * laptop to disappear. Only the recorded PID is stopped, by throwaway-server.ps1 itself.
+ * laptop to disappear. Only the recorded PID is stopped, by the throwaway tool itself: the PowerShell
+ * script on Windows, `throwaway.mjs` on Linux (`--tw-node`).
  */
 function serverControl() {
-  if (!args.name || !args.tw) return null;
+  if (!args.name) return null;
+  if (!args.tw && !args["tw-node"]) return null;
   const run = (flag) => {
-    const result = NodeChildProcess.spawnSync(
-      "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", args.tw, flag, args.name],
-      { encoding: "utf8", timeout: 240_000 },
-    );
+    const [command, commandArgs] = args["tw-node"]
+      ? [process.execPath, [args["tw-node"], flag, "--name", args.name]]
+      : [
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            args.tw,
+            `-${flag[0].toUpperCase()}${flag.slice(1)}`,
+            args.name,
+          ],
+        ];
+    const result = NodeChildProcess.spawnSync(command, commandArgs, {
+      encoding: "utf8",
+      timeout: 240_000,
+    });
     if (result.status !== 0) {
       throw new Error(
-        `throwaway-server.ps1 ${flag} ${args.name} failed (exit ${result.status}): ${(result.stdout + result.stderr).trim().slice(-300)}`,
+        `throwaway ${flag} ${args.name} failed (exit ${result.status}): ${(result.stdout + result.stderr).trim().slice(-300)}`,
       );
     }
   };
-  return { down: async () => run("-Down"), up: async () => run("-Up") };
+  return { down: async () => run("down"), up: async () => run("up") };
 }
 const server = serverControl();
 

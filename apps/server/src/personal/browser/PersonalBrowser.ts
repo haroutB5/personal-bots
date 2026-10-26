@@ -43,6 +43,7 @@ import { makeBrowserLifecycle } from "./browserLifecycle.ts";
 import { makeBrowserOperations } from "./browserOperations.ts";
 import { makeBrowserTabs } from "./browserTabs.ts";
 import { makeBrowserViewers } from "./browserViewers.ts";
+import { resolveBrowserHeadless } from "./headlessMode.ts";
 
 export {
   CONTROL_GRACE_MS,
@@ -167,8 +168,10 @@ export interface PersonalBrowserOptions {
 }
 
 /**
- * Headed by default so the user can sign in on the laptop.
- * `T3CODE_PERSONAL_BROWSER_HEADLESS=1` runs headless. The shared browser is
+ * Headed by default so the user can sign in on the laptop; a Linux host with no
+ * graphical session (a systemd service without DISPLAY) runs headless instead
+ * of failing, see `headlessMode.ts`. `T3CODE_PERSONAL_BROWSER_HEADLESS=1` runs
+ * headless. The shared browser is
  * Brave: the installed Brave is discovered when no path is given, and
  * `T3CODE_PERSONAL_BROWSER_EXECUTABLE` overrides it with another Brave build.
  * Chrome is never used as a fallback.
@@ -197,7 +200,7 @@ const controlGraceMsFromEnvironment = (value: string | undefined): number | unde
 
 export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   driver: makePlaywrightDriver(),
-  headless: /^(1|true|yes)$/i.test(process.env.T3CODE_PERSONAL_BROWSER_HEADLESS ?? ""),
+  headless: resolveBrowserHeadless(process.env),
   executablePath: process.env.T3CODE_PERSONAL_BROWSER_EXECUTABLE?.trim() || undefined,
   // Kill switch: T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY=off stops the stream log lines.
   streamTelemetry: process.env.T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY?.trim() !== "off",

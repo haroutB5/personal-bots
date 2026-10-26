@@ -125,6 +125,7 @@ import Migration0110 from "./Migrations/110_PersonalVoiceCallLeases.ts";
 import Migration0111 from "./Migrations/111_PersonalVoiceCallSummary.ts";
 import Migration0112 from "./Migrations/112_ProviderSessionHistory.ts";
 import Migration0113 from "./Migrations/113_LinuxPathRewrite.ts";
+import Migration0114 from "./Migrations/114_LinuxInstructionPaths.ts";
 import MigrationUpstream0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import MigrationUpstream0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
@@ -255,6 +256,7 @@ const migrationEntries = [
   [111, "PersonalVoiceCallSummary", Migration0111],
   [112, "ProviderSessionHistory", Migration0112],
   [113, "LinuxPathRewrite", Migration0113],
+  [114, "LinuxInstructionPaths", Migration0114],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

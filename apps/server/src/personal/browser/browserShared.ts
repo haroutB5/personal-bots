@@ -214,27 +214,75 @@ export const looksLikeLoginPage = (url: string): boolean => {
   }
 };
 
+export interface ProfileLockState {
+  readonly locked: boolean;
+  readonly pid: number | null;
+  /**
+   * A POSIX lock whose recorded process has exited. Chrome leaves
+   * `SingletonLock` behind when it is killed (a crash, the server's teardown),
+   * and the next launch then reads it as "another instance owns this profile".
+   * The lock is ours to clear: no live process holds it.
+   */
+  readonly stale: boolean;
+}
+
+/** True when a process with this PID exists (EPERM means someone else's, still alive). */
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    return (cause as { readonly code?: string }).code === "EPERM";
+  }
+};
+
 export async function detectProfileLock(
   profileDir: string,
-): Promise<{ readonly locked: boolean; readonly pid: number | null }> {
+  deps: { readonly isAlive?: (pid: number) => boolean } = {},
+): Promise<ProfileLockState> {
   try {
     // POSIX Chrome: SingletonLock -> "<hostname>-<pid>".
     const target = await NodeFSP.readlink(NodePath.join(profileDir, "SingletonLock"));
     const pid = Number(/-(\d+)$/.exec(target)?.[1]);
-    return { locked: true, pid: Number.isInteger(pid) && pid > 0 ? pid : null };
+    if (!Number.isInteger(pid) || pid <= 0) return { locked: true, pid: null, stale: false };
+    const alive = (deps.isAlive ?? processIsAlive)(pid);
+    return { locked: alive, pid, stale: !alive };
   } catch {
     // fall through to the Windows lockfile probe
   }
   try {
     const handle = await NodeFSP.open(NodePath.join(profileDir, "lockfile"), "r+");
     await handle.close();
-    return { locked: false, pid: null };
+    return { locked: false, pid: null, stale: false };
   } catch (cause) {
     const code = (cause as { readonly code?: string }).code;
     return code === "EBUSY" || code === "EPERM" || code === "EACCES"
-      ? { locked: true, pid: null }
-      : { locked: false, pid: null };
+      ? { locked: true, pid: null, stale: false }
+      : { locked: false, pid: null, stale: false };
   }
+}
+
+/**
+ * Removes the POSIX singleton files a killed Chrome left behind, and only when
+ * `detectProfileLock` found the recorded process gone. Best effort: a lock that
+ * cannot be removed is left in place and the launch reports it as before.
+ */
+export async function clearStaleProfileLock(
+  profileDir: string,
+  deps: { readonly isAlive?: (pid: number) => boolean } = {},
+): Promise<boolean> {
+  const state = await detectProfileLock(profileDir, deps);
+  if (!state.stale) return false;
+  let cleared = false;
+  for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+    try {
+      await NodeFSP.unlink(NodePath.join(profileDir, name));
+      cleared = true;
+    } catch {
+      // Already gone, or not ours to remove.
+    }
+  }
+  return cleared;
 }
 
 export interface ScannedFile extends PersonalBrowserFile {
