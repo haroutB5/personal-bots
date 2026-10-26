@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Synchronise existing agent-browser skill installations, without deleting files."""
-import argparse,hashlib,json,pathlib,shutil,sys
+import argparse,hashlib,json,pathlib,re,shutil,sys
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--master',default='/home/harout/Claude/AI/dev-team/tools/agent-browser-skill')
 p.add_argument('--base',default='/home/harout/.personal-bots/dev/bot-plugins')
 p.add_argument('--check',action='store_true')
+LINUX_PATCH='Linux port 26 Oct 2026: runner is tools/ab.sh (ab.py), pinned linux-x64 binary SHA256, Brave only, isolated session HOME under ~/.cache/hbots-agent-browser; docs rewritten for Linux paths, BOM-free'
 a=p.parse_args();master=pathlib.Path(a.master);base=pathlib.Path(a.base)
 try:
  files={str(f.relative_to(master)):f.read_bytes() for f in master.rglob('*') if f.is_file()}
@@ -28,7 +29,8 @@ try:
   if not a.check:
    for rel,data in files.items():
     out=dest/rel;out.parent.mkdir(parents=True,exist_ok=True);out.write_bytes(data)
-   entry.update(computedHash=digest,package='agent-browser@0.39.1',skillPath=str((dest/'SKILL.md').relative_to(plugin)),localPatches=['Linux runner ab.sh; isolated Brave; binary SHA pin; BOM-free Linux docs'])
+   patches=[x for x in entry.get('localPatches',[]) if x!=LINUX_PATCH]+[LINUX_PATCH]
+   entry.update(computedHash=digest,package='agent-browser@0.39.1',skillPath=entry.get('skillPath','skills/agent-browser/SKILL.md'),localPatches=patches)
    lockpath.write_text(json.dumps(lock,indent=2)+'\n')
    if manifest.exists():
     data=json.loads(manifest.read_text(encoding='utf-8-sig'))
@@ -37,6 +39,7 @@ try:
   if entry.get('computedHash')!=digest:raise ValueError('lock mismatch '+str(plugin))
   for rel,data in files.items():
    if (dest/rel).read_bytes()!=data:raise ValueError('file mismatch '+str(dest/rel))
+  if manifest.exists() and re.search(r'ab\.(cmd|ps1)',json.loads(manifest.read_text(encoding='utf-8-sig')).get('description','')):raise ValueError('plugin description still names the Windows runner '+str(manifest))
   for f in [lockpath,manifest]:
    if f.exists() and f.read_bytes().startswith(b'\xef\xbb\xbf'):raise ValueError('JSON BOM '+str(f))
   print('PASS '+str(dest))
