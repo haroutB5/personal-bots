@@ -27,4 +27,7 @@ No migration (112 to 112). Build staged with copied externals; nothing was activ
 
 ## Gate evidence
 
-Pending the staged build and its release id; the builder gate numbers are above.
+- Commit: `ed294fbcf3dd22f82e9208a8cd9c26e6d8a574ac`.
+- Staged release: `ed294fbcf3dd` in `/home/harout/.personal-bots/releases/ed294fbcf3dd`, `1.66.95`, `externals=copied`, not active (`current.txt` stayed `da7ce4163864`). `dist/bin.mjs --version` prints `t3 v0.0.42`; `VERSION` records the same commit and branch.
+- Gate (`runGate` from `scripts/personal/node/lib/upstream.mjs`, `NODE_ENV=test`): PASS, exit 0. Server personal tests 2660 passed, 6 skipped, 0 failed in 196 files; server `tsc --noEmit` 0 errors; web personal tests 3055 passed, 0 failed in 267 files. Log: `/tmp/opencode/hbots-16695-gate.log`.
+- Build log: `/tmp/opencode/hbots-16695-build.log`, exit 0. Release notes are a docs-only commit after the build, so they do not change the staged artifact.
