@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/provider/**/*.test.ts",
+    "src/provider/**/*.test.tsx",
+    "src/orchestration/**/*.test.ts",
+    "src/orchestration/**/*.test.tsx",
+    "src/persistence/**/*.test.ts",
+    "src/persistence/**/*.test.tsx"
+  ]
+}
