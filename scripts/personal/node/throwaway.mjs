@@ -353,8 +353,7 @@ async function main() {
       return;
     }
     case "list": {
-      const rows = fs
-        .readdirSync(NodeOS.tmpdir())
+      const rows = NodeFS.readdirSync(NodeOS.tmpdir())
         .filter((entry) => entry.startsWith(ROOT_PREFIX))
         .map((entry) => {
           const root = NodePath.join(NodeOS.tmpdir(), entry);

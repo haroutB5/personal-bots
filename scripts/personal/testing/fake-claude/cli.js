@@ -742,7 +742,8 @@ Text after the placeholder.
         }
       }
       if (end !== -1) {
-        const json = text.slice(open, end + 1);
+        // open/end are indices in ownerText, the string the match ran on.
+        const json = ownerText.slice(open, end + 1);
         if (!toolCandidates.some((candidate) => candidate.json === json)) {
           toolCandidates.push({ name: hit[1], json });
         }
