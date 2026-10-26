@@ -23,6 +23,10 @@
 #   2. restore Claude/ and personal-bots/ from the external SSD
 #   3. install packages: base-devel, git, python, nodejs + mise node 24.22.1,
 #      pnpm 11.10.0 via mise, brave-bin (AUR), cloudflared, lm_sensors, ollama
+#   3b. build, stage and activate hbots from the restored checkout of the Linux
+#      branch (pnpm install + hbots.mjs build --copy-externals --activate), so
+#      the release carries Linux node-pty. --skip-build keeps the restored
+#      current.txt release instead.
 #   4. install the systemd user units, with T3CODE_PATH_MAP set in the hbots
 #      unit so migration 113 rewrites stored Windows paths on the first boot
 #   5. import the sealed secrets bundle with `bin.mjs secrets import`
@@ -37,7 +41,8 @@
 #
 # Defaults:
 #   --source /mnt/hbots-backup/plain
-#   --repo   <target home>/Claude/AI/personal-bots
+#   --repo   <target home>/Claude/AI/_wt/hbots-linux-ops when that worktree was
+#            restored, else <target home>/Claude/AI/personal-bots
 #   --data-dir <target home>/.personal-bots
 #   --user   $SUDO_USER, else harout
 #   --secrets-bundle /mnt/hbots-backup/secrets.bundle
@@ -60,6 +65,7 @@ SKIP_PACKAGES=0
 SKIP_SECRETS=0
 SKIP_START=0
 SKIP_VERIFY=0
+SKIP_BUILD=0
 ALLOW_ARCH_ONLY=0
 
 usage() {
@@ -162,6 +168,10 @@ while [ "$#" -gt 0 ]; do
       SKIP_START=1
       shift
       ;;
+    --skip-build)
+      SKIP_BUILD=1
+      shift
+      ;;
     --skip-verify)
       SKIP_VERIFY=1
       shift
@@ -206,7 +216,15 @@ fi
 TARGET_GROUP="$(id -gn "$TARGET_USER" 2>/dev/null || printf '%s' "$TARGET_USER")"
 
 SOURCE="${SOURCE_ARG:-/mnt/hbots-backup/plain}"
-REPO="${REPO_ARG:-$TARGET_HOME/Claude/AI/personal-bots}"
+# The Linux branch is checked out in a worktree on Windows; the main checkout
+# stays on the Windows release line. Build from the Linux branch, never main.
+if [ -n "$REPO_ARG" ]; then
+  REPO="$REPO_ARG"
+elif [ -e "$TARGET_HOME/Claude/AI/_wt/hbots-linux-ops/.git" ]; then
+  REPO="$TARGET_HOME/Claude/AI/_wt/hbots-linux-ops"
+else
+  REPO="$TARGET_HOME/Claude/AI/personal-bots"
+fi
 DATA_DIR="${DATA_ARG:-$TARGET_HOME/.personal-bots}"
 SECRETS_BUNDLE="${SECRETS_ARG:-/mnt/hbots-backup/secrets.bundle}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -362,6 +380,50 @@ else
   else
     warn "no AUR helper (yay/paru) found; install brave-bin manually: yay -S brave-bin"
   fi
+fi
+
+# ---------------------------------------------------------------- 3b. build
+
+log "3b/9 Build hbots from the restored checkout"
+info "checkout: $REPO"
+if [ "$SKIP_BUILD" -eq 1 ]; then
+  warn "build skipped (--skip-build); the restored current.txt release is used as is"
+else
+  [ -d "$REPO" ] || die "the build checkout is missing: $REPO (the restore did not copy Claude/AI)."
+  NODE_BIN="$TARGET_HOME/.local/share/mise/installs/node/24.22.1/bin/node"
+  if [ ! -x "$NODE_BIN" ]; then
+    NODE_BIN="$(command -v node || true)"
+  fi
+  [ -n "$NODE_BIN" ] || die "node was not found; the packages step did not finish."
+  info "node: $NODE_BIN"
+
+  ENV_FILE="$REPO/.env"
+  MAIN_REPO="$TARGET_HOME/Claude/AI/personal-bots"
+  if [ ! -f "$ENV_FILE" ] && [ -f "$MAIN_REPO/.env" ]; then
+    cp -a "$MAIN_REPO/.env" "$ENV_FILE"
+    chown "$TARGET_USER:$TARGET_GROUP" "$ENV_FILE" 2>/dev/null || true
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
+    info "copied the repo .env into the build checkout (values not shown)"
+  fi
+  [ -f "$ENV_FILE" ] || die "no .env at $ENV_FILE. The build needs the public T3 Connect config."
+
+  # A worktree restored from Windows points its .git file at a C:\ path; repair
+  # it, and ignore NTFS file modes so the tree is not seen as dirty.
+  if [ -d "$MAIN_REPO/.git" ] && [ -f "$REPO/.git" ]; then
+    run_as_user git -C "$MAIN_REPO" worktree repair "$REPO" || warn "git worktree repair reported a problem"
+  fi
+  run_as_user git -C "$REPO" config core.fileMode false || true
+  if [ "$DRY_RUN" -eq 0 ]; then
+    run_as_user git -C "$REPO" rev-parse --short=12 HEAD >/dev/null \
+      || die "git cannot read $REPO after the restore; the build needs a working checkout."
+  fi
+
+  BUILD_PATH="$TARGET_HOME/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin"
+  info "pnpm install (this downloads the Linux dependencies)"
+  run_as_user env "PATH=$BUILD_PATH" pnpm install --frozen-lockfile --reporter=append-only
+  info "build + stage + activate (the Linux release carries Linux node-pty)"
+  run_as_user env "PATH=$BUILD_PATH" "$NODE_BIN" "$REPO/scripts/personal/node/hbots.mjs" build --copy-externals --activate
+  info "release: $(tr -d '[:space:]' < "$CURRENT_FILE" 2>/dev/null || echo '?')"
 fi
 
 # ---------------------------------------------------------------- 4. units

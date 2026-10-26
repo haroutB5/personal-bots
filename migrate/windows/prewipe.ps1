@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Capture the laptop before Omarchy replaces Windows, onto Harout's SanDisk SSD.
 
@@ -64,6 +64,15 @@
 .PARAMETER SkipPayload
     Do not write the one-paste payload or PASTE-ME.txt.
 
+.PARAMETER SecretsBundle
+    Use an existing sealed bundle instead of exporting a new one. When empty
+    (default), install night exports one into <target>\secrets.bundle and asks
+    for the passphrase locally, twice, hidden.
+
+.PARAMETER SkipSecretsExport
+    Never export a bundle. The payload then carries no keys and the bots start
+    without their saved secrets.
+
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File migrate\windows\prewipe.ps1
 
@@ -92,7 +101,7 @@ param(
 
     [string]$SourceData = (Join-Path $env:USERPROFILE '.personal-bots'),
 
-    [string]$SecretsBundle = 'C:\Claude\AI\dev-team\omarchy-secrets.bundle',
+    [string]$SecretsBundle = '',
 
     [string]$RepoRoot = '',
 
@@ -101,6 +110,8 @@ param(
     [switch]$SkipDatabase,
 
     [switch]$SkipPayload,
+
+    [switch]$SkipSecretsExport,
 
     [switch]$Practice,
 
@@ -188,13 +199,16 @@ function Test-ExcludedDir {
 }
 
 function Get-ReleaseExclusions {
-    param([string]$Source)
-    # Keep only the live release from a personal-bots tree.
+    param([string]$Source, [string]$Keep)
+    # Keep only the one release the Linux install will run.
     $result = @()
     $releases = Join-Path $Source 'releases'
     $current = Join-Path $releases 'current.txt'
     if (-not (Test-Path -LiteralPath $current -PathType Leaf)) { return $result }
-    $active = (Get-Content -LiteralPath $current -Raw).Trim()
+    $active = $Keep
+    if ([string]::IsNullOrWhiteSpace($active)) {
+        $active = (Get-Content -LiteralPath $current -Raw).Trim()
+    }
     if ([string]::IsNullOrWhiteSpace($active)) { return $result }
     foreach ($dir in [System.IO.Directory]::EnumerateDirectories((ConvertTo-LongPath $releases))) {
         $name = [System.IO.Path]::GetFileName($dir)
@@ -654,7 +668,7 @@ function Invoke-DatabaseSnapshot {
     }
 
     $sourceBytes = (Get-Item -LiteralPath $source -Force).Length
-    Write-Host ("    online backup of {0} ({1}) while hbots keeps running" -f $source, (Format-Bytes $sourceBytes))
+    Write-Host ("    SQLite online backup of {0} ({1})" -f $source, (Format-Bytes $sourceBytes))
     $started = Get-Date
     $env:PB_SNAPSHOT_SOURCE = $source
     $env:PB_SNAPSHOT_TARGET = $target
@@ -678,6 +692,86 @@ function Invoke-DatabaseSnapshot {
     $script:Timings.databaseBytes = $bytes
     Write-Host ("    database snapshot verified: {0}, {1:N1} s" -f (Format-Bytes $bytes), $seconds)
     return [pscustomobject]@{ Path = $target; Proof = $proof; Bytes = $bytes; Seconds = $seconds }
+}
+
+function Invoke-SecretsExport {
+    param(
+        [string]$DataRoot,
+        [string]$ReleaseName,
+        [string]$BundlePath,
+        [string]$NodeExe
+    )
+
+    if ([string]::IsNullOrWhiteSpace($NodeExe)) {
+        throw 'node.exe was not found. Node 24 is needed for the secrets export.'
+    }
+    $bin = Join-Path (Join-Path (Join-Path $DataRoot 'releases') $ReleaseName) 'dist\bin.mjs'
+    if (-not (Test-Path -LiteralPath $bin -PathType Leaf)) {
+        throw "The release CLI is missing: $bin"
+    }
+    $secretsDir = Join-Path (Join-Path $DataRoot 'dev\userdata') 'secrets'
+    if (-not (Test-Path -LiteralPath $secretsDir -PathType Container)) {
+        throw "No secrets folder at $secretsDir. Nothing was exported."
+    }
+
+    Write-Host ''
+    Write-Host '    Choose the passphrase that seals the secrets bundle.' -ForegroundColor Yellow
+    Write-Host '    Type the same passphrase later on the new Omarchy machine when it asks.'
+    Write-Host '    It is not shown, not written to a file and not put on the command line.'
+    try {
+        $first = Read-Host -AsSecureString '    passphrase (12+ characters)'
+        $second = Read-Host -AsSecureString '    passphrase again'
+    }
+    catch {
+        throw 'The passphrase prompt needs an interactive PowerShell window. Run prewipe.ps1 directly in a terminal.'
+    }
+
+    $handle1 = [IntPtr]::Zero
+    $handle2 = [IntPtr]::Zero
+    $code = 1
+    $output = @()
+    $entries = $null
+    try {
+        $handle1 = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($first)
+        $handle2 = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($second)
+        $plain1 = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($handle1)
+        $plain2 = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($handle2)
+        if ($plain1 -cne $plain2) {
+            throw 'The two passphrases differ. Nothing was exported; run again.'
+        }
+        if ($plain1.Length -lt 12) {
+            throw 'The passphrase is shorter than 12 characters. Nothing was exported; run again.'
+        }
+
+        $arguments = @($bin, 'secrets', 'export', '--secrets-dir', $secretsDir, '--out', $BundlePath)
+        if (Test-Path -LiteralPath $BundlePath) { $arguments += '--force' }
+        $output = @($plain1 | & $NodeExe @arguments 2>&1)
+        $code = $LASTEXITCODE
+    }
+    finally {
+        if ($handle1 -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($handle1) }
+        if ($handle2 -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($handle2) }
+        $plain1 = $null
+        $plain2 = $null
+    }
+
+    if ($code -ne 0) {
+        $detail = (($output | Out-String).Trim() -replace '(?i)passphrase[^,;]*', 'passphrase <hidden>')
+        throw "Secrets export failed (exit $code): $detail"
+    }
+    if (-not (Test-Path -LiteralPath $BundlePath -PathType Leaf)) {
+        throw "Secrets export reported success but $BundlePath is missing."
+    }
+    foreach ($line in $output) {
+        if ("$line" -match 'Exported\s+(\d+)\s+saved secret') { $entries = [int]$Matches[1] }
+        elseif ("$line" -match 'entries.*?(\d+)') { if ($null -eq $entries) { $entries = [int]$Matches[1] } }
+    }
+
+    $bytes = (Get-Item -LiteralPath $BundlePath -Force).Length
+    $sha = Get-Sha256 -Path $BundlePath
+    Write-Host ("    sealed bundle: {0}, {1} saved secret(s), sha256 {2}" -f (Format-Bytes $bytes), $entries, $sha.Substring(0, 16))
+    Write-Host '    the passphrase is the only way to open it; keep it in your head, not on the SSD'
+    return [pscustomobject]@{ Path = $BundlePath; Bytes = $bytes; Sha256 = $sha; Entries = $entries }
 }
 
 function ConvertTo-LfText {
@@ -717,7 +811,10 @@ function Write-Payload {
     $hasBundle = $false
     if (-not [string]::IsNullOrWhiteSpace($SecretsBundle) -and (Test-Path -LiteralPath $SecretsBundle -PathType Leaf)) {
         $bundleTarget = Join-Path $TargetPath 'secrets.bundle'
-        Copy-Item -LiteralPath $SecretsBundle -Destination $bundleTarget -Force
+        $sameFile = [System.IO.Path]::GetFullPath($SecretsBundle).Equals([System.IO.Path]::GetFullPath($bundleTarget), [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $sameFile) {
+            Copy-Item -LiteralPath $SecretsBundle -Destination $bundleTarget -Force
+        }
         $bundleHash = Get-Sha256 -Path $bundleTarget
         $manifestLines.Add("$bundleHash  secrets.bundle")
         $hasBundle = $true
@@ -1148,12 +1245,43 @@ try {
         }
     }
 
-    $hasBundle = (-not [string]::IsNullOrWhiteSpace($SecretsBundle)) -and (Test-Path -LiteralPath $SecretsBundle -PathType Leaf)
-    if (-not $SkipPayload -and -not $hasBundle -and $Scope -eq 'Full') {
-        if ($Apply) {
-            throw "The sealed secrets bundle is missing: $SecretsBundle. Export it before install night (or pass -SkipPayload if that is deliberate)."
+    # The Windows release that is live now is only used for the secrets export.
+    # The Linux server never runs it: bootstrap builds its own release on Linux,
+    # because node-pty and the other native modules differ per platform.
+    $cliReleaseName = ''
+    $cliReleaseBin = ''
+    $releasesRoot = Join-Path $SourceData 'releases'
+    if (Test-Path -LiteralPath $releasesRoot -PathType Container) {
+        # The live release may predate the secrets CLI (1.66.92 does), so use the
+        # newest release bundle that carries `secrets export`.
+        foreach ($dir in @(Get-ChildItem -LiteralPath $releasesRoot -Directory -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
+            $candidate = Join-Path $dir.FullName 'dist\bin.mjs'
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+            if (Select-String -LiteralPath $candidate -Pattern 'passphrase-sealed' -SimpleMatch -Quiet) {
+                $cliReleaseName = $dir.Name
+                $cliReleaseBin = $candidate
+                break
+            }
         }
-        Write-Host "    WARNING: no secrets bundle at $SecretsBundle. The payload would restore data without keys." -ForegroundColor Yellow
+    }
+    if ([string]::IsNullOrWhiteSpace($cliReleaseName)) {
+        throw "No release under $releasesRoot has the secrets export CLI (dist\bin.mjs with secrets). Stage a 1.66.93+ build before install night."
+    }
+    Write-Host "    secrets CLI: release $cliReleaseName"
+
+    $bundlePath = if (-not [string]::IsNullOrWhiteSpace($SecretsBundle)) { $SecretsBundle } else { Join-Path $Target 'secrets.bundle' }
+    $hasBundle = (-not [string]::IsNullOrWhiteSpace($SecretsBundle)) -and (Test-Path -LiteralPath $SecretsBundle -PathType Leaf)
+    $willExport = (-not $SkipPayload) -and (-not $SkipSecretsExport) -and (-not $hasBundle) -and ($Scope -eq 'Full') -and ($StopServer -or $Apply)
+    if (-not $SkipPayload -and -not $hasBundle -and -not $willExport -and $Scope -eq 'Full') {
+        if ($Apply) {
+            throw "The sealed secrets bundle is missing: $bundlePath. Export it before install night (or pass -SkipPayload if that is deliberate)."
+        }
+        if ($Practice) {
+            Write-Host "    WARNING: no secrets bundle at $bundlePath. A practice copy has no keys; install night exports them." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host '    secrets:     none yet; install night exports the bundle and asks for your passphrase'
+        }
     }
 
     # ---------------------------------------------------------------- plan
@@ -1166,6 +1294,7 @@ try {
     Write-Host "    scope:       $Scope"
     Write-Host "    target:      $Target"
     Write-Host "    repo:        $script:RepoRoot"
+    Write-Host '    hbots build: built on Linux at first login from the restored checkout (native modules differ per platform)'
     foreach ($item in $sources) {
         Write-Host ("    source:      {0}" -f $item.Source)
     }
@@ -1179,7 +1308,16 @@ try {
         Write-Host '    payload:     not written (--skip-payload)'
     }
     else {
-        Write-Host ("    payload:     scripts, one-paste line, hashes{0}" -f $(if ($hasBundle) { ', sealed secrets bundle' } else { ', NO secrets bundle' }))
+        $bundleNote = if ($hasBundle) {
+            ', sealed secrets bundle'
+        }
+        elseif ($willExport) {
+            ', sealed secrets bundle exported now (asks for your passphrase)'
+        }
+        else {
+            ', NO secrets bundle'
+        }
+        Write-Host ("    payload:     scripts, one-paste line, hashes{0}" -f $bundleNote)
     }
     if (-not [string]::IsNullOrWhiteSpace($script:VolumeInfo.DriveLetter)) {
         Write-Host "    second copy: no (Harout: the SSD folder is the only copy)"
@@ -1187,28 +1325,37 @@ try {
 
     # ---------------------------------------------------------------- space
 
-    $targetFree = Get-FreeSpaceBytes -Path $Target
-    $needed = [long]0
-    foreach ($item in $sources) {
-        $script:ExcludeDirs = @(Get-ReleaseExclusions -Source $item.Source)
-        $needed += (Get-PathSizeBytes -Path $item.Source)
-    }
-    $script:ExcludeDirs = @()
-    # The database is snapshotted separately, so it is in the estimate above.
-    # 10% margin for file-system overhead and the manifests.
-    $needed = [long]($needed * 1.10)
-
     Write-Step 'Free-space check'
-    Write-Host ("    estimated need (data + database + manifests + margin): {0}" -f (Format-Bytes $needed))
-    if ($null -eq $targetFree) {
-        Write-Host '    target free space: unknown; check the drive before -Apply' -ForegroundColor Yellow
+    $targetFree = Get-FreeSpaceBytes -Path $Target
+    # Walking all of C:\Claude takes minutes on this laptop. When the drive is
+    # this empty the answer cannot change, so skip the walk (install night must
+    # not spend 10 minutes measuring).
+    $ample = [long]150GB
+    if ($null -ne $targetFree -and $targetFree -ge $ample) {
+        Write-Host ("    target free space: {0} (ample; size estimate skipped)" -f (Format-Bytes $targetFree))
+        Write-Host '    PASS free space'
     }
     else {
-        Write-Host ("    target free space: {0}" -f (Format-Bytes $targetFree))
-        if ($targetFree -lt $needed) {
-            throw "Not enough free space on target. Need about $(Format-Bytes $needed), have $(Format-Bytes $targetFree)."
+        $needed = [long]0
+        foreach ($item in $sources) {
+            $script:ExcludeDirs = @(Get-ReleaseExclusions -Source $item.Source)
+            $needed += (Get-PathSizeBytes -Path $item.Source)
         }
-        Write-Host '    PASS free space'
+        $script:ExcludeDirs = @()
+        # The database is snapshotted separately, so it is in the estimate above.
+        # 10% margin for file-system overhead and the manifests.
+        $needed = [long]($needed * 1.10)
+        Write-Host ("    estimated need (data + database + manifests + margin): {0}" -f (Format-Bytes $needed))
+        if ($null -eq $targetFree) {
+            Write-Host '    target free space: unknown; check the drive before -Apply' -ForegroundColor Yellow
+        }
+        else {
+            Write-Host ("    target free space: {0}" -f (Format-Bytes $targetFree))
+            if ($targetFree -lt $needed) {
+                throw "Not enough free space on target. Need about $(Format-Bytes $needed), have $(Format-Bytes $targetFree)."
+            }
+            Write-Host '    PASS free space'
+        }
     }
 
     Write-Step 'Data scope'
@@ -1249,6 +1396,19 @@ try {
     if ($StopServer) {
         Write-Step 'Stopping hbots'
         Invoke-StopServer -Root $script:RepoRoot
+    }
+
+    # ---------------------------------------------------------------- secrets
+
+    $secretsExport = $null
+    if ($willExport) {
+        Write-Step 'Sealed secrets for the new machine'
+        $secretsExport = Invoke-SecretsExport -DataRoot $SourceData -ReleaseName $cliReleaseName -BundlePath $bundlePath -NodeExe $nodeExe
+        $hasBundle = $true
+    }
+    elseif ($hasBundle) {
+        Write-Step 'Sealed secrets for the new machine'
+        Write-Host "    using the bundle you passed: $bundlePath (contents not read)"
     }
 
     # ---------------------------------------------------------------- copy
@@ -1297,7 +1457,7 @@ try {
     $payload = $null
     if (-not $SkipPayload) {
         Write-Step 'First-login payload'
-        $payload = Write-Payload -TargetPath $Target -RepoRoot $script:RepoRoot -SecretsBundle $SecretsBundle
+        $payload = Write-Payload -TargetPath $Target -RepoRoot $script:RepoRoot -SecretsBundle $bundlePath
         if (-not $payload.HasBundle -and $Scope -eq 'Full' -and $Apply) {
             throw 'The payload has no secrets.bundle. Refusing to finish install night without it.'
         }
@@ -1339,6 +1499,7 @@ try {
         target        = $Target
         volume        = $null
         sources       = $sourceSummaries
+        secrets       = $secretsExport
         database      = $database
         payload       = $payload
         unstable      = @($script:Unstable)

@@ -170,12 +170,21 @@ elif mountpoint -q "$MOUNT_POINT"; then
   info "device:   $device ($fstype)"
   info "model:    ${model:-unknown}"
   info "serial:   ${serial:-unknown}"
-  case "$model" in
-    *"$EXPECTED_MODEL"*) ;;
-    *) die "this is not the $EXPECTED_MODEL drive (model: ${model:-unknown}). Refusing to restore from it." ;;
-  esac
-  [ "$serial" = "$EXPECTED_SERIAL" ] \
-    || die "serial ${serial:-unknown} is not the expected $EXPECTED_SERIAL. Refusing to restore from it."
+  # The serial is the identity that matters. USB bridges do not always report
+  # the model string the same way, so a model that looks different only warns.
+  if [ -n "$serial" ]; then
+    [ "$serial" = "$EXPECTED_SERIAL" ] \
+      || die "serial $serial is not the expected $EXPECTED_SERIAL. Refusing to restore from it."
+    case "$model" in
+      *"$EXPECTED_MODEL"*|*Extreme*) ;;
+      *) info "WARNING: model '${model:-unknown}' is not the usual SanDisk string; the serial matched" ;;
+    esac
+  else
+    case "$model" in
+      *"$EXPECTED_MODEL"*|*Extreme*) info "this bridge reports no serial; the model matched instead" ;;
+      *) die "cannot identify the drive: no serial and model '${model:-unknown}'. Refusing to restore from it." ;;
+    esac
+  fi
   options="$(findmnt -n -o OPTIONS --mountpoint "$MOUNT_POINT" | head -1)"
   case ",$options," in
     *,ro,*) info "mounted read-only" ;;
