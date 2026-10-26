@@ -1,0 +1,100 @@
+{
+  "about": "slow3g:check budgets: ceilings on the median of 3 throttled runs (slow3g.mjs). Seeded from the 1.66.97 baseline (slowest run plus headroom), lowered only by slow3g-check.mjs --ratchet. See README.md.",
+  "settings": {
+    "downKbps": 400,
+    "upKbps": 400,
+    "rtt": 400,
+    "runs": 3,
+    "data": "backup 20261026-211327 copy, chats per README"
+  },
+  "scenarios": {
+    "cold": {
+      "visibleMs": {
+        "max": 47884,
+        "headroom": 0.1
+      },
+      "wireKB": {
+        "max": 2459,
+        "headroom": 0.05,
+        "slack": 20
+      },
+      "jsonKB": {
+        "max": 1306,
+        "headroom": 0.05,
+        "slack": 20
+      }
+    },
+    "reconnect": {
+      "visibleMs": {
+        "max": 18862,
+        "headroom": 0.1
+      },
+      "wireKB": {
+        "max": 227,
+        "headroom": 0.05,
+        "slack": 20
+      },
+      "jsonKB": {
+        "max": 817,
+        "headroom": 0.05,
+        "slack": 20
+      }
+    },
+    "open-A": {
+      "visibleMs": {
+        "max": 2509,
+        "headroom": 0.1
+      },
+      "wireKB": {
+        "max": 201,
+        "headroom": 0.05,
+        "slack": 20
+      },
+      "jsonKB": {
+        "max": 667,
+        "headroom": 0.05,
+        "slack": 20
+      }
+    },
+    "open-B": {
+      "visibleMs": {
+        "max": 2518,
+        "headroom": 0.1
+      },
+      "wireKB": {
+        "max": 368,
+        "headroom": 0.05,
+        "slack": 20
+      },
+      "jsonKB": {
+        "max": 545,
+        "headroom": 0.05,
+        "slack": 20
+      }
+    },
+    "open-C": {
+      "visibleMs": {
+        "max": 2519,
+        "headroom": 0.1
+      },
+      "wireKB": {
+        "max": 185,
+        "headroom": 0.05,
+        "slack": 20
+      },
+      "jsonKB": {
+        "max": 576,
+        "headroom": 0.05,
+        "slack": 20
+      }
+    }
+  },
+  "ratchetedAt": "2026-10-26T23:04:51.651Z",
+  "ratchetedFrom": "after-all 2026-10-26T23:04:33.857Z",
+  "ratchetHistory": [
+    {
+      "at": "2026-10-26T22:52:40.612Z",
+      "from": "seed before 2026-10-26T22:21:42.222Z"
+    }
+  ]
+}
