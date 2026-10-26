@@ -12,6 +12,15 @@ test('lock gives exact nice 10, idle I/O, nested execution and preserves failure
  const r=run('bash',[path.join(here,'heavy-job.sh'),'--label','test priority','--','bash','-c',`ps -o ni= -p $$; ionice -p $$; bash '${here}/heavy-job.sh' --label nested -- bash -c 'exit 23'`]);
  assert.equal(r.status,23,r.stderr);assert.match(r.stdout,/10/);assert.match(r.stdout,/idle/);
 });
+test('job runs in its own scope with a soft MemoryHigh; off is the kill switch',()=>{
+ const probe=`cat /proc/self/cgroup; cat /sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.high`;
+ const scoped=run('bash',[path.join(here,'heavy-job.sh'),'--label','test scope','--','bash','-c',probe],{env:{...process.env,HEAVY_JOB_MEMORY_HIGH:'64M'}});
+ assert.equal(scoped.status,0,scoped.stderr);assert.match(scoped.stdout,/heavy-job-\d+\.scope/);assert.match(scoped.stdout,/^67108864$/m);
+ const off=run('bash',[path.join(here,'heavy-job.sh'),'--label','test off','--','bash','-c','cat /proc/self/cgroup'],{env:{...process.env,HEAVY_JOB_MEMORY_HIGH:'off'}});
+ assert.equal(off.status,0,off.stderr);assert.doesNotMatch(off.stdout,/heavy-job-/);
+ const bad=run('bash',[path.join(here,'heavy-job.sh'),'--label','test bad','--','true'],{env:{...process.env,HEAVY_JOB_MEMORY_HIGH:'lots'}});
+ assert.equal(bad.status,2);
+});
 test('contending lock reports holder and times out',async()=>{
  const p=spawn('bash',[path.join(here,'heavy-job.sh'),'--label','fixture-holder','--','sleep','2'],{stdio:['ignore','ignore','pipe']});
  await new Promise(resolve=>p.stderr.once('data',resolve));

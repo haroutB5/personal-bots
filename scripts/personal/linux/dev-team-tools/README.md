@@ -19,8 +19,12 @@ argument vector after `--`; use `bash -o pipefail -c '...'` for shell syntax.
 inherits the locked descriptor, preventing overlap even if its wrapper exits.
 The file's text identifies the last holder; it is current only while locked.
 The wrapper sets absolute nice 10 and ionice idle. Nested calls retaining fd 9
-reuse the lock. Do not detach a job inside the wrapper. No systemd scope is
-needed for CPU/I/O priority inheritance; memory is not capped.
+reuse the lock. Do not detach a job inside the wrapper. The job runs in its own
+user scope (`heavy-job-PID.scope`, CPUWeight 20) with a soft `MemoryHigh` of 6G:
+past it the kernel reclaims from the job and slows it, it is never killed, and
+the live server keeps its pages. Set `HEAVY_JOB_MEMORY_HIGH=8G` for a bigger
+job or `off` for the old behaviour; without `systemd-run --user` it warns and
+runs unscoped.
 
 Gate definitions use the PowerShell shape, with POSIX shell commands:
 `[{"id":"server-tests","kind":"vitest","cwd":"apps/server","commands":["vp test run src/personal src/mcp"]}, ...]`.
