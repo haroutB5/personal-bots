@@ -278,7 +278,7 @@ async function main() {
       note(`heavy-job lock taken (holder pid ${heavy.pid}) until the release is verified`);
       testActiveRelease(cfg, a);
       await step("seal.reverify-before-restart", () => verifySeal(cfg, a, names));
-      const quick = await quickIdleCheck(cfg, 3000);
+      const quick = await quickIdleCheck(cfg, 3000, { ignoreLock: true });
       if (!quick.idle) {
         note(`work resumed before the restart (${quick.reasons.join(" ")}): back to waiting`);
         heavy.release();

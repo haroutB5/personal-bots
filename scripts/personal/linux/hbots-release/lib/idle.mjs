@@ -37,7 +37,7 @@ export function heavyLockHeld(lockPath) {
 export async function takeHeavyLock(lockPath, label) {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   const script = `printf 'pid=%s started=%s label=%s cwd=%s\\n' "$$" "$(date -Is)" "$1" "$PWD" > "$2"; exec sleep 7200`;
-  const child = spawn("flock", ["-n", "-E", "75", lockPath, "sh", "-c", script, "sh", label, lockPath], { stdio: "ignore", detached: false });
+  const child = spawn("flock", ["-n", "-E", "75", "-F", lockPath, "sh", "-c", script, "sh", label, lockPath], { stdio: "ignore", detached: false });
   const outcome = await Promise.race([
     new Promise((resolve) => child.once("exit", (code) => resolve({ exited: code }))),
     sleep(400).then(() => ({ exited: null })),
@@ -70,7 +70,7 @@ function newestEventLog(dir) {
 }
 
 /** One look. prev is the previous look's snapshot (for CPU deltas). */
-export function takeLook(cfg, prev) {
+export function takeLook(cfg, prev, { ignoreLock = false } = {}) {
   const state = liveState(cfg);
   if (!state) return { serverRunning: false };
   const now = procSnapshot();
@@ -91,7 +91,7 @@ export function takeLook(cfg, prev) {
     toolProcs.push({ pid, ageSec: Math.round(ageMs / 1000), delta: round1(delta), cmd: proc.cmdline.slice(0, 100) });
   }
   const events = newestEventLog(cfg.providerLogs);
-  const lock = heavyLockHeld(cfg.heavyLock);
+  const lock = ignoreLock ? { held: false, holder: null } : heavyLockHeld(cfg.heavyLock);
   const cgCpu = cgDir ? cgroupCpuSeconds(cgDir) : null;
   return {
     serverRunning: true,
@@ -154,12 +154,12 @@ export async function waitForIdle(cfg, { onLook, looksLimit = Infinity, interval
   return { idle: false, looks, waitedS: round1((Date.now() - started) / 1000), timedOut: true };
 }
 
-/** A short window check right before the restart: lock, tools, events, and CPU over windowMs. */
-export async function quickIdleCheck(cfg, windowMs = 3000) {
-  const first = takeLook(cfg, null);
+/** A short window check right before the restart: lock, tools, events, and CPU over windowMs. ignoreLock: the runner holds the lock itself. */
+export async function quickIdleCheck(cfg, windowMs = 3000, { ignoreLock = false } = {}) {
+  const first = takeLook(cfg, null, { ignoreLock });
   if (!first.serverRunning) return { idle: false, reasons: ["server-not-running"] };
   await sleep(windowMs);
-  const second = takeLook(cfg, first);
+  const second = takeLook(cfg, first, { ignoreLock });
   if (!second.serverRunning) return { idle: false, reasons: ["server-not-running"] };
   const scaled = Math.max(0.15, cfg.cpuBudgetS * (windowMs / cfg.lookMs));
   const reasons = busyReasons(second, { ...cfg, cpuBudgetS: scaled });
