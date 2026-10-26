@@ -90,6 +90,11 @@ export function helpOrigin(status: PersonalBrowserStatus | null): string | null 
   return asString(asRecord(help)?.origin);
 }
 
+/** When the browser last closed, if the server says (Backend `lastStop`, optional). */
+export function browserLastStop(status: PersonalBrowserStatus | null): string | null {
+  return asString(asRecord(status)?.lastStop);
+}
+
 /** A sensitive-site pause waiting for Allow once / Refuse, or null. */
 export function egressPause(status: PersonalBrowserStatus | null): ComputerEgressPause | null {
   const raw = asRecord(status)?.egressPause;

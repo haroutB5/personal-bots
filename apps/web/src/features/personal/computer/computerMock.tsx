@@ -43,6 +43,7 @@ const isScenario = (value: string): value is MockScenario =>
 
 const ASSISTANT = { botId: "mock-assistant", botName: "Assistant", threadId: "mock-thread-a" };
 const DEVELOPER = { botId: "mock-developer", botName: "Developer", threadId: "mock-thread-d" };
+const OPTIMIZER = { botId: "mock-optimizer", botName: "Optimizer", threadId: "mock-thread-o" };
 const RESEARCHER = { botId: "mock-researcher", botName: "Researcher", threadId: "mock-thread-r" };
 
 const brand = <T,>(value: string): T => value as unknown as T;
@@ -242,9 +243,14 @@ function scenarioState(name: MockScenario): MockState {
           state: "offline",
           controller: { _tag: "None" },
           page: null,
-          lastAgent: null,
-        }),
-        events: base.events.slice(0, 2),
+          lastStop: minutesAgo(26),
+        } as Partial<PersonalBrowserStatus>),
+        events: [
+          event(["i1", 50, "open", "Opened a tab", OPTIMIZER, { status: "failed" }]),
+          event(["i2", 45, "control", "You took control", null]),
+          event(["i3", 40, "download", "Downloaded receipt.pdf", ASSISTANT]),
+          event(["i4", 36, "control", "You handed back to Assistant", null]),
+        ],
       };
     case "offline":
       return { ...base, status: null, reachable: false, events: [] };

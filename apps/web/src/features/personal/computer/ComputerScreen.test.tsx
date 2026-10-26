@@ -721,4 +721,13 @@ describe("control held by another device (1.60.45)", () => {
     expect(buttonWith("Take control")).toBeUndefined();
     expect(buttonWith("Hand back")).toBeDefined();
   });
+
+  it("leaves Take control to the stage buttons while nothing is on screen", async () => {
+    await render({ ...STATUS, state: "offline", controller: { _tag: "None" }, lastAgent: null });
+    expect(buttonWith("Take control")).toBeUndefined();
+    const stageButtons = renderer!.root
+      .findAllByType("button")
+      .map((node) => node.children.filter((child) => typeof child === "string").join(""));
+    expect(stageButtons).toEqual(expect.arrayContaining(["Open Brave", "View desktop"]));
+  });
 });

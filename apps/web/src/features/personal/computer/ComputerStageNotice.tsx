@@ -1,4 +1,4 @@
-import { Monitor, PowerOff, type LucideIcon } from "lucide-react";
+import { Globe, Monitor, PowerOff, type LucideIcon } from "lucide-react";
 import type { JSX, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -6,7 +6,7 @@ import { cn } from "~/lib/utils";
 import { ICON_STROKE } from "./ComputerSourceRow";
 
 const OUTLINED =
-  "flex h-11 items-center justify-center rounded-[10px] border border-[var(--personal-border-strong)] px-4 text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50";
+  "flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border-strong)] px-4 text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50";
 
 /** What the stage shows when there is nothing to stream. */
 export function StageNotice(props: {
@@ -20,7 +20,7 @@ export function StageNotice(props: {
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2.5 px-6 py-9 text-center",
+        "flex min-h-[300px] flex-col items-center justify-center gap-2.5 px-6 py-9 text-center",
         props.className,
       )}
     >
@@ -61,6 +61,7 @@ export function IdleStage(props: {
           onClick={props.onOpenBrave}
           className={OUTLINED}
         >
+          <Globe className="size-[18px]" strokeWidth={ICON_STROKE} aria-hidden />
           Open Brave
         </button>
         <button
@@ -69,6 +70,7 @@ export function IdleStage(props: {
           onClick={props.onViewDesktop}
           className={OUTLINED}
         >
+          <Monitor className="size-[18px]" strokeWidth={ICON_STROKE} aria-hidden />
           View desktop
         </button>
       </div>

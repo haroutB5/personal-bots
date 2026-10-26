@@ -96,6 +96,8 @@ export function ComputerDriverCard(props: {
   readonly state: DriverState;
   readonly line: string;
   readonly heading?: string;
+  /** Replaces the bot's name, e.g. "Last used by Assistant". */
+  readonly title?: string;
   readonly queue?: DriverQueue;
   readonly resolveFace: (ref: BotRef) => BotFace | null;
   readonly onOpenChat?: (() => void) | undefined;
@@ -103,14 +105,18 @@ export function ComputerDriverCard(props: {
   readonly className?: string;
 }): JSX.Element | null {
   const { face } = props;
-  if (face === null && props.queue === undefined) return null;
+  const queued =
+    props.queue !== undefined && (props.queue.paused !== null || props.queue.next.length > 0);
+  if (face === null && !queued) return null;
   const body = (
     <>
       <DriverAvatar face={face} state={props.state} size={40} dotSize={12} animate />
       <div className="min-w-0 flex-1 text-left">
         <p className="flex items-baseline gap-2">
-          <span className="truncate text-[16px] leading-5 font-semibold">{face?.name}</span>
-          {face?.model ? (
+          <span className="truncate text-[16px] leading-5 font-semibold">
+            {props.title ?? face?.name}
+          </span>
+          {props.title === undefined && face?.model ? (
             <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
               {face.model}
             </span>
@@ -160,7 +166,7 @@ export function ComputerDriverCard(props: {
           )}
         </div>
       )}
-      {props.queue === undefined ? null : (
+      {!queued || props.queue === undefined ? null : (
         <UpNext queue={props.queue} resolveFace={props.resolveFace} />
       )}
     </section>

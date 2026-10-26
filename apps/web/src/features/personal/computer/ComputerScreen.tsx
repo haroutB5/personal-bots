@@ -67,6 +67,7 @@ import { usePersonalBotsList, usePersonalEnvironmentId } from "../usePersonalBot
 import { ComputerActivityCard, ComputerActivitySheet } from "./ComputerActivityCard";
 import { mergeActivity, latestBotAction } from "./computerActivity";
 import {
+  browserLastStop,
   desktopUnavailableReason,
   readBrowserEvent,
   egressPause,
@@ -822,7 +823,44 @@ function ComputerScreenView({
     </div>
   );
 
-  const driverBlock = fullScreen ? null : (
+  // Nothing is on screen: the stage buttons stand in for Take control, and
+  // the only card is who used the browser last.
+  const nothingOnScreen = !reachable || idle;
+  const lastUsed =
+    idle && status?.lastAgent != null
+      ? {
+          face: faceOf({ botId: status.lastAgent.botId, botName: null }),
+          at:
+            browserLastStop(status) ??
+            events.find(
+              (event) =>
+                event.source === "browser" && event.threadId === status.lastAgent?.threadId,
+            )?.at ??
+            null,
+          threadId: status.lastAgent.threadId,
+          botId: status.lastAgent.botId,
+        }
+      : null;
+  const lastUsedBlock =
+    lastUsed === null || lastUsed.face === null ? null : (
+      <ComputerDriverCard
+        face={lastUsed.face}
+        title={`Last used by ${lastUsed.face.name}`}
+        state="idle"
+        line={
+          lastUsed.at === null
+            ? "Brave · closed"
+            : `Brave · closed at ${formatActivityTime(lastUsed.at)}`
+        }
+        resolveFace={faceOf}
+        onOpenChat={() => botChatTarget({ botId: lastUsed.botId, threadId: lastUsed.threadId })}
+        className="mt-3"
+      />
+    );
+
+  const driverBlock = fullScreen ? null : nothingOnScreen ? (
+    lastUsedBlock
+  ) : (
     <>
       <ComputerDriverCard
         face={
@@ -863,26 +901,27 @@ function ComputerScreenView({
     </>
   );
 
-  const actionsBlock = fullScreen ? null : (
-    <>
-      <ComputerActions
-        inControl={youShown || otherDevice === true}
-        takeDisabled={takeDisabled}
-        handBackLabel={handBackLabel}
-        onTake={() => void takeControl(shown)}
-        onHandBack={() => void handBack()}
-        stopLabel={canStop ? `Stop ${stopName ?? "the bot"}` : null}
-        onStop={() => void stop()}
-        stopDisabled={stopBusy}
-        className="mt-3"
-      />
-      {takeError !== null || actionError !== null ? (
-        <p role="alert" className="mt-2 text-[13px] text-[var(--personal-danger)]">
-          {takeError ?? actionError}
-        </p>
-      ) : null}
-    </>
-  );
+  const actionsBlock =
+    fullScreen || nothingOnScreen ? null : (
+      <>
+        <ComputerActions
+          inControl={youShown || otherDevice === true}
+          takeDisabled={takeDisabled}
+          handBackLabel={handBackLabel}
+          onTake={() => void takeControl(shown)}
+          onHandBack={() => void handBack()}
+          stopLabel={canStop ? `Stop ${stopName ?? "the bot"}` : null}
+          onStop={() => void stop()}
+          stopDisabled={stopBusy}
+          className="mt-3"
+        />
+        {takeError !== null || actionError !== null ? (
+          <p role="alert" className="mt-2 text-[13px] text-[var(--personal-danger)]">
+            {takeError ?? actionError}
+          </p>
+        ) : null}
+      </>
+    );
 
   const activityBlock = fullScreen ? null : (
     <ComputerActivityCard
