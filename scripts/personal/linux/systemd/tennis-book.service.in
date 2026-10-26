@@ -1,11 +1,11 @@
 [Unit]
 Description=Tennis book (weekly Friday 12:05 local)
-ConditionPathExists=@AI@/tennis-poll/dist/run.js
+ConditionPathExists=@AI@/tennis-poll/src/run.ts
 
 [Service]
 Type=oneshot
 WorkingDirectory=@AI@/tennis-poll
-ExecStart=/usr/bin/bash -c 'exec @NODE@ dist/run.js book >> data/runtime/task-book.out.log 2>&1'
+ExecStart=/usr/bin/bash -c 'exec @NODE@ src/run.ts book >> data/runtime/task-book.out.log 2>&1'
 TimeoutStartSec=32400
 Nice=10
 
