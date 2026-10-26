@@ -118,7 +118,7 @@ async function main() {
     mode, logFile: names.log, resultFile: names.result,
     initial: {
       runner: "hbots-release.mjs (linux)", mode, concurrency: 5, attempt: 1, version: a.version, release: a.release, rollback: a.rollback,
-      mainSha: a["main-sha"], armedAt, idleAt: null, activatedAt: null, verifiedAt: null, backupExit: null, backupPath: null,
+      mainSha: a["main-sha"], notifyThread: a["notify-thread"], armedAt, idleAt: null, activatedAt: null, verifiedAt: null, backupExit: null, backupPath: null,
       restartExit: null, smokeExit: null, logErrors: null, logWarnings: null, liveVersion: null, rollbackExit: null, rollbackSmokeExit: null,
       error: null, host: "omarchy", node: process.version, runnerPid: process.pid,
       ...(cfg.test ? { testOverrides: true } : {}),
