@@ -16,6 +16,12 @@
  * Linux host with a readable lock file answers "not held", which keeps the
  * normal limit.
  *
+ * The device in `/proc/locks` is the mount's, not `statSync(path).dev`: /home
+ * here is a btrfs subvolume whose stat device (57, hex 00:39) never matches the
+ * mount device (0:36, hex 00:24) that every flock on it is reported under. It
+ * therefore comes from `/proc/self/mountinfo`, for the mount that contains the
+ * lock, and only the inode comes from stat.
+ *
  * @module personal/tasks/heavyJobLock
  */
 import * as NodeFS from "node:fs";
@@ -24,13 +30,44 @@ import * as NodePath from "node:path";
 
 export const HEAVY_JOB_LOCK_PATH = "/home/harout/.personal-bots/run/omarchy-heavy.lock";
 
-/** glibc's `dev_t` encoding, the one `/proc/locks` prints as `major:minor`. */
-export function devMajorMinor(dev: number): { readonly major: number; readonly minor: number } {
-  // 32-bit dev_t, the Linux kernel's own encoding (minors over 8 bits live in
-  // bits 20-31). Node's st_dev is that number.
-  const major = (dev >>> 8) & 0xfff;
-  const minor = (dev & 0xff) | ((dev >>> 12) & 0xfff00);
-  return { major, minor };
+export interface MountDevice {
+  readonly major: number;
+  readonly minor: number;
+}
+
+/** mountinfo escapes space, tab, newline and backslash as \040, \011, \012, \134. */
+const unescapeMountPoint = (value: string): string =>
+  value.replace(/\\([0-7]{3})/g, (_, octal: string) =>
+    String.fromCharCode(Number.parseInt(octal, 8)),
+  );
+
+/**
+ * The device `/proc/locks` reports for a path, from `/proc/self/mountinfo`:
+ * the `major:minor` (decimal there) of the deepest mount that contains it.
+ * This is the mount's superblock device, which is exactly what locks prints;
+ * `statSync(path).dev` is a different number on a btrfs subvolume.
+ */
+export function mountDeviceFor(path: string, mountInfo: string): MountDevice | null {
+  let best: { readonly mountPoint: string; readonly device: MountDevice } | null = null;
+  for (const line of mountInfo.split("\n")) {
+    // id parent major:minor root mount-point options [optional fields] - fs source super-options
+    const fields = line.trim().split(" ");
+    if (fields.length < 6) continue;
+    const [majorText, minorText] = (fields[2] ?? "").split(":");
+    if (!majorText || !minorText) continue;
+    if (!/^\d+$/.test(majorText) || !/^\d+$/.test(minorText)) continue;
+    const mountPoint = unescapeMountPoint(fields[4] ?? "");
+    if (!mountPoint.startsWith("/")) continue;
+    const contains =
+      mountPoint === "/"
+        ? path.startsWith("/")
+        : path === mountPoint || path.startsWith(`${mountPoint}/`);
+    if (!contains) continue;
+    if (best === null || mountPoint.length > best.mountPoint.length) {
+      best = { mountPoint, device: { major: Number(majorText), minor: Number(minorText) } };
+    }
+  }
+  return best?.device ?? null;
 }
 
 /**
@@ -63,7 +100,9 @@ export interface HeavyJobProbeDeps {
   readonly platform?: NodeJS.Platform;
   readonly lockPath?: string;
   readonly readFile?: (path: string) => string;
-  readonly stat?: (path: string) => { readonly dev: number; readonly ino: number };
+  readonly stat?: (path: string) => { readonly ino: number };
+  /** Resolves symlinks in the lock path before it is matched to a mount. */
+  readonly realpath?: (path: string) => string;
 }
 
 /**
@@ -82,13 +121,15 @@ export function heavyJobLockHeld(deps: HeavyJobProbeDeps = {}): boolean {
   const platform = deps.platform ?? NodeOS.platform();
   if (platform !== "linux") return false;
   const lockPath = deps.lockPath ?? HEAVY_JOB_LOCK_PATH;
+  const readFile = deps.readFile ?? ((path: string) => NodeFS.readFileSync(path, "utf8"));
   try {
     const stat = (deps.stat ?? ((path: string) => NodeFS.statSync(path)))(lockPath);
-    const contents = (deps.readFile ?? ((path: string) => NodeFS.readFileSync(path, "utf8")))(
-      "/proc/locks",
-    );
-    const { major, minor } = devMajorMinor(stat.dev);
-    return lockHeldInProcLocks(contents, { major, minor, inode: stat.ino });
+    const realPath = (deps.realpath ?? ((path: string) => NodeFS.realpathSync(path)))(lockPath);
+    const device = mountDeviceFor(realPath, readFile("/proc/self/mountinfo"));
+    // No mount means the device is unknown; answer "not held" as before rather
+    // than guess at a device that would never match.
+    if (device === null) return false;
+    return lockHeldInProcLocks(readFile("/proc/locks"), { ...device, inode: stat.ino });
   } catch {
     return false;
   }
