@@ -113,7 +113,12 @@ export function focusedWindow(status: PersonalDesktopStatus | null): FocusedWind
   if (record === null) return null;
   const title = asString(record.title);
   if (title === null) return null;
-  return { title, windowClass: asString(record.class) ?? "" };
+  return { title, windowClass: asString(record.windowClass) ?? asString(record.class) ?? "" };
+}
+
+/** Why the server cannot drive a desktop, when it says (Backend `unavailableReason`). */
+export function desktopUnavailableReason(status: PersonalDesktopStatus | null): string | null {
+  return status?.available === false ? asString(asRecord(status)?.unavailableReason) : null;
 }
 
 export function isLinuxDesktop(status: PersonalDesktopStatus | null): boolean {

@@ -67,6 +67,7 @@ import { usePersonalBotsList, usePersonalEnvironmentId } from "../usePersonalBot
 import { ComputerActivityCard, ComputerActivitySheet } from "./ComputerActivityCard";
 import { mergeActivity, latestBotAction } from "./computerActivity";
 import {
+  desktopUnavailableReason,
   readBrowserEvent,
   egressPause,
   helpKind,
@@ -763,6 +764,7 @@ function ComputerScreenView({
       auto={prefs.auto}
       badges={badges}
       desktopAvailable={desktopAvailable}
+      desktopUnavailableReason={desktopUnavailableReason(desktopStatus)}
       disabled={!reachable}
       onSelect={selectSource}
       onToggleAuto={toggleAuto}

@@ -74,6 +74,8 @@ export function ComputerSourceRow(props: {
   readonly auto: boolean;
   readonly badges: Record<ComputerSource, SourceBadge>;
   readonly desktopAvailable: boolean;
+  /** Why Desktop is unavailable, when the server says; shown as the tab's tooltip. */
+  readonly desktopUnavailableReason?: string | null;
   readonly disabled: boolean;
   readonly onSelect: (source: ComputerSource) => void;
   readonly onToggleAuto: () => void;
@@ -107,6 +109,7 @@ export function ComputerSourceRow(props: {
               aria-selected={selected}
               aria-label={`${LABELS[source]}${driver}`}
               disabled={props.disabled || unavailable}
+              title={unavailable ? (props.desktopUnavailableReason ?? undefined) : undefined}
               onClick={() => props.onSelect(source)}
               className="flex h-11 min-w-0 rounded-[10px] border-2 border-transparent outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-inset disabled:cursor-not-allowed"
             >

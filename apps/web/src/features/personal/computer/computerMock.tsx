@@ -113,7 +113,7 @@ function desktopStatus(patch: Partial<PersonalDesktopStatus> & Record<string, un
     waiting: [],
     lastStop: null,
     stopHotkey: "Super+Shift+F12",
-    focusedWindow: { title: "Terminal", class: "kitty", address: "0x1" },
+    focusedWindow: { title: "Terminal", windowClass: "kitty" },
     ...patch,
   } as PersonalDesktopStatus;
 }
