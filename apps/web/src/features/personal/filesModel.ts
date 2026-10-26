@@ -19,8 +19,6 @@ const TEXT_EXTENSIONS = new Set([
   "toml",
   "ini",
   "xml",
-  "html",
-  "htm",
   "css",
   "js",
   "jsx",
@@ -43,6 +41,55 @@ const TEXT_EXTENSIONS = new Set([
   "sh",
   "ps1",
   "sql",
+  "conf",
+  "cfg",
+  "diff",
+  "patch",
+  "lock",
+]);
+const IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "avif",
+  "bmp",
+  "svg",
+  "ico",
+]);
+const HTML_EXTENSIONS = new Set(["html", "htm"]);
+// Known binaries that no text read can show; they go straight to Download.
+const DOWNLOAD_EXTENSIONS = new Set([
+  "zip",
+  "gz",
+  "tgz",
+  "tar",
+  "7z",
+  "rar",
+  "docx",
+  "xlsx",
+  "pptx",
+  "doc",
+  "xls",
+  "ppt",
+  "mp3",
+  "wav",
+  "m4a",
+  "mp4",
+  "mov",
+  "mkv",
+  "webm",
+  "woff",
+  "woff2",
+  "ttf",
+  "otf",
+  "exe",
+  "dmg",
+  "apk",
+  "iso",
+  "bin",
+  "wasm",
 ]);
 
 function extensionOf(name: string): string {
@@ -73,21 +120,34 @@ export function filePreviewKind(
   return "download";
 }
 
-export type ChatFilePreviewKind = "markdown" | "text";
-
 /**
- * Whether a file chip in a chat opens in the in-chat preview sheet, by file
- * extension only: markdown renders, source and other text files show as
- * preformatted source, and everything else (images, PDFs, binaries) keeps its
- * existing action.
+ * How a file chip in a chat opens, by file extension only. Markdown renders;
+ * source and other text show as preformatted source; images show as images;
+ * PDFs open in the browser's viewer (the iPhone PWA cannot scroll an inline
+ * one); HTML shows its source with a sandboxed rendered view one tap away;
+ * known binaries go to Download; anything else is read as text and falls back
+ * to Download when it turns out to be binary.
  */
-export function chatFilePreviewKind(path: string): ChatFilePreviewKind | null {
+export type ChatFilePreviewKind =
+  | "markdown"
+  | "text"
+  | "image"
+  | "pdf"
+  | "html"
+  | "download"
+  | "other";
+
+export function chatFilePreviewKind(path: string): ChatFilePreviewKind {
   const normalized = path.replaceAll("\\", "/");
   const name = normalized.slice(normalized.lastIndexOf("/") + 1);
   const extension = extensionOf(name);
   if (MARKDOWN_EXTENSIONS.has(extension)) return "markdown";
   if (TEXT_EXTENSIONS.has(extension)) return "text";
-  return null;
+  if (IMAGE_EXTENSIONS.has(extension)) return "image";
+  if (extension === "pdf") return "pdf";
+  if (HTML_EXTENSIONS.has(extension)) return "html";
+  if (DOWNLOAD_EXTENSIONS.has(extension)) return "download";
+  return "other";
 }
 
 /** The final segment of a workspace or host path, for a preview header. */

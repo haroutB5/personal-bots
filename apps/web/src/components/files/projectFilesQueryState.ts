@@ -39,6 +39,10 @@ interface ProjectQueryState<A> {
 interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult> {
   /** The path exists but is not a regular file, typically a directory. */
   readonly isNotFile: boolean;
+  /** The file is not text (a binary), so it cannot be read as contents. */
+  readonly isBinary: boolean;
+  /** The server refuses to read this file on purpose (credentials, machine state). */
+  readonly isProtected: boolean;
 }
 
 function getProjectEntriesQueryAtom(
@@ -222,6 +226,8 @@ export function useProjectFileQuery(
     data: optimisticFile?.data ?? data,
     error: errorMessage(cause),
     isNotFile: isProjectReadFileError(cause) && cause.failure === "path_not_file",
+    isBinary: isProjectReadFileError(cause) && cause.failure === "binary_file",
+    isProtected: isProjectReadFileError(cause) && cause.failure === "protected_file",
     isPending: result.waiting,
     refresh,
   };

@@ -25,6 +25,13 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { isWindowsDrivePath } from "@t3tools/shared/path";
+
+import {
+  currentHostPathContext,
+  hostPathCandidates,
+  isProtectedHostPath,
+} from "./HostFilePaths.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
@@ -95,11 +102,25 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   }
 }
 
+export class WorkspaceProtectedFileError extends Schema.TaggedError<WorkspaceProtectedFileError>()(
+  "WorkspaceProtectedFileError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    resolvedPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Workspace file '${this.relativePath}' in '${this.workspaceRoot}' holds credentials or machine state and is never shown.`;
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
+  WorkspaceProtectedFileError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
@@ -109,7 +130,9 @@ export class WorkspaceFileSystem extends Context.Service<
   {
     /**
      * Read a UTF-8 text file relative to the workspace root, or any host file by
-     * absolute path.
+     * absolute path. A relative path that is not in the workspace is tried against
+     * the home folder, `~/` expands to it and a Windows path goes through the path
+     * map. Credential files are refused.
      */
     readonly readFile: (
       input: ProjectReadFileInput,
@@ -139,74 +162,136 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
 
+  const realpathOf = (input: ProjectReadFileInput, requested: string, operationPath: string) =>
+    Effect.tryPromise({
+      try: () => NodeFSP.realpath(operationPath),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: requested,
+          operationPath,
+          operation: "realpath-target",
+          cause,
+        }),
+    });
+
+  /** The first host path the request can mean that exists, or the "not found" failure for the best guess. */
+  const resolveHostCandidates = Effect.fn("WorkspaceFileSystem.resolveHostCandidates")(function* (
+    input: ProjectReadFileInput,
+    candidates: ReadonlyArray<string>,
+    fallbackPath: string,
+  ) {
+    for (const candidate of candidates) {
+      if (isProtectedHostPath(candidate)) {
+        return yield* new WorkspaceProtectedFileError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: candidate,
+        });
+      }
+      const real = yield* Effect.option(realpathOf(input, candidate, candidate));
+      if (real._tag === "Some") return { relativePath: candidate, realTargetPath: real.value };
+    }
+    const first = candidates[0] ?? fallbackPath;
+    const realTargetPath = yield* realpathOf(input, first, first);
+    return { relativePath: first, realTargetPath };
+  });
+
   /**
    * Resolves the file a read targets. Workspace-relative paths must stay inside the
-   * root, symlinks included. An absolute path reads a host file in place, such as a
-   * report an agent wrote to a temp directory; it gets no root check.
+   * root, symlinks included, and fall back to the home folder when the workspace
+   * has no such file. An absolute path reads a host file in place, such as a
+   * report an agent wrote to a temp directory; it gets no root check. `~/` and
+   * Windows paths resolve on the host. A credential file is refused wherever it
+   * resolves.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
     const requestedPath = input.relativePath.trim();
-    if (path.isAbsolute(requestedPath)) {
-      const realTargetPath = yield* Effect.tryPromise({
-        try: () => NodeFSP.realpath(requestedPath),
+    const context = currentHostPathContext(input.cwd);
+    const refuseIfProtected = Effect.fn("WorkspaceFileSystem.refuseIfProtected")(function* (
+      lexicalPath: string,
+      realTargetPath: string,
+    ) {
+      if (isProtectedHostPath(lexicalPath) || isProtectedHostPath(realTargetPath)) {
+        return yield* new WorkspaceProtectedFileError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: realTargetPath,
+        });
+      }
+    });
+
+    if (
+      path.isAbsolute(requestedPath) ||
+      isWindowsDrivePath(requestedPath) ||
+      requestedPath === "~" ||
+      requestedPath.startsWith("~/")
+    ) {
+      const hostCandidates = path.isAbsolute(requestedPath)
+        ? [requestedPath]
+        : hostPathCandidates(requestedPath, context);
+      const resolved = yield* resolveHostCandidates(input, hostCandidates, requestedPath);
+      yield* refuseIfProtected(resolved.relativePath, resolved.realTargetPath);
+      return resolved;
+    }
+
+    const inWorkspace = Effect.gen(function* () {
+      const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+
+      const realWorkspaceRoot = yield* Effect.tryPromise({
+        try: () => NodeFSP.realpath(input.cwd),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: requestedPath,
-            operationPath: requestedPath,
-            operation: "realpath-target",
+            resolvedPath: target.absolutePath,
+            operationPath: input.cwd,
+            operation: "realpath-workspace-root",
             cause,
           }),
       });
-      return { relativePath: requestedPath, realTargetPath };
-    }
-
-    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
-      workspaceRoot: input.cwd,
-      relativePath: input.relativePath,
-    });
-
-    const realWorkspaceRoot = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(input.cwd),
-      catch: (cause) =>
-        new WorkspaceFileSystemOperationError({
+      const realTargetPath = yield* realpathOf(input, target.absolutePath, target.absolutePath);
+      const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
+      if (
+        relativeRealPath.startsWith(`..${path.sep}`) ||
+        relativeRealPath === ".." ||
+        path.isAbsolute(relativeRealPath)
+      ) {
+        return yield* new WorkspaceFilePathEscapeError({
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
-          resolvedPath: target.absolutePath,
-          operationPath: input.cwd,
-          operation: "realpath-workspace-root",
-          cause,
-        }),
+          resolvedWorkspaceRoot: realWorkspaceRoot,
+          resolvedPath: realTargetPath,
+        });
+      }
+      yield* refuseIfProtected(target.absolutePath, realTargetPath);
+      return { relativePath: target.relativePath, realTargetPath };
     });
-    const realTargetPath = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(target.absolutePath),
-      catch: (cause) =>
-        new WorkspaceFileSystemOperationError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          resolvedPath: target.absolutePath,
-          operationPath: target.absolutePath,
-          operation: "realpath-target",
-          cause,
-        }),
-    });
-    const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
-    if (
-      relativeRealPath.startsWith(`..${path.sep}`) ||
-      relativeRealPath === ".." ||
-      path.isAbsolute(relativeRealPath)
-    ) {
-      return yield* new WorkspaceFilePathEscapeError({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-        resolvedWorkspaceRoot: realWorkspaceRoot,
-        resolvedPath: realTargetPath,
-      });
-    }
-    return { relativePath: target.relativePath, realTargetPath };
+
+    // A bot writes `.personal-bots/qa/x/RESULT.md` relative to the home folder,
+    // not the chat's workspace: when the workspace has no such file, look there.
+    return yield* inWorkspace.pipe(
+      Effect.catchTag("WorkspaceFileSystemOperationError", (error) => {
+        if (error.operation !== "realpath-target") return Effect.fail(error);
+        const homeCandidates = hostPathCandidates(requestedPath, {
+          ...context,
+          workspaceRoot: undefined,
+        });
+        if (homeCandidates.length === 0) return Effect.fail(error);
+        return resolveHostCandidates(input, homeCandidates, requestedPath).pipe(
+          Effect.tap((resolved) =>
+            refuseIfProtected(resolved.relativePath, resolved.realTargetPath),
+          ),
+          Effect.catchTag("WorkspaceFileSystemOperationError", () => Effect.fail(error)),
+        );
+      }),
+    );
   });
 
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(

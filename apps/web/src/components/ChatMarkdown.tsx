@@ -2740,10 +2740,14 @@ function useChatMarkdownState({
           fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
         ) !== null;
       // Media outside the workspace keeps the expanded preview; other host
-      // files (a report in a temp dir) open read-only in the files panel.
+      // files (a report in a temp dir) open read-only in the files panel. A
+      // host shell with its own file sheet (the personal chat) shows every
+      // file, media included, so it takes the absolute path too.
       const panelPath =
         fileLinkMeta.workspaceRelativePath ??
-        (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+        ((!canPreviewMedia || onOpenFile !== undefined) && isAbsolutePath(fileLinkMeta.filePath)
+          ? fileLinkMeta.filePath
+          : null);
 
       return (
         <MarkdownFileLink
@@ -2787,6 +2791,7 @@ function useChatMarkdownState({
       openFileInPanel,
       openInPreferredEditor,
       openMarkdownFileInPreview,
+      onOpenFile,
       openMarkdownMedia,
       preferredEditorMenuLabel,
       resolvedTheme,

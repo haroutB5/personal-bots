@@ -1,7 +1,13 @@
 import type { JSX, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-import type { PersonalBot, PersonalTask, PersonalTaskId } from "@t3tools/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type {
+  PersonalBot,
+  PersonalTask,
+  PersonalTaskId,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { ChevronLeft } from "lucide-react";
@@ -9,8 +15,10 @@ import { ChevronLeft } from "lucide-react";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { shouldPreserveAssistantLineBreaks } from "~/components/chat/MessagesTimeline.logic";
 import { requestConfirmDialog } from "~/confirmDialog";
+import { useProject, useThreadShell } from "~/state/entities";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { ChatFilePreviewProvider, useChatFilePreview } from "./ChatFilePreview";
 import { commandFailureMessage } from "./commandFeedback";
 import {
   canCancelTask,
@@ -80,6 +88,27 @@ function RelatedTask({ task, bot }: { task: PersonalTask; bot: PersonalBot | und
   );
 }
 
+function TaskResultMarkdown({
+  text,
+  cwd,
+  threadRef,
+}: {
+  text: string;
+  cwd: string | undefined;
+  threadRef: ScopedThreadRef | null;
+}): JSX.Element {
+  const openFile = useChatFilePreview();
+  return (
+    <ChatMarkdown
+      text={text}
+      cwd={cwd}
+      {...(threadRef !== null ? { threadRef } : {})}
+      lineBreaks={shouldPreserveAssistantLineBreaks(text)}
+      onOpenFile={openFile ?? undefined}
+    />
+  );
+}
+
 /** /tasks/$taskId: live status, timestamps, delegation tree, result and actions. */
 export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
@@ -118,6 +147,23 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
         ? fullTask.result
         : task.result;
   const updatedAt = task === undefined ? null : DateTime.formatIso(task.updatedAt);
+  // File links in the result open in the same sheet as in a chat, resolved
+  // against the task's own thread folder.
+  const taskThreadId = task?.threadId ?? null;
+  const taskThreadRef = useMemo(
+    () =>
+      environmentId === null || taskThreadId === null
+        ? null
+        : scopeThreadRef(environmentId, taskThreadId),
+    [environmentId, taskThreadId],
+  );
+  const taskShell = useThreadShell(taskThreadRef);
+  const taskProject = useProject(
+    environmentId !== null && taskShell !== null
+      ? scopeProjectRef(environmentId, taskShell.projectId)
+      : null,
+  );
+  const taskCwd = taskShell?.worktreePath ?? taskProject?.workspaceRoot;
   const refreshDetail = detail.refresh;
   // Attempts come from personalTasks.get; refetch whenever the live task moves.
   useEffect(() => {
@@ -188,127 +234,131 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
   };
 
   return (
-    <div className="flex flex-col gap-4 px-5 pb-8">
-      {header}
+    <ChatFilePreviewProvider environmentId={environmentId} cwd={taskCwd}>
+      <div className="flex flex-col gap-4 px-5 pb-8">
+        {header}
 
-      <section className={DETAIL_CARD}>
-        <div className="flex items-center gap-3">
-          <SmallBotAvatar bot={bot} />
-          <span className="text-[15px] font-semibold text-[var(--personal-text)]">
-            {bot?.name ?? "Deleted bot"}
-          </span>
-        </div>
-        <h2 className="mt-3 text-[17px] font-semibold text-[var(--personal-text)]">{task.title}</h2>
-        <p className="mt-1 flex items-center gap-1.5 text-[14px] text-[var(--personal-text-secondary)]">
-          <StatusDot tone={taskStatusTone(task.status)} />
-          {taskStatusLabel(task.status)}
-          {task.source === "routine" ? " · from a routine" : null}
-        </p>
-        <dl className="mt-3 border-t border-[var(--personal-border)] pt-2">
-          <DetailRow label="Created">{when(task.createdAt)}</DetailRow>
-          {task.startedAt !== null ? (
-            <DetailRow label="Started">{when(task.startedAt)}</DetailRow>
-          ) : null}
-          {task.completedAt !== null ? (
-            <DetailRow label="Finished">{when(task.completedAt)}</DetailRow>
-          ) : null}
-          {task.availableAt !== null && task.status === "rate_limited" ? (
-            <DetailRow label="Retries at">{when(task.availableAt)}</DetailRow>
-          ) : null}
-          {detail.data !== null && detail.data.attempts.length > 0 ? (
-            <DetailRow label="Attempts">{detail.data.attempts.length}</DetailRow>
-          ) : null}
-        </dl>
-      </section>
-
-      {task.errorMessage !== null && task.status !== "completed" ? (
-        <section className="rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] p-4">
-          <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">What went wrong</h3>
-          <p className="mt-1 text-[14px] break-words whitespace-pre-wrap text-[var(--personal-text)]">
-            {task.errorMessage}
-          </p>
-        </section>
-      ) : null}
-
-      {result !== null && result.summary.trim().length > 0 ? (
         <section className={DETAIL_CARD}>
-          <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">
-            {task.status === "running" && result.waitingOnBackgroundSince !== undefined
-              ? "Reply so far (still finishing background work)"
-              : "Result"}
-          </h3>
-          {/* A bot writes its result in markdown, the same as a reply: shown
+          <div className="flex items-center gap-3">
+            <SmallBotAvatar bot={bot} />
+            <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+              {bot?.name ?? "Deleted bot"}
+            </span>
+          </div>
+          <h2 className="mt-3 text-[17px] font-semibold text-[var(--personal-text)]">
+            {task.title}
+          </h2>
+          <p className="mt-1 flex items-center gap-1.5 text-[14px] text-[var(--personal-text-secondary)]">
+            <StatusDot tone={taskStatusTone(task.status)} />
+            {taskStatusLabel(task.status)}
+            {task.source === "routine" ? " · from a routine" : null}
+          </p>
+          <dl className="mt-3 border-t border-[var(--personal-border)] pt-2">
+            <DetailRow label="Created">{when(task.createdAt)}</DetailRow>
+            {task.startedAt !== null ? (
+              <DetailRow label="Started">{when(task.startedAt)}</DetailRow>
+            ) : null}
+            {task.completedAt !== null ? (
+              <DetailRow label="Finished">{when(task.completedAt)}</DetailRow>
+            ) : null}
+            {task.availableAt !== null && task.status === "rate_limited" ? (
+              <DetailRow label="Retries at">{when(task.availableAt)}</DetailRow>
+            ) : null}
+            {detail.data !== null && detail.data.attempts.length > 0 ? (
+              <DetailRow label="Attempts">{detail.data.attempts.length}</DetailRow>
+            ) : null}
+          </dl>
+        </section>
+
+        {task.errorMessage !== null && task.status !== "completed" ? (
+          <section className="rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] p-4">
+            <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">
+              What went wrong
+            </h3>
+            <p className="mt-1 text-[14px] break-words whitespace-pre-wrap text-[var(--personal-text)]">
+              {task.errorMessage}
+            </p>
+          </section>
+        ) : null}
+
+        {result !== null && result.summary.trim().length > 0 ? (
+          <section className={DETAIL_CARD}>
+            <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">
+              {task.status === "running" && result.waitingOnBackgroundSince !== undefined
+                ? "Reply so far (still finishing background work)"
+                : "Result"}
+            </h3>
+            {/* A bot writes its result in markdown, the same as a reply: shown
               as plain text it read "**Cause**" and `code` with the marks in. */}
-          <div className="personal-markdown mt-1 text-[15px] leading-[1.5] break-words text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">
-            <ChatMarkdown
-              text={result.summary}
-              cwd={undefined}
-              lineBreaks={shouldPreserveAssistantLineBreaks(result.summary)}
-            />
-          </div>
-        </section>
-      ) : null}
-
-      {detail.data?.workRecord != null ? <WorkRecordCard record={detail.data.workRecord} /> : null}
-
-      {parent !== undefined ? (
-        <section>
-          <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-section-label)] uppercase">
-            Delegated by
-          </h3>
-          <RelatedTask task={parent} bot={botById.get(parent.botId)} />
-        </section>
-      ) : null}
-
-      {children.length > 0 ? (
-        <section>
-          <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-section-label)] uppercase">
-            Delegated work
-          </h3>
-          <div className="divide-y divide-[var(--personal-border)]">
-            {children.map((child) => (
-              <RelatedTask key={child.taskId} task={child} bot={botById.get(child.botId)} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2.5">
-        {canCancelTask(task.status) ? (
-          <button
-            type="button"
-            className={SECONDARY_BUTTON}
-            disabled={busy}
-            onClick={() => void run("cancel")}
-          >
-            Stop task
-          </button>
+            <div className="personal-markdown mt-1 text-[15px] leading-[1.5] break-words text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">
+              <TaskResultMarkdown text={result.summary} cwd={taskCwd} threadRef={taskThreadRef} />
+            </div>
+          </section>
         ) : null}
-        {canRetryTask(task.status) ? (
-          <button
-            type="button"
-            className={SECONDARY_BUTTON}
-            disabled={busy}
-            onClick={() => void run("retry")}
-          >
-            Retry
-          </button>
+
+        {detail.data?.workRecord != null ? (
+          <WorkRecordCard record={detail.data.workRecord} />
         ) : null}
-        {task.threadId !== null ? (
-          <Link
-            to="/bots/$botId/$threadId"
-            params={{ botId: task.botId, threadId: task.threadId }}
-            className={PRIMARY_BUTTON}
-          >
-            Open chat
-          </Link>
+
+        {parent !== undefined ? (
+          <section>
+            <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-section-label)] uppercase">
+              Delegated by
+            </h3>
+            <RelatedTask task={parent} bot={botById.get(parent.botId)} />
+          </section>
+        ) : null}
+
+        {children.length > 0 ? (
+          <section>
+            <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-section-label)] uppercase">
+              Delegated work
+            </h3>
+            <div className="divide-y divide-[var(--personal-border)]">
+              {children.map((child) => (
+                <RelatedTask key={child.taskId} task={child} bot={botById.get(child.botId)} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <div className="flex flex-wrap gap-2.5">
+          {canCancelTask(task.status) ? (
+            <button
+              type="button"
+              className={SECONDARY_BUTTON}
+              disabled={busy}
+              onClick={() => void run("cancel")}
+            >
+              Stop task
+            </button>
+          ) : null}
+          {canRetryTask(task.status) ? (
+            <button
+              type="button"
+              className={SECONDARY_BUTTON}
+              disabled={busy}
+              onClick={() => void run("retry")}
+            >
+              Retry
+            </button>
+          ) : null}
+          {task.threadId !== null ? (
+            <Link
+              to="/bots/$botId/$threadId"
+              params={{ botId: task.botId, threadId: task.threadId }}
+              className={PRIMARY_BUTTON}
+            >
+              Open chat
+            </Link>
+          ) : null}
+        </div>
+        {actionError !== null ? (
+          <p role="alert" className="text-[14px] text-[var(--personal-error)]">
+            {actionError}
+          </p>
         ) : null}
       </div>
-      {actionError !== null ? (
-        <p role="alert" className="text-[14px] text-[var(--personal-error)]">
-          {actionError}
-        </p>
-      ) : null}
-    </div>
+    </ChatFilePreviewProvider>
   );
 }

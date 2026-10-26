@@ -1168,4 +1168,152 @@ describe("AssetAccess", () => {
       }
     }).pipe(Effect.provide(testLayer)),
   );
+
+  describe("host files from chat links", () => {
+    const withHome = <A, E, R>(
+      home: string,
+      pathMap: string | undefined,
+      effect: Effect.Effect<A, E, R>,
+    ) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const previous = { home: process.env.HOME, pathMap: process.env.T3CODE_PATH_MAP };
+          process.env.HOME = home;
+          if (pathMap === undefined) delete process.env.T3CODE_PATH_MAP;
+          else process.env.T3CODE_PATH_MAP = pathMap;
+          return previous;
+        }),
+        () => effect,
+        (previous) =>
+          Effect.sync(() => {
+            if (previous.home === undefined) delete process.env.HOME;
+            else process.env.HOME = previous.home;
+            if (previous.pathMap === undefined) delete process.env.T3CODE_PATH_MAP;
+            else process.env.T3CODE_PATH_MAP = previous.pathMap;
+          }),
+      );
+    const resolveIssued = (relativeUrl: string) => {
+      const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+    };
+
+    it.effect("serves a home-relative, ~/ and mapped Windows media path", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-host-home-" });
+        const cwd = path.join(home, "work");
+        yield* fs.makeDirectory(cwd);
+        yield* fs.makeDirectory(path.join(home, "shots"), { recursive: true });
+        yield* fs.writeFileString(path.join(home, "shots", "a.png"), "png");
+        yield* fs.writeFileString(path.join(home, "report.pdf"), "%PDF");
+        const canonicalHome = yield* fs.realPath(home);
+
+        yield* withHome(
+          home,
+          `C:/Users/Ht=${home}`,
+          Effect.gen(function* () {
+            for (const [requested, expected] of [
+              ["shots/a.png", path.join(canonicalHome, "shots", "a.png")],
+              ["~/shots/a.png", path.join(canonicalHome, "shots", "a.png")],
+              ["C:/Users/Ht/report.pdf", path.join(canonicalHome, "report.pdf")],
+            ] as const) {
+              const issued = yield* issueAssetUrl({
+                resource: {
+                  _tag: "media-file",
+                  threadId: ThreadId.make("thread-1"),
+                  path: requested,
+                },
+                workspaceRoot: cwd,
+              });
+              expect(yield* resolveIssued(issued.relativeUrl)).toMatchObject({
+                kind: "file",
+                path: expected,
+              });
+            }
+          }),
+        );
+      }).pipe(Effect.provide(testLayer)),
+    );
+
+    it.effect("serves a file of any type as a download only", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-host-download-" });
+        const cwd = path.join(home, "work");
+        yield* fs.makeDirectory(cwd);
+        yield* fs.writeFileString(path.join(home, "data.bin"), "bytes");
+        yield* fs.writeFileString(path.join(home, "page.html"), "<script>alert(1)</script>");
+        const resource = (name: string, disposition: "inline" | "download") =>
+          ({ _tag: "host-file", cwd, path: name, disposition }) as const;
+
+        yield* withHome(
+          home,
+          undefined,
+          Effect.gen(function* () {
+            const issued = yield* issueAssetUrl({ resource: resource("data.bin", "download") });
+            expect(issued.sourcePath).toBe(path.join(yield* fs.realPath(home), "data.bin"));
+            expect(yield* resolveIssued(issued.relativeUrl)).toMatchObject({
+              kind: "file",
+              download: true,
+              fileName: "data.bin",
+            });
+            // An inline request for an unknown type is refused rather than rendered.
+            const inline = yield* issueAssetUrl({ resource: resource("data.bin", "inline") }).pipe(
+              Effect.flip,
+            );
+            expect(inline).toBeInstanceOf(AssetPreviewTypeValidationError);
+            // HTML as a download never renders.
+            const html = yield* issueAssetUrl({ resource: resource("page.html", "download") });
+            expect(yield* resolveIssued(html.relativeUrl)).toMatchObject({ download: true });
+            const missing = yield* issueAssetUrl({
+              resource: resource("nope.bin", "download"),
+            }).pipe(Effect.flip);
+            expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
+          }),
+        );
+      }).pipe(Effect.provide(testLayer)),
+    );
+
+    it.effect("refuses credential files for every resource that reads the host", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-host-secret-" });
+        const cwd = path.join(home, "work");
+        yield* fs.makeDirectory(cwd);
+        yield* fs.makeDirectory(path.join(home, ".ssh"));
+        yield* fs.writeFileString(path.join(home, ".ssh", "id_rsa"), "key");
+        yield* fs.writeFileString(path.join(home, "bot-token.png"), "png");
+        yield* fs.writeFileString(path.join(cwd, ".env"), "SECRET=1");
+
+        yield* withHome(
+          home,
+          undefined,
+          Effect.gen(function* () {
+            for (const requested of [
+              ".ssh/id_rsa",
+              "~/.ssh/id_rsa",
+              "bot-token.png",
+              "work/.env",
+            ]) {
+              for (const resource of [
+                { _tag: "host-file", cwd, path: requested, disposition: "download" },
+                { _tag: "host-file", cwd, path: requested, disposition: "inline" },
+                { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: requested },
+                { _tag: "draft-workspace-file", cwd, path: path.join(home, requested) },
+              ] as const) {
+                const error = yield* issueAssetUrl({ resource, workspaceRoot: cwd }).pipe(
+                  Effect.flip,
+                );
+                expect(error._tag, `${resource._tag} ${requested}`).toBe("AssetProtectedFileError");
+              }
+            }
+          }),
+        );
+      }).pipe(Effect.provide(testLayer)),
+    );
+  });
 });
