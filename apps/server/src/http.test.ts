@@ -394,6 +394,24 @@ describe("assetResponseHeaders", () => {
     }
   });
 
+  it("sandboxes rendered host files, HTML and SVG alike", () => {
+    expect(
+      assetResponseHeaders("/home/harout/Claude/AI/dev-team/report.html", {
+        mimeType: "text/html",
+      }),
+    ).toMatchObject({
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals",
+    });
+    expect(
+      assetResponseHeaders("/home/harout/Claude/AI/dev-team/diagram.svg", {
+        mimeType: "image/svg+xml",
+      }),
+    ).toMatchObject({
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    });
+  });
+
   it("downloads uploaded documents without executing their content", () => {
     expect(assetResponseHeaders("/attachments/upload.html", { download: true })).toMatchObject({
       "Content-Disposition": "attachment",

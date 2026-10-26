@@ -104,6 +104,15 @@ const PROTECTED_BASENAME_PATTERNS: ReadonlyArray<RegExp> = [
   /\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i,
   /\.(sqlite|sqlite3|db)(-wal|-shm|-journal)?$/i,
   /token/i,
+  /^\.?pgpass$/i,
+  /^\.my\.cnf$/i,
+  /^cookies(-journal)?$/i,
+  /^login data(-journal)?$/i,
+  /^local state$/i,
+  /^web data(-journal)?$/i,
+  /^logins\.json$/i,
+  /^key[34]\.db$/i,
+  /^signons\.sqlite$/i,
 ];
 const TEMPLATE_ENV = /^\.env\.(example|sample|template|dist|defaults?)$/i;
 
@@ -115,6 +124,7 @@ const PROTECTED_SEGMENTS = new Set([
   ".kube",
   ".password-store",
   "secrets",
+  "browser-profiles",
 ]);
 
 // Absolute prefixes of the system: kernel views, devices and account databases.
@@ -126,6 +136,7 @@ const PROTECTED_PREFIXES = [
   "/etc/shadow",
   "/etc/gshadow",
   "/etc/sudoers",
+  "/etc/sudoers.d",
 ];
 
 // The Bots data root keeps its database, its sealed secret store and its
@@ -135,16 +146,16 @@ function isProtectedBotsData(segments: ReadonlyArray<string>): boolean {
   return index >= 0 && segments[index + 1] !== "attachments";
 }
 
+const PROTECTED_CONFIG_DIRS = new Set(["gh", "glab-cli", "op", "gcloud", "azure", "rclone"]);
+const BROWSER_PROFILE_DIRS = new Set(["bravesoftware", "google-chrome", "chromium", "mozilla"]);
 function isProtectedConfigFolder(segments: ReadonlyArray<string>): boolean {
   // gh keeps its token in ~/.config/gh/hosts.yml; the CLI logins live in these.
   for (let index = 0; index + 1 < segments.length; index += 1) {
-    if (
-      segments[index] === ".config" &&
-      ["gh", "glab-cli", "op"].includes(segments[index + 1] ?? "")
-    ) {
-      return true;
+    const child = (segments[index + 1] ?? "").toLowerCase();
+    if (segments[index] === ".config") {
+      if (PROTECTED_CONFIG_DIRS.has(child) || BROWSER_PROFILE_DIRS.has(child)) return true;
     }
-    if (segments[index] === ".docker" && segments[index + 1] === "config.json") return true;
+    if (segments[index] === ".docker" && child === "config.json") return true;
   }
   return false;
 }
@@ -161,9 +172,9 @@ export function isProtectedHostPath(absolutePath: string): boolean {
   }
   const segments = normalized.split("/").filter((segment) => segment !== "");
   const basename = segments.at(-1) ?? "";
-  if (TEMPLATE_ENV.test(basename)) return false;
   if (segments.slice(0, -1).some((segment) => PROTECTED_SEGMENTS.has(segment.toLowerCase())))
     return true;
   if (isProtectedBotsData(segments.slice(0, -1)) || isProtectedConfigFolder(segments)) return true;
+  if (TEMPLATE_ENV.test(basename)) return false;
   return PROTECTED_BASENAME_PATTERNS.some((pattern) => pattern.test(basename));
 }

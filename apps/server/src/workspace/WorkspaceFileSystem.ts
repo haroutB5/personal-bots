@@ -304,11 +304,21 @@ export const make = Effect.gen(function* () {
       Effect.tryPromise({
         // Non-blocking so a FIFO cannot hang the open; the stat below rejects
         // it. Regular files ignore the flag. Windows lacks it.
-        try: () =>
-          NodeFSP.open(
+        try: async () => {
+          const before = await NodeFSP.lstat(realTargetPath, { bigint: true });
+          const handle = await NodeFSP.open(
             realTargetPath,
-            NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
-          ),
+            NodeFS.constants.O_RDONLY |
+              (NodeFS.constants.O_NOFOLLOW ?? 0) |
+              (NodeFS.constants.O_NONBLOCK ?? 0),
+          );
+          const after = await handle.stat({ bigint: true });
+          if (after.isFile() && (after.dev !== before.dev || after.ino !== before.ino)) {
+            await handle.close();
+            throw new Error(`File changed while opening '${realTargetPath}'.`);
+          }
+          return handle;
+        },
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,

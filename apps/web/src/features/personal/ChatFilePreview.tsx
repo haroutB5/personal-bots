@@ -331,9 +331,9 @@ export function ChatFilePreviewBody({
       ) : null}
       <ActionRow>
         {kind === "html" ? (
-          // The server serves HTML in a sandbox with no scripts or network, so
-          // the rendered page cannot reach this app; the source above is the
-          // default view.
+          // The server serves HTML from an opaque-origin sandbox: scripts may
+          // run, but there are no app cookies, storage or same-origin access;
+          // the source above is the default view.
           <ActionLink href={inlineUrl} label={`Open ${name} rendered`} primary={false}>
             <ExternalLink aria-hidden="true" className="size-[18px]" strokeWidth={1.75} />
             Open rendered

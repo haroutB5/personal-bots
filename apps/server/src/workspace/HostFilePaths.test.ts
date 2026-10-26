@@ -66,6 +66,17 @@ describe("isProtectedHostPath", () => {
     "/home/harout/.personal-bots/dev/userdata/state.sqlite-wal",
     "/home/harout/.personal-bots/dev/userdata/secrets/key",
     "/home/harout/.personal-bots/dev/userdata/settings.json",
+    "/home/harout/.personal-bots/dev/personal/browser-profiles/default/Default/Cookies",
+    "/home/harout/.personal-bots/dev/personal/browser-profiles/default/Default/Login Data",
+    "/home/harout/.personal-bots/dev/personal/browser-profiles/default/Local State",
+    "/home/harout/.personal-bots/dev/personal/browser-profiles/default/Default/Web Data",
+    "/home/harout/.config/BraveSoftware/Brave-Browser/Default/Cookies",
+    "/home/harout/.config/google-chrome/Default/Login Data",
+    "/home/harout/.config/chromium/Default/Local State",
+    "/home/harout/.config/mozilla/firefox/x/logins.json",
+    "/home/harout/.pgpass",
+    "/home/harout/.my.cnf",
+    "/etc/sudoers.d/90-cloud-init-users",
     "/home/harout/.ssh/id_ed25519",
     "/home/harout/.ssh/config",
     "/home/harout/.aws/credentials",
@@ -101,5 +112,13 @@ describe("isProtectedHostPath", () => {
   it("looks through ../ and backslashes", () => {
     expect(isProtectedHostPath("/home/harout/work/../.ssh/id_rsa")).toBe(true);
     expect(isProtectedHostPath("C:\\Users\\Ht\\.ssh\\id_rsa")).toBe(true);
+  });
+
+  it("lets a denied folder win over the .env.example template exemption", () => {
+    expect(isProtectedHostPath("/home/harout/.ssh/.env.example")).toBe(true);
+    expect(
+      isProtectedHostPath("/home/harout/.config/BraveSoftware/Brave-Browser/.env.example"),
+    ).toBe(true);
+    expect(isProtectedHostPath("/home/harout/.personal-bots/dev/userdata/.env.example")).toBe(true);
   });
 });
