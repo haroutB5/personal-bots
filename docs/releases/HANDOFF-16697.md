@@ -37,6 +37,10 @@ notes are `docs/releases/HANDOFF-16696.md`; nothing in that text is repeated her
   sliced the whole prompt (memory block included) with offsets into the owner's message, so when the
   memory block quoted a call cut off mid-JSON, every real call was reported as bad JSON (QA's
   `fake-bug-locked-prompt.txt`). It now slices `ownerText`, and a regression test uses that prompt.
+- **No tall blank gap under the progress note in short chats (Frontend).** The status line reserved
+  its height even when the chat was too short to need it, leaving a blank band between the messages
+  and the composer; it now takes its space only when the list can scroll under it
+  (`MessageList.statusLine.test.tsx`, 3 cases).
 
 ## Lean builds (Optimizer, `perf/hbots-build-diet`)
 
@@ -89,7 +93,7 @@ from that file, so the reported memory peaks are the lean ones.
   `updateStatus.test.ts` (`compareVersions` ties) and `updateStatusRoute.test.ts` (tie path),
   `PersonalVoiceSampleService.test.ts` (temp-root cleanup), `fake-claude/cli.test.mjs` (QA's
   multi-call prompt), `typecheck.test.mjs` (shard coverage).
-- Targeted runs: heavy lock 8/8; update status route 20/20 after the fix (5/15 failed before);
+- Targeted runs: heavy lock 8/8; the gap fix's `MessageList.statusLine.test.tsx` 3/3; update status route 20/20 after the fix (5/15 failed before);
   voice samples 9/9 with no leftovers; fake CLI 6/6, and the new test fails with the old slice.
 - The live five-slot proof is in `.personal-bots/qa/backend-16697-lock/RESULT.md`, on a throwaway
   booted from this release; the live `state.sqlite` was never opened and the live service was never
