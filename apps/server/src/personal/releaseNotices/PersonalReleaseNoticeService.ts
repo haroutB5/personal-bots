@@ -78,7 +78,7 @@ export const ReleaseNotice = Schema.Struct({
    * previous release is back and passed its smoke. rollback_failed: the smoke
    * failed and so did the rollback. failed: stopped before activating.
    */
-  outcome: Schema.Literals(["live", "rolled_back", "rollback_failed", "failed"]),
+  outcome: Schema.Literals(["live", "rolled_back", "rollback_failed", "failed", "waiting"]),
   smokeExit: Schema.optional(ExitCode),
   rollbackRelease: Schema.optional(Text),
   rollbackExit: Schema.optional(ExitCode),
@@ -99,7 +99,9 @@ export function releaseNoticeText(notice: ReleaseNotice): string {
   const name = `hbots ${notice.version} (release ${notice.release})`;
   const rollbackTo = notice.rollbackRelease ?? "the previous release";
   const head =
-    notice.outcome === "live"
+    notice.outcome === "waiting"
+      ? `Release waiting: ${name} is still waiting for idle.`
+      : notice.outcome === "live"
       ? `Release landed: ${name} is live. Smoke ${exitText(notice.smokeExit)}. No rollback.`
       : notice.outcome === "rolled_back"
         ? `Release failed: ${name} failed its smoke (${exitText(notice.smokeExit)}) and was rolled back to ${rollbackTo}: rollback ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}.`
@@ -107,7 +109,9 @@ export function releaseNoticeText(notice: ReleaseNotice): string {
           ? `Release failed and the rollback failed too: ${name} smoke ${exitText(notice.smokeExit)}; rollback to ${rollbackTo} ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}. The server may be down or on the wrong release.`
           : `Release not activated: ${name} stopped before the restart. Nothing changed on the live server.`;
   const next =
-    notice.outcome === "live"
+    notice.outcome === "waiting"
+      ? "Check the blockers and the log; the waiter is still running."
+      : notice.outcome === "live"
       ? "Confirm the live release and start QA now."
       : notice.outcome === "rollback_failed"
         ? "Check status.ps1 and the log now and tell Harout plainly."

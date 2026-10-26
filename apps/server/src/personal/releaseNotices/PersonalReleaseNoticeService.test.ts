@@ -127,6 +127,24 @@ const turnStarts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
   );
 
 describe("PersonalReleaseNotices", () => {
+  it.effect("a waiting notice posts once without saying the release failed", () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    return Effect.gen(function* () {
+      yield* linkCtoChat;
+      yield* writeNotice("waiting.json", {
+        threadId: CTO_CHAT, version: "1.66.97", release: "abc123def456",
+        outcome: "waiting", detail: "node pid 123, 40m",
+      });
+      const service = yield* PersonalReleaseNotices;
+      expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
+      expect(yield* service.sweep).toEqual([]);
+      const turns = turnStarts(dispatched);
+      expect(turns).toHaveLength(1);
+      expect(turns[0]!.message.text).toContain("still waiting for idle");
+      expect(turns[0]!.message.text).toContain("node pid 123, 40m");
+      expect(turns[0]!.message.text).not.toContain("re-arm");
+    }).pipe(Effect.provide(makeLayer(dispatched)));
+  });
   it.effect("a successful release posts exactly one turn into the requesting chat", () => {
     const dispatched: Array<OrchestrationCommand> = [];
     return Effect.gen(function* () {
