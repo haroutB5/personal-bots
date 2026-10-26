@@ -5,7 +5,11 @@ import { ThreadId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import { openCode2Environment, configureOpenCode2Turn } from "./opencode2.ts";
+import {
+  openCode2Environment,
+  openCode2SessionFingerprint,
+  configureOpenCode2Turn,
+} from "./opencode2.ts";
 import type * as AcpSessionRuntime from "./acp/AcpSessionRuntime.ts";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -83,6 +87,29 @@ it.effect("adds the session instructions file to the agent config", () =>
     expect(decodeJson(env.OPENCODE_CONFIG_CONTENT!)).toMatchObject({
       instructions: ["/bots/state/opencode-v2/instructions/thread-1.md"],
     });
+  }),
+);
+
+it.effect("fingerprints the auth content and the binary path", () =>
+  Effect.gen(function* () {
+    let auth = "key-one";
+    const fingerprint = (binaryPath: string) =>
+      openCode2SessionFingerprint({
+        base: { USERPROFILE: "/owner" },
+        stateDir: "/bots/state",
+        binaryPath,
+      }).pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({ readFileString: () => Effect.succeed(auth) }),
+        ),
+        Effect.provide(NodePath.layerPosix),
+      );
+    const first = yield* fingerprint("/bin/opencode-a");
+    expect(yield* fingerprint("/bin/opencode-a")).toBe(first);
+    expect(yield* fingerprint("/bin/opencode-b")).not.toBe(first);
+    auth = "key-two";
+    expect(yield* fingerprint("/bin/opencode-a")).not.toBe(first);
   }),
 );
 
