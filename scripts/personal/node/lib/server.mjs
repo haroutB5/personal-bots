@@ -38,7 +38,30 @@ function killOldLogs(logsDir, keep = 7) {
   } catch {
     return;
   }
-  names.sort().reverse().slice(keep).forEach((name) => fs.rmSync(path.join(logsDir, name), { force: true }));
+  names
+    .sort()
+    .reverse()
+    .slice(keep)
+    .forEach((name) => fs.rmSync(path.join(logsDir, name), { force: true }));
+}
+
+// The server releases its Cloudflare tunnel on a plain shutdown (the relay
+// provisions a replacement UUID and the public hostname then takes 1-2 minutes
+// to route to it). It keeps the tunnel when a restart is an update handoff, so
+// an update restart must leave this marker in <base>/runtime, the same one the
+// desktop app writes. Released only on stop, never on restart.
+const UPDATE_RESTART_MARKER = "desktop-update-restart";
+
+export function markUpdateRestart({ paths }) {
+  const runtimeDir = path.join(paths.baseDir, "runtime");
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  const marker = path.join(runtimeDir, UPDATE_RESTART_MARKER);
+  fs.writeFileSync(marker, `${new Date().toISOString()}\n`);
+  return marker;
+}
+
+function clearUpdateRestartMarker({ paths }) {
+  fs.rmSync(path.join(paths.baseDir, "runtime", UPDATE_RESTART_MARKER), { force: true });
 }
 
 export function serverEnvFor(repoRoot, label = "Bots") {
@@ -51,7 +74,11 @@ async function waitReady({ paths, launchedAt, childPid, timeoutMs = 60000 }) {
   while (Date.now() < deadline) {
     if (!proc.isAlive(childPid)) return { ready: false, exited: true };
     const runtime = proc.runtimeState(paths.baseDir);
-    if (runtime && runtime.startedAt && Date.parse(runtime.startedAt) >= launchedAt.getTime() - 2000) {
+    if (
+      runtime &&
+      runtime.startedAt &&
+      Date.parse(runtime.startedAt) >= launchedAt.getTime() - 2000
+    ) {
       return { ready: true, runtime };
     }
     await proc.sleep(500);
@@ -75,7 +102,9 @@ export async function startServer({
   }
   const owner = proc.dataRootOwner(paths.baseDir);
   if (owner) {
-    throw new Error(`A T3 server (pid ${owner.pid}, ${owner.origin}) already serves ${paths.baseDir}. Two servers must never share a data root.`);
+    throw new Error(
+      `A T3 server (pid ${owner.pid}, ${owner.origin}) already serves ${paths.baseDir}. Two servers must never share a data root.`,
+    );
   }
   const release = resolveRelease(paths, releaseName);
   await checkPortFree(port);
@@ -83,7 +112,10 @@ export async function startServer({
   killOldLogs(paths.logsDir);
   const logFile = path.join(paths.logsDir, logFileName());
   const launchedAt = new Date();
-  fs.appendFileSync(logFile, `=== ${launchedAt.toISOString()} start release ${release.name} root ${paths.root} base ${paths.baseDir}\n`);
+  fs.appendFileSync(
+    logFile,
+    `=== ${launchedAt.toISOString()} start release ${release.name} root ${paths.root} base ${paths.baseDir}\n`,
+  );
 
   const child = proc.spawnServe({
     nodeExe,
@@ -114,7 +146,9 @@ export async function startServer({
       proc.clearState(paths);
       throw new Error(`Personal Bots exited during startup. Last log lines:\n${tail}`);
     }
-    process.stderr.write(`Server is running (pid ${child.pid}) but not ready after ${waitMs / 1000}s. Check ${logFile}.\n`);
+    process.stderr.write(
+      `Server is running (pid ${child.pid}) but not ready after ${waitMs / 1000}s. Check ${logFile}.\n`,
+    );
   }
   return { alreadyRunning: false, state, ready: ready.ready, logFile };
 }
@@ -122,7 +156,14 @@ export async function startServer({
 // Foreground supervisor for systemd: one child, state file, signals forwarded.
 // systemd owns crash restarts (Restart=on-failure) and the kill of the whole
 // control group, so a stop never leaves an orphan.
-export async function serveForeground({ paths, repoRoot, releaseName = null, nodeExe = process.execPath, port = defaultPort(paths.root), label = "Bots" }) {
+export async function serveForeground({
+  paths,
+  repoRoot,
+  releaseName = null,
+  nodeExe = process.execPath,
+  port = defaultPort(paths.root),
+  label = "Bots",
+}) {
   ensureDirs([paths.logsDir, paths.runDir, paths.baseDir, paths.workDir]);
   const owner = proc.dataRootOwner(paths.baseDir);
   if (owner && Number(owner.pid) !== process.pid) {
@@ -134,16 +175,23 @@ export async function serveForeground({ paths, repoRoot, releaseName = null, nod
   killOldLogs(paths.logsDir);
   const logFile = path.join(paths.logsDir, logFileName());
   const launchedAt = new Date();
-  fs.appendFileSync(logFile, `=== ${launchedAt.toISOString()} serve release ${release.name} root ${paths.root} base ${paths.baseDir}\n`);
+  fs.appendFileSync(
+    logFile,
+    `=== ${launchedAt.toISOString()} serve release ${release.name} root ${paths.root} base ${paths.baseDir}\n`,
+  );
 
   const fd = fs.openSync(logFile, "a");
   const { spawn } = await import("node:child_process");
-  const child = spawn(nodeExe, [release.bin, "serve", "--base-dir", paths.baseDir, "--no-browser", "--port", String(port)], {
-    cwd: paths.workDir,
-    env: serverEnvFor(repoRoot, label),
-    stdio: ["ignore", fd, fd],
-    detached: false,
-  });
+  const child = spawn(
+    nodeExe,
+    [release.bin, "serve", "--base-dir", paths.baseDir, "--no-browser", "--port", String(port)],
+    {
+      cwd: paths.workDir,
+      env: serverEnvFor(repoRoot, label),
+      stdio: ["ignore", fd, fd],
+      detached: false,
+    },
+  );
   fs.closeSync(fd);
   proc.writeState(paths, {
     pid: child.pid,
@@ -156,7 +204,9 @@ export async function serveForeground({ paths, repoRoot, releaseName = null, nod
     supervised: true,
   });
 
-  const exited = new Promise((resolve) => child.once("exit", (exitCode, signal) => resolve({ exitCode, signal })));
+  const exited = new Promise((resolve) =>
+    child.once("exit", (exitCode, signal) => resolve({ exitCode, signal })),
+  );
   let requestedStop = false;
   const forward = (signal) => {
     requestedStop = true;
@@ -170,7 +220,8 @@ export async function serveForeground({ paths, repoRoot, releaseName = null, nod
   process.on("SIGINT", () => forward("SIGINT"));
 
   const ready = await waitReady({ paths, launchedAt, childPid: child.pid, timeoutMs: 60000 });
-  if (ready.ready) log(`Personal Bots ready: pid ${child.pid}, release ${release.name}, root ${paths.root}`);
+  if (ready.ready)
+    log(`Personal Bots ready: pid ${child.pid}, release ${release.name}, root ${paths.root}`);
   else if (ready.exited) process.stderr.write(`Server exited during startup. See ${logFile}.\n`);
 
   const { exitCode, signal } = await exited;
@@ -203,7 +254,10 @@ export async function stopServer({ paths }) {
 }
 
 export function systemdUnitActive(unit = "hbots.service") {
-  return spawnSync("systemctl", ["--user", "is-active", "--quiet", unit], { stdio: "ignore" }).status === 0;
+  return (
+    spawnSync("systemctl", ["--user", "is-active", "--quiet", unit], { stdio: "ignore" }).status ===
+    0
+  );
 }
 
 export async function restartServer({
@@ -218,33 +272,55 @@ export async function restartServer({
 }) {
   const before = proc.readState(paths);
   const rollbackTarget = before && before.release ? String(before.release) : null;
-  const listenPort = port ?? (before && before.port ? Number(before.port) : defaultPort(paths.root));
+  const listenPort =
+    port ?? (before && before.port ? Number(before.port) : defaultPort(paths.root));
   if (releaseName) {
     setActiveRelease(paths, releaseName);
     log(`Active release set to ${releaseName}.`);
   }
   const useSystemd = viaSystemd === null ? systemdUnitActive() : viaSystemd;
+  // An update restart is a handoff, not the host going offline: keep the
+  // managed tunnel so the phone keeps a warm route and the next boot skips the
+  // first-registration jitter.
+  const marker = markUpdateRestart({ paths });
+  log(`Update-restart marker: ${marker}`);
   let started;
-  if (useSystemd) {
-    const result = spawnSync("systemctl", ["--user", "restart", "hbots.service"], { encoding: "utf8" });
-    if (result.status !== 0) throw new Error(`systemctl --user restart hbots.service failed: ${(result.stderr || "").trim()}`);
-    const deadline = Date.now() + waitMs;
-    while (Date.now() < deadline) {
-      const state = proc.readState(paths);
-      if (state && proc.isServerProcess(Number(state.pid), state)) {
-        started = { state };
-        break;
+  try {
+    if (useSystemd) {
+      const result = spawnSync("systemctl", ["--user", "restart", "hbots.service"], {
+        encoding: "utf8",
+      });
+      if (result.status !== 0)
+        throw new Error(
+          `systemctl --user restart hbots.service failed: ${(result.stderr || "").trim()}`,
+        );
+      const deadline = Date.now() + waitMs;
+      while (Date.now() < deadline) {
+        const state = proc.readState(paths);
+        if (state && proc.isServerProcess(Number(state.pid), state)) {
+          started = { state };
+          break;
+        }
+        await proc.sleep(500);
       }
-      await proc.sleep(500);
+      if (!started) throw new Error("hbots.service did not bring the server back within the wait.");
+    } else {
+      await stopServer({ paths });
+      started = await startServer({ paths, repoRoot, nodeExe, waitMs: 60000, port: listenPort });
     }
-    if (!started) throw new Error("hbots.service did not bring the server back within the wait.");
-  } else {
-    await stopServer({ paths });
-    started = await startServer({ paths, repoRoot, nodeExe, waitMs: 60000, port: listenPort });
+  } catch (error) {
+    clearUpdateRestartMarker({ paths });
+    throw error;
   }
   if (keepReleases > 0) {
     try {
-      pruneReleases({ paths, keep: keepReleases, protect: [rollbackTarget].filter(Boolean), running: started.state.release, dryRun: false });
+      pruneReleases({
+        paths,
+        keep: keepReleases,
+        protect: [rollbackTarget].filter(Boolean),
+        running: started.state.release,
+        dryRun: false,
+      });
     } catch (error) {
       process.stderr.write(`Release pruning failed: ${error.message}\n`);
     }
@@ -261,7 +337,16 @@ export function describeStatus({ paths }) {
   if (active) {
     version = formatVersionFile(path.join(paths.releasesDir, active, "VERSION"));
   }
-  return { root: paths.root, active, state, alive, runtime, version, home: paths.home, baseDir: paths.baseDir };
+  return {
+    root: paths.root,
+    active,
+    state,
+    alive,
+    runtime,
+    version,
+    home: paths.home,
+    baseDir: paths.baseDir,
+  };
 }
 
 export function formatVersionFile(file) {

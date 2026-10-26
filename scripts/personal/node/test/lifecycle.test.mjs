@@ -1,13 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { getPaths } from "../lib/paths.mjs";
-import { startServer, stopServer, restartServer, describeStatus, serveForeground } from "../lib/server.mjs";
-import { runSmoke } from "../lib/smoke.mjs";
+import {
+  startServer,
+  stopServer,
+  restartServer,
+  describeStatus,
+  serveForeground,
+  markUpdateRestart,
+} from "../lib/server.mjs";
+import { runSmoke, waitHttp200 } from "../lib/smoke.mjs";
 import * as proc from "../lib/proc.mjs";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
@@ -45,7 +53,13 @@ test("start, status, smoke and stop against a throwaway root", async () => {
   makeRelease(paths);
   const port = await freePort();
 
-  const started = await startServer({ paths, repoRoot, nodeExe: process.execPath, port, waitMs: 20000 });
+  const started = await startServer({
+    paths,
+    repoRoot,
+    nodeExe: process.execPath,
+    port,
+    waitMs: 20000,
+  });
   try {
     assert.equal(started.alreadyRunning, false);
     assert.equal(started.ready, true);
@@ -91,7 +105,13 @@ test("smoke fails when the log has SQL errors", async () => {
   fs.mkdirSync(paths.logsDir, { recursive: true });
   makeRelease(paths);
   const port = await freePort();
-  const started = await startServer({ paths, repoRoot, nodeExe: process.execPath, port, waitMs: 20000 });
+  const started = await startServer({
+    paths,
+    repoRoot,
+    nodeExe: process.execPath,
+    port,
+    waitMs: 20000,
+  });
   try {
     const logFile = path.join(paths.logsDir, "server-20990101.log");
     fs.writeFileSync(logFile, "SQLITE_ERROR: no such column: x\n");
@@ -135,9 +155,23 @@ test("restart keeps the same release and a live pid", async () => {
   makeRelease(paths, "r1");
   makeRelease(paths, "r2");
   const port = await freePort();
-  const first = await startServer({ paths, repoRoot, nodeExe: process.execPath, port, waitMs: 20000 });
+  const first = await startServer({
+    paths,
+    repoRoot,
+    nodeExe: process.execPath,
+    port,
+    waitMs: 20000,
+  });
   try {
-    const restarted = await restartServer({ paths, repoRoot, releaseName: "r2", viaSystemd: false, keepReleases: 0, nodeExe: process.execPath, port });
+    const restarted = await restartServer({
+      paths,
+      repoRoot,
+      releaseName: "r2",
+      viaSystemd: false,
+      keepReleases: 0,
+      nodeExe: process.execPath,
+      port,
+    });
     assert.equal(restarted.state.release, "r2");
     assert.notEqual(restarted.state.pid, first.state.pid);
     assert.equal(proc.isServerProcess(restarted.state.pid, restarted.state), true);
@@ -167,4 +201,36 @@ test("serve (systemd foreground) writes state and exits on SIGTERM", async () =>
   const code = await runner;
   assert.equal(code, 0);
   assert.equal(proc.isAlive(childPid), false);
+});
+
+test("waitHttp200 reports every poll's status and the time to the first 200", async () => {
+  let calls = 0;
+  const server = http.createServer((_request, response) => {
+    calls += 1;
+    response.writeHead(calls < 3 ? 503 : 200, { "content-type": "application/json" });
+    response.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const polls = [];
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/.well-known/t3/environment`;
+    const result = await waitHttp200(url, 20, { onPoll: (poll) => polls.push(poll) });
+    assert.equal(result.status, 200);
+    assert.deepEqual(
+      polls.map((poll) => poll.status),
+      [503, 503, 200],
+    );
+    assert.ok(polls[2].elapsedSeconds >= 5.9, `elapsed ${polls[2].elapsedSeconds}`);
+    assert.equal(polls[0].error, null);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("update restart marker lands where the server checks it", () => {
+  const paths = getPaths({ home: tempHome() });
+  const marker = markUpdateRestart({ paths });
+  assert.equal(marker, path.join(paths.baseDir, "runtime", "desktop-update-restart"));
+  assert.equal(fs.existsSync(marker), true);
+  assert.ok(Date.now() - fs.statSync(marker).mtimeMs < 5000);
 });

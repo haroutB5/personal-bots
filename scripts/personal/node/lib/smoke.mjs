@@ -7,30 +7,51 @@ import * as proc from "./proc.mjs";
 
 const execFileAsync = promisify(execFile);
 
-const LOG_ERROR_PATTERN = /MigrationError|Migrations? failed|SqlError|no such column|no such table|SQLITE_ERROR|Defect in|FATAL/;
+const LOG_ERROR_PATTERN =
+  /MigrationError|Migrations? failed|SqlError|no such column|no such table|SQLITE_ERROR|Defect in|FATAL/;
 
 async function httpStatus(url, timeoutMs = 10000) {
+  const startedAt = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { signal: controller.signal, redirect: "follow" });
     const body = await response.text();
-    return { status: response.status, body };
-  } catch {
-    return null;
+    return { status: response.status, body, ms: Date.now() - startedAt };
+  } catch (error) {
+    return {
+      status: null,
+      body: "",
+      ms: Date.now() - startedAt,
+      error: error?.name === "AbortError" ? "timeout" : String(error?.message ?? error),
+    };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function waitHttp200(url, timeoutSeconds) {
-  const deadline = Date.now() + timeoutSeconds * 1000;
+// Every poll is reported so a failing limit can be judged from the codes and
+// the time to the first 200 instead of a single "did not answer" line.
+export async function waitHttp200(url, timeoutSeconds, { onPoll = null } = {}) {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutSeconds * 1000;
+  let attempt = 0;
+  let last = null;
   do {
+    attempt += 1;
     const result = await httpStatus(url);
-    if (result && result.status === 200) return result;
+    last = result;
+    onPoll?.({
+      attempt,
+      elapsedSeconds: (Date.now() - startedAt) / 1000,
+      status: result.status,
+      error: result.error ?? null,
+      requestMs: result.ms,
+    });
+    if (result.status === 200) return result;
     await proc.sleep(3000);
   } while (Date.now() < deadline);
-  return null;
+  return last && last.status === 200 ? last : null;
 }
 
 function latestLog(logsDir) {
@@ -55,10 +76,14 @@ function readLogLines(file, fromByte) {
 
 export async function connectStatus({ nodeExe, binPath, baseDir }) {
   try {
-    const { stdout } = await execFileAsync(nodeExe, [binPath, "connect", "status", "--json", "--base-dir", baseDir], {
-      timeout: 60000,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    const { stdout } = await execFileAsync(
+      nodeExe,
+      [binPath, "connect", "status", "--json", "--base-dir", baseDir],
+      {
+        timeout: 60000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
     const start = stdout.indexOf("{");
     return start >= 0 ? JSON.parse(stdout.slice(start)) : null;
   } catch {
@@ -139,15 +164,40 @@ export async function runSmoke({
 
   // 3. Relay health.
   if (!noTunnel) {
-    const connect = await connectStatus({ nodeExe, binPath: state.binPath, baseDir: state.baseDir });
+    const connect = await connectStatus({
+      nodeExe,
+      binPath: state.binPath,
+      baseDir: state.baseDir,
+    });
     const endpoint = connect && connect.endpointUrl ? String(connect.endpointUrl) : null;
     if (!endpoint) {
       fail("connect status --json has no endpointUrl");
     } else {
       const tunnelUri = `${endpoint.replace(/\/+$/, "")}/.well-known/t3/environment`;
-      const tunnel = await waitHttp200(tunnelUri, tunnelTimeoutSeconds);
-      if (tunnel) pass(`tunnel ${tunnelUri} (linked ${connect.linked})`);
-      else fail(`tunnel ${tunnelUri} did not answer 200 within ${tunnelTimeoutSeconds}s (linked ${connect.linked}, desired ${connect.desired})`);
+      const tunnelPolls = [];
+      const tunnel = await waitHttp200(tunnelUri, tunnelTimeoutSeconds, {
+        onPoll: (poll) => {
+          tunnelPolls.push(poll);
+          const outcome =
+            poll.status === null ? `no-response (${poll.error})` : `status ${poll.status}`;
+          lines.push(
+            `  poll  tunnel +${poll.elapsedSeconds.toFixed(1)}s ${outcome} (${poll.requestMs}ms)`,
+          );
+        },
+      });
+      if (tunnel) {
+        const first = tunnelPolls.find((poll) => poll.status === 200);
+        pass(
+          `tunnel ${tunnelUri} (linked ${connect.linked}; first 200 at +${first.elapsedSeconds.toFixed(1)}s, ${tunnelPolls.length} poll(s))`,
+        );
+      } else {
+        const seen = tunnelPolls
+          .map((poll) => (poll.status === null ? `error:${poll.error}` : poll.status))
+          .join(",");
+        fail(
+          `tunnel ${tunnelUri} did not answer 200 within ${tunnelTimeoutSeconds}s (linked ${connect.linked}, desired ${connect.desired}); statuses: ${seen || "none"}`,
+        );
+      }
     }
   }
 
@@ -178,7 +228,10 @@ export async function runSmoke({
   if (file && fs.existsSync(file)) {
     const bad = readLogLines(file, logFromByte).filter((line) => LOG_ERROR_PATTERN.test(line));
     if (bad.length === 0) pass(`log ${file} has no migration/SQL errors`);
-    else fail(`log ${file} has ${bad.length} migration/SQL error line(s): ${bad.slice(0, 3).join(" | ")}`);
+    else
+      fail(
+        `log ${file} has ${bad.length} migration/SQL error line(s): ${bad.slice(0, 3).join(" | ")}`,
+      );
   } else {
     fail("no server log found");
   }
