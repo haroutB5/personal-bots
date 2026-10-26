@@ -158,7 +158,8 @@ open), `AssetAccess.test.ts` and `http.test.ts` (CSP on the signed host-file res
   `PersonalVoiceSampleService.test.ts` (temp-root cleanup), `fake-claude/cli.test.mjs` (QA's
   multi-call prompt), `typecheck.test.mjs` (shard coverage).
 - Targeted runs: heavy lock 8/8; the gap fix's `MessageList.statusLine.test.tsx` 3/3; update status route 20/20 after the fix (5/15 failed before);
-  voice samples 9/9 with no leftovers; fake CLI 6/6, and the new test fails with the old slice.
+  voice samples 9/9 with no leftovers; fake CLI 6/6, and the new test fails with the old slice; the
+  security suites `HostFilePaths`, `WorkspaceFileSystem`, `AssetAccess` and `http.test.ts` 129/129.
 - The live five-slot proof is in `.personal-bots/qa/backend-16697-lock/RESULT.md`, on a throwaway
   booted from this release; the live `state.sqlite` was never opened and the live service was never
   restarted by this work.
