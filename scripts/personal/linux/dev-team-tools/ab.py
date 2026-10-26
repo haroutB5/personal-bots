@@ -45,7 +45,7 @@ def main():
     ROOT.mkdir(mode=0o700,parents=True,exist_ok=True)
     if session.is_symlink(): raise Refused('session is a symlink')
     session.mkdir(mode=0o700,exist_ok=True)
-    lock=open(ROOT/(a.session+'.lock'),'a'); fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    lock_file=ROOT/(a.session+'.lock'); lock=open(lock_file,'a'); fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     env.pop('XDG_RUNTIME_DIR',None)
     env.update(HOME=str(session),XDG_CONFIG_HOME=str(session/'config'),XDG_CACHE_HOME=str(session/'cache'),XDG_DATA_HOME=str(session/'data'))
     config=session/'clean.json'; config.write_text(json.dumps(CONFIG))
@@ -80,7 +80,7 @@ def main():
     try:
         if a.sweep:
             if not dead(): raise Refused('daemon alive; use --close first')
-            shutil.rmtree(session); return
+            shutil.rmtree(session); lock_file.unlink(missing_ok=True); return
         if a.close:
             if not dead(): call(['close'])
             else: closed=True
@@ -126,7 +126,7 @@ def main():
                     for _ in range(50):
                         if dead(): break
                         time.sleep(0.1)
-                    if dead(): shutil.rmtree(session)
+                    if dead(): shutil.rmtree(session); lock_file.unlink(missing_ok=True)
                     else: raise Failed('daemon did not exit; session retained for --close')
                 finally:
                     if a.out: pathlib.Path(a.out).write_text('\n'.join(log))
