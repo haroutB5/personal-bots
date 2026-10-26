@@ -42,6 +42,7 @@
    * effectively invisible, so dark carries a stronger value. */
   --personal-border-strong: #e6e6e3;
   --personal-live: #34a853;
+  --personal-control: #3987e5; /* you drive the PC: ring, pill, top bar */
   --personal-review: #d4a017; /* dots, bars, borders, connectors: never text */
   /* Amber for GLYPHS ("Needs you", "Weekly 89% used", "Update available").
    * The bright amber above is only 2.3:1 on the page, fine for a dot and
@@ -180,6 +181,7 @@
   --personal-provider-codex: #008300;
   --personal-provider-other: #8c8c88;
   --personal-live: #3ecf6b; /* status dot, 9.5:1 on bg (needs 3:1) */
+  --personal-control: #3987e5; /* 5.4:1 on bg */
   --personal-review: #e3b855; /* 8.8:1 on --personal-review-bg */
   /* Dark already clears AA with the bright amber: 10.3:1 on bg, 9.3:1 on
    * surface, 8.8:1 on --personal-review-bg. */
