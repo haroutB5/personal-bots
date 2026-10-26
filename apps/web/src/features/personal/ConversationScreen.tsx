@@ -1624,8 +1624,6 @@ export function ConversationScreen({
         }}
       />
 
-      <ProgressNoteLine note={progressNote} />
-
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>
           <ChatFilePreviewProvider
@@ -1636,6 +1634,7 @@ export function ConversationScreen({
               environmentId={environmentId}
               threadRef={threadRef}
               showContextUsed
+              statusLine={progressNote === null ? null : <ProgressNoteLine note={progressNote} />}
               items={items}
               pending={visiblePending}
               queued={queuedMessages.rows}
