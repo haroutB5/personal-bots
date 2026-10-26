@@ -22,7 +22,7 @@ function settings(root,repo){const source=path.join(repo,'scripts/personal/testi
 }
 async function boot(r,timeoutSec){
  const log=fs.openSync(path.join(r.root,'server.log'),'a',0o600);
- const child=spawn(process.execPath,[r.bin,'serve','--base-dir',r.root,'--host','127.0.0.1','--port',String(r.port),'--no-browser'],{cwd:r.root,env:cleanEnv(r.root),detached:true,stdio:['ignore',log,log]});fs.closeSync(log);
+ const child=spawn(process.execPath,[r.bin,'serve','--base-dir',r.root,'--host','127.0.0.1','--port',String(r.port),'--no-browser'],{cwd:r.root,env:cleanEnv(r.root,r.schedulersOff),detached:true,stdio:['ignore',log,log]});fs.closeSync(log);
  await new Promise((yes,no)=>{child.once('spawn',yes);child.once('error',no);});r.pid=child.pid;r.ticks=ticks(child.pid);atomic(path.join(r.root,marker),r);child.unref();
  const deadline=Date.now()+Number(timeoutSec||60)*1000;
  while(Date.now()<deadline&&identity(r)){
@@ -33,7 +33,7 @@ async function boot(r,timeoutSec){
 export async function start(a,{prepare}={}){
  required(a,'name','release','repo-root');valid(a.name);if(records().some(r=>r.name===a.name))throw Error('name already exists');
  const bin=resolveBin(a.release),root=fs.mkdtempSync('/tmp/'+prefix+a.name+'-');fs.chmodSync(root,0o700);
- const r={tool:'linux-throwaway-v1',name:a.name,root,bin,pid:null,ticks:null,port:Number(a.port||await freePort())};
+ const r={tool:'linux-throwaway-v1',name:a.name,root,bin,pid:null,ticks:null,schedulersOff:Boolean(a['schedulers-off']),port:Number(a.port||await freePort())};
  if(!Number.isInteger(r.port)||r.port<1024||r.port>65535){fs.rmdirSync(root);throw Error('invalid port');}
  atomic(path.join(root,marker),r);
  try{
@@ -42,8 +42,8 @@ export async function start(a,{prepare}={}){
   throw Error('throwaway failed to start (inspect release compatibility)');
  }catch(e){await stop(r);throw e;}
 }
-export function pair(r){if(!identity(r))throw Error('server not running');const out=run(process.execPath,[r.bin,'pair','--base-dir',r.root,'--ttl','15m'],{env:cleanEnv(r.root),cwd:r.root});const token=out.match(/^\s*Token:\s*(\S+)/m);if(!token)throw Error('pair command did not return token');return `${r.url}/pair#token=${token[1]}`;}
-if(process.argv[1]===new URL(import.meta.url).pathname)main(async()=>{const a=args(undefined,['json','no-pair']);only(a,['name','release','repo-root','port','timeout-sec','json','no-pair']);const cmd=a._[0]||'start';
+export function pair(r){if(!identity(r))throw Error('server not running');const out=run(process.execPath,[r.bin,'pair','--base-dir',r.root,'--ttl','15m'],{env:cleanEnv(r.root,r.schedulersOff),cwd:r.root});const token=out.match(/^\s*Token:\s*(\S+)/m);if(!token)throw Error('pair command did not return token');return `${r.url}/pair#token=${token[1]}`;}
+if(process.argv[1]===new URL(import.meta.url).pathname)main(async()=>{const a=args(undefined,['json','no-pair','schedulers-off']);only(a,['name','release','repo-root','port','timeout-sec','json','no-pair','schedulers-off']);const cmd=a._[0]||'start';
  if(cmd==='list'){console.log(JSON.stringify(records().map(r=>({...r,running:identity(r)}))));return;}
  if(cmd==='up'){const r=find(a.name||a._[1]);if(identity(r))throw Error(r.name+' is already running');if(r.pid&&ticks(r.pid)===r.ticks)throw Error("recorded PID command changed; refusing");if(!await boot(r,a['timeout-sec'])){await stop(r,{remove:false});throw Error('server did not come back up on port '+r.port);}console.log(JSON.stringify(r));return;}
  if(['stop','pair','down'].includes(cmd)){const r=find(a.name||a._[1]);if(cmd==='pair')console.log(pair(r));else {await stop(r,{remove:cmd==='stop'});console.log(cmd+' '+r.name);}return;}
