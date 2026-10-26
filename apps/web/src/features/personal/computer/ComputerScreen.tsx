@@ -818,7 +818,7 @@ function ComputerScreenView({
             />,
           )
         : null}
-      {toast === null ? null : <FollowToast text={toast} />}
+      {toast === null ? null : <FollowToast text={toast} belowBar={!controlBarShown} />}
     </div>
   );
 

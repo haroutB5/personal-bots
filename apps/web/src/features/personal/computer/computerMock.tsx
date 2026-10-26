@@ -167,6 +167,11 @@ function scenarioState(name: MockScenario): MockState {
     case "browser":
       return {
         ...base,
+        // The browser bot acted last, so Auto opens on Browser.
+        events: [
+          ...BROWSER_EVENTS,
+          ...DESKTOP_EVENTS.map(([id, ago, ...rest]): EventDraft => [id, ago + 2, ...rest]),
+        ].map(event),
         desktop: desktopStatus({ holder: desktopHolder(DEVELOPER, 6) }),
       };
     case "desktop":

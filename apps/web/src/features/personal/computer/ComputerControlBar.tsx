@@ -55,12 +55,19 @@ export function ComputerControlTopBar(props: {
 }
 
 /** "Followed Assistant to the desktop": a pill over the top of the stage. */
-export function FollowToast(props: { readonly text: string }): JSX.Element {
+export function FollowToast(props: {
+  readonly text: string;
+  /** The pane's address/PC bar is showing: sit inside the picture, under it. */
+  readonly belowBar?: boolean;
+}): JSX.Element {
   return (
     <div
       role="status"
       aria-live="polite"
-      className="computer-toast pointer-events-none absolute top-2 left-1/2 z-20 flex h-8 max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center rounded-full border border-[var(--personal-border-strong)] bg-[rgb(15_15_14/.92)] px-3.5 text-[13px] text-[var(--personal-text)]"
+      className={cn(
+        "computer-toast pointer-events-none absolute left-1/2 z-20 flex h-8 max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center rounded-full border border-[var(--personal-border-strong)] bg-[rgb(15_15_14/.92)] px-3.5 text-[13px] text-[var(--personal-text)]",
+        props.belowBar === true ? "top-[4.75rem]" : "top-2",
+      )}
     >
       <span className="truncate">{props.text}</span>
     </div>
