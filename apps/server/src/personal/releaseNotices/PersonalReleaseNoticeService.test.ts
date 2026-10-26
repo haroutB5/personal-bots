@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -156,9 +157,11 @@ describe("PersonalReleaseNotices", () => {
         result.waitingAlert = { ...result.waitingAlert, minutes: 60, at: "2026-10-26T20:40:00Z" };
         await NodeFSP.writeFile(file, JSON.stringify(result));
       });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
       expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
       expect(yield* service.sweep).toEqual([]);
       expect(turnStarts(dispatched)).toHaveLength(2);
+      clock.mockRestore();
     }).pipe(Effect.provide(makeLayer(dispatched)));
   });
   it.effect("a waiting notice posts once without saying the release failed", () => {

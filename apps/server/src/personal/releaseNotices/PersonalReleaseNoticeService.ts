@@ -312,14 +312,18 @@ export const make = Effect.gen(function* () {
 
   // The installed Linux runner records desktop alerts in its result file. Older
   // servers ignore them; this consumer starts only with the next server release.
+  let nextWaitingScan = 0;
   const queueWaitingAlerts = Effect.promise(async () => {
+    if (Date.now() < nextWaitingScan) return;
+    nextWaitingScan = Date.now() + 30_000;
     const runDir = NodePath.join(NodePath.basename(config.baseDir) === "dev" ? NodePath.dirname(config.baseDir) : config.baseDir, "run");
     const files = await NodeFSP.readdir(runDir).catch(() => [] as string[]);
     for (const file of files) {
       if (!/^restart-\d+\.\d+\.\d+-result\.json$/.test(file)) continue;
       try {
         const source = NodePath.join(runDir, file);
-        if ((await NodeFSP.stat(source)).size > 1_000_000) continue;
+        const stat = await NodeFSP.stat(source);
+        if (stat.size > 1_000_000 || Date.now() - stat.mtimeMs > 90_000) continue;
         const result: unknown = JSON.parse(await NodeFSP.readFile(source, "utf8"));
         if (typeof result !== "object" || result === null) continue;
         const r = result as Record<string, unknown>;
