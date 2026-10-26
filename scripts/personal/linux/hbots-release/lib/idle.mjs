@@ -17,6 +17,39 @@ export const isHelper = (cmd) =>
 export const isSessionRoot = (cmd) =>
   /\sacp$/.test(cmd) || /codex app-server/.test(cmd) || /claude --output-format stream-json/.test(cmd);
 
+export function classifyOrphan(proc, parent, ageMs, nowMs, orphanSince) {
+  const orphan = ageMs > 30 * 60_000 && (proc.ppid === 1 || (/^(?:\S*\/)?systemd\s+--user$/.test(parent?.cmdline ?? "")));
+  const key = `${proc.pid}:${proc.startTicks}`;
+  if (orphan && !orphanSince.has(key)) orphanSince.set(key, nowMs);
+  if (!orphan) orphanSince.delete(key);
+  return { orphan, ignored: orphan && nowMs - orphanSince.get(key) >= 10 * 60_000 };
+}
+
+export function hasSessionAncestor(proc, snapshot) {
+  const seen = new Set();
+  let pid = proc.ppid;
+  while (pid > 1 && !seen.has(pid)) {
+    seen.add(pid);
+    const parent = snapshot.get(pid);
+    if (!parent) break;
+    if (isSessionRoot(parent.cmdline)) return true;
+    pid = parent.ppid;
+  }
+  return false;
+}
+
+export function dueWaitingAlerts(elapsedMs, alerted) {
+  return [20, 60].filter((minutes) => elapsedMs >= minutes * 60_000 && !alerted.has(minutes));
+}
+
+export function sendWaitingAlerts(elapsedMs, alerted, version, summary, send) {
+  return dueWaitingAlerts(elapsedMs, alerted).map((minutes) => {
+    alerted.add(minutes);
+    const text = `hbots release ${version} waiting on: ${summary}`;
+    return { minutes, text, exit: send(text) };
+  });
+}
+
 /** True while a heavy-job.sh holder (a build, a gate run) owns the lock. flock -n takes and drops it at once. */
 export function heavyLockHeld(lockPath) {
   if (!fs.existsSync(lockPath)) return { held: false, holder: null };
@@ -70,7 +103,7 @@ function newestEventLog(dir) {
 }
 
 /** One look. prev is the previous look's snapshot (for CPU deltas). */
-export function takeLook(cfg, prev, { ignoreLock = false } = {}) {
+export function takeLook(cfg, prev, { ignoreLock = false, orphanSince = new Map() } = {}) {
   const state = liveState(cfg);
   if (!state) return { serverRunning: false };
   const now = procSnapshot();
@@ -85,10 +118,11 @@ export function takeLook(cfg, prev, { ignoreLock = false } = {}) {
     if (isHelper(proc.cmdline) || isSessionRoot(proc.cmdline) || /hbots\.mjs\s+serve/.test(proc.cmdline) || /\bbin\.mjs\b.*\bserve\b/.test(proc.cmdline)) continue;
     const before = prev?.snapshot?.get(pid);
     const delta = before ? proc.cpu - before.cpu : 0;
-    cpu += Math.max(0, delta);
     const ageMs = Date.now() - procStartMs(proc.startTicks);
-    if (delta <= 0.02 && ageMs > cfg.staleLeftoverMs) continue; // old leftover, no work
-    toolProcs.push({ pid, ageSec: Math.round(ageMs / 1000), delta: round1(delta), cmd: proc.cmdline.slice(0, 100) });
+    const { orphan, ignored } = classifyOrphan(proc, now.get(proc.ppid), ageMs, Date.now(), orphanSince);
+    if (!ignored) cpu += Math.max(0, delta);
+    if (!orphan && !hasSessionAncestor(proc, now) && delta <= 0.02 && ageMs > cfg.staleLeftoverMs) continue;
+    toolProcs.push({ pid, ageSec: Math.round(ageMs / 1000), delta: round1(delta), cmd: proc.cmdline.slice(0, 80), orphan, ignored });
   }
   const events = newestEventLog(cfg.providerLogs);
   const lock = ignoreLock ? { held: false, holder: null } : heavyLockHeld(cfg.heavyLock);
@@ -112,8 +146,9 @@ export function takeLook(cfg, prev, { ignoreLock = false } = {}) {
 export function busyReasons(look, cfg) {
   const reasons = [];
   if (look.heavy?.held) reasons.push(`heavy-lock(${look.heavy.holder ?? "held"})`);
-  if (look.toolProcs.length)
-    reasons.push(`tools=${look.toolProcs.length}(${look.toolProcs.slice(0, 4).map((p) => `${p.cmd.split(" ")[0].split("/").pop()}:${p.ageSec}s`).join(",")})`);
+  const blocking = look.toolProcs.filter((p) => !p.ignored);
+  if (blocking.length)
+    reasons.push(`tools=${blocking.length}(${blocking.map((p) => `pid=${p.pid} cmd=${JSON.stringify(p.cmd)} age=${p.ageSec}s reason=${p.orphan ? "orphan-tool" : "tool-process"}`).join(", ")})`);
   if (look.cpu > cfg.cpuBudgetS) reasons.push(`cpu=${look.cpu}s`);
   if (look.eventsAgeMs < cfg.eventsQuietMs) reasons.push(`events=${Math.round(look.eventsAgeMs / 1000)}s(${look.eventsName ?? "?"})`);
   return reasons;
@@ -123,18 +158,22 @@ export function busyReasons(look, cfg) {
  * Waits for N quiet looks in a row. One sleep per look (no busy polling); the first look waits one interval so
  * CPU deltas have a window. Returns { idle, looks, waitedS } and calls onLook after each look.
  */
-export async function waitForIdle(cfg, { onLook, looksLimit = Infinity, intervalMs = cfg.lookMs } = {}) {
+export async function waitForIdle(cfg, { onLook, looksLimit = Infinity, intervalMs = cfg.lookMs, orphanSince = new Map() } = {}) {
   const started = Date.now();
   const deadline = started + cfg.marathonMs;
   const looks = [];
-  let prev = takeLook(cfg, null);
+  let prev = takeLook(cfg, null, { orphanSince });
   let quiet = 0;
   while (Date.now() < deadline) {
     await sleep(intervalMs);
-    const look = takeLook(cfg, prev);
+    const look = takeLook(cfg, prev, { orphanSince });
     if (!look.serverRunning) throw new Error("the live server stopped during the idle wait; not restarting anything");
     const reasons = busyReasons(look, cfg);
     quiet = reasons.length ? 0 : quiet + 1;
+    const blockers = look.toolProcs.map((p) => ({ ...p, reason: p.orphan ? "orphan tool process" : "tool process" }));
+    if (look.eventsAgeMs < cfg.eventsQuietMs) blockers.push({ pid: null, cmd: look.eventsName, ageSec: Math.round(look.eventsAgeMs / 1000), reason: "events log", ignored: false });
+    if (look.cpu > cfg.cpuBudgetS) blockers.push({ pid: null, cmd: null, ageSec: null, reason: `CPU ${look.cpu}s`, ignored: false });
+    if (look.heavy.held) blockers.push({ pid: null, cmd: look.heavy.holder, ageSec: null, reason: "heavy lock", ignored: false });
     const entry = {
       at: look.at,
       quiet,
@@ -142,6 +181,7 @@ export async function waitForIdle(cfg, { onLook, looksLimit = Infinity, interval
       cgroupCpuDelta: look.cgroupCpuDelta,
       eventsAgeSec: look.eventsAgeMs === Number.MAX_SAFE_INTEGER ? null : Math.round(look.eventsAgeMs / 1000),
       toolProcs: look.toolProcs.length,
+      blockers,
       heavyLock: look.heavy.held,
       busyReason: reasons.length ? reasons.join(" ") : null,
     };
@@ -155,11 +195,11 @@ export async function waitForIdle(cfg, { onLook, looksLimit = Infinity, interval
 }
 
 /** A short window check right before the restart: lock, tools, events, and CPU over windowMs. ignoreLock: the runner holds the lock itself. */
-export async function quickIdleCheck(cfg, windowMs = 3000, { ignoreLock = false } = {}) {
-  const first = takeLook(cfg, null, { ignoreLock });
+export async function quickIdleCheck(cfg, windowMs = 3000, { ignoreLock = false, orphanSince = new Map() } = {}) {
+  const first = takeLook(cfg, null, { ignoreLock, orphanSince });
   if (!first.serverRunning) return { idle: false, reasons: ["server-not-running"] };
   await sleep(windowMs);
-  const second = takeLook(cfg, first, { ignoreLock });
+  const second = takeLook(cfg, first, { ignoreLock, orphanSince });
   if (!second.serverRunning) return { idle: false, reasons: ["server-not-running"] };
   const scaled = Math.max(0.15, cfg.cpuBudgetS * (windowMs / cfg.lookMs));
   const reasons = busyReasons(second, { ...cfg, cpuBudgetS: scaled });

@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# hbots status panel for the desk layout (CTO, 26 Oct 2026). Refreshes every 5 s.
+# Reads only systemd, /proc, /proc/locks, file times and the run/ result files.
+# Never opens the hbots database (a second reader SIGBUS-crashed the server on 26 Oct).
+set -uo pipefail
+
+HB=${HBOTS_STATUS_ROOT:-/home/harout/.personal-bots}
+RUN=$HB/run
+EVENTS=$HB/dev/userdata/logs/provider
+LOCK=$RUN/omarchy-heavy.lock
+B=$'\e[1;34m' G=$'\e[32m' Y=$'\e[33m' R=$'\e[31m' D=$'\e[2m' N=$'\e[0m'
+
+ago() { # seconds -> 3h04m / 12m / 40s
+  local s=$1
+  if ((s >= 3600)); then printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60))
+  elif ((s >= 60)); then printf '%dm' $((s / 60))
+  else printf '%ds' "$s"; fi
+}
+
+real_results() { # newest first; only real release results, not dry runs, guards or prepare
+  ls -t "$RUN"/restart-*-result.json 2>/dev/null | grep -E '/restart-[0-9]+\.[0-9]+\.[0-9]+-result\.json$'
+}
+
+line_server() {
+  local state since pid restarts rel ver f
+  eval "$(systemctl --user show hbots.service -p ActiveState -p ActiveEnterTimestampMonotonic -p NRestarts -p MainPID |
+    sed -E 's/^([A-Za-z]+)=(.*)$/\1="\2"/')"
+  rel=$(cat "$HB/releases/current.txt" 2>/dev/null) || rel=?
+  ver=$rel
+  for f in $(real_results); do
+    if grep -q "\"release\": *\"$rel\"" "$f"; then ver=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$f" | head -1); break; fi
+  done
+  if [[ $ActiveState == active ]]; then
+    local up=$(( ($(cut -d' ' -f1 /proc/uptime | cut -d. -f1) * 1000000 - ActiveEnterTimestampMonotonic) / 1000000 ))
+    printf ' %shbots%s   %s● up%s %-7s v%s %s(%s)%s  restarts %s\n' "$B" "$N" "$G" "$N" "$(ago "$up")" "$ver" "$D" "$rel" "$N" "$NRestarts"
+  else
+    printf ' %shbots%s   %s● %s%s  v%s  restarts %s\n' "$B" "$N" "$R" "$ActiveState" "$N" "$ver" "$NRestarts"
+  fi
+}
+
+heavy_held() { # 0 when a heavy job holds the lock (read from /proc/locks, never taking it)
+  [[ -e $LOCK ]] || return 1
+  local ino; ino=$(stat -c %i "$LOCK")
+  grep -qE ":$ino +[0-9]+ +(EOF|[0-9]+)\$" /proc/locks
+}
+
+line_bots_build() {
+  local now working limit=8 holder age waiting
+  now=$(date +%s)
+  # A chat whose provider event log changed in the last 90 s is working (same signal as the release waiter).
+  working=$(find "$EVENTS" -maxdepth 1 -name 'events.*.log' -newermt "@$((now - 90))" 2>/dev/null | wc -l)
+  if heavy_held; then
+    limit=5
+    holder=$(sed -n 's/.* label=\(.*\) cwd=.*/\1/p' "$LOCK" | head -1); holder=${holder//\\ / }; holder=${holder//\'/}
+    age=$(( now - $(date -d "$(sed -n 's/.*started=\([^ ]*\).*/\1/p' "$LOCK")" +%s 2>/dev/null || echo "$now") ))
+    waiting=$(for p in $(pgrep -x flock); do [[ $(readlink "/proc/$p/fd/9" 2>/dev/null) == "$LOCK" ]] && echo; done | wc -l)
+    printf ' %sbots%s    %d working   %slimit 5 (build)%s\n' "$B" "$N" "$working" "$Y" "$N"
+    printf ' %sbuild%s   %s%s%s, %s%s\n' "$B" "$N" "$Y" "${holder:0:44}" "$N" "$(ago "$age")" "$( ((waiting)) && echo ", $waiting waiting")"
+  else
+    printf ' %sbots%s    %d working   limit %d\n' "$B" "$N" "$working" "$limit"
+    printf ' %sbuild%s   %snone%s\n' "$B" "$N" "$D" "$N"
+  fi
+}
+
+line_release() {
+  local f status ver at waiter
+  f=$(real_results | head -1)
+  if [[ -n $f ]]; then
+    status=$(sed -n 's/.*"status": *"\([^"]*\)".*/\1/p' "$f" | head -1)
+    ver=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$f" | head -1)
+    at=$(date -r "$f" +'%a %H:%M')
+  fi
+  # A real armed waiter: node running a release runner, not a dry run, guards check or prepare.
+  waiter=$(pgrep -a -x node | grep -E 'run/(linux-release-[0-9.]+\.mjs|hbots-release)' | grep -vcE -- '--(dry-run|guards-only|prepare)')
+  if ((waiter)); then
+    printf ' %srelease%s %swaiter running%s  last: %s %s\n' "$B" "$N" "$Y" "$N" "${ver:-?}" "${status:-?}"
+  else
+    local c=$G; [[ ${status:-} == live_verified ]] || c=$Y
+    printf ' %srelease%s %s %s%s%s  %s\n' "$B" "$N" "${ver:-?}" "$c" "${status:-none}" "$N" "${at:-}"
+  fi
+  if [[ ${status:-} == waiting_for_idle && -n ${f:-} ]]; then
+    local blocker
+    blocker=$(/home/harout/.local/share/mise/installs/node/24.22.1/bin/node -e '
+      try {
+        const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+        const b = (r.blockers || []).find(x => !x.ignored);
+        if (b) {
+          const name = (b.cmd || b.reason || "unknown").split(" ")[0].split("/").pop().replace(/[\x00-\x1f\x7f]/g, "?");
+          process.stdout.write(`${name}${b.pid ? ` pid ${b.pid}` : ""}${b.ageSec != null ? `, ${b.ageSec}s` : ""}`);
+        }
+      } catch {}
+    ' "$f")
+    [[ -z $blocker ]] || printf '         %swaiting on: %s%s\n' "$Y" "$blocker" "$N"
+  fi
+}
+
+line_system() {
+  local disk mem
+  disk=$(df -h --output=used,size,pcent / | tail -1 | awk '{print $1"/"$2" ("$3")"}')
+  mem=$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{printf "%.1f/%.1fG", (t-a)/1048576, t/1048576}' /proc/meminfo)
+  printf ' %sdisk%s    %-20s %smem%s %s\n' "$B" "$N" "$disk" "$B" "$N" "$mem"
+}
+
+line_crashes() {
+  local list count last
+  list=$(coredumpctl list --since today --no-pager --no-legend 2>/dev/null)
+  count=$(grep -c . <<<"$list")
+  if ((count)); then
+    last=$(tail -1 <<<"$list" | awk '{split($3,t,":"); n=split($10,p,"/"); print t[1]":"t[2], p[n]}')
+    printf ' %scrashes%s %d today, last %s\n' "$B" "$N" "$count" "$last"
+  else
+    printf ' %scrashes%s %snone today%s\n' "$B" "$N" "$G" "$N"
+  fi
+}
+
+printf '\e[?25l'
+trap 'printf "\e[?25h"' EXIT
+while :; do
+  frame=$(
+    line_server
+    line_bots_build
+    line_release
+    line_system
+    line_crashes
+    printf ' %supdated %s%s' "$D" "$(date +%H:%M:%S)" "$N"
+  )
+  printf '\e[H\e[J%s' "$frame"
+  [[ ${HBOTS_STATUS_ONCE:-} == 1 ]] && { echo; exit; }
+  sleep 5
+done

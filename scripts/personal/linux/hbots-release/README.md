@@ -41,3 +41,7 @@ $N tests/bench.mjs      # production constants, about 3 minutes, prints arm-to-v
 ```
 
 The tests start a throwaway systemd user unit with a fake server under `~/.cache/hbots-release-fixture-*`; the real hbots service and data are never touched.
+
+While waiting, the result JSON includes `blockers` with process IDs, command prefixes, ages and reasons. Orphan tools whose immediate parent is init or the user systemd are reported separately after 30 minutes of process age. They block for 10 minutes after first observation, then are ignored without being killed. Active provider event logs, other tools, CPU and the heavy lock still block. The same per-process timer is used for the final idle check. Desktop waiting alerts are attempted once at 20 and 60 minutes; `waitingAlert.exit` records whether `notify-send` succeeded.
+
+The accompanying `hbots-desk-status` shows a yellow waiting-on line. The `bot-bin/opencode` wrapper uses `--standalone` for `models`, `auth list` and version queries. Install the wrapper to `~/.personal-bots/run/hbots-bot-bin/opencode` and prepare the `systemd/10-opencode-path.conf` drop-in for the next hbots restart; it does not affect the already-running server. The server's separate waiting notice support requires a future hbots release and a future producer for CTO chat delivery. The installed runner currently sends desktop alerts only.

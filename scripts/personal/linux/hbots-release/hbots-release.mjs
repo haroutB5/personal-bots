@@ -19,7 +19,7 @@ import { atomicWrite, errMsg, makeRun, readJson, round1, run, runAsync, sleep, s
 import { checkPins, writePins } from "./lib/pins.mjs";
 import { treeInfo, verifySeal, writeLegacySeal, writeSeal } from "./lib/seal.mjs";
 import { runGuards, runTool, smokeCli, testActiveRelease } from "./lib/guards.mjs";
-import { heavyLockHeld, quickIdleCheck, takeHeavyLock, waitForIdle } from "./lib/idle.mjs";
+import { heavyLockHeld, quickIdleCheck, sendWaitingAlerts, takeHeavyLock, waitForIdle } from "./lib/idle.mjs";
 import { listenerPids, liveState, selfStats } from "./lib/proc.mjs";
 import { copyStopped, listBackups, pruneBackups, stamp, verifyBackup, writeManifest } from "./lib/backup.mjs";
 import { postActivation, waitAlive } from "./lib/verify.mjs";
@@ -257,13 +257,29 @@ async function main() {
     if (g.skipBackup) result.backupSkipped = true;
     const waitStart = Date.now();
     result.idleLooks = [];
+    const orphanSince = new Map();
+    const alerted = new Set();
+    const loggedIgnored = new Set();
     let confirmed = false;
     while (!confirmed) {
       if (Date.now() - waitStart > cfg.marathonMs) throw new Error(`No quiet window within ${round1(cfg.marathonMs / 3_600_000)} hours; nothing was activated.`);
       const waited = await waitForIdle(cfg, {
+        orphanSince,
         onLook: (entry, quiet) => {
           result.idleLooks.push(entry);
           if (result.idleLooks.length > 60) result.idleLooks.shift();
+          result.blockers = entry.blockers;
+          for (const p of entry.blockers.filter((p) => p.ignored)) {
+            if (!loggedIgnored.has(p.pid)) {
+              loggedIgnored.add(p.pid);
+              note(`orphan ignored after 10 minutes: pid=${p.pid} cmd=${JSON.stringify(p.cmd)} age=${p.ageSec}s`);
+            }
+          }
+          const summary = (entry.blockers.filter((p) => !p.ignored).map((p) => `${p.cmd || p.reason}${p.pid ? ` pid ${p.pid}` : ""}${p.ageSec != null ? `, ${p.ageSec}s` : ""}`).join("; ") || entry.busyReason || "unknown").slice(0, 1000);
+          for (const alert of sendWaitingAlerts(Date.now() - waitStart, alerted, a.version, summary, (text) => run("notify-send", [text], { timeout: 5000 }).code)) {
+              result.waitingAlert = { ...alert, at: new Date().toISOString() };
+              note(`waiting alert ${alert.minutes}m notify-send exit=${alert.exit}: ${alert.text}`);
+          }
           save("waiting_for_idle");
           note(entry.busyReason ? `busy ${entry.busyReason}` : `quiet ${quiet}/${cfg.quietLooks} cpu=${entry.cpu}s`);
         },
@@ -278,7 +294,7 @@ async function main() {
       note(`heavy-job lock taken (holder pid ${heavy.pid}) until the release is verified`);
       testActiveRelease(cfg, a);
       await step("seal.reverify-before-restart", () => verifySeal(cfg, a, names));
-      const quick = await quickIdleCheck(cfg, 3000, { ignoreLock: true });
+      const quick = await quickIdleCheck(cfg, 3000, { ignoreLock: true, orphanSince });
       if (!quick.idle) {
         note(`work resumed before the restart (${quick.reasons.join(" ")}): back to waiting`);
         heavy.release();

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# One-shot commands must not start the shared OpenCode background service.
+set -euo pipefail
+real=/home/harout/.local/share/mise/installs/opencode/latest/node_modules/.bin/opencode
+case "${1-}:${2-}" in
+  models:*|auth:list|--version:*|-v:*)
+    for arg in "$@"; do
+      case "$arg" in --standalone|--server|--server=*) exec "$real" "$@" ;; esac
+    done
+    exec "$real" "$@" --standalone ;;
+  *) exec "$real" "$@" ;;
+esac
