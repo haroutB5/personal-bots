@@ -72,13 +72,10 @@ function makeLog(step, runId) {
   const dir = runDirFor(runId);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${step}.log`);
-  return {
-    file,
-    write(text) {
-      const line = `${new Date().toISOString().slice(11, 19)} ${text}`;
-      fs.appendFileSync(file, `${line}\n`);
-      process.stderr.write(`${line}\n`);
-    },
+  return (text) => {
+    const line = `${new Date().toISOString().slice(11, 19)} ${text}`;
+    fs.appendFileSync(file, `${line}\n`);
+    process.stderr.write(`${line}\n`);
   };
 }
 
@@ -983,7 +980,7 @@ async function main() {
   const mode = values.mode === "dry-run" ? "dry-run" : "live";
   if (command === "preflight") {
     await preflight(runId, mode, values["review-label"], values["review-report"]);
-    return 0;
+    return process.exitCode ?? 0;
   }
   if (command === "ship") {
     ship(runId);
@@ -991,7 +988,7 @@ async function main() {
   }
   if (command === "pipeline") {
     await pipeline(runId);
-    return 0;
+    return process.exitCode ?? 0;
   }
   process.stderr.write(`unknown command: ${command}\n`);
   return 2;
