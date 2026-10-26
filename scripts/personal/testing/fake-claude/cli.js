@@ -16,6 +16,8 @@
 //   text is streamed first (message_start, content_block_*), as the real CLI sends it.
 //   TABLEMSG  a markdown table wider than a 390 px phone.   TABLEFIT  a table that fits the screen.
 //   WIDECODE  an unwrapped code block wider than a phone (the sideways-scroll checks drag them).
+//   FILELINKS  a list of file links in every shape a bot writes: home-relative, absolute, ~/, a mapped
+//     Windows path, pdf, png, json, an unknown type and files that hold secrets (1.66.97).
 //   MDFIX  markdown the upstream-pick fixes cover: a wide ordered-list marker, model ids in inline code,
 //     a bare <A> placeholder, and a link and image whose destination is a Windows path.
 //   DELEGATE:<botId>  calls the delegate_task MCP tool (not on a [Task continuation] turn, which quotes
@@ -569,6 +571,16 @@ lines.on("line", async (line) => {
     // A table that fits the screen: the message's own swipe must still work on it.
     assistant(
       `A small one.\n\n| Step | State |\n| --- | --- |\n| Build | done |\n| Smoke | ok |\n`,
+    );
+    finish("ok", false);
+    return;
+  }
+  if (text.includes("FILELINKS")) {
+    // File links in every shape a bot writes (1.66.97): home-relative, absolute, ~/, a Windows path
+    // the server maps, a PDF, a PNG, a JSON, an unknown type and two files that hold secrets.
+    const home = (process.env.HOME ?? "").replaceAll("\\", "/");
+    assistant(
+      `Files:\n\n- [home-relative](.personal-bots/qa/run/RESULT.md)\n- [absolute](${home}/docs/ABSOLUTE.md)\n- [tilde](~/docs/TILDE.md)\n- [windows](C:/Claude/AI/reports/WINDOWS.md)\n- [pdf](docs/spec.pdf)\n- [png](docs/shot.png)\n- [json](docs/data.json)\n- [binary](docs/blob.bin)\n- [env](docs/.env)\n- [auth](~/auth.json)\n- [ssh](~/.ssh/id_rsa)\n`,
     );
     finish("ok", false);
     return;

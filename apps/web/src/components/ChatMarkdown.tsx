@@ -2743,11 +2743,15 @@ function useChatMarkdownState({
       // files (a report in a temp dir) open read-only in the files panel. A
       // host shell with its own file sheet (the personal chat) shows every
       // file, media included, so it takes the absolute path too.
+      // `~/` stays as written when the shell has its own sheet: the server
+      // knows its home folder, the browser cannot always infer it from the cwd.
       const panelPath =
         fileLinkMeta.workspaceRelativePath ??
         ((!canPreviewMedia || onOpenFile !== undefined) && isAbsolutePath(fileLinkMeta.filePath)
           ? fileLinkMeta.filePath
-          : null);
+          : onOpenFile !== undefined && /^~(\/|$)/.test(fileLinkMeta.filePath)
+            ? fileLinkMeta.filePath
+            : null);
 
       return (
         <MarkdownFileLink

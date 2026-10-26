@@ -176,7 +176,9 @@ function FileCard({
     <div className="space-y-4 py-6 text-center">
       <p className="break-words text-[17px] font-semibold text-[var(--personal-text)]">{name}</p>
       <p className="text-[15px] text-[var(--personal-text-secondary)]">{note}</p>
-      <div className="flex flex-col gap-2">{children}</div>
+      <div className="flex flex-col gap-2 [&>a]:flex-none [&>span]:flex-none [&>button]:flex-none">
+        {children}
+      </div>
     </div>
   );
 }
