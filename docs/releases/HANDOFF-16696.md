@@ -11,8 +11,9 @@ platform supports it: every new path is either Linux-only or comes after an expl
   `preview_*` tool failed. The environment is no longer frozen at service start: at each launch the
   browser finds the live session itself (the `wayland-N` socket in `XDG_RUNTIME_DIR`, the Hyprland
   instance signature under `XDG_RUNTIME_DIR/hypr`, the user bus) and passes it to Brave. When no
-  session exists it falls back to headless instead of failing; Windows, macOS and a Linux desktop
-  session stay headed. `T3CODE_PERSONAL_BROWSER_HEADLESS=1` and the new
+  session exists it falls back to headless instead of failing; a Wayland-only session gets
+  `--ozone-platform=wayland`, because Chromium defaults to X11 and dies with the same no-XServer
+  error; Windows, macOS and a Linux desktop session stay headed. `T3CODE_PERSONAL_BROWSER_HEADLESS=1` and the new
   `T3CODE_PERSONAL_BROWSER_HEADED=1` still win, and a launch failure now says "needs a graphical
   session" instead of Chrome's wrapper text.
 - **A dead browser profile no longer reports "Locked by pid".** When Brave is killed it leaves

@@ -832,6 +832,12 @@ export const makePlaywrightDriver = (
       args: [
         "--no-first-run",
         "--no-default-browser-check",
+        // Chromium defaults to X11. On a Wayland-only session (Hyprland, no
+        // DISPLAY) it then dies with "no XServer"; point it at the compositor
+        // the launch discovered.
+        ...(options.env?.WAYLAND_DISPLAY !== undefined && (options.env.DISPLAY ?? "") === ""
+          ? ["--ozone-platform=wayland"]
+          : []),
         // Covers the brief CDP attach window of a script-opened popup too.
         "--disable-features=WebAuthenticationUseNativeWinApi",
         // Ad and tracker hosts fail to resolve; T3CODE_PERSONAL_BROWSER_ADBLOCK=off drops this.
