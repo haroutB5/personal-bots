@@ -25,6 +25,7 @@ import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import { ServerConfig } from "../../config.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
 import {
+  compareVersions,
   personalRunDir,
   readRestartResult,
   restartResultVersion,
@@ -95,6 +96,9 @@ const readUpdateStatus = Effect.fn("readUpdateStatus")(function* (input: {
           info.type === "File"
             ? {
                 name,
+                // Candidates are named restart-<version>-result.json, so this
+                // is never null here; "" only satisfies the type.
+                version: restartResultVersion(name) ?? "",
                 mtimeMs: Option.getOrNull(info.mtime)?.getTime() ?? null,
                 size: ByteSize.toBigInt(info.size),
               }
@@ -105,12 +109,24 @@ const readUpdateStatus = Effect.fn("readUpdateStatus")(function* (input: {
     { concurrency: STAT_CONCURRENCY },
   );
 
-  let newest: { name: string; mtimeMs: number; size: bigint } | null = null;
+  let newest: { name: string; version: string; mtimeMs: number; size: bigint } | null = null;
   for (const entry of stamped) {
     if (entry === null || entry.mtimeMs === null) continue;
     if (input.nowMs - entry.mtimeMs > RESTART_RESULT_MAX_AGE_MS) continue;
-    if (newest === null || entry.mtimeMs > newest.mtimeMs) {
-      newest = { name: entry.name, mtimeMs: entry.mtimeMs, size: entry.size };
+    if (
+      newest === null ||
+      entry.mtimeMs > newest.mtimeMs ||
+      // mtime is a Date, so two files written inside one millisecond report
+      // the same time; the higher version is the newer run. Without this the
+      // newest file would depend on the directory's listing order.
+      (entry.mtimeMs === newest.mtimeMs && compareVersions(entry.version, newest.version) > 0)
+    ) {
+      newest = {
+        name: entry.name,
+        version: entry.version,
+        mtimeMs: entry.mtimeMs,
+        size: entry.size,
+      };
     }
   }
   if (newest === null || newest.size > MAX_RESULT_BYTES) return null;
