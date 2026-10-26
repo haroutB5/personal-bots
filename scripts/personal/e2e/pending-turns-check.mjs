@@ -5,6 +5,8 @@
 //
 // Usage: node pending-turns-check.mjs <state.sqlite> <idle-classification-.mjs> [--json]
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
@@ -16,7 +18,18 @@ if (!dbPath || !classifierPath) {
 if (!NodeFS.existsSync(classifierPath)) throw new Error(`no classifier at ${classifierPath}`);
 const classifier = await import(pathToFileURL(classifierPath).href);
 
-const db = new DatabaseSync(dbPath, { readOnly: true });
+// Never open the live files: on Linux a second SQLite connection to a WAL
+// database the running server has mapped can crash the server (SIGBUS in
+// node:sqlite's WAL code). Read a copy of the three files instead.
+const copyDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-pending-db-"));
+for (const suffix of ["", "-wal", "-shm"]) {
+  try {
+    NodeFS.copyFileSync(`${dbPath}${suffix}`, NodePath.join(copyDir, `state.sqlite${suffix}`));
+  } catch {
+    // A missing -shm/-wal is normal on a just-checkpointed database.
+  }
+}
+const db = new DatabaseSync(NodePath.join(copyDir, "state.sqlite"), { readOnly: true });
 let verdict;
 let pending;
 let turns;
@@ -37,6 +50,7 @@ try {
   verdict = classifier.classify(db);
 } finally {
   db.close();
+  NodeFS.rmSync(copyDir, { recursive: true, force: true });
 }
 
 const result = { pendingRows: pending, turns, classifier: verdict };

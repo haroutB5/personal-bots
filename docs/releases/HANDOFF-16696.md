@@ -61,6 +61,32 @@ the probe so a suite that asserts the five-slot queueing is deterministic.
   explicit guard-then-activate path. A rollback to an older version is exempt, and
   `--no-evidence-check` is the deliberate override.
 
+## The 26 October SIGBUS crashes, root-caused
+
+Two throwaway servers and the live server died with SIGBUS (`BUS_ADRERR`) inside node:sqlite's WAL
+code (`walFindFrame`, `readDbPage`, once under `balance_nonroot`). All three were the same class:
+**another process touched the running server's WAL files**, which invalidates the shared-memory
+mapping the server is reading. There is no way to catch SIGBUS in Node, so the fix is at the
+source of the interference.
+
+- **Throwaway root deleted under a running server** (probe4, 14:38:30). `throwaway.mjs` checked
+  the recorded PID with the wrong field names, decided the server was gone, and deleted the root
+  while it was still serving. Fixed: the identity check now uses the same `binPath`/`baseDir`
+  fields the process helper expects, so a root is only removed when its own server is dead.
+  Verified by repeated start/stop/down/up cycles with no leftovers and no crash.
+- **Another process opening the live database** (the e2e offline-queue proof, 14:35:49, and the
+  live server at 10:59 when a read-only Python connection opened `state.sqlite`). The harness read
+  the live WAL database to prove what reached the bot. Fixed: the e2e harness and
+  `pending-turns-check.mjs` copy the three files first and read the copy; nothing outside the
+  server opens the live files on Linux.
+- **Regression test** (`apps/server/src/persistence/linuxLiveReader.test.ts`): the server's own
+  pragmas (WAL, NORMAL sync, `journal_size_limit`, PASSIVE checkpoints) write while a separate
+  process opens the file read-only, reads and closes, 12 times over 60 writes; the writer stays
+  healthy. A plain reader is therefore safe; what kills the server is deleting or truncating the
+  files under it, which the tooling no longer does.
+- **Operational rule** (already in the app sheet): never open the live `state.sqlite`, `-wal` or
+  `-shm` from another process on Linux, including `sqlite3`, Python or a test script. Use a copy.
+
 ## Verification
 
 - New tests: `headlessMode.test.ts`, `browserProfileLock.test.ts` (stale vs live lock, cleanup),
