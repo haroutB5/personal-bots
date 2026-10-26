@@ -51,6 +51,18 @@ export function compareCoverage(full, shards) {
   };
 }
 
+// A .d.ts or a `declare global` / `declare module "x"` changes types for every
+// file of a program, not only for its importers. The full program always has
+// our own ones, so every shard must too, or a shard can check against
+// different types (26 Oct: without vite-env.d.ts the web tests shard had 164
+// errors the full run does not).
+const AMBIENT = /^\s*(export\s+)?declare\s+(global\b|module\s+["'])/m;
+
+export function isOwnAmbient(file, read) {
+  if (file.includes("/node_modules/") || !file.startsWith("/")) return false;
+  return file.endsWith(".d.ts") || AMBIENT.test(read(file));
+}
+
 function tscRunner(tsc, cwd, env) {
   return (args) =>
     spawnSync(tsc, args, {
@@ -84,10 +96,9 @@ export function runTypecheck({
   const shards = findShards(cwd);
   const projects = shards.length ? shards : ["tsconfig.json"];
   if (shards.length) {
-    const cov = compareCoverage(
-      listFiles(run, "tsconfig.json"),
-      shards.map((s) => listFiles(run, s)),
-    );
+    const full = listFiles(run, "tsconfig.json");
+    const lists = shards.map((s) => listFiles(run, s));
+    const cov = compareCoverage(full, lists);
     if (cov.missing.length || cov.extra.length) {
       log.write(
         `typecheck: shards do not cover tsconfig.json exactly (missing ${cov.missing.length}, extra ${cov.extra.length})\n`,
@@ -96,6 +107,16 @@ export function runTypecheck({
       for (const f of cov.extra.slice(0, 20)) log.write(`  extra: ${f}\n`);
       return 2;
     }
+    const ambient = full.filter((f) => isOwnAmbient(f, (p) => fs.readFileSync(p, "utf8")));
+    let gaps = 0;
+    shards.forEach((shard, i) => {
+      const have = new Set(lists[i]);
+      for (const f of ambient.filter((a) => !have.has(a))) {
+        log.write(`typecheck: ${shard} must include ${f} (it declares global types)\n`);
+        gaps++;
+      }
+    });
+    if (gaps) return 2;
   }
   const seen = new Set();
   let exit = 0;
