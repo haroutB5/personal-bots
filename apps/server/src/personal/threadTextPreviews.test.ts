@@ -5,6 +5,7 @@ import type {
   PersonalThreadFullTextInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemoryWorker } from "../persistence/Layers/Sqlite.ts";
@@ -20,6 +21,7 @@ import {
 const at = "2026-10-26T03:00:00.000Z";
 const long = "x".repeat(5_000);
 const longCommand = `cat <<'EOF'\n${"y".repeat(4_000)}\nEOF`;
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const message = (id: string, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -132,7 +134,7 @@ it.effect("reads the whole text of the named messages and activities of one thre
         (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
       VALUES (
         'a-1', 'thread-1', 'turn-old', 'tool', 'tool.completed', 'Command run',
-        ${JSON.stringify({ itemType: "command_execution", data: { command: longCommand, stdout: "dropped" } })},
+        ${encodeJson({ itemType: "command_execution", data: { command: longCommand, stdout: "dropped" } })},
         ${at}
       )
     `;
