@@ -104,12 +104,12 @@ source of the interference.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=0d98553761e6e657ff3f65983ba1baaf5b8e52b1 release=0d98553761e6 json-sha256=acf499d1687ba5c25701455c82f79b338a9b23f087fb8ff12e827a5869ad370b result=PASS -->
+<!-- gate-evidence:begin sha=2f64985950eea849ff7ed181cbceaed7c5b5929b release=2f64985950ee json-sha256=a2e25985e69eaf6bf6c79263cba88b87933e1a19a4f87aba8c044abc14bddae7 result=FAIL -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
 - web-tests: PASS, exit 0
 - web-tsc: PASS, exit 0
-- e2e: PASS, exit 0
+- e2e: FAIL, exit 1
 
 <!-- gate-evidence:end -->

@@ -115,8 +115,9 @@ function runNode(script, scriptArgs, { timeout = 300_000 } = {}) {
 
 const portListening = (port) =>
   new Promise((resolve) => {
-    const net = NodeChildProcess.spawnSync("ss", ["-ltnH"], { encoding: "utf8" }).stdout ?? "";
-    resolve(NodeNet.split(/\r?\n/).some((line) => new RegExp(`[:.]${port}\\s`).test(line)));
+    const listeners =
+      NodeChildProcess.spawnSync("ss", ["-ltnH"], { encoding: "utf8" }).stdout ?? "";
+    resolve(listeners.split(/\r?\n/).some((line) => new RegExp(`[:.]${port}\\s`).test(line)));
   });
 
 async function main() {
