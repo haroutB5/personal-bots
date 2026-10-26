@@ -24,8 +24,18 @@ export const MAX_SETTLE_MS = 5_000;
 /** Keeps one typing call well inside the MCP client's 60 s tool timeout. */
 export const MAX_TYPE_CHARS = 2_000;
 
+/** What the Computer tab's activity row says about one finished action. */
+export interface DesktopActivity {
+  readonly summary: string;
+  readonly x?: number | undefined;
+  readonly y?: number | undefined;
+  readonly monitor?: number | undefined;
+  readonly chars?: number | undefined;
+}
+
 export interface DesktopShot {
   readonly note?: string;
+  readonly activity?: DesktopActivity;
   readonly screenshot?: {
     readonly mimeType: string;
     readonly data: string;
@@ -54,6 +64,26 @@ export interface AfterAction {
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A logical point as a 0..1 share of the frame it was clicked in. */
+function pointActivity(
+  frame: ScreenFrame,
+  point: { readonly x: number; readonly y: number },
+): Pick<DesktopActivity, "x" | "y" | "monitor"> {
+  const share = (value: number, origin: number, size: number) =>
+    Math.min(1, Math.max(0, Math.round(((value - origin) / Math.max(1, size)) * 1000) / 1000));
+  return {
+    x: share(point.x, frame.region.x, frame.region.width),
+    y: share(point.y, frame.region.y, frame.region.height),
+    ...(typeof frame.monitor === "number" ? { monitor: frame.monitor } : {}),
+  };
+}
+
+const pct = (value: number | undefined) => `${Math.round((value ?? 0) * 100)}%`;
+
+/** "at 42%, 61%", for summaries. */
+const where = (activity: Pick<DesktopActivity, "x" | "y">) =>
+  `at ${pct(activity.x)}, ${pct(activity.y)}`;
 
 const num = (value: unknown): number => (typeof value === "number" ? value : Number(value));
 
@@ -101,7 +131,13 @@ export async function captureShot(
   });
   const cursor = await context.driver.request("cursor");
   context.setFrame(frame);
+  const monitorName =
+    target.monitor === "all"
+      ? "all monitors"
+      : (monitors.find((entry) => entry.index === target.monitor)?.name ??
+        `monitor ${target.monitor}`);
   return {
+    activity: { summary: `screenshot of ${monitorName}` },
     ...(locked
       ? {
           note: "The PC is locked (or a secure Windows prompt is showing): clicks and typing are refused until the user unlocks it. Never try to unlock it yourself.",
@@ -147,6 +183,7 @@ export async function zoomShot(
     quality: 85,
   });
   return {
+    activity: { summary: "zoomed in" },
     note: "Zoomed view only: keep using coordinates from your latest computer_screenshot.",
     screenshot: {
       mimeType: String(shot.mimeType ?? "image/png"),
@@ -203,23 +240,39 @@ export async function click(
     modifiers?: string | undefined;
   },
 ): Promise<DesktopShot> {
-  const point = toPhysical(requireFrame(context), input);
+  const frame = requireFrame(context);
+  const point = toPhysical(frame, input);
+  const count = Math.max(1, Math.min(3, input.clicks ?? 1));
   await context.driver.request("click", {
     ...point,
     button: input.button ?? "left",
-    count: Math.max(1, Math.min(3, input.clicks ?? 1)),
+    count,
     modifiers: modifierKeys(input.modifiers),
   });
-  return afterAction(context, input);
+  const at = pointActivity(frame, point);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary:
+        count === 1
+          ? `clicked ${where(at)}`
+          : `clicked ${count} times ${where(at)}`,
+    },
+  };
 }
 
 export async function move(
   context: DesktopActionContext,
   input: AfterAction & { x: number; y: number },
 ): Promise<DesktopShot> {
-  const point = toPhysical(requireFrame(context), input);
+  const frame = requireFrame(context);
+  const point = toPhysical(frame, input);
   await context.driver.request("move", { x: point.x, y: point.y });
-  return afterAction(context, input);
+  const at = pointActivity(frame, point);
+  const after = await afterAction(context, input);
+  return { ...after, activity: { ...at, summary: `moved ${where(at)}` } };
 }
 
 export async function drag(
@@ -244,7 +297,16 @@ export async function drag(
     button: input.button ?? "left",
     modifiers: modifierKeys(input.modifiers),
   });
-  return afterAction(context, input);
+  const at = pointActivity(frame, to);
+  const start = pointActivity(frame, from);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary: `dragged from ${pct(start.x)}, ${pct(start.y)} to ${pct(at.x)}, ${pct(at.y)}`,
+    },
+  };
 }
 
 export async function scroll(
@@ -271,7 +333,15 @@ export async function scroll(
     dx: input.direction === "right" ? amount : input.direction === "left" ? -amount : 0,
     modifiers: modifierKeys(input.modifiers),
   });
-  return afterAction(context, input);
+  const at = point === null ? {} : pointActivity(requireFrame(context), point);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary: `scrolled ${input.direction} ${amount}`,
+    },
+  };
 }
 
 export async function typeText(
@@ -289,7 +359,11 @@ export async function typeText(
     { text: input.text },
     Math.min(55_000, 10_000 + input.text.length * 20),
   );
-  return afterAction(context, input);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: { chars: input.text.length, summary: `typed ${input.text.length} characters` },
+  };
 }
 
 export async function pressKeys(
@@ -303,7 +377,13 @@ export async function pressKeys(
     { combos, repeat },
     Math.min(55_000, 10_000 + repeat * combos.length * 200),
   );
-  return afterAction(context, input);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      summary: repeat === 1 ? `pressed ${input.keys}` : `pressed ${input.keys} ${repeat} times`,
+    },
+  };
 }
 
 /** A point given by both x and y, or by neither (then the pointer stays where it is). */
@@ -341,7 +421,16 @@ export async function mouseDown(
   const point = optionalPoint(context, input);
   context.markButton(button, true);
   await context.driver.request("button", { button, down: true, ...point });
-  return afterAction(context, input);
+  const at =
+    point === null || context.frame === null ? {} : pointActivity(context.frame, point);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary: point === null ? `pressed the ${button} button` : `pressed the ${button} button ${where(at)}`,
+    },
+  };
 }
 
 /** Lets go of a button pressed with computer_mouse_down, optionally after moving to a point. */
@@ -362,7 +451,16 @@ export async function mouseUp(
   const point = optionalPoint(context, input);
   await context.driver.request("button", { button, down: false, ...point });
   context.markButton(button, false);
-  return afterAction(context, input);
+  const at =
+    point === null || context.frame === null ? {} : pointActivity(context.frame, point);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary: point === null ? `let go of the ${button} button` : `let go of the ${button} button ${where(at)}`,
+    },
+  };
 }
 
 /**
@@ -383,7 +481,13 @@ export async function holdKey(
     input.durationMs + 12_000,
   );
   context.markKeysHeld(false);
-  return afterAction(context, input);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      summary: `held ${input.keys} ${(input.durationMs / 1000).toFixed(1)} s`,
+    },
+  };
 }
 
 export async function cursorPosition(

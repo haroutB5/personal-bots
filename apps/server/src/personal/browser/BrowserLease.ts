@@ -5,12 +5,14 @@
  * op re-checks the generation immediately before it executes, so an op queued
  * or captured before a takeover can never act on the page afterwards.
  */
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -57,7 +59,21 @@ const ACTIONS_NEEDING_FRESH_SNAPSHOT: ReadonlySet<string> = new Set([
 export type BrowserLeaseRejectionReason =
   | "human-control"
   | "stale-generation"
-  | "snapshot-required";
+  | "snapshot-required"
+  /** Another bot holds the browser and this one's place in line is not first. */
+  | "busy";
+
+/** How long one tool call waits for the browser before it is told to try again. */
+export const BROWSER_QUEUE_WAIT_MS = 45_000;
+/** A bot whose wait ran out keeps its place this long. */
+export const BROWSER_LINE_GRACE_MS = 60_000;
+
+/** A bot waiting for the shared browser, first in line first. */
+export interface BrowserLeaseWaiter {
+  readonly threadId: string;
+  /** When it first joined the line; the order. */
+  readonly since: number;
+}
 
 export class BrowserLeaseRejected extends Data.TaggedError("BrowserLeaseRejected")<{
   readonly reason: BrowserLeaseRejectionReason;
@@ -137,6 +153,14 @@ export class BrowserLease extends Context.Service<
      */
     readonly releaseThread: (threadId: string) => Effect.Effect<LeaseView>;
     readonly isHumanController: (sessionId: string) => Effect.Effect<boolean>;
+    /** Bots waiting for the lease, first in line first (expired places dropped). */
+    readonly waiting: Effect.Effect<ReadonlyArray<BrowserLeaseWaiter>>;
+    /**
+     * Releases the lease when `threadId` owns it; a no-op for any other owner.
+     * Called when a turn ends, so the queue moves at the end of a reply
+     * instead of after the 90 s TTL.
+     */
+    readonly releaseIfOwner: (threadId: string) => Effect.Effect<LeaseView>;
     readonly view: Effect.Effect<LeaseView>;
     readonly changes: Stream.Stream<LeaseView>;
   }
@@ -255,6 +279,35 @@ export const make = Effect.gen(function* () {
   });
   // One agent op at a time: the page is shared, and takeover waits on it.
   const opLock = yield* Semaphore.make(1);
+  /**
+   * The FIFO line. `since` is first-come order; a bot that timed out keeps its
+   * entry for the grace period, so calling again keeps its place instead of
+   * restarting at the back. Polling (250 ms) rather than an event makes the
+   * queue move on a release, a turn end and a lapsed TTL alike.
+   */
+  const waiters = new Map<string, number>();
+  const graceDeadlines = new Map<string, number>();
+  /** Threads inside a call right now; a place kept in grace is not active. */
+  const activeWaiters = new Set<string>();
+  const pruneWaiters = (now: number): void => {
+    for (const [threadId, deadline] of graceDeadlines) {
+      if (now < deadline) continue;
+      graceDeadlines.delete(threadId);
+      waiters.delete(threadId);
+    }
+  };
+  const firstWaiter = (): string | null => {
+    let first: string | null = null;
+    let at = Number.POSITIVE_INFINITY;
+    for (const [threadId, since] of waiters) {
+      if (!activeWaiters.has(threadId)) continue;
+      if (since < at) {
+        at = since;
+        first = threadId;
+      }
+    }
+    return first;
+  };
   const takeoverLock = yield* Semaphore.make(1);
   const changesPubSub = yield* PubSub.unbounded<LeaseView>();
 
@@ -297,7 +350,51 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const runAgentOp: BrowserLease["Service"]["runAgentOp"] = (input, effect) =>
+  const waitForTurn = (
+    threadId: string,
+    deadline: number,
+  ): Effect.Effect<void, BrowserLeaseRejected> =>
+    Effect.gen(function* () {
+      activeWaiters.add(threadId);
+      while (true) {
+        const current = yield* Ref.get(state);
+        const now = yield* Clock.currentTimeMillis;
+        pruneWaiters(now);
+        if (current.takeoverPending || current.row.ownerType === "human") {
+          waiters.delete(threadId);
+          return yield* new BrowserLeaseRejected({
+            reason: "human-control",
+            message: humanControlMessage,
+          });
+        }
+        const holderLives =
+          agentLeaseLive(current.row, now) &&
+          current.row.ownerType === "agent" &&
+          current.row.ownerId !== null;
+        if (!holderLives || current.row.ownerId === threadId) {
+          waiters.delete(threadId);
+          return;
+        }
+        if (!waiters.has(threadId)) {
+          waiters.set(threadId, now);
+        }
+        if (now >= deadline) {
+          graceDeadlines.set(threadId, now + BROWSER_LINE_GRACE_MS);
+          const ordered = [...waiters.entries()].sort((a, b) => a[1] - b[1]);
+          const position = ordered.findIndex(([id]) => id === threadId) + 1;
+          return yield* new BrowserLeaseRejected({
+            reason: "busy",
+            message: `Another bot is using the shared browser right now. Nothing was done. You are number ${Math.max(1, position)} in line and keep that place for the next minute: call the same tool again now to keep waiting, or carry on with other work and tell the user you are waiting for the browser.`,
+          });
+        }
+        yield* Effect.sleep(250);
+      }
+    }).pipe(Effect.ensuring(Effect.sync(() => activeWaiters.delete(threadId))));
+
+  const runOnce = <A, E, R>(
+    input: { readonly threadId: string; readonly operation: string },
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E | BrowserLeaseRejected, R> =>
     opLock.withPermit(
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
@@ -318,6 +415,14 @@ export const make = Effect.gen(function* () {
           ] => {
             if (current.takeoverPending || current.row.ownerType === "human") {
               return [{ _tag: "rejected", reason: "human-control" }, current];
+            }
+            const holderLives =
+              agentLeaseLive(current.row, now) &&
+              current.row.ownerType === "agent" &&
+              current.row.ownerId !== null &&
+              current.row.ownerId !== input.threadId;
+            if (holderLives && firstWaiter() !== input.threadId) {
+              return [{ _tag: "rejected", reason: "busy" }, current];
             }
             if (
               current.freshSnapshotRequired &&
@@ -349,9 +454,13 @@ export const make = Effect.gen(function* () {
             message:
               acquired.reason === "snapshot-required"
                 ? "The user just returned control of the shared browser and the page may have changed. Call preview_snapshot first; every click, hover, drag, type, press, scroll, history, close-tab and evaluate action stays refused until a snapshot succeeds."
-                : humanControlMessage,
+                : acquired.reason === "busy"
+                  ? "Another bot is using the shared browser right now. Wait your turn: call the same tool again in a moment."
+                  : humanControlMessage,
           });
         }
+        waiters.delete(input.threadId);
+        graceDeadlines.delete(input.threadId);
         yield* persist(acquired.row);
         if (acquired.changed) yield* publish;
         const generation = acquired.row.generation;
@@ -393,6 +502,27 @@ export const make = Effect.gen(function* () {
         );
       }),
     );
+
+  const runAgentOp: BrowserLease["Service"]["runAgentOp"] = (input, effect) =>
+    Effect.gen(function* () {
+      const started = yield* Clock.currentTimeMillis;
+      const deadline = started + BROWSER_QUEUE_WAIT_MS;
+      while (true) {
+        yield* waitForTurn(input.threadId, deadline);
+        const attempt = yield* Effect.exit(runOnce(input, effect));
+        if (Exit.isSuccess(attempt)) return attempt.value;
+        // A racing waiter got the lease first: go back in line rather than
+        // stealing it, until this call's own deadline runs out.
+        const failure = Cause.squash(attempt.cause);
+        if (!(failure instanceof BrowserLeaseRejected) || failure.reason !== "busy") {
+          return yield* Effect.failCause(attempt.cause as Cause.Cause<BrowserLeaseRejected>);
+        }
+        if ((yield* Clock.currentTimeMillis) >= deadline) {
+          return yield* Effect.fail(failure);
+        }
+        yield* Effect.sleep(250);
+      }
+    });
 
   const runExclusive: BrowserLease["Service"]["runExclusive"] = (effect) =>
     opLock.withPermit(effect);
@@ -557,6 +687,34 @@ export const make = Effect.gen(function* () {
       return yield* view;
     });
 
+  const waiting: BrowserLease["Service"]["waiting"] = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    pruneWaiters(now);
+    return [...waiters.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .map(([threadId, since]) => ({ threadId, since }));
+  });
+
+  const releaseIfOwner: BrowserLease["Service"]["releaseIfOwner"] = (threadId) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const row = yield* Ref.modify(state, (latest) => {
+        if (latest.row.ownerType !== "agent" || latest.row.ownerId !== threadId) {
+          return [null, latest] as const;
+        }
+        const next: BrowserLeaseRow = {
+          ...releasedRow(latest.row.generation + 1, latest.row.lastUrl),
+          heartbeatAt: iso(now),
+        };
+        return [next, { ...latest, row: next }] as const;
+      });
+      if (row !== null) {
+        yield* persist(row);
+        yield* publish;
+      }
+      return yield* view;
+    });
+
   const isHumanController: BrowserLease["Service"]["isHumanController"] = (sessionId) =>
     Ref.get(state).pipe(
       Effect.map(
@@ -574,6 +732,8 @@ export const make = Effect.gen(function* () {
     releaseAll,
     releaseThread,
     isHumanController,
+    waiting,
+    releaseIfOwner,
     view,
     changes: Stream.fromPubSub(changesPubSub),
   });

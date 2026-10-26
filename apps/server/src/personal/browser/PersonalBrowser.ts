@@ -68,7 +68,28 @@ export class PersonalBrowser extends Context.Service<
       readonly botName: string;
       readonly taskId: PersonalTaskId;
       readonly reason: string;
+      /** What the user is being asked for, so the card picks its copy. */
+      readonly kind?: "captcha" | "code" | "login" | "sensitive" | "other" | undefined;
+      /** The site the user has to act on, when the bot knows it. */
+      readonly origin?: string | undefined;
     }) => Effect.Effect<PersonalBrowserHelpRequest, HostOperationError>;
+    /**
+     * Allows the paused sensitive-site step once for that bot. The next
+     * identical step asks again; nothing else is approved, and the browser,
+     * the page and every other bot are untouched.
+     */
+    readonly approveEgress: (input: {
+      readonly threadId: ThreadId;
+      readonly sessionId: string;
+    }) => Effect.Effect<PersonalBrowserStatus, PersonalBrowserError>;
+    /**
+     * Refuses that one step and lets the bot carry on without it. Never closes
+     * the browser and never touches another bot's page.
+     */
+    readonly refuseEgress: (input: {
+      readonly threadId: ThreadId;
+      readonly sessionId: string;
+    }) => Effect.Effect<PersonalBrowserStatus, PersonalBrowserError>;
     /**
      * Ends the shared browser session outright: every tab closed, Chrome
      * stopped, the lease released whoever held it, and the saved page dropped
@@ -94,6 +115,8 @@ export class PersonalBrowser extends Context.Service<
      * browser's controller, or have its page reopened by a later restart.
      */
     readonly releaseThread: (threadId: ThreadId) => Effect.Effect<void>;
+    /** A finished turn gives up the lease when that thread owns it. */
+    readonly releaseLease: (threadId: ThreadId) => Effect.Effect<void>;
     /**
      * The user-marked sensitive origins this thread, and the delegation tree
      * it works in, has had open — sorted. Read by the egress channels the
@@ -234,6 +257,8 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   ),
 });
 
+const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
@@ -249,7 +274,15 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
     const { handleAutomationRequest, navigateTab } = operations;
 
     const control = yield* makeBrowserControl(core, launch, tabs, operations);
-    const { fillLogin, loginPage, requestHelp, returnToAgent, takeControl } = control;
+    const {
+      approveEgress,
+      fillLogin,
+      loginPage,
+      refuseEgress,
+      requestHelp,
+      returnToAgent,
+      takeControl,
+    } = control;
 
     const lifecycle = yield* makeBrowserLifecycle(core, launch, tabs);
     const { activity, closeBrowser, listFiles, resolveFile } = lifecycle;
@@ -328,11 +361,14 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
       status,
       takeControl,
       requestHelp,
+      approveEgress,
+      refuseEgress,
       returnToAgent,
       closeBrowser,
       listFiles,
       resolveFile,
       releaseThread,
+      releaseLease: (threadId) => lease.releaseIfOwner(threadId).pipe(Effect.asVoid),
       sensitiveExposure,
       activity,
       handleAutomationRequest,
