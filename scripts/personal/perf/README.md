@@ -80,8 +80,25 @@ node scripts/personal/perf/slow3g.mjs --target http://127.0.0.1:<port> --runs 3 
   --biggest /bots/<bot>/<thread> --chats /bots/<bot>/<a>,/bots/<bot>/<b>,/bots/<bot>/<c>
 ```
 
-The budgets for these journeys are `slow3g-*` in `budget.json`; like the rest
-they only go down.
+The budgets for these journeys live in `slow3g-budget.json` and are checked by
+`slow3g-check.mjs` (median of the report's runs against each ceiling; the
+report's 400/400/400 settings must match). Like the rest they only go down:
+`--ratchet` lowers a beaten budget to the slowest run plus headroom (10% for
+time, 5% or 20 KB for sizes). `settledMs` is not gated, because background
+polls move it by tens of seconds on 3G.
+
+```bash
+node scripts/personal/perf/slow3g-check.mjs --report ~/.personal-bots/perf/slow3g-<label>.json
+node scripts/personal/perf/slow3g-check.mjs --report <file> --ratchet   # then commit slow3g-budget.json
+```
+
+Caveat: CDP throttling charges WebSocket frames at their decoded size, not
+the permessage-deflate bytes that cross the socket. A large RPC answer (for
+example `personalBots.list`, about 500 KB of JSON) takes seconds under the
+throttle even though the proxy counts only a fraction of that on the wire. So
+the bench is pessimistic for WebSocket-heavy journeys such as `reconnect`;
+compare runs with each other, not with a real phone. The relay is not
+measured: there is no isolated relay route for a throwaway server.
 
 ## Commands
 
