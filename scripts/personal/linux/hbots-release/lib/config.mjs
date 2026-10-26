@@ -57,7 +57,6 @@ export function loadConfig(env = process.env) {
     staleLeftoverMs: n("STALE_LEFTOVER_MS", 30 * 60_000),
     stableSeconds: n("STABLE_SECONDS", 120),
     startTimeoutMs: n("START_TIMEOUT_MS", 180_000),
-    smokeCmd: t("SMOKE_CMD", ""),
     pinsFile: t("PINS", path.join(here, "PINS.json")),
     scope: t("CGROUP", ""),
   };
