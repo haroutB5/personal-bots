@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { useMemo } from "react";
 
 import { useThreadShells } from "~/state/entities";
+import { useLazyThreadShells } from "~/state/lazyThreadShells";
 
 import { botThreadRows, chatCountsLabel } from "./botThreadRows";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
@@ -22,6 +23,7 @@ export function AllChatsCount({
   botId: string;
   links: ReadonlyArray<PersonalBotThread>;
 }): JSX.Element {
+  useLazyThreadShells(environmentId, { botId });
   const shells = useThreadShells();
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
   const counts = useMemo(() => {

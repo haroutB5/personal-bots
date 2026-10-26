@@ -1075,6 +1075,12 @@ export const OrchestrationSubscribeShellInput = Schema.Struct({
    * snapshot or catch-up replay and before it begins emitting live events.
    */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The full snapshot this subscription sends (when there is no cursor)
+   * leaves out idle archived bot chats, like the HTTP shell's
+   * `omitArchivedBotChats=true`. Live events still carry every thread.
+   */
+  omitArchivedBotChats: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
 

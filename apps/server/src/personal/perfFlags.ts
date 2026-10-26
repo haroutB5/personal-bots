@@ -18,7 +18,9 @@ export type ServerPerfOptimization =
   /** Read the open tasks of the `personalTasks.subscribe` replay through the status index. */
   | "task-replay-index"
   /** The bots list reads the owner's newest message (`lastOwnerMessageAt`) for unarchived chats only. */
-  | "owner-message-active-links";
+  | "owner-message-active-links"
+  /** The Bots app's shell leaves out idle archived bot chats (personalShellSlim.ts). */
+  | "shell-omit-archived";
 
 export function serverPerfOptimizationOn(
   name: ServerPerfOptimization,

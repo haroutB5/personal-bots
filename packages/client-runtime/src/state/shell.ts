@@ -235,8 +235,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
         // If the authoritative refresh failed, omit the cached cursor so the
         // socket fallback sends a complete snapshot for this new session.
+        const omit =
+          snapshotLoader.omitArchivedBotChats?.() === true
+            ? { omitArchivedBotChats: true as const }
+            : {};
         if (!canResume || Option.isNone(current.snapshot)) {
-          return supportsCompletionMarker ? { requestCompletionMarker: true as const } : {};
+          return supportsCompletionMarker
+            ? { requestCompletionMarker: true as const, ...omit }
+            : omit;
         }
         if (!supportsCompletionMarker) {
           // Without a completion marker there is no synchronized signal for a
@@ -250,6 +256,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         return {
           afterSequence: current.snapshot.value.snapshotSequence,
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+          ...omit,
         };
       }),
       {

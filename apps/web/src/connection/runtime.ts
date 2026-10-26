@@ -1,5 +1,5 @@
 import { Connection } from "@t3tools/client-runtime/connection";
-import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
+import { makeShellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
 import { threadSnapshotLoaderLayer } from "@t3tools/client-runtime/state/threads";
 import { pullRequestDiffLoaderLayer } from "@t3tools/client-runtime/state/pull-requests";
 import * as Layer from "effect/Layer";
@@ -10,6 +10,7 @@ import {
   backgroundActivityObserverLayer,
   backgroundActivityReporterLayer,
 } from "../lib/backgroundActivityReporter";
+import { perfOptimizationOn } from "../features/personal/perfFlags";
 import { PROVIDER_WORKSPACE_DATA_OMITTED } from "../features/personal/providerCatalogScope";
 import { connectionPlatformLayer } from "./platform";
 
@@ -19,7 +20,10 @@ const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
 
 const snapshotLoaderLayer = Layer.mergeAll(
   threadSnapshotLoaderLayer,
-  shellSnapshotLoaderLayer,
+  // The Bots app loads idle archived bot chats on demand (lazyThreadShells.ts).
+  makeShellSnapshotLoaderLayer({
+    omitArchivedBotChats: () => perfOptimizationOn("shell-omit-archived"),
+  }),
   pullRequestDiffLoaderLayer,
 );
 

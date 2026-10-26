@@ -74,7 +74,11 @@ export type PerfOptimization =
   // Once the app is quiet it preloads the personal screens' code (Team, Settings,
   // Memory, Files, Tasks, Computer) so they still open when the phone loses its
   // network (warmRoutes.ts, 1.66.11); off: each is fetched when first opened.
-  | "warm-routes";
+  | "warm-routes"
+  // The shell loaded at connect leaves out idle archived bot chats; a bot's chat
+  // list, an open archived chat and search load theirs on demand
+  // (lazyThreadShells.ts, 1.67.x); off: the full shell at every connect, as before.
+  | "shell-omit-archived";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

@@ -10,7 +10,11 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
-import { ModelSelection, OrchestrationMessageRole } from "./orchestration.ts";
+import {
+  ModelSelection,
+  OrchestrationMessageRole,
+  OrchestrationThreadShell,
+} from "./orchestration.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { VoiceCallSettings, VoiceCallSettingsInput } from "./personalVoiceCallSettings.ts";
 import { UsageProviderKind } from "./usage.ts";
@@ -587,6 +591,24 @@ export const PersonalBotArchiveThreadsInput = Schema.Struct({
   archived: Schema.Boolean,
 });
 export type PersonalBotArchiveThreadsInput = typeof PersonalBotArchiveThreadsInput.Type;
+
+/**
+ * The thread shells the slim shell leaves out (archived bot chats), for one
+ * bot's chat list, an open chat or search titles: every chat of `botId` plus
+ * the named `threadIds`.
+ */
+export const PersonalBotThreadShellsInput = Schema.Struct({
+  botId: Schema.optionalKey(PersonalBotId),
+  threadIds: Schema.optionalKey(
+    Schema.Array(ThreadId).check(Schema.isMaxLength(PERSONAL_BOT_THREADS_BATCH_MAX)),
+  ),
+});
+export type PersonalBotThreadShellsInput = typeof PersonalBotThreadShellsInput.Type;
+
+export const PersonalBotThreadShellsResult = Schema.Struct({
+  threads: Schema.Array(OrchestrationThreadShell),
+});
+export type PersonalBotThreadShellsResult = typeof PersonalBotThreadShellsResult.Type;
 
 /** Deletes several chats, one at a time, each exactly as `deleteThread` would. */
 export const PersonalBotDeleteThreadsInput = Schema.Struct({

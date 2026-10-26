@@ -60,6 +60,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { perfOptimizationOn } from "./perfFlags";
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
+import { useLazyThreadShells } from "~/state/lazyThreadShells";
 import { AllChatsCount } from "./AllChatsCount";
 import { ArchivedChatBar } from "./ArchivedChatBar";
 import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
@@ -269,6 +270,11 @@ export function ConversationScreen({
   const link = list.data?.threads.find((candidate) => candidate.threadId === threadIdParam) ?? null;
   const archived =
     (threadShell?.archivedAt ?? null) !== null || (link?.archivedAt ?? null) !== null;
+  // The connect-time shell leaves idle archived chats out: load this one's.
+  useLazyThreadShells(
+    environmentId,
+    (link?.archivedAt ?? null) !== null ? { threadIds: [threadIdParam] } : null,
+  );
   // Reopened by a relaunch but deleted or archived since (deleting a bot
   // deletes its chats): back to Bots without a word.
   useLeaveResumedChatIfGone(`/bots/${botId}/${threadIdParam}`, status === "deleted" || archived);

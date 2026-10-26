@@ -12,6 +12,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 
 import { useThreadDetail, useThreadShells } from "~/state/entities";
+import { useLazyThreadShells } from "~/state/lazyThreadShells";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -335,6 +336,8 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const backTarget = usePersonalBackTarget();
   const laptopOffline = useLaptopOffline();
   const list = usePersonalBotsList(environmentId);
+  // The connect-time shell has no idle archived chats: load this bot's.
+  useLazyThreadShells(environmentId, { botId });
   const shells = useThreadShells();
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const providers = useAtomValue(primaryServerProvidersAtom);

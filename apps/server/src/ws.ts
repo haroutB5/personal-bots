@@ -217,6 +217,11 @@ import {
   makePersonalSessionPrewarmer,
   type PersonalSessionPrewarmer,
 } from "./personal/sessionPrewarm.ts";
+import {
+  listBotThreadIds,
+  maybeSlimShellSnapshot,
+  pickThreadShells,
+} from "./personal/personalShellSlim.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalVoiceSampleService from "./personal/voiceCalls/PersonalVoiceSampleService.ts";
@@ -2259,6 +2264,10 @@ const makeWsRpcLayer = (
               );
 
               const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
+                Effect.flatMap((snapshot) =>
+                  maybeSlimShellSnapshot(snapshot, input.omitArchivedBotChats === true),
+                ),
+                Effect.provideService(SqlClient.SqlClient, sql),
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
                 ),
@@ -3442,6 +3451,26 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalBotsThreadShells]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsThreadShells,
+            Effect.gen(function* () {
+              const ids = yield* listBotThreadIds(input);
+              if (ids.size === 0) return { threads: [] };
+              const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+              return { threads: pickThreadShells(snapshot, ids) };
+            }).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.mapError(
+                (cause) =>
+                  new PersonalBotsError({
+                    message: "Could not load the bot's chats.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalBotsCreate]: (input) =>
           observeRpcEffect(WS_METHODS.personalBotsCreate, personalBots.create(input), {
             "rpc.aggregate": "server",
