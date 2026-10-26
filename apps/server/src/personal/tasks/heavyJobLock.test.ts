@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - the real-holder test spawns flock and reads /proc.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - the real-holder test spawns flock and polls /proc with plain Node timers, outside any Effect runtime.
 import { spawn } from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";

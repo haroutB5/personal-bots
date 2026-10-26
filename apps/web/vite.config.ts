@@ -337,7 +337,9 @@ export default defineConfig(() => {
       },
     },
     test: {
-      maxWorkers: testMaxWorkers,
+      // Omitted rather than undefined: the config type does not accept an
+      // explicit undefined for maxWorkers (exactOptionalPropertyTypes).
+      ...(testMaxWorkers === undefined ? {} : { maxWorkers: testMaxWorkers }),
       projects: [defineProject(unitTestProject)],
     },
   };

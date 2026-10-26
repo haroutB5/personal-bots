@@ -1,4 +1,4 @@
-// @effect-diagnostics preferSchemaOverJson:off - the fake transport returns the raw Gemini body, which is the point of the test.
+// @effect-diagnostics preferSchemaOverJson:off nodeBuiltinImport:off - the fake transport returns the raw Gemini body, which is the point of the test, and the test deletes its own temp root with plain node fs.
 /**
  * Settings > Voice calls: one short clip per voice, made once with the saved
  * key and cached on disk after that (spec section 8, Astra review finding 9).
