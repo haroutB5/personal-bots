@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "composite": false, "incremental": true },
+  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
+}

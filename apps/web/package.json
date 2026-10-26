@@ -8,7 +8,7 @@
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node ../../scripts/personal/node/typecheck-lean.mjs",
     "test": "vp test run --passWithNoTests --project unit",
     "remotion:studio": "remotion studio src/features/personal/avatarRemotion/index.ts",
     "remotion:render": "remotion render src/features/personal/avatarRemotion/index.ts"
