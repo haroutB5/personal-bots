@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - writes notice files into the test server's inbox like notify-release.ps1 does.
 // @effect-diagnostics preferSchemaOverJson:off - writes the notice JSON verbatim, as the script does.
+// @effect-diagnostics globalDateInEffect:off - fixture exercises wall-clock file freshness and throttling.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

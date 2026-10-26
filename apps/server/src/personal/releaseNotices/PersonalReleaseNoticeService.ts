@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - a plain directory inbox written by scripts/personal/notify-release.ps1; renames are the whole protocol.
+// @effect-diagnostics globalDateInEffect:off - result timestamps and filesystem mtimes use the host wall clock.
+// @effect-diagnostics preferSchemaOverJson:off - the runner owns this small local JSON protocol.
 /**
  * Release-landed wake-up: tells the chat that asked for an hbots release how
  * it went, the moment the release waiter knows.
