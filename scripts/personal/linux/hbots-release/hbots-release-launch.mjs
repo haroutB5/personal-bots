@@ -32,15 +32,15 @@ async function main() {
   if (!fs.existsSync(runner)) throw new Error(`Runner ${runner} missing.`);
 
   // 1. no other waiter: a run-mode unit of any version, or an old one-off linux-release waiter
-  const listed = run("systemctl", ["--user", "list-units", "--all", "--plain", "--no-legend", "hbots-release-*"], { timeout: 15_000 }).out;
+  const listed = run("systemctl", ["--user", "list-units", "--all", "--plain", "--no-legend", "hbots-release-run-*"], { timeout: 15_000 }).out;
   const waiters = [];
   for (const line of listed.split("\n")) {
-    const m = /^(hbots-release-\d+\.\d+\.\d+)\.service\s+\S+\s+(active|activating|deactivating)/.exec(line.trim());
+    const m = /^(hbots-release-run-\d+\.\d+\.\d+)\.service\s+\S+\s+(active|activating|deactivating)/.exec(line.trim());
     if (m) waiters.push(m[1]);
   }
   const old = run("pgrep", ["-f", "linux-release-[0-9.]+\\.mjs"], { timeout: 10_000 }).out.trim().split("\n").filter(Boolean);
   if (armed && (waiters.length || old.length)) throw new Error(`Another waiter is running: ${[...waiters, ...old.map((p) => `pid ${p}`)].join(", ")}.`);
-  const unit = `hbots-release-${a.version}${{ run: "", dryrun: "-dryrun", prepare: "-prepare", guards: "-guards" }[mode]}`;
+  const unit = `hbots-release-${mode}-${a.version}`;
   if (unitState(`${unit}.service`).active === "active") throw new Error(`${unit}.service is already running.`);
 
   // 2. live is still the rollback baseline

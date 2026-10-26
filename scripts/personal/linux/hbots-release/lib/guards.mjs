@@ -72,9 +72,13 @@ export function otherRunners(cfg) {
   return found;
 }
 
-export function testRunnerOutsideUnit(cfg) {
+export function testRunnerOutsideUnit(cfg, strict = true, note = () => {}) {
   if (cfg.test) return;
   const mine = cgroupOfPid(process.pid) ?? "";
+  if (mine.includes(cfg.unit) && !strict) {
+    note(`runner is inside ${cfg.unit}'s cgroup (${mine}): fine for a read-only mode, a real run must be started with the launcher`);
+    return;
+  }
   if (mine.includes(cfg.unit)) throw new Error(`The runner is inside ${cfg.unit}'s cgroup (${mine}); the restart would kill it. Start it with the launcher (systemd-run --user).`);
 }
 
@@ -113,7 +117,7 @@ export async function runGuards(cfg, a, names, ctx, flags) {
     const cli = smokeCli(cfg, names);
     if (!fs.existsSync(cli)) throw new Error(`Smoke CLI missing: ${cli}.`);
     if (!fs.existsSync(cfg.node)) throw new Error(`Pinned node missing: ${cfg.node}.`);
-    testRunnerOutsideUnit(cfg);
+    testRunnerOutsideUnit(cfg, mode === "run", note);
     result.smokeCli = cli;
     result.serverCgroup = cgroupOfPid(Number(state.pid));
   });
@@ -167,7 +171,7 @@ export async function runGuards(cfg, a, names, ctx, flags) {
     note(`No backup planned (migration ${a["migration-before"]} -> ${a["migration-after"]}, no --force-backup): source levels ${levels.before} -> ${levels.after}. The live database is never opened.`);
   }
   await step("guards.active-release", async () => {
-    result.activeRelease = testActiveRelease(cfg, a, { allowTarget: mode === "dryrun" || mode === "guards" });
+    result.activeRelease = testActiveRelease(cfg, a, { allowTarget: mode !== "run" });
   });
   if (mode === "run") {
     await step("guards.no-other-waiter", async () => {
