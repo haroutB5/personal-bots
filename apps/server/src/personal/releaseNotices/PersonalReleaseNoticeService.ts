@@ -310,8 +310,47 @@ export const make = Effect.gen(function* () {
   // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): pending notices stay in the inbox.
   const schedulersOff = personalSchedulersOff();
 
+  // The installed Linux runner records desktop alerts in its result file. Older
+  // servers ignore them; this consumer starts only with the next server release.
+  const queueWaitingAlerts = Effect.promise(async () => {
+    const runDir = NodePath.join(NodePath.basename(config.baseDir) === "dev" ? NodePath.dirname(config.baseDir) : config.baseDir, "run");
+    const files = await NodeFSP.readdir(runDir).catch(() => [] as string[]);
+    for (const file of files) {
+      if (!/^restart-\d+\.\d+\.\d+-result\.json$/.test(file)) continue;
+      try {
+        const source = NodePath.join(runDir, file);
+        if ((await NodeFSP.stat(source)).size > 1_000_000) continue;
+        const result: unknown = JSON.parse(await NodeFSP.readFile(source, "utf8"));
+        if (typeof result !== "object" || result === null) continue;
+        const r = result as Record<string, unknown>;
+        const a = r.waitingAlert;
+        if (r.status !== "waiting_for_idle" || r.mode !== "run" || r.runner !== "hbots-release.mjs (linux)" ||
+            typeof r.notifyThread !== "string" || typeof r.version !== "string" ||
+            typeof r.release !== "string" || typeof r.runnerPid !== "number" ||
+            typeof r.updatedAt !== "string" || !Number.isFinite(Date.parse(r.updatedAt)) ||
+            Date.now() - Date.parse(r.updatedAt) > 90_000 || Date.parse(r.updatedAt) > Date.now() + 5_000 ||
+            typeof a !== "object" || a === null) continue;
+        const alert = a as Record<string, unknown>;
+        if ((alert.minutes !== 20 && alert.minutes !== 60) || typeof alert.text !== "string" ||
+            typeof alert.at !== "string" || !Number.isFinite(Date.parse(alert.at))) continue;
+        const id = `waiting-${r.runnerPid}-${alert.minutes}-${Date.parse(alert.at)}`;
+        const name = `${id}.json`;
+        const exists = async (p: string) => NodeFSP.access(p).then(() => true, () => false);
+        if (await exists(NodePath.join(inbox, "posted", name)) || await exists(NodePath.join(inbox, "rejected", name))) continue;
+        await NodeFSP.mkdir(inbox, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(inbox, name), JSON.stringify({
+          threadId: r.notifyThread, version: r.version, release: r.release,
+          outcome: "waiting", detail: alert.text.slice(0, DETAIL_MAX_CHARS), writtenAt: alert.at,
+        }), { flag: "wx" });
+      } catch {
+        // Files can change between listing and reading; the next sweep retries.
+      }
+    }
+  });
+
   const scheduledSweep: PersonalReleaseNotices["Service"]["sweep"] = lock.withPermit(
     Effect.gen(function* () {
+      yield* queueWaitingAlerts;
       const names = yield* Effect.promise(() =>
         NodeFSP.readdir(inbox, { withFileTypes: true }).then(
           (entries) =>
