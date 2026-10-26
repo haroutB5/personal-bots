@@ -461,8 +461,14 @@ async function preflight(runId, mode, reviewLabel, reviewReport) {
     log(`preflight run ${runId} (${mode}), checkout ${repoRoot}`);
 
     const live = readLiveRelease();
-    const branch = process.env.HBOTS_UPDATES_BRANCH ?? live.branch ?? "personal-bots/main";
     const current = git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout;
+    if (current === "HEAD")
+      throw new Error("the checkout is detached; check out the live branch first");
+    // A release built from a detached worktree records branch=HEAD; the
+    // checkout's own branch is the live trunk then.
+    const branch =
+      process.env.HBOTS_UPDATES_BRANCH ??
+      (live.branch && live.branch !== "HEAD" ? live.branch : current);
     if (current !== branch) throw new Error(`the checkout is on '${current}', not ${branch}`);
     checkClean(repoRoot);
 
