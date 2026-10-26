@@ -85,6 +85,19 @@ const unitTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
+// Vitest defaults to one fork per core but one less (19 on the Omarchy laptop):
+// 3.3-3.7 GiB and 312 s CPU for the web gate. Four forks run the same 3,080
+// tests in 1.4 GiB and 179 s CPU, 37 s wall instead of 21 s (Optimizer, 26 Oct,
+// qa/build-diet-20261026). HBOTS_TEST_WORKERS=default is the kill switch back
+// to Vitest's own choice; a number or a percentage such as 50% also works.
+const testWorkersEnv = process.env.HBOTS_TEST_WORKERS?.trim() || "4";
+const testMaxWorkers =
+  testWorkersEnv === "default"
+    ? undefined
+    : /^[1-9][0-9]*$/.test(testWorkersEnv)
+      ? Number(testWorkersEnv)
+      : testWorkersEnv;
+
 function resolveDevProxyTarget(
   backendPort: string | undefined,
   wsUrl: string | undefined,
@@ -324,6 +337,7 @@ export default defineConfig(() => {
       },
     },
     test: {
+      maxWorkers: testMaxWorkers,
       projects: [defineProject(unitTestProject)],
     },
   };
