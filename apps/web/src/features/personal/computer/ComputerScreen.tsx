@@ -410,7 +410,6 @@ function ComputerScreenView({
     const timer = window.setTimeout(() => setPulse(null), 1400);
     return () => window.clearTimeout(timer);
     // `shown` is read at the moment of the action only.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [actionKey]);
 
   // The unshown stage keeps its socket for a moment, then lets go.
