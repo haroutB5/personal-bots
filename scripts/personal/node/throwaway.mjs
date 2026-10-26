@@ -75,7 +75,9 @@ function resolveBin(where) {
   );
 }
 
-const isRunning = (record) => record !== null && proc.isServerProcess(Number(record.pid), record);
+const isRunning = (record) =>
+  record !== null &&
+  proc.isServerProcess(Number(record.pid), { binPath: record.bin, baseDir: record.root });
 
 function freePort() {
   return new Promise((resolve, reject) => {
