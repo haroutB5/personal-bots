@@ -54,6 +54,35 @@ For each journey the bench records:
 - CDP counters: script ms, task ms, layouts, style recalcs, heap;
 - WebSocket frames and KB received before the mark.
 
+## Slow-connection bench (Theo's 3G method)
+
+`slow3g.mjs` measures the app the way Theo measured upstream T3 Code: Brave on
+a phone viewport, throttled through CDP `Network.emulateNetworkConditions` to
+400 kbps down and up with 400 ms RTT, cache disabled, a fresh profile and a new
+TCP connection every run (a byte-counting proxy sits in front of the target, so
+"wire KB" is what really crossed the socket, compressed, both ways). Point it at
+a throwaway server (never the live one); it needs a perf auth state for that
+origin (`login.mjs`).
+
+| Journey     | Start -> end                                                             |
+| ----------- | ------------------------------------------------------------------------ |
+| `cold`      | first visit straight into the biggest chat -> transcript and composer up |
+| `reconnect` | relaunch on the same profile (worker and caches warm) -> live Bots list  |
+| `open-A..C` | from the list, open each of three big chats -> transcript and composer   |
+
+Each journey records time to visible (the primary number), time to settled (2 s
+of network quiet, capped at 60 s), KB on the wire (down and up), and JSON
+parsed (HTTP JSON bodies plus WebSocket text frames, decoded). `--detail 1`
+adds every request and WebSocket bytes per RPC method.
+
+```bash
+node scripts/personal/perf/slow3g.mjs --target http://127.0.0.1:<port> --runs 3 \
+  --biggest /bots/<bot>/<thread> --chats /bots/<bot>/<a>,/bots/<bot>/<b>,/bots/<bot>/<c>
+```
+
+The budgets for these journeys are `slow3g-*` in `budget.json`; like the rest
+they only go down.
+
 ## Commands
 
 ```powershell
