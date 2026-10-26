@@ -462,12 +462,18 @@ it.effect(
         ["P1", "P2", "P3", "P4", "P5"],
       );
       assert.ok(
-        data.commands.preflight.includes("-Step preflight -RunId 20260925-0400 -Mode Live"),
+        process.platform === "win32"
+          ? data.commands.preflight.includes("-Step preflight -RunId 20260925-0400 -Mode Live")
+          : data.commands.preflight.includes("preflight --run-id 20260925-0400 --mode live"),
       );
       assert.ok(
-        data.commands.ship.includes(
-          "-Step ship -RunId 20260925-0400 -Mode Live -ReviewLabel 2.1.283",
-        ),
+        process.platform === "win32"
+          ? data.commands.ship.includes(
+              "-Step ship -RunId 20260925-0400 -Mode Live -ReviewLabel 2.1.283",
+            )
+          : data.commands.ship.includes(
+              'ship --run-id 20260925-0400 --mode live --review-label "2.1.283"',
+            ),
       );
       assert.ok(data.commands.ledger.includes("scripts/personal/updates/ledger.ts"));
       // Reviewed only once the task exists.
@@ -581,7 +587,11 @@ it.effect("Run now is a dry run: any time of day, report in the run folder, noth
     assert.strictEqual(data.run.id, "20260924-221507-dry");
     assert.strictEqual(data.run.mode, "dry-run");
     assert.strictEqual(data.review.reportFile, `${HOME}/runs/20260924-221507-dry/2.1.282.md`);
-    assert.ok(data.commands.preflight.includes("-Mode DryRun"));
+    assert.ok(
+      process.platform === "win32"
+        ? data.commands.preflight.includes("-Mode DryRun")
+        : data.commands.preflight.includes("--mode dry-run"),
+    );
     assert.strictEqual(prepared._tag === "Run" && prepared.onStarted === undefined, true);
     assert.deepStrictEqual(reviewState(), {
       reviewedClaudeCode: "2.1.281",
@@ -722,7 +732,11 @@ it.effect("a Claude Code release and a newer harness are reviewed in one run", (
     assert.strictEqual(data.review.claudeCode.upTo, "2.1.282");
     assert.strictEqual(data.review.deepseekHarness.moved, true);
     assert.strictEqual(data.review.deepseekHarness.candidate, "0.2.2-rc.1");
-    assert.ok(data.commands.ship.includes("-ReviewLabel 2.1.282+dsh-0.2.2-rc.1"));
+    assert.ok(
+      process.platform === "win32"
+        ? data.commands.ship.includes("-ReviewLabel 2.1.282+dsh-0.2.2-rc.1")
+        : data.commands.ship.includes('--review-label "2.1.282+dsh-0.2.2-rc.1"'),
+    );
   }),
 );
 

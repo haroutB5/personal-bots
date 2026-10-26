@@ -24,6 +24,7 @@
 // Default ledger: C:/Claude/AI/personal-bots-notes/claude-code-updates/proposals.json
 // (PB_NOTES_DIR overrides the notes folder).
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -45,7 +46,11 @@ import {
   type RunOutcome,
 } from "../../../apps/server/src/personal/claudeCodeReview/proposalLedger.ts";
 
-const notesDir = process.env.PB_NOTES_DIR ?? "C:/Claude/AI/personal-bots-notes";
+const defaultNotesDir =
+  process.platform === "win32"
+    ? "C:/Claude/AI/personal-bots-notes"
+    : NodePath.join(NodeOS.homedir(), "Claude", "AI", "personal-bots-notes");
+const notesDir = process.env.PB_NOTES_DIR ?? defaultNotesDir;
 const DEFAULT_LEDGER = `${notesDir}/claude-code-updates/proposals.json`;
 
 interface Parsed {

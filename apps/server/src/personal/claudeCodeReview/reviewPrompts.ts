@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - a module-level default path for the CLI tools, not an Effect.
 /**
  * The dedicated "Updates" bot and its two routines, created once by
  * {@link ./PersonalClaudeCodeReview.ts}:
@@ -19,6 +20,39 @@ import {
   type PersonalBotCreateInput,
   type PersonalRoutineCreateInput,
 } from "@t3tools/contracts";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+/**
+ * The hbots checkout on Linux is the one the live release was built from: the
+ * release's VERSION names it, and builders can move it between worktrees. The
+ * Windows layout stays untouched.
+ */
+function defaultRepoDir(): string {
+  if (process.platform === "win32") return "C:/Claude/AI/personal-bots";
+  const home = NodePath.join(NodeOS.homedir(), ".personal-bots");
+  try {
+    const current = NodeFS.readFileSync(
+      NodePath.join(home, "releases", "current.txt"),
+      "utf8",
+    ).trim();
+    const version = NodeFS.readFileSync(
+      NodePath.join(home, "releases", current, "VERSION"),
+      "utf8",
+    );
+    const repo = /^repo=(.+)$/m.exec(version)?.[1]?.trim();
+    if (repo && NodeFS.existsSync(NodePath.join(repo, "scripts", "personal", "app-version.txt"))) {
+      return repo;
+    }
+  } catch {
+    // No release yet (a fresh install): fall through to the default checkout.
+  }
+  return NodePath.join(NodeOS.homedir(), "Claude", "AI", "personal-bots");
+}
+
+const DEFAULT_AI_DIR =
+  process.platform === "win32" ? "C:/Claude/AI" : NodePath.join(NodeOS.homedir(), "Claude", "AI");
 
 /** Where hbots' source and the notes repo live on this machine. */
 export interface ReviewPaths {
@@ -27,8 +61,8 @@ export interface ReviewPaths {
 }
 
 export const DEFAULT_REVIEW_PATHS: ReviewPaths = {
-  repoDir: process.env.PB_REPO_DIR ?? "C:/Claude/AI/personal-bots",
-  notesDir: process.env.PB_NOTES_DIR ?? "C:/Claude/AI/personal-bots-notes",
+  repoDir: process.env.PB_REPO_DIR ?? defaultRepoDir(),
+  notesDir: process.env.PB_NOTES_DIR ?? `${DEFAULT_AI_DIR}/personal-bots-notes`,
 };
 
 export const reportDir = (paths: ReviewPaths) => `${paths.notesDir}/claude-code-updates`;
@@ -146,14 +180,14 @@ export const updatesNightlyPrompt = (paths: ReviewPaths) =>
     "   - model lists: apps/server/src/provider/ClaudeModelCatalog.ts, ClaudeModelManifest.ts",
     "   - MCP wiring: apps/server/src/mcp/ (toolkits/personal); plugins and skills from bot-plugins",
     "   - the SDK pin: apps/server/package.json and pnpm-workspace.yaml (@anthropic-ai/claude-agent-sdk)",
-    '   Grep for any option, event, env var or setting an entry names before judging it. Register each proposal (at most 7, highest value first) with: <ledger> --ledger <ledger> add --source <review label> --title "<one line>" --detail "<what, why, effort S/M/L, files>". It prints the new id; use those ids in the report. Write the report (Markdown, under 150 lines) to review.reportFile: # Claude Code <version> update review; one line with the ranges, installed claude.exe, SDK pinned -> latest; ## Proposals (id, what, why, effort); ## Breaks or needs a change (with file:line evidence, or \'Nothing found\'); ## Relevant changes (one entry each: version, can hbots use it, breaks anything, effort, adopt/adapt/watch/ignore); ## Everything else (one line per theme).',
+    '   Grep for any option, event, env var or setting an entry names before judging it. Register each proposal (at most 7, highest value first) with: <ledger> --ledger <ledger> add --source <review label> --title "<one line>" --detail "<what, why, effort S/M/L, files>". It prints the new id; use those ids in the report. Write the report (Markdown, under 150 lines) to review.reportFile: # Claude Code <version> update review; one line with the ranges, the installed Claude Code version, SDK pinned -> latest; ## Proposals (id, what, why, effort); ## Breaks or needs a change (with file:line evidence, or \'Nothing found\'); ## Relevant changes (one entry each: version, can hbots use it, breaks anything, effort, adopt/adapt/watch/ignore); ## Everything else (one line per theme).',
     "",
     "1b. DeepSeek Harness pin, only when review.deepseekHarness.moved is true. Its pinMoveInstructions are the authoritative steps: proposal form, the launch-patch rows to check, the A/B rig and how a green A/B moves the pin. The check reads only the latest and next dist-tags; alpha is never read, and a candidate equal to or older than the pin is not a review.",
     "",
     '2. Decide every actionable proposal (the run data\'s proposals.actionable plus the ones you just added). SAFE means all of: small or medium; no data loss and no destructive or data-altering migration; reversible by a plain git revert; no change to auth, pairing, permissions, secrets or the security model; not a large refactor; you can verify it with tests you can run now; a dependency change (package.json, lockfile, vp i) only when preflight says dependencyChangesAllowed. Anything else, or anything you are not sure you can verify, is RISKY. A DeepSeek Harness pin move is risky unless its A/B was 100% green on both runtimes. Record each: <ledger> --ledger <ledger> decide <id> --rating safe|risky --reason "<one line>". An approved proposal is applied whatever you rate it: Harout already decided.',
     "",
     "3. Implement each SAFE or approved proposal, one at a time, in workDir:",
-    "   - make the change with focused tests; run them (vp test run <files> in apps/server or apps/web; never a bare vp test run in apps/server) and typecheck the package you touched (tsc --noEmit via ..\\..\\node_modules\\.bin\\tsc.cmd); format the files you touched (vp fmt <files>).",
+    "   - make the change with focused tests; run them (vp test run <files> in apps/server or apps/web; never a bare vp test run in apps/server) and typecheck the package you touched (node_modules/.bin/tsc --noEmit from that package's directory; on Windows use node_modules\\.bin\\tsc.cmd); format the files you touched (vp fmt <files>).",
     '   - one commit per proposal: git -c user.email=harout_b5@live.com -c user.name=haroutB5 commit -m "<conventional title> (P<n>)" -m "Before: ... After: ..."',
     '   - then: <ledger> --ledger <ledger> applied <id> --commits <sha> --notes "Before: ... After: ..."',
     '   - if you cannot make it work, undo only your own uncommitted edits for it (git restore --staged --worktree -- <files>, and delete files you created), then <ledger> --ledger <ledger> failed <id> --reason "<why>". Never leave uncommitted changes behind.',

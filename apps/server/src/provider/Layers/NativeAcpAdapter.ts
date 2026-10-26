@@ -174,10 +174,25 @@ interface RegistryAcpSessionContext {
   notificationFiber?: Fiber.Fiber<void, unknown>;
   stopped: boolean;
   readonly needsFreshContext: boolean;
+  /** The start input, so a same-thread restart keeps the persona and runtime mode. */
+  readonly startInput: ProviderSessionStartInput;
+  /** What the running process was started with (auth file, binary path, XDG
+   * homes). ACP agents read that environment once, at session start. */
+  readonly environmentFingerprint: string | undefined;
+  /** The model a fresh-session retry was already spent on, so a truly missing
+   * model fails at once instead of restarting the agent on every turn. */
+  modelRefreshAttempted?: string;
 }
 
 export interface NativeAcpAdapterOptions {
   readonly needsFreshContext?: (input: ProviderSessionStartInput) => boolean;
+  /**
+   * Identifies the environment the agent captured when the session started.
+   * A resume cursor carrying another value starts a fresh session, and a live
+   * session whose value changed is replaced before its next turn. Drivers whose
+   * agent re-reads its environment per turn leave this unset.
+   */
+  readonly sessionFingerprint?: (input: ProviderSessionStartInput) => Effect.Effect<string>;
   readonly provider: ProviderDriverKind;
   readonly runtimeOptions: (
     input: ProviderSessionStartInput,
@@ -354,7 +369,33 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
           let sessionScopeTransferred = false;
 
           const startEffect = Effect.gen(function* () {
-            const runtimeOptions = yield* options.runtimeOptions(input);
+            const environmentFingerprint = options.sessionFingerprint
+              ? yield* options.sessionFingerprint(input)
+              : undefined;
+            // A resumed agent keeps the environment it read at its own session
+            // start: a changed auth file, binary or XDG home must not resume it.
+            // An old cursor without the fingerprint is treated the same way, so
+            // the first turn after this upgrade starts a clean session.
+            const resumeCursor = input.resumeCursor;
+            const resumedAcpSession =
+              typeof resumeCursor === "object" &&
+              resumeCursor !== null &&
+              "engine" in resumeCursor &&
+              resumeCursor.engine === "acp" &&
+              "sessionId" in resumeCursor &&
+              typeof resumeCursor.sessionId === "string";
+            const resumedFingerprint =
+              resumedAcpSession && "fingerprint" in resumeCursor
+                ? resumeCursor.fingerprint
+                : undefined;
+            const staleResume =
+              options.sessionFingerprint !== undefined &&
+              resumedAcpSession &&
+              resumedFingerprint !== environmentFingerprint;
+            const effectiveInput = staleResume
+              ? { ...input, resumeCursor: undefined, freshSession: true }
+              : input;
+            const runtimeOptions = yield* options.runtimeOptions(effectiveInput);
 
             let launcherPid: number | undefined;
             let stderrTail = "";
@@ -468,7 +509,15 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
               status: "ready",
               runtimeMode: input.runtimeMode,
               ...(runtimeOptions.resumeSessionId !== undefined || DRIVER === "opencode"
-                ? { resumeCursor: { sessionId: started.sessionId, engine: "acp" } }
+                ? {
+                    resumeCursor: {
+                      sessionId: started.sessionId,
+                      engine: "acp",
+                      ...(environmentFingerprint !== undefined
+                        ? { fingerprint: environmentFingerprint }
+                        : {}),
+                    },
+                  }
                 : {}),
               createdAt,
               updatedAt: createdAt,
@@ -486,6 +535,8 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
               pendingSteers: 0,
               stopped: false,
               needsFreshContext: options.needsFreshContext?.(input) ?? false,
+              startInput: input,
+              environmentFingerprint,
             };
             context = ctx;
 
@@ -952,6 +1003,50 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
 
     const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
       Effect.gen(function* () {
+        // The agent captured its environment when this session started. A new
+        // auth file or binary must not be used through the old process: replace
+        // it before the turn. A model the old process does not list is the same
+        // symptom (a newly available model after a key change), so it gets one
+        // fresh-session retry too.
+        if (options.sessionFingerprint) {
+          const existing = sessions.get(input.threadId);
+          if (
+            existing &&
+            !existing.stopped &&
+            !existing.activeTurnId &&
+            existing.session.status !== "running"
+          ) {
+            const currentFingerprint = yield* options.sessionFingerprint(existing.startInput);
+            const wanted = input.modelSelection?.model;
+            const offered = registryModelEntries(existing.setup);
+            const modelMissing =
+              wanted !== undefined &&
+              wanted !== "default" &&
+              wanted !== existing.appliedModel &&
+              existing.modelRefreshAttempted !== wanted &&
+              offered.length > 0 &&
+              !offered.some((entry) => entry.value === wanted);
+            if (currentFingerprint !== existing.environmentFingerprint || modelMissing) {
+              yield* Effect.logInfo("ACP session environment changed; starting a fresh session", {
+                provider: DRIVER,
+                threadId: input.threadId,
+                reason: modelMissing ? "model-not-offered" : "environment-changed",
+              });
+              yield* startSession({
+                ...existing.startInput,
+                ...(input.modelSelection !== undefined
+                  ? { modelSelection: input.modelSelection }
+                  : {}),
+                resumeCursor: undefined,
+                freshSession: true,
+              });
+              if (modelMissing) {
+                const restarted = sessions.get(input.threadId);
+                if (restarted) restarted.modelRefreshAttempted = wanted;
+              }
+            }
+          }
+        }
         // Cancel only the ACP prompt, retaining the logical turn and its
         // running session. Stop alone emits turn.aborted. Publishing that
         // event for a steer used to settle delegated tasks as interrupted

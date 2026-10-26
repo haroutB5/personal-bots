@@ -59,16 +59,19 @@ fi
 if [ -z "$PYTHON_BIN" ]; then PYTHON_BIN=/usr/bin/python3; fi
 
 TARGET="$HOME/.config/systemd/user"
+# The nightly dependency update and the upstream sync stay off unless someone
+# enables them by hand. The upstream merge is deliberately blocked (orchestrator
+# v2 is not merged) and the nightly pipeline is unproven on Linux; a reinstall
+# must not turn either back on (26 Oct, after both were switched off live).
 CORE_UNITS=(
   hbots.service
-  hbots-upstream-sync.timer
-  hbots-nightly-updates.timer
   tennis-poll.timer
   tennis-book.timer
   matchday-sofascore-fetcher.service
   docs-server.service
 )
 OPTIONAL_UNITS=(urgot.service cloudflared.service)
+MANUAL_UNITS=(hbots-upstream-sync.timer hbots-nightly-updates.timer)
 
 render() {
   sed -e "s|@REPO@|$REPO|g" \
@@ -124,5 +127,5 @@ if [ "$ENABLE" = 1 ]; then
   # install (26 Oct: docs-server and all four timers were enabled but dead).
   systemctl --user enable --now "${CORE_UNITS[@]}"
   echo "Enabled and started: ${CORE_UNITS[*]}"
-  echo "Left disabled on purpose: ${OPTIONAL_UNITS[*]}"
+  echo "Left disabled on purpose: ${OPTIONAL_UNITS[*]} ${MANUAL_UNITS[*]}"
 fi

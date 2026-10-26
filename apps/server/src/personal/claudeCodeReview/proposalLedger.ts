@@ -390,6 +390,8 @@ export type RunResult =
   /** Built, but bots or tasks stayed busy so nothing was restarted; the run was reverted. */
   | "busy"
   | "shipped"
+  /** Gated and staged on Linux; the normal release path installs it. */
+  | "staged"
   /** The new release failed its checks; the previous one is live again. */
   | "rolled-back"
   /** The rollback failed too, or Bots is not answering. */
@@ -426,6 +428,7 @@ const HEADLINE: Record<RunResult, string> = {
   "push-rejected": "not shipped (push rejected)",
   busy: "changes reverted (Bots was busy)",
   shipped: "shipped",
+  staged: "staged for release (waiting for DevOps)",
   "rolled-back": "rolled back",
   down: "Bots may be down",
   error: "stopped on an error",

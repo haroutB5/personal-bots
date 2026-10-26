@@ -40,6 +40,14 @@ test("install script renders absolute paths and supports dry-run", () => {
   assert.match(script, /ConditionPathExists|enable/);
 });
 
+test("a reinstall never enables the unproven nightly timers", () => {
+  const script = fs.readFileSync(path.join(root, "install-units.sh"), "utf8");
+  const core = script.slice(script.indexOf("CORE_UNITS=("), script.indexOf("OPTIONAL_UNITS="));
+  assert.doesNotMatch(core, /hbots-nightly-updates\.timer/);
+  assert.doesNotMatch(core, /hbots-upstream-sync\.timer/);
+  assert.match(script, /MANUAL_UNITS=\(hbots-upstream-sync\.timer hbots-nightly-updates\.timer\)/);
+});
+
 test("hbots service is distinct from the optional tunnel unit", () => {
   const hbots = fs.readFileSync(path.join(systemd, "hbots.service.in"), "utf8");
   assert.match(hbots, /hbots\.mjs serve --root dev/);
