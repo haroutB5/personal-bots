@@ -274,7 +274,7 @@ export const makeTaskDispatch = (
     return {
       text: openingTurnText({
         header: openingTurnHeader(sourceLabel(task, delegatorName), attemptNumber),
-        sections: taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null),
+        sections: taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null, delegatorName),
         notes,
       }),
       marker: marker(attemptNumber > 1 ? "retry" : "start", delegatorBotId, []),

@@ -451,8 +451,52 @@ describe("turn policy", () => {
 
   it("keeps a steer's own prefix, and adds one otherwise", () => {
     expect(steerText("CTO", "Update from CTO: go")).toBe("Update from CTO: go");
+    expect(steerText("CTO", "Update from Frontend: go")).toBe("Update from Frontend: go");
     expect(steerText("CTO", "  go  ")).toBe("Update from CTO: go");
     expect(steerText("  ", "go")).toBe("Update from your delegator: go");
+  });
+
+  it("drops the sender's own attribution so the label is not repeated", () => {
+    // Harout's report: the app's label plus a text that began "From CTO."
+    expect(steerText("CTO", "From CTO. Harout: ship it")).toBe("Update from CTO: Harout: ship it");
+    expect(steerText("CTO", "from cto! narrow the scope")).toBe(
+      "Update from CTO: narrow the scope",
+    );
+    expect(steerText("CTO", "CTO: check the logs")).toBe("Update from CTO: check the logs");
+    expect(steerText("CTO", "CTO here. Check the logs")).toBe(
+      "Update from CTO: Check the logs",
+    );
+    expect(steerText("CTO", "Update from CTO. Check the logs")).toBe(
+      "Update from CTO: Check the logs",
+    );
+    // A name in the middle of a sentence, or another bot's attribution, is not touched.
+    expect(steerText("CTO", "The CTO asked for this")).toBe("Update from CTO: The CTO asked for this");
+    expect(steerText("CTO", "Frontend: check this")).toBe("Update from CTO: Frontend: check this");
+    // Nothing is left: keep the words rather than send an empty steer.
+    expect(steerText("CTO", "From CTO.")).toBe("Update from CTO: From CTO.");
+  });
+
+  it("drops a delegator's own attribution from the brief it labels", () => {
+    const delegation = { ...task, source: "delegation", objective: "From Nova. Do it" } as never;
+    expect(taskSections(delegation, null, "Nova")).toContain("Objective:\nDo it");
+    expect(
+      taskSections(
+        delegation,
+        { title: "T", context: "Nova here. ctx", constraints: "Nova: no", targetBot: "b" } as never,
+        "Nova",
+      ),
+    ).toEqual([
+      "Task id: t1",
+      "Title: Title",
+      "Objective:\nDo it",
+      "Context:\nctx",
+      "Constraints:\nno",
+      "Expected output:\nDone",
+    ]);
+    // A user's task keeps its words exactly.
+    expect(taskSections({ ...task, objective: "From CTO. Do it" } as never, null)).toContain(
+      "Objective:\nFrom CTO. Do it",
+    );
   });
 });
 
