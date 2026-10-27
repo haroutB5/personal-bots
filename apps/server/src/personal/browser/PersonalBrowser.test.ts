@@ -3790,8 +3790,12 @@ describe("PersonalBrowser", () => {
         yield* browser.releaseLease(threadId);
 
         // The lease and the card are still A's, and the card outlives the 90 s
-        // agent TTL because the waiting thread keeps its place.
+        // agent TTL because the waiting thread keeps its place. The refresh
+        // runs in its own fiber, so let it run before reading the view.
         yield* TestClock.adjust(120_000);
+        yield* awaitCondition(
+          browser.status("session-1").pipe(Effect.map((view) => view.controller._tag === "Agent")),
+        );
         const kept = yield* browser.status("session-1");
         expect(kept.controller).toMatchObject({ _tag: "Agent", threadId });
         expect(kept.helpRequest?.threadId).toBe(threadId);
