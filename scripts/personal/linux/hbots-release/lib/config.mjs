@@ -54,11 +54,18 @@ export function loadConfig(env = process.env) {
     eventsQuietMs: n("EVENTS_QUIET_MS", 90_000),
     cpuBudgetS: Number(t("CPU_BUDGET_S", 0.6)),
     marathonMs: n("MARATHON_MS", 4 * 60 * 60_000),
+    // Minutes after the idle wait starts at which the desktop and chat alerts fire once each.
+    waitingAlertMinutes: String(t("WAITING_ALERT_MINUTES", "20,60"))
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value) && value >= 0),
     staleLeftoverMs: n("STALE_LEFTOVER_MS", 30 * 60_000),
     stableSeconds: n("STABLE_SECONDS", 120),
     startTimeoutMs: n("START_TIMEOUT_MS", 180_000),
     pinsFile: t("PINS", path.join(here, "PINS.json")),
     scope: t("CGROUP", ""),
+    /** Desktop notifier. Tests point this at a recorder so they never toast the owner. */
+    notifySend: t("NOTIFY_SEND", "notify-send"),
   };
 }
 

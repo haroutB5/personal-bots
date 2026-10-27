@@ -38,15 +38,61 @@ export function hasSessionAncestor(proc, snapshot) {
   return false;
 }
 
-export function dueWaitingAlerts(elapsedMs, alerted) {
-  return [20, 60].filter((minutes) => elapsedMs >= minutes * 60_000 && !alerted.has(minutes));
+export function dueWaitingAlerts(elapsedMs, alerted, minutes = [20, 60]) {
+  return minutes.filter((minute) => elapsedMs >= minute * 60_000 && !alerted.has(minute));
 }
 
-export function sendWaitingAlerts(elapsedMs, alerted, version, summary, send) {
-  return dueWaitingAlerts(elapsedMs, alerted).map((minutes) => {
-    alerted.add(minutes);
+/** The short line for a notification and the full blocker list for the log and the chat notice. */
+export function waitingSummary(blockers, busyReason = null) {
+  const active = blockers.filter((p) => !p.ignored);
+  const name = (p) =>
+    (p.cmd || p.reason || "unknown").split(" ")[0].split("/").pop() ?? "unknown";
+  const detail = (p, label) =>
+    `${label}${p.pid ? ` pid ${p.pid}` : ""}${p.ageSec != null ? `, ${p.ageSec}s` : ""}`;
+  const full = (
+    active.map((p) => detail(p, p.cmd || p.reason || "unknown")).join("; ") ||
+    busyReason ||
+    "unknown"
+  ).slice(0, 1000);
+  const first = active[0];
+  const short =
+    active.length === 0
+      ? (busyReason ?? "unknown").slice(0, 160)
+      : `${active.length} blocker${active.length === 1 ? "" : "s"}, e.g. ${detail(first, name(first))}`.slice(0, 200);
+  return { short, full };
+}
+
+/**
+ * Desktop alerts due now, once at each threshold. A critical toast stays on
+ * screen until dismissed (a normal one expires in seconds, which is how the
+ * 1.66.98 20-minute alert was missed), and its text names what is blocking
+ * instead of dumping every pid. The full list still goes to the log and the
+ * chat notice. `deliver` writes the durable chat side and returns its path.
+ */
+export function sendWaitingAlerts({
+  elapsedMs,
+  alerted,
+  version,
+  summary,
+  minutes = [20, 60],
+  send,
+  deliver,
+}) {
+  return dueWaitingAlerts(elapsedMs, alerted, minutes).map((minute) => {
+    alerted.add(minute);
     const text = `hbots release ${version} waiting on: ${summary}`;
-    return { minutes, text, exit: send(text) };
+    const desktop = `hbots ${version} release is waiting (${minute} min): ${summary}`;
+    const sent = send(desktop);
+    const exit = typeof sent === "number" ? sent : sent.exit;
+    let error = typeof sent === "number" ? null : (sent.error ?? null);
+    let noticeFile = null;
+    try {
+      noticeFile = deliver?.({ minutes: minute, text, desktop });
+    } catch (cause) {
+      noticeFile = null;
+      error = `${error === null ? "" : `${error}; `}notice: ${cause instanceof Error ? cause.message : String(cause)}`;
+    }
+    return { minutes: minute, text, desktop, exit, error, noticeFile };
   });
 }
 

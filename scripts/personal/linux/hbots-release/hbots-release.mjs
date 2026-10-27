@@ -19,7 +19,7 @@ import { atomicWrite, errMsg, makeRun, readJson, round1, run, runAsync, sleep, s
 import { checkPins, writePins } from "./lib/pins.mjs";
 import { treeInfo, verifySeal, writeLegacySeal, writeSeal } from "./lib/seal.mjs";
 import { runGuards, runTool, smokeCli, testActiveRelease } from "./lib/guards.mjs";
-import { heavyLockHeld, quickIdleCheck, sendWaitingAlerts, takeHeavyLock, waitForIdle } from "./lib/idle.mjs";
+import { heavyLockHeld, quickIdleCheck, sendWaitingAlerts, takeHeavyLock, waitingSummary, waitForIdle } from "./lib/idle.mjs";
 import { listenerPids, liveState, selfStats } from "./lib/proc.mjs";
 import { copyStopped, listBackups, pruneBackups, stamp, verifyBackup, writeManifest } from "./lib/backup.mjs";
 import { postActivation, waitAlive } from "./lib/verify.mjs";
@@ -37,6 +37,35 @@ function markUpdateRestart(cfg, note) {
   const marker = path.join(cfg.runtimeDir, "desktop-update-restart");
   fs.writeFileSync(marker, `${new Date().toISOString()}\n`);
   note("update-restart marker written (tunnel kept across the restart)");
+}
+
+/**
+ * Writes a waiting notice into the app's release-notice inbox. The wait can run
+ * for hours, the server that will post it may be the old release (or restarting),
+ * and the wait ends seconds after the last alert, so the runner delivers the file
+ * itself: it waits in the inbox and the first server that sweeps posts it once.
+ * `noticeFile` in the result tells the server's own scan not to queue a duplicate.
+ */
+function queueWaitingNotice(cfg, a, names, alert) {
+  const threadId = String(a["notify-thread"] ?? "").trim();
+  if (!threadId) return null;
+  const dir = path.join(cfg.baseDir, "personal", "release-notices");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${Date.now()}-${a.version}-waiting-${process.pid}-${alert.minutes}.json`);
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify({
+      threadId,
+      version: a.version,
+      release: a.release,
+      outcome: "waiting",
+      detail: alert.summary.slice(0, 2000),
+      logPath: names.log,
+      writtenAt: new Date().toISOString(),
+    })}\n`,
+    { flag: "wx" },
+  );
+  return file;
 }
 
 /** pids that hold the database files open, read from /proc/<pid>/fd links (a readlink, never an open of the DB). */
@@ -275,10 +304,26 @@ async function main() {
               note(`orphan ignored after 10 minutes: pid=${p.pid} cmd=${JSON.stringify(p.cmd)} age=${p.ageSec}s`);
             }
           }
-          const summary = (entry.blockers.filter((p) => !p.ignored).map((p) => `${p.cmd || p.reason}${p.pid ? ` pid ${p.pid}` : ""}${p.ageSec != null ? `, ${p.ageSec}s` : ""}`).join("; ") || entry.busyReason || "unknown").slice(0, 1000);
-          for (const alert of sendWaitingAlerts(Date.now() - waitStart, alerted, a.version, summary, (text) => run("notify-send", [text], { timeout: 5000 }).code)) {
-              result.waitingAlert = { ...alert, at: new Date().toISOString() };
-              note(`waiting alert ${alert.minutes}m notify-send exit=${alert.exit}: ${alert.text}`);
+          const summary = waitingSummary(entry.blockers, entry.busyReason);
+          for (const alert of sendWaitingAlerts({
+            elapsedMs: Date.now() - waitStart,
+            alerted,
+            version: a.version,
+            summary: summary.short,
+            minutes: cfg.waitingAlertMinutes,
+            send: (text) => {
+              const r = run(
+                cfg.notifySend,
+                ["--app-name=hbots release", "--urgency=critical", "--expire-time=20000", "--icon=dialog-warning", text],
+                { timeout: 5000 },
+              );
+              return { exit: r.code, error: r.code === 0 ? null : r.err.slice(0, 200) };
+            },
+            deliver: (alert) => queueWaitingNotice(cfg, a, names, { ...alert, summary: summary.full }),
+          })) {
+            result.waitingAlert = { ...alert, at: new Date().toISOString() };
+            result.waitingAlerts = [...(result.waitingAlerts ?? []), result.waitingAlert].slice(-4);
+            note(`waiting alert ${alert.minutes}m notify-send exit=${alert.exit}${alert.error ? ` error=${alert.error}` : ""} notice=${alert.noticeFile ?? "none"}: ${alert.desktop}`);
           }
           save("waiting_for_idle");
           note(entry.busyReason ? `busy ${entry.busyReason}` : `quiet ${quiet}/${cfg.quietLooks} cpu=${entry.cpu}s`);

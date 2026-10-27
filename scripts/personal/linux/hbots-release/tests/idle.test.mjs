@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { busyReasons, classifyOrphan, dueWaitingAlerts, hasSessionAncestor, sendWaitingAlerts } from '../lib/idle.mjs';
+import { busyReasons, classifyOrphan, dueWaitingAlerts, hasSessionAncestor, sendWaitingAlerts, waitingSummary } from '../lib/idle.mjs';
 import { cgroupPathFromProcText, onlyInCgroup } from '../lib/proc.mjs';
 
 test('busy tools are only the server cgroup, never a sibling systemd scope', () => {
@@ -64,10 +64,48 @@ test('waiting alerts are due once at 20 and once at 60 minutes', () => {
 test('waiting notifications include blockers and are sent once at each threshold', () => {
   const seen = new Set();
   const sent = [];
+  const notices = [];
   const send = (text) => { sent.push(text); return 0; };
+  const deliver = (alert) => { notices.push(alert); return `/tmp/${alert.minutes}.json`; };
   for (const t of [1_199_999, 1_200_000, 1_300_000, 3_600_000, 3_700_000])
-    sendWaitingAlerts(t, seen, '9.9.9', 'node pid 123, 245s', send);
-  assert.deepEqual(sent, Array(2).fill('hbots release 9.9.9 waiting on: node pid 123, 245s'));
+    sendWaitingAlerts({ elapsedMs: t, alerted: seen, version: '9.9.9', summary: 'node pid 123, 245s', send, deliver });
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0], 'hbots 9.9.9 release is waiting (20 min): node pid 123, 245s');
+  assert.deepEqual(notices.map((n) => [n.minutes, n.text]), [
+    [20, 'hbots release 9.9.9 waiting on: node pid 123, 245s'],
+    [60, 'hbots release 9.9.9 waiting on: node pid 123, 245s'],
+  ]);
+});
+
+test('a failed desktop toast is recorded but the chat notice is still delivered', () => {
+  const seen = new Set();
+  const delivered = [];
+  const [alert] = sendWaitingAlerts({
+    elapsedMs: 0,
+    minutes: [0],
+    alerted: seen,
+    version: '9.9.9',
+    summary: 'sleep pid 5, 30s',
+    send: () => ({ exit: 127, error: 'notify-send: not found' }),
+    deliver: (a) => { delivered.push(a); return '/tmp/notice.json'; },
+  });
+  assert.equal(alert.exit, 127);
+  assert.equal(alert.error, 'notify-send: not found');
+  assert.equal(alert.noticeFile, '/tmp/notice.json');
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].minutes, 0);
+  assert.equal(seen.has(0), true);
+});
+
+test('waiting summary names one blocker briefly and keeps the full list', () => {
+  const { short, full } = waitingSummary([
+    { pid: 12, cmd: '/usr/lib/chromium/chromium --type=gpu-process', ageSec: 300, ignored: false },
+    { pid: 13, cmd: 'python3 watch.py', ageSec: 20, ignored: false },
+    { pid: 14, cmd: 'old thing', ageSec: 900, ignored: true },
+  ]);
+  assert.equal(short, '2 blockers, e.g. chromium pid 12, 300s');
+  assert.match(full, /chromium pid 12, 300s; python3 pid 13, 20s/);
+  assert.doesNotMatch(full, /old thing/);
 });
 
 test('desk panel displays the current waiting blocker', async () => {

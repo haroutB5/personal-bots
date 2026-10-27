@@ -165,6 +165,32 @@ describe("PersonalReleaseNotices", () => {
       clock.mockRestore();
     }).pipe(Effect.provide(makeLayer(dispatched)));
   });
+  it.effect("a runner that delivered its own waiting notice is not queued again", () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    return Effect.gen(function* () {
+      yield* linkCtoChat;
+      const config = yield* ServerConfig.ServerConfig;
+      const runDir = NodePath.join(config.baseDir, "run");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(runDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(runDir, "restart-9.9.9-result.json"), JSON.stringify({
+          runner: "hbots-release.mjs (linux)", mode: "run", status: "waiting_for_idle",
+          version: "9.9.9", release: "abc123def456", runnerPid: 123,
+          updatedAt: new Date().toISOString(),
+          notifyThread: CTO_CHAT,
+          waitingAlert: {
+            minutes: 20,
+            text: "hbots release 9.9.9 waiting on: node pid 123, 245s",
+            at: "2026-10-26T20:00:00Z",
+            noticeFile: "/home/harout/.personal-bots/dev/personal/release-notices/1-9.9.9-waiting-123-20.json",
+          },
+        }));
+      });
+      const service = yield* PersonalReleaseNotices;
+      expect(yield* service.sweep).toEqual([]);
+      expect(turnStarts(dispatched)).toHaveLength(0);
+    }).pipe(Effect.provide(makeLayer(dispatched)));
+  });
   it.effect("a waiting notice posts once without saying the release failed", () => {
     const dispatched: Array<OrchestrationCommand> = [];
     return Effect.gen(function* () {

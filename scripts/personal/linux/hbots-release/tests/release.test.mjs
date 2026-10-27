@@ -213,6 +213,61 @@ test("busy tools: only the server's cgroup counts, never a sibling Chromium scop
   }
 });
 
+test("waiting for idle tells Harout on the desktop and in his chat, once", async () => {
+  const env = await makeEnv({ constants: { WAITING_ALERT_MINUTES: "0" } });
+  const bin = path.join(env.tmp, "fakebin");
+  const notifyLog = path.join(env.tmp, "notify.log");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, "notify-send"),
+    `#!/bin/sh\nprintf '%s\\n' "$@" >> '${notifyLog}'\n`,
+    { mode: 0o755 },
+  );
+  try {
+    env.start({ child: "sleep 302" });
+    env.target();
+    env.writePins();
+    // Inside the detached unit PATH is systemd's, not this test's: point the
+    // runner's notifier at the recorder explicitly.
+    env.overrides.HBOTS_RELEASE_TEST_NOTIFY_SEND = path.join(bin, "notify-send");
+    const prep = env.runner("--prepare");
+    assert.equal(prep.status, 0, prep.stdout + prep.stderr);
+    const launched = env.launch(null);
+    assert.equal(launched.status, 0, launched.stdout + launched.stderr);
+    const inbox = path.join(env.home, "dev", "personal", "release-notices");
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline && !(fs.existsSync(inbox) && fs.readdirSync(inbox).length > 0)) {
+      await sleep(200);
+    }
+    const notices = fs.readdirSync(inbox).filter((name) => name.endsWith(".json"));
+    assert.equal(notices.length, 1, `one waiting notice: ${notices.join(", ")}`);
+    const notice = JSON.parse(fs.readFileSync(path.join(inbox, notices[0]), "utf8"));
+    assert.equal(notice.outcome, "waiting");
+    assert.equal(notice.threadId, env.thread);
+    assert.match(notice.detail, /sleep 302/);
+    assert.match(notice.logPath, /restart-9\.9\.1\.log$/);
+    // The desktop toast is critical (a normal one expires in seconds) and short.
+    const toast = fs.readFileSync(notifyLog, "utf8");
+    assert.match(toast, /--urgency=critical/);
+    assert.match(toast, /--app-name=hbots release/);
+    assert.match(toast, /hbots 9\.9\.1 release is waiting \(0 min\): /);
+    assert.doesNotMatch(toast, /; .*; .*; /, "the toast names one blocker, not a pid dump");
+    const result = env.result();
+    assert.equal(result.waitingAlert.minutes, 0);
+    assert.match(result.waitingAlert.noticeFile, /-waiting-\d+-0\.json$/);
+    // A second look must not deliver it again.
+    await sleep(1_600);
+    assert.equal(fs.readdirSync(inbox).filter((name) => name.endsWith(".json")).length, 1);
+    // Let the wait finish: kill only the child this test started.
+    const childPid = Number(fs.readFileSync(path.join(env.home, "run", "fixture-child.pid"), "utf8"));
+    process.kill(childPid, "SIGTERM");
+    const j = await waitResult(env);
+    assert.equal(j.status, "live_verified", j.error);
+  } finally {
+    env.stop();
+  }
+});
+
 test("heavy-job lock: waits while another job holds it, never restarts mid-build", async () => {  const env = await prepared();
   try {
     const lock = path.join(env.tmp, "heavy.lock");

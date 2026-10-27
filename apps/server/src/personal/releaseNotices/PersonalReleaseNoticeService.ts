@@ -339,6 +339,9 @@ export const make = Effect.gen(function* () {
         const alert = a as Record<string, unknown>;
         if ((alert.minutes !== 20 && alert.minutes !== 60) || typeof alert.text !== "string" ||
             typeof alert.at !== "string" || !Number.isFinite(Date.parse(alert.at))) continue;
+        // The runner delivered this alert into the inbox itself (1.66.99): the
+        // durable file is already there, so a second one would double-post.
+        if (typeof alert.noticeFile === "string") continue;
         const id = `waiting-${r.runnerPid}-${alert.minutes}-${Date.parse(alert.at)}`;
         const name = `${id}.json`;
         const exists = async (p: string) => NodeFSP.access(p).then(() => true, () => false);
