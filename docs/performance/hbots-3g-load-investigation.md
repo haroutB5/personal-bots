@@ -74,4 +74,4 @@ All of these are built on orchestration v2, which the fork does not merge, so no
 - Cold is now bound by the serial environment, shell and thread data chain (about 5 s after the last script) and by the small-script tail on HTTP/1.1.
 - `personalRoutines.list` (113 KB) polls every 30 s by design (next-run times).
 - Relay (h2) measurement needs an isolated relay route.
-- `asyncConsoleFile` server test fails on the base too (not from this branch); for Backend.
+- Gates (NODE_ENV=test) match 1.66.97 test by test: web 11 and server 17 failures are the same tests on the base, including `asyncConsoleFile` (for Backend). Format (67 files) and lint (307 errors) findings are identical to the base.
