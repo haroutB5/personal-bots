@@ -73,6 +73,7 @@ import {
   browserLastStop,
   desktopUnavailableReason,
   readBrowserEvent,
+  readDesktopEvent,
   egressPause,
   helpKind,
   helpOrigin,
@@ -343,7 +344,14 @@ function ComputerScreenView({
   const [fullScreen, setFullScreen] = useState(false);
   const screenRef = useRef<HTMLDivElement | null>(null);
 
-  const events = useMemo(() => mergeActivity(feed.events.map(readBrowserEvent)), [feed.events]);
+  const events = useMemo(
+    () =>
+      mergeActivity([
+        ...feed.events.map(readBrowserEvent),
+        ...data.desktopEvents.map(readDesktopEvent),
+      ]),
+    [feed.events, data.desktopEvents],
+  );
   const lastAction = useMemo(() => latestBotAction(events), [events]);
 
   // ---- who is at which source -------------------------------------------
@@ -585,6 +593,12 @@ function ComputerScreenView({
         ]
           .filter((part): part is string => part !== null)
           .join(" ");
+  // The laptop's own key that stops a bot and takes the PC back.
+  const stopNote =
+    desktopStatus?.available === true && desktopStatus.stopHotkey !== ""
+      ? `Stop key on the laptop: ${desktopStatus.stopHotkey}.`
+      : "";
+  const controlFootnote = [carryNote, stopNote].filter((part) => part !== "").join(" ");
   const goBackToChat = () => onBackToChat(computerBackTarget(status, origin));
   const botChatTarget = (ref: { botId: string; threadId: string }) => onBackToChat(ref);
   const filesOpen = onOpenFiles ?? (() => setActivityOpen(true));
@@ -876,7 +890,7 @@ function ComputerScreenView({
               wantControl={takeSource === "desktop"}
               onControlState={onDeskControl}
               hideBar={controlBarShown}
-              footnote={carryNote === "" ? null : carryNote}
+              footnote={controlFootnote === "" ? null : controlFootnote}
               onHandBack={() => void handBack()}
               paused={backgroundPaused === "desktop" && shown !== "desktop"}
               stand={mockStage("desktop")}

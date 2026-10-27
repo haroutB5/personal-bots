@@ -51,6 +51,14 @@ export const computerEnvironment = {
     label: "environment-data:personal-browser:close",
     tag: WS_METHODS.personalBrowserClose,
   }),
+  approveEgress: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:personal-browser:approve-egress",
+    tag: WS_METHODS.personalBrowserApproveEgress,
+  }),
+  refuseEgress: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:personal-browser:refuse-egress",
+    tag: WS_METHODS.personalBrowserRefuseEgress,
+  }),
 };
 
 export function useComputerFeed(environmentId: EnvironmentId | null): {

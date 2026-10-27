@@ -59,6 +59,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeVcsStatus
   | typeof WS_METHODS.personalBrowserActivity
   | typeof WS_METHODS.personalDesktopStatus
+  | typeof WS_METHODS.personalDesktopActivity
   | typeof WS_METHODS.personalTasksSubscribe
   | typeof WS_METHODS.personalGroupsSubscribe
   | typeof WS_METHODS.personalPushInApp

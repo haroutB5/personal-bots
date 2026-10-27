@@ -1,15 +1,16 @@
 import type {
   PersonalBrowserActivityEvent,
   PersonalBrowserStatus,
+  PersonalDesktopActivityEvent,
   PersonalDesktopStatus,
 } from "@t3tools/contracts";
 
 /**
- * The Computer tab reads a few fields Backend adds in hbots 1.66.98 (see
- * design/computer-use-linux/SPEC.md section 10). They are not in
- * `@t3tools/contracts` yet, so this file is the one place that reads them,
- * defensively, from an older or newer server alike. When the contracts land,
- * delete the shapes below and read the typed fields directly.
+ * The one place the Computer tab reads the fields hbots 1.66.98 added to the
+ * browser and desktop contracts (waiting, egressPause, helpRequest.kind,
+ * focusedWindow, unavailableReason). They are all optional on the wire, so an
+ * older server reads as "not there". `lastStop` is not in the contract yet and
+ * is read defensively.
  */
 
 export type ComputerSource = "browser" | "desktop";
@@ -60,11 +61,11 @@ function readClaimants(value: unknown): ReadonlyArray<ComputerClaimant> {
   });
 }
 
-/** Bots waiting for the shared browser (Backend section 10, optional). */
+/** Bots waiting for the shared browser, first in line first (optional on the wire). */
 export function browserWaiting(
   status: PersonalBrowserStatus | null,
 ): ReadonlyArray<ComputerClaimant> {
-  return status === null ? [] : readClaimants(asRecord(status)?.waiting);
+  return status === null ? [] : readClaimants(status.waiting);
 }
 
 /** Bots waiting for the desktop, first in line first. */
@@ -79,15 +80,15 @@ const HELP_KINDS: ReadonlySet<string> = new Set(["captcha", "code", "login", "se
 export function helpKind(status: PersonalBrowserStatus | null): HelpKind | null {
   const help = status?.helpRequest;
   if (help === null || help === undefined) return null;
-  const kind = asString(asRecord(help)?.kind);
-  return kind !== null && HELP_KINDS.has(kind) ? (kind as HelpKind) : "other";
+  const kind = help.kind ?? null;
+  return kind !== null && HELP_KINDS.has(kind) ? kind : "other";
 }
 
 /** The site a human check or sign-in is about, when the server says. */
 export function helpOrigin(status: PersonalBrowserStatus | null): string | null {
   const help = status?.helpRequest;
   if (help === null || help === undefined) return null;
-  return asString(asRecord(help)?.origin);
+  return asString(help.origin);
 }
 
 /** When the browser last closed, if the server says (Backend `lastStop`, optional). */
@@ -97,33 +98,42 @@ export function browserLastStop(status: PersonalBrowserStatus | null): string | 
 
 /** A sensitive-site pause waiting for Allow once / Refuse, or null. */
 export function egressPause(status: PersonalBrowserStatus | null): ComputerEgressPause | null {
-  const raw = asRecord(status)?.egressPause;
-  const record = asRecord(raw);
-  if (record === null) return null;
-  const claimant = readClaimant(record);
-  if (claimant === null) return null;
-  const sources = Array.isArray(record.sources)
-    ? record.sources.filter((entry): entry is string => typeof entry === "string").join(", ")
-    : (asString(record.sources) ?? "");
+  const pause = status?.egressPause;
+  if (pause === null || pause === undefined) {
+    // The pause shows before the bot asks for help; once it does, the help
+    // request carries the same destination and sources.
+    const help = status?.helpRequest;
+    if (help === null || help === undefined || help.kind !== "sensitive") return null;
+    return {
+      threadId: help.threadId,
+      botId: help.botId,
+      botName: help.botName,
+      sources: (help.sources ?? []).join(", "),
+      destination: asString(help.destination) ?? "another site",
+      requestedAt: help.requestedAt,
+    };
+  }
   return {
-    ...claimant,
-    sources,
-    destination: asString(record.destination) ?? "another site",
-    requestedAt: asString(record.requestedAt) ?? "",
+    threadId: pause.threadId,
+    botId: pause.botId,
+    botName: pause.botName,
+    sources: (pause.sources ?? []).join(", "),
+    destination: asString(pause.destination) ?? "another site",
+    requestedAt: pause.requestedAt,
   };
 }
 
 export function focusedWindow(status: PersonalDesktopStatus | null): FocusedWindow | null {
-  const record = asRecord(asRecord(status)?.focusedWindow);
-  if (record === null) return null;
-  const title = asString(record.title);
+  const focused = status?.focusedWindow;
+  if (focused === null || focused === undefined) return null;
+  const title = asString(focused.title);
   if (title === null) return null;
-  return { title, windowClass: asString(record.windowClass) ?? asString(record.class) ?? "" };
+  return { title, windowClass: focused.windowClass ?? "" };
 }
 
 /** Why the server cannot drive a desktop, when it says (Backend `unavailableReason`). */
 export function desktopUnavailableReason(status: PersonalDesktopStatus | null): string | null {
-  return status?.available === false ? asString(asRecord(status)?.unavailableReason) : null;
+  return status?.available === false ? asString(status.unavailableReason) : null;
 }
 
 export function isLinuxDesktop(status: PersonalDesktopStatus | null): boolean {
@@ -131,7 +141,7 @@ export function isLinuxDesktop(status: PersonalDesktopStatus | null): boolean {
   return hotkey.startsWith("Super") || focusedWindow(status) !== null;
 }
 
-/** The kinds a desktop action can carry (Backend section 10). */
+/** Which timeline an activity event came from. */
 export type ActivitySource = ComputerSource;
 
 export interface ActivityPoint {
@@ -156,7 +166,6 @@ export interface ComputerActivityEvent {
 
 export function readBrowserEvent(event: PersonalBrowserActivityEvent): ComputerActivityEvent {
   const record = asRecord(event) ?? {};
-  // A desktop event may arrive on the browser stream once Backend merges them.
   const source: ActivitySource = record.source === "desktop" ? "desktop" : "browser";
   const x = typeof record.x === "number" ? record.x : null;
   const y = typeof record.y === "number" ? record.y : null;
@@ -172,5 +181,22 @@ export function readBrowserEvent(event: PersonalBrowserActivityEvent): ComputerA
     botId: asString(record.botId),
     point: x !== null && y !== null ? { x, y } : null,
     chars: typeof record.chars === "number" ? record.chars : null,
+  };
+}
+
+/** A desktop timeline event, in the shape the merged feed uses. */
+export function readDesktopEvent(event: PersonalDesktopActivityEvent): ComputerActivityEvent {
+  return {
+    id: event.id,
+    source: "desktop",
+    kind: event.kind,
+    summary: event.summary,
+    status: event.status,
+    at: event.at,
+    threadId: event.threadId,
+    botName: event.botName,
+    botId: event.botId,
+    point: event.x !== undefined && event.y !== undefined ? { x: event.x, y: event.y } : null,
+    chars: event.chars ?? null,
   };
 }

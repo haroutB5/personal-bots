@@ -1,4 +1,9 @@
-import type { EnvironmentId, PersonalDesktopStatus } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PersonalDesktopActivityEvent,
+  PersonalDesktopStatus,
+  ThreadId,
+} from "@t3tools/contracts";
 import { createContext, useCallback, useContext, useMemo } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -6,7 +11,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { commandFailureMessage } from "../commandFeedback";
 import { computerEnvironment, useComputerFeed } from "./computerState";
 import type { ComputerFeed } from "./computerModel";
-import { desktopEnvironment, useDesktopStatus } from "./desktopState";
+import { desktopEnvironment, useDesktopActivity, useDesktopStatus } from "./desktopState";
 
 /**
  * Everything the Computer tab asks the server. A command resolves to the
@@ -18,9 +23,9 @@ export interface ComputerCommands {
   readonly closeBrowser: () => Promise<string | null>;
   readonly stopDesktop: () => Promise<string | null>;
   /**
-   * Allow once / Refuse for a sensitive-site pause. `available` is false until
-   * the server has the commands (Backend SPEC section 10); the card then keeps
-   * today's Take control path.
+   * Allow once / Refuse for a sensitive-site pause. `available` is false only
+   * under the mock layer when a scenario turns it off; the card then keeps the
+   * Take control path.
    */
   readonly egress: {
     readonly available: boolean;
@@ -34,6 +39,8 @@ export interface ComputerData {
   readonly error: string | null;
   readonly loading: boolean;
   readonly desktop: PersonalDesktopStatus | null;
+  /** The desktop's own activity timeline; merged with the browser's by the screen. */
+  readonly desktopEvents: ReadonlyArray<PersonalDesktopActivityEvent>;
   readonly commands: ComputerCommands;
   /** Set only by the mock layer: stages draw a stand-in instead of a socket. */
   readonly mock: string | null;
@@ -50,10 +57,13 @@ export function useComputerData(environmentId: EnvironmentId | null): ComputerDa
   const liveEnvironment = override === null ? environmentId : null;
   const { feed, error, loading } = useComputerFeed(liveEnvironment);
   const desktop = useDesktopStatus(liveEnvironment);
+  const desktopEvents = useDesktopActivity(liveEnvironment);
   const takeControl = useAtomCommand(computerEnvironment.takeControl);
   const returnToAgent = useAtomCommand(computerEnvironment.returnToAgent);
   const closeBrowser = useAtomCommand(computerEnvironment.close);
   const stopDesktop = useAtomCommand(desktopEnvironment.stop);
+  const approveEgress = useAtomCommand(computerEnvironment.approveEgress);
+  const refuseEgress = useAtomCommand(computerEnvironment.refuseEgress);
 
   const run = useCallback(
     async (
@@ -69,26 +79,53 @@ export function useComputerData(environmentId: EnvironmentId | null): ComputerDa
     [environmentId],
   );
 
+  const decideEgress = useCallback(
+    async (
+      command: (value: {
+        environmentId: EnvironmentId;
+        input: { threadId: ThreadId };
+      }) => Promise<Parameters<typeof commandFailureMessage>[0]>,
+      threadId: string,
+      fallback: string,
+    ): Promise<string | null> => {
+      if (environmentId === null) return NOT_YET;
+      return commandFailureMessage(
+        await command({ environmentId, input: { threadId: threadId as ThreadId } }),
+        fallback,
+      );
+    },
+    [environmentId],
+  );
+
   const commands = useMemo<ComputerCommands>(
     () => ({
       takeBrowser: () => run(takeControl, "Couldn't take control. Try again."),
       returnBrowser: () => run(returnToAgent, "Couldn't hand back. Try again."),
       closeBrowser: () => run(closeBrowser, "Couldn't close the browser. Try again."),
       stopDesktop: () => run(stopDesktop, "Couldn't stop it. Try again."),
-      // Swap for real RPCs when Backend's contract lands (approveEgress and
-      // refuseEgress); until then the sensitive card keeps Take control.
       egress: {
-        available: false,
-        approve: () => Promise.resolve(NOT_YET),
-        refuse: () => Promise.resolve(NOT_YET),
+        available: true,
+        approve: (threadId) =>
+          decideEgress(approveEgress, threadId, "Couldn't allow it. Try again."),
+        refuse: (threadId) =>
+          decideEgress(refuseEgress, threadId, "Couldn't refuse it. Try again."),
       },
     }),
-    [run, takeControl, returnToAgent, closeBrowser, stopDesktop],
+    [
+      run,
+      decideEgress,
+      takeControl,
+      returnToAgent,
+      closeBrowser,
+      stopDesktop,
+      approveEgress,
+      refuseEgress,
+    ],
   );
 
   return useMemo(
-    () => override ?? { feed, error, loading, desktop, commands, mock: null },
-    [override, feed, error, loading, desktop, commands],
+    () => override ?? { feed, error, loading, desktop, desktopEvents, commands, mock: null },
+    [override, feed, error, loading, desktop, desktopEvents, commands],
   );
 }
 

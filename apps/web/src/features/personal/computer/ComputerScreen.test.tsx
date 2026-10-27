@@ -23,20 +23,27 @@ const state = vi.hoisted(() => ({
   returnToAgent: vi.fn(async () => ({ _tag: "Success", value: undefined })),
   close: vi.fn(async () => ({ _tag: "Success", value: undefined })),
   stop: vi.fn(async () => ({ _tag: "Success", value: undefined })),
+  approveEgress: vi.fn(async () => ({ _tag: "Success", value: undefined })),
+  refuseEgress: vi.fn(async () => ({ _tag: "Success", value: undefined })),
 }));
 
 const commands = vi.hoisted(() => ({
   takeControl: { label: "takeControl" },
   returnToAgent: { label: "returnToAgent" },
   close: { label: "close" },
+  approveEgress: { label: "approveEgress" },
+  refuseEgress: { label: "refuseEgress" },
 }));
 
+const NO_DESKTOP_EVENTS = vi.hoisted(() => []);
 const desktopCommands = vi.hoisted(() => ({ stop: { label: "stop" } }));
 
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
     if (command === commands.takeControl) return state.takeControl;
     if (command === commands.returnToAgent) return state.returnToAgent;
+    if (command === commands.approveEgress) return state.approveEgress;
+    if (command === commands.refuseEgress) return state.refuseEgress;
     if (command === desktopCommands.stop) return state.stop;
     return state.close;
   },
@@ -86,6 +93,7 @@ vi.mock("./viewportClient", () => ({ connectViewport: vi.fn() }));
 const desktopState = vi.hoisted(() => ({ available: true as boolean | null }));
 vi.mock("./desktopState", () => ({
   desktopEnvironment: desktopCommands,
+  useDesktopActivity: () => NO_DESKTOP_EVENTS,
   useDesktopStatus: () =>
     desktopState.available === null
       ? null
@@ -729,5 +737,47 @@ describe("control held by another device (1.60.45)", () => {
       .findAllByType("button")
       .map((node) => node.children.filter((child) => typeof child === "string").join(""));
     expect(stageButtons).toEqual(expect.arrayContaining(["Open Brave", "View desktop"]));
+  });
+});
+
+const plainButton = (label: string) =>
+  renderer!.root
+    .findAllByType("button")
+    .find((node) => node.children.filter((child) => typeof child === "string").join("") === label);
+
+describe("sensitive-site pause (1.66.98)", () => {
+  const PAUSED = {
+    ...STATUS,
+    egressPause: {
+      threadId: "thread-a",
+      botId: "bot-a",
+      botName: "Assistant",
+      sources: ["Chase", "Gmail"],
+      destination: "slack.com",
+      requestedAt: new Date().toISOString(),
+    },
+  } as unknown as PersonalBrowserStatus;
+
+  it("sends Allow once and Refuse to the server for the paused chat", async () => {
+    stubBrowserGlobals();
+    feedState.status = PAUSED;
+    await renderScreen();
+    const allow = plainButton("Allow once");
+    expect(allow).toBeDefined();
+    await act(async () => {
+      allow!.props.onClick();
+    });
+    expect(state.approveEgress).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("env-1"),
+      input: { threadId: "thread-a" },
+    });
+    const refuse = plainButton("Refuse");
+    await act(async () => {
+      refuse!.props.onClick();
+    });
+    expect(state.refuseEgress).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("env-1"),
+      input: { threadId: "thread-a" },
+    });
   });
 });

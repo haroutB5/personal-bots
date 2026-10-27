@@ -229,12 +229,14 @@ function scenarioState(name: MockScenario): MockState {
         ...base,
         status: browserStatus({
           egressPause: {
-            ...ASSISTANT,
-            sources: "Chase, Gmail",
+            threadId: brand<ThreadId>(ASSISTANT.threadId),
+            botId: brand<PersonalBotId>(ASSISTANT.botId),
+            botName: ASSISTANT.botName,
+            sources: ["Chase", "Gmail"],
             destination: "slack.com",
             requestedAt: minutesAgo(0.5),
           },
-        } as Partial<PersonalBrowserStatus>),
+        }),
       };
     case "idle":
       return {
@@ -375,6 +377,7 @@ export function ComputerMockProvider(props: {
       error: state.reachable ? null : "offline",
       loading: false,
       desktop: state.reachable ? state.desktop : null,
+      desktopEvents: [],
       commands,
       mock: name,
     }),
