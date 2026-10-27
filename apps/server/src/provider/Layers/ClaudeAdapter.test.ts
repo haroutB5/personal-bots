@@ -681,10 +681,16 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
       assert.equal(options?.env?.PATH, "/usr/bin");
       assert.equal(options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS, undefined);
-      // Built-in tools are not narrowed.
+      // Built-in tools no bot has ever called are removed from the schema
+      // (1.66.62; PERSONAL_BOT_TOOL_TRIM=off restores all of them).
       assert.equal(options?.tools, undefined);
       assert.equal(options?.allowedTools, undefined);
-      assert.equal(options?.disallowedTools, undefined);
+      assert.deepEqual(options?.disallowedTools, [
+        "Workflow",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "AskUserQuestion",
+      ]);
     }).pipe(
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

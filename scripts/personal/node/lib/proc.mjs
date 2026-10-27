@@ -25,11 +25,15 @@ export function commandLine(pid) {
     const script =
       `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction SilentlyContinue; ` +
       `if ($p) { [Console]::Out.Write($p.CommandLine) }`;
-    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-      encoding: "utf8",
-      timeout: 15000,
-      windowsHide: true,
-    });
+    const result = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      {
+        encoding: "utf8",
+        timeout: 15000,
+        windowsHide: true,
+      },
+    );
     const text = (result.stdout || "").trim();
     return text || null;
   }
@@ -84,7 +88,9 @@ export function clearState(paths) {
 
 export function runtimeState(baseDir) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(baseDir, "userdata", "server-runtime.json"), "utf8"));
+    return JSON.parse(
+      fs.readFileSync(path.join(baseDir, "userdata", "server-runtime.json"), "utf8"),
+    );
   } catch {
     return null;
   }
@@ -117,7 +123,16 @@ export function serverEnv({ envFileValues = {}, label = "Bots" } = {}) {
   return env;
 }
 
-export function spawnServe({ nodeExe, binPath, baseDir, logFile, workDir, port, env, detached = true }) {
+export function spawnServe({
+  nodeExe,
+  binPath,
+  baseDir,
+  logFile,
+  workDir,
+  port,
+  env,
+  detached = true,
+}) {
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.mkdirSync(workDir, { recursive: true });
   const fd = fs.openSync(logFile, "a");
@@ -147,35 +162,126 @@ async function waitGone(pid, timeoutMs) {
   return !isAlive(pid);
 }
 
-// Stops exactly the recorded PID. A detached child is a process-group leader,
-// so a group TERM reaches its relay and helpers too; the fallback kills only
-// that PID.
-export async function stopProcessTree(pid, { timeoutMs = 15000 } = {}) {
-  if (!isAlive(pid)) return true;
+/** Linux only: one PID's state, parent and process group, or null. */
+function readProcStat(pid) {
+  if (isWindows) return null;
+  try {
+    const raw = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    // The command name may hold spaces and parentheses; the fields start after
+    // the last ')': state ppid pgrp ...
+    const fields = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
+    return { state: fields[0], ppid: Number(fields[1]), pgrp: Number(fields[2]) };
+  } catch {
+    return null;
+  }
+}
+
+function livePids() {
+  if (isWindows) return [];
+  try {
+    return fs
+      .readdirSync("/proc")
+      .filter((entry) => /^\d+$/.test(entry))
+      .map(Number);
+  } catch {
+    return [];
+  }
+}
+
+/** The process group a just-spawned detached child leads (Linux), or null. */
+export function processGroupOf(pid) {
+  return readProcStat(pid)?.pgrp ?? null;
+}
+
+/**
+ * Every live PID in one process group. The group outlives its leader: a
+ * crashed server leaves its fake CLIs and grandchildren in the same group.
+ */
+export function processGroupPids(pgid) {
+  if (!Number.isInteger(pgid) || pgid <= 1) return [];
+  return livePids().filter((pid) => readProcStat(pid)?.pgrp === pgid);
+}
+
+/** Live PIDs of this user whose command line still names a throwaway root. */
+export function rootProcessPids(root) {
+  if (isWindows) return [];
+  const needle = path.resolve(root);
+  return livePids().filter((pid) => {
+    if (pid === process.pid) return false;
+    const text = commandLine(pid);
+    return text !== null && text.includes(needle);
+  });
+}
+
+async function waitTreeGone({ pid, group, root, trustedGroup }, timeoutMs) {
+  const stillThere = () =>
+    isAlive(pid) ||
+    (trustedGroup && processGroupPids(group).length > 0) ||
+    (root !== undefined && rootProcessPids(root).length > 0);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!stillThere()) return true;
+    await sleep(200);
+  }
+  return !stillThere();
+}
+
+/**
+ * Stops a throwaway server's whole tree, not just its leader: the recorded PID,
+ * its process group and anything whose command line still names the root. A
+ * detached server leads its own group, so the group reaches the relay, the fake
+ * Claude CLIs and their children.
+ *
+ * The leader may already be gone (a crash) while its orphaned group still runs.
+ * The group is then only trusted when one of its processes still names the
+ * root, so a recycled group id cannot take an unrelated process down with it.
+ *
+ * `root` and `pgid` are optional for the other callers that stop one PID tree.
+ */
+export async function stopProcessTree(pid, { timeoutMs = 15000, pgid, root } = {}) {
   if (isWindows) {
-    spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    if (!isAlive(pid)) return true;
+    spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
     return waitGone(pid, timeoutMs);
   }
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      return !isAlive(pid);
+  const group = Number.isInteger(pgid) && pgid > 1 ? pgid : pid;
+  const groupBefore = processGroupPids(group);
+  const rootBefore = root === undefined ? [] : rootProcessPids(root);
+  if (!isAlive(pid) && groupBefore.length === 0 && rootBefore.length === 0) return true;
+  const trustedGroup =
+    isAlive(pid) ||
+    groupBefore.some((member) => {
+      const text = commandLine(member);
+      return text !== null && root !== undefined && text.includes(path.resolve(root));
+    });
+  const signal = (name) => {
+    // The whole group first when it is ours; root-named processes are killed by
+    // their captured PID even if one changed group.
+    if (trustedGroup) {
+      try {
+        process.kill(-group, name);
+      } catch {
+        /* no members left in the group */
+      }
     }
-  }
-  if (await waitGone(pid, timeoutMs)) return true;
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      /* already gone */
+    const targets = new Set([...rootBefore, ...(trustedGroup ? [] : groupBefore)]);
+    if (!trustedGroup && isAlive(pid)) targets.add(pid);
+    for (const target of targets) {
+      try {
+        process.kill(target, name);
+      } catch {
+        /* already gone */
+      }
     }
-  }
-  return waitGone(pid, 5000);
+  };
+  signal("SIGTERM");
+  const gone = () => waitTreeGone({ pid, group, root, trustedGroup }, timeoutMs);
+  if (await gone()) return true;
+  signal("SIGKILL");
+  return waitTreeGone({ pid, group, root, trustedGroup }, 5000);
 }
 
 export function dataRootOwner(baseDir) {
@@ -184,4 +290,3 @@ export function dataRootOwner(baseDir) {
   if (!isAlive(Number(runtime.pid))) return null;
   return { pid: Number(runtime.pid), origin: runtime.origin };
 }
-

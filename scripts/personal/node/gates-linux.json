@@ -4,7 +4,9 @@
     "kind": "vitest",
     "title": "Server fork gate (personal, mcp, persistence, preview, workspace, assets)",
     "cwd": "apps/server",
-    "commands": ["NODE_ENV=test vp test run src/personal src/mcp src/persistence src/preview src/workspace src/assets"]
+    "commands": [
+      "NODE_ENV=test vp test run src/personal src/mcp src/persistence src/preview src/workspace src/assets"
+    ]
   },
   {
     "id": "server-tsc",
@@ -19,6 +21,7 @@
     "title": "Web fork gate",
     "cwd": "apps/web",
     "commands": [
+      "node ../../scripts/personal/node/check-test-tree.mjs --package web",
       "NODE_ENV=test vp test run --project unit src/features/personal src/authBootstrap.test.ts"
     ]
   },

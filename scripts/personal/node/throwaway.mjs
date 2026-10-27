@@ -186,7 +186,9 @@ function startServer({ name, root, bin, port, schedulersOff }) {
     env: serverEnv(name, root, schedulersOff),
     detached: true,
   });
-  return { pid: child.pid, logFile };
+  // The detached child leads its own process group; record it so stop still
+  // reaches the fake CLIs and grandchildren after a crash killed the leader.
+  return { pid: child.pid, pgid: proc.processGroupOf(child.pid), logFile };
 }
 
 function pairingLink(record) {
@@ -208,10 +210,28 @@ function pairingLink(record) {
 }
 
 async function stopRecorded(record) {
-  if (!isRunning(record)) return "the PID was not this server any more (left alone)";
-  const ok = await proc.stopProcessTree(Number(record.pid));
-  if (!ok) throw new Error(`PID ${record.pid} is still alive after SIGKILL.`);
-  return `stopped PID ${record.pid}`;
+  const pgid = Number(record.pgid) || Number(record.pid);
+  const leaderRunning = isRunning(record);
+  const groupBefore = proc.processGroupPids(pgid);
+  const rootBefore = proc.rootProcessPids(record.root);
+  if (!leaderRunning && groupBefore.length === 0 && rootBefore.length === 0) {
+    return "the PID was not this server any more (left alone)";
+  }
+  const ok = await proc.stopProcessTree(Number(record.pid), { pgid, root: record.root });
+  if (!ok) {
+    throw new Error(
+      `The throwaway tree for '${record.name}' is still alive after SIGKILL (group ${pgid}).`,
+    );
+  }
+  // Deleting the root while a fake CLI still reads it would leave that process
+  // running from a deleted folder, exactly what tripped the 1.66.99 release.
+  const left = proc.rootProcessPids(record.root);
+  if (left.length > 0) {
+    throw new Error(`Refusing to delete ${record.root}: PID(s) ${left.join(", ")} still name it.`);
+  }
+  return leaderRunning
+    ? `stopped PID ${record.pid} and its process group ${pgid}`
+    : `stopped the orphaned process group ${pgid}`;
 }
 
 function removeRoot(root) {
@@ -233,12 +253,19 @@ async function start({ name, release, port, json, schedulersOff, startTimeout = 
   NodeFS.mkdirSync(root, { recursive: true });
   writeFakeClaude(root);
   writeSettings(root);
-  const { pid, logFile } = startServer({ name, root, bin, port: chosenPort, schedulersOff });
+  const { pid, pgid, logFile } = startServer({
+    name,
+    root,
+    bin,
+    port: chosenPort,
+    schedulersOff,
+  });
   const record = {
     name,
     root,
     port: chosenPort,
     pid,
+    pgid,
     bin,
     node: process.execPath,
     startedAt: new Date().toISOString(),
@@ -248,7 +275,13 @@ async function start({ name, release, port, json, schedulersOff, startTimeout = 
     const tail = NodeFS.existsSync(logFile)
       ? NodeFS.readFileSync(logFile, "utf8").split(/\r?\n/).slice(-8).join("\n")
       : "";
-    if (proc.isAlive(pid)) await proc.stopProcessTree(pid);
+    await proc.stopProcessTree(pid, { pgid: pgid ?? undefined, root });
+    const left = proc.rootProcessPids(root);
+    if (left.length > 0) {
+      throw new Error(
+        `The server did not come up on ${origin}, and PID(s) ${left.join(", ")} still use ${root}; the root was kept.`,
+      );
+    }
     removeRoot(root);
     throw new Error(
       `The server did not come up on ${origin}. Root removed. Last log lines:\n${tail}`,
@@ -300,6 +333,12 @@ async function main() {
       }
       const record = readRecord(root);
       const stopped = record ? await stopRecorded(record) : "no recorded server";
+      if (!record) {
+        const left = proc.rootProcessPids(root);
+        if (left.length > 0) {
+          throw new Error(`Refusing to delete ${root}: PID(s) ${left.join(", ")} still name it.`);
+        }
+      }
       removeRoot(root);
       console.log(`Stopped '${name}': ${stopped}; deleted ${root}.`);
       return;
@@ -326,7 +365,7 @@ async function main() {
         console.log(`'${name}' is already running (PID ${record.pid}).`);
         return;
       }
-      const { pid } = startServer({
+      const { pid, pgid } = startServer({
         name,
         root,
         bin: record.bin,
@@ -334,6 +373,7 @@ async function main() {
         schedulersOff: args["schedulers-off"] === true,
       });
       record.pid = pid;
+      record.pgid = pgid;
       record.startedAt = new Date().toISOString();
       writeRecord(root, record);
       const origin = `http://127.0.0.1:${record.port}`;
