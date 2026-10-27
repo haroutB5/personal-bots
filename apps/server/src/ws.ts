@@ -4019,6 +4019,26 @@ const makeWsRpcLayer = (
             personalBrowser.activity(currentSessionId),
             { "rpc.aggregate": "personal-browser" },
           ),
+        // Owner decisions on one paused sensitive-site step. The paused thread
+        // comes from the card; the acting session is this connection's.
+        [WS_METHODS.personalBrowserApproveEgress]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBrowserApproveEgress,
+            personalBrowser.approveEgress({
+              threadId: input.threadId,
+              sessionId: currentSessionId,
+            }),
+            { "rpc.aggregate": "personal-browser" },
+          ),
+        [WS_METHODS.personalBrowserRefuseEgress]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBrowserRefuseEgress,
+            personalBrowser.refuseEgress({
+              threadId: input.threadId,
+              sessionId: currentSessionId,
+            }),
+            { "rpc.aggregate": "personal-browser" },
+          ),
         // The user's real PC: who holds it, who waits, and the app's Stop.
         [WS_METHODS.personalDesktopStatus]: (_input) =>
           observeRpcStream(
@@ -4030,6 +4050,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalDesktopStop, personalDesktop.stop("app"), {
             "rpc.aggregate": "personal-desktop",
           }),
+        [WS_METHODS.personalDesktopActivity]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.personalDesktopActivity,
+            personalDesktop.activity,
+            { "rpc.aggregate": "personal-desktop" },
+          ),
         [WS_METHODS.personalRoutinesList]: (_input) =>
           observeRpcEffect(WS_METHODS.personalRoutinesList, personalRoutines.list(), {
             "rpc.aggregate": "server",

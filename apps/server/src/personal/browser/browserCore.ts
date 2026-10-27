@@ -262,6 +262,20 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
     // The approval a thread was refused for, until its next request_browser_help
     // turns it into the question the user actually sees.
     const pendingApprovals = new Map<string, EgressApproval>();
+    /** When each pending approval was paused, for the UI's card. */
+    const pendingApprovalAt = new Map<string, string>();
+    /**
+     * "Allow once": the next guardEgress for that thread whose key matches
+     * consumes this and passes. In memory only, never the persistent exposure
+     * store, so a second identical step asks again (SPEC.md 10.7).
+     */
+    const oneShotApprovals = new Map<string, string>();
+    /**
+     * "Refused": the same step fails for the rest of the turn instead of
+     * pausing again, so Refuse works even when the user answers before the bot
+     * has called request_browser_help. Cleared at turn end.
+     */
+    const refusedApprovals = new Map<string, string>();
 
     const refreshSensitiveOrigins = logins.sensitiveOrigins().pipe(
       Effect.map((origins) => {
@@ -392,7 +406,23 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
           sensitive: st.sensitiveOrigins,
         });
         if (approval === null) return;
+        if (oneShotApprovals.get(threadId) === approval.key) {
+          oneShotApprovals.delete(threadId);
+          return;
+        }
+        if (refusedApprovals.get(threadId) === approval.key) {
+          refusedApprovals.delete(threadId);
+          pendingApprovals.delete(threadId);
+          pendingApprovalAt.delete(threadId);
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              "The user refused this step. Do not retry it; carry on without it.",
+            ),
+          );
+        }
         pendingApprovals.set(threadId, approval);
+        pendingApprovalAt.set(threadId, yield* nowIso);
         return yield* Effect.fail(
           new HostOperationError(
             "PreviewAutomationExecutionError",
@@ -402,7 +432,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       });
 
     const approvalQuestion = (approval: EgressApproval) =>
-      `Allow sending what the bot saw on ${approval.sources.join(", ")} to ${approval.destination}? Take control, then Return to bot to allow. Close the browser to refuse.`;
+      `Allow sending what the bot saw on ${approval.sources.join(", ")} to ${approval.destination}? Choose Allow once to let this one step through, or Refuse to skip it.`;
 
     const notify = PubSub.publish(statusDirty, undefined).pipe(Effect.asVoid);
 
@@ -506,6 +536,54 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       return pageTitles.get(page) ?? "";
     };
 
+    /**
+     * The paused step, if any, for the Computer tab's card: the active help
+     * request's approval first, else an approval the bot has not yet turned
+     * into a help request.
+     */
+    const egressPauseFor = Effect.gen(function* () {
+      const help = st.activeHelp;
+      if (help !== null && help.approval !== null) {
+        const bot = yield* botForThread(help.request.threadId);
+        return {
+          threadId: help.request.threadId,
+          botId: help.request.botId,
+          botName: help.request.botName,
+          sources: [...help.approval.sources],
+          destination: help.approval.destination,
+          requestedAt: help.request.requestedAt,
+        };
+      }
+      const [threadId, approval] = [...pendingApprovals.entries()][0] ?? [];
+      if (threadId === undefined || approval === undefined) return null;
+      const bot = yield* botForThread(threadId);
+      if (bot === null) return null;
+      return {
+        threadId: ThreadId.make(threadId),
+        botId: bot.botId,
+        botName: bot.name ?? "A bot",
+        sources: [...approval.sources],
+        destination: approval.destination,
+        requestedAt: pendingApprovalAt.get(threadId) ?? (yield* nowIso),
+      };
+    });
+
+    /** Bots queued for the lease, named for "Up next". */
+    const waitingClaimants = Effect.gen(function* () {
+      const queued = yield* lease.waiting;
+      const claimants = [];
+      for (const entry of queued) {
+        const bot = yield* botForThread(entry.threadId);
+        if (bot === null) continue;
+        claimants.push({
+          threadId: entry.threadId,
+          botId: bot.botId,
+          botName: bot.name ?? "A bot",
+        });
+      }
+      return claimants;
+    });
+
     const status: PersonalBrowser["Service"]["status"] = (sessionId) =>
       Effect.gen(function* () {
         const view = yield* lease.view;
@@ -558,6 +636,8 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
           generation: view.generation,
           page: pageInfo,
           helpRequest: st.activeHelp?.request ?? null,
+          waiting: yield* waitingClaimants,
+          egressPause: yield* egressPauseFor,
           dialog: page === null ? null : redactor.redact(page.pendingDialog()),
           lastAgent,
           viewers: viewers.size,
@@ -637,6 +717,9 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       originOf,
       ownedPages,
       pendingApprovals,
+      pendingApprovalAt,
+      oneShotApprovals,
+      refusedApprovals,
       persistProtections,
       previewManager,
       profileDir,

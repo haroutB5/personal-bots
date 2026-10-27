@@ -855,6 +855,8 @@ const make = Effect.gen(function* () {
             botName: caller.botName,
             taskId: caller.task.taskId,
             reason: shortenBrowserHelpReason(input.reason),
+            ...(input.kind === undefined ? {} : { kind: input.kind }),
+            ...(input.origin === undefined ? {} : { origin: input.origin }),
           })
           .pipe(Effect.mapError(readable));
         return {

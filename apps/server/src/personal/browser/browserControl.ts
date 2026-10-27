@@ -1,7 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - same node access as PersonalBrowser.ts (profile lock, artifacts).
 // Who holds the browser: saved-login fills, the person taking control, help requests and the grace watchdog.
 import * as NodeCrypto from "node:crypto";
-import { type PersonalBrowserHelpRequest } from "@t3tools/contracts";
+import {
+  PersonalBrowserError,
+  type PersonalBrowserHelpRequest,
+  type PersonalTaskId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -32,17 +36,18 @@ export const makeBrowserControl = (
       approvalQuestion,
       botForThread,
       exposeIfSensitive,
-      exposureKeys,
       lease,
       notify,
       nowIso,
       openPage,
       options,
+      oneShotApprovals,
+      refusedApprovals,
       originOf,
       pendingApprovals,
+      pendingApprovalAt,
       persistProtections,
       recordActivity,
-      recordExposure,
       redactError,
       redactor,
       refreshSensitiveOrigins,
@@ -288,6 +293,16 @@ export const makeBrowserControl = (
             botName: input.botName,
             reason: approval === null ? input.reason : approvalQuestion(approval),
             requestedAt: yield* nowIso,
+            ...(approval === null
+              ? {
+                  ...(input.kind === undefined ? {} : { kind: input.kind }),
+                  ...(input.origin === undefined ? {} : { origin: input.origin }),
+                }
+              : {
+                  kind: "sensitive" as const,
+                  destination: approval.destination,
+                  sources: [...approval.sources],
+                }),
           };
           st.activeHelp = { request, taskId: input.taskId, approval };
           yield* recordActivity({
@@ -328,8 +343,8 @@ export const makeBrowserControl = (
           if (finishedHelp !== null) {
             const approval = finishedHelp.approval;
             if (approval !== null) {
-              const keys = yield* exposureKeys(finishedHelp.request.threadId);
-              yield* recordExposure(keys, "approved", approval.key);
+              // Once, never a standing permit: the same step asks again.
+              oneShotApprovals.set(finishedHelp.request.threadId, approval.key);
             }
             yield* tasks
               .resumeFromUser({
@@ -338,7 +353,7 @@ export const makeBrowserControl = (
                 note:
                   approval === null
                     ? "The user finished helping in the browser. Continue the task."
-                    : `The user approved ${approval.destination}. Retry that step; any other destination still needs their approval.`,
+                    : `The user allowed this step once: ${approval.destination}. Retry that step now; any other destination still needs their approval.`,
                 restartSession: false,
               })
               .pipe(
@@ -357,6 +372,118 @@ export const makeBrowserControl = (
 
     const returnToAgent: PersonalBrowser["Service"]["returnToAgent"] = (sessionId) =>
       returnControl(sessionId, null);
+
+    /** The paused step for one thread: an active approval help, else a pending one. */
+    const pausedStep = (threadId: string) => {
+      const help = st.activeHelp;
+      if (help !== null && help.request.threadId === threadId && help.approval !== null) {
+        return { approval: help.approval, taskId: help.taskId, requestedAt: help.request.requestedAt };
+      }
+      const approval = pendingApprovals.get(threadId);
+      if (approval === undefined) return null;
+      return {
+        approval,
+        taskId: null,
+        requestedAt: pendingApprovalAt.get(threadId) ?? null,
+      };
+    };
+
+    const resumePausedTask = (
+      taskId: PersonalTaskId | null,
+      requestedAt: string | null,
+      note: string,
+    ) =>
+      taskId === null
+        ? Effect.void
+        : tasks
+            .resumeFromUser({
+              taskId,
+              noteId: `browser-help:${requestedAt ?? "pending"}`,
+              note,
+              restartSession: false,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("personal browser egress continuation could not be queued", {
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
+
+    const approveEgress: PersonalBrowser["Service"]["approveEgress"] = (input) =>
+      Effect.gen(function* () {
+        const paused = pausedStep(input.threadId);
+        if (paused === null) {
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              "There is no paused step to allow for this bot. It may have moved on, or the pause was already decided.",
+            ),
+          );
+        }
+        // In memory, consumed by the next matching guardEgress.
+        oneShotApprovals.set(input.threadId, paused.approval.key);
+        pendingApprovals.delete(input.threadId);
+        pendingApprovalAt.delete(input.threadId);
+        const help = st.activeHelp;
+        if (help !== null && help.request.threadId === input.threadId) st.activeHelp = null;
+        yield* resumePausedTask(
+          paused.taskId,
+          paused.requestedAt,
+          "The user allowed this step once. Retry the same action now.",
+        );
+        const bot = yield* botForThread(input.threadId);
+        yield* recordActivity({
+          kind: "control",
+          summary: `allowed one step before ${paused.approval.destination}`,
+          status: "succeeded",
+          threadId: input.threadId,
+          botName: help?.request.botName ?? bot?.name ?? null,
+        });
+        yield* notify;
+        return yield* status(input.sessionId);
+      }).pipe(
+        Effect.mapError((error) => new PersonalBrowserError({ message: error.message })),
+      );
+
+    const refuseEgress: PersonalBrowser["Service"]["refuseEgress"] = (input) =>
+      Effect.gen(function* () {
+        const paused = pausedStep(input.threadId);
+        if (paused === null) {
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              "There is no paused step to refuse for this bot. It may have moved on, or the pause was already decided.",
+            ),
+          );
+        }
+        oneShotApprovals.delete(input.threadId);
+        // The same step stays refused for the rest of the turn, even if the
+        // bot retries instead of taking the note.
+        refusedApprovals.set(input.threadId, paused.approval.key);
+        pendingApprovals.delete(input.threadId);
+        pendingApprovalAt.delete(input.threadId);
+        const help = st.activeHelp;
+        if (help !== null && help.request.threadId === input.threadId) st.activeHelp = null;
+        yield* resumePausedTask(
+          paused.taskId,
+          paused.requestedAt,
+          "The user refused this step. Do not retry it; carry on without it.",
+        );
+        const bot = yield* botForThread(input.threadId);
+        // The browser, the page and every other bot stay exactly as they are.
+        yield* recordActivity({
+          kind: "control",
+          summary: `refused one step before ${paused.approval.destination}`,
+          status: "succeeded",
+          threadId: input.threadId,
+          botName: help?.request.botName ?? bot?.name ?? null,
+        });
+        yield* notify;
+        return yield* status(input.sessionId);
+      }).pipe(
+        Effect.mapError((error) => new PersonalBrowserError({ message: error.message })),
+      );
 
     const controlGraceMs = options.controlGraceMs ?? CONTROL_GRACE_MS;
 
@@ -401,7 +528,15 @@ export const makeBrowserControl = (
       ),
     ).pipe(Effect.forkScoped);
 
-    return { fillLogin, loginPage, requestHelp, returnToAgent, takeControl };
+    return {
+      approveEgress,
+      fillLogin,
+      loginPage,
+      refuseEgress,
+      requestHelp,
+      returnToAgent,
+      takeControl,
+    };
   });
 
 export type BrowserControl = Effect.Success<ReturnType<typeof makeBrowserControl>>;
