@@ -477,7 +477,14 @@ describe("turn policy", () => {
   });
 
   it("drops a delegator's own attribution from the brief it labels", () => {
-    const delegation = { ...task, source: "delegation", objective: "From Nova. Do it" } as never;
+    // taskSections only needs these five fields; the task id is a branded string in real rows.
+    const delegation = {
+      taskId: "t1" as never,
+      title: "Title",
+      objective: "From Nova. Do it",
+      acceptanceCriteria: "",
+      expectedOutput: "Done",
+    };
     expect(taskSections(delegation, null, "Nova")).toContain("Objective:\nDo it");
     expect(
       taskSections(
@@ -494,9 +501,9 @@ describe("turn policy", () => {
       "Expected output:\nDone",
     ]);
     // A user's task keeps its words exactly.
-    expect(taskSections({ ...task, objective: "From CTO. Do it" } as never, null)).toContain(
-      "Objective:\nFrom CTO. Do it",
-    );
+    expect(
+      taskSections({ ...delegation, objective: "From CTO. Do it" }, null),
+    ).toContain("Objective:\nFrom CTO. Do it");
   });
 });
 

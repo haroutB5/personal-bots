@@ -131,6 +131,9 @@ export function stripSelfAttribution(fromName: string, message: string): string 
   const name = fromName.trim();
   if (name.length === 0) return text;
   const n = escapeRegExp(name);
+  // Already labelled with the sender's name and a colon: keep the sender's own
+  // wording (and case) exactly; ALREADY_PREFIXED below leaves it alone.
+  if (new RegExp(`^update\\s+from\\s+${n}\\s*:`, "i").test(text)) return text;
   const prefix = new RegExp(
     `^(?:(?:update\\s+)?from\\s+${n}(?:\\s+here)?|${n}\\s+here|${n}\\s*:)[\\s:,.!;\\-–—]*`,
     "i",

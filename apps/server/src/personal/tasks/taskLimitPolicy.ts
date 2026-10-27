@@ -146,7 +146,7 @@ export type SessionErrorSettlement =
       readonly limit?: {
         readonly provider: string;
         readonly reason: string | undefined;
-        readonly retryAt: string | undefined;
+        readonly retryAt?: string | undefined;
         /** The provider was at capacity, not out of a usage window. */
         readonly capacity?: boolean;
       };
