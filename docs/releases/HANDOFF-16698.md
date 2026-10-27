@@ -38,7 +38,10 @@ Already in this branch before the Computer tab merge: `2670ee9c3c`, `ff99282934`
 `f76fe5327f` (PINS refresh, OpenCode shell fixture). `fix/release-runner-idle` head
 `f76fe5327f` is an ancestor, so nothing is left to cherry-pick.
 
-## Pre-stage gate results (27 Oct, head `dc5f563943`)
+## Pre-stage gate results (27 Oct)
+
+Server gates re-ran green at head `1412d382b0`; the web gates ran at `dc5f563943` and no web
+file changed after it.
 
 - server-tests (personal, mcp, persistence, preview, workspace, assets): PASS, 304 files and
   3,440 tests passed, 6 skipped.
