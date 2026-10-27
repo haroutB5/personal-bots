@@ -384,6 +384,9 @@ int main(int argc, char **argv) {
            * speaks one XKB layout, so the first is the one that types. */
           name[strcspn(name, ",")] = '\0';
         }
+        /* A rebuild destroys the virtual keyboard; let go of anything held
+         * first so the compositor cannot keep a stale key down. */
+        release_all();
         if (!setup_keyboard(name)) err = "cannot load that keyboard layout";
       }
     } else if (strcmp(cmd, "move") == 0) {

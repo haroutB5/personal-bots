@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import { DesktopHelperError } from "../DesktopHelper.ts";
 import { LinuxDesktopDriver } from "./driver.ts";
+import { ensureLinuxHelperBuilt } from "./helperBuild.ts";
 import { LinuxDesktopHelper } from "./helper.ts";
 import type { LinuxSession } from "./session.ts";
 import { makeFakeWorld, type FakeWorld } from "./testFixtures.ts";
@@ -39,6 +40,16 @@ beforeAll(() => {
 
 afterAll(() => {
   process.env.PATH = savedPath;
+});
+
+describe("Linux helper build", () => {
+  it("compiles the embedded C source once and reuses the binary", () => {
+    const dir = NodePath.join(root, "real-build");
+    const first = ensureLinuxHelperBuilt(dir);
+    expect(NodeFS.existsSync(first)).toBe(true);
+    expect(NodeFS.statSync(first).size).toBeGreaterThan(1_000);
+    expect(ensureLinuxHelperBuilt(dir)).toBe(first);
+  }, 120_000);
 });
 
 describe("LinuxDesktopDriver", () => {

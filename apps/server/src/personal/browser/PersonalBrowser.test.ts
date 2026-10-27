@@ -872,6 +872,9 @@ describe("PersonalBrowser", () => {
         password: "password-value",
       });
 
+      // One bot at a time on the shared browser: hand the lease on, the
+      // signed-in tab stays open.
+      yield* browser.releaseLease(threadId);
       // Another thread opens the same site and reads it: it inherits the
       // session, which is the point of sharing the saved login.
       yield* browser.handleAutomationRequest(
@@ -885,6 +888,7 @@ describe("PersonalBrowser", () => {
         .handleAutomationRequest(otherRequest("evaluate", { expression: "document.cookie" }))
         .pipe(Effect.asVoid, Effect.flip);
       expect(scripted.message).toContain("Page scripts are disabled");
+      yield* browser.releaseLease(otherThread);
 
       // The tab the password went into is still closed, to its own thread too.
       const onForm = yield* browser
@@ -4300,6 +4304,7 @@ describe("PersonalBrowser", () => {
         );
         expect(sibling).toBeDefined();
         expect(unrelated).toBeDefined();
+        yield* browser.releaseLease(otherThread);
 
         yield* signIn(browser, "https://app.example.com");
 
@@ -4806,10 +4811,12 @@ describe("PersonalBrowser", () => {
         yield* browser.handleAutomationRequest(
           request("navigate", { url: "https://one.example/" }),
         );
+        yield* browser.releaseLease(threadId);
         const theirs = (yield* browser.handleAutomationRequest({
           ...request("open", { url: "https://theirs.example/", reuseExistingTab: false }),
           threadId: other,
         } as PreviewAutomationRequest)) as PreviewAutomationStatus;
+        yield* browser.releaseLease(other);
 
         // The current tab is never closed by default.
         const implicit = yield* refused(browser, request("closeTab", {}));

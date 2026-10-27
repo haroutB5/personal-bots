@@ -339,7 +339,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
       // Re-register on every config reload; it is runtime-only, never written
       // to hyprland.conf.
       const lua = `hl.bind("${STOP_CHORD}", function() hl.exec_cmd("touch ${file}") end)`;
-      void hyprctl(this.session, ["dispatch", lua], 5_000).catch((error: unknown) => {
+      void hyprctl(this.session, ["eval", lua], 5_000).catch((error: unknown) => {
         this.log(
           `desktop linux: could not register the stop chord: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -530,6 +530,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
           throw new DesktopHelperError("unavailable", "No monitor was found.");
         }
         if (await this.locked()) return { locked: true };
+        if (primary.dpmsStatus === false) return { locked: true };
         const regionX = params.regionX === undefined ? primary.x : primary.x + num(params.regionX);
         const regionY = params.regionY === undefined ? primary.y : primary.y + num(params.regionY);
         const regionWidth = params.regionWidth === undefined ? primary.width : num(params.regionWidth);
@@ -768,7 +769,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
       this.stopWatch = null;
     }
     if (this.options.stopChord !== false) {
-      void hyprctl(this.session, ["dispatch", `hl.unbind("${STOP_CHORD}")`], 3_000).catch(
+      void hyprctl(this.session, ["eval", `hl.unbind("${STOP_CHORD}")`], 3_000).catch(
         () => undefined,
       );
     }

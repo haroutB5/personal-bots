@@ -81,6 +81,16 @@ function pointActivity(
 
 const pct = (value: number | undefined) => `${Math.round((value ?? 0) * 100)}%`;
 
+/**
+ * Key sequences that look like text (single characters, no "+" chord) are
+ * summarised by count: a password entered key by key must not be readable in
+ * the user's activity feed. Named keys and shortcuts stay named.
+ */
+function looksLikeTyping(keys: string): boolean {
+  const groups = keys.trim().split(/\s+/).filter((group) => group.length > 0);
+  return groups.length > 0 && groups.every((group) => group.length === 1 && !group.includes("+"));
+}
+
 /** "at 42%, 61%", for summaries. */
 const where = (activity: Pick<DesktopActivity, "x" | "y">) =>
   `at ${pct(activity.x)}, ${pct(activity.y)}`;
@@ -381,7 +391,11 @@ export async function pressKeys(
   return {
     ...after,
     activity: {
-      summary: repeat === 1 ? `pressed ${input.keys}` : `pressed ${input.keys} ${repeat} times`,
+      summary: looksLikeTyping(input.keys)
+        ? `pressed ${input.keys.trim().split(/\s+/).length} keys`
+        : repeat === 1
+          ? `pressed ${input.keys}`
+          : `pressed ${input.keys} ${repeat} times`,
     },
   };
 }
@@ -485,7 +499,9 @@ export async function holdKey(
   return {
     ...after,
     activity: {
-      summary: `held ${input.keys} ${(input.durationMs / 1000).toFixed(1)} s`,
+      summary: looksLikeTyping(input.keys)
+        ? `held a key ${(input.durationMs / 1000).toFixed(1)} s`
+        : `held ${input.keys} ${(input.durationMs / 1000).toFixed(1)} s`,
     },
   };
 }
