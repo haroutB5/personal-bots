@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -220,6 +221,7 @@ static uint32_t type_text(const char *text) {
     } else {
       return 0xFFFD;
     }
+    if (cp < 0x20 || cp == 0x7f) return cp;
     xkb_keysym_t sym = xkb_utf32_to_keysym(cp);
     char name[64];
     if (sym == XKB_KEY_NoSymbol || xkb_keysym_get_name(sym, name, sizeof(name)) <= 0) {
@@ -259,6 +261,14 @@ static void release_all(void) {
   button_event(BTN_LEFT, 0);
   button_event(BTN_RIGHT, 0);
   button_event(BTN_MIDDLE, 0);
+}
+
+/* The server dying (Stop, a crash, a restart) must not leave a key or button
+ * held: the compositor keeps whatever the helper last sent. */
+static void on_terminate(int signo) {
+  (void)signo;
+  release_all();
+  _exit(0);
 }
 
 static void teardown_keyboard(void) {
@@ -358,6 +368,8 @@ int main(int argc, char **argv) {
   wl_display_roundtrip(display);
   printf("ready layout=%s pid=%ld\n", g_layout, (long)getpid());
   fflush(stdout);
+  signal(SIGTERM, on_terminate);
+  signal(SIGINT, on_terminate);
 
   char line[16384];
   while (fgets(line, sizeof(line), stdin) != NULL) {
@@ -506,6 +518,8 @@ int main(int argc, char **argv) {
     printf("ok %ld %llu\n", id, (unsigned long long)(now_us() - started));
     fflush(stdout);
   }
+  /* stdin closed (the server went away): nothing may stay held. */
+  release_all();
   if (ptr != NULL) zwlr_virtual_pointer_v1_destroy(ptr);
   if (ptr_manager != NULL) zwlr_virtual_pointer_manager_v1_destroy(ptr_manager);
   teardown_keyboard();
