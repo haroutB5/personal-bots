@@ -1,4 +1,4 @@
-import { Hand, Shield } from "lucide-react";
+import { Hand, MousePointer2, Shield } from "lucide-react";
 import type { JSX, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -12,7 +12,7 @@ const CARD =
 const BADGE =
   "flex size-9 shrink-0 items-center justify-center rounded-full bg-[rgb(227_184_85/.14)] text-[var(--personal-review)]";
 const BUTTON =
-  "flex h-11 items-center justify-center rounded-[10px] px-4 text-[15px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50";
+  "flex h-11 items-center justify-center gap-2 rounded-[10px] px-4 text-[15px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50";
 
 function Bold({ children }: { readonly children: ReactNode }) {
   return <b className="font-semibold">{children}</b>;
@@ -104,6 +104,7 @@ export function ComputerHelpCard(props: {
             "flex-1 bg-[var(--personal-primary)] text-[var(--personal-primary-text)]",
           )}
         >
+          <MousePointer2 className="size-[18px]" strokeWidth={ICON_STROKE} aria-hidden />
           Take over
         </button>
         <button

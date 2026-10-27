@@ -20,10 +20,12 @@ import type {
   PersonalBrowserDialog,
 } from "@t3tools/contracts";
 import {
+  Activity,
   ArrowLeft,
   Camera,
   ChevronLeft,
   Download,
+  Eye,
   FileText,
   Film,
   Globe,
@@ -722,9 +724,19 @@ function ComputerScreenView({
           type="button"
           onClick={() => setPerfOpen(true)}
           aria-label={`Performance, CPU ${Math.round(summary.cpuPct)} percent, RAM ${Math.round(summary.memUsedPct)} percent`}
-          className="flex h-8 shrink-0 items-center rounded-full border border-[var(--personal-border)] px-3 text-[12px] font-medium text-[var(--personal-text-secondary)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex h-11 shrink-0 items-center gap-1.5 rounded-full bg-[var(--personal-fill-muted)] px-3 text-[13px] text-[var(--personal-text-secondary)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
-          CPU {Math.round(summary.cpuPct)}% · RAM {Math.round(summary.memUsedPct)}%
+          <Activity className="size-4" strokeWidth={ICON_STROKE} aria-hidden />
+          <span>
+            CPU{" "}
+            <b className="font-semibold text-[var(--personal-text)]">
+              {Math.round(summary.cpuPct)}%
+            </b>
+            {" · "}RAM{" "}
+            <b className="font-semibold text-[var(--personal-text)]">
+              {Math.round(summary.memUsedPct)}%
+            </b>
+          </span>
         </button>
       ) : null}
     </header>
@@ -826,21 +838,25 @@ function ComputerScreenView({
   // Nothing is on screen: the stage buttons stand in for Take control, and
   // the only card is who used the browser last.
   const nothingOnScreen = !reachable || idle;
+  const lastAgent = idle ? (status?.lastAgent ?? null) : null;
+  const lastUsedEvent =
+    lastAgent === null
+      ? undefined
+      : events.find(
+          (event) =>
+            event.source === "browser" &&
+            event.threadId === lastAgent.threadId &&
+            event.botName !== null,
+        );
   const lastUsed =
-    idle && status?.lastAgent != null
-      ? {
-          face: faceOf({ botId: status.lastAgent.botId, botName: null }),
-          at:
-            browserLastStop(status) ??
-            events.find(
-              (event) =>
-                event.source === "browser" && event.threadId === status.lastAgent?.threadId,
-            )?.at ??
-            null,
-          threadId: status.lastAgent.threadId,
-          botId: status.lastAgent.botId,
-        }
-      : null;
+    lastAgent === null
+      ? null
+      : {
+          face: faceOf({ botId: lastAgent.botId, botName: lastUsedEvent?.botName ?? null }),
+          at: browserLastStop(status) ?? lastUsedEvent?.at ?? null,
+          threadId: lastAgent.threadId,
+          botId: lastAgent.botId,
+        };
   const lastUsedBlock =
     lastUsed === null || lastUsed.face === null ? null : (
       <ComputerDriverCard
@@ -1321,7 +1337,13 @@ function BrowserToolbar(props: {
             />
           </form>
         ) : (
-          <span className="min-w-0 flex-1 truncate text-[14px]">{addressLabel(page)}</span>
+          <>
+            <span className="min-w-0 flex-1 truncate text-[14px]">{addressLabel(page)}</span>
+            <span className="flex shrink-0 items-center gap-1 text-[12px] text-[var(--personal-text-secondary)]">
+              <Eye className="size-4" strokeWidth={ICON_STROKE} aria-hidden />
+              View only
+            </span>
+          </>
         )}
       </div>
       {props.onOpenFullScreen !== undefined && !props.showBack ? (

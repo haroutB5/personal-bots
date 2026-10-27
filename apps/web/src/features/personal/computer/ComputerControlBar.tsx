@@ -1,4 +1,4 @@
-import { Bot, ChevronLeft, Hand } from "lucide-react";
+import { Bot, ChevronLeft, Crosshair, Hand } from "lucide-react";
 import type { JSX } from "react";
 
 import { cn } from "~/lib/utils";
@@ -65,10 +65,11 @@ export function FollowToast(props: {
       role="status"
       aria-live="polite"
       className={cn(
-        "computer-toast pointer-events-none absolute left-1/2 z-20 flex h-8 max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center rounded-full border border-[var(--personal-border-strong)] bg-[rgb(15_15_14/.92)] px-3.5 text-[13px] text-[var(--personal-text)]",
+        "computer-toast pointer-events-none absolute left-1/2 z-20 flex h-8 max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-[var(--personal-border-strong)] bg-[rgb(15_15_14/.92)] px-3.5 text-[13px] text-[var(--personal-text)]",
         props.belowBar === true ? "top-[4.75rem]" : "top-2",
       )}
     >
+      <Crosshair className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
       <span className="truncate">{props.text}</span>
     </div>
   );
