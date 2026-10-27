@@ -130,6 +130,9 @@ static int modifier_mask(const char *name) {
 
 static int send_keycode(int code, int down) {
   if (code <= 0 || code >= 512) return 0;
+  /* No keyboard object (a failed keymap load, or teardown in progress):
+   * sending on a NULL proxy is a segfault, so report the key as not sent. */
+  if (vk == NULL) return 0;
   zwp_virtual_keyboard_v1_key(vk, now_ms(), (uint32_t)(code - 8),
                               down ? WL_KEYBOARD_KEY_STATE_PRESSED
                                    : WL_KEYBOARD_KEY_STATE_RELEASED);
@@ -289,33 +292,52 @@ static void teardown_keyboard(void) {
 /* Compile and upload the keymap for `layout`. The system keymap, uploaded once
  * for the life of the process, is what keeps held keys resolving correctly. */
 static int setup_keyboard(const char *layout) {
-  teardown_keyboard();
-  snprintf(g_layout, sizeof(g_layout), "%s", layout);
-  xkb_ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-  if (xkb_ctx == NULL) return 0;
+  /* Build the new keymap first and only then replace the old one: a layout
+   * name the keymap compiler rejects must leave the helper typing with the
+   * layout it already had, not tear the keyboard down (QA's B1). */
+  struct xkb_context *next_ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+  if (next_ctx == NULL) return 0;
   struct xkb_rule_names names = {.rules = NULL, .model = NULL,
                                  .layout = layout, .variant = NULL, .options = NULL};
-  xkb_map = xkb_keymap_new_from_names(xkb_ctx, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
-  if (xkb_map == NULL) return 0;
-  char *str = xkb_keymap_get_as_string(xkb_map, XKB_KEYMAP_FORMAT_TEXT_V1);
-  if (str == NULL) return 0;
+  struct xkb_keymap *next_map =
+      xkb_keymap_new_from_names(next_ctx, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+  if (next_map == NULL) {
+    xkb_context_unref(next_ctx);
+    return 0;
+  }
+  char *str = xkb_keymap_get_as_string(next_map, XKB_KEYMAP_FORMAT_TEXT_V1);
+  if (str == NULL) {
+    xkb_keymap_unref(next_map);
+    xkb_context_unref(next_ctx);
+    return 0;
+  }
   size_t len = strlen(str) + 1;
   int fd = memfd_create("pbdesk-keymap", MFD_CLOEXEC);
   if (fd < 0) {
     free(str);
+    xkb_keymap_unref(next_map);
+    xkb_context_unref(next_ctx);
     return 0;
   }
   if (write(fd, str, len) != (ssize_t)len) {
     close(fd);
     free(str);
+    xkb_keymap_unref(next_map);
+    xkb_context_unref(next_ctx);
     return 0;
   }
   lseek(fd, 0, SEEK_SET);
   if (seat == NULL) {
     close(fd);
     free(str);
+    xkb_keymap_unref(next_map);
+    xkb_context_unref(next_ctx);
     return 0;
   }
+  /* The new keymap is good: replace the old devices and keymap. */
+  teardown_keyboard();
+  xkb_ctx = next_ctx;
+  xkb_map = next_map;
   vk = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(kb_manager, seat);
   if (vk == NULL) {
     close(fd);
@@ -328,6 +350,7 @@ static int setup_keyboard(const char *layout) {
   zwp_virtual_keyboard_v1_modifiers(vk, 0, 0, 0, 0);
   wl_display_roundtrip(g_display);
   if (wl_display_get_error(g_display) != 0) return 0;
+  snprintf(g_layout, sizeof(g_layout), "%s", layout);
   return 1;
 }
 

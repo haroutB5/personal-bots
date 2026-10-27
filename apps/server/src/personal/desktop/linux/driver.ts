@@ -114,12 +114,15 @@ export class LinuxDesktopDriver implements DesktopDriver {
   private readonly killListeners: Array<() => void> = [];
   private readonly log: (line: string) => void;
   private monitorsCache: ScreenState | null = null;
+  private layoutRefresh: Promise<void> | null = null;
   private windowCache: { window: ActiveWindow | null; at: number } | null = null;
   private lockCache: { locked: boolean; at: number } | null = null;
   private events: NodeNet.Socket | null = null;
   private stopWatch: NodeFS.StatWatcher | null = null;
   private stopFile: string | null = null;
   private overlayId: number | null = null;
+  /** The notification id to replace, so a session never stacks banners. */
+  private overlayReplaceId: number | null = null;
   private overlayText: string | null = null;
   private overlayCapturable = false;
   private disposed = false;
@@ -166,6 +169,35 @@ export class LinuxDesktopDriver implements DesktopDriver {
       await this.helper.request("layout", [this.layout], 5_000).catch(() => undefined);
     } catch {
       // Keep "us"; typing still works for plain text and fails loudly otherwise.
+    }
+  }
+
+  /**
+   * A layout change is re-read from Hyprland, once per burst of keyboard
+   * events, and only sent to the helper when it really changed: every
+   * `layout` command rebuilds the keymap and releases whatever is held.
+   */
+  private scheduleLayoutRefresh(): void {
+    if (this.layoutRefresh !== null) return;
+    this.layoutRefresh = this.refreshLayout().finally(() => {
+      this.layoutRefresh = null;
+    });
+  }
+
+  private async refreshLayout(): Promise<void> {
+    try {
+      const option = await hyprctlJson<{ str?: string }>(this.session, [
+        "getoption",
+        "input:kb_layout",
+      ]);
+      const value = str(option.str).split(",")[0]?.trim() ?? "";
+      if (value.length === 0) return;
+      this.layoutKnown = true;
+      if (value === this.layout) return;
+      this.layout = value;
+      if (this.helper.running) await this.helper.request("layout", [value], 5_000);
+    } catch {
+      // Keep the layout in use; the next keyboard event tries again.
     }
   }
 
@@ -365,13 +397,14 @@ export class LinuxDesktopDriver implements DesktopDriver {
       return;
     }
     if (event === "activelayout") {
-      const layout = detail.split(",")[0]?.trim();
-      if (layout !== undefined && layout.length > 0 && layout !== this.layout) {
-        this.layout = layout;
-        if (this.helper.running) {
-          void this.helper.request("layout", [layout], 5_000).catch(() => undefined);
-        }
-      }
+      // Hyprland sends "KEYBOARD,LAYOUT". The first field is the device name:
+      // the helper's own virtual keyboard reports itself there, and treating
+      // that name as a layout tore the keymap down and crashed the next key
+      // (QA's B1). Ignore virtual keyboards and ask Hyprland for the real
+      // layout instead of parsing a display name.
+      const keyboard = detail.split(",")[0]?.trim() ?? "";
+      if (keyboard.startsWith("hl-virtual-keyboard") || keyboard.includes("pbdesk-wl")) return;
+      this.scheduleLayoutRefresh();
       return;
     }
     if (event === "configreloaded") {
@@ -459,13 +492,26 @@ export class LinuxDesktopDriver implements DesktopDriver {
     try {
       const result = await runCommand(
         "notify-send",
-        ["-u", "critical", "-t", "0", "-p", "--app-name=hbots", "hbots", text],
+        [
+          "-u",
+          "critical",
+          "-t",
+          "0",
+          "-p",
+          // Replacing the last banner is what keeps one on screen instead of
+          // a stack of them after a run of screenshots (QA's L4).
+          ...(this.overlayReplaceId === null ? [] : ["-r", String(this.overlayReplaceId)]),
+          "--app-name=hbots",
+          "hbots",
+          text,
+        ],
         { env: sessionEnv(this.session), timeoutMs: 5_000 },
       );
       if (result.code === 0) {
         const id = Number.parseInt(result.stdout.trim(), 10);
         if (Number.isFinite(id)) {
           this.overlayId = id;
+          this.overlayReplaceId = id;
           return;
         }
       }
@@ -654,6 +700,8 @@ export class LinuxDesktopDriver implements DesktopDriver {
         if (params.show === false) {
           const id = this.overlayId;
           this.overlayId = null;
+          // The session is over: the next one starts a fresh notification.
+          this.overlayReplaceId = null;
           this.overlayText = null;
           if (id !== null) await this.closeNotification(id);
           return { shown: false };

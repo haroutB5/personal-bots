@@ -24,6 +24,7 @@ export interface FakeWorld {
   readonly workDir: string;
   setActiveWindow(window: Record<string, unknown>): void;
   setClients(clients: ReadonlyArray<Record<string, unknown>>): void;
+  setLayout(layout: string): void;
   setLocked(locked: boolean): void;
   helperCommands(): string[];
   helperPath: string;
@@ -61,6 +62,11 @@ export function makeFakeWorld(workDir: string, binary?: string): FakeWorld {
       },
     ]),
   );
+  const layoutFile = NodePath.join(fixtureDir, "layout.txt");
+  NodeFS.writeFileSync(layoutFile, "gb");
+  const setLayout = (layout: string) => {
+    NodeFS.writeFileSync(layoutFile, layout);
+  };
   const lockedFile = NodePath.join(fixtureDir, "locked");
   const setLocked = (locked: boolean) => {
     NodeFS.writeFileSync(lockedFile, locked ? "true" : "false");
@@ -102,7 +108,7 @@ export function makeFakeWorld(workDir: string, binary?: string): FakeWorld {
   *"monitors -j"*) cat "${Path(fixtureDir, "monitors.json")}" ;;
   *"activewindow -j"*) cat "${Path(fixtureDir, "activewindow.json")}" ;;
   *"clients -j"*) cat "${Path(fixtureDir, "clients.json")}" ;;
-  *"getoption"*) echo '{"option":"input:kb_layout","str":"gb"}' ;;
+  *"getoption"*) printf '{"option":"input:kb_layout","str":"%s"}' "$(cat "${Path(fixtureDir, "layout.txt")}")" ;;
   *"cursorpos"*) echo "100, 200" ;;
   *"instances -j"*) echo '[]' ;;
   *"version"*) echo '{"version":"0.56.2"}' ;;
@@ -161,6 +167,7 @@ done
     helperPath,
     setActiveWindow,
     setClients,
+    setLayout,
     setLocked,
     helperCommands: () =>
       NodeFS.readFileSync(helperLog, "utf8")

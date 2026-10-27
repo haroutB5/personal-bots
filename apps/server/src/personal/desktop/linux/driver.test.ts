@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the fixture writes shell scripts and inspects temp files.
 // @effect-diagnostics globalTimers:off - a hold is a real millisecond wait in this fixture test.
+// @effect-diagnostics globalDate:off - the layout refresh poll is bounded by wall-clock time.
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -100,6 +101,24 @@ describe("LinuxDesktopDriver", () => {
     } finally {
       driver.dispose();
     }
+  });
+
+  it("replaces its own PC banner instead of stacking a new one", async () => {
+    const driver = makeDriver();
+    try {
+      await driver.request("overlay", { text: "Assistant is using your PC" });
+      // A screenshot hides the banner and puts it back, which used to create
+      // a fresh notification every time (QA's L4).
+      await driver.request("screenshot", { x: 0, y: 0, width: 100, height: 100 });
+    } finally {
+      driver.dispose();
+    }
+    const banners = NodeFS.readFileSync(world.notifyLog, "utf8")
+      .split("\n")
+      .filter((line) => line.includes("Assistant is using your PC"));
+    expect(banners.length).toBe(2);
+    expect(banners[0]).not.toContain("-r");
+    expect(banners[1]).toContain("-r 42");
   });
 
   it("reports the cursor in logical pixels", async () => {
@@ -348,6 +367,69 @@ describe("LinuxDesktopDriver", () => {
         code: "user_active",
       });
     } finally {
+      driver.dispose();
+      for (const socket of connections) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("ignores the helper's own virtual keyboard layout event and keeps typing", async () => {
+    const dir = NodePath.join(root, "hypr", "test-instance");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    const socketPath = NodePath.join(dir, ".socket2.sock");
+    NodeFS.rmSync(socketPath, { force: true });
+    const connections: NodeNet.Socket[] = [];
+    const server = NodeNet.createServer((socket) => connections.push(socket));
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const connected = new Promise<void>((resolve) => server.once("connection", () => resolve()));
+    const driver = makeDriver();
+    try {
+      await connected;
+      await driver.request("move", { x: 10, y: 10 });
+      // What Hyprland sends when the helper's own virtual keyboard is chosen:
+      // both fields are the device name, not a layout.
+      connections[0]?.write(
+        "activelayout>>hl-virtual-keyboard-pbdesk-wl-99,hl-virtual-keyboard-pbdesk-wl-99\n",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const before = world.helperCommands().length;
+      await driver.request("keys", { combos: [[0x41]] });
+      const added = world.helperCommands().slice(before);
+      // The key still goes out, and no layout was ever named after the device.
+      expect(added).toContain("key a down");
+      expect(world.helperCommands().some((line) => line.startsWith("layout hl-"))).toBe(false);
+      expect(world.helperCommands().some((line) => line.includes("pbdesk-wl-99"))).toBe(false);
+    } finally {
+      driver.dispose();
+      for (const socket of connections) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("re-reads the layout on a real keyboard event instead of parsing its name", async () => {
+    const dir = NodePath.join(root, "hypr", "test-instance");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    const socketPath = NodePath.join(dir, ".socket2.sock");
+    NodeFS.rmSync(socketPath, { force: true });
+    const connections: NodeNet.Socket[] = [];
+    const server = NodeNet.createServer((socket) => connections.push(socket));
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const connected = new Promise<void>((resolve) => server.once("connection", () => resolve()));
+    const driver = makeDriver();
+    try {
+      await connected;
+      await driver.request("move", { x: 10, y: 10 });
+      world.setLayout("fr");
+      connections[0]?.write("activelayout>>kbd-1,French (US)\n");
+      const started = Date.now();
+      while (!world.helperCommands().includes("layout fr")) {
+        if (Date.now() - started > 2_000) throw new Error("the layout was never refreshed");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      // The display name never reaches the helper: the option value does.
+      expect(world.helperCommands().some((line) => line.includes("French"))).toBe(false);
+    } finally {
+      world.setLayout("gb");
       driver.dispose();
       for (const socket of connections) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
