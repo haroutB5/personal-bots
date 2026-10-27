@@ -1,4 +1,4 @@
-import { Tool, type Toolkit } from "effect/unstable/ai";
+import { Tool } from "effect/unstable/ai";
 
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 
@@ -14,7 +14,7 @@ import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
  * Every toolkit `McpHttpServer.layer` registers, in registration order. Keep the two in step:
  * personal/agentContextBudget.test.ts measures the context bots pay for from this list.
  */
-export const ADVERTISED_TOOLKITS: ReadonlyArray<Toolkit.Toolkit<Record<string, Tool.Any>>> = [
+export const ADVERTISED_TOOLKITS: ReadonlyArray<{ readonly tools: Record<string, Tool.Any> }> = [
   PreviewStandardToolkit,
   PreviewSnapshotToolkit,
   PullRequestsToolkit,

@@ -1,6 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - the measurement hook writes a plain dump file.
 import { writeFileSync } from "node:fs";
 
-import { expect, it } from "vitest";
+import { expect, it } from "@effect/vitest";
 
 import { advertisedToolList } from "../mcp/advertisedTools.ts";
 import { buildCodexAdditionalContext } from "../provider/CodexDeveloperInstructions.ts";

@@ -798,23 +798,23 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect.each([
-  {
-    name: "preview (toolkit and hand-registered tools)",
-    layer: TestLayer,
-    tools: { ...PreviewStandardToolkit.tools, ...PreviewSnapshotToolkit.tools },
-  },
-  { name: "pull requests", layer: PullRequestsTestLayer, tools: PullRequestsToolkit.tools },
-])("advertises the compact input schema for every $name tool", ({ layer, tools }) =>
+const expectCompactSchemas = (byName: Record<string, Tool.Any>) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const byName: Record<string, Tool.Any> = tools;
-
     expect(server.tools.length).toBe(Object.keys(byName).length);
     for (const { tool } of server.tools) {
       expect(tool.inputSchema, tool.name).toEqual(advertisedJsonSchema(byName[tool.name]!));
     }
-  }).pipe(Effect.provide(layer as typeof PullRequestsTestLayer)),
+  });
+
+it.effect("advertises the compact input schema for every preview tool", () =>
+  expectCompactSchemas({ ...PreviewStandardToolkit.tools, ...PreviewSnapshotToolkit.tools }).pipe(
+    Effect.provide(TestLayer),
+  ),
+);
+
+it.effect("advertises the compact input schema for every pull request tool", () =>
+  expectCompactSchemas(PullRequestsToolkit.tools).pipe(Effect.provide(PullRequestsTestLayer)),
 );
 
 it.effect("registers annotated tools and preserves authenticated request context", () =>
