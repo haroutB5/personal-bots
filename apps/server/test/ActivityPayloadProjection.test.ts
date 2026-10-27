@@ -367,9 +367,16 @@ describe("superseded tool.updated snapshot dedup", () => {
       readonly title?: string;
       readonly detail?: string;
       readonly toolCallId?: string;
+      readonly createdAt?: string;
     } = {},
   ): OrchestrationThreadActivity {
-    const { turn = "turn-a", title = "File change", detail, toolCallId } = options;
+    const {
+      turn = "turn-a",
+      title = "File change",
+      detail,
+      toolCallId,
+      createdAt = "2026-07-27T00:00:00.000Z",
+    } = options;
     return {
       id: EventId.make(id),
       tone: "tool",
@@ -386,7 +393,7 @@ describe("superseded tool.updated snapshot dedup", () => {
         },
       },
       turnId: TurnId.make(turn),
-      createdAt: "2026-07-27T00:00:00.000Z",
+      createdAt,
     };
   }
 
@@ -463,8 +470,13 @@ describe("superseded tool.updated snapshot dedup", () => {
 
   it("keeps an update that follows its completion", () => {
     // A later update under the same identity is the next call, still in flight.
+    // The next call starts later; an update stamped with its completion's own
+    // time is that call's last in-flight state and is dropped (tie dedup, see
+    // src/orchestration/ActivityPayloadProjection.test.ts).
     const completed = makeToolLifecycleActivity("done-first", "tool.completed");
-    const nextCall = makeToolLifecycleActivity("upd-next", "tool.updated");
+    const nextCall = makeToolLifecycleActivity("upd-next", "tool.updated", {
+      createdAt: "2026-07-27T00:00:01.000Z",
+    });
 
     expect(projectedIds([completed, nextCall])).toEqual([completed.id, nextCall.id]);
   });
