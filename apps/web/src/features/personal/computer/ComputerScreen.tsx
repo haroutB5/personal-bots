@@ -803,7 +803,7 @@ function ComputerScreenView({
       trailing={
         inlineControl ? (
           <>
-            <p className="min-w-0 truncate text-[13px] text-[var(--personal-text-secondary)]">
+            <p className="hidden min-w-0 text-[13px] text-[var(--personal-text-secondary)] min-[1700px]:block">
               Keyboard and mouse go to the laptop
             </p>
             <button

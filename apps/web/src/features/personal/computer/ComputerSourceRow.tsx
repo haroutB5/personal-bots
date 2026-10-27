@@ -88,13 +88,17 @@ export function ComputerSourceRow(props: {
   const sources: ReadonlyArray<ComputerSource> = ["browser", "desktop"];
   return (
     <div
-      className={cn("flex items-center gap-2", props.disabled && "opacity-[.45]", props.className)}
+      className={cn(
+        "flex flex-wrap items-center gap-2",
+        props.disabled && "opacity-[.45]",
+        props.className,
+      )}
     >
       <div
         role="tablist"
         aria-label="Computer view"
         className={cn(
-          "grid h-11 min-w-0 flex-1 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)]",
+          "grid h-11 min-w-[240px] flex-1 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)]",
           props.tabsClassName,
         )}
       >
