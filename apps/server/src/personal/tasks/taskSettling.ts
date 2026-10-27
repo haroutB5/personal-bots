@@ -430,6 +430,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
           nowMs: DateTime.toEpochMillis(now),
           providerRetry: session.providerRetry,
           attemptStartedAtMs: DateTime.toEpochMillis(attempt.startedAt),
+          providerName: session.providerName,
           activeTurnId: session.activeTurnId,
           sessionUpdatedAtMs: Date.parse(session.updatedAt),
         });
@@ -452,6 +453,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
                   instanceId: session.providerInstanceId,
                   reason: settlement.limit.reason,
                   retryAt: settlement.limit.retryAt,
+                  ...(settlement.limit.capacity === true ? { capacity: true } : {}),
                 },
               }),
           ...(settlement.resetAtMs === undefined

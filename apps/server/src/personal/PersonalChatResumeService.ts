@@ -27,6 +27,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
+import { isProviderCapacityError } from "./personalModelFallbackPolicy.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
 import { personalSchedulersOff } from "./schedulersSwitch.ts";
 import {
@@ -286,6 +287,7 @@ export const make = Effect.gen(function* () {
         providerName: session.providerName,
         reason: retry.reason,
         retryAt: retry.retryAt,
+        capacity: isProviderCapacityError(retry.reason),
       });
       if (hit.switched) {
         yield* sql`

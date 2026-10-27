@@ -49,6 +49,7 @@ import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import {
   decideFallback,
   decideSwitchBack,
+  FALLBACK_CAPACITY_HOLD_MS,
   FALLBACK_DEFAULT_HOLD_MS,
   FALLBACK_RECHECK_MS,
   FALLBACK_RESWITCH_COOLDOWN_MS,
@@ -222,6 +223,29 @@ describe("decideFallback", () => {
     expect(decideFallback(baseDecision({ retryAtMs: NOW + 30 * 86_400_000 }))).toEqual({
       kind: "switch",
       resetAtMs: null,
+    });
+  });
+
+  it("a capacity hit holds the fallback for a short window, not a whole reset", () => {
+    expect(decideFallback(baseDecision({ retryAtMs: null, capacityHit: true }))).toEqual({
+      kind: "switch",
+      resetAtMs: NOW + FALLBACK_CAPACITY_HOLD_MS,
+    });
+    // A reset the provider did report still wins.
+    expect(decideFallback(baseDecision({ capacityHit: true }))).toEqual({
+      kind: "switch",
+      resetAtMs: RESET,
+    });
+  });
+
+  it("a capacity hit may switch to another model on the same provider", () => {
+    const other = { instanceId: HOME.instanceId, model: "opencode/glm-5" } as ModelSelection;
+    expect(
+      decideFallback(baseDecision({ home: HOME, fallback: other, capacityHit: true })).kind,
+    ).toBe("switch");
+    expect(decideFallback(baseDecision({ home: HOME, fallback: other }))).toEqual({
+      kind: "none",
+      reason: "same_pool",
     });
   });
 });

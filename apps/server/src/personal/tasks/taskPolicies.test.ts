@@ -238,6 +238,32 @@ describe("limit policy", () => {
       expect(out).toMatchObject({ kind: "finish", category: "rate_limited" });
       expect(out).not.toHaveProperty("resetAtMs");
     });
+
+    it("treats a provider capacity error as a limit that carries its own reason", () => {
+      expect(
+        settleSessionError({
+          ...base,
+          lastError: "Selected model is at capacity. Please try a different model.",
+          providerName: "opencode",
+        }),
+      ).toEqual({
+        kind: "finish",
+        clearRenewalWait: false,
+        category: "rate_limited",
+        limit: {
+          provider: "opencode",
+          reason: "Selected model is at capacity. Please try a different model.",
+          capacity: true,
+        },
+      });
+      const overloaded = settleSessionError({ ...base, lastError: "model is overloaded" });
+      expect(overloaded).toMatchObject({
+        kind: "finish",
+        category: "rate_limited",
+        limit: { capacity: true },
+      });
+      expect(overloaded).not.toHaveProperty("limit.retryAt");
+    });
   });
 });
 

@@ -113,6 +113,7 @@ export const makeTaskDispatch = (
                     providerName: outcome.limit?.provider,
                     reason: outcome.limit?.reason,
                     retryAt: outcome.limit?.retryAt,
+                    capacity: outcome.limit?.capacity === true,
                   }),
             ),
           )

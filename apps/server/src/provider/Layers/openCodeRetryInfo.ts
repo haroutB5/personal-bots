@@ -25,7 +25,7 @@ export interface OpenCodeRetryStatus {
 }
 
 const RATE_LIMIT_PATTERN =
-  /rate.?limit|too many requests|\b429\b|quota|usage limit|free usage|limit (?:exceeded|reached)|exceeded .{0,30}limit/i;
+  /rate.?limit|too many requests|\b429\b|quota|usage limit|free usage|limit (?:exceeded|reached)|exceeded .{0,30}limit|at capacity|overloaded|try a different model/i;
 const REASON_MAX_LENGTH = 200;
 /** Anything smaller is a delay or garbage, not an epoch-ms time (2001-09-09). */
 const MIN_EPOCH_MS = 1_000_000_000_000;

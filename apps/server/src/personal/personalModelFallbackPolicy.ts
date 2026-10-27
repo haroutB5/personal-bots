@@ -28,6 +28,24 @@ export const FALLBACK_DEFAULT_HOLD_MS = 5 * 60 * 60_000;
 export const FALLBACK_MAX_RESET_MS = 8 * 24 * 60 * 60_000;
 /** After a switch back, a limit hit within this time is not switched again (no ping-pong). */
 export const FALLBACK_RESWITCH_COOLDOWN_MS = 60_000;
+/**
+ * How long a bot stays on its fallback after a provider capacity/overloaded
+ * error, which reports no reset. Capacity clears in minutes, not hours, so the
+ * bot re-checks its own model after this instead of waiting a whole window.
+ */
+export const FALLBACK_CAPACITY_HOLD_MS = 15 * 60_000;
+/**
+ * A provider refused the turn because the model itself is out of capacity
+ * ("Selected model is at capacity. Please try a different model.", "model
+ * overloaded"). Nothing is spent and no window resets: another model can run
+ * the work now, so this takes the same fallback path as a usage limit.
+ */
+export const PROVIDER_CAPACITY_PATTERN =
+  /(?:at|no|over|out of) capacity|capacity (?:exceeded|reached|limit)|overloaded|try a different model|model (?:is )?(?:busy|unavailable)/i;
+
+export function isProviderCapacityError(message: string | null | undefined): boolean {
+  return typeof message === "string" && PROVIDER_CAPACITY_PATTERN.test(message);
+}
 /** Only recent, successful readings can override a future recorded reset. */
 export const FALLBACK_RECOVERY_FRESH_MS = 2 * 60_000;
 
@@ -120,6 +138,8 @@ export interface FallbackDecisionInput {
   readonly reason: string | null | undefined;
   /** When the provider said the limit resets, epoch ms. */
   readonly retryAtMs: number | null;
+  /** The provider is at capacity (no window spent, no reset reported). */
+  readonly capacityHit?: boolean;
   readonly nowMs: number;
   /** The snapshot of the fallback's provider instance; undefined when it is not configured. */
   readonly fallbackProvider: Pick<ServerProvider, "enabled" | "usageLimits"> | undefined;
@@ -145,9 +165,11 @@ export function decideFallback(input: FallbackDecisionInput): FallbackDecision {
   ) {
     return { kind: "none", reason: "same_model" };
   }
-  if (input.home.instanceId === input.fallback.instanceId) {
+  if (input.home.instanceId === input.fallback.instanceId && input.capacityHit !== true) {
     // One provider, one account: the fallback shares the home limit unless the
     // provider split it by model family and the fallback is another family.
+    // A capacity hit spent nothing, so another model on the same provider is
+    // exactly what the provider asked for.
     const pool = limitPool(input.reason);
     if (pool === "shared" || modelFamily(input.fallback.model) === pool) {
       return { kind: "none", reason: "same_pool" };
@@ -163,7 +185,13 @@ export function decideFallback(input: FallbackDecisionInput): FallbackDecision {
   if (!usageRoom(input.fallbackProvider.usageLimits, input.fallback.model, input.nowMs).room) {
     return { kind: "none", reason: "fallback_limited" };
   }
-  return { kind: "switch", resetAtMs: resetTimeOf(input) };
+  const reported = resetTimeOf(input);
+  // A capacity hit spends nothing, so there is no reset to wait for: hold the
+  // fallback for a short, fixed window and re-check the home model after it.
+  if (reported === null && input.capacityHit === true) {
+    return { kind: "switch", resetAtMs: input.nowMs + FALLBACK_CAPACITY_HOLD_MS };
+  }
+  return { kind: "switch", resetAtMs: reported };
 }
 
 /**

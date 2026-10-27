@@ -142,6 +142,8 @@ export interface LimitHitInput {
   readonly reason?: string | null | undefined;
   /** When the provider says the limit resets (ISO). */
   readonly retryAt?: string | null | undefined;
+  /** The provider was at capacity rather than out of a usage window. */
+  readonly capacity?: boolean;
 }
 
 export interface LimitHitResult {
@@ -401,6 +403,7 @@ export const make = Effect.gen(function* () {
         onFallback: active !== undefined && peakActive === undefined,
         reason: input.reason,
         retryAtMs: Number.isFinite(retryAtMs) ? retryAtMs : null,
+        capacityHit: input.capacity === true,
         nowMs: now,
         fallbackProvider,
         fallbackProviderReady: providerReady(fallbackProvider),
@@ -464,7 +467,13 @@ export const make = Effect.gen(function* () {
             : `until it resets (about ${formatResumeTime(decision.resetAtMs, now)})`;
         yield* postNotice(
           input.threadId,
-          `${fromProvider} hit its usage limit. ${bot.name} is on ${modelLabel} ${until}.`,
+          input.capacity === true
+            ? `${fromProvider} is at capacity. ${bot.name} is on ${modelLabel} ${
+                decision.resetAtMs === null
+                  ? "and will retry its own model shortly"
+                  : `until about ${formatResumeTime(decision.resetAtMs, now)}`
+              }.`
+            : `${fromProvider} hit its usage limit. ${bot.name} is on ${modelLabel} ${until}.`,
           {
             notice: "model-fallback-on",
             provider: fromProvider,
