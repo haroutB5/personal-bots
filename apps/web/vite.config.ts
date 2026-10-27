@@ -13,6 +13,7 @@ import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
+import { routePreloadPlugin } from "./vite/routePreload";
 import { tailwindPlugins } from "./vite/tailwind";
 
 const repoEnv = loadRepoEnv();
@@ -165,6 +166,8 @@ function devCompressionPlugin(): Plugin {
 const LUCIDE_DYNAMIC_IMPORTER = /lucide-react[\\/]dist[\\/]esm[\\/]dynamicIconImports\.js$/;
 const LUCIDE_DYNAMIC_QUERY = "?lucide-dynamic";
 const LUCIDE_ICON_MODULE = /lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/][^\\/]+\.js/;
+const HAST_TO_HTML_MODULE =
+  /[\\/]node_modules[\\/](?:\.pnpm[\\/])?(?:hast-util-to-html|zwitch|html-void-elements|character-entities-legacy|character-entities-html4|stringify-entities)[@\\/]/;
 
 function lucideDynamicIconsPlugin(): Plugin {
   return {
@@ -219,6 +222,7 @@ export default defineConfig(() => {
         presets: [reactCompilerPreset()],
       }),
       tailwindPlugins(bundledDev),
+      routePreloadPlugin(),
     ],
     optimizeDeps: {
       include: [
@@ -330,6 +334,14 @@ export default defineConfig(() => {
                 name: "icons",
                 test: (id) => LUCIDE_ICON_MODULE.test(id) && !id.includes(LUCIDE_DYNAMIC_QUERY),
                 priority: 2,
+              },
+              // hast-util-to-html and its leaf helpers are shared by ChatMarkdown and
+              // Shiki. Left to the default split they land in the Shiki chunk, so
+              // every chat paid ~61 KB gzip of highlighter on its startup path.
+              {
+                name: "hast-to-html",
+                test: HAST_TO_HTML_MODULE,
+                priority: 1,
               },
             ],
           },

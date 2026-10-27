@@ -108,6 +108,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.sourceControlCloneRepository]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalBotsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalBotsThreadShells]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalBotsThreadFullText]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalBotsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalBotsDelete]: AuthOrchestrationOperateScope,

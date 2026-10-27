@@ -129,4 +129,17 @@ describe("archivedLiveThreadsKey", () => {
     expect(archivedLiveThreadsKey({ links: chats, shells: undefined })).toBeNull();
     expect(archivedLiveThreadsKey({ links: null, shells: [] })).toBeNull();
   });
+
+  it("refreshes for a live shell absent from a list that omits archived links", () => {
+    expect(
+      archivedLiveThreadsKey({
+        links: [chats[0]!],
+        shells: [shell("put-away", "running")],
+        omitsArchived: true,
+      }),
+    ).toBe("archived:put-away@turn-1");
+    expect(
+      archivedLiveThreadsKey({ links: [chats[0]!], shells: [shell("put-away", "running")] }),
+    ).toBeNull();
+  });
 });

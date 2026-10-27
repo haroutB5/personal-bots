@@ -65,6 +65,11 @@ export interface WorkLogEntry {
   viewedImagePath?: string;
   command?: string;
   rawCommand?: string;
+  /**
+   * The activity whose `command` a chat open cut to a preview
+   * (`data.commandTruncated`); `withFullToolCommand` swaps in the whole one.
+   */
+  commandPreviewOf?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
@@ -619,6 +624,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
   }
+  if (commandPreview.command && asRecord(payload?.data)?.commandTruncated === true) {
+    entry.commandPreviewOf = activity.id;
+  }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
   }
@@ -855,6 +863,7 @@ function mergeDerivedWorkLogEntries(
   const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const commandPreviewOf = next.command ? next.commandPreviewOf : previous.commandPreviewOf;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const toolSurface = next.toolSurface ?? previous.toolSurface;
   const toolIcon = next.toolIcon ?? previous.toolIcon;
@@ -865,13 +874,17 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  // The preview marker belongs to whichever row the command came from.
+  const { commandPreviewOf: _previousPreview, ...previousRest } = previous;
+  const { commandPreviewOf: _nextPreview, ...nextRest } = next;
   return {
-    ...previous,
-    ...next,
+    ...previousRest,
+    ...nextRest,
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
+    ...(commandPreviewOf ? { commandPreviewOf } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(toolSurface ? { toolSurface } : {}),
@@ -1142,6 +1155,24 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     command: null,
     rawCommand: null,
   };
+}
+
+/**
+ * `entry` with the whole command from `fullPayload` (the activity payload
+ * `personalBots.threadFullText` returned) in place of a preview.
+ */
+export function withFullToolCommand<T extends Pick<WorkLogEntry, "command" | "rawCommand">>(
+  entry: T,
+  fullPayload: unknown,
+): T {
+  const full = extractToolCommand(asRecord(fullPayload));
+  if (!full.command) return entry;
+  const { rawCommand: _preview, ...rest } = entry;
+  return {
+    ...rest,
+    command: full.command,
+    ...(full.rawCommand ? { rawCommand: full.rawCommand } : {}),
+  } as T;
 }
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {

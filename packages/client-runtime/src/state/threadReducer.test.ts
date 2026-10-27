@@ -615,6 +615,48 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("replaces a preview with the finished text and drops the flag", () => {
+      const preview = {
+        id: MessageId.make("thought"),
+        role: "reasoning" as const,
+        text: "Plan…",
+        textTruncated: true,
+        turnId: null,
+        streaming: false,
+        createdAt: baseThread.createdAt,
+        updatedAt: baseThread.updatedAt,
+      };
+      const event = (text: string, streaming: boolean) =>
+        applyThreadDetailEvent(
+          { ...baseThread, messages: [preview] },
+          {
+            ...baseEventFields,
+            sequence: 6,
+            occurredAt: baseThread.updatedAt,
+            aggregateKind: "thread",
+            aggregateId: baseThread.id,
+            type: "thread.message-sent",
+            payload: {
+              threadId: baseThread.id,
+              messageId: preview.id,
+              role: "reasoning",
+              text,
+              turnId: null,
+              streaming,
+              createdAt: baseThread.createdAt,
+              updatedAt: baseThread.updatedAt,
+            },
+          },
+        );
+      const full = event("Plan the whole thing", false);
+      if (full.kind !== "updated") throw new Error("expected update");
+      expect(full.thread.messages[0]!.text).toBe("Plan the whole thing");
+      expect(full.thread.messages[0]).not.toHaveProperty("textTruncated");
+      const delta = event(" more", true);
+      if (delta.kind !== "updated") throw new Error("expected update");
+      expect(delta.thread.messages[0]!.textTruncated).toBe(true);
+    });
+
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,

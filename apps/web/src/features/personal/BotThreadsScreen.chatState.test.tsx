@@ -46,6 +46,10 @@ vi.mock("~/components/ui/menu", () => ({
     </button>
   ),
 }));
+vi.mock("~/state/lazyThreadShells", () => ({
+  useLazyThreadShells: () => ({ pending: false }),
+  withLazyThreadShells: <A,>(atom: A) => atom,
+}));
 vi.mock("~/state/entities", () => ({ useThreadDetail: () => null, useThreadShells: () => [] }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
@@ -75,6 +79,7 @@ vi.mock("./PersonalOfflineBanner", () => ({ useLaptopOffline: () => false }));
 vi.mock("./usePersonalAutomation", () => ({ usePersonalTasks: () => ({ tasks: null }) }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./usePersonalBots", () => ({
+  usePersonalArchivedLinks: () => ({ data: null, isPending: false, isSuccess: false, error: null }),
   personalBotArchiveThread: {},
   usePersonalEnvironmentId: () => "env-1",
   usePersonalBotsList: () => ({

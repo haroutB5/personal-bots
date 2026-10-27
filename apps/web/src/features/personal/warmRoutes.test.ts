@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { PERF_OFF_STORAGE_KEY } from "./perfFlags";
-import { warmPersonalRoutes, WARM_ROUTES } from "./warmRoutes";
+import { afterPaintWhenQuiet, warmPersonalRoutes, WARM_ROUTES } from "./warmRoutes";
 
 function deps(overrides: { online?: () => boolean; saveData?: () => boolean } = {}) {
   let run: (() => void) | null = null;
@@ -31,6 +31,57 @@ function chunkRouter(loadRouteChunk: (route: never) => Promise<unknown> | undefi
 afterEach(() => vi.unstubAllGlobals());
 
 describe("warming the personal screens", () => {
+  it("waits for a painted frame before starting the quiet wait, and can cancel it", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let next = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++next, callback);
+      return next;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    const work = vi.fn();
+    const cancel = afterPaintWhenQuiet(work);
+    expect(frames.size).toBe(1);
+    frames.get(1)?.(0);
+    frames.delete(1);
+    expect(work).not.toHaveBeenCalled();
+    expect(frames.size).toBe(1);
+    cancel();
+    expect(frames.size).toBe(0);
+    expect(work).not.toHaveBeenCalled();
+  });
+
+  it("warms only after paint and the quiet and idle waits", () => {
+    vi.useFakeTimers();
+    try {
+      const frames: FrameRequestCallback[] = [];
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+      vi.stubGlobal("cancelAnimationFrame", () => undefined);
+      vi.stubGlobal("window", {
+        setTimeout,
+        clearTimeout,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      });
+      const work = vi.fn();
+      const cancel = afterPaintWhenQuiet(work);
+      vi.advanceTimersByTime(20_000);
+      expect(work).not.toHaveBeenCalled();
+      frames.shift()?.(0);
+      frames.shift()?.(0);
+      vi.advanceTimersByTime(7_999);
+      expect(work).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(5_000);
+      expect(work).toHaveBeenCalledOnce();
+      cancel();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preloads every screen, one at a time, once the app is quiet", async () => {
     const seen: string[] = [];
     let inFlight = 0;

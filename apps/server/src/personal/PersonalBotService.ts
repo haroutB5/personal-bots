@@ -215,7 +215,11 @@ export type PersonalFileRecord = Omit<PersonalFile, "url" | "previewUrl" | "expi
 export class PersonalBotService extends Context.Service<
   PersonalBotService,
   {
-    readonly list: () => Effect.Effect<PersonalBotsListResult, PersonalBotsError>;
+    readonly list: (input?: {
+      readonly omitArchived?: boolean | undefined;
+      readonly archivedBotId?: string | undefined;
+      readonly archivedThreadId?: string | undefined;
+    }) => Effect.Effect<PersonalBotsListResult, PersonalBotsError>;
     readonly create: (
       input: PersonalBotCreateInput,
     ) => Effect.Effect<PersonalBot, PersonalBotsError>;
@@ -519,7 +523,7 @@ export const make = Effect.gen(function* () {
     return projectId;
   });
 
-  const list: PersonalBotService["Service"]["list"] = () =>
+  const list: PersonalBotService["Service"]["list"] = (input) =>
     Effect.gen(function* () {
       // Lazy seeding covers servers that started before any provider was
       // configured. A seeding failure must never break listing bots.
@@ -530,7 +534,7 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
-      const [bots, threads, storedProjectId, groupPresence] = yield* Effect.all([
+      const [bots, threads, storedProjectId, groupPresence, archivedCountRows] = yield* Effect.all([
         repository.listBots().pipe(Effect.mapError(repositoryError("list"))),
         repository.listThreadLinks().pipe(Effect.mapError(repositoryError("list"))),
         repository
@@ -544,10 +548,25 @@ export const make = Effect.gen(function* () {
             }).pipe(Effect.as([])),
           ),
         ),
+        input?.omitArchived
+          ? repository
+              .listArchivedChatCounts()
+              .pipe(Effect.mapError(repositoryError("list archive counts")))
+          : Effect.succeed([]),
       ]);
+      const archivedCounts: Record<string, number> = {};
+      for (const row of archivedCountRows) archivedCounts[row.botId] = row.count;
       return {
         bots: withGroupPresence(bots, groupPresence),
-        threads: [...threads],
+        threads: input?.omitArchived
+          ? threads.filter(
+              (thread) =>
+                thread.archivedAt === null ||
+                thread.botId === input.archivedBotId ||
+                thread.threadId === input.archivedThreadId,
+            )
+          : [...threads],
+        ...(input?.omitArchived ? { archivedCounts } : {}),
         personalProjectId: Option.isSome(storedProjectId)
           ? ProjectId.make(storedProjectId.value)
           : null,

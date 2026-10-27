@@ -53,6 +53,10 @@ vi.mock("~/components/ui/menu", () => ({
   MenuPopup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
+vi.mock("~/state/lazyThreadShells", () => ({
+  useLazyThreadShells: () => ({ pending: false }),
+  withLazyThreadShells: <A,>(atom: A) => atom,
+}));
 vi.mock("~/state/entities", () => ({
   useThreadDetail: () => null,
   useThreadShells: () => [],
@@ -127,6 +131,7 @@ vi.mock("./PersonalOfflineBanner", () => ({ useLaptopOffline: () => false }));
 vi.mock("./usePersonalAutomation", () => ({ usePersonalTasks: () => ({ tasks: state.tasks }) }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./usePersonalBots", () => ({
+  usePersonalArchivedLinks: () => ({ data: null, isPending: false, isSuccess: false, error: null }),
   personalBotArchiveThread: ARCHIVE_COMMAND,
   usePersonalEnvironmentId: () => "env-1",
   usePersonalBotsList: () => ({

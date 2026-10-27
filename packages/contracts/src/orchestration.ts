@@ -623,6 +623,11 @@ export const OrchestrationMessage = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /**
+   * Set when a thread read sent only a preview of `text` (the `textPreviews`
+   * opt-in); `personalBots.threadFullText` returns the whole text.
+   */
+  textTruncated: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
 
@@ -1075,6 +1080,12 @@ export const OrchestrationSubscribeShellInput = Schema.Struct({
    * snapshot or catch-up replay and before it begins emitting live events.
    */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The full snapshot this subscription sends (when there is no cursor)
+   * leaves out idle archived bot chats, like the HTTP shell's
+   * `omitArchivedBotChats=true`. Live events still carry every thread.
+   */
+  omitArchivedBotChats: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
 
@@ -1082,6 +1093,12 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
   /** Opt in to reasoning roles; older clients receive system messages instead. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Opt in to previews: snapshots send finished reasoning and long tool
+   * commands outside a running turn as a preview, flagged `textTruncated` /
+   * `data.commandTruncated`, and the client fetches the rest on expand.
+   */
+  textPreviews: Schema.optionalKey(Schema.Boolean),
   /**
    * When provided, the server skips the initial snapshot frame and instead
    * replays events after this sequence before streaming live events. Clients

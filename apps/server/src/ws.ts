@@ -217,6 +217,13 @@ import {
   makePersonalSessionPrewarmer,
   type PersonalSessionPrewarmer,
 } from "./personal/sessionPrewarm.ts";
+import {
+  listBotThreadIds,
+  maybeSlimShellSnapshot,
+  pickThreadShells,
+} from "./personal/personalShellSlim.ts";
+import { serverPerfOptimizationOn } from "./personal/perfFlags.ts";
+import { maybeApplyThreadTextPreviews, readThreadFullText } from "./personal/threadTextPreviews.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalVoiceSampleService from "./personal/voiceCalls/PersonalVoiceSampleService.ts";
@@ -2027,6 +2034,7 @@ const makeWsRpcLayer = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
+            ...(serverPerfOptimizationOn("text-previews") ? { textPreviews: true } : {}),
           };
         });
 
@@ -2259,6 +2267,10 @@ const makeWsRpcLayer = (
               );
 
               const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
+                Effect.flatMap((snapshot) =>
+                  maybeSlimShellSnapshot(snapshot, input.omitArchivedBotChats === true),
+                ),
+                Effect.provideService(SqlClient.SqlClient, sql),
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
                 ),
@@ -2519,9 +2531,9 @@ const makeWsRpcLayer = (
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
-                  snapshot: projectThreadDetailSnapshot(
-                    snapshot.value,
-                    input.reasoningMessages === true,
+                  snapshot: maybeApplyThreadTextPreviews(
+                    projectThreadDetailSnapshot(snapshot.value, input.reasoningMessages === true),
+                    input.textPreviews === true,
                   ),
                 }),
                 afterSnapshot,
@@ -3438,10 +3450,45 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
-        [WS_METHODS.personalBotsList]: (_input) =>
-          observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(), {
+        [WS_METHODS.personalBotsList]: (input) =>
+          observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalBotsThreadShells]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsThreadShells,
+            Effect.gen(function* () {
+              const ids = yield* listBotThreadIds(input);
+              if (ids.size === 0) return { threads: [] };
+              const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+              return { threads: pickThreadShells(snapshot, ids) };
+            }).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.mapError(
+                (cause) =>
+                  new PersonalBotsError({
+                    message: "Could not load the bot's chats.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalBotsThreadFullText]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsThreadFullText,
+            readThreadFullText(input).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.mapError(
+                (cause) =>
+                  new PersonalBotsError({
+                    message: "Could not load the full text.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalBotsCreate]: (input) =>
           observeRpcEffect(WS_METHODS.personalBotsCreate, personalBots.create(input), {
             "rpc.aggregate": "server",

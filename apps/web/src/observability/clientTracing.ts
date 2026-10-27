@@ -10,6 +10,7 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import * as ClientTracer from "./clientTracer";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
+import { gzipRequestBodiesLayer } from "./traceGzip";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
@@ -25,7 +26,7 @@ const CLIENT_TRACING_RESOURCE = {
 } as const;
 
 const delegateRuntimeLayer = Layer.mergeAll(
-  primaryEnvironmentHttpLayer,
+  gzipRequestBodiesLayer.pipe(Layer.provide(primaryEnvironmentHttpLayer)),
   OtlpExporter.layerFlusher,
   OtlpSerialization.layerJson,
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),

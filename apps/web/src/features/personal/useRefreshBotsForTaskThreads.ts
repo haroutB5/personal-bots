@@ -91,15 +91,19 @@ export function unknownTaskBotsKey(input: {
 export function archivedLiveThreadsKey(input: {
   readonly links: ReadonlyArray<PersonalBotThread> | null;
   readonly shells: ReadonlyArray<EnvironmentThreadShell> | undefined;
+  readonly omitsArchived?: boolean;
 }): string | null {
-  const { links, shells } = input;
+  const { links, shells, omitsArchived } = input;
   if (links === null || shells === undefined) return null;
+  const known = new Set(links.map((link) => link.threadId as string));
   const archived = new Set<string>(
     links.filter((link) => link.archivedAt !== null).map((link) => link.threadId),
   );
-  if (archived.size === 0) return null;
   const live = shells
-    .filter((shell) => archived.has(shell.id) && isThreadLive(shell))
+    .filter(
+      (shell) =>
+        (archived.has(shell.id) || (omitsArchived && !known.has(shell.id))) && isThreadLive(shell),
+    )
     .map((shell) => `${shell.id}@${shell.latestTurn?.turnId ?? ""}`)
     .toSorted();
   return live.length === 0 ? null : `archived:${live.join(",")}`;
@@ -122,14 +126,15 @@ export function useRefreshBotsForTaskThreads(input: {
   readonly refresh: () => void;
   /** The thread shells, where the screen has them (see `archivedLiveThreadsKey`). */
   readonly shells?: ReadonlyArray<EnvironmentThreadShell>;
+  readonly omitsArchived?: boolean;
 }): void {
-  const { bots, links, tasks, refresh, shells } = input;
+  const { bots, links, tasks, refresh, shells, omitsArchived } = input;
   const now = Date.now();
   const unknownKey =
     [
       unknownTaskThreadsKey({ bots, links, tasks, now }),
       unknownTaskBotsKey({ bots, tasks, now }),
-      archivedLiveThreadsKey({ links, shells }),
+      archivedLiveThreadsKey({ links, shells, omitsArchived: omitsArchived ?? false }),
     ]
       .filter((part) => part !== null)
       .join("|") || null;

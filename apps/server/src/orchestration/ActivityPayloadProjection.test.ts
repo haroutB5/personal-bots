@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
-import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
+import {
+  projectActivityPayload,
+  projectThreadDetailSnapshot,
+} from "./ActivityPayloadProjection.ts";
 
 function activity(payload: Record<string, unknown>): OrchestrationThreadActivity {
   return {
@@ -342,5 +345,53 @@ describe("projectActivityPayload", () => {
     });
     const projected = projectActivityPayload(source);
     expect(projected.payload).toEqual(source.payload);
+  });
+});
+
+describe("projectThreadDetailSnapshot tool updates", () => {
+  const row = (id: string, kind: string, createdAt: string, toolCallId = "call-1") =>
+    ({
+      id,
+      tone: "tool",
+      kind,
+      summary: "Command run",
+      payload: { itemType: "command_execution", toolCallId, title: "Command run", data: {} },
+      turnId: "turn-1",
+      createdAt,
+    }) as unknown as OrchestrationThreadActivity;
+  const snapshot = (activities: OrchestrationThreadActivity[]) =>
+    ({
+      snapshotSequence: 1,
+      thread: { id: "thread-1", messages: [], activities },
+    }) as unknown as Parameters<typeof projectThreadDetailSnapshot>[0];
+  const ids = (activities: OrchestrationThreadActivity[]) =>
+    projectThreadDetailSnapshot(snapshot(activities)).thread.activities.map((entry) => entry.id);
+  const t0 = "2026-10-26T15:50:52.317Z";
+  const t1 = "2026-10-26T15:50:53.000Z";
+
+  it("drops an update its completion follows", () => {
+    expect(ids([row("u", "tool.updated", t0), row("c", "tool.completed", t1)])).toEqual(["c"]);
+  });
+
+  it("drops an update that sorts after a completion with the same timestamp", () => {
+    expect(ids([row("c", "tool.completed", t0), row("u", "tool.updated", t0)])).toEqual(["c"]);
+  });
+
+  it("keeps a later update of a call that reuses the identity", () => {
+    expect(ids([row("c", "tool.completed", t0), row("u", "tool.updated", t1)])).toEqual(["c", "u"]);
+  });
+
+  it("keeps the strict order behind the kill switch", () => {
+    const previous = process.env.PB_PERF_OFF;
+    process.env.PB_PERF_OFF = "tool-update-tie-dedup";
+    try {
+      expect(ids([row("c", "tool.completed", t0), row("u", "tool.updated", t0)])).toEqual([
+        "c",
+        "u",
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.PB_PERF_OFF;
+      else process.env.PB_PERF_OFF = previous;
+    }
   });
 });

@@ -23,6 +23,7 @@ import {
   useThreadStatus,
 } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
+import { useLazyThreadShells } from "../state/lazyThreadShells";
 import { environmentShell } from "../state/shell";
 import {
   buildThreadRouteParams,
@@ -82,7 +83,22 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const serverThreadDetail = useThreadDetail(serverThreadRef);
   const serverThreadStatus = useThreadStatus(serverThreadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
-  const bootstrapComplete = shell.data?.snapshot._tag === "Some";
+  const shellLoaded = shell.data?.snapshot._tag === "Some";
+  // The connect-time shell leaves idle archived bot chats out. A thread it
+  // lacks is asked for once (lazyThreadShells.ts) before it counts as missing.
+  const lazyShellKey =
+    shellLoaded && serverThreadRef !== null ? scopedThreadKey(serverThreadRef) : null;
+  const [lazyShellFor, setLazyShellFor] = useState<string | null>(null);
+  if (lazyShellKey !== null && serverThreadShell === null && lazyShellFor !== lazyShellKey) {
+    setLazyShellFor(lazyShellKey);
+  }
+  const lazyShell = useLazyThreadShells(
+    serverThreadRef?.environmentId ?? null,
+    serverThreadRef !== null && lazyShellFor === lazyShellKey
+      ? { threadIds: [serverThreadRef.threadId] }
+      : null,
+  );
+  const bootstrapComplete = shellLoaded && !lazyShell.pending;
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
