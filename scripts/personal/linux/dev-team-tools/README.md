@@ -1,6 +1,13 @@
 # Linux dev-team commands
 
-Install the five runtime files in `/home/harout/Claude/AI/dev-team/tools/`.
+Install the runtime files in `/home/harout/Claude/AI/dev-team/tools/` with
+`bash scripts/personal/linux/hbots-release/install.sh` from the hbots repo. It
+installs the runner, the five pinned helpers (`check-release-notes`,
+`check-gate-evidence`, `gate-common`, `ops-common`, `notify-release`) and
+`heavy-job.sh` from that same reviewed tree, each file written to a temp file
+and renamed into place, then writes `PINS.json` from what it installed. Because
+the runner and its pinned helpers are replaced together, an install can never
+restore an older helper the repo already fixed.
 These tools do not restart the live server. The collector writes staged evidence
 and release notes; DevOps must check it before activating a release.
 

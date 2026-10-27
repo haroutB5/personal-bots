@@ -10,7 +10,7 @@
     "tools/check-release-notes.mjs": "b1501431a607f4e960205f500eb7a7777649d59dacf6d3ee523a004ce5cd2d06",
     "tools/check-gate-evidence.mjs": "a397e27254c5dac7cbb7c042911ee9a7cc5de70f3adb8ea7dd5ce7fe640c4510",
     "tools/gate-common.mjs": "33f6bf330848aa42dc6eb1ee9d94cc7eefd509ba781e95dc2497f0faadbc7018",
-    "tools/ops-common.mjs": "0b5c7f4751e0fa09f9ef3a1e1542a8d450fe52c5a177f8df83fbd1a45490739e",
+    "tools/ops-common.mjs": "197fcb32a02ca5da3c6da2a0caeb4cfe22a05375e1d36b4dc6f14eb0f3cc6377",
     "tools/notify-release.mjs": "a7f1b2f9156ff4f362cb332bfcdeda0b0518b2b1a58897696d99dfff27b71942"
   }
 }
