@@ -192,6 +192,31 @@ registered as a virtual keyboard, and ignored SIGTERM.
   on a test root, outside the app. No app-owned source found; if it recurs, QA's exact URLs will
   settle it.
 
+## QA round 3 fix (27 Oct)
+
+QA's last failure on `8c2b0be031e1`: a user workspace change during a 20 s `computer_hold_key`
+did not interrupt the hold. The key kept repeating after the switch back and the next move
+succeeded.
+
+- **The driver** now ends a hold on a take-back as well as on the stop key (`interruptHeldInput`),
+  and lets go of everything pressed through the helper's `releaseall` before the hold's own
+  cleanup: a key, a chord and a held mouse button. The hold rejects with `taken_over` (the tool
+  says "Stopped: the user took over the PC...") instead of "Done." with the full duration. The
+  stop key keeps its own wording.
+- **The service** maps `taken_over` to the `stopped` kind (a refusal, not a failure) and drops its
+  held-button record through the new optional `onTakeBack` hook. The bot keeps its claim and its
+  next input is refused with `user_active` until a fresh screenshot acknowledges the take-back
+  (the M2 rule); a held `mouse_down` is let go at once and a later `mouse_up` says it is not held.
+- **Proof**: `qa/hbots-16698d/RESULT.md`. On empty workspace 9 with a focused raw-input logger, the
+  hold rejected 10 ms after the workspace dispatch and the logger received 0 repeats after the
+  switch back; the next move was refused, then allowed after a screenshot. Unit tests cover the
+  key, the held button, the service wording and the held-button bookkeeping.
+- **Banner environment (QA's B5 note)**: the live server has `OMARCHY_PATH` and
+  `DBUS_SESSION_BUS_ADDRESS` (checked by name in `/proc/755809/environ`), and the banner commands
+  run through `sessionEnv()`, which carries the whole service environment; a new test proves both
+  reach `notify-send`. The helper keeps its five-variable allowlist. The throwaway helper's
+  `cleanEnv()` was the gap QA saw; it now passes both through when present.
+
 ## Gate work
 
 - `scripts/personal/node/gates-linux.json`: the server gate now also runs `src/workspace` and
@@ -271,10 +296,19 @@ After the QA round 2 fixes, at head `8c2b0be031` on staged release `8c2b0be031e1
 
 - server-tests: PASS, 306 files and 3,480 tests passed, 6 skipped.
 - server-tsc: PASS (exit 0).
-- web-tests: PASS, 273 files and 3,136 tests.
+- web-tests: PASS, 273 files, 3,136 tests.
 - web-tsc: PASS (exit 0).
 - e2e: PASS, 12 of 12 journeys.
-- The five-gate run on the staged release `8c2b0be031e1` is the authoritative evidence below.
+- That five-gate run was QA's round-3 stage; it is superseded by the take-back fix below.
+
+After the take-back fix, at head `28432c7a07` on staged release `28432c7a07e7`:
+
+- server-tests: PASS, 306 files and 3,485 tests passed, 6 skipped.
+- server-tsc: PASS (exit 0).
+- web-tests: PASS, 273 files, 3,136 tests.
+- web-tsc: PASS (exit 0).
+- e2e: PASS, 12 of 12 journeys.
+- The five-gate run on the staged release `28432c7a07e7` is the authoritative evidence below.
 
 ## Ship-time steps (DevOps)
 
@@ -282,14 +316,14 @@ After the QA round 2 fixes, at head `8c2b0be031` on staged release `8c2b0be031e1
    `/home/harout/.personal-bots/run/hbots-bot-bin/opencode`. Install the drop-in before the
    restart, from the repo root:
    `mkdir -p ~/.config/systemd/user/hbots.service.d && cp scripts/personal/linux/hbots-release/systemd/10-opencode-path.conf ~/.config/systemd/user/hbots.service.d/ && systemctl --user daemon-reload`
-2. Staged release **`8c2b0be031e1`**, 1.66.98, `externals=copied`; gate evidence PASS with all
-   five gates including e2e (`~/.personal-bots/releases/8c2b0be031e1/gate-evidence.json`).
+2. Staged release **`28432c7a07e7`**, 1.66.98, `externals=copied`; gate evidence PASS with all
+   five gates including e2e (`~/.personal-bots/releases/28432c7a07e7/gate-evidence.json`).
    Install the runner from the pushed notes commit, then arm the idle waiter.
 3. No migration and no schema change: `--migration-before 114 --migration-after 114`, so the
    runner takes no backup.
 4. Rollback baseline is the live **1.66.97, `c1a7c4bd14c9`** (binary rollback only).
-5. `d3638e88100e`, `0d8171726875`, `078551baf6d2` and `082a4296c130` are superseded stages; they
-   go once this one passes.
+5. `d3638e88100e`, `0d8171726875`, `078551baf6d2`, `082a4296c130` and `8c2b0be031e1` are
+   superseded stages; they go once this one passes.
 
 ## What now works on the Omarchy laptop
 
@@ -308,7 +342,9 @@ After the QA round 2 fixes, at head `8c2b0be031` on staged release `8c2b0be031e1
   to `hyprland.conf`. The app's Stop is unchanged.
 - Take-back: a workspace change the bot did not make, or a focus change to a window it did not
   act on more than 300 ms after its last action, refuses the next input with `user_active`.
-  The refusal is one-shot: it stands until a fresh screenshot acknowledges it. The optional
+  The refusal is one-shot: it stands until a fresh screenshot acknowledges it. A take-back in the
+  middle of `computer_hold_key` (or while `computer_mouse_down` holds a button) now lets go of the
+  held input at once and ends the hold with "Stopped: the user took over the PC...". The optional
   `input` group watcher was not added (it needs a group change); the Hyprland event fallback is
   what ships.
 - Refusals: locked session, screen off, screensaver, Brave/Chromium focused (use the browser
@@ -350,15 +386,21 @@ source: "desktop", x?, y?, monitor?, chars? }`. `x`/`y` are 0..1 of the captured
 
 ## Proof
 
-- Server gate on `8c2b0be031e1`: 306 files, 3,480 tests passed, 6 skipped. Web gate: 273 files,
+- Server gate on `28432c7a07e7`: 306 files, 3,485 tests passed, 6 skipped. Web gate: 273 files,
   3,136 tests passed. Both typechecks clean, and the phone e2e passed 12 of 12 journeys. The
   committed gate evidence is the release proof.
-- New tests this round: visible-workspace filtering for the point guard (a browser on a hidden
-  workspace, the same one on the shown workspace, a pinned one, and the unknown-list fallback);
-  the embedded helper source matching `pbdesk-wl.c` and the XMLs byte for byte plus the B4/B7
-  markers; one banner per session (dismiss IPC, replace id, session end); the queue showing only
-  active waiters; an archived chat leaving the line with `thread-gone`; a help card whose task is
-  gone clearing on turn end; a stopped hold reporting "stopped"; "pressed 1 key"; the point
+- Take-back mid-hold, real desktop on empty workspace 9 (`qa/hbots-16698d/RESULT.md`): with a
+  focused raw-input logger and a 20 s `Down` hold, a workspace switch ended the hold 10 ms after
+  the dispatch, and the logger got 0 repeats after the switch back; the next move was refused
+  `user_active`, then allowed after a screenshot. Run twice; the helper and logger were gone
+  afterwards.
+- New tests this round: a held key and a held mouse button each let go on a workspace take-back
+  (release well under 500 ms, `releaseall` then the key's own up); the service reports `stopped`
+  with the taken-over wording and drops its held-button record; the banner command receives
+  `OMARCHY_PATH` and `DBUS_SESSION_BUS_ADDRESS` from the service environment. Earlier round tests:
+  visible-workspace filtering for the point guard; the embedded helper source matching
+  `pbdesk-wl.c` byte for byte plus the B4/B7 markers; one banner per session; the browser queue;
+  an archived chat leaving the line; a stopped hold reporting "stopped"; "pressed 1 key"; the point
   refusal's activity wording; and the activity card not repeating "refused".
 - Real desktop checks on empty workspace 9, from this tree, every process killed by a PID captured
   in the check (`qa/hbots-16698c/`):
@@ -402,7 +444,7 @@ release, into the app's state directory.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=8c2b0be031e117962d3c4241899681673a220fc3 release=8c2b0be031e1 json-sha256=a4dc86002039876bd5936d2c5cd8e844088bd1ecad5fe9c24d6dd0043ec6aa95 result=PASS -->
+<!-- gate-evidence:begin sha=28432c7a07e7ab87e388b7944dc53e69b5a1e97e release=28432c7a07e7 json-sha256=a6fc2a2b50b0ffc7d1b0377830209c0bf77a20e126a265b0d59bc8b6e4e5c692 result=PASS -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
