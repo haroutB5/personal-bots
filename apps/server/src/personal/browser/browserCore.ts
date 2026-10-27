@@ -199,6 +199,8 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
         readonly approval: EgressApproval | null;
       } | null;
       sensitiveOrigins: ReadonlySet<string>;
+      /** When the browser last closed; survives the teardown so the idle card can say it. */
+      lastStop: string | null;
     } = {
       viewerSequence: 0,
       humanInControl: (yield* lease.view).ownerType === "human",
@@ -211,6 +213,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       appliedViewport: null,
       activeHelp: null,
       sensitiveOrigins: new Set(),
+      lastStop: null,
     };
     st.controlViewerSeen = st.humanInControl;
     // Frames arrive on Playwright's callback, outside any effect, so the mask
@@ -640,6 +643,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
           egressPause: yield* egressPauseFor,
           dialog: page === null ? null : redactor.redact(page.pendingDialog()),
           lastAgent,
+          lastStop: st.lastStop,
           viewers: viewers.size,
         } satisfies PersonalBrowserStatus;
       });

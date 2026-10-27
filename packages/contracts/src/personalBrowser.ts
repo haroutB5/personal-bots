@@ -131,6 +131,12 @@ export const PersonalBrowserStatus = Schema.Struct({
    * is what "Back to chat" on the Computer tab steers by.
    */
   lastAgent: Schema.NullOr(PersonalBrowserAgentRef),
+  /**
+   * ISO-8601 UTC instant the browser last closed, kept while it is offline so
+   * the Computer tab's idle card can say "closed at HH:MM". Optional: an older
+   * server never sends it and the client falls back to the last activity.
+   */
+  lastStop: Schema.optional(Schema.NullOr(Schema.String)),
   viewers: Schema.Int,
 });
 export type PersonalBrowserStatus = typeof PersonalBrowserStatus.Type;
