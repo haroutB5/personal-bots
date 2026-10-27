@@ -63,6 +63,8 @@ const WINDOW_TTL_MS = 1_000;
 const LOCK_TTL_MS = 1_000;
 /** Which workspaces are on screen changes far less often than the clock ticks. */
 const VISIBLE_TTL_MS = 500;
+/** The banner's summary; also what Omarchy's notification IPC dismisses by. */
+const OVERLAY_SUMMARY = "hbots";
 
 /** Windows that hold credentials: never type into them (best effort, by class). */
 const PASSWORD_MANAGER_CLASSES = [
@@ -493,20 +495,31 @@ export class LinuxDesktopDriver implements DesktopDriver {
   }
 
   /**
-   * Closes the banner around one tool screenshot when it would otherwise be
-   * captured, then shows it again. The live view never does this: closing and
-   * reopening a notification five times a second would flicker.
+   * Takes the banner off the screen for one screenshot and puts it back after.
+   * Closing the notification is not enough: Omarchy's quickshell keeps a card
+   * the server closed on screen, so every screenshot used to leave another
+   * banner behind (QA's B5). Its own IPC drops the card; the close is the
+   * fallback for any other notification daemon.
    */
   private async withOverlayHidden<T>(run: () => Promise<T>): Promise<T> {
     if (this.overlayCapturable || this.overlayId === null) return run();
-    const id = this.overlayId;
-    this.overlayId = null;
-    await this.closeNotification(id);
+    await this.hideOverlay();
     try {
       return await run();
     } finally {
       if (!this.disposed && this.overlayText !== null) await this.showOverlay(this.overlayText);
     }
+  }
+
+  /** Removes the banner card; at most one survives a session. */
+  private async hideOverlay(): Promise<void> {
+    await runCommand("omarchy-shell", ["notifications", "dismiss", OVERLAY_SUMMARY], {
+      env: sessionEnv(this.session),
+      timeoutMs: 3_000,
+    }).catch(() => undefined);
+    const id = this.overlayId;
+    this.overlayId = null;
+    if (id !== null) await this.closeNotification(id);
   }
 
   private async closeNotification(id: number): Promise<void> {
@@ -530,6 +543,14 @@ export class LinuxDesktopDriver implements DesktopDriver {
   private async showOverlay(text: string): Promise<void> {
     this.overlayText = text;
     if (this.overlayId !== null) return;
+    // The first banner of a session clears cards a crash left behind, so a
+    // run never starts on top of yesterday's.
+    if (this.overlayReplaceId === null) {
+      await runCommand("omarchy-shell", ["notifications", "dismiss", OVERLAY_SUMMARY], {
+        env: sessionEnv(this.session),
+        timeoutMs: 3_000,
+      }).catch(() => undefined);
+    }
     try {
       const result = await runCommand(
         "notify-send",
@@ -542,8 +563,8 @@ export class LinuxDesktopDriver implements DesktopDriver {
           // Replacing the last banner is what keeps one on screen instead of
           // a stack of them after a run of screenshots (QA's L4).
           ...(this.overlayReplaceId === null ? [] : ["-r", String(this.overlayReplaceId)]),
-          "--app-name=hbots",
-          "hbots",
+          `--app-name=${OVERLAY_SUMMARY}`,
+          OVERLAY_SUMMARY,
           text,
         ],
         { env: sessionEnv(this.session), timeoutMs: 5_000 },
@@ -739,12 +760,10 @@ export class LinuxDesktopDriver implements DesktopDriver {
       }
       case "overlay": {
         if (params.show === false) {
-          const id = this.overlayId;
-          this.overlayId = null;
           // The session is over: the next one starts a fresh notification.
+          await this.hideOverlay();
           this.overlayReplaceId = null;
           this.overlayText = null;
-          if (id !== null) await this.closeNotification(id);
           return { shown: false };
         }
         this.overlayCapturable = params.capturable === true;
@@ -957,7 +976,13 @@ export class LinuxDesktopDriver implements DesktopDriver {
     this.events = null;
     const id = this.overlayId;
     this.overlayId = null;
-    if (id !== null) void this.closeNotification(id);
+    if (id !== null) {
+      void runCommand("omarchy-shell", ["notifications", "dismiss", OVERLAY_SUMMARY], {
+        env: sessionEnv(this.session),
+        timeoutMs: 3_000,
+      }).catch(() => undefined);
+      void this.closeNotification(id);
+    }
     void this.helper.dispose();
   }
 

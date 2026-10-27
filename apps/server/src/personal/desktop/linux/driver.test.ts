@@ -121,6 +121,35 @@ describe("LinuxDesktopDriver", () => {
     expect(banners[1]).toContain("-r 42");
   });
 
+  it("takes the banner off the screen for each screenshot and off for good at the end", async () => {
+    // Omarchy's quickshell keeps a card the server closed on screen, so a
+    // close-then-recreate left one banner behind per screenshot (QA's B5).
+    // Its own dismiss IPC is what removes it; the banner stays one card.
+    const offset = NodeFS.readFileSync(world.notifyLog, "utf8").split("\n").length - 1;
+    const driver = makeDriver();
+    try {
+      await driver.request("overlay", { text: "Assistant is using your PC" });
+      await driver.request("screenshot", { x: 0, y: 0, width: 100, height: 100 });
+      await driver.request("screenshot", { x: 0, y: 0, width: 100, height: 100 });
+      await driver.request("overlay", { show: false });
+    } finally {
+      driver.dispose();
+    }
+    const lines = NodeFS.readFileSync(world.notifyLog, "utf8")
+      .split("\n")
+      .slice(offset)
+      .filter((line) => line.trim().length > 0);
+    const dismisses = lines.filter((line) => line.startsWith("dismiss "));
+    // One before each of the two screenshots and one when the session ended;
+    // the first show also clears anything a crash left behind.
+    expect(dismisses.length).toBe(4);
+    expect(dismisses.every((line) => line.endsWith("hbots"))).toBe(true);
+    // Every re-show reuses the same replace id, so the cards stay one.
+    const banners = lines.filter((line) => line.includes("Assistant is using your PC"));
+    expect(banners.length).toBe(3);
+    expect(banners.slice(1).every((line) => line.includes("-r 42"))).toBe(true);
+  });
+
   it("reports the cursor in logical pixels", async () => {
     const driver = makeDriver();
     try {
