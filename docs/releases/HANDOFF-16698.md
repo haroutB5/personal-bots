@@ -303,7 +303,7 @@ After the QA round 2 fixes, at head `8c2b0be031` on staged release `8c2b0be031e1
 
 After the take-back fix, at head `28432c7a07` on staged release `28432c7a07e7`:
 
-- server-tests: PASS, 306 files and 3,485 tests passed, 6 skipped.
+- server-tests: PASS, 307 test files passed (6 skipped), 3,485 tests passed (6 skipped).
 - server-tsc: PASS (exit 0).
 - web-tests: PASS, 273 files, 3,136 tests.
 - web-tsc: PASS (exit 0).
