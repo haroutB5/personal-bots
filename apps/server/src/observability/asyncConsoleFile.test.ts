@@ -11,10 +11,7 @@ import {
   type AsyncConsoleTarget,
 } from "./asyncConsoleFile.ts";
 
-const settle = () => new Promise((resolve) => setImmediate(resolve));
-
-/** Waits until the file holds `count` lines (fs.write callbacks batched). */
-const waitForLines = async (filePath: string, count: number) => {
+/** Waits until the file holds `count` lines (fs.write callbacks batched). */const waitForLines = async (filePath: string, count: number) => {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     try {
@@ -75,12 +72,13 @@ describe("installAsyncConsoleFileRedirect", () => {
 
     expect(write("first line\n")).toBe(true);
     write("second line\n");
-    // The queue is drained by fs.write callbacks; a couple of macrotasks clear
-    // both chunks, and until then the loop was never held.
-    await settle();
-    await settle();
+    // Wait on the writer's own drain. Two setImmediates used to stand in for
+    // it, which was the flake: the fs.write callback lands on the threadpool's
+    // schedule, so under load both chunks were not on disk after two turns.
+    const writer = asyncConsoleWriterFor(stream);
+    expect(writer).toBeDefined();
+    await writer?.flush();
     expect(NodeFS.readFileSync(filePath, "utf8")).toBe("first line\nsecond line\n");
-    expect(asyncConsoleWriterFor(stream)).toBeDefined();
   });
 
   it("keeps a chunk order that matches the call order under load", async () => {
