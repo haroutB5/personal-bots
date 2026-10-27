@@ -292,7 +292,11 @@ export function DesktopPane(props: {
             role={notice === null ? undefined : "status"}
             className={cn(
               "min-w-0 text-[13px] text-[var(--personal-text-secondary)]",
-              rail ? "line-clamp-5 text-[12px] leading-4" : "flex-1 truncate",
+              rail
+                ? "line-clamp-5 text-[12px] leading-4"
+                : inControl
+                  ? "flex-1 leading-4"
+                  : "flex-1 truncate",
             )}
           >
             {statusLine}

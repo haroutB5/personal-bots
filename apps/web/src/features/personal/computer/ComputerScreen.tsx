@@ -184,10 +184,9 @@ const NO_DESK_CONTROL: DesktopControlState = {
 };
 /** From 1100 px the Computer page is a stage column and a 340 px rail. */
 const D2_HEADER = "min-[1100px]:col-start-1 min-[1100px]:row-start-1";
-const D2_HELP = "min-[1100px]:col-start-2 min-[1100px]:row-start-1";
 const D2_ROW = "min-[1100px]:col-start-1 min-[1100px]:row-start-2";
 const D2_STAGE = "min-[1100px]:col-start-1 min-[1100px]:row-start-3";
-const D2_RAIL = "min-[1100px]:col-start-2 min-[1100px]:row-span-3 min-[1100px]:row-start-2";
+const D2_RAIL = "min-[1100px]:col-start-2 min-[1100px]:row-span-3 min-[1100px]:row-start-1";
 const HEADER_DOT: Record<HeaderTone, string> = {
   live: "var(--personal-live)",
   pending: "var(--personal-review)",
@@ -795,7 +794,7 @@ function ComputerScreenView({
         onAllow={() => void decideEgress("approve")}
         onRefuse={() => void decideEgress("refuse")}
         onTakeControl={takeOver}
-        className={cn("mt-1", !panel && D2_HELP)}
+        className={cn("mt-1", widePage && "min-[1100px]:mt-0")}
       />
     ) : help !== null ? (
       <ComputerHelpCard
@@ -808,7 +807,7 @@ function ComputerScreenView({
         busy={takingShown}
         onTakeOver={takeOver}
         onOpenChat={() => botChatTarget({ botId: help.botId, threadId: help.threadId })}
-        className={cn("mt-1", !panel && D2_HELP)}
+        className={cn("mt-1", widePage && "min-[1100px]:mt-0")}
       />
     ) : null;
 
@@ -1054,10 +1053,11 @@ function ComputerScreenView({
         )}
       >
         {headerBlock}
-        {helpBlock}
+        {widePage ? null : helpBlock}
         {rowBlock}
         {stage}
         <div className={cn(fullScreen ? "hidden" : "flex flex-col", !panel && D2_RAIL)}>
+          {widePage ? helpBlock : null}
           {driverBlock}
           {actionsBlock}
           {activityBlock}
