@@ -88,6 +88,33 @@ describe("LinuxDesktopDriver", () => {
     }
   });
 
+  it("reports the cursor in logical pixels", async () => {
+    const driver = makeDriver();
+    try {
+      expect(await driver.request("cursor")).toEqual({ x: 100, y: 200 });
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("serves live-view frames with the monitor's logical size", async () => {
+    const driver = makeDriver();
+    try {
+      const frame = await driver.request("frame", {
+        maxWidth: 768,
+        maxHeight: 480,
+        quality: 70,
+      });
+      expect(frame.screenWidth).toBe(1536);
+      expect(frame.screenHeight).toBe(960);
+      expect(frame.regionWidth).toBe(1536);
+      expect(String(frame.data).length).toBeGreaterThan(0);
+      expect(frame.locked).toBe(false);
+    } finally {
+      driver.dispose();
+    }
+  });
+
   it("maps every pointer and keyboard primitive to the helper protocol", async () => {
     const driver = makeDriver();
     try {
