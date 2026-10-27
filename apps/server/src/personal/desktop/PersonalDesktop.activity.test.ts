@@ -1,15 +1,12 @@
 // @effect-diagnostics globalTimers:off - the fake driver is promise-based, like the real one.
 import { describe, expect, it } from "@effect/vitest";
-import type {
-  PersonalDesktopActivityEvent,
-  PersonalDesktopStreamItem,
-} from "@t3tools/contracts";
+import type { PersonalDesktopActivityEvent, PersonalDesktopStreamItem } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import type { DesktopDriver } from "./DesktopHelper.ts";
+import { DesktopHelperError, type DesktopDriver } from "./DesktopHelper.ts";
 import { makeDesktopService } from "./PersonalDesktop.ts";
 
 const ada = { threadId: "t-ada", botId: "b-ada", botName: "Ada" };
@@ -24,9 +21,7 @@ class FakeDriver implements DesktopDriver {
   dispose() {}
 }
 
-const nextEvent = (service: {
-  readonly activity: Stream.Stream<PersonalDesktopStreamItem>;
-}) =>
+const nextEvent = (service: { readonly activity: Stream.Stream<PersonalDesktopStreamItem> }) =>
   Effect.gen(function* () {
     const head = yield* service.activity.pipe(
       Stream.dropWhile((item) => item._tag === "Recent"),
@@ -93,6 +88,28 @@ describe("desktop activity", () => {
       expect(event.status).toBe("failed");
       expect(event.kind).toBe("click");
       expect(event.x).toBeUndefined();
+    }),
+  );
+
+  it.live("records a take-back as refused, and says which kind", () =>
+    Effect.gen(function* () {
+      const driver = new FakeDriver();
+      const { service } = yield* makeDesktopService({ driver });
+      yield* service
+        .act(ada, "click", () =>
+          Promise.reject(new DesktopHelperError("user_active", "The screensaver is up")),
+        )
+        .pipe(Effect.exit);
+      const head = yield* service.activity.pipe(Stream.take(1), Stream.runHead);
+      if (Option.isNone(head) || head.value._tag !== "Recent") return;
+      const event = head.value.events.at(-1) as PersonalDesktopActivityEvent;
+      // The PC said no: the feed reads "refused", not "failed" (QA's L3).
+      expect(event).toMatchObject({
+        kind: "click",
+        summary: "click refused (user active)",
+        status: "failed",
+        outcome: "refused",
+      });
     }),
   );
 

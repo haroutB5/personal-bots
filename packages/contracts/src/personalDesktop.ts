@@ -101,6 +101,11 @@ export const PersonalDesktopActivityEvent = Schema.Struct({
   kind: PersonalDesktopActivityKind,
   summary: Schema.String,
   status: Schema.Literals(["succeeded", "failed"]),
+  /**
+   * Why a step did not succeed when it was not a failure: the PC refused the
+   * input (`refused`). Optional so an older client still reads the event.
+   */
+  outcome: Schema.optional(Schema.Literals(["paused", "refused"])),
   /** ISO-8601 UTC instant from the host clock. */
   at: Schema.String,
   threadId: Schema.NullOr(ThreadId),

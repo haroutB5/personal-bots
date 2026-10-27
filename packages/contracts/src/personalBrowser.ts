@@ -169,6 +169,12 @@ export const PersonalBrowserActivityEvent = Schema.Struct({
   kind: PersonalBrowserActivityKind,
   summary: Schema.String,
   status: Schema.Literals(["succeeded", "failed"]),
+  /**
+   * Why a step did not succeed when it was not a failure: a sensitive pause
+   * (`paused`) or the PC refusing input (`refused`). Optional so an older
+   * client still reads the event.
+   */
+  outcome: Schema.optional(Schema.Literals(["paused", "refused"])),
   /** ISO-8601 UTC instant from the host clock. */
   at: Schema.String,
   threadId: Schema.NullOr(ThreadId),

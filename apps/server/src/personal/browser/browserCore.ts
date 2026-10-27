@@ -54,6 +54,9 @@ import {
 import type { PersonalBrowserOptions } from "./PersonalBrowser.ts";
 import type { PersonalBrowser } from "./PersonalBrowser.ts";
 
+/** How a paused sensitive step starts its sentence; the activity feed uses it too. */
+export const EGRESS_PAUSE_PREFIX = "Paused:";
+
 export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
     const options = rawOptions;
@@ -430,7 +433,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
         return yield* Effect.fail(
           new HostOperationError(
             "PreviewAutomationExecutionError",
-            `Paused: this could carry what you saw on ${approval.sources.join(", ")} (a site the user marked sensitive) to ${approval.destination}. Call request_browser_help now with a one-line reason, tell the user in one sentence what you want to do, then end your turn. You continue automatically if they approve; do not try another route.`,
+            `${EGRESS_PAUSE_PREFIX} this could carry what you saw on ${approval.sources.join(", ")} (a site the user marked sensitive) to ${approval.destination}. Call request_browser_help now with a one-line reason, tell the user in one sentence what you want to do, then end your turn. You continue automatically if they approve; do not try another route.`,
           ),
         );
       });

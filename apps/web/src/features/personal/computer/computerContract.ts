@@ -144,6 +144,8 @@ export function isLinuxDesktop(status: PersonalDesktopStatus | null): boolean {
 /** Which timeline an activity event came from. */
 export type ActivitySource = ComputerSource;
 
+export type ActivityOutcome = "paused" | "refused" | null;
+
 export interface ActivityPoint {
   readonly x: number;
   readonly y: number;
@@ -156,12 +158,19 @@ export interface ComputerActivityEvent {
   readonly kind: string;
   readonly summary: string;
   readonly status: "succeeded" | "failed";
+  /** A question or a refusal, when the step was neither a success nor a fault. */
+  readonly outcome?: ActivityOutcome;
   readonly at: string;
   readonly threadId: string | null;
   readonly botName: string | null;
   readonly botId: string | null;
   readonly point: ActivityPoint | null;
   readonly chars: number | null;
+}
+
+/** An older server sends no outcome; anything unexpected is ignored. */
+function asOutcome(value: unknown): ActivityOutcome {
+  return value === "paused" || value === "refused" ? value : null;
 }
 
 export function readBrowserEvent(event: PersonalBrowserActivityEvent): ComputerActivityEvent {
@@ -175,6 +184,7 @@ export function readBrowserEvent(event: PersonalBrowserActivityEvent): ComputerA
     kind: event.kind,
     summary: event.summary,
     status: event.status,
+    outcome: asOutcome(record.outcome),
     at: event.at,
     threadId: event.threadId,
     botName: event.botName,
@@ -192,6 +202,7 @@ export function readDesktopEvent(event: PersonalDesktopActivityEvent): ComputerA
     kind: event.kind,
     summary: event.summary,
     status: event.status,
+    outcome: asOutcome(event.outcome),
     at: event.at,
     threadId: event.threadId,
     botName: event.botName,

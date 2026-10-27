@@ -53,6 +53,17 @@ describe("describeActivity", () => {
     expect(row.icon).toBe("download");
   });
 
+  it("reads a paused or refused step as neither a success nor a fault", () => {
+    const paused = describeActivity(event({ status: "failed", outcome: "paused" }));
+    expect(paused).toMatchObject({ failed: true, outcome: "paused" });
+    const refused = describeActivity(
+      event({ status: "failed", outcome: "refused", source: "desktop" }),
+    );
+    expect(refused).toMatchObject({ failed: true, outcome: "refused" });
+    // An older server sends no outcome at all.
+    expect(describeActivity(event({ status: "failed" })).outcome).toBeNull();
+  });
+
   it("keeps an acronym as written", () => {
     expect(describeActivity(event({ summary: "PDF saved" })).text).toBe("PDF saved");
   });

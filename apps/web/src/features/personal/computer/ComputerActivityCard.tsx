@@ -58,7 +58,16 @@ function Row(props: {
       <span className="min-w-0 flex-1 truncate text-[14px]">
         {row.actor === null ? null : <b className="font-semibold">{row.actor} </b>}
         {row.text}
-        {row.failed ? <span className="text-[var(--personal-danger)]"> · failed</span> : null}
+        {row.outcome !== null ? (
+          <span
+            className={
+              row.failed ? "text-[var(--personal-danger)]" : "text-[var(--personal-text-secondary)]"
+            }
+          >
+            {" "}
+            · {row.outcome}
+          </span>
+        ) : null}
         {props.more ? (
           <span className="text-[var(--personal-text-secondary)]"> · +{props.more} more</span>
         ) : null}

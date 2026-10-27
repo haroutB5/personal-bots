@@ -17,6 +17,8 @@ export interface ActivityRow {
   /** The summary without the actor, e.g. "clicked Continue". */
   readonly text: string;
   readonly failed: boolean;
+  /** "paused" or "refused" when the step did not fail outright. */
+  readonly outcome: "paused" | "refused" | null;
   readonly at: string;
   readonly icon: ActivityIcon;
   readonly threadId: string | null;
@@ -122,6 +124,7 @@ export function describeActivity(event: ComputerActivityEvent): ActivityRow {
     actor,
     text,
     failed: event.status === "failed",
+    outcome: event.outcome ?? null,
     at: event.at,
     icon: iconFor(event),
     threadId: event.threadId,

@@ -472,6 +472,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
       readonly y?: number | undefined;
       readonly monitor?: number | undefined;
       readonly chars?: number | undefined;
+      readonly outcome?: "paused" | "refused" | undefined;
     }) => {
       const event: PersonalDesktopActivityEvent = {
         id: NodeCrypto.randomUUID(),
@@ -487,6 +488,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         ...(input.y === undefined ? {} : { y: input.y }),
         ...(input.monitor === undefined ? {} : { monitor: input.monitor }),
         ...(input.chars === undefined ? {} : { chars: input.chars }),
+        ...(input.outcome === undefined ? {} : { outcome: input.outcome }),
       };
       recentActivity.push(event);
       if (recentActivity.length > recentLimit) {
@@ -818,9 +820,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         if (driver === null) {
           return yield* new PersonalDesktopActionError({
             kind: "unavailable",
-            reason:
-              options.unavailableReason ??
-              "Desktop control is not available on this server.",
+            reason: options.unavailableReason ?? "Desktop control is not available on this server.",
           });
         }
         yield* acquire(claimant);
@@ -877,10 +877,17 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                 : failure;
             const kind = OPERATION_KIND[operation];
             if (kind !== undefined) {
+              // A lock, a take-back or the stop key is the PC saying no, not a
+              // broken action: the feed says "refused" (QA's L3).
+              const refused =
+                reported.kind === "user_active" ||
+                reported.kind === "stopped" ||
+                reported.kind === "locked";
               recordActivity({
                 kind,
-                summary: `${operation.replace(/_/g, " ")} failed (${reported.kind})`,
+                summary: `${operation.replace(/_/g, " ")} ${refused ? "refused" : "failed"} (${reported.kind.replace(/_/g, " ")})`,
                 status: "failed",
+                ...(refused ? { outcome: "refused" as const } : {}),
                 threadId: claimant.threadId,
                 botId: claimant.botId,
                 botName: claimant.botName,
@@ -960,8 +967,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
             throw new PersonalDesktopActionError({
               kind: "unavailable",
               reason:
-                options.unavailableReason ??
-                "Remote control is not available on this server.",
+                options.unavailableReason ?? "Remote control is not available on this server.",
             });
           }
           const info = await driver.request("info");
@@ -1181,7 +1187,8 @@ export const layer = Layer.effect(
       if (Exit.isSuccess(attempt)) driver = attempt.value;
       else {
         const cause = Exit.isFailure(attempt) ? attempt.cause : null;
-        unavailableReason = cause === null ? "The Linux desktop is unavailable." : Cause.pretty(cause);
+        unavailableReason =
+          cause === null ? "The Linux desktop is unavailable." : Cause.pretty(cause);
       }
     }
     yield* Effect.addFinalizer(() => Effect.sync(() => driver?.dispose()));

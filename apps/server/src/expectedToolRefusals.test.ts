@@ -10,6 +10,7 @@ import {
   downgradeExpectedRefusals,
   EXPECTED_TOOL_REFUSAL_TAGS,
   expectedToolRefusals,
+  toolFailureText,
 } from "./expectedToolRefusals.ts";
 
 class Refusal extends Error {
@@ -52,6 +53,29 @@ const logged = (effect: Effect.Effect<unknown, Error>) => {
 
 /** The way the MCP toolkit runner logs a failed tool call. */
 const toolFailed = (error: Error) => Effect.fail(error).pipe(Effect.tapCause(Effect.logError));
+
+describe("tool failure text", () => {
+  it("names the tool and the expected argument for a wrong input", () => {
+    const error = AiError.make({
+      module: "Toolkit",
+      method: "computer_key.handle",
+      reason: new AiError.ToolParameterValidationError({
+        toolName: "computer_key",
+        description: 'Expected string, got 5\nat ["keys"]',
+      }),
+    });
+    const text = toolFailureText(error);
+    expect(text).toBe('The computer_key call was refused: Expected string, got 5 at ["keys"]');
+  });
+
+  it("keeps a declared refusal's own sentence", () => {
+    expect(toolFailureText(new Refusal("Stopped", "The user pressed stop."))).toBe(
+      "The user pressed stop.",
+    );
+    expect(toolFailureText(new Error("The page did not load."))).toBe("The page did not load.");
+    expect(toolFailureText({})).toBeNull();
+  });
+});
 
 describe("expected tool refusals in the log", () => {
   it.effect("save_memory schema refusals are WARN without raw input or stack", () =>

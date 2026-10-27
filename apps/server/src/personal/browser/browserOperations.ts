@@ -58,7 +58,7 @@ import {
   hostOf,
   withoutTypedSecrets,
 } from "./browserShared.ts";
-import type { BrowserCore } from "./browserCore.ts";
+import { EGRESS_PAUSE_PREFIX, type BrowserCore } from "./browserCore.ts";
 import type { BrowserLaunch } from "./browserLaunch.ts";
 import type { BrowserTabs } from "./browserTabs.ts";
 import type { PersonalBrowser } from "./PersonalBrowser.ts";
@@ -673,10 +673,16 @@ export const makeBrowserOperations = (
           tab.timeline.splice(0, tab.timeline.length - TIMELINE_LIMIT);
       }
       const bot = yield* botForThread(request.threadId);
+      const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
+      // The message alone: String(error) would prefix the error's own name.
+      const failureMessage =
+        failure === null ? "" : failure instanceof Error ? failure.message : String(failure);
       yield* recordActivity({
         kind: request.operation as PersonalBrowserActivityKind,
         summary: describeOperation(request, tab),
         status: Exit.isSuccess(exit) ? "succeeded" : "failed",
+        // A sensitive pause is a question, not a broken step.
+        ...(failureMessage.startsWith(EGRESS_PAUSE_PREFIX) ? { outcome: "paused" as const } : {}),
         threadId: request.threadId,
         botName: bot?.name ?? null,
       });
