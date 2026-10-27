@@ -198,6 +198,7 @@ import { usePrewarmChatSession } from "./usePrewarmChatSession";
 import { mergeTaskLists } from "./taskPresentation";
 import {
   personalBotArchiveThread,
+  usePersonalArchivedLinks,
   usePersonalBotsList,
   usePersonalEnvironmentId,
 } from "./usePersonalBots";
@@ -267,9 +268,26 @@ export function ConversationScreen({
   // An archived chat opens read-only: the history, an "Archived" bar with
   // Unarchive and Delete in the composer's place, and nothing that starts a
   // turn or a provider session.
-  const link = list.data?.threads.find((candidate) => candidate.threadId === threadIdParam) ?? null;
-  const archived =
+  const activeLink =
+    list.data?.threads.find((candidate) => candidate.threadId === threadIdParam) ?? null;
+  const needsArchiveLookup = list.data?.archivedCounts !== undefined && activeLink === null;
+  const archivedLinks = usePersonalArchivedLinks(
+    environmentId,
+    needsArchiveLookup ? { threadId: threadIdParam } : null,
+    list.dataUpdatedAt,
+  );
+  const link =
+    activeLink ??
+    archivedLinks.data?.threads.find((candidate) => candidate.threadId === threadIdParam) ??
+    null;
+  // Read-only only while the loaded list says this chat is not an active one
+  // and its archived link is still on the way. Before the list arrives the
+  // chat's shell decides, as before slim lists, so a cold deep link's composer
+  // does not wait for personalBots.list.
+  const archiveUnresolved = needsArchiveLookup && !archivedLinks.isSuccess;
+  const isArchived =
     (threadShell?.archivedAt ?? null) !== null || (link?.archivedAt ?? null) !== null;
+  const archived = archiveUnresolved || isArchived;
   // The connect-time shell leaves idle archived chats out: load this one's.
   useLazyThreadShells(
     environmentId,
@@ -277,7 +295,7 @@ export function ConversationScreen({
   );
   // Reopened by a relaunch but deleted or archived since (deleting a bot
   // deletes its chats): back to Bots without a word.
-  useLeaveResumedChatIfGone(`/bots/${botId}/${threadIdParam}`, status === "deleted" || archived);
+  useLeaveResumedChatIfGone(`/bots/${botId}/${threadIdParam}`, status === "deleted" || isArchived);
 
   // A cold deep link (notification tap, PWA relaunch) makes this the first
   // screen: nothing else has loaded the bots list, and a query that failed
@@ -1555,7 +1573,10 @@ export function ConversationScreen({
             {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
             {/* The one door to the chat's own actions (pin, snooze, rename, archive...): the sheet
                 holds them, so the menu keeps no copies. */}
-            <MenuItem onClick={() => openSettings(threadIdParam, menuButtonRef.current)}>
+            <MenuItem
+              disabled={archiveUnresolved}
+              onClick={() => openSettings(threadIdParam, menuButtonRef.current)}
+            >
               Chat settings…
               <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)]">
                 {chatSettingsHint(chipsShown)}
@@ -1563,7 +1584,7 @@ export function ConversationScreen({
             </MenuItem>
             {/* The second door to a call, and the one that also works while the
                 field has text in it (spec 2). */}
-            {bot !== null && voice !== null && botVoiceCallsEnabled(bot) ? (
+            {!archived && bot !== null && voice !== null && botVoiceCallsEnabled(bot) ? (
               <MenuItem
                 disabled={voice.call !== null && voice.call.threadId !== threadId}
                 onClick={startVoiceCall}
@@ -1584,6 +1605,7 @@ export function ConversationScreen({
                   environmentId={environmentId}
                   botId={botId}
                   links={list.data.threads}
+                  archivedCount={list.data.archivedCounts?.[botId]}
                 />
               ) : null}
             </MenuItem>
@@ -1721,7 +1743,20 @@ export function ConversationScreen({
               onHide={() => setPersonalPreference("showRoutinesStrip", false)}
             />
           ) : null}
-          {archived ? (
+          {archiveUnresolved ? (
+            <div className="p-4 text-sm text-[var(--personal-text-secondary)]" role="status">
+              {archivedLinks.error ? (
+                <>
+                  Could not check this chat.{" "}
+                  <button type="button" onClick={archivedLinks.refresh}>
+                    Try again
+                  </button>
+                </>
+              ) : (
+                "Loading chat…"
+              )}
+            </div>
+          ) : archived ? (
             <ArchivedChatBar
               hint="Unarchive to send messages again."
               unarchiving={unarchiving}

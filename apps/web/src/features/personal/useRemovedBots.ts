@@ -12,7 +12,7 @@ import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { commandFailureMessage } from "./commandFeedback";
-import { personalBotsList } from "./usePersonalBots";
+import { personalBotsList, personalBotsListInput } from "./usePersonalBots";
 
 /**
  * Bots a team lead removed (soft delete: chats, memory and settings kept).
@@ -32,7 +32,9 @@ type Registry = { refresh: (atom: Atom.Atom<unknown>) => void };
 const refreshBoth = (target: { readonly environmentId: EnvironmentId }, registry: Registry) =>
   Effect.sync(() => {
     registry.refresh(personalRemovedBotsList({ environmentId: target.environmentId, input: {} }));
-    registry.refresh(personalBotsList({ environmentId: target.environmentId, input: {} }));
+    registry.refresh(
+      personalBotsList({ environmentId: target.environmentId, input: personalBotsListInput() }),
+    );
   });
 
 export const personalBotRestore = createEnvironmentRpcCommand(connectionAtomRuntime, {

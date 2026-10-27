@@ -79,6 +79,10 @@ export type PerfOptimization =
   // list, an open archived chat and search load theirs on demand
   // (lazyThreadShells.ts, 1.67.x); off: the full shell at every connect, as before.
   | "shell-omit-archived"
+  // personalBots.list leaves out archived chat links and sends a count per bot;
+  // a bot's chat list or an archived deep link fetches its own on demand
+  // (usePersonalArchivedLinks, 1.66.x); off: every link at every connect, as before.
+  | "archive-links"
   // Chat opens get previews of finished reasoning and long tool commands
   // outside a running turn; the classic timeline loads the rest on expand
   // (threadFullText.ts, 1.67.x); off: whole text in every chat open, as before.

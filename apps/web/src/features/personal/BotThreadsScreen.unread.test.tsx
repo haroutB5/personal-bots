@@ -131,6 +131,7 @@ vi.mock("./PersonalOfflineBanner", () => ({ useLaptopOffline: () => false }));
 vi.mock("./usePersonalAutomation", () => ({ usePersonalTasks: () => ({ tasks: state.tasks }) }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./usePersonalBots", () => ({
+  usePersonalArchivedLinks: () => ({ data: null, isPending: false, isSuccess: false, error: null }),
   personalBotArchiveThread: ARCHIVE_COMMAND,
   usePersonalEnvironmentId: () => "env-1",
   usePersonalBotsList: () => ({

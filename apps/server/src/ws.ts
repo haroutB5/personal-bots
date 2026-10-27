@@ -3450,8 +3450,8 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
-        [WS_METHODS.personalBotsList]: (_input) =>
-          observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(), {
+        [WS_METHODS.personalBotsList]: (input) =>
+          observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(input), {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.personalBotsThreadShells]: (input) =>

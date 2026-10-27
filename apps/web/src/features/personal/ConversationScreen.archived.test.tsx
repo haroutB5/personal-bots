@@ -11,6 +11,9 @@ type Outcome = { status: "done" } | { status: "cancelled" } | { status: "failed"
 const state = vi.hoisted(() => ({
   shell: null as null | { title: string; archivedAt: string | null },
   linkArchivedAt: null as string | null,
+  slimLookup: false,
+  listPending: false,
+  lookupResolved: false,
   thread: null as unknown,
   navigate: (() => {}) as (...args: unknown[]) => unknown,
   archive: (() => {}) as (...args: unknown[]) => unknown,
@@ -400,44 +403,63 @@ vi.mock("./taskPresentation", () => ({ mergeTaskLists: () => null }));
 vi.mock("./usePersonalBots", async () => {
   const DateTime = await import("effect/DateTime");
   return {
+    usePersonalArchivedLinks: () => ({
+      data: state.lookupResolved
+        ? {
+            threads: [
+              { botId: "bot-a", threadId: "thread-1", archivedAt: "2026-09-30T10:00:00.000Z" },
+            ],
+          }
+        : null,
+      isPending: !state.lookupResolved,
+      isSuccess: state.lookupResolved,
+      error: null,
+    }),
     personalBotArchiveThread: ARCHIVE_COMMAND,
     usePersonalEnvironmentId: () => "env-1",
     usePersonalBotsList: () => ({
-      data: {
-        bots: [
-          {
-            botId: "bot-a",
-            name: "Ada",
-            avatarShape: "pill",
-            avatarColor: "#E8711A",
-            modelSelection: {},
+      data: state.listPending
+        ? null
+        : {
+            bots: [
+              {
+                botId: "bot-a",
+                name: "Ada",
+                avatarShape: "pill",
+                avatarColor: "#E8711A",
+                modelSelection: {},
+              },
+            ],
+            ...(state.slimLookup ? { archivedCounts: { "bot-a": 1 } } : {}),
+            threads: [
+              ...(!state.slimLookup
+                ? [
+                    {
+                      botId: "bot-a",
+                      threadId: "thread-1",
+                      archivedAt: state.linkArchivedAt,
+                      ...(state.linkPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
+                      ...(state.linkSnoozedUntil === null
+                        ? {}
+                        : { snoozedUntil: DateTime.makeUnsafe(state.linkSnoozedUntil) }),
+                    },
+                  ]
+                : []),
+              ...(state.twoChats
+                ? [
+                    {
+                      botId: "bot-a",
+                      threadId: "thread-2",
+                      archivedAt: null,
+                      ...(state.otherPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
+                      ...(state.otherSnoozedUntil === null
+                        ? {}
+                        : { snoozedUntil: DateTime.makeUnsafe(state.otherSnoozedUntil) }),
+                    },
+                  ]
+                : []),
+            ],
           },
-        ],
-        threads: [
-          {
-            botId: "bot-a",
-            threadId: "thread-1",
-            archivedAt: state.linkArchivedAt,
-            ...(state.linkPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
-            ...(state.linkSnoozedUntil === null
-              ? {}
-              : { snoozedUntil: DateTime.makeUnsafe(state.linkSnoozedUntil) }),
-          },
-          ...(state.twoChats
-            ? [
-                {
-                  botId: "bot-a",
-                  threadId: "thread-2",
-                  archivedAt: null,
-                  ...(state.otherPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
-                  ...(state.otherSnoozedUntil === null
-                    ? {}
-                    : { snoozedUntil: DateTime.makeUnsafe(state.otherSnoozedUntil) }),
-                },
-              ]
-            : []),
-        ],
-      },
       isPending: false,
       error: null,
       refresh: () => {},
@@ -546,6 +568,9 @@ beforeEach(() => {
   });
   state.shell = { title: "Plans", archivedAt: "2026-09-30T10:00:00.000Z" };
   state.linkArchivedAt = "2026-09-30T10:00:00.000Z";
+  state.slimLookup = false;
+  state.listPending = false;
+  state.lookupResolved = false;
   state.thread = THREAD;
   state.navigate = vi.fn(async () => undefined);
   state.archive = vi.fn(async () => ({ _tag: "Success", value: {} }));
@@ -690,6 +715,30 @@ function announced(): string {
     ? ""
     : region.children.filter((child) => typeof child === "string").join("");
 }
+
+it("keeps an archived deep link read-only while its link loads", async () => {
+  state.shell = { title: "Plans", archivedAt: null };
+  state.slimLookup = true;
+  await renderScreen();
+  expect(hasComposer()).toBe(false);
+  expect(hasArchivedBar()).toBe(false);
+  expect(text()).toContain("Loading chat");
+  expect(lastMessageListProps().readOnly).toBe(true);
+  state.lookupResolved = true;
+  await act(async () => renderer!.update(<ConversationScreen botId="bot-a" threadId="thread-1" />));
+  expect(hasComposer()).toBe(false);
+  expect(hasArchivedBar()).toBe(true);
+});
+
+it("does not hold an active chat's composer for the bots list", async () => {
+  // A cold deep link: the shell is in, personalBots.list is still on the way.
+  state.shell = { title: "Plans", archivedAt: null };
+  state.listPending = true;
+  await renderScreen();
+  expect(hasComposer()).toBe(true);
+  expect(hasArchivedBar()).toBe(false);
+  expect(lastMessageListProps().readOnly).toBe(false);
+});
 
 it("opens an archived chat read-only: the Archived bar, no composer, no session, no retry", async () => {
   await renderScreen();

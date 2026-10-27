@@ -889,6 +889,7 @@ export const PersonalBotsListResult = Schema.Struct({
   bots: Schema.Array(PersonalBot),
   threads: Schema.Array(PersonalBotThread),
   personalProjectId: Schema.NullOr(ProjectId),
+  archivedCounts: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
 });
 export type PersonalBotsListResult = typeof PersonalBotsListResult.Type;
 

@@ -429,6 +429,7 @@ export function ChatsScreen({
     tasks,
     refresh: list.refresh,
     shells,
+    omitsArchived: list.data?.archivedCounts !== undefined,
   });
   const namesById = useMemo(
     () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry.name])),

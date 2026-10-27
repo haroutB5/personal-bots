@@ -5,13 +5,19 @@ import {
   createEnvironmentRpcQueryAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useActiveEnvironmentId } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { PERSONAL_TIME_ZONE } from "./greeting";
+import { perfOptimizationOn } from "./perfFlags";
+
+/** Shared key for the normal list and all of its mutation refreshes. */
+export function personalBotsListInput() {
+  return perfOptimizationOn("archive-links") ? { omitArchived: true } : {};
+}
 
 /** Bots, bot-thread links and the personal project id for one environment. */
 export const personalBotsList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -59,7 +65,9 @@ const refreshBotsList = (
   registry: { refresh: (atom: ReturnType<typeof personalBotsList>) => void },
 ) =>
   Effect.sync(() =>
-    registry.refresh(personalBotsList({ environmentId: target.environmentId, input: {} })),
+    registry.refresh(
+      personalBotsList({ environmentId: target.environmentId, input: personalBotsListInput() }),
+    ),
   );
 
 const refreshFilesList = (
@@ -167,10 +175,53 @@ export function usePersonalEnvironmentId(): EnvironmentId | null {
 
 export function usePersonalBotsList(environmentId: EnvironmentId | null) {
   const atom = useMemo(
-    () => (environmentId === null ? null : personalBotsList({ environmentId, input: {} })),
+    () =>
+      environmentId === null
+        ? null
+        : personalBotsList({ environmentId, input: personalBotsListInput() }),
     [environmentId],
   );
   return useEnvironmentQuery(atom);
+}
+
+/** Fetch only one bot's archived links, or an archived deep link, when needed. */
+export function usePersonalArchivedLinks(
+  environmentId: EnvironmentId | null,
+  target: { readonly botId?: string; readonly threadId?: string } | null,
+  listUpdatedAt: number | null,
+) {
+  const botId = target?.botId;
+  const threadId = target?.threadId;
+  const enabled = target !== null;
+  const atom = useMemo(() => {
+    if (environmentId === null || !enabled || !perfOptimizationOn("archive-links")) return null;
+    return personalBotsList({
+      environmentId,
+      input: {
+        omitArchived: true,
+        ...(botId === undefined ? {} : { archivedBotId: botId }),
+        ...(threadId === undefined ? {} : { archivedThreadId: threadId }),
+      },
+    });
+  }, [environmentId, botId, threadId, enabled]);
+  const result = useEnvironmentQuery(atom);
+  const previous = useRef<{ atom: typeof atom; updatedAt: number | null }>({
+    atom: null,
+    updatedAt: null,
+  });
+  useEffect(() => {
+    const old = previous.current;
+    previous.current = { atom, updatedAt: listUpdatedAt };
+    if (
+      atom !== null &&
+      listUpdatedAt !== null &&
+      ((old.atom === atom && old.updatedAt !== listUpdatedAt) ||
+        (old.atom !== atom && result.data !== null))
+    ) {
+      result.refresh();
+    }
+  }, [atom, listUpdatedAt, result.data, result.refresh]);
+  return result;
 }
 
 export function usePersonalFiles(environmentId: EnvironmentId | null) {

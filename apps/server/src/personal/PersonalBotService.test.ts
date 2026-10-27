@@ -915,6 +915,18 @@ it.live(
       expect(tooFarExit._tag).toBe("Failure");
 
       yield* service.archiveThread({ threadId, archived: true });
+      const oldClient = yield* service.list();
+      expect(oldClient.threads.some((entry) => entry.threadId === threadId)).toBe(true);
+      const slim = yield* service.list({ omitArchived: true });
+      expect(slim.threads.some((entry) => entry.threadId === threadId)).toBe(false);
+      // The mock engine does not create a projection shell, so it is not a visible row.
+      expect(slim.archivedCounts?.[created.botId]).toBeUndefined();
+      const botArchive = yield* service.list({ omitArchived: true, archivedBotId: created.botId });
+      expect(botArchive.threads.some((entry) => entry.threadId === threadId)).toBe(true);
+      const deepLink = yield* service.list({ omitArchived: true, archivedThreadId: threadId });
+      expect(deepLink.threads.some((entry) => entry.threadId === threadId)).toBe(true);
+      const otherBot = yield* service.list({ omitArchived: true, archivedBotId: "another" });
+      expect(otherBot.threads.some((entry) => entry.threadId === threadId)).toBe(false);
       const archivedExit = yield* Effect.exit(service.updateThread({ threadId, pinned: true }));
       expect(archivedExit._tag).toBe("Failure");
       const missing = yield* Effect.exit(

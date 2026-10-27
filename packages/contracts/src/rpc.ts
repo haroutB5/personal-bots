@@ -1345,7 +1345,11 @@ const WsSourceControlPublishRepositoryRpc = Rpc.make(WS_METHODS.sourceControlPub
 const PersonalBotsRpcError = Schema.Union([PersonalBotsError, EnvironmentAuthorizationError]);
 
 const WsPersonalBotsListRpc = Rpc.make(WS_METHODS.personalBotsList, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({
+    omitArchived: Schema.optional(Schema.Boolean),
+    archivedBotId: Schema.optional(Schema.String),
+    archivedThreadId: Schema.optional(Schema.String),
+  }),
   success: PersonalBotsListResult,
   error: PersonalBotsRpcError,
 });
