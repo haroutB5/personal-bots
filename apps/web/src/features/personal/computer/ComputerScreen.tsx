@@ -12,7 +12,6 @@
  */
 import type {
   EnvironmentId,
-  PersonalBrowserActivityEvent,
   PersonalBrowserFile,
   PersonalBrowserFrameMeta,
   PersonalBrowserInputMessage,
@@ -79,7 +78,7 @@ import {
   helpOrigin,
   type ComputerSource,
 } from "./computerContract";
-import { readMockScenario, useComputerData } from "./computerData";
+import { useComputerData } from "./computerData";
 import { ComputerControlTopBar, FollowToast, HelpStrip } from "./ComputerControlBar";
 import { ComputerActions, ComputerDriverCard } from "./ComputerDriverCard";
 import {
@@ -129,11 +128,6 @@ import { DesktopPane, type DesktopControlState } from "./DesktopPane";
 import { createTimedNotice } from "./timedNotice";
 import { useBotFaces } from "./useBotFaces";
 import { connectViewport, type RemoteField, type ViewportClient } from "./viewportClient";
-
-/** Only loaded under the mock flag: the typed scenarios behind `?computerMock=`. */
-const MockStage = lazy(() =>
-  import("./computerMock").then((module) => ({ default: module.MockStage })),
-);
 
 export interface ComputerScreenProps {
   /** Null when no agent holds the browser: fall back to the chats list. */
@@ -279,24 +273,7 @@ function usePageVisible(): boolean {
   return visible;
 }
 
-const MockProvider = lazy(() =>
-  import("./computerMock").then((module) => ({ default: module.ComputerMockProvider })),
-);
-
-/** The tab; under the mock flag it first loads the mock layer's data. */
-export function ComputerScreen(props: ComputerScreenProps) {
-  const [scenario] = useState(readMockScenario);
-  if (scenario === null) return <ComputerScreenView {...props} />;
-  return (
-    <Suspense fallback={null}>
-      <MockProvider scenario={scenario}>
-        <ComputerScreenView {...props} />
-      </MockProvider>
-    </Suspense>
-  );
-}
-
-function ComputerScreenView({
+export function ComputerScreen({
   onBackToChat,
   origin = null,
   variant = "screen",
@@ -306,8 +283,7 @@ function ComputerScreenView({
   const data = useComputerData(environmentId);
   const { feed, error, loading, desktop: desktopStatus, commands } = data;
   const status = feed.status;
-  const mock = data.mock;
-  const reachable = (environmentId !== null || mock !== null) && error === null;
+  const reachable = environmentId !== null && error === null;
   const faceOf = useBotFaces(environmentId);
   const panel = variant === "panel";
   const compactLandscape = useMediaQuery(COMPACT_LANDSCAPE_QUERY);
@@ -693,18 +669,6 @@ function ComputerScreenView({
     takingShown ||
     (shown === "browser" ? status === null : !desktopAvailable || !deskControl.canControl);
 
-  const mockStage = (source: ComputerSource) =>
-    mock === null ? undefined : (
-      <Suspense fallback={null}>
-        <MockStage
-          scenario={mock}
-          source={source}
-          controlled={takeSource === source}
-          fill={fullScreen}
-        />
-      </Suspense>
-    );
-
   const stageShell = (source: ComputerSource, content: ReactNode) => (
     <div
       key={source}
@@ -871,7 +835,6 @@ function ComputerScreenView({
               onOpenFullScreen={() => setFullScreen(true)}
               paused={backgroundPaused === "browser" && shown !== "browser"}
               placeholder={browserPlaceholder}
-              stand={mockStage("browser")}
               onClose={() => void stop()}
             />,
           )
@@ -892,7 +855,6 @@ function ComputerScreenView({
               footnote={controlFootnote === "" ? null : controlFootnote}
               onHandBack={() => void handBack()}
               paused={backgroundPaused === "desktop" && shown !== "desktop"}
-              stand={mockStage("desktop")}
             />,
           )
         : null}
@@ -1107,8 +1069,6 @@ export function ComputerBrowserPane(props: {
   readonly paused?: boolean;
   /** Stands in for the live view (idle, offline); the address bar steps aside. */
   readonly placeholder?: ReactNode;
-  /** Draw this instead of the live socket (the mock layer). */
-  readonly stand?: ReactNode;
   /** Close the browser (the screen confirms and runs it). */
   readonly onClose?: () => void;
 }) {
@@ -1120,7 +1080,6 @@ export function ComputerBrowserPane(props: {
   const pageVisible = usePageVisible();
   const keyboardToggleRef = useRef<(() => void) | null>(null);
   const [keyboard, setKeyboard] = useState({ open: false, ready: false });
-  const standing = props.stand !== undefined;
 
   const controller = status?.controller;
   const inControl = controller?._tag === "Human" && controller.self;
@@ -1136,7 +1095,7 @@ export function ComputerBrowserPane(props: {
     [],
   );
   const keyboardDock = useMemo(() => ({ toggleRef: keyboardToggleRef, onState: setKeyboard }), []);
-  const ready = inputReady || standing;
+  const ready = inputReady;
   const dock = fullScreen && inControl && ready;
 
   return (
@@ -1177,8 +1136,6 @@ export function ComputerBrowserPane(props: {
       >
         {props.placeholder !== undefined ? (
           props.placeholder
-        ) : props.stand !== undefined ? (
-          props.stand
         ) : environmentId !== null && hasLiveViewport(status) ? (
           <LiveViewport
             environmentId={environmentId}

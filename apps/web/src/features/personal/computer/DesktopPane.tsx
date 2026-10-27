@@ -167,8 +167,6 @@ export function DesktopPane(props: {
   readonly onHandBack?: () => void;
   /** Control runs in the page, not full screen (the wide Computer page). */
   readonly inline?: boolean;
-  /** Draw this instead of the live socket (the mock layer). */
-  readonly stand?: ReactNode;
   /** Not on screen for a while: let go of the socket. */
   readonly paused?: boolean;
 }): JSX.Element {
@@ -258,11 +256,6 @@ export function DesktopPane(props: {
       canControl,
     });
   }, [controlWanted, controlOn, notice, canControl]);
-  // The mock layer has no socket to confirm control: wanted in full screen is on.
-  const standing = props.stand !== undefined;
-  useEffect(() => {
-    if (standing) setControlOn(controlWanted && mayControl);
-  }, [standing, controlWanted, mayControl]);
 
   const send: SendInput = (message) => sendRef.current?.(message);
   const takeSticky = (): ReadonlySet<PersonalDesktopModifier> => {
@@ -395,9 +388,7 @@ export function DesktopPane(props: {
           rail && "col-start-2 row-span-2 row-start-1 border-0",
         )}
       >
-        {props.stand !== undefined ? (
-          props.stand
-        ) : environmentId !== null && available ? (
+        {environmentId !== null && available ? (
           <LiveDesktop
             environmentId={environmentId}
             active={pageVisible && props.paused !== true}

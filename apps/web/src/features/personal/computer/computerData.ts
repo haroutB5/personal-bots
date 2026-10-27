@@ -4,7 +4,7 @@ import type {
   PersonalDesktopStatus,
   ThreadId,
 } from "@t3tools/contracts";
-import { createContext, useCallback, useContext, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -23,9 +23,8 @@ export interface ComputerCommands {
   readonly closeBrowser: () => Promise<string | null>;
   readonly stopDesktop: () => Promise<string | null>;
   /**
-   * Allow once / Refuse for a sensitive-site pause. `available` is false only
-   * under the mock layer when a scenario turns it off; the card then keeps the
-   * Take control path.
+   * Allow once / Refuse for a sensitive-site pause. `available` is false when
+   * the server has no such commands; the card then keeps the Take control path.
    */
   readonly egress: {
     readonly available: boolean;
@@ -42,22 +41,14 @@ export interface ComputerData {
   /** The desktop's own activity timeline; merged with the browser's by the screen. */
   readonly desktopEvents: ReadonlyArray<PersonalDesktopActivityEvent>;
   readonly commands: ComputerCommands;
-  /** Set only by the mock layer: stages draw a stand-in instead of a socket. */
-  readonly mock: string | null;
 }
-
-/** The mock layer provides this; absent in production. */
-export const ComputerDataOverride = createContext<ComputerData | null>(null);
 
 const NOT_YET = "The computer isn't ready for that yet.";
 
 export function useComputerData(environmentId: EnvironmentId | null): ComputerData {
-  const override = useContext(ComputerDataOverride);
-  // Under the mock layer no real subscription is opened.
-  const liveEnvironment = override === null ? environmentId : null;
-  const { feed, error, loading } = useComputerFeed(liveEnvironment);
-  const desktop = useDesktopStatus(liveEnvironment);
-  const desktopEvents = useDesktopActivity(liveEnvironment);
+  const { feed, error, loading } = useComputerFeed(environmentId);
+  const desktop = useDesktopStatus(environmentId);
+  const desktopEvents = useDesktopActivity(environmentId);
   const takeControl = useAtomCommand(computerEnvironment.takeControl);
   const returnToAgent = useAtomCommand(computerEnvironment.returnToAgent);
   const closeBrowser = useAtomCommand(computerEnvironment.close);
@@ -124,26 +115,7 @@ export function useComputerData(environmentId: EnvironmentId | null): ComputerDa
   );
 
   return useMemo(
-    () => override ?? { feed, error, loading, desktop, desktopEvents, commands, mock: null },
-    [override, feed, error, loading, desktop, desktopEvents, commands],
+    () => ({ feed, error, loading, desktop, desktopEvents, commands }),
+    [feed, error, loading, desktop, desktopEvents, commands],
   );
-}
-
-export const MOCK_STORAGE_KEY = "hbots.computer.mock";
-
-/**
- * The scenario the mock layer plays, from `?computerMock=<name>` or the
- * `hbots.computer.mock` storage key, or null for the real server. Inert unless
- * one of the two is set.
- */
-export function readMockScenario(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const fromUrl = new URLSearchParams(window.location.search).get("computerMock");
-    if (fromUrl !== null && fromUrl !== "") return fromUrl;
-    const stored = window.localStorage.getItem(MOCK_STORAGE_KEY);
-    return stored !== null && stored !== "" ? stored : null;
-  } catch {
-    return null;
-  }
 }
