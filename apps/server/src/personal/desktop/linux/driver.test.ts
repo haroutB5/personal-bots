@@ -248,17 +248,17 @@ describe("LinuxDesktopDriver", () => {
     try {
       // Focus is the terminal; the click point is inside the Brave window.
       await expect(driver.request("click", { x: 200, y: 150 })).rejects.toMatchObject({
-        code: "user_active",
+        code: "point_blocked",
       });
       // The point is checked for both ends of a drag.
       await expect(
         driver.request("drag", { fromX: 10, fromY: 10, toX: 200, toY: 150 }),
-      ).rejects.toMatchObject({ code: "user_active" });
+      ).rejects.toMatchObject({ code: "point_blocked" });
       await expect(driver.request("scroll", { x: 200, y: 150, dy: 3 })).rejects.toMatchObject({
-        code: "user_active",
+        code: "point_blocked",
       });
       await expect(driver.request("button", { x: 200, y: 150, down: true })).rejects.toMatchObject({
-        code: "user_active",
+        code: "point_blocked",
       });
     } finally {
       world.setClients([TERMINAL_CLIENT]);
@@ -278,6 +278,122 @@ describe("LinuxDesktopDriver", () => {
     ).toBe(false);
   });
 
+  it("ignores a Brave window on a workspace no monitor is showing", async () => {
+    // QA's B3: Hyprland reports a loaded workspace's windows as mapped too, so
+    // a browser on workspace 6 used to block a click at the same spot on the
+    // active workspace 2.
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xbrave",
+        title: "Bank",
+        class: "brave-abc-Default",
+        at: [100, 100],
+        size: [400, 300],
+        mapped: true,
+        hidden: false,
+        workspace: { id: 6, name: "6" },
+      },
+    ]);
+    const before = world.helperCommands().length;
+    const driver = makeDriver();
+    try {
+      await driver.request("click", { x: 200, y: 150 });
+      expect(
+        world
+          .helperCommands()
+          .slice(before)
+          .some((line) => line.startsWith("click")),
+      ).toBe(true);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("blocks the same point once the monitor shows that workspace", async () => {
+    // The point guard follows the monitor's active workspace, not a stale
+    // window list: switch the monitor to workspace 6 and the same Brave
+    // window is on screen and must block.
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xbrave",
+        title: "Bank",
+        class: "brave-abc-Default",
+        at: [100, 100],
+        size: [400, 300],
+        mapped: true,
+        hidden: false,
+        workspace: { id: 6, name: "6" },
+      },
+    ]);
+    world.setMonitors([
+      {
+        id: 0,
+        name: "eDP-1",
+        width: 3072,
+        height: 1920,
+        x: 0,
+        y: 0,
+        scale: 2,
+        focused: true,
+        dpmsStatus: true,
+        activeWorkspace: { id: 6, name: "6" },
+        specialWorkspace: { id: 0, name: "" },
+      },
+    ]);
+    const driver = makeDriver();
+    try {
+      await expect(driver.request("click", { x: 200, y: 150 })).rejects.toMatchObject({
+        code: "point_blocked",
+      });
+    } finally {
+      world.setClients([TERMINAL_CLIENT]);
+      world.setMonitors([
+        {
+          id: 0,
+          name: "eDP-1",
+          width: 3072,
+          height: 1920,
+          x: 0,
+          y: 0,
+          scale: 2,
+          focused: true,
+          dpmsStatus: true,
+          activeWorkspace: { id: 2, name: "2" },
+          specialWorkspace: { id: 0, name: "" },
+        },
+      ]);
+      driver.dispose();
+    }
+  });
+
+  it("keeps a pinned browser window in the guard, whatever workspace it sits on", async () => {
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xbrave",
+        title: "Bank",
+        class: "brave-abc-Default",
+        at: [100, 100],
+        size: [400, 300],
+        mapped: true,
+        hidden: false,
+        pinned: true,
+        workspace: { id: 6, name: "6" },
+      },
+    ]);
+    const driver = makeDriver();
+    try {
+      await expect(driver.request("click", { x: 200, y: 150 })).rejects.toMatchObject({
+        code: "point_blocked",
+      });
+    } finally {
+      world.setClients([TERMINAL_CLIENT]);
+      driver.dispose();
+    }
+  });
+
   it("refuses a point over a password manager, by any namespaced class", async () => {
     world.setClients([
       TERMINAL_CLIENT,
@@ -295,7 +411,7 @@ describe("LinuxDesktopDriver", () => {
     const driver = makeDriver();
     try {
       await expect(driver.request("click", { x: 250, y: 250 })).rejects.toMatchObject({
-        code: "user_active",
+        code: "point_blocked",
       });
     } finally {
       world.setClients([TERMINAL_CLIENT]);

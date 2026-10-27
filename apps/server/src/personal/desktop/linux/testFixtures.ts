@@ -24,6 +24,8 @@ export interface FakeWorld {
   readonly workDir: string;
   setActiveWindow(window: Record<string, unknown>): void;
   setClients(clients: ReadonlyArray<Record<string, unknown>>): void;
+  /** Replaces the monitor list; defaults to one eDP-1 showing workspace 2. */
+  setMonitors(monitors: ReadonlyArray<Record<string, unknown>>): void;
   setLayout(layout: string): void;
   setLocked(locked: boolean): void;
   helperCommands(): string[];
@@ -46,8 +48,9 @@ export function makeFakeWorld(workDir: string, binary?: string): FakeWorld {
   NodeFS.writeFileSync(helperLog, "");
   NodeFS.writeFileSync(notifyLog, "");
 
+  const monitorsFile = NodePath.join(fixtureDir, "monitors.json");
   NodeFS.writeFileSync(
-    NodePath.join(fixtureDir, "monitors.json"),
+    monitorsFile,
     JSON.stringify([
       {
         id: 0,
@@ -59,9 +62,14 @@ export function makeFakeWorld(workDir: string, binary?: string): FakeWorld {
         scale: 2,
         focused: true,
         dpmsStatus: true,
+        activeWorkspace: { id: 2, name: "2" },
+        specialWorkspace: { id: 0, name: "" },
       },
     ]),
   );
+  const setMonitors = (monitors: ReadonlyArray<Record<string, unknown>>) => {
+    NodeFS.writeFileSync(monitorsFile, JSON.stringify(monitors));
+  };
   const layoutFile = NodePath.join(fixtureDir, "layout.txt");
   NodeFS.writeFileSync(layoutFile, "gb");
   const setLayout = (layout: string) => {
@@ -126,6 +134,7 @@ echo grim >> "${log}"`,
     NodePath.join(binDir, "omarchy-shell"),
     `case "$*" in
   *isLocked*) cat "${Path(fixtureDir, "locked")}" ;;
+  *dismiss*) echo "dismiss $*" >> "${notifyLog}"; echo "ok" ;;
   *) echo "" ;;
 esac`,
   );
@@ -167,6 +176,7 @@ done
     helperPath,
     setActiveWindow,
     setClients,
+    setMonitors,
     setLayout,
     setLocked,
     helperCommands: () =>

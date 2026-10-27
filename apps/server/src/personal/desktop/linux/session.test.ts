@@ -11,6 +11,7 @@ import {
   mappedWindows,
   sessionEnv,
   sessionLocked,
+  visibleWorkspaces,
   type LinuxSession,
 } from "./session.ts";
 
@@ -153,6 +154,65 @@ describe("mappedWindows", () => {
       { class: "shown", at: [0, 0], size: [10, 10], mapped: true },
     ]);
     expect(windows.map((window) => window.class)).toEqual(["shown"]);
+  });
+
+  it("counts only windows on a workspace a monitor is showing (QA's B3)", () => {
+    const visible = visibleWorkspaces([
+      {
+        activeWorkspace: { id: 2, name: "2" },
+        specialWorkspace: { id: -99, name: "special:scratch" },
+      },
+    ]);
+    const windows = mappedWindows(
+      [
+        {
+          class: "active",
+          at: [0, 0],
+          size: [10, 10],
+          mapped: true,
+          workspace: { id: 2, name: "2" },
+        },
+        {
+          class: "hidden-ws",
+          at: [0, 0],
+          size: [10, 10],
+          mapped: true,
+          workspace: { id: 6, name: "6" },
+        },
+        {
+          class: "pinned",
+          at: [0, 0],
+          size: [10, 10],
+          mapped: true,
+          pinned: true,
+          workspace: { id: 6, name: "6" },
+        },
+        {
+          class: "special-shown",
+          at: [0, 0],
+          size: [10, 10],
+          mapped: true,
+          workspace: { id: -99, name: "special:scratch" },
+        },
+        {
+          class: "special-hidden",
+          at: [0, 0],
+          size: [10, 10],
+          mapped: true,
+          workspace: { id: -98, name: "special:notes" },
+        },
+      ],
+      visible,
+    );
+    expect(windows.map((window) => window.class)).toEqual(["active", "pinned", "special-shown"]);
+  });
+
+  it("keeps every mapped window when the shown workspaces are unknown", () => {
+    const windows = mappedWindows(
+      [{ class: "anywhere", at: [0, 0], size: [10, 10], mapped: true, workspace: { id: 6 } }],
+      visibleWorkspaces([{ activeWorkspace: { id: 0, name: "" } }]),
+    );
+    expect(windows.map((window) => window.class)).toEqual(["anywhere"]);
   });
 });
 

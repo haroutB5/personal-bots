@@ -50,6 +50,8 @@ import {
   runCommand,
   sessionEnv,
   sessionLocked,
+  type VisibleWorkspaces,
+  visibleWorkspaces,
 } from "./session.ts";
 
 export const LINUX_STOP_HOTKEY = "Super+Shift+F12";
@@ -59,6 +61,8 @@ const TAKEOVER_GRACE_MS = 300;
 const MONITOR_TTL_MS = 500;
 const WINDOW_TTL_MS = 1_000;
 const LOCK_TTL_MS = 1_000;
+/** Which workspaces are on screen changes far less often than the clock ticks. */
+const VISIBLE_TTL_MS = 500;
 
 /** Windows that hold credentials: never type into them (best effort, by class). */
 const PASSWORD_MANAGER_CLASSES = [
@@ -114,6 +118,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
   private readonly killListeners: Array<() => void> = [];
   private readonly log: (line: string) => void;
   private monitorsCache: ScreenState | null = null;
+  private workspaceCache: { workspaces: VisibleWorkspaces; at: number } | null = null;
   private layoutRefresh: Promise<void> | null = null;
   private windowCache: { window: ActiveWindow | null; at: number } | null = null;
   private lockCache: { locked: boolean; at: number } | null = null;
@@ -307,13 +312,13 @@ export class LinuxDesktopDriver implements DesktopDriver {
     );
     if (under.some((window) => isBrowserClass(window.class.toLowerCase()))) {
       throw new DesktopHelperError(
-        "user_active",
+        "point_blocked",
         "Brave is the shared browser and a browser window is under that point. Use the browser tools so the lease and the sensitive-site pause apply. The desktop cannot click it.",
       );
     }
     if (under.some((window) => isPasswordManagerClass(window.class.toLowerCase()))) {
       throw new DesktopHelperError(
-        "user_active",
+        "point_blocked",
         "A password manager window is under that point. The desktop tools never type or click in one; ask the user to do it.",
       );
     }
@@ -322,8 +327,14 @@ export class LinuxDesktopDriver implements DesktopDriver {
   /** Every window Hyprland has mapped; a hidden workspace contributes none. */
   private async mappedWindows(): Promise<MappedWindow[]> {
     try {
-      const raw = await hyprctlJson<ReadonlyArray<RawClient>>(this.session, ["clients"]);
-      return mappedWindows(Array.isArray(raw) ? raw : []);
+      // `clients` alone cannot say which workspace is on screen: Hyprland
+      // reports a loaded workspace's windows as mapped too (QA's B3). The
+      // monitors' active and shown special workspaces are the answer.
+      const [raw, shown] = await Promise.all([
+        hyprctlJson<ReadonlyArray<RawClient>>(this.session, ["clients"]),
+        this.visibleWorkspaces(),
+      ]);
+      return mappedWindows(Array.isArray(raw) ? raw : [], shown);
     } catch (error) {
       // The point guard exists to keep Brave's lease honest. If the window list
       // cannot be read, refusing is the safe side of that decision.
@@ -334,6 +345,23 @@ export class LinuxDesktopDriver implements DesktopDriver {
         }`,
       );
     }
+  }
+
+  /** The workspaces on screen, from `hyprctl monitors`. */
+  private async visibleWorkspaces(): Promise<VisibleWorkspaces> {
+    const now = Date.now();
+    if (this.workspaceCache !== null && now - this.workspaceCache.at < VISIBLE_TTL_MS) {
+      return this.workspaceCache.workspaces;
+    }
+    const monitors = await hyprctlJson<
+      ReadonlyArray<{
+        readonly activeWorkspace?: { readonly id?: number; readonly name?: string };
+        readonly specialWorkspace?: { readonly id?: number; readonly name?: string };
+      }>
+    >(this.session, ["monitors"]);
+    const workspaces = visibleWorkspaces(Array.isArray(monitors) ? monitors : []);
+    this.workspaceCache = { workspaces, at: now };
+    return workspaces;
   }
 
   private noteBotAction(): void {
@@ -390,10 +418,22 @@ export class LinuxDesktopDriver implements DesktopDriver {
     }
     if (event.startsWith("workspace")) {
       this.windowCache = null;
+      this.workspaceCache = null;
       const workspace = detail.split(",")[0]?.trim() ?? "";
       if (workspace.length > 0 && workspace !== this.botWorkspace) {
         this.userActiveAt = Date.now();
       }
+      return;
+    }
+    if (event === "monitoradded" || event === "monitorremoved") {
+      this.monitorsCache = null;
+      this.workspaceCache = null;
+      return;
+    }
+    if (event === "focusedmon") {
+      // Each monitor's active workspace is its own; a monitor switch does not
+      // always send `workspace`.
+      this.workspaceCache = null;
       return;
     }
     if (event === "activelayout") {
@@ -410,6 +450,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
     if (event === "configreloaded") {
       this.configReloads += 1;
       this.monitorsCache = null;
+      this.workspaceCache = null;
       if (this.options.stopChord !== false) this.armStop();
     }
   }

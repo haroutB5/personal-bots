@@ -357,7 +357,44 @@ export interface RawClient {
   readonly size?: ReadonlyArray<number>;
   readonly mapped?: boolean;
   readonly hidden?: boolean;
+  readonly pinned?: boolean;
   readonly workspace?: { readonly id?: number; readonly name?: string };
+}
+
+/**
+ * The workspaces a monitor is showing right now. Hyprland reports `mapped` for
+ * a window on any workspace that is merely loaded, so the active workspace of
+ * each monitor (and a shown special one) is what says a window is on screen
+ * (QA's B3).
+ */
+export interface VisibleWorkspaces {
+  readonly ids: ReadonlySet<number>;
+  readonly names: ReadonlySet<string>;
+}
+
+/** The workspaces `hyprctl monitors` says are on screen; empty means unknown. */
+export function visibleWorkspaces(
+  monitors: ReadonlyArray<{
+    readonly activeWorkspace?: { readonly id?: number; readonly name?: string };
+    readonly specialWorkspace?: { readonly id?: number; readonly name?: string };
+  }>,
+): VisibleWorkspaces {
+  const ids = new Set<number>();
+  const names = new Set<string>();
+  for (const monitor of monitors) {
+    for (const workspace of [monitor.activeWorkspace, monitor.specialWorkspace]) {
+      if (workspace === undefined || workspace === null) continue;
+      const id =
+        typeof workspace.id === "number" && Number.isFinite(workspace.id) ? workspace.id : null;
+      const name = typeof workspace.name === "string" ? workspace.name.trim() : "";
+      // An empty special workspace is reported as id 0 with no name: that is
+      // "nothing shown", not a workspace.
+      if (name.length === 0 && (id === null || id <= 0)) continue;
+      if (id !== null) ids.add(id);
+      if (name.length > 0) names.add(name);
+    }
+  }
+  return { ids, names };
 }
 
 /** A window that is actually on screen, in logical layout pixels. */
@@ -372,13 +409,29 @@ export interface MappedWindow {
 
 /**
  * The windows a pointer can land on. Hyprland lists every client, including
- * those on hidden workspaces; `mapped` is what separates them.
+ * those on hidden workspaces, and `mapped` does not distinguish them (QA's
+ * B3): only a client on a workspace some monitor is showing can take the
+ * pointer. A pinned window floats onto every workspace, so it always counts.
+ * An unknown (empty) visible set keeps the old behaviour: filter only on
+ * `mapped` and `hidden`.
  */
-export function mappedWindows(raw: ReadonlyArray<RawClient>): MappedWindow[] {
+export function mappedWindows(
+  raw: ReadonlyArray<RawClient>,
+  visible?: VisibleWorkspaces,
+): MappedWindow[] {
+  const knowWorkspaces = visible !== undefined && (visible.ids.size > 0 || visible.names.size > 0);
   const windows: MappedWindow[] = [];
   for (const entry of raw) {
     if (entry === null || entry === undefined) continue;
     if (entry.mapped === false || entry.hidden === true) continue;
+    if (knowWorkspaces && entry.pinned !== true) {
+      const workspace = entry.workspace;
+      const id = typeof workspace?.id === "number" ? workspace.id : null;
+      const name = typeof workspace?.name === "string" ? workspace.name.trim() : "";
+      const onScreen =
+        (id !== null && visible.ids.has(id)) || (name.length > 0 && visible.names.has(name));
+      if (!onScreen) continue;
+    }
     const at = Array.isArray(entry.at) ? entry.at : [];
     const size = Array.isArray(entry.size) ? entry.size : [];
     const width = Number(size[0]);
