@@ -87,4 +87,10 @@
 
 ## Gate evidence
 
-<!-- The gate-evidence collector appends its section here. -->
+<!-- gate-evidence:begin sha=2a8c65321cd0760717174fa52763319ba3260dd9 release=2a8c65321cd0 json-sha256=7b6bfdda25f075af9d1259d2c47579c87e114585eecc1a46da5ba0f9033f8d88 result=PASS -->
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+<!-- gate-evidence:end -->
