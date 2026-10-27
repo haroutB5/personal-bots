@@ -95,6 +95,8 @@ describe("LinuxDesktopDriver", () => {
       });
       expect(shot.mimeType).toBe("image/jpeg");
       expect(String(shot.data).length).toBeGreaterThan(0);
+      // A screenshot can hold anything: the folder is owner-only.
+      expect(NodeFS.statSync(NodePath.join(root, "tmp")).mode & 0o777).toBe(0o700);
     } finally {
       driver.dispose();
     }

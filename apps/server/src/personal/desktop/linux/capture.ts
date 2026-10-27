@@ -40,7 +40,14 @@ export class LinuxScreenCapture {
   constructor(session: LinuxSession, tempDir: string) {
     this.session = session;
     this.tempDir = tempDir;
-    NodeFS.mkdirSync(tempDir, { recursive: true });
+    // Screenshots can hold anything that was on screen, so the directory is
+    // owner-only and each file is narrowed to 0600 the moment grim writes it.
+    NodeFS.mkdirSync(tempDir, { recursive: true, mode: 0o700 });
+    try {
+      NodeFS.chmodSync(tempDir, 0o700);
+    } catch {
+      // A directory we cannot chmod stays as it is; the file mode still applies.
+    }
   }
 
   async capture(request: CaptureRequest): Promise<CaptureResult> {
@@ -74,6 +81,7 @@ export class LinuxScreenCapture {
           `The screen could not be captured: ${(result.stderr || result.stdout).trim().slice(0, 300)}`,
         );
       }
+      NodeFS.chmodSync(file, 0o600);
       let buffer = NodeFS.readFileSync(file);
       let size = jpegSize(buffer);
       if (size === null) {
