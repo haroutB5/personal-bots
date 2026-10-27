@@ -270,6 +270,12 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
      * store, so a second identical step asks again (SPEC.md 10.7).
      */
     const oneShotApprovals = new Map<string, string>();
+    /**
+     * "Refused": the same step fails for the rest of the turn instead of
+     * pausing again, so Refuse works even when the user answers before the bot
+     * has called request_browser_help. Cleared at turn end.
+     */
+    const refusedApprovals = new Map<string, string>();
 
     const refreshSensitiveOrigins = logins.sensitiveOrigins().pipe(
       Effect.map((origins) => {
@@ -403,6 +409,17 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
         if (oneShotApprovals.get(threadId) === approval.key) {
           oneShotApprovals.delete(threadId);
           return;
+        }
+        if (refusedApprovals.get(threadId) === approval.key) {
+          refusedApprovals.delete(threadId);
+          pendingApprovals.delete(threadId);
+          pendingApprovalAt.delete(threadId);
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              "The user refused this step. Do not retry it; carry on without it.",
+            ),
+          );
         }
         pendingApprovals.set(threadId, approval);
         pendingApprovalAt.set(threadId, yield* nowIso);
@@ -702,6 +719,7 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       pendingApprovals,
       pendingApprovalAt,
       oneShotApprovals,
+      refusedApprovals,
       persistProtections,
       previewManager,
       profileDir,

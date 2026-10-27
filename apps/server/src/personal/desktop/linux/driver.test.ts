@@ -2,6 +2,7 @@
 // @effect-diagnostics globalTimers:off - a hold is a real millisecond wait in this fixture test.
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 
 import { DesktopHelperError } from "../DesktopHelper.ts";
@@ -165,6 +166,62 @@ describe("LinuxDesktopDriver", () => {
         monitor: 0,
       });
       driver.dispose();
+    }
+  });
+
+  it("takes back control after a workspace change the bot did not make", async () => {
+    const dir = NodePath.join(root, "hypr", "test-instance");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    const socketPath = NodePath.join(dir, ".socket2.sock");
+    NodeFS.rmSync(socketPath, { force: true });
+    const connections: NodeNet.Socket[] = [];
+    const server = NodeNet.createServer((socket) => connections.push(socket));
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const connected = new Promise<void>((resolve) => server.once("connection", () => resolve()));
+    const driver = makeDriver();
+    try {
+      await connected;
+      await driver.request("move", { x: 10, y: 10 });
+      connections[0]?.write("workspace>>5\n");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await expect(driver.request("move", { x: 11, y: 11 })).rejects.toMatchObject({
+        code: "user_active",
+      });
+    } finally {
+      driver.dispose();
+      for (const socket of connections) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("ignores the bot's own focus change but takes back a later one", async () => {
+    const dir = NodePath.join(root, "hypr", "test-instance");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    const socketPath = NodePath.join(dir, ".socket2.sock");
+    NodeFS.rmSync(socketPath, { force: true });
+    const connections: NodeNet.Socket[] = [];
+    const server = NodeNet.createServer((socket) => connections.push(socket));
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const connected = new Promise<void>((resolve) => server.once("connection", () => resolve()));
+    const driver = makeDriver();
+    try {
+      await connected;
+      await driver.request("move", { x: 20, y: 20 });
+      // Right after the bot's own action: its click may have moved focus.
+      connections[0]?.write("activewindowv2>>0xnew\n");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await driver.request("move", { x: 21, y: 21 });
+      // Later, a focus change is the user's.
+      await new Promise((resolve) => setTimeout(resolve, 1_600));
+      connections[0]?.write("activewindowv2>>0xother\n");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await expect(driver.request("move", { x: 22, y: 22 })).rejects.toMatchObject({
+        code: "user_active",
+      });
+    } finally {
+      driver.dispose();
+      for (const socket of connections) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 

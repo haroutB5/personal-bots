@@ -263,7 +263,15 @@ const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 export const make = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
     const core = yield* makeBrowserCore(rawOptions);
-    const { lease, options, sensitiveExposure, status, viewers } = core;
+    const {
+      lease,
+      oneShotApprovals,
+      options,
+      refusedApprovals,
+      sensitiveExposure,
+      status,
+      viewers,
+    } = core;
 
     const launch = yield* makeBrowserLaunch(core);
 
@@ -368,7 +376,12 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
       listFiles,
       resolveFile,
       releaseThread,
-      releaseLease: (threadId) => lease.releaseIfOwner(threadId).pipe(Effect.asVoid),
+      releaseLease: (threadId) =>
+        Effect.sync(() => {
+          // Approval decisions never outlive the turn that asked for them.
+          oneShotApprovals.delete(threadId);
+          refusedApprovals.delete(threadId);
+        }).pipe(Effect.andThen(lease.releaseIfOwner(threadId)), Effect.asVoid),
       sensitiveExposure,
       activity,
       handleAutomationRequest,

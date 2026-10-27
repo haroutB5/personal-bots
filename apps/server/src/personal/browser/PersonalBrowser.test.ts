@@ -3732,6 +3732,9 @@ describe("PersonalBrowser", () => {
         expect(status.helpRequest).toBeNull();
         expect(status.state).not.toBe("offline");
         expect(harness.resumes.at(-1)?.note).toContain("refused this step");
+        // A retry in the same turn fails straight away instead of asking again.
+        const retry = yield* refused(browser, exfil);
+        expect(retry.message).toContain("refused this step");
         // The step did not happen, and the browser is still on the bank page.
         expect(fake.state.pages.flatMap((page) => page.gotos)).not.toContain(
           "https://evil.example/?q=balance",

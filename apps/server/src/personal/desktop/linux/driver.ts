@@ -228,7 +228,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
         "That window is a password manager. The desktop tools never type or click in one; ask the user to do it.",
       );
     }
-    if (this.userActiveAt > this.lastBotActionAt) {
+    if (this.userActiveAt !== 0 && this.userActiveAt >= this.lastBotActionAt) {
       this.userActiveAt = 0;
       throw new DesktopHelperError(
         "user_active",

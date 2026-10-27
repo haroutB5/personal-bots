@@ -42,6 +42,7 @@ export const makeBrowserControl = (
       openPage,
       options,
       oneShotApprovals,
+      refusedApprovals,
       originOf,
       pendingApprovals,
       pendingApprovalAt,
@@ -457,6 +458,9 @@ export const makeBrowserControl = (
           );
         }
         oneShotApprovals.delete(input.threadId);
+        // The same step stays refused for the rest of the turn, even if the
+        // bot retries instead of taking the note.
+        refusedApprovals.set(input.threadId, paused.approval.key);
         pendingApprovals.delete(input.threadId);
         pendingApprovalAt.delete(input.threadId);
         const help = st.activeHelp;

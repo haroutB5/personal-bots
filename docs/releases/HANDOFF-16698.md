@@ -60,8 +60,8 @@ pieces it needs.
 ## Proof
 
 - `cd apps/server && npx tsc --noEmit` — clean.
-- `cd apps/server && vp test run src/personal` — see the gate evidence committed by the build
-  (2,720 tests incl. 26 new Linux/activity tests).
+- `cd apps/server && vp test run src/personal` — 2,728 tests (2,722 pass, 6 skipped),
+  including 28 new Linux/activity/queue tests. The committed gate evidence is the release proof.
 - New tests: `desktop/linux/driver.test.ts` (fixture binary per primitive: move, click,
   double click, drag, scroll, type with Enter, keys, buttons, hold, releaseAll, screenshot,
   info, cursor, Brave refusal, locked refusal, panic release after a crash, key-up after a
