@@ -17,10 +17,15 @@ import type * as Tool from "effect/unstable/ai/Tool";
 import type * as Toolkit from "effect/unstable/ai/Toolkit";
 
 import { secretRedactor, type SecretRedactor } from "../personal/secrets/secretRedaction.ts";
+import { advertisedMcpTool } from "./advertisedJsonSchema.ts";
 
 type McpServerService = McpServer.McpServer["Service"];
 
-/** The same server, with every tool it registers handed a payload with saved values masked. */
+/**
+ * The same server, with every tool it registers handed a payload with saved values masked. It
+ * is also the one place every tool is advertised from, so each gets its compact input schema
+ * here (advertisedJsonSchema.ts); decoding still uses the tool's full schema.
+ */
 export const guardMcpServer = (
   server: McpServerService,
   redactor: SecretRedactor = secretRedactor,
@@ -30,6 +35,7 @@ export const guardMcpServer = (
       value: ((options) =>
         server.addTool({
           ...options,
+          tool: advertisedMcpTool(options.tool),
           handle: (payload) => options.handle(redactor.redact(payload)),
         })) satisfies McpServerService["addTool"],
     },

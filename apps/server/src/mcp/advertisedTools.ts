@@ -1,5 +1,7 @@
 import { Tool, type Toolkit } from "effect/unstable/ai";
 
+import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+
 import { BotsToolkit } from "./toolkits/bots/tools.ts";
 import { ConnectionsToolkit } from "./toolkits/connections/tools.ts";
 import { DesktopImageToolkit, DesktopStandardToolkit } from "./toolkits/desktop/tools.ts";
@@ -31,6 +33,6 @@ export const advertisedToolList = () =>
     Object.values(toolkit.tools).map((tool) => ({
       name: tool.name,
       description: Tool.getDescription(tool),
-      inputSchema: Tool.getJsonSchema(tool),
+      inputSchema: advertisedJsonSchema(tool),
     })),
   );

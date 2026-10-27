@@ -15,16 +15,19 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, McpServer, type Tool } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import { secretRedactor } from "../personal/secrets/secretRedaction.ts";
+import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { PreviewSnapshotToolkit, PreviewStandardToolkit } from "./toolkits/preview/tools.ts";
+import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -793,6 +796,25 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       expect(reusedSessionResponse.status).toBe(404);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each([
+  {
+    name: "preview (toolkit and hand-registered tools)",
+    layer: TestLayer,
+    tools: { ...PreviewStandardToolkit.tools, ...PreviewSnapshotToolkit.tools },
+  },
+  { name: "pull requests", layer: PullRequestsTestLayer, tools: PullRequestsToolkit.tools },
+])("advertises the compact input schema for every $name tool", ({ layer, tools }) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const byName: Record<string, Tool.Any> = tools;
+
+    expect(server.tools.length).toBe(Object.keys(byName).length);
+    for (const { tool } of server.tools) {
+      expect(tool.inputSchema, tool.name).toEqual(advertisedJsonSchema(byName[tool.name]!));
+    }
+  }).pipe(Effect.provide(layer as typeof PullRequestsTestLayer)),
 );
 
 it.effect("registers annotated tools and preserves authenticated request context", () =>
