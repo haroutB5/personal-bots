@@ -2,6 +2,8 @@
 
 **No migration, no schema change** (latest remains 114). Live is 1.66.98
 (`28432c7a07e7`). This release is six follow-ups from that release and its three-hour wait.
+**Artifact `87733cbec191`** is the re-stage after QA checked `2a8c65321cd0` and found the four bugs
+below; it carries the same six follow-ups plus the fixes in "QA 1.66.99" and the notification fix.
 
 - **A model at capacity now falls back instead of ending the work** (`fix(tasks)`).
   An OpenCode Go turn failed with "Selected model is at capacity. Please try a different
@@ -66,14 +68,73 @@
   on its objective, context and constraints, where the header already says who sent it. A user's
   own words are untouched.
 
+## QA 1.66.99: the fixes in this re-stage
+
+QA passed `2a8c65321cd0` with four bugs. `87733cbec191` carries all of them, plus the waiting
+alert's Do Not Disturb fix. **B is the root cause of the 15-26 October SIGBUS crashes.**
+
+- **B: the checkpoint worker was silently dropping the server's SQLite locks** (`fix(server)`).
+  `sqliteCheckpointWorker.ts` read `mxFrame` for its 1000-frame trigger by opening
+  `state.sqlite-shm`, reading 100 bytes and closing it, once a second. On Linux a `close()` of
+  **any** descriptor of a file drops **every** POSIX lock the process holds on that file, and
+  SQLite keeps its WAL-index locks on the `-shm`. So every tick wiped the running server's
+  locks (QA's probe: held in **0 of 60** samples); any other process that then opened the
+  database could reinitialise the shared memory under it, and the server died in
+  `walIndexReadHdr` with SIGBUS (live 26 Oct PID 40077, QA's throwaway PID 3333035). The worker
+  shipped in 1.66.52 (commit `03c2e748bd`, 15 Oct), which matches "present since 15 Oct".
+  - **Fix:** the worker never opens the database or the `-shm` again. The frame count comes from
+    the `-wal` file, which carries no locks: its 32-byte header gives the page size and the two
+    salts, and a bisection over the 24-byte frame headers finds the frames of the current WAL
+    (a complete checkpoint restarts the log in place, so the live frames are the first N slots
+    and the old ones keep the previous salt). The 1000-frame trigger and the "already
+    backfilled" skip are unchanged, and checkpoints still run through
+    `PRAGMA wal_checkpoint(PASSIVE)` on the worker's own connection.
+  - **Checked every other `state.sqlite*` access in the server:** this was the only one. The
+    service launcher's copy of the database and its sidecars runs in the CLI, before or after
+    the server is stopped, and the stall recorder never opens the database.
+  - **Proof, same test on both stages, throwaway root, second process running the real
+    `t3 pair` and `t3 auth session issue`:** old `2a8c65321cd0`, 137 samples over 30 s with 32
+    CLI calls: the lock was held in **0 of 137** samples. New `87733cbec191`, 326 samples over
+    65 s with **110** CLI calls: held in **326 of 326** (min 1), server alive, HTTP 200, no CLI
+    errors. The crash itself is a race and did not fire on demand (967 rounds of 20 writes plus
+    a `TRUNCATE` checkpoint from a second process left the old stage up), so the regression is
+    the invariant, not a crash: a short WAL must keep this process's lock across ticks (fails on
+    the old code at the first tick) and the 60 s two-process test samples the lock throughout.
+- **D: a capacity hold ended after about a minute, not 15** (`fix(personal)`).
+  `decideSwitchBack` consulted usage recovery before the stored reset. A capacity hit spends
+  nothing, so every window reads healthy and the bot went back on the first sweep. A capacity
+  hit now skips the recovery path: the stored time is the hold (15 min), and the bot tries its
+  own model when it ends. The switch-back line says "<provider> is available again", not "usage
+  limit has reset", because no window reset. Tests: the policy waits inside the hold even with a
+  healthy snapshot (and returns `recovered` without the flag), goes back at the hold plus the
+  grace, and the service test proves the notice, the +1 minute wait and the "available again"
+  line.
+- **C: `stripSelfAttribution` had no word boundary** (`fix(tasks)`). "From Assistants notes"
+  came out as "s notes". The name must now end at a boundary (not a letter, digit or
+  apostrophe) and "here" must end as a word, so "From Assistants notes" and "From Developer
+  notes" stay whole for Assistant and Dev, and "From CTO's review" keeps its possessive.
+- **A: `tools.test.mjs` used the real machine lock** (`test(tools)`). The invalid-memory case
+  ran `heavy-job.sh` with no `HEAVY_JOB_BASE`; it now uses the same throwaway base as the other
+  cases (it still exits 2 before taking any lock).
+- **The waiting alert did not get past Do Not Disturb** (`fix(release)`). Omarchy's shell only
+  lets `omarchy-action` (or a critical `notify-send`) through, and the toast was sent as "hbots
+  release". It now sends as `omarchy-action`, preferring Omarchy's own
+  `omarchy-notification-send` by absolute path (it also avoids `notify-send`'s argv parsing);
+  the fixture asserts the arguments. The runner change takes effect when DevOps runs
+  `install.sh`; `PINS.json` is unchanged because no pinned helper was touched.
+
 ## Verification and rollout
 
 - Server: `src/personal` gate plus the targeted task and release-notice suites; server and web
   typechecks; web `src/features/personal` gate; the phone e2e smoke on the staged artifact. Gate
-  numbers are in the section below.
-- Runner: all 25 release fixture tests under the heavy-job gate (`tests/release.test.mjs` and
-  `tests/idle.test.mjs`), including the new fixture that starts a real sibling systemd scope, the
-  waiting-alert fixture (fake notifier, real inbox file), and the two-slot fixture.
+  numbers are in the section below: **3,496 server tests, 3,136 web tests, 12 of 12 e2e
+  journeys, no failures**. The persistence and task suites were also run directly on this stage
+  (79 files, 371 tests) before the build, and the new worker test file passes its 60 s
+  two-process run.
+- Runner: **25 of 25** release fixture tests under the heavy-job gate on this stage
+  (`tests/release.test.mjs` and `tests/idle.test.mjs`), including the new fixture that starts a
+  real sibling systemd scope, the waiting-alert fixture (fake notifier, real inbox file, the
+  `omarchy-action` arguments), and the two-slot fixture.
 - Dev-team tools: all six `tools.test.mjs` checks, including the new two-jobs-plus-waiter test and
   the gate-evidence collector re-entry over the shared gate.
 - **DevOps, one command:** `bash scripts/personal/linux/hbots-release/install.sh` installs the new
@@ -87,7 +148,7 @@
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=2a8c65321cd0760717174fa52763319ba3260dd9 release=2a8c65321cd0 json-sha256=7b6bfdda25f075af9d1259d2c47579c87e114585eecc1a46da5ba0f9033f8d88 result=PASS -->
+<!-- gate-evidence:begin sha=87733cbec191ce3c03a60669944ef14f7733b4fb release=87733cbec191 json-sha256=80d5e95add2bf5f34b3707a8f853e4b1c35f90c3886c2039f53eccdfdd015865 result=PASS -->
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
 - web-tests: PASS, exit 0
