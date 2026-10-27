@@ -4,7 +4,7 @@
  * machine lock right now.
  *
  * The team runs heavy commands through `dev-team/tools/heavy-job.sh`, which
- * takes an exclusive `flock` on
+ * takes a `flock` on
  * `~/.personal-bots/run/omarchy-heavy.lock` for the whole job. While it is
  * held, the laptop has little RAM to spare, so task dispatches drop from the
  * normal 8 to 5.
@@ -87,7 +87,7 @@ export function lockHeldInProcLocks(
     if (fields.length < 6) continue;
     const [, type, , mode, pid, id] = fields;
     if (type !== "FLOCK") continue;
-    if (mode !== "WRITE") continue;
+    if (mode !== "WRITE" && mode !== "READ") continue;
     if (pid === undefined || !/^\d+$/.test(pid) || Number(pid) <= 0) continue;
     const [major, minor, inode] = (id ?? "").split(":");
     if (major === majorHex && minor === minorHex && inode === String(target.inode)) return true;

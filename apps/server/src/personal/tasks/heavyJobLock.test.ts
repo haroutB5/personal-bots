@@ -36,17 +36,16 @@ describe("heavy job lock probe", () => {
     expect(lockHeldInProcLocks(PROC_LOCKS, { major: 0, minor: 0x39, inode: 2874988 })).toBe(true);
   });
 
-  it("ignores the same inode on another device, a read lock, and no entry", () => {
+  it("recognises a shared flock and ignores unrelated locks", () => {
     expect(lockHeldInProcLocks(PROC_LOCKS, { major: 0, minor: 0x24, inode: 2874988 })).toBe(false);
     expect(lockHeldInProcLocks(PROC_LOCKS, { major: 0, minor: 0x39, inode: 999 })).toBe(false);
-    // Only the READ line matches these, so the lock is not held for a writer.
     expect(
       lockHeldInProcLocks("1: FLOCK  ADVISORY  READ  4349 00:39:2874988 0 EOF\n", {
         major: 0,
         minor: 0x39,
         inode: 2874988,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(lockHeldInProcLocks("", { major: 0, minor: 0x39, inode: 1 })).toBe(false);
   });
 
@@ -111,14 +110,14 @@ describe("heavy job lock probe", () => {
   });
 
   it.skipIf(process.platform !== "linux")(
-    "sees a real flock held by another process on this machine's home filesystem",
+    "sees a real shared flock held by another process on this machine's home filesystem",
     async () => {
       // /tmp is tmpfs, where stat's device happens to agree with /proc/locks;
       // the bug only shows on the mount the app's lock really lives on.
       const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.homedir(), ".hbots-lock-probe-"));
       const lockFile = NodePath.join(dir, "probe.lock");
       NodeFS.writeFileSync(lockFile, "");
-      const holder = spawn("flock", ["-n", lockFile, "sleep", "20"], { stdio: "ignore" });
+      const holder = spawn("flock", ["-s", "-n", lockFile, "sleep", "20"], { stdio: "ignore" });
       const waitFor = async (want: boolean): Promise<boolean> => {
         const deadline = Date.now() + 5_000;
         while (Date.now() < deadline) {
