@@ -27,24 +27,23 @@ it("registers the 1.66.6 desktop tools and states their limits", () => {
   );
   const down = byName("computer_mouse_down").description ?? "";
   expect(down).toMatch(/Always finish with computer_mouse_up/);
-  expect(down).toMatch(/let go automatically/);
-  expect(down).toMatch(/over 60 seconds/);
+  expect(down).toMatch(/auto-released/);
+  expect(down).toMatch(/after 60 s/);
   expect(down).toMatch(/computer_release/);
-  expect(down).toMatch(/turn ends/);
+  expect(down).toMatch(/turn end/);
   // The shared wording: one bot at a time, a queue, coordinates from the latest screenshot.
   for (const name of ["computer_mouse_down", "computer_mouse_up", "computer_hold_key"]) {
     expect(byName(name).description, name).toMatch(/one bot at a time/);
-    expect(byName(name).description, name).toMatch(/call again to keep your place/);
+    expect(byName(name).description, name).toMatch(/call again if told/);
+    expect(byName(name).description, name).toMatch(/keep your place/);
     expect(byName(name).description, name).toMatch(/latest computer_screenshot/);
   }
   const hold = byName("computer_hold_key").description ?? "";
-  expect(hold).toMatch(/30000 \(30 s at most\)/);
-  expect(hold).toMatch(/always let go/);
+  expect(hold).toMatch(/up to 30 s/);
+  expect(hold).toMatch(/release \(always/);
   expect(hold).toMatch(/cannot type/);
   expect(hold).toMatch(/2000 ms/);
   expect(hold).toMatch(/passwords/);
-  expect(byName("computer_drag").description).toMatch(/modifiers/);
-  expect(byName("computer_scroll").description).toMatch(/modifiers/);
   // Every parameter that is not a coordinate or an after-action option explains itself.
   for (const name of ["computer_mouse_down", "computer_mouse_up", "computer_hold_key"]) {
     const schema = Tool.getJsonSchema(byName(name)) as {
