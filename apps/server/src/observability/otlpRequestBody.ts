@@ -4,7 +4,7 @@
  * 3G), so the web client gzips them (`Content-Encoding: gzip`, client switch
  * `trace-gzip`). Plain bodies are still read as before.
  */
-import { gunzip } from "node:zlib";
+import * as NodeZlib from "node:zlib";
 import * as Effect from "effect/Effect";
 import * as Data from "effect/Data";
 import * as Schema from "effect/Schema";
@@ -19,7 +19,7 @@ export class OtlpRequestBodyError extends Data.TaggedError("OtlpRequestBodyError
 
 const gunzipBounded = (bytes: Uint8Array) =>
   Effect.callback<Buffer, OtlpRequestBodyError>((resume) => {
-    gunzip(bytes, { maxOutputLength: OTLP_MAX_UNZIPPED_BYTES }, (error, result) => {
+    NodeZlib.gunzip(bytes, { maxOutputLength: OTLP_MAX_UNZIPPED_BYTES }, (error, result) => {
       resume(
         error ? Effect.fail(new OtlpRequestBodyError({ cause: error })) : Effect.succeed(result),
       );

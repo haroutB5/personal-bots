@@ -1,4 +1,4 @@
-import { gzipSync } from "node:zlib";
+import * as NodeZlib from "node:zlib";
 
 import { expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -33,7 +33,7 @@ it.effect("reads a plain JSON body", () =>
 
 it.effect("unzips a gzipped JSON body", () =>
   Effect.gen(function* () {
-    const request = post(new Uint8Array(gzipSync(bodyText)), {
+    const request = post(new Uint8Array(NodeZlib.gzipSync(bodyText)), {
       "content-type": "application/json",
       "content-encoding": "gzip",
     });
@@ -43,9 +43,12 @@ it.effect("unzips a gzipped JSON body", () =>
 
 it.effect("refuses a body that unzips past the limit or is not gzip", () =>
   Effect.gen(function* () {
-    const bomb = post(new Uint8Array(gzipSync(Buffer.alloc(OTLP_MAX_UNZIPPED_BYTES + 1, 32))), {
-      "content-encoding": "gzip",
-    });
+    const bomb = post(
+      new Uint8Array(NodeZlib.gzipSync(Buffer.alloc(OTLP_MAX_UNZIPPED_BYTES + 1, 32))),
+      {
+        "content-encoding": "gzip",
+      },
+    );
     const tooBig = yield* Effect.exit(readOtlpJsonBody(bomb));
     expect(tooBig._tag === "Failure" && Cause.squash(tooBig.cause)).toBeInstanceOf(
       OtlpRequestBodyError,
