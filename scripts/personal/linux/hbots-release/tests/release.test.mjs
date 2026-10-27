@@ -246,10 +246,11 @@ test("waiting for idle tells Harout on the desktop and in his chat, once", async
     assert.equal(notice.threadId, env.thread);
     assert.match(notice.detail, /sleep 302/);
     assert.match(notice.logPath, /restart-9\.9\.1\.log$/);
-    // The desktop toast is critical (a normal one expires in seconds) and short.
+    // The desktop toast is critical (a normal one expires in seconds), short,
+    // and sent as omarchy-action: the one app name Omarchy lets past Do Not Disturb.
     const toast = fs.readFileSync(notifyLog, "utf8");
     assert.match(toast, /--urgency=critical/);
-    assert.match(toast, /--app-name=hbots release/);
+    assert.match(toast, /--app-name=omarchy-action/);
     assert.match(toast, /hbots 9\.9\.1 release is waiting \(0 min\): /);
     assert.doesNotMatch(toast, /; .*; .*; /, "the toast names one blocker, not a pid dump");
     const result = env.result();

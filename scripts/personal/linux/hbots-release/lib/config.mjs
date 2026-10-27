@@ -1,6 +1,7 @@
 // Paths, constants and the test overrides of the Linux release runner.
 // Overrides exist only with HBOTS_RELEASE_TEST=1 plus HBOTS_RELEASE_TEST_*; the launcher never sets them and a
 // run that used them says so in its result.
+import fs from "node:fs";
 import path from "node:path";
 
 export const PINNED_NODE = "/home/harout/.local/share/mise/installs/node/24.22.1/bin/node";
@@ -12,6 +13,15 @@ export const DEFAULT_REPO = "/home/harout/Claude/AI/personal-bots";
 export const HEAVY_LOCK = "/home/harout/.personal-bots/run/omarchy-heavy.lock";
 export const UNIT = "hbots.service";
 export const PORT = 38472;
+
+/**
+ * Omarchy's own notifier, by absolute path because the runner starts from a
+ * systemd unit with a minimal PATH. It is the one route past Do Not Disturb
+ * for a critical alert: the shell only lets `omarchy-action` through, and this
+ * tool sends as exactly that. Plain notify-send stays as the fallback.
+ */
+const DEFAULT_NOTIFIER = "/usr/bin/omarchy-notification-send";
+const notifier = () => (fs.existsSync(DEFAULT_NOTIFIER) ? DEFAULT_NOTIFIER : "notify-send");
 
 export const STANDING_COLUMNS = [
   "personal_bot_threads.pinned_at", "personal_bot_threads.snoozed_until", "personal_bot_threads.marked_unread_at",
@@ -65,7 +75,7 @@ export function loadConfig(env = process.env) {
     pinsFile: t("PINS", path.join(here, "PINS.json")),
     scope: t("CGROUP", ""),
     /** Desktop notifier. Tests point this at a recorder so they never toast the owner. */
-    notifySend: t("NOTIFY_SEND", "notify-send"),
+    notifySend: t("NOTIFY_SEND", notifier()),
   };
 }
 

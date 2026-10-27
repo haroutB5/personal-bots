@@ -314,7 +314,7 @@ async function main() {
             send: (text) => {
               const r = run(
                 cfg.notifySend,
-                ["--app-name=hbots release", "--urgency=critical", "--expire-time=20000", "--icon=dialog-warning", text],
+                ["--app-name=omarchy-action", "--urgency=critical", "--expire-time=20000", "--icon=dialog-warning", text],
                 { timeout: 5000 },
               );
               return { exit: r.code, error: r.code === 0 ? null : r.err.slice(0, 200) };
@@ -323,7 +323,7 @@ async function main() {
           })) {
             result.waitingAlert = { ...alert, at: new Date().toISOString() };
             result.waitingAlerts = [...(result.waitingAlerts ?? []), result.waitingAlert].slice(-4);
-            note(`waiting alert ${alert.minutes}m notify-send exit=${alert.exit}${alert.error ? ` error=${alert.error}` : ""} notice=${alert.noticeFile ?? "none"}: ${alert.desktop}`);
+            note(`waiting alert ${alert.minutes}m notification exit=${alert.exit}${alert.error ? ` error=${alert.error}` : ""} notice=${alert.noticeFile ?? "none"}: ${alert.desktop}`);
           }
           save("waiting_for_idle");
           note(entry.busyReason ? `busy ${entry.busyReason}` : `quiet ${quiet}/${cfg.quietLooks} cpu=${entry.cpu}s`);
