@@ -6,7 +6,10 @@ import { advertisedToolList } from "../mcp/advertisedTools.ts";
 import { buildCodexAdditionalContext } from "../provider/CodexDeveloperInstructions.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../provider/RuntimeInstructions.ts";
 import budget from "./agentContextBudget.json" with { type: "json" };
-import { PERSONAL_BOT_APP_RULES, personalBotSystemInstructions } from "./personalBotInstructions.ts";
+import {
+  PERSONAL_BOT_APP_RULES,
+  personalBotSystemInstructions,
+} from "./personalBotInstructions.ts";
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
