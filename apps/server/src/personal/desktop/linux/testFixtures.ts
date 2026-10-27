@@ -8,7 +8,8 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 /** A valid 16x16 JPEG, so jpegSize() reads a real frame. */
-const JPEG_B64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAQABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AIYBsO//2Q==";
+const JPEG_B64 =
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAQABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AIYBsO//2Q==";
 
 const script = (path: string, body: string): void => {
   NodeFS.writeFileSync(path, `#!/bin/sh\n${body}\n`, "utf8");
@@ -22,6 +23,7 @@ export interface FakeWorld {
   readonly notifyLog: string;
   readonly workDir: string;
   setActiveWindow(window: Record<string, unknown>): void;
+  setClients(clients: ReadonlyArray<Record<string, unknown>>): void;
   setLocked(locked: boolean): void;
   helperCommands(): string[];
   helperPath: string;
@@ -75,12 +77,31 @@ export function makeFakeWorld(workDir: string, binary?: string): FakeWorld {
     workspace: { id: 2, name: "2" },
     monitor: 0,
   });
+  const clients = NodePath.join(fixtureDir, "clients.json");
+  const setClients = (list: ReadonlyArray<Record<string, unknown>>) => {
+    NodeFS.writeFileSync(clients, JSON.stringify(list));
+  };
+  // The terminal fills the screen; a test that wants Brave under a point adds
+  // its own client.
+  setClients([
+    {
+      address: "0xabc",
+      title: "Terminal",
+      class: "alacritty",
+      at: [0, 0],
+      size: [1536, 960],
+      mapped: true,
+      hidden: false,
+      workspace: { id: 2, name: "2" },
+    },
+  ]);
 
   script(
     NodePath.join(binDir, "hyprctl"),
     `case "$*" in
   *"monitors -j"*) cat "${Path(fixtureDir, "monitors.json")}" ;;
   *"activewindow -j"*) cat "${Path(fixtureDir, "activewindow.json")}" ;;
+  *"clients -j"*) cat "${Path(fixtureDir, "clients.json")}" ;;
   *"getoption"*) echo '{"option":"input:kb_layout","str":"gb"}' ;;
   *"cursorpos"*) echo "100, 200" ;;
   *"instances -j"*) echo '[]' ;;
@@ -139,6 +160,7 @@ done
     workDir,
     helperPath,
     setActiveWindow,
+    setClients,
     setLocked,
     helperCommands: () =>
       NodeFS.readFileSync(helperLog, "utf8")

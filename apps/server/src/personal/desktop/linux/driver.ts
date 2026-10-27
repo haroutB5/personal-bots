@@ -16,9 +16,12 @@
  * - no desktop input while Brave (or another Chromium) is focused: the shared
  *   browser has a lease and a sensitive-site pause the desktop would bypass;
  * - no input into a password manager by window class;
+ * - no input at a point where a mapped browser or password-manager window sits,
+ *   whatever holds focus: a click can land on Brave while a text editor is
+ *   focused;
  * - take-back: a workspace change the bot did not make, or a focus change to a
- *   window it did not act on more than 1.5 s after its last action, refuses the
- *   next input with `user_active`;
+ *   window it did not act on more than 300 ms after its last action, refuses the
+ *   next input with `user_active` until a fresh screenshot acknowledges it;
  * - every failure and every restart panic-releases held keys and buttons.
  */
 import * as NodeFS from "node:fs";
@@ -40,16 +43,19 @@ import {
   type LinuxSession,
   type LogicalMonitor,
   logicalMonitors,
+  type MappedWindow,
+  mappedWindows,
+  type RawActiveWindow,
+  type RawClient,
   runCommand,
   sessionEnv,
   sessionLocked,
-  type RawActiveWindow,
 } from "./session.ts";
 
 export const LINUX_STOP_HOTKEY = "Super+Shift+F12";
 const STOP_CHORD = "SUPER + SHIFT + F12";
 /** A focus/workspace event this soon after the bot's own action is the bot's. */
-const TAKEOVER_GRACE_MS = 1_500;
+const TAKEOVER_GRACE_MS = 300;
 const MONITOR_TTL_MS = 500;
 const WINDOW_TTL_MS = 1_000;
 const LOCK_TTL_MS = 1_000;
@@ -64,7 +70,18 @@ const PASSWORD_MANAGER_CLASSES = [
   "proton pass",
   "protonpass",
 ];
-const BROWSER_CLASSES = ["brave-browser", "brave", "chromium", "google-chrome", "chrome"];
+/**
+ * Matched by prefix, not equality: a Brave PWA is `brave-<app>-Default`, and
+ * the focus guard and the point guard must both see it as the shared browser.
+ */
+const BROWSER_CLASS_PREFIXES = ["brave", "chromium", "chrome", "google-chrome"];
+
+const isBrowserClass = (windowClass: string): boolean =>
+  BROWSER_CLASS_PREFIXES.some((prefix) => windowClass.startsWith(prefix));
+
+/** Matched by containment: a password manager's class is namespaced. */
+const isPasswordManagerClass = (windowClass: string): boolean =>
+  PASSWORD_MANAGER_CLASSES.some((name) => windowClass.includes(name));
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -208,6 +225,8 @@ export class LinuxDesktopDriver implements DesktopDriver {
         "The screen is off. Nothing was clicked or typed. Wait for the user to turn it back on.",
       );
     }
+    // Always ask Hyprland now: a cached focus is how a take-back was missed.
+    this.windowCache = null;
     const window = await this.focusedWindow();
     const windowClass = window?.class.toLowerCase() ?? "";
     if (windowClass === "org.omarchy.screensaver") {
@@ -216,23 +235,71 @@ export class LinuxDesktopDriver implements DesktopDriver {
         "The screensaver is up, so the user is away. Nothing was clicked or typed; do not dismiss it.",
       );
     }
-    if (BROWSER_CLASSES.includes(windowClass)) {
+    if (isBrowserClass(windowClass)) {
       throw new DesktopHelperError(
         "user_active",
         "Brave is the shared browser. Use the browser tools so the lease and the sensitive-site pause apply. The desktop cannot drive it.",
       );
     }
-    if (PASSWORD_MANAGER_CLASSES.includes(windowClass)) {
+    if (isPasswordManagerClass(windowClass)) {
       throw new DesktopHelperError(
         "user_active",
         "That window is a password manager. The desktop tools never type or click in one; ask the user to do it.",
       );
     }
     if (this.userActiveAt !== 0 && this.userActiveAt >= this.lastBotActionAt) {
-      this.userActiveAt = 0;
+      // One-shot: it stays set until a fresh screenshot acknowledges it, so a
+      // retry cannot slip through on a second read of the same state.
       throw new DesktopHelperError(
         "user_active",
-        "The user is using the PC (they switched window or workspace), so nothing was done. Wait a few seconds, take a fresh screenshot, and try again; if they keep using it, ask them whether to continue.",
+        "The user is using the PC (they switched window or workspace), so nothing was done. Take a fresh screenshot, then try again; if they keep using it, ask them whether to continue.",
+      );
+    }
+  }
+
+  /**
+   * The window under the point decides, not the focused one: a click can land
+   * on Brave or a password manager while a text editor keeps focus.
+   */
+  private async guardPoint(point: { readonly x: number; readonly y: number }): Promise<void> {
+    const { union } = await this.extents();
+    const x = Math.round(point.x) - union.x;
+    const y = Math.round(point.y) - union.y;
+    const windows = await this.mappedWindows();
+    const under = windows.filter(
+      (window) =>
+        x >= window.x &&
+        x < window.x + window.width &&
+        y >= window.y &&
+        y < window.y + window.height,
+    );
+    if (under.some((window) => isBrowserClass(window.class.toLowerCase()))) {
+      throw new DesktopHelperError(
+        "user_active",
+        "Brave is the shared browser and a browser window is under that point. Use the browser tools so the lease and the sensitive-site pause apply. The desktop cannot click it.",
+      );
+    }
+    if (under.some((window) => isPasswordManagerClass(window.class.toLowerCase()))) {
+      throw new DesktopHelperError(
+        "user_active",
+        "A password manager window is under that point. The desktop tools never type or click in one; ask the user to do it.",
+      );
+    }
+  }
+
+  /** Every window Hyprland has mapped; a hidden workspace contributes none. */
+  private async mappedWindows(): Promise<MappedWindow[]> {
+    try {
+      const raw = await hyprctlJson<ReadonlyArray<RawClient>>(this.session, ["clients"]);
+      return mappedWindows(Array.isArray(raw) ? raw : []);
+    } catch (error) {
+      // The point guard exists to keep Brave's lease honest. If the window list
+      // cannot be read, refusing is the safe side of that decision.
+      throw new DesktopHelperError(
+        "unavailable",
+        `The windows under the pointer could not be checked, so nothing was clicked: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
   }
@@ -414,7 +481,10 @@ export class LinuxDesktopDriver implements DesktopDriver {
     return { union: unionRect(monitors), monitors };
   }
 
-  private async helperPoint(x: number, y: number): Promise<{
+  private async helperPoint(
+    x: number,
+    y: number,
+  ): Promise<{
     x: number;
     y: number;
     width: number;
@@ -468,7 +538,9 @@ export class LinuxDesktopDriver implements DesktopDriver {
     }
   }
 
-  private async screenshot(params: Readonly<Record<string, unknown>>): Promise<Record<string, unknown>> {
+  private async screenshot(
+    params: Readonly<Record<string, unknown>>,
+  ): Promise<Record<string, unknown>> {
     return this.withOverlayHidden(async () => {
       const shot = await this.capture.capture({
         x: num(params.x),
@@ -521,8 +593,13 @@ export class LinuxDesktopDriver implements DesktopDriver {
               : { title: window.title, class: window.class, address: window.address },
         };
       }
-      case "screenshot":
-        return this.screenshot(params);
+      case "screenshot": {
+        const shot = await this.screenshot(params);
+        // A fresh screenshot acknowledges a take-back: the bot has seen that
+        // the user is using the PC, and the next input may try again.
+        this.userActiveAt = 0;
+        return shot;
+      }
       case "frame": {
         const monitors = await this.monitors();
         const primary = monitors.find((monitor) => monitor.primary) ?? monitors[0];
@@ -533,7 +610,8 @@ export class LinuxDesktopDriver implements DesktopDriver {
         if (primary.dpmsStatus === false) return { locked: true };
         const regionX = params.regionX === undefined ? primary.x : primary.x + num(params.regionX);
         const regionY = params.regionY === undefined ? primary.y : primary.y + num(params.regionY);
-        const regionWidth = params.regionWidth === undefined ? primary.width : num(params.regionWidth);
+        const regionWidth =
+          params.regionWidth === undefined ? primary.width : num(params.regionWidth);
         const regionHeight =
           params.regionHeight === undefined ? primary.height : num(params.regionHeight);
         const maxWidth = Math.max(64, num(params.maxWidth, 1280));
@@ -592,6 +670,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
         await this.ensureLayout();
         await this.guardInput();
         const point = await this.helperPoint(num(params.x), num(params.y));
+        await this.guardPoint({ x: num(params.x), y: num(params.y) });
         const button = str(params.button) || "left";
         const count = Math.max(1, Math.min(3, num(params.count, 1)));
         const modifiers = Array.isArray(params.modifiers)
@@ -624,6 +703,8 @@ export class LinuxDesktopDriver implements DesktopDriver {
         await this.guardInput();
         const from = await this.helperPoint(num(params.fromX), num(params.fromY));
         const to = await this.helperPoint(num(params.toX), num(params.toY));
+        await this.guardPoint({ x: num(params.fromX), y: num(params.fromY) });
+        await this.guardPoint({ x: num(params.toX), y: num(params.toY) });
         const button = str(params.button) || "left";
         const modifiers = Array.isArray(params.modifiers)
           ? (params.modifiers as ReadonlyArray<number>)
@@ -648,7 +729,12 @@ export class LinuxDesktopDriver implements DesktopDriver {
         await this.guardInput();
         if (params.x !== undefined && params.y !== undefined) {
           const point = await this.helperPoint(num(params.x), num(params.y));
-          await this.helper.request("move", [point.x, point.y, point.width, point.height], timeoutMs);
+          await this.guardPoint({ x: num(params.x), y: num(params.y) });
+          await this.helper.request(
+            "move",
+            [point.x, point.y, point.width, point.height],
+            timeoutMs,
+          );
         }
         const divisor = cmd === "wheel" ? 120 : 1;
         const dx = num(params.dx) / divisor;
@@ -706,7 +792,12 @@ export class LinuxDesktopDriver implements DesktopDriver {
         await this.guardInput();
         if (params.x !== undefined && params.y !== undefined) {
           const point = await this.helperPoint(num(params.x), num(params.y));
-          await this.helper.request("move", [point.x, point.y, point.width, point.height], timeoutMs);
+          await this.guardPoint({ x: num(params.x), y: num(params.y) });
+          await this.helper.request(
+            "move",
+            [point.x, point.y, point.width, point.height],
+            timeoutMs,
+          );
         }
         const button = str(params.button) || "left";
         const down = params.down === true;

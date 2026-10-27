@@ -56,7 +56,11 @@ export function runCommand(
       if (settled) return;
       settled = true;
       child.kill();
-      reject(new LinuxSessionError(`${command} did not answer within ${options.timeoutMs ?? 10_000} ms.`));
+      reject(
+        new LinuxSessionError(
+          `${command} did not answer within ${options.timeoutMs ?? 10_000} ms.`,
+        ),
+      );
     }, options.timeoutMs ?? 10_000);
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
@@ -100,7 +104,10 @@ const ownedByUid = (path: string, uid: number): boolean => {
 };
 
 /** The environment hyprctl, grim and the helper need for one session. */
-export function sessionEnv(session: LinuxSession, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function sessionEnv(
+  session: LinuxSession,
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
   return {
     ...base,
     XDG_RUNTIME_DIR: session.xdgRuntimeDir,
@@ -128,7 +135,10 @@ export async function hyprctl(
   return result.stdout;
 }
 
-export async function hyprctlJson<T>(session: LinuxSession, args: ReadonlyArray<string>): Promise<T> {
+export async function hyprctlJson<T>(
+  session: LinuxSession,
+  args: ReadonlyArray<string>,
+): Promise<T> {
   const text = await hyprctl(session, [...args, "-j"]);
   try {
     return JSON.parse(text) as T;
@@ -203,7 +213,12 @@ export async function discoverLinuxSession(
   }
   const envDisplay = env.WAYLAND_DISPLAY?.trim();
   const envInstance = env.HYPRLAND_INSTANCE_SIGNATURE?.trim();
-  if (envDisplay !== undefined && envInstance !== undefined && envDisplay.length > 0 && envInstance.length > 0) {
+  if (
+    envDisplay !== undefined &&
+    envInstance !== undefined &&
+    envDisplay.length > 0 &&
+    envInstance.length > 0
+  ) {
     candidates.push({
       waylandDisplay: envDisplay,
       xdgRuntimeDir: runtime,
@@ -333,11 +348,61 @@ export function activeWindow(raw: RawActiveWindow | null | undefined): ActiveWin
   };
 }
 
+export interface RawClient {
+  readonly class?: string;
+  readonly title?: string;
+  readonly at?: ReadonlyArray<number>;
+  readonly size?: ReadonlyArray<number>;
+  readonly mapped?: boolean;
+  readonly hidden?: boolean;
+  readonly workspace?: { readonly id?: number; readonly name?: string };
+}
+
+/** A window that is actually on screen, in logical layout pixels. */
+export interface MappedWindow {
+  readonly class: string;
+  readonly title: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The windows a pointer can land on. Hyprland lists every client, including
+ * those on hidden workspaces; `mapped` is what separates them.
+ */
+export function mappedWindows(raw: ReadonlyArray<RawClient>): MappedWindow[] {
+  const windows: MappedWindow[] = [];
+  for (const entry of raw) {
+    if (entry === null || entry === undefined) continue;
+    if (entry.mapped === false || entry.hidden === true) continue;
+    const at = Array.isArray(entry.at) ? entry.at : [];
+    const size = Array.isArray(entry.size) ? entry.size : [];
+    const width = Number(size[0]);
+    const height = Number(size[1]);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) continue;
+    windows.push({
+      class: typeof entry.class === "string" ? entry.class : "",
+      title: typeof entry.title === "string" ? entry.title : "",
+      x: Number(at[0]) || 0,
+      y: Number(at[1]) || 0,
+      width,
+      height,
+    });
+  }
+  return windows;
+}
+
 /** The lock is Omarchy's quickshell ext-session-lock, not hyprlock. */
-export async function sessionLocked(session: LinuxSession): Promise<boolean> {
+export async function sessionLocked(
+  session: LinuxSession,
+  base: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  // Oracle 1: Omarchy's own shell answers true/false when it is up.
   try {
     const result = await runCommand("omarchy-shell", ["lock", "isLocked"], {
-      env: sessionEnv(session),
+      env: sessionEnv(session, base),
       timeoutMs: 3_000,
     });
     const text = (result.stdout || result.stderr).trim().toLowerCase();

@@ -32,6 +32,18 @@ const makeDriver = () =>
     log: () => undefined,
   });
 
+/** The terminal fills the monitor, so any point lands on it by default. */
+const TERMINAL_CLIENT = {
+  address: "0xabc",
+  title: "Terminal",
+  class: "alacritty",
+  at: [0, 0],
+  size: [1536, 960],
+  mapped: true,
+  hidden: false,
+  workspace: { id: 2, name: "2" },
+};
+
 beforeAll(() => {
   NodeFS.mkdirSync(root, { recursive: true });
   world = makeFakeWorld(root);
@@ -196,6 +208,86 @@ describe("LinuxDesktopDriver", () => {
     }
   });
 
+  it("refuses a point over a Brave PWA while a text editor has focus", async () => {
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xbrave",
+        title: "Bank",
+        class: "brave-abc-Default",
+        at: [100, 100],
+        size: [400, 300],
+        mapped: true,
+        hidden: false,
+        workspace: { id: 2, name: "2" },
+      },
+    ]);
+    const before = world.helperCommands().length;
+    const driver = makeDriver();
+    try {
+      // Focus is the terminal; the click point is inside the Brave window.
+      await expect(driver.request("click", { x: 200, y: 150 })).rejects.toMatchObject({
+        code: "user_active",
+      });
+      // The point is checked for both ends of a drag.
+      await expect(
+        driver.request("drag", { fromX: 10, fromY: 10, toX: 200, toY: 150 }),
+      ).rejects.toMatchObject({ code: "user_active" });
+      await expect(driver.request("scroll", { x: 200, y: 150, dy: 3 })).rejects.toMatchObject({
+        code: "user_active",
+      });
+      await expect(driver.request("button", { x: 200, y: 150, down: true })).rejects.toMatchObject({
+        code: "user_active",
+      });
+    } finally {
+      world.setClients([TERMINAL_CLIENT]);
+      driver.dispose();
+    }
+    expect(
+      world
+        .helperCommands()
+        .slice(before)
+        .some((line) => line.startsWith("click")),
+    ).toBe(false);
+    expect(
+      world
+        .helperCommands()
+        .slice(before)
+        .some((line) => line.startsWith("drag")),
+    ).toBe(false);
+  });
+
+  it("refuses a point over a password manager, by any namespaced class", async () => {
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xkeepass",
+        class: "org.keepassxc.KeePassXC",
+        at: [200, 200],
+        size: [300, 200],
+        mapped: true,
+        hidden: false,
+        workspace: { id: 2, name: "2" },
+      },
+    ]);
+    const before = world.helperCommands().length;
+    const driver = makeDriver();
+    try {
+      await expect(driver.request("click", { x: 250, y: 250 })).rejects.toMatchObject({
+        code: "user_active",
+      });
+    } finally {
+      world.setClients([TERMINAL_CLIENT]);
+      driver.dispose();
+    }
+    expect(
+      world
+        .helperCommands()
+        .slice(before)
+        .some((line) => line.startsWith("click")),
+    ).toBe(false);
+  });
+
   it("takes back control after a workspace change the bot did not make", async () => {
     const dir = NodePath.join(root, "hypr", "test-instance");
     NodeFS.mkdirSync(dir, { recursive: true });
@@ -214,6 +306,14 @@ describe("LinuxDesktopDriver", () => {
       await expect(driver.request("move", { x: 11, y: 11 })).rejects.toMatchObject({
         code: "user_active",
       });
+      // One-shot: a retry without a fresh screenshot is refused as well, so a
+      // second look at the same state cannot slip through.
+      await expect(driver.request("move", { x: 12, y: 12 })).rejects.toMatchObject({
+        code: "user_active",
+      });
+      // A fresh screenshot is how the bot acknowledges the take-back.
+      await driver.request("screenshot", { x: 0, y: 0, width: 100, height: 100 });
+      await driver.request("move", { x: 13, y: 13 });
     } finally {
       driver.dispose();
       for (const socket of connections) socket.destroy();
@@ -238,8 +338,8 @@ describe("LinuxDesktopDriver", () => {
       connections[0]?.write("activewindowv2>>0xnew\n");
       await new Promise((resolve) => setTimeout(resolve, 50));
       await driver.request("move", { x: 21, y: 21 });
-      // Later, a focus change is the user's.
-      await new Promise((resolve) => setTimeout(resolve, 1_600));
+      // Later than the 300 ms grace, a focus change is the user's.
+      await new Promise((resolve) => setTimeout(resolve, 500));
       connections[0]?.write("activewindowv2>>0xother\n");
       await new Promise((resolve) => setTimeout(resolve, 50));
       await expect(driver.request("move", { x: 22, y: 22 })).rejects.toMatchObject({
