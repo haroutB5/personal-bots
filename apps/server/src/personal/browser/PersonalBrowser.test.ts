@@ -3736,9 +3736,12 @@ describe("PersonalBrowser", () => {
         expect(status.helpRequest).toBeNull();
         expect(status.state).not.toBe("offline");
         expect(harness.resumes.at(-1)?.note).toContain("refused this step");
-        // A retry in the same turn fails straight away instead of asking again.
-        const retry = yield* refused(browser, exfil);
-        expect(retry.message).toContain("refused this step");
+        // Every retry in the same turn fails straight away instead of asking
+        // again: the refusal lasts until the turn ends.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const retry = yield* refused(browser, exfil);
+          expect(retry.message).toContain("refused this step");
+        }
         // The step did not happen, and the browser is still on the bank page.
         expect(fake.state.pages.flatMap((page) => page.gotos)).not.toContain(
           "https://evil.example/?q=balance",
@@ -3749,6 +3752,10 @@ describe("PersonalBrowser", () => {
           .refuseEgress({ threadId, sessionId: "session-1" })
           .pipe(Effect.flip);
         expect(again.message).toContain("no paused step");
+        // The turn ends: the next attempt asks the user again instead of
+        // staying silently blocked for the rest of the session.
+        yield* browser.releaseLease(threadId);
+        expect((yield* refused(browser, exfil)).message).toContain("request_browser_help");
       }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
     });
 

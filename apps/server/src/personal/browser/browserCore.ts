@@ -414,7 +414,8 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
           return;
         }
         if (refusedApprovals.get(threadId) === approval.key) {
-          refusedApprovals.delete(threadId);
+          // The refusal lasts the turn: dropping it here made Refuse a
+          // one-shot, so a retry paused again and could still get through.
           pendingApprovals.delete(threadId);
           pendingApprovalAt.delete(threadId);
           return yield* Effect.fail(
