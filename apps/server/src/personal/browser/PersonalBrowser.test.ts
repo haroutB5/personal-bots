@@ -1357,6 +1357,10 @@ describe("PersonalBrowser", () => {
 
       expect(closed.state).toBe("offline");
       expect(closed.controller).toEqual({ _tag: "None" });
+      // The Computer tab's idle card reads this; it must survive in later status polls.
+      expect(closed.lastStop).not.toBeNull();
+      expect(Number.isNaN(Date.parse(String(closed.lastStop)))).toBe(false);
+      expect((yield* browser.status("session-1")).lastStop).toBe(closed.lastStop);
       expect(fake.state.page.closed).toBe(true);
       // No saved page, so a restart after a close cannot resurrect the session.
       expect(yield* lease.view).toMatchObject({ ownerId: null, lastUrl: null });
