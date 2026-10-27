@@ -3531,7 +3531,13 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBotsArchiveThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsArchiveThread,
-            personalBots.archiveThread(input),
+            personalBots.archiveThread(input).pipe(
+              // An archived chat cannot use the browser any more: its tabs,
+              // its help card and its place in line go with it (QA's B6).
+              Effect.tap(() =>
+                input.archived ? personalBrowser.releaseThread(input.threadId) : Effect.void,
+              ),
+            ),
             {
               "rpc.aggregate": "server",
             },
@@ -3573,7 +3579,20 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBotsArchiveThreads]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsArchiveThreads,
-            archivePersonalChats(personalBots, input.threadIds, input.archived),
+            archivePersonalChats(personalBots, input.threadIds, input.archived).pipe(
+              // Same as one chat: every archived chat gives up the browser.
+              Effect.tap((result) =>
+                input.archived
+                  ? Effect.forEach(
+                      result.done,
+                      (threadId) => personalBrowser.releaseThread(threadId),
+                      {
+                        discard: true,
+                      },
+                    )
+                  : Effect.void,
+              ),
+            ),
             {
               "rpc.aggregate": "server",
             },
@@ -4098,11 +4117,9 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "personal-desktop",
           }),
         [WS_METHODS.personalDesktopActivity]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.personalDesktopActivity,
-            personalDesktop.activity,
-            { "rpc.aggregate": "personal-desktop" },
-          ),
+          observeRpcStream(WS_METHODS.personalDesktopActivity, personalDesktop.activity, {
+            "rpc.aggregate": "personal-desktop",
+          }),
         [WS_METHODS.personalRoutinesList]: (_input) =>
           observeRpcEffect(WS_METHODS.personalRoutinesList, personalRoutines.list(), {
             "rpc.aggregate": "server",

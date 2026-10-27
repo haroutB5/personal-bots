@@ -659,10 +659,7 @@ describe("BrowserLease", () => {
     Effect.gen(function* () {
       const lease = yield* BrowserLease.BrowserLease;
       // A holds the browser.
-      yield* lease.runAgentOp(
-        { threadId: "thread-a", operation: "snapshot" },
-        Effect.succeed("a"),
-      );
+      yield* lease.runAgentOp({ threadId: "thread-a", operation: "snapshot" }, Effect.succeed("a"));
       // B's call starts, finds A's live lease, and takes its place in line.
       const queued = yield* lease
         .runAgentOp({ threadId: "thread-b", operation: "click" }, Effect.succeed("b"))
@@ -683,8 +680,9 @@ describe("BrowserLease", () => {
         const error = Cause.squash(timedOut.cause) as BrowserLease.BrowserLeaseRejected;
         expect(error.message).toContain("number 1 in line");
       }
-      // Its place survives the timeout, so a quick retry keeps it.
-      expect((yield* lease.waiting).map((entry) => entry.threadId)).toEqual(["thread-b"]);
+      // "Up next" is only bots inside a call: a place kept after a timeout is
+      // not shown there any more (QA's B6), though the retry keeps it.
+      expect(yield* lease.waiting).toEqual([]);
       // A's turn ends: the lease is released at once, not after 90 s.
       yield* lease.releaseIfOwner("thread-a");
       expect((yield* lease.view).ownerId).toBeNull();
@@ -699,13 +697,36 @@ describe("BrowserLease", () => {
     }).pipe(Effect.provide(leaseLayer)),
   );
 
+  it.effect("an archived chat leaves the line and its wait ends", () =>
+    Effect.gen(function* () {
+      const lease = yield* BrowserLease.BrowserLease;
+      // A holds the browser; B is inside a call, waiting.
+      yield* lease.runAgentOp({ threadId: "thread-a", operation: "snapshot" }, Effect.succeed("a"));
+      const queued = yield* lease
+        .runAgentOp({ threadId: "thread-b", operation: "click" }, Effect.succeed("b"))
+        .pipe(Effect.exit, Effect.forkChild);
+      for (let turn = 0; turn < 100; turn++) {
+        if ((yield* lease.waiting).length > 0) break;
+        yield* Effect.yieldNow;
+      }
+      expect((yield* lease.waiting).map((entry) => entry.threadId)).toEqual(["thread-b"]);
+
+      // Archiving B's chat drops its place and ends the call that held it.
+      yield* lease.releaseThread("thread-b");
+      expect(yield* lease.waiting).toEqual([]);
+      // The wait loop polls every 250 ms; let it see the drop.
+      yield* TestClock.adjust(500);
+      const ended = yield* Fiber.join(queued);
+      expect(rejectionReason(ended)).toBe("thread-gone");
+      // A still owns the browser: the archived chat never touched it.
+      expect((yield* lease.view).ownerId).toBe("thread-a");
+    }).pipe(Effect.provide(leaseLayer)),
+  );
+
   it.effect("releaseIfOwner never touches another thread's lease", () =>
     Effect.gen(function* () {
       const lease = yield* BrowserLease.BrowserLease;
-      yield* lease.runAgentOp(
-        { threadId: "thread-a", operation: "snapshot" },
-        Effect.succeed("a"),
-      );
+      yield* lease.runAgentOp({ threadId: "thread-a", operation: "snapshot" }, Effect.succeed("a"));
       yield* lease.releaseIfOwner("thread-b");
       expect((yield* lease.view).ownerId).toBe("thread-a");
     }).pipe(Effect.provide(leaseLayer)),

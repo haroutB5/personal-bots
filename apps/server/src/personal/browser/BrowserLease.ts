@@ -61,7 +61,9 @@ export type BrowserLeaseRejectionReason =
   | "stale-generation"
   | "snapshot-required"
   /** Another bot holds the browser and this one's place in line is not first. */
-  | "busy";
+  | "busy"
+  /** The chat was archived or deleted while it waited. */
+  | "thread-gone";
 
 /** How long one tool call waits for the browser before it is told to try again. */
 export const BROWSER_QUEUE_WAIT_MS = 45_000;
@@ -289,6 +291,8 @@ export const make = Effect.gen(function* () {
   const graceDeadlines = new Map<string, number>();
   /** Threads inside a call right now; a place kept in grace is not active. */
   const activeWaiters = new Set<string>();
+  /** Threads whose chat is gone: their place in line and any new wait end. */
+  const dropped = new Set<string>();
   const pruneWaiters = (now: number): void => {
     for (const [threadId, deadline] of graceDeadlines) {
       if (now < deadline) continue;
@@ -360,6 +364,14 @@ export const make = Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const now = yield* Clock.currentTimeMillis;
         pruneWaiters(now);
+        if (dropped.has(threadId)) {
+          waiters.delete(threadId);
+          return yield* new BrowserLeaseRejected({
+            reason: "thread-gone",
+            message:
+              "This chat was closed or archived, so it is no longer in line for the shared browser. Nothing was done.",
+          });
+        }
         if (current.takeoverPending || current.row.ownerType === "human") {
           waiters.delete(threadId);
           return yield* new BrowserLeaseRejected({
@@ -505,6 +517,9 @@ export const make = Effect.gen(function* () {
 
   const runAgentOp: BrowserLease["Service"]["runAgentOp"] = (input, effect) =>
     Effect.gen(function* () {
+      // A new call from this chat means it is open again (it may have been
+      // unarchived), so it may queue once more.
+      dropped.delete(input.threadId);
       const started = yield* Clock.currentTimeMillis;
       const deadline = started + BROWSER_QUEUE_WAIT_MS;
       while (true) {
@@ -649,6 +664,11 @@ export const make = Effect.gen(function* () {
 
   const releaseThread: BrowserLease["Service"]["releaseThread"] = (threadId) =>
     Effect.gen(function* () {
+      // The chat is gone: it is not in line any more and a caller still
+      // waiting for it ends instead of re-joining on its next poll (QA's B6).
+      dropped.add(threadId);
+      waiters.delete(threadId);
+      graceDeadlines.delete(threadId);
       const now = yield* Clock.currentTimeMillis;
       const outcome = yield* Ref.modify(
         state,
@@ -690,7 +710,18 @@ export const make = Effect.gen(function* () {
   const waiting: BrowserLease["Service"]["waiting"] = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     pruneWaiters(now);
+    const current = yield* Ref.get(state);
+    // "Up next" is only the bots inside a call and actually waiting: a bot
+    // whose call returned keeps a place in grace, and the bot holding the
+    // browser is not waiting for it (QA's B6).
+    const holder =
+      current.row.ownerType === "agent" &&
+      current.row.ownerId !== null &&
+      agentLeaseLive(current.row, now)
+        ? current.row.ownerId
+        : null;
     return [...waiters.entries()]
+      .filter(([threadId]) => activeWaiters.has(threadId) && threadId !== holder)
       .sort((a, b) => a[1] - b[1])
       .map(([threadId, since]) => ({ threadId, since }));
   });

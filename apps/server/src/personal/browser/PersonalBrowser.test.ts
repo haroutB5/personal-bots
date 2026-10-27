@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type PersonalTask,
+  type PersonalTaskDetail,
   type PreviewAutomationRequest,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -375,6 +376,8 @@ interface TaskHarness {
   readonly roots?: ReadonlyMap<string, string>;
   /** What `list` reports; the idle sweep asks it whether a tab's thread is busy. */
   readonly live?: ReadonlyArray<PersonalTask>;
+  /** Status `get` reports per task; a card's task is waiting unless set here. */
+  readonly statuses?: ReadonlyMap<string, string>;
 }
 
 const taskServiceLayer = (harness: TaskHarness) =>
@@ -389,6 +392,10 @@ const taskServiceLayer = (harness: TaskHarness) =>
         harness.waits.push(taskId);
         return {} as PersonalTask;
       }),
+    get: ({ taskId }) =>
+      Effect.succeed({
+        task: { taskId, status: harness.statuses?.get(taskId) ?? "waiting_for_browser" },
+      } as unknown as PersonalTaskDetail),
     resumeFromUser: ({ taskId, note }) =>
       Effect.sync(() => {
         harness.resumes.push({ taskId, note });
@@ -3820,6 +3827,44 @@ describe("PersonalBrowser", () => {
         expect(fake.state.pages.flatMap((page) => page.gotos)).not.toContain(
           "https://other.example/",
         );
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("drops the card and the lease when its task is gone", () => {
+      // QA's B6: a cancelled task (or an archived chat) left "needs you"
+      // holding the browser forever, because every turn end skipped the
+      // release while any card was open.
+      const fake = makeFakeDriver();
+      const statuses = new Map<string, string>([[taskId, "waiting_for_browser"]]);
+      const harness: TaskHarness = { waits: [], resumes: [], statuses };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/" }),
+        );
+        yield* browser.requestHelp({
+          threadId,
+          botId: PersonalBotId.make("bot-assistant"),
+          botName: "Assistant",
+          taskId,
+          kind: "captcha",
+          reason: "Solve the CAPTCHA",
+        });
+        // A live question keeps the card and the lease (QA's B2).
+        yield* browser.releaseLease(threadId);
+        expect((yield* browser.status("session-1")).helpRequest?.threadId).toBe(threadId);
+        expect((yield* browser.status("session-1")).controller).toMatchObject({
+          _tag: "Agent",
+          threadId,
+        });
+
+        // The task is cancelled: the next turn end takes the card away and
+        // gives the browser back.
+        statuses.set(taskId, "cancelled");
+        yield* browser.releaseLease(threadId);
+        const after = yield* browser.status("session-1");
+        expect(after.helpRequest).toBeNull();
+        expect(after.controller._tag).not.toBe("Agent");
       }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
     });
 

@@ -265,6 +265,7 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
     const core = yield* makeBrowserCore(rawOptions);
     const {
       lease,
+      notify,
       oneShotApprovals,
       options,
       pendingApprovals,
@@ -272,6 +273,7 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
       sensitiveExposure,
       st,
       status,
+      tasks,
       viewers,
     } = core;
 
@@ -383,9 +385,21 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
           // The user is still answering a card for this thread. Releasing now
           // would hand the browser to the next bot and cancel the question it
           // is waiting on, which is how two bots could cancel each other's
-          // help forever (QA's B2). The waiting card keeps the lease; other
-          // bots stay in Up next until it is answered.
-          if (st.activeHelp?.request.threadId === threadId) return;
+          // help forever (QA's B2). A card whose task is gone (cancelled, or
+          // the chat archived) is not a question any more: it goes and the
+          // lease with it (QA's B6).
+          if (st.activeHelp?.request.threadId === threadId) {
+            const card = st.activeHelp;
+            const detail = yield* tasks.get({ taskId: card.taskId }).pipe(
+              Effect.option,
+              Effect.catchCause(() => Effect.succeed(Option.none())),
+            );
+            const waitingForBrowser =
+              Option.isSome(detail) && detail.value.task.status === "waiting_for_browser";
+            if (waitingForBrowser) return;
+            st.activeHelp = null;
+            yield* notify;
+          }
           if (pendingApprovals.has(threadId)) return;
           // Approval decisions never outlive the turn that asked for them.
           oneShotApprovals.delete(threadId);
