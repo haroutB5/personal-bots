@@ -183,7 +183,7 @@ export async function captureShot(
     activity: { summary: `screenshot of ${monitorName}` },
     ...(locked
       ? {
-          note: "The PC is locked (or a secure Windows prompt is showing): clicks and typing are refused until the user unlocks it. Never try to unlock it yourself.",
+          note: "The PC is locked (or a secure system prompt is showing): clicks and typing are refused until the user unlocks it. Never try to unlock it yourself.",
         }
       : {}),
     screenshot: {
@@ -242,11 +242,14 @@ async function afterAction(
   context: DesktopActionContext,
   after: AfterAction,
 ): Promise<DesktopShot> {
+  // The user may have hit stop while the action ran: then the PC is theirs
+  // again and the action must say it was stopped, not "Done." (QA's L6).
+  if (!context.stillHeld()) {
+    throw new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
+  }
   if (after.screenshot === false) return { note: "Done." };
   const settle = Math.max(0, Math.min(MAX_SETTLE_MS, after.settleMs ?? DEFAULT_SETTLE_MS));
   if (settle > 0) await sleep(settle);
-  // The user may have hit stop while the screen settled: then the PC is
-  // theirs again, and a screenshot of it is no longer this bot's to take.
   if (!context.stillHeld()) {
     throw new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
   }
@@ -443,11 +446,12 @@ export async function pressKeys(
     Math.min(55_000, 10_000 + repeat * combos.length * 200),
   );
   const after = await afterAction(context, input);
+  const typed = input.keys.trim().split(/\s+/).length;
   return {
     ...after,
     activity: {
       summary: looksLikeTyping(input.keys)
-        ? `pressed ${input.keys.trim().split(/\s+/).length} keys`
+        ? `pressed ${typed} key${typed === 1 ? "" : "s"}`
         : repeat === 1
           ? `pressed ${input.keys}`
           : `pressed ${input.keys} ${repeat} times`,

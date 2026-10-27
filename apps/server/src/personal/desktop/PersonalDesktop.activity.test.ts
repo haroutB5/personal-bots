@@ -103,10 +103,34 @@ describe("desktop activity", () => {
       const head = yield* service.activity.pipe(Stream.take(1), Stream.runHead);
       if (Option.isNone(head) || head.value._tag !== "Recent") return;
       const event = head.value.events.at(-1) as PersonalDesktopActivityEvent;
-      // The PC said no: the feed reads "refused", not "failed" (QA's L3).
+      // The PC said no: the feed reads "refused", not "failed" (QA's L3), and
+      // the reason appears once (QA's L5).
       expect(event).toMatchObject({
         kind: "click",
-        summary: "click refused (user active)",
+        summary: "click (user active)",
+        status: "failed",
+        outcome: "refused",
+      });
+    }),
+  );
+
+  it.live("names a point refusal as the window under the pointer, not the user", () =>
+    Effect.gen(function* () {
+      const driver = new FakeDriver();
+      const { service } = yield* makeDesktopService({ driver });
+      yield* service
+        .act(ada, "click", () =>
+          Promise.reject(
+            new DesktopHelperError("point_blocked", "A browser window is under that point"),
+          ),
+        )
+        .pipe(Effect.exit);
+      const head = yield* service.activity.pipe(Stream.take(1), Stream.runHead);
+      if (Option.isNone(head) || head.value._tag !== "Recent") return;
+      const event = head.value.events.at(-1) as PersonalDesktopActivityEvent;
+      expect(event).toMatchObject({
+        kind: "click",
+        summary: "click (window under the pointer)",
         status: "failed",
         outcome: "refused",
       });

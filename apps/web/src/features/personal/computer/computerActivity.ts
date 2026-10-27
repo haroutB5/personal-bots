@@ -118,13 +118,16 @@ export function describeActivity(event: ComputerActivityEvent): ActivityRow {
     const count = charCount(event);
     text = count === null ? "typed text" : `typed ${count} character${count === 1 ? "" : "s"}`;
   }
+  // A row whose words already say it was refused does not say it twice
+  // ("click refused (user active) · refused", QA's L5).
+  const outcome = event.outcome ?? null;
   return {
     id: event.id,
     source: event.source,
     actor,
     text,
     failed: event.status === "failed",
-    outcome: event.outcome ?? null,
+    outcome: outcome !== null && !new RegExp(`\\b${outcome}\\b`, "i").test(text) ? outcome : null,
     at: event.at,
     icon: iconFor(event),
     threadId: event.threadId,

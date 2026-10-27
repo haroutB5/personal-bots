@@ -1,4 +1,5 @@
 import { McpCapabilityUnavailableError } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/unstable/ai/Tool";
 import * as Toolkit from "effect/unstable/ai/Toolkit";
@@ -218,11 +219,20 @@ export const ReleaseResult = Schema.Struct({
   note: Schema.String,
 });
 
-const SHARED =
-  "It drives the user's real Windows PC, one bot at a time: while another bot has it you wait in line, and if the wait runs out you are told to call again to keep your place. Coordinates are pixels in your latest computer_screenshot.";
+/**
+ * What the desktop tools drive, named for the machine the server is on: the
+ * phone reads these descriptions on Linux now, and "Windows PC" was wrong
+ * (QA's L8).
+ */
+const DESKTOP_MACHINE = (() => {
+  const platform = HostProcessPlatform.defaultValue();
+  return platform === "win32" ? "Windows PC" : platform === "darwin" ? "Mac" : "Linux PC";
+})();
+
+const SHARED = `It drives the user's real ${DESKTOP_MACHINE}, one bot at a time: while another bot has it you wait in line, and if the wait runs out you are told to call again to keep your place. Coordinates are pixels in your latest computer_screenshot.`;
 
 export const ComputerScreenshotTool = Tool.make("computer_screenshot", {
-  description: `See the user's real Windows desktop: returns an image of one monitor (the primary by default), the monitor list, and where the mouse pointer is. Take one before your first action and whenever you need to look again; every later coordinate refers to the latest one. ${SHARED}`,
+  description: `See the user's real ${DESKTOP_MACHINE} desktop: returns an image of one monitor (the primary by default), the monitor list, and where the mouse pointer is. Take one before your first action and whenever you need to look again; every later coordinate refers to the latest one. ${SHARED}`,
   parameters: ScreenshotInput,
   success: DesktopShotResult,
   failure: DesktopToolFailure,

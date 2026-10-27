@@ -89,6 +89,8 @@ export type DesktopActionErrorKind =
   | "stopped"
   | "busy"
   | "user_active"
+  /** The window under the point is one the desktop tools must not touch. */
+  | "point_blocked"
   | "locked"
   | "invalid"
   | "failed";
@@ -284,10 +286,10 @@ function primaryMonitor(info: Record<string, unknown>): DesktopRect {
 }
 
 export const overlayText = (botName: string, hotkey = PERSONAL_DESKTOP_STOP_HOTKEY) =>
-  `${botName} is using your PC  Â·  press ${hotkey} to take it back`;
+  `${botName} is using your PC  ·  press ${hotkey} to take it back`;
 
 export const remoteOverlayText = (hotkey = PERSONAL_DESKTOP_STOP_HOTKEY) =>
-  `You are controlling this PC remotely  Â·  press ${hotkey} here to end it`;
+  `You are controlling this PC remotely  ·  press ${hotkey} here to end it`;
 
 export const REMOTE_OVERLAY_TEXT = remoteOverlayText();
 
@@ -339,6 +341,13 @@ function helperFailure(error: unknown): PersonalDesktopActionError {
         return new PersonalDesktopActionError({
           kind: "user_active",
           reason: `${error.message} Nothing more was done. Wait a few seconds, take a fresh screenshot and try again; if the user keeps using the PC, ask them whether you should continue.`,
+        });
+      case "point_blocked":
+        // The point guard refused because of the window under the pointer, not
+        // because the person is using the PC (QA's L5).
+        return new PersonalDesktopActionError({
+          kind: "point_blocked",
+          reason: `${error.message} Nothing was clicked or typed. Pick another point or use the other tool.`,
         });
       case "locked":
         return new PersonalDesktopActionError({
@@ -877,15 +886,21 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                 : failure;
             const kind = OPERATION_KIND[operation];
             if (kind !== undefined) {
-              // A lock, a take-back or the stop key is the PC saying no, not a
-              // broken action: the feed says "refused" (QA's L3).
+              // A lock, a take-back, a blocked point or the stop key is the PC
+              // saying no, not a broken action: the feed says "refused"
+              // (QA's L3). The reason is a short label; the card appends the
+              // outcome once, so the word "refused" is not repeated (QA's L5).
               const refused =
                 reported.kind === "user_active" ||
+                reported.kind === "point_blocked" ||
                 reported.kind === "stopped" ||
                 reported.kind === "locked";
+              const label = FAILURE_LABEL[reported.kind] ?? reported.kind.replace(/_/g, " ");
               recordActivity({
                 kind,
-                summary: `${operation.replace(/_/g, " ")} ${refused ? "refused" : "failed"} (${reported.kind.replace(/_/g, " ")})`,
+                summary: refused
+                  ? `${operation.replace(/_/g, " ")} (${label})`
+                  : `${operation.replace(/_/g, " ")} failed${label === "failed" ? "" : ` (${label})`}`,
                 status: "failed",
                 ...(refused ? { outcome: "refused" as const } : {}),
                 threadId: claimant.threadId,
@@ -1141,6 +1156,18 @@ const OPERATION_KIND: Readonly<Record<string, PersonalDesktopActivityKind>> = {
   type: "type",
   key: "key",
   hold_key: "hold",
+};
+
+/** Short words for the feed's "(...)" reason; never a second "refused". */
+const FAILURE_LABEL: Readonly<Record<string, string>> = {
+  user_active: "user active",
+  point_blocked: "window under the pointer",
+  stopped: "stopped",
+  locked: "PC locked",
+  busy: "PC busy",
+  unavailable: "unavailable",
+  invalid: "invalid input",
+  failed: "failed",
 };
 
 interface ActionActivity {

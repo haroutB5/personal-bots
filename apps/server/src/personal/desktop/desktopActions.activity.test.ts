@@ -64,6 +64,25 @@ const makeContext = (overrides: Partial<DesktopActionContext> = {}) => {
 };
 
 describe("desktop action activity", () => {
+  it("reports a stopped hold as stopped, not Done", async () => {
+    // The stop chord cuts a hold short: the tool must say so (QA's L6).
+    let held = true;
+    const { context } = makeContext({
+      stillHeld: () => held,
+      driver: {
+        request: () => {
+          held = false;
+          return Promise.resolve({ ok: true });
+        },
+        onKill: () => undefined,
+        dispose: () => undefined,
+      },
+    });
+    await expect(holdKey(context, { keys: "Right", durationMs: 20_000 })).rejects.toMatchObject({
+      kind: "stopped",
+    });
+  });
+
   it("reports a click's fraction of the screenshot", async () => {
     const { context } = makeContext();
     const shot = await click(context, { x: 768, y: 480, screenshot: false });
@@ -89,7 +108,7 @@ describe("desktop action activity", () => {
     expect(typed.activity?.summary).toBe("pressed 8 keys");
     // A character behind a modifier is how a password is typed with Shift.
     const chord = await pressKeys(context, { keys: "ctrl+a", screenshot: false });
-    expect(chord.activity?.summary).toBe("pressed 1 keys");
+    expect(chord.activity?.summary).toBe("pressed 1 key");
     const shifted = await pressKeys(context, {
       keys: "Shift+a Shift+b Shift+c",
       screenshot: false,

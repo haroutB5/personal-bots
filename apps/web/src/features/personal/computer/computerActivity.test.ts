@@ -60,6 +60,18 @@ describe("describeActivity", () => {
       event({ status: "failed", outcome: "refused", source: "desktop" }),
     );
     expect(refused).toMatchObject({ failed: true, outcome: "refused" });
+    // An older server's summary already says "refused": the card must not
+    // print it a second time after the dot (QA's L5).
+    expect(
+      describeActivity(
+        event({
+          status: "failed",
+          outcome: "refused",
+          source: "desktop",
+          summary: "Click refused (user active)",
+        }),
+      ).outcome,
+    ).toBeNull();
     // An older server sends no outcome at all.
     expect(describeActivity(event({ status: "failed" })).outcome).toBeNull();
   });

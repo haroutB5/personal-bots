@@ -118,6 +118,8 @@ export class LinuxDesktopDriver implements DesktopDriver {
   private readonly helper: LinuxDesktopHelper;
   private readonly capture: LinuxScreenCapture;
   private readonly killListeners: Array<() => void> = [];
+  /** Wakes a long wait (a hold) the moment the user stops the bot. */
+  private stopWaiters: Array<() => void> = [];
   private readonly log: (line: string) => void;
   private monitorsCache: ScreenState | null = null;
   private workspaceCache: { workspaces: VisibleWorkspaces; at: number } | null = null;
@@ -158,6 +160,31 @@ export class LinuxDesktopDriver implements DesktopDriver {
     // and the app's Stop end a bot.
     this.watchEvents();
     if (options.stopChord !== false) this.armStop();
+    // A hold is a plain sleep in this driver: end it when the stop lands, so
+    // the tool reports "stopped" instead of a full hold that never happened
+    // (QA's L6).
+    this.onKill(() => {
+      const waiters = this.stopWaiters;
+      this.stopWaiters = [];
+      for (const wake of waiters) wake();
+    });
+  }
+
+  /** Sleeps, but ends at once when the bot is stopped or the helper dies. */
+  private waitUnlessStopped(ms: number): Promise<void> {
+    if (ms <= 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (timer !== null) clearTimeout(timer);
+        resolve();
+      };
+      timer = setTimeout(finish, ms);
+      this.stopWaiters.push(finish);
+    });
   }
 
   private layout = "us";
@@ -939,7 +966,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
             await this.helper.request("key", [mainDown, "up"], 5_000);
             mainDown = null;
           }
-          await sleep(durationMs);
+          await this.waitUnlessStopped(durationMs);
         } finally {
           if (mainDown !== null) {
             await this.helper.request("key", [mainDown, "up"], 5_000).catch(() => undefined);
