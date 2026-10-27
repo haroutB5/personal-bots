@@ -88,7 +88,12 @@ export type PerfOptimization =
   // (threadFullText.ts, 1.67.x); off: whole text in every chat open, as before.
   | "text-previews"
   // Trace exports are sent gzipped (traceGzip.ts, 1.67.x); off: plain JSON.
-  | "trace-gzip";
+  | "trace-gzip"
+  // index.html adds modulepreload hints for main's scripts and the opened
+  // page's route chunks (vite/routePreload.ts, 1.66.x), so a cold launch does
+  // not wait on bootstrap, then main, then the route; off: no hints, as before.
+  // Read by the inline script itself, so it applies from the next launch.
+  | "route-preload";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {
