@@ -10,32 +10,32 @@
   "scenarios": {
     "cold": {
       "visibleMs": {
-        "max": 47884,
+        "max": 40270,
         "headroom": 0.1
       },
       "wireKB": {
-        "max": 2459,
+        "max": 2088,
         "headroom": 0.05,
         "slack": 20
       },
       "jsonKB": {
-        "max": 1306,
+        "max": 865,
         "headroom": 0.05,
         "slack": 20
       }
     },
     "reconnect": {
       "visibleMs": {
-        "max": 18862,
+        "max": 8795,
         "headroom": 0.1
       },
       "wireKB": {
-        "max": 227,
+        "max": 147,
         "headroom": 0.05,
         "slack": 20
       },
       "jsonKB": {
-        "max": 817,
+        "max": 377,
         "headroom": 0.05,
         "slack": 20
       }
@@ -58,7 +58,7 @@
     },
     "open-B": {
       "visibleMs": {
-        "max": 2518,
+        "max": 2508,
         "headroom": 0.1
       },
       "wireKB": {
@@ -67,14 +67,14 @@
         "slack": 20
       },
       "jsonKB": {
-        "max": 545,
+        "max": 403,
         "headroom": 0.05,
         "slack": 20
       }
     },
     "open-C": {
       "visibleMs": {
-        "max": 2519,
+        "max": 2484,
         "headroom": 0.1
       },
       "wireKB": {
@@ -89,12 +89,16 @@
       }
     }
   },
-  "ratchetedAt": "2026-10-26T23:04:51.651Z",
-  "ratchetedFrom": "after-all 2026-10-26T23:04:33.857Z",
+  "ratchetedAt": "2026-10-27T03:12:35.794Z",
+  "ratchetedFrom": "run 2026-10-27T02:46:12.968Z",
   "ratchetHistory": [
     {
       "at": "2026-10-26T22:52:40.612Z",
       "from": "seed before 2026-10-26T22:21:42.222Z"
+    },
+    {
+      "at": "2026-10-26T23:04:51.651Z",
+      "from": "after-all 2026-10-26T23:04:33.857Z"
     }
   ]
 }

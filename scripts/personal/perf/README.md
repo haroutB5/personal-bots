@@ -94,7 +94,8 @@ node scripts/personal/perf/slow3g-check.mjs --report <file> --ratchet   # then c
 
 Caveat: CDP throttling charges WebSocket frames at their decoded size, not
 the permessage-deflate bytes that cross the socket. A large RPC answer (for
-example `personalBots.list`, about 500 KB of JSON) takes seconds under the
+example `personalBots.list`, about 100 KB of JSON since archived links went
+lazy) takes seconds under the
 throttle even though the proxy counts only a fraction of that on the wire. So
 the bench is pessimistic for WebSocket-heavy journeys such as `reconnect`;
 compare runs with each other, not with a real phone. The relay is not
