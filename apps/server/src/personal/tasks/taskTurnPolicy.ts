@@ -134,8 +134,12 @@ export function stripSelfAttribution(fromName: string, message: string): string 
   // Already labelled with the sender's name and a colon: keep the sender's own
   // wording (and case) exactly; ALREADY_PREFIXED below leaves it alone.
   if (new RegExp(`^update\\s+from\\s+${n}\\s*:`, "i").test(text)) return text;
+  // The name has to end where it ends: "From Assistants notes" is not from
+  // "Assistant", "From CTO's review" keeps its possessive and "From Developer
+  // notes" is not from "Dev".
+  const end = `(?![\\w'’])`;
   const prefix = new RegExp(
-    `^(?:(?:update\\s+)?from\\s+${n}(?:\\s+here)?|${n}\\s+here|${n}\\s*:)[\\s:,.!;\\-–—]*`,
+    `^(?:(?:update\\s+)?from\\s+${n}${end}(?:\\s+here\\b)?|${n}\\s+here\\b|${n}\\s*:)[\\s:,.!;\\-–—]*`,
     "i",
   );
   const stripped = text.replace(prefix, "").trim();

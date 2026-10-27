@@ -54,6 +54,7 @@ import {
   reopenNote,
   sourceLabel,
   steerText,
+  stripSelfAttribution,
   taskSections,
 } from "./taskTurnPolicy.ts";
 
@@ -474,6 +475,28 @@ describe("turn policy", () => {
     expect(steerText("CTO", "Frontend: check this")).toBe("Update from CTO: Frontend: check this");
     // Nothing is left: keep the words rather than send an empty steer.
     expect(steerText("CTO", "From CTO.")).toBe("Update from CTO: From CTO.");
+  });
+
+  it("only drops a name that ends at a word boundary", () => {
+    // "From Assistants notes" is not a message from "Assistant", and a longer
+    // name that merely starts with the sender's is another sender.
+    expect(stripSelfAttribution("Assistant", "From Assistants notes")).toBe(
+      "From Assistants notes",
+    );
+    expect(stripSelfAttribution("Dev", "From Developer notes")).toBe("From Developer notes");
+    // A possessive is part of the sentence, not an attribution.
+    expect(stripSelfAttribution("CTO", "From CTO's review")).toBe("From CTO's review");
+    // The real shapes still strip, including punctuation after the name.
+    expect(stripSelfAttribution("CTO", "From CTO. Review it")).toBe("Review it");
+    expect(stripSelfAttribution("CTO", "From CTO, narrow it")).toBe("narrow it");
+    expect(stripSelfAttribution("CTO", "From CTO here. Narrow it")).toBe("Narrow it");
+    expect(stripSelfAttribution("Dev", "Dev here: narrow it")).toBe("narrow it");
+    expect(steerText("Assistant", "From Assistants notes")).toBe(
+      "Update from Assistant: From Assistants notes",
+    );
+    expect(steerText("Dev", "From Developer notes")).toBe(
+      "Update from Dev: From Developer notes",
+    );
   });
 
   it("drops a delegator's own attribution from the brief it labels", () => {
