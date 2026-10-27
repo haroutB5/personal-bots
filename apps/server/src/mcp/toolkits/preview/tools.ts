@@ -108,7 +108,7 @@ const PreviewResizeTool = safeBrowserTool(
 const PreviewSetAppearanceTool = safeBrowserTool(
   Tool.make("preview_set_appearance", {
     description:
-      "Emulate prefers-color-scheme with {colorScheme:'dark'} or 'light'. 'system' clears the override.",
+      "Dark/light mode for a browser tab (prefers-color-scheme): 'dark', 'light' or 'system' (clears).",
     parameters: PreviewAutomationSetColorSchemeInput,
     success: Schema.Struct({
       ...PreviewAutomationSetColorSchemeResult.fields,
