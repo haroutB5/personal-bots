@@ -1,11 +1,12 @@
 import type { CSSProperties, JSX } from "react";
-import { useRef } from "react";
+import { lazy, Suspense, useRef } from "react";
 
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
+import { ChunkLoadBoundary } from "~/lib/ChunkLoadBoundary";
+
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
-import { ComputerScreen } from "./computer/ComputerScreen";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import {
   SIDE_PANEL_WIDTH,
@@ -14,6 +15,12 @@ import {
   sidePanelWidthCss,
 } from "./desktopColumns";
 import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
+
+// Wide desktop only: the phone never opens this panel, so the Computer screen
+// stays off a chat's startup path (about 28 KB on the wire).
+const ComputerScreen = lazy(() =>
+  import("./computer/ComputerScreen").then((module) => ({ default: module.ComputerScreen })),
+);
 
 export const CONVERSATION_SIDE_PANEL_ID = "conversation-side-panel";
 
@@ -75,16 +82,20 @@ export function ConversationSidePanel({
         measure={measure}
         onCommit={(next) => setPersonalNumberPreference("sidePanelWidth", next)}
       />
-      <ComputerScreen
-        variant="panel"
-        origin={{ botId, threadId }}
-        // No Back in the panel; kept for the screen's contract.
-        onBackToChat={(target) =>
-          void (target === null
-            ? navigate({ to: "/bots" })
-            : navigate({ to: "/bots/$botId/$threadId", params: target }))
-        }
-      />
+      <ChunkLoadBoundary>
+        <Suspense fallback={null}>
+          <ComputerScreen
+            variant="panel"
+            origin={{ botId, threadId }}
+            // No Back in the panel; kept for the screen's contract.
+            onBackToChat={(target) =>
+              void (target === null
+                ? navigate({ to: "/bots" })
+                : navigate({ to: "/bots/$botId/$threadId", params: target }))
+            }
+          />
+        </Suspense>
+      </ChunkLoadBoundary>
       {showRoutines ? (
         <ConversationRoutinesPanel
           environmentId={environmentId}
