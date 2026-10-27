@@ -100,23 +100,20 @@ it("lists the 1.66.6 browser tools, each with its limits in the description", ()
       "preview_close_tab",
     ]),
   );
-  expect(tools.preview_click.description).toMatch(/button.*right.*middle/);
-  expect(tools.preview_click.description).toMatch(/clicks \(1 to 3/);
+  expect(tools.preview_click.description).toMatch(/button \(left, right, middle\), clicks \(1 to 3; 2 is a double click\) and modifiers/);
   expect(tools.preview_click.description).toMatch(/modifiers/);
-  expect(tools.preview_click.description).toMatch(
-    /background tab that the preview tools cannot drive/,
-  );
-  expect(tools.preview_click.description).toMatch(/saved login was filled only plain left clicks/);
+  expect(tools.preview_click.description).toMatch(/background tab the preview tools cannot drive/);
+  expect(tools.preview_click.description).toMatch(/saved login was filled, only plain left clicks/);
   expect(tools.preview_hover.description).toMatch(/without clicking/);
-  expect(tools.preview_hover.description).toMatch(/saved login was filled only x\/y/);
+  expect(tools.preview_hover.description).toMatch(/saved login was filled, only x\/y/);
   expect(tools.preview_drag.description).toMatch(/fromLocator and toLocator/);
-  expect(tools.preview_drag.description).toMatch(/Do not mix/);
+  expect(tools.preview_drag.description).toMatch(/do not mix/);
   expect(tools.preview_drag.description).toMatch(
     /files from the computer into a page is not available/,
   );
   expect(tools.preview_history.description).toMatch(/reload/);
   expect(tools.preview_history.description).toMatch(/same approval as preview_navigate/);
-  expect(tools.preview_close_tab.description).toMatch(/tabId \(it is required/);
+  expect(tools.preview_close_tab.description).toMatch(/tabId \(required/);
   expect(tools.preview_close_tab.description).toMatch(/while the user is controlling the browser/);
   // No upload tool: no bot sends a file from this computer to a website.
   expect(Object.keys(tools).some((name) => /upload|file/i.test(name))).toBe(false);

@@ -20,7 +20,7 @@ const dependencies = [
 ];
 
 const REGISTER_EVERY_PR =
-  "Register every pull request you open for this thread, including each layer of a stack, right after creating it.";
+  "Link every PR you open for this thread, including each stack layer, right after creating it.";
 
 /**
  * Either the pull request's URL or its repository and number. Both forms
@@ -30,25 +30,22 @@ const REGISTER_EVERY_PR =
 export const PullRequestTargetInput = Schema.Struct({
   url: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description:
-        "The pull request's web URL, for example https://github.com/owner/repo/pull/123. Preferred when you have it; host, repository and number are read from it.",
+      description: "Full PR URL, e.g. https://github.com/owner/repo/pull/123. Preferred.",
     }),
   ),
   repository: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description:
-        "Repository path below the host, for example owner/repo. Required with number when url is omitted.",
+      description: "e.g. owner/repo. With number, when no url.",
     }),
   ),
   number: Schema.optional(
     PositiveInt.annotate({
-      description: "Pull request number. Required with repository when url is omitted.",
+      description: "With repository, when no url.",
     }),
   ),
   host: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description:
-        "Host the repository lives on, for example github.com. Defaults to the host of this thread's project.",
+      description: "Default: this project's host.",
     }),
   ),
 });
@@ -139,7 +136,7 @@ const PullRequestIdentity = {
 export const LinkPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
   alreadyLinked: Schema.Boolean.annotate({
-    description: "True when the pull request was linked to this thread before the call.",
+    description: "True if already linked.",
   }),
 });
 export type LinkPullRequestResult = typeof LinkPullRequestResult.Type;
@@ -149,7 +146,7 @@ export const UnlinkPullRequestResult = Schema.Struct({
   repository: Schema.String,
   number: Schema.Int,
   wasLinked: Schema.Boolean.annotate({
-    description: "False when the pull request was not linked to this thread to begin with.",
+    description: "False if it was not linked.",
   }),
 });
 export type UnlinkPullRequestResult = typeof UnlinkPullRequestResult.Type;
@@ -186,7 +183,7 @@ export const ListThreadPullRequestsResult = Schema.Struct({
 export type ListThreadPullRequestsResult = typeof ListThreadPullRequestsResult.Type;
 
 const LinkPullRequestTool = Tool.make("link_pull_request", {
-  description: `${REGISTER_EVERY_PR} Links a pull request to this thread so T3 Code tracks it, shows its status beside the thread, and settles the thread when it merges. Pass the URL, or repository plus number. Linking an already-linked pull request succeeds with alreadyLinked=true.`,
+  description: `${REGISTER_EVERY_PR} T3 shows its status beside the thread and settles the thread on merge. Pass the full URL, or repository plus number.`,
   parameters: PullRequestTargetInput,
   success: LinkPullRequestResult,
   failure: PullRequestToolError,
@@ -200,7 +197,7 @@ const LinkPullRequestTool = Tool.make("link_pull_request", {
 
 const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
   description:
-    "Remove a pull request link from this thread, for example after closing a pull request you opened by mistake. Pass the URL, or repository plus number. Unlinking a pull request that is not linked succeeds with wasLinked=false.",
+    "Remove a PR link from this thread, e.g. after closing one opened by mistake. Pass the full URL, or repository plus number.",
   parameters: PullRequestTargetInput,
   success: UnlinkPullRequestResult,
   failure: PullRequestToolError,
@@ -213,7 +210,7 @@ const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
   .annotate(Tool.OpenWorld, false);
 
 const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
-  description: `List the pull requests linked to this thread with their last known host state, and how they chain into stacks (bottom to top). ${REGISTER_EVERY_PR}`,
+  description: `List this thread's linked PRs with last known state and stack order (bottom to top). ${REGISTER_EVERY_PR}`,
   success: ListThreadPullRequestsResult,
   failure: PullRequestToolError,
   dependencies,
