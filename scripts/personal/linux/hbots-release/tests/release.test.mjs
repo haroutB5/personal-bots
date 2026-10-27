@@ -289,6 +289,45 @@ test("heavy-job lock: waits while another job holds it, never restarts mid-build
   }
 });
 
+test("the runner waits for both heavy-job slots", async () => {
+  const env = await prepared();
+  const heavy = path.join(ROOT, "..", "dev-team-tools", "heavy-job.sh");
+  const base = path.join(env.tmp, "heavy");
+  const jobEnv = {
+    ...process.env,
+    HEAVY_JOB_BASE: base,
+    HEAVY_JOB_MEMORY_HIGH: "off",
+    HEAVY_JOB_MIN_FREE_GB: "0",
+    HEAVY_JOB_SLOTS: "2",
+  };
+  const start = (label) =>
+    new Promise((resolve) => {
+      const p = spawn("bash", [heavy, "--label", label, "--", "sleep", "12"], { stdio: ["ignore", "ignore", "pipe"], env: jobEnv });
+      p.stderr.on("data", (d) => {
+        if (/nice 10/.test(String(d))) resolve(p);
+      });
+    });
+  const a = await start("slot alpha");
+  const b = await start("slot beta");
+  try {
+    const pid = env.serverJson().pid;
+    const r = env.launch(null);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    await sleep(4000);
+    assert.equal(env.serverJson().pid, pid, "no restart while both slots run");
+    const waiting = env.result();
+    assert.equal(waiting.status, "waiting_for_idle");
+    assert.match(JSON.stringify(waiting.idleLooks ?? []), /heavy-lock/);
+    assert.match(JSON.stringify(waiting.blockers ?? []), /slot (alpha|beta)/);
+    assert.match(JSON.stringify(waiting.blockers ?? []), /slot alpha[\s\S]*slot beta|slot beta[\s\S]*slot alpha/);
+  } finally {
+    a.kill("SIGTERM");
+    b.kill("SIGTERM");
+  }
+  const j = await waitResult(env);
+  assert.equal(j.status, "live_verified", j.error);
+});
+
 test("big release: stopped-server backup, background check of the copy, retention keeps 3", async () => {
   const env = await prepared({ migrateTo: 114 }, (e) => {
     for (const name of ["20260101-000001", "20260101-000002", "20260101-000003", "20260101-000004"]) {

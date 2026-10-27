@@ -7,7 +7,8 @@ set -uo pipefail
 HB=${HBOTS_STATUS_ROOT:-/home/harout/.personal-bots}
 RUN=$HB/run
 EVENTS=$HB/dev/userdata/logs/provider
-LOCK=$RUN/omarchy-heavy.lock
+HEAVY=$RUN/omarchy-heavy
+LOCK=$HEAVY.lock
 B=$'\e[1;34m' G=$'\e[32m' Y=$'\e[33m' R=$'\e[31m' D=$'\e[2m' N=$'\e[0m'
 
 ago() { # seconds -> 3h04m / 12m / 40s
@@ -38,24 +39,57 @@ line_server() {
   fi
 }
 
-heavy_held() { # 0 when a heavy job holds the lock (read from /proc/locks, never taking it)
-  [[ -e $LOCK ]] || return 1
-  local ino; ino=$(stat -c %i "$LOCK")
-  grep -qE ":$ino +[0-9]+ +(EOF|[0-9]+)\$" /proc/locks
+lock_held() { # 0 when /proc/locks shows a FLOCK (shared or exclusive) on this file
+  [[ -e $1 ]] || return 1
+  local ino; ino=$(stat -c %i "$1")
+  awk -v i="$ino" '$2=="FLOCK" { for (k=1;k<=NF;k++) if ($k ~ (":" i "$")) found=1 } END { exit found ? 0 : 1 }' /proc/locks
+}
+
+heavy_any() { # any slot job or the release gate
+  lock_held "$HEAVY.lock" || lock_held "$HEAVY-1.lock" || lock_held "$HEAVY-2.lock"
+}
+
+holder_label() { # "label=\"a b\"" -> "a b"
+  local v
+  v=$(sed -n 's/.* label=\(.*\) cwd=.*/\1/p' "$1" | head -1)
+  v=${v//\\ / }; v=${v//\'/}; v=${v//\"/}
+  printf '%s' "$v"
+}
+
+holder_age() {
+  local started
+  started=$(sed -n 's/.*started=\([^ ]*\).*/\1/p' "$1")
+  date -d "$started" +%s 2>/dev/null || date +%s
 }
 
 line_bots_build() {
-  local now working limit=8 holder age waiting
+  local now working limit=8 jobs=0 i f label age waiting
   now=$(date +%s)
   # A chat whose provider event log changed in the last 90 s is working (same signal as the release waiter).
   working=$(find "$EVENTS" -maxdepth 1 -name 'events.*.log' -newermt "@$((now - 90))" 2>/dev/null | wc -l)
-  if heavy_held; then
+  if heavy_any; then
     limit=5
-    holder=$(sed -n 's/.* label=\(.*\) cwd=.*/\1/p' "$LOCK" | head -1); holder=${holder//\\ / }; holder=${holder//\'/}
-    age=$(( now - $(date -d "$(sed -n 's/.*started=\([^ ]*\).*/\1/p' "$LOCK")" +%s 2>/dev/null || echo "$now") ))
-    waiting=$(for p in $(pgrep -x flock); do [[ $(readlink "/proc/$p/fd/9" 2>/dev/null) == "$LOCK" ]] && echo; done | wc -l)
     printf ' %sbots%s    %d working   %slimit 5 (build)%s\n' "$B" "$N" "$working" "$Y" "$N"
-    printf ' %sbuild%s   %s%s%s, %s%s\n' "$B" "$N" "$Y" "${holder:0:44}" "$N" "$(ago "$age")" "$( ((waiting)) && echo ", $waiting waiting")"
+    for i in 1 2; do
+      f=$HEAVY-$i.lock
+      lock_held "$f" || continue
+      jobs=$((jobs + 1))
+      label=$(holder_label "$f")
+      age=$((now - $(holder_age "$f")))
+      printf ' %sjob%s %s   %s%s%s, %s\n' "$B" "$i" "$N" "$Y" "${label:0:44}" "$N" "$(ago "$age")"
+    done
+    # The release runner takes the main lock exclusively, so no slot is held by a job.
+    if ((jobs == 0)) && lock_held "$HEAVY.lock"; then
+      jobs=1
+      label=$(holder_label "$HEAVY.lock")
+      age=$((now - $(holder_age "$HEAVY.lock")))
+      printf ' %sgate%s    %s%s%s, %s\n' "$B" "$N" "$Y" "${label:0:60}" "$N" "$(ago "$age")"
+    fi
+    waiting=$(for p in $(pgrep -x flock); do
+      [[ $(readlink "/proc/$p/fd/8" 2>/dev/null) == "$HEAVY.lock" ]] && echo
+    done | wc -l)
+    ((waiting)) && printf '         %s%d waiting for a slot or the gate%s\n' "$Y" "$waiting" "$N"
+    ((jobs)) || printf ' %sbuild%s   %snone%s\n' "$B" "$N" "$D" "$N"
   else
     printf ' %sbots%s    %d working   limit %d\n' "$B" "$N" "$working" "$limit"
     printf ' %sbuild%s   %snone%s\n' "$B" "$N" "$D" "$N"

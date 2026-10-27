@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { cgroupCpuSeconds, cgroupDirFromPid, cgroupDirOf, cgroupMembership, cgroupPids, cgroupPathFromProcText, descendants, liveState, onlyInCgroup, procSnapshot, procStartMs } from "./proc.mjs";
+import { cgroupCpuSeconds, cgroupDirFromPid, cgroupDirOf, cgroupMembership, cgroupPids, cgroupPathFromProcText, descendants, fileLockedInProcLocks, liveState, onlyInCgroup, procSnapshot, procStartMs } from "./proc.mjs";
 import { run, sleep, round1 } from "./util.mjs";
 
 export const isHelper = (cmd) =>
@@ -101,11 +101,19 @@ export function heavyLockHeld(lockPath) {
   if (!fs.existsSync(lockPath)) return { held: false, holder: null };
   const r = run("flock", ["-n", "-E", "75", lockPath, "true"], { timeout: 10_000 });
   if (r.code === 0) return { held: false, holder: null };
-  let holder = null;
-  try {
-    holder = fs.readFileSync(lockPath, "utf8").trim().split("\n")[0].slice(0, 160) || null;
-  } catch {}
-  return { held: r.code === 75 || r.code === 1, holder };
+  // The gate is held. Normal jobs hold it shared and put their metadata in one
+  // of the slot files beside it; the runner holds it exclusively and writes
+  // into the gate file itself. Name every held slot, not just the stale text.
+  const base = lockPath.replace(/\.lock$/, "");
+  const labels = [];
+  for (const file of [lockPath, `${base}-1.lock`, `${base}-2.lock`]) {
+    if (!fileLockedInProcLocks(file)) continue;
+    try {
+      const line = fs.readFileSync(file, "utf8").trim().split("\n")[0];
+      if (line) labels.push(line.slice(0, 160));
+    } catch {}
+  }
+  return { held: r.code === 75 || r.code === 1, holder: labels.join(" | ") || null };
 }
 
 /**

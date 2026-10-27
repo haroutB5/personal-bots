@@ -7,7 +7,10 @@ import {options,git,hash,gatePass,validate} from './gate-common.mjs';
 let v;
 try {v=options()} catch(e){console.error(e.message);process.exit(2)}
 const here=path.dirname(fileURLToPath(import.meta.url));
-if(process.env.HBOTS_HEAVY_JOB_HELD!=='1' || (()=>{try{return fs.readlinkSync('/proc/self/fd/9')!=='/home/harout/.personal-bots/run/omarchy-heavy.lock'}catch{return true}})()) {
+const MAIN_LOCK=`${process.env.HEAVY_JOB_BASE||'/home/harout/.personal-bots/run/omarchy-heavy'}.lock`;
+const linkOf=(fd)=>{try{return fs.readlinkSync(`/proc/self/fd/${fd}`)}catch{return null}};
+const holdsGate=()=>linkOf(8)===MAIN_LOCK||linkOf(9)===MAIN_LOCK;
+if(process.env.HBOTS_HEAVY_JOB_HELD!=='1' || !holdsGate()) {
   const r=spawnSync('bash',[path.join(here,'heavy-job.sh'),'--label',`gate evidence ${v.release}`,'--',process.execPath,fileURLToPath(import.meta.url),...process.argv.slice(2)],{stdio:'inherit'});
   process.exit(r.status??1);
 }
@@ -30,7 +33,10 @@ try {
   const startedAt=new Date().toISOString(), gates=[...kept];
   for(const d of defs.filter(d=>wanted.includes(d.id))){
     const log=path.join(logDir,`${d.id}.log`), fd=fs.openSync(log,'w'), commands=[], started=Date.now();
-    try {for(const command of d.commands){const r=spawnSync('bash',['-o','pipefail','-c',command],{cwd:path.resolve(v.repo,(d.cwd??'.').replaceAll('\\','/')),env:{...process.env,PATH:`${v.repo}/node_modules/.bin:${process.env.PATH}`,NO_COLOR:'1'},stdio:['ignore',fd,fd,'ignore','ignore','ignore','ignore','ignore','ignore',9]});commands.push({command,exit:r.status??1})}} finally{fs.closeSync(fd)}
+    const stdio=['ignore',fd,fd,'ignore','ignore','ignore','ignore','ignore','ignore','ignore'];
+    if(linkOf(8)!==null) stdio[8]=8;
+    if(linkOf(9)!==null) stdio[9]=9;
+    try {for(const command of d.commands){const r=spawnSync('bash',['-o','pipefail','-c',command],{cwd:path.resolve(v.repo,(d.cwd??'.').replaceAll('\\','/')),env:{...process.env,PATH:`${v.repo}/node_modules/.bin:${process.env.PATH}`,NO_COLOR:'1'},stdio});commands.push({command,exit:r.status??1})}} finally{fs.closeSync(fd)}
     const text=fs.readFileSync(log,'utf8').replace(/\x1b\[[0-9;?]*[A-Za-z]/g,'');
     const g={id:d.id,kind:d.kind,title:d.title??d.id,cwd:d.cwd??'.',commands,exit:commands.find(c=>c.exit!==0)?.exit??0,seconds:(Date.now()-started)/1000,log};
     if(d.kind==='vitest'){

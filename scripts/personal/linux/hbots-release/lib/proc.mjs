@@ -134,6 +134,22 @@ export function onlyInCgroup(pids, members, serverPath) {
   return out;
 }
 
+/** True when /proc/locks shows a FLOCK (shared or exclusive) on this file. */
+export function fileLockedInProcLocks(file, content = null) {
+  try {
+    const ino = fs.statSync(file).ino;
+    const text = content ?? fs.readFileSync("/proc/locks", "utf8");
+    for (const line of text.split("\n")) {
+      const fields = line.trim().split(/\s+/);
+      if (fields[1] !== "FLOCK") continue;
+      if (fields.some((field) => field.endsWith(`:${ino}`))) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /** Is this pid inside the given unit's cgroup? (Used to prove the runner is outside hbots.service.) */
 export function cgroupOfPid(pid) {
   try {

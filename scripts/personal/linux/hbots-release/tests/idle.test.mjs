@@ -104,7 +104,7 @@ test('waiting summary names one blocker briefly and keeps the full list', () => 
     { pid: 14, cmd: 'old thing', ageSec: 900, ignored: true },
   ]);
   assert.equal(short, '2 blockers, e.g. chromium pid 12, 300s');
-  assert.match(full, /chromium pid 12, 300s; python3 pid 13, 20s/);
+  assert.match(full, /\/usr\/lib\/chromium\/chromium --type=gpu-process pid 12, 300s; python3 watch\.py pid 13, 20s/);
   assert.doesNotMatch(full, /old thing/);
 });
 
@@ -119,4 +119,29 @@ test('desk panel displays the current waiting blocker', async () => {
   const result = spawnSync('bash', [new URL('../hbots-desk-status', import.meta.url).pathname], { encoding: 'utf8', env: { ...process.env, HBOTS_STATUS_ROOT: root, HBOTS_STATUS_ONCE: '1' } });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /waiting on: node pid 123, 245s/);
+});
+
+test('desk panel shows both running heavy jobs and the 5-bot cap', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { spawn, spawnSync } = await import('node:child_process');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hbots-panel-heavy-'));
+  fs.mkdirSync(path.join(root, 'run'));
+  for (const [slot, label] of [[1, 'frontend build'], [2, 'qa e2e']]) {
+    fs.writeFileSync(path.join(root, `run/omarchy-heavy-${slot}.lock`), `pid=${slot} started=${new Date().toISOString()} label=${label} cwd=/x slot=${slot}.lock\n`);
+  }
+  const holders = [1, 2].map((slot) => spawn('flock', ['-x', path.join(root, `run/omarchy-heavy-${slot}.lock`), 'sleep', '8'], { stdio: 'ignore' }));
+  await new Promise((r) => setTimeout(r, 400));
+  try {
+    const result = spawnSync('bash', [new URL('../hbots-desk-status', import.meta.url).pathname], { encoding: 'utf8', env: { ...process.env, HBOTS_STATUS_ROOT: root, HBOTS_STATUS_ONCE: '1' } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /limit 5 \(build\)/);
+    assert.match(result.stdout, /frontend build/);
+    assert.match(result.stdout, /qa e2e/);
+    assert.match(result.stdout, /job1/);
+    assert.match(result.stdout, /job2/);
+  } finally {
+    for (const holder of holders) holder.kill('SIGTERM');
+  }
 });

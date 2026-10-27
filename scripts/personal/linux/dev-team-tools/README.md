@@ -21,17 +21,23 @@ node tools/check-gate-evidence.mjs --version 1.2.3 --release 0123456789ab --repo
 `build.sh` calls the chosen repo's `node scripts/personal/node/hbots.mjs build
 --copy-externals` under the lock. It never activates. `heavy-job.sh` accepts an
 argument vector after `--`; use `bash -o pipefail -c '...'` for shell syntax.
-`--wait-seconds` defaults to 10800; timeout exits 75. All checkouts share
-`/home/harout/.personal-bots/run/omarchy-heavy.lock` on this single-user laptop. Do not unlink it: a job
-inherits the locked descriptor, preventing overlap even if its wrapper exits.
+`--wait-seconds` defaults to 10800; timeout exits 75. All checkouts share the
+gate `/home/harout/.personal-bots/run/omarchy-heavy.lock` on this single-user
+laptop. A normal job takes that gate SHARED plus one of two EXCLUSIVE slot files
+(`omarchy-heavy-1.lock`, `-2.lock`), so two jobs run at once and the hbots
+server's cap probe sees the gate held either way; the release runner takes the
+gate EXCLUSIVE, so it waits for both jobs. A third job waits for a slot without
+holding the gate, so it never starves a release. Each slot file carries its own
+holder line (pid, start, label, cwd, slot). Do not unlink the files: a job
+inherits the locked descriptors, preventing overlap even if its wrapper exits.
 The file's text identifies the last holder; it is current only while locked.
-The wrapper sets absolute nice 10 and ionice idle. Nested calls retaining fd 9
-reuse the lock. Do not detach a job inside the wrapper. The job runs in its own
-user scope (`heavy-job-PID.scope`, CPUWeight 20) with a soft `MemoryHigh` of 6G:
-past it the kernel reclaims from the job and slows it, it is never killed, and
-the live server keeps its pages. Set `HEAVY_JOB_MEMORY_HIGH=8G` for a bigger
-job or `off` for the old behaviour; without `systemd-run --user` it warns and
-runs unscoped.
+`HEAVY_JOB_BASE` moves the whole set (tests only). The wrapper sets absolute
+nice 10 and ionice idle. Nested calls retaining fds 8 and 9 reuse both locks.
+Do not detach a job inside the wrapper. The job runs in its own user scope
+(`heavy-job-PID.scope`, CPUWeight 20) with a soft `MemoryHigh` of 5G: past it
+the kernel reclaims from the job and slows it, it is never killed, and the live
+server keeps its pages. Set `HEAVY_JOB_MEMORY_HIGH=6G` for a bigger job or `off`
+for the old behaviour; without `systemd-run --user` it warns and runs unscoped.
 
 Gate definitions use the PowerShell shape, with POSIX shell commands:
 `[{"id":"server-tests","kind":"vitest","cwd":"apps/server","commands":["vp test run src/personal src/mcp"]}, ...]`.

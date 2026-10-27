@@ -24,7 +24,7 @@ The runner prints its own help with `--help`. Logs: `~/.personal-bots/logs/resta
 
 1. Guards: pinned helpers, unit and smoke CLI, seal of dist/node_modules/tools copy/gate evidence, concurrency rule 5, release notes check, gate evidence check, migration levels from git, backup plan (reflink + disk), active release, no other waiter.
 2. Idle gate: 4 quiet looks 30 s apart from the process tree, the unit's cgroup (`cgroup.procs`, `cpu.stat`), the newest `events.*.log` and the heavy-job lock. Never reads the database. Waits up to 48 h.
-3. Takes the heavy-job lock (`omarchy-heavy.lock`) so no build starts until verified, re-verifies the seal, takes a last 3 s idle look.
+3. Takes the heavy-job gate (`omarchy-heavy.lock`) EXCLUSIVE, so no build starts until verified and both heavy-job slots wait it out, re-verifies the seal, takes a last 3 s idle look.
 4. Sets `current.txt`, writes the update-restart marker (keeps the Cloudflare tunnel), then either `systemctl --user restart hbots.service` or (big release) stop, reflink copy of the data files, start.
 5. Smoke with a 120 s stability window; checks A (version, listener, cgroup, sw.js, push 401, key files) run inside it; checks B (log scans, migration evidence from the startup log) after it.
 6. Any failure: binary rollback (`current.txt` back, restart, smoke on the old release), result `rolled_back` or `rollback_failed`.
