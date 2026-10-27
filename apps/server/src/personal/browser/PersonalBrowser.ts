@@ -267,8 +267,10 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
       lease,
       oneShotApprovals,
       options,
+      pendingApprovals,
       refusedApprovals,
       sensitiveExposure,
+      st,
       status,
       viewers,
     } = core;
@@ -377,11 +379,19 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
       resolveFile,
       releaseThread,
       releaseLease: (threadId) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          // The user is still answering a card for this thread. Releasing now
+          // would hand the browser to the next bot and cancel the question it
+          // is waiting on, which is how two bots could cancel each other's
+          // help forever (QA's B2). The waiting card keeps the lease; other
+          // bots stay in Up next until it is answered.
+          if (st.activeHelp?.request.threadId === threadId) return;
+          if (pendingApprovals.has(threadId)) return;
           // Approval decisions never outlive the turn that asked for them.
           oneShotApprovals.delete(threadId);
           refusedApprovals.delete(threadId);
-        }).pipe(Effect.andThen(lease.releaseIfOwner(threadId)), Effect.asVoid),
+          yield* lease.releaseIfOwner(threadId);
+        }).pipe(Effect.asVoid),
       sensitiveExposure,
       activity,
       handleAutomationRequest,

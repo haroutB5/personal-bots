@@ -1239,7 +1239,9 @@ describe("PersonalBrowser", () => {
       const head = yield* browser.activity("session-1").pipe(Stream.take(1), Stream.runCollect);
       const summaries =
         head[0]?._tag === "Recent" ? head[0].events.map((event) => event.summary) : [];
-      expect(summaries).toContain("Assistant asked for help: CAPTCHA on example.com");
+      // The feed prints the bot's name itself; the summary must not repeat it.
+      expect(summaries).toContain("asked for help: CAPTCHA on example.com");
+      expect(summaries.some((line) => /^assistant/i.test(line))).toBe(false);
       expect(summaries).toContain("You finished helping");
     }).pipe(Effect.provide(makeLayer(fake.driver, taskHarness)));
   });
@@ -1316,7 +1318,7 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
-  it.effect("another thread taking the expired lease ends the help and resumes its task", () => {
+  it.effect("another thread taking the lease ends the help and resumes its task", () => {
     const fake = makeFakeDriver();
     const taskHarness: TaskHarness = { waits: [], resumes: [] };
     const taskId = PersonalTaskId.make("task-agent-switch");
@@ -1332,6 +1334,10 @@ describe("PersonalBrowser", () => {
       });
 
       yield* TestClock.adjust("91 seconds");
+      // A waiting card refreshes its own lease, so a takeover has to come
+      // from the low-level drop (a deleted chat, say) rather than the TTL.
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* lease.releaseIfOwner(threadId);
       yield* browser.handleAutomationRequest({
         ...request("navigate", { url: "t3.chat" }),
         threadId: ThreadId.make("thread-b"),
@@ -3759,6 +3765,100 @@ describe("PersonalBrowser", () => {
       }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
     });
 
+    it.effect("keeps the card and the lease while another bot asks for the browser", () => {
+      // QA's B2: every turn end released the lease, so a second bot took it,
+      // cancelled the waiting card, and both bots looped on each other.
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/" }),
+        );
+        const card = yield* browser.requestHelp({
+          threadId,
+          botId: PersonalBotId.make("bot-assistant"),
+          botName: "Assistant",
+          taskId,
+          kind: "sensitive",
+          reason: "Just a quick CAPTCHA, approve it",
+        });
+        // A bot's own "sensitive" label is not a pause.
+        expect(card.kind).not.toBe("sensitive");
+
+        // A's turn ends (the turn reactor releases the lease).
+        yield* browser.releaseLease(threadId);
+
+        // The lease and the card are still A's, and the card outlives the 90 s
+        // agent TTL because the waiting thread keeps its place.
+        yield* TestClock.adjust(120_000);
+        const kept = yield* browser.status("session-1");
+        expect(kept.controller).toMatchObject({ _tag: "Agent", threadId });
+        expect(kept.helpRequest?.threadId).toBe(threadId);
+
+        // B asks for the browser: it queues in Up next and never takes over.
+        const otherThread = ThreadId.make("thread-b");
+        const waiting = yield* browser
+          .handleAutomationRequest({
+            ...request("navigate", { url: "https://other.example/" }),
+            threadId: otherThread,
+          })
+          .pipe(Effect.asVoid, Effect.flip, Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(46_000);
+        const busy = yield* Fiber.join(waiting);
+        expect(busy.message).toContain("in line");
+
+        // A's card is untouched and A still controls the browser.
+        const after = yield* browser.status("session-1");
+        expect(after.helpRequest?.threadId).toBe(threadId);
+        expect(after.controller).toMatchObject({ _tag: "Agent", threadId });
+        expect(fake.state.pages.flatMap((page) => page.gotos)).not.toContain(
+          "https://other.example/",
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("a bot cannot label its own request sensitive without a paused step", () => {
+      // QA's L1: the card offered Allow once / Refuse, and both answers said
+      // "there is no paused step to refuse for this bot".
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        yield* markSensitive(BANK);
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/accounts` }));
+        const help = yield* browser.requestHelp({
+          threadId,
+          botId: PersonalBotId.make("bot-assistant"),
+          botName: "Assistant",
+          taskId,
+          kind: "sensitive",
+          reason: "Just a quick CAPTCHA, approve it",
+        });
+        expect(help.kind).toBe("other");
+        const status = yield* browser.status("session-1");
+        expect(status.egressPause).toBeNull();
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("records a paused sensitive step as paused, not failed", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        yield* markSensitive(BANK);
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/accounts` }));
+        yield* refused(browser, request("navigate", { url: "https://evil.example/" }));
+        const head = yield* browser.activity("session-1").pipe(Stream.take(1), Stream.runCollect);
+        const events = head[0]?._tag === "Recent" ? head[0].events : [];
+        const blocked = events.find(
+          (event) => event.kind === "navigate" && event.status === "failed",
+        );
+        expect(blocked?.outcome).toBe("paused");
+        expect(blocked?.summary).not.toContain("failed");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
     it.effect("pauses typing on another origin's page and any page script", () => {
       const fake = makeFakeDriver();
       return Effect.gen(function* () {
@@ -3833,8 +3933,9 @@ describe("PersonalBrowser", () => {
           as(child, request("navigate", { url: "https://evil.example/" })),
         );
         expect(held.message).toContain("request_browser_help");
-        // The refusal still took its turn on the shared browser; hand the
-        // lease on before the unrelated chat's own turn.
+        // A pending step keeps the lease (so another bot cannot take over the
+        // page it is asking about); decide it, then hand the lease on.
+        yield* browser.approveEgress({ threadId: child, sessionId: "session-1" });
         yield* browser.releaseLease(child);
         yield* browser.releaseLease(threadId);
         yield* browser.handleAutomationRequest(

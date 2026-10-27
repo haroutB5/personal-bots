@@ -258,6 +258,27 @@ export const makeBrowserControl = (
         return yield* status(sessionId);
       });
 
+    /** How often a waiting card refreshes the lease it is keeping (90 s TTL). */
+    const HELP_LEASE_REFRESH_MS = 30_000;
+
+    /**
+     * A card can wait minutes on the user, and the agent lease lives 90 s
+     * without a heartbeat. While the question is open the thread keeps its
+     * place with a quiet refresh, so the lease cannot lapse and let the next
+     * bot cancel the card the user is answering (QA's B2).
+     */
+    const keepLeaseWhileAsking = (threadId: string) =>
+      Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep(HELP_LEASE_REFRESH_MS);
+          const help = st.activeHelp;
+          if (help === null || help.request.threadId !== threadId) return;
+          yield* lease
+            .runAgentOp({ threadId, operation: "help-wait" }, Effect.void)
+            .pipe(Effect.ignore);
+        }
+      });
+
     const requestHelp: PersonalBrowser["Service"]["requestHelp"] = (input) =>
       lease.runExclusive(
         Effect.gen(function* () {
@@ -295,7 +316,12 @@ export const makeBrowserControl = (
             requestedAt: yield* nowIso,
             ...(approval === null
               ? {
-                  ...(input.kind === undefined ? {} : { kind: input.kind }),
+                  // Only a real pending step makes a request "sensitive". A
+                  // bot that labels its own request that way used to get an
+                  // Allow once / Refuse card with nothing to decide (QA L1).
+                  ...(input.kind === undefined
+                    ? {}
+                    : { kind: input.kind === "sensitive" ? ("other" as const) : input.kind }),
                   ...(input.origin === undefined ? {} : { origin: input.origin }),
                 }
               : {
@@ -304,10 +330,12 @@ export const makeBrowserControl = (
                   sources: [...approval.sources],
                 }),
           };
+          const opening = st.activeHelp === null;
           st.activeHelp = { request, taskId: input.taskId, approval };
+          if (opening) runFork(Effect.ignore(keepLeaseWhileAsking(input.threadId)));
           yield* recordActivity({
             kind: "control",
-            summary: `${input.botName} asked for help: ${request.reason}`,
+            summary: `asked for help: ${request.reason}`,
             status: "succeeded",
             threadId: input.threadId,
             botName: input.botName,
@@ -377,7 +405,11 @@ export const makeBrowserControl = (
     const pausedStep = (threadId: string) => {
       const help = st.activeHelp;
       if (help !== null && help.request.threadId === threadId && help.approval !== null) {
-        return { approval: help.approval, taskId: help.taskId, requestedAt: help.request.requestedAt };
+        return {
+          approval: help.approval,
+          taskId: help.taskId,
+          requestedAt: help.request.requestedAt,
+        };
       }
       const approval = pendingApprovals.get(threadId);
       if (approval === undefined) return null;
@@ -442,9 +474,7 @@ export const makeBrowserControl = (
         });
         yield* notify;
         return yield* status(input.sessionId);
-      }).pipe(
-        Effect.mapError((error) => new PersonalBrowserError({ message: error.message })),
-      );
+      }).pipe(Effect.mapError((error) => new PersonalBrowserError({ message: error.message })));
 
     const refuseEgress: PersonalBrowser["Service"]["refuseEgress"] = (input) =>
       Effect.gen(function* () {
@@ -481,9 +511,7 @@ export const makeBrowserControl = (
         });
         yield* notify;
         return yield* status(input.sessionId);
-      }).pipe(
-        Effect.mapError((error) => new PersonalBrowserError({ message: error.message })),
-      );
+      }).pipe(Effect.mapError((error) => new PersonalBrowserError({ message: error.message })));
 
     const controlGraceMs = options.controlGraceMs ?? CONTROL_GRACE_MS;
 
