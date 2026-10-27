@@ -595,6 +595,10 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     try: () => encodePngIco(icoRenditions),
     catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
   });
+  const faviconIco = yield* Effect.try({
+    try: () => encodePngIco(icoRenditions.filter((image) => image.size === 48)),
+    catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
+  });
 
   return new Map<string, Buffer>([
     [variant.outputs.ios, ios],
@@ -602,7 +606,7 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     [variant.outputs.appleTouch, yield* render("iOS", 180)],
     [variant.outputs.favicon16, yield* render("iOS", 16)],
     [variant.outputs.favicon32, yield* render("iOS", 32)],
-    [variant.outputs.faviconIco, ico],
+    [variant.outputs.faviconIco, faviconIco],
     [variant.outputs.windowsIco, ico],
   ]);
 });
