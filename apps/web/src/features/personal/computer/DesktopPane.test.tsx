@@ -190,7 +190,6 @@ const text = () => JSON.stringify(renderer!.toJSON());
 type Node = { readonly children: ReadonlyArray<Node | string> };
 const textOf = (node: Node | string): string =>
   typeof node === "string" ? node : node.children.map(textOf).join("");
-const buttonLabels = () => renderer!.root.findAllByType("button").map((button) => textOf(button));
 
 describe("DesktopPane live view", () => {
   it("opens one authenticated socket while the view is on screen, sized for the phone", async () => {

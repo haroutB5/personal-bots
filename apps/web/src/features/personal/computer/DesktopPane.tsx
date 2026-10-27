@@ -29,13 +29,13 @@ import {
   ArrowUp,
   ChevronLeft,
   Eye,
+  Hand,
   Keyboard,
   Lock,
   Maximize2,
   Monitor,
   MonitorOff,
   MousePointer2,
-  ZoomOut,
 } from "lucide-react";
 import {
   type JSX,
@@ -165,12 +165,15 @@ export function DesktopPane(props: {
   readonly footnote?: string | null;
   /** Hand back, for the landscape rail where the screen's top bar is not drawn. */
   readonly onHandBack?: () => void;
+  /** Control runs in the page, not full screen (the wide Computer page). */
+  readonly inline?: boolean;
   /** Draw this instead of the live socket (the mock layer). */
   readonly stand?: ReactNode;
   /** Not on screen for a while: let go of the socket. */
   readonly paused?: boolean;
 }): JSX.Element {
   const { environmentId, fullScreen } = props;
+  const mayControl = fullScreen || props.inline === true;
   const ownStatus = useDesktopStatus(props.status === undefined ? environmentId : null);
   const status = props.status === undefined ? ownStatus : props.status;
   const linux = isLinuxDesktop(status);
@@ -203,19 +206,24 @@ export function DesktopPane(props: {
   // Leaving full screen, backgrounding the app or the PC locking ends control
   // for good: coming back never quietly resumes it. (State adjusted during
   // render, React's pattern for resetting on a prop change.)
-  const endKey = `${fullScreen}|${pageVisible}|${locked}`;
+  const endKey = `${mayControl}|${pageVisible}|${locked}`;
   const [seenEndKey, setSeenEndKey] = useState(endKey);
   if (seenEndKey !== endKey) {
     setSeenEndKey(endKey);
-    if (!fullScreen || !pageVisible || locked) {
+    if (!mayControl || !pageVisible || locked) {
       if (controlWanted && locked) setNotice(REMOTE_LOCKED_TEXT);
       setControlWanted(false);
       setControlOn(false);
       setSticky(new Set());
     }
   }
-  const controlActive = controlWanted && fullScreen && pageVisible && canControl;
+  const controlActive = controlWanted && mayControl && pageVisible && canControl;
   const inControl = controlOn && controlActive;
+  // The gesture card shows for the first few times you take control.
+  const [hint, setHint] = useState(false);
+  useEffect(() => {
+    setHint(inControl && takeHintSession());
+  }, [inControl]);
 
   useEffect(() => {
     if (notice === null) return;
@@ -253,8 +261,8 @@ export function DesktopPane(props: {
   // The mock layer has no socket to confirm control: wanted in full screen is on.
   const standing = props.stand !== undefined;
   useEffect(() => {
-    if (standing) setControlOn(controlWanted && fullScreen);
-  }, [standing, controlWanted, fullScreen]);
+    if (standing) setControlOn(controlWanted && mayControl);
+  }, [standing, controlWanted, mayControl]);
 
   const send: SendInput = (message) => sendRef.current?.(message);
   const takeSticky = (): ReadonlySet<PersonalDesktopModifier> => {
@@ -263,8 +271,36 @@ export function DesktopPane(props: {
     return held;
   };
 
-  const statusLine = notice ?? (fullScreen ? (props.footnote ?? null) : null);
+  const statusLine = notice ?? (fullScreen || inControl ? (props.footnote ?? null) : null);
   const barLabel = `${linux ? "Omarchy laptop" : "Your PC"}${windowTitle === null ? "" : ` · ${windowTitle}`}`;
+
+  const below = (
+    <>
+      {hint && inControl && !rail ? <GestureHint /> : null}
+      {statusLine === null ? null : (
+        <div
+          className={cn(
+            "flex gap-2",
+            rail
+              ? "col-start-1 row-start-2 flex-col items-start pt-2 pr-1 pl-[calc(env(safe-area-inset-left)+0.75rem)]"
+              : "mt-2.5 min-h-11 items-center",
+            fullScreen && !rail && "shrink-0 px-3 pb-3",
+            inControl && !rail && "mt-1",
+          )}
+        >
+          <p
+            role={notice === null ? undefined : "status"}
+            className={cn(
+              "min-w-0 text-[13px] text-[var(--personal-text-secondary)]",
+              rail ? "line-clamp-5 text-[12px] leading-4" : "flex-1 truncate",
+            )}
+          >
+            {statusLine}
+          </p>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div
@@ -418,6 +454,7 @@ export function DesktopPane(props: {
         ) : null}
       </div>
 
+      {inControl && !rail ? below : null}
       {inControl ? (
         <ControlBar
           send={send}
@@ -440,28 +477,7 @@ export function DesktopPane(props: {
         />
       ) : null}
 
-      {statusLine === null ? null : (
-        <div
-          className={cn(
-            "flex gap-2",
-            rail
-              ? "col-start-1 row-start-2 flex-col items-start pt-2 pr-1 pl-[calc(env(safe-area-inset-left)+0.75rem)]"
-              : "mt-2.5 min-h-11 items-center",
-            fullScreen && !rail && "shrink-0 px-3 pb-3",
-            inControl && !rail && "mt-1",
-          )}
-        >
-          <p
-            role={notice === null ? undefined : "status"}
-            className={cn(
-              "min-w-0 text-[13px] text-[var(--personal-text-secondary)]",
-              rail ? "line-clamp-5 text-[12px] leading-4" : "flex-1 truncate",
-            )}
-          >
-            {statusLine}
-          </p>
-        </div>
-      )}
+      {inControl && !rail ? null : below}
     </div>
   );
 }
@@ -666,7 +682,7 @@ function KeyButton(props: {
         "flex h-11 min-w-11 shrink-0 items-center justify-center rounded-[10px] border px-2.5 text-[13px] font-medium outline-none",
         "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-70",
         props.pressed === true
-          ? "border-transparent bg-[var(--personal-control)] text-[#0f0f0e]"
+          ? "border-transparent bg-[var(--personal-control)] text-[var(--personal-primary-text)]"
           : "border-[var(--personal-border)] bg-[var(--personal-surface)]",
         props.attention && "personal-keyboard-ready",
       )}
@@ -1049,14 +1065,14 @@ function LiveDesktop(props: {
           style={{ left: ripple.x, top: ripple.y }}
         />
       ))}
-      {view.scale > 1 && !locked ? (
+      {(view.scale > 1 || interactive) && !locked ? (
         <button
           type="button"
           aria-label="Reset zoom"
           onClick={() => updateView(() => IDENTITY_VIEW)}
-          className="absolute top-2 right-2 z-10 flex size-11 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] shadow-[var(--personal-shadow-card)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="absolute right-2 bottom-2 z-10 flex size-11 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[14px] font-semibold shadow-[var(--personal-shadow-card)] outline-none tabular-nums focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
-          <ZoomOut className="size-5" strokeWidth={ICON_STROKE} />
+          {Math.round(view.scale * 10) / 10}×
         </button>
       ) : null}
       {locked ? (
@@ -1732,4 +1748,32 @@ function measureView(
     height: Math.round(height * scale),
     region: WHOLE_REGION,
   };
+}
+
+const HINT_KEY = "hbots.computer.hint";
+const HINT_SESSIONS = 3;
+
+/** True for the first few times the owner takes control, counting this one. */
+function takeHintSession(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    const seen = Number(window.localStorage.getItem(HINT_KEY) ?? "0");
+    if (!(seen < HINT_SESSIONS)) return false;
+    window.localStorage.setItem(HINT_KEY, String(seen + 1));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function GestureHint(): JSX.Element {
+  return (
+    <div className="mx-3 mt-3 flex shrink-0 items-start gap-3 rounded-[14px] border border-[var(--personal-border-strong)] px-3.5 py-3 text-[14px] leading-5 text-[var(--personal-text-secondary)]">
+      <Hand className="mt-0.5 size-5 shrink-0" strokeWidth={ICON_STROKE} aria-hidden />
+      <p>
+        Tap to click · hold to right-click · hold, then drag · two fingers to scroll · pinch to
+        zoom. Turn the phone sideways for a bigger view.
+      </p>
+    </div>
+  );
 }

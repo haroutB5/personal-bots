@@ -21,6 +21,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   Activity,
+  Hand,
   ArrowLeft,
   Camera,
   ChevronLeft,
@@ -172,6 +173,7 @@ const TOAST_MS = 2400;
 const TAKE_ERROR_MS = 10_000;
 /** The source left in the background keeps its socket this long. */
 const BACKGROUND_PAUSE_MS = 10_000;
+const WIDE_PAGE_QUERY = "(min-width: 1100px)";
 const COMPACT_LANDSCAPE_QUERY = "(orientation: landscape) and (max-height: 540px)";
 const NO_DESK_CONTROL: DesktopControlState = {
   wanted: false,
@@ -309,6 +311,9 @@ function ComputerScreenView({
   const faceOf = useBotFaces(environmentId);
   const panel = variant === "panel";
   const compactLandscape = useMediaQuery(COMPACT_LANDSCAPE_QUERY);
+  // The wide page keeps desktop control in the page (the rail stays); the
+  // phone, the panel and browser control go full screen.
+  const widePage = useMediaQuery(WIDE_PAGE_QUERY) && !panel;
 
   // A link elsewhere can ask for a source, Files or Performance (taken once).
   const [request] = useState(() => takeRequestedComputerSegment());
@@ -465,7 +470,7 @@ function ComputerScreenView({
     const driver = driverOf[source];
     setPaused(driver.state === "using" ? driver : null);
     setTakeSource(source);
-    setFullScreen(true);
+    if (!(source === "desktop" && widePage)) setFullScreen(true);
     if (source === "browser") {
       const failure = await commands.takeBrowser();
       if (failure !== null) {
@@ -563,6 +568,23 @@ function ComputerScreenView({
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");
+  // "CTO carries on when you hand back. Frontend and DevOps are next."
+  const nextNames = queue.next.map((entry) => entry.botName);
+  const carryNote =
+    queue.paused === null
+      ? ""
+      : [
+          `${queue.paused.botName} carries on when you hand back.`,
+          nextNames.length === 0
+            ? null
+            : nextNames.length === 1
+              ? `${nextNames[0]} is next.`
+              : nextNames.length === 2
+                ? `${nextNames[0]} and ${nextNames[1]} are next.`
+                : `${nextNames[0]}, ${nextNames[1]} and ${nextNames.length - 2} more are next.`,
+        ]
+          .filter((part): part is string => part !== null)
+          .join(" ");
   const goBackToChat = () => onBackToChat(computerBackTarget(status, origin));
   const botChatTarget = (ref: { botId: string; threadId: string }) => onBackToChat(ref);
   const filesOpen = onOpenFiles ?? (() => setActivityOpen(true));
@@ -642,6 +664,7 @@ function ComputerScreenView({
     />
   ) : undefined;
   const controlBarShown = fullScreen && (youShown || takingShown);
+  const inlineControl = widePage && shown === "desktop" && !fullScreen && (youShown || takingShown);
   const railLayout = compactLandscape && fullScreen && shown === "desktop";
   const helpText = help === null ? null : `${help.botName}: ${help.reason}`;
   const handBackLabel =
@@ -717,7 +740,11 @@ function ComputerScreenView({
             style={{ backgroundColor: HEADER_DOT[header.tone] }}
           />
         </div>
-        <p className="truncate text-[14px] text-[var(--personal-text-secondary)]">{header.text}</p>
+        <p className="truncate text-[14px] text-[var(--personal-text-secondary)]">
+          {inlineControl
+            ? ["You're in control of the desktop", queueNote].filter(Boolean).join(" · ")
+            : header.text}
+        </p>
       </div>
       {summary !== null && reachable && summary.cpuPct !== null && summary.memUsedPct !== null ? (
         <button
@@ -773,6 +800,23 @@ function ComputerScreenView({
 
   const rowBlock = fullScreen ? null : (
     <ComputerSourceRow
+      trailing={
+        inlineControl ? (
+          <>
+            <p className="min-w-0 truncate text-[13px] text-[var(--personal-text-secondary)]">
+              Keyboard and mouse go to the laptop
+            </p>
+            <button
+              type="button"
+              onClick={() => void handBack()}
+              className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
+              <Hand className="size-4" strokeWidth={ICON_STROKE} aria-hidden />
+              {handBackLabel}
+            </button>
+          </>
+        ) : null
+      }
       shown={shown}
       auto={prefs.auto}
       badges={badges}
@@ -781,12 +825,19 @@ function ComputerScreenView({
       disabled={!reachable}
       onSelect={selectSource}
       onToggleAuto={toggleAuto}
+      tabsClassName={panel ? undefined : "min-[1100px]:max-w-[360px]"}
       className={cn("mt-3", !panel && D2_ROW)}
     />
   );
 
   const stage = !reachable ? (
-    <div className={cn("mt-2.5", !panel && D2_STAGE, fullScreen && "min-h-0 flex-1")}>
+    <div
+      className={cn(
+        "mt-2.5 overflow-hidden rounded-[12px] border border-[var(--personal-border)]",
+        !panel && D2_STAGE,
+        fullScreen && "min-h-0 flex-1",
+      )}
+    >
       <OfflineStage />
     </div>
   ) : (
@@ -819,12 +870,13 @@ function ComputerScreenView({
               environmentId={environmentId}
               status={desktopStatus}
               fullScreen={fullScreen}
+              inline={widePage}
               onOpenFullScreen={() => setFullScreen(true)}
               onExitFullScreen={() => setFullScreen(false)}
               wantControl={takeSource === "desktop"}
               onControlState={onDeskControl}
               hideBar={controlBarShown}
-              footnote={queueNote === "" ? null : queueNote}
+              footnote={carryNote === "" ? null : carryNote}
               onHandBack={() => void handBack()}
               paused={backgroundPaused === "desktop" && shown !== "desktop"}
               stand={mockStage("desktop")}
@@ -901,14 +953,13 @@ function ComputerScreenView({
       />
       {otherDriver.state === "using" ? (
         <ComputerDriverCard
-          heading={`In the background: ${otherSource}`}
           face={faceOf({ botId: otherDriver.botId, botName: otherDriver.botName })}
           state="using"
-          line={driverLine({
+          line={`${driverLine({
             driver: otherDriver,
             events: events.filter((event) => event.source === otherSource),
             now,
-          })}
+          })} · in the background`}
           resolveFace={faceOf}
           onClick={() => selectSource(otherSource)}
           className="mt-2 opacity-80"
@@ -918,7 +969,7 @@ function ComputerScreenView({
   );
 
   const actionsBlock =
-    fullScreen || nothingOnScreen ? null : (
+    fullScreen || nothingOnScreen || inlineControl ? null : (
       <>
         <ComputerActions
           inControl={youShown || otherDevice === true}
@@ -1188,7 +1239,7 @@ function BrowserKeyDock(props: {
         className={cn(
           button,
           props.keyboardOpen
-            ? "border-transparent bg-[var(--personal-control)] text-[#0f0f0e]"
+            ? "border-transparent bg-[var(--personal-control)] text-[var(--personal-primary-text)]"
             : "border-[var(--personal-border)] bg-[var(--personal-surface)]",
           props.keyboardReady && "personal-keyboard-ready",
         )}

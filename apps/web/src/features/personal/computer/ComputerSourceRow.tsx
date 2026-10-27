@@ -1,5 +1,5 @@
 import { Crosshair, Globe, Monitor } from "lucide-react";
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -79,6 +79,10 @@ export function ComputerSourceRow(props: {
   readonly disabled: boolean;
   readonly onSelect: (source: ComputerSource) => void;
   readonly onToggleAuto: () => void;
+  /** Sits at the right of the row (the Hand back pill while you control the desktop). */
+  readonly trailing?: ReactNode | undefined;
+  /** Extra classes for the tab list, e.g. a max width on the wide page. */
+  readonly tabsClassName?: string | undefined;
   readonly className?: string;
 }): JSX.Element {
   const sources: ReadonlyArray<ComputerSource> = ["browser", "desktop"];
@@ -89,7 +93,10 @@ export function ComputerSourceRow(props: {
       <div
         role="tablist"
         aria-label="Computer view"
-        className="grid h-11 min-w-0 flex-1 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)]"
+        className={cn(
+          "grid h-11 min-w-0 flex-1 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)]",
+          props.tabsClassName,
+        )}
       >
         {sources.map((source) => {
           const badge = props.badges[source];
@@ -155,6 +162,9 @@ export function ComputerSourceRow(props: {
         <Crosshair className="size-[18px]" strokeWidth={ICON_STROKE} aria-hidden />
         Auto
       </button>
+      {props.trailing === undefined || props.trailing === null ? null : (
+        <div className="ml-auto flex min-w-0 items-center gap-3 pl-2">{props.trailing}</div>
+      )}
     </div>
   );
 }
