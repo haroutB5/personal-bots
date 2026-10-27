@@ -140,7 +140,8 @@ esac`,
   );
   script(
     NodePath.join(binDir, "notify-send"),
-    `echo "$@" >> "${notifyLog}"
+    `env >> "${Path(workDir, "notify-env.log")}"
+echo "$@" >> "${notifyLog}"
 echo 42`,
   );
   script(NodePath.join(binDir, "gdbus"), `echo "()"`);

@@ -487,6 +487,96 @@ describe("LinuxDesktopDriver", () => {
     }
   });
 
+  it("lets go of a held key at once when the user switches workspace", async () => {
+    const dir = NodePath.join(root, "hypr", "test-instance");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    const socketPath = NodePath.join(dir, ".socket2.sock");
+    NodeFS.rmSync(socketPath, { force: true });
+    const connections: NodeNet.Socket[] = [];
+    const server = NodeNet.createServer((socket) => connections.push(socket));
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const connected = new Promise<void>((resolve) => server.once("connection", () => resolve()));
+    const driver = makeDriver();
+    try {
+      await connected;
+      await driver.request("move", { x: 10, y: 10 });
+      // QA's finding: a 20 s hold ignored a workspace change and kept repeating.
+      const baseline = world.helperCommands().length;
+      const hold = driver.request("hold", { keys: [0x28], durationMs: 5_000, repeat: true });
+      // Claim the rejection now: it waits until the workspace event below.
+      const outcome = hold.then(
+        () => null,
+        (error: unknown) => error,
+      );
+      const pressedBy = Date.now() + 2_000;
+      while (!world.helperCommands().slice(baseline).includes("key Down down")) {
+        if (Date.now() > pressedBy) throw new Error("the hold never pressed Down");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const before = world.helperCommands().length;
+      const interruptedAt = Date.now();
+      connections[0]?.write("workspace>>5\n");
+      let releasedAfter = Number.POSITIVE_INFINITY;
+      const deadline = interruptedAt + 2_000;
+      for (;;) {
+        if (world.helperCommands().slice(before).includes("releaseall")) {
+          releasedAfter = Date.now() - interruptedAt;
+          break;
+        }
+        if (Date.now() > deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      // The release must not wait for the rest of the hold.
+      expect(releasedAfter).toBeLessThan(500);
+      expect(await outcome).toMatchObject({ code: "taken_over" });
+      const after = world.helperCommands().slice(before);
+      expect(after).toContain("key Down up");
+      // M2: the next action stays blocked until a fresh screenshot.
+      await expect(driver.request("move", { x: 11, y: 11 })).rejects.toMatchObject({
+        code: "user_active",
+      });
+      await driver.request("screenshot", { x: 0, y: 0, width: 100, height: 100 });
+      await driver.request("move", { x: 12, y: 12 });
+    } finally {
+      driver.dispose();
+      for (const socket of connections) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("lets go of a held mouse button when the user switches workspace", async () => {
+    const dir = NodePath.join(root, "hypr", "test-instance");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    const socketPath = NodePath.join(dir, ".socket2.sock");
+    NodeFS.rmSync(socketPath, { force: true });
+    const connections: NodeNet.Socket[] = [];
+    const server = NodeNet.createServer((socket) => connections.push(socket));
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const connected = new Promise<void>((resolve) => server.once("connection", () => resolve()));
+    const driver = makeDriver();
+    try {
+      await connected;
+      await driver.request("move", { x: 10, y: 10 });
+      await driver.request("button", { button: "left", down: true });
+      const before = world.helperCommands().length;
+      connections[0]?.write("workspace>>5\n");
+      const deadline = Date.now() + 2_000;
+      while (!world.helperCommands().slice(before).includes("releaseall")) {
+        if (Date.now() > deadline) throw new Error("the held button was never let go");
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      await expect(driver.request("move", { x: 11, y: 11 })).rejects.toMatchObject({
+        code: "user_active",
+      });
+      await driver.request("screenshot", { x: 0, y: 0, width: 100, height: 100 });
+      await driver.request("move", { x: 12, y: 12 });
+    } finally {
+      driver.dispose();
+      for (const socket of connections) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("ignores the bot's own focus change but takes back a later one", async () => {
     const dir = NodePath.join(root, "hypr", "test-instance");
     NodeFS.mkdirSync(dir, { recursive: true });
@@ -666,5 +756,34 @@ done
       "WAYLAND_DISPLAY",
       "XDG_RUNTIME_DIR",
     ]);
+  });
+});
+
+describe("Linux banner environment", () => {
+  it("passes notify-send the variables Omarchy's notification IPC needs", async () => {
+    // The live service has both (checked in /proc/<pid>/environ); the throwaway
+    // helper dropped them, which QA saw as three stacked banners (B5). The
+    // banner commands get the service's environment, so prove they carry it.
+    const saved = {
+      OMARCHY_PATH: process.env.OMARCHY_PATH,
+      DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS,
+    };
+    delete process.env.OMARCHY_PATH;
+    delete process.env.DBUS_SESSION_BUS_ADDRESS;
+    process.env.OMARCHY_PATH = "/usr/share/omarchy";
+    process.env.DBUS_SESSION_BUS_ADDRESS = "unix:path=/run/user/1000/bus";
+    const driver = makeDriver();
+    try {
+      await driver.request("overlay", { text: "Assistant is using your PC" });
+    } finally {
+      driver.dispose();
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    const env = NodeFS.readFileSync(NodePath.join(root, "notify-env.log"), "utf8");
+    expect(env).toContain("OMARCHY_PATH=/usr/share/omarchy");
+    expect(env).toContain("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus");
   });
 });

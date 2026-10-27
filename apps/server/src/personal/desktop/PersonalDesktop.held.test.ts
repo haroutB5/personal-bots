@@ -36,6 +36,7 @@ class FakeDriver implements DesktopDriver {
     timeoutMs: number | undefined;
   }> = [];
   private killListener: (() => void) | null = null;
+  private takeBackListener: (() => void) | null = null;
   /** Commands that reject with this error instead of answering. */
   readonly failing = new Map<string, Error>();
   /** Commands that never answer until the stop key. */
@@ -70,6 +71,15 @@ class FakeDriver implements DesktopDriver {
 
   onKill(listener: () => void) {
     this.killListener = listener;
+  }
+
+  onTakeBack(listener: () => void) {
+    this.takeBackListener = listener;
+  }
+
+  /** The user switches window or workspace while the bot still holds input. */
+  pressTakeBack() {
+    this.takeBackListener?.();
   }
 
   /** The user presses the stop key: the helper aborts what it is doing, then reports it. */
@@ -595,6 +605,48 @@ describe("modifiers on drag and scroll", () => {
       expect(failureOf(exit)?.kind).toBe("user_active");
       // The helper's own finally lets the modifier go; the service holds no record of it.
       expect(driver.countOf("releaseAll")).toBe(0);
+    }),
+  );
+});
+
+describe("take-back during a hold", () => {
+  it.live("a held key interrupted by the user reports stopped and lets go", () =>
+    Effect.gen(function* () {
+      const { driver, service } = yield* setup();
+      driver.failing.set(
+        "hold",
+        new DesktopHelperError("taken_over", "The user took over the PC mid-hold."),
+      );
+      const exit = yield* service
+        .act(ada, "hold_key", (context) =>
+          DesktopActions.holdKey(context, { keys: "down", durationMs: 20_000, ...NO_SHOT }),
+        )
+        .pipe(Effect.exit);
+      // "stopped", not "failed": the PC said no, the action is not broken.
+      expect(failureOf(exit)?.kind).toBe("stopped");
+      expect(failureOf(exit)?.reason).toContain("Stopped: the user took over the PC");
+      yield* tick();
+      expect(driver.countOf("releaseAll")).toBe(1);
+    }),
+  );
+
+  it.live("a held mouse button is let go without ending the bot's claim", () =>
+    Effect.gen(function* () {
+      const { driver, service } = yield* setup();
+      yield* service.act(ada, "mouse_down", (context) =>
+        DesktopActions.mouseDown(context, { x: 100, y: 50, ...NO_SHOT }),
+      );
+      driver.pressTakeBack();
+      yield* tick();
+      expect(driver.countOf("releaseAll")).toBe(1);
+      // The service no longer believes the button is down.
+      const up = yield* service
+        .act(ada, "mouse_up", (context) => DesktopActions.mouseUp(context, { ...NO_SHOT }))
+        .pipe(Effect.exit);
+      expect(failureOf(up)?.kind).toBe("invalid");
+      // A take-back is not the stop key: the next input still needs a screenshot,
+      // but the PC stays this chat's.
+      expect((yield* service.status).holder?.threadId).toBe("t-ada");
     }),
   );
 });

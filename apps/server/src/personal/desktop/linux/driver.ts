@@ -66,6 +66,13 @@ const VISIBLE_TTL_MS = 500;
 /** The banner's summary; also what Omarchy's notification IPC dismisses by. */
 const OVERLAY_SUMMARY = "hbots";
 
+/** Why a hold ended before its time: the stop key, or the user taking over. */
+type HoldEnd = "stopped" | "taken_over";
+
+/** What a hold reports when the user came back and its input was let go. */
+const HOLD_TAKEN_OVER_DETAIL =
+  "The user took over the PC (they changed window or workspace), so the held key or button was let go.";
+
 /** Windows that hold credentials: never type into them (best effort, by class). */
 const PASSWORD_MANAGER_CLASSES = [
   "1password",
@@ -118,8 +125,16 @@ export class LinuxDesktopDriver implements DesktopDriver {
   private readonly helper: LinuxDesktopHelper;
   private readonly capture: LinuxScreenCapture;
   private readonly killListeners: Array<() => void> = [];
-  /** Wakes a long wait (a hold) the moment the user stops the bot. */
-  private stopWaiters: Array<() => void> = [];
+  /** Called when the user takes the PC back while input is still held. */
+  private readonly takeBackListeners: Array<() => void> = [];
+  /** Wakes a long wait (a hold) the moment the user stops the bot or takes over. */
+  private holdWaiters: Array<(end: HoldEnd | null) => void> = [];
+  /** The interruption that ended the hold in progress, if any (QA's take-back). */
+  private holdEnd: HoldEnd | null = null;
+  /** True while computer_hold_key has a key or chord down. */
+  private holdActive = false;
+  /** True while computer_mouse_down has a button down. */
+  private buttonDown = false;
   private readonly log: (line: string) => void;
   private monitorsCache: ScreenState | null = null;
   private workspaceCache: { workspaces: VisibleWorkspaces; at: number } | null = null;
@@ -162,29 +177,65 @@ export class LinuxDesktopDriver implements DesktopDriver {
     if (options.stopChord !== false) this.armStop();
     // A hold is a plain sleep in this driver: end it when the stop lands, so
     // the tool reports "stopped" instead of a full hold that never happened
-    // (QA's L6).
-    this.onKill(() => {
-      const waiters = this.stopWaiters;
-      this.stopWaiters = [];
-      for (const wake of waiters) wake();
-    });
+    // (QA's L6). A take-back does the same and also lets go of the key.
+    this.onKill(() => this.interruptHeldInput("stopped"));
   }
 
-  /** Sleeps, but ends at once when the bot is stopped or the helper dies. */
-  private waitUnlessStopped(ms: number): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    return new Promise<void>((resolve) => {
+  onTakeBack = (listener: () => void): void => {
+    this.takeBackListeners.push(listener);
+  };
+
+  /**
+   * The user is back at the PC: let go of anything still pressed and end a
+   * running hold. `releaseall` is the helper's panic path, so one command
+   * covers a key, a chord and a mouse button alike, and it does not wait for
+   * the hold's own cleanup. The hold then reports why it ended, so the tool
+   * says "stopped" instead of a full duration that never happened (QA's
+   * take-back finding).
+   */
+  private interruptHeldInput(end: HoldEnd): void {
+    // Remember it until the next hold starts, so a take-back that lands just
+    // before a hold presses its first key still ends that hold.
+    this.holdEnd ??= end;
+    const pressed = this.holdActive || this.buttonDown;
+    if (pressed) {
+      this.buttonDown = false;
+      void this.helper.request("releaseall", [], 5_000).catch(() => undefined);
+      if (end === "taken_over") {
+        for (const listener of this.takeBackListeners) listener();
+      }
+    }
+    const waiters = this.holdWaiters;
+    this.holdWaiters = [];
+    for (const wake of waiters) wake(end);
+  }
+
+  /** Sleeps, but ends at once when the bot is stopped or the user takes over. */
+  private waitUnlessStopped(ms: number): Promise<HoldEnd | null> {
+    if (ms <= 0) return Promise.resolve(null);
+    return new Promise<HoldEnd | null>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
       let done = false;
-      const finish = () => {
+      const finish = (end: HoldEnd | null) => {
         if (done) return;
         done = true;
         if (timer !== null) clearTimeout(timer);
-        resolve();
+        resolve(end);
       };
-      timer = setTimeout(finish, ms);
-      this.stopWaiters.push(finish);
+      timer = setTimeout(() => finish(null), ms);
+      this.holdWaiters.push(finish);
     });
+  }
+
+  /** The error a hold throws when it was interrupted, or null if it ran its time. */
+  private holdEndError(): DesktopHelperError | null {
+    if (this.holdEnd === "taken_over") {
+      return new DesktopHelperError("taken_over", HOLD_TAKEN_OVER_DETAIL);
+    }
+    if (this.holdEnd === "stopped") {
+      return new DesktopHelperError("aborted", "Stopped: the stop key was pressed at the PC.");
+    }
+    return null;
   }
 
   private layout = "us";
@@ -442,6 +493,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
       if (address.length === 0 || address === this.botWindowAddress) return;
       if (Date.now() - this.lastBotActionAt > TAKEOVER_GRACE_MS) {
         this.userActiveAt = Date.now();
+        this.interruptHeldInput("taken_over");
       }
       return;
     }
@@ -451,6 +503,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
       const workspace = detail.split(",")[0]?.trim() ?? "";
       if (workspace.length > 0 && workspace !== this.botWorkspace) {
         this.userActiveAt = Date.now();
+        this.interruptHeldInput("taken_over");
       }
       return;
     }
@@ -800,6 +853,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
       case "abort":
       case "releaseAll":
         await this.helper.request("releaseall", [], timeoutMs).catch(() => undefined);
+        this.buttonDown = false;
         return { released: true };
       case "click": {
         await this.ensureLayout();
@@ -937,6 +991,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
         const button = str(params.button) || "left";
         const down = params.down === true;
         await this.helper.request("button", [button, down ? "down" : "up"], timeoutMs);
+        this.buttonDown = down;
         this.noteBotAction();
         return { done: true };
       }
@@ -950,14 +1005,20 @@ export class LinuxDesktopDriver implements DesktopDriver {
         const mains = combo.filter((entry) => !isModifierEntry(entry));
         const down: string[] = [];
         let mainDown: string | null = null;
+        this.holdEnd = null;
+        this.holdActive = true;
         try {
           for (const entry of modifiers) {
             const name = keysymName(entry);
+            const interrupted = this.holdEndError();
+            if (interrupted !== null) throw interrupted;
             await this.helper.request("key", [name, "down"], 5_000);
             down.push(name);
           }
           const first = mains[0];
           if (first !== undefined) {
+            const interrupted = this.holdEndError();
+            if (interrupted !== null) throw interrupted;
             mainDown = keysymName(first);
             await this.helper.request("key", [mainDown, "down"], 5_000);
           }
@@ -966,8 +1027,15 @@ export class LinuxDesktopDriver implements DesktopDriver {
             await this.helper.request("key", [mainDown, "up"], 5_000);
             mainDown = null;
           }
-          await this.waitUnlessStopped(durationMs);
+          // A take-back that landed while the keys went down ends the hold
+          // here; otherwise the sleep wakes the moment it lands.
+          const ended = this.holdEnd ?? (await this.waitUnlessStopped(durationMs));
+          if (ended !== null) {
+            throw this.holdEndError() ?? new DesktopHelperError("aborted", "");
+          }
         } finally {
+          this.holdActive = false;
+          this.holdEnd = null;
           if (mainDown !== null) {
             await this.helper.request("key", [mainDown, "up"], 5_000).catch(() => undefined);
           }

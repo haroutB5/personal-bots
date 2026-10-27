@@ -115,6 +115,10 @@ export const STOPPED_REASON = stoppedReasonFor(PERSONAL_DESKTOP_STOP_HOTKEY);
 export const TAKEN_OVER_REASON =
   "The user took control of the PC remotely from the app. Stop using the desktop now: do not retry. Tell the user what you had done so far and ask whether they want you to continue.";
 
+/** What a bot hears when the user takes the PC back in the middle of a hold. */
+export const HOLD_TAKEN_OVER_REASON =
+  "Stopped: the user took over the PC, so the held key or button was let go at once. Take a fresh screenshot before the next action; if they keep using it, ask them whether you should continue.";
+
 /** The owner, as the PC's holder while they control it remotely. */
 export const REMOTE_USER: DesktopClaimant = {
   threadId: "remote-user",
@@ -356,6 +360,8 @@ function helperFailure(error: unknown): PersonalDesktopActionError {
         });
       case "unavailable":
         return new PersonalDesktopActionError({ kind: "unavailable", reason: error.message });
+      case "taken_over":
+        return new PersonalDesktopActionError({ kind: "stopped", reason: HOLD_TAKEN_OVER_REASON });
       default:
         return new PersonalDesktopActionError({ kind: "failed", reason: error.message });
     }
@@ -724,6 +730,16 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     };
 
     driver?.onKill(() => stopAllNow("hotkey"));
+
+    // A take-back (a workspace or focus change) is not the stop key: the bot
+    // keeps its place, the next input waits for a fresh screenshot, and
+    // anything it still holds is let go at once. The driver has released the
+    // input already; this clears the service's held-button bookkeeping.
+    driver?.onTakeBack?.(() => {
+      const holder = lock.holder;
+      if (holder === null || isUser(holder)) return;
+      void releaseHeld(holder.threadId, "the user took over");
+    });
 
     const waitForTurn = (claimant: DesktopClaimant): Promise<void> => {
       let waiter = waiters.get(claimant.threadId);

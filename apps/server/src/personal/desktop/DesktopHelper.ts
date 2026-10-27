@@ -20,6 +20,11 @@ export interface DesktopDriver {
   ) => Promise<Record<string, unknown>>;
   /** Called when the user presses the stop hotkey. */
   readonly onKill: (listener: () => void) => void;
+  /**
+   * Called when a workspace or focus change means the user is back at the PC
+   * while the bot still holds input; the driver has already let it go.
+   */
+  readonly onTakeBack?: (listener: () => void) => void;
   readonly dispose: () => void;
   /** The key that stops this machine's bot, for the status and the messages. */
   readonly stopHotkey?: string;
