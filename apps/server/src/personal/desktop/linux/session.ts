@@ -76,7 +76,9 @@ export function runCommand(
       clearTimeout(timer);
       reject(new LinuxSessionError(`${command} could not run: ${error.message}`));
     });
-    child.on("exit", (code) => {
+    // "close" and not "exit": exit can fire before the last chunk of stdout
+    // has been read, which made a one-line answer look like no answer.
+    child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -411,14 +413,40 @@ export async function sessionLocked(
   } catch {
     // Fall through to the next oracle.
   }
+  // Oracle 2: prints the lock program that is up, and nothing while unlocked.
   try {
-    // Prints the lock program that is up, and nothing while unlocked.
     const result = await runCommand("omarchy-hyprland-session-locked", [], {
-      env: sessionEnv(session),
+      env: sessionEnv(session, base),
       timeoutMs: 3_000,
     });
-    return result.stdout.trim().length > 0;
+    if (result.code === 0) return result.stdout.trim().length > 0;
   } catch {
-    return false;
+    // Fall through to logind.
   }
+  // Oracle 3: logind's own LockedHint, independent of Omarchy's scripts.
+  try {
+    const result = await runCommand(
+      "gdbus",
+      [
+        "call",
+        "--system",
+        "--dest",
+        "org.freedesktop.login1",
+        "--object-path",
+        "/org/freedesktop/login1/session/auto",
+        "--method",
+        "org.freedesktop.DBus.Properties.Get",
+        "org.freedesktop.login1.Session",
+        "LockedHint",
+      ],
+      { env: sessionEnv(session, base), timeoutMs: 3_000 },
+    );
+    const text = result.stdout.trim().toLowerCase();
+    if (text.includes("false")) return false;
+    if (text.includes("true")) return true;
+  } catch {
+    // No oracle left.
+  }
+  // Fail closed: if nothing can say the session is unlocked, treat it as locked.
+  return true;
 }

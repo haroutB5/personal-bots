@@ -1,11 +1,17 @@
+// @effect-diagnostics nodeBuiltinImport:off - the fixture writes stand-in oracle scripts on PATH.
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import {
   activeWindow,
   discoverLinuxSession,
   logicalMonitors,
   LinuxSessionError,
+  mappedWindows,
   sessionEnv,
+  sessionLocked,
+  type LinuxSession,
 } from "./session.ts";
 
 describe("logicalMonitors", () => {
@@ -118,5 +124,81 @@ describe("discoverLinuxSession", () => {
     expect(env.WAYLAND_DISPLAY).toBe("wayland-1");
     expect(env.XDG_RUNTIME_DIR).toBe("/run/user/1000");
     expect(env.HYPRLAND_INSTANCE_SIGNATURE).toBe("sig");
+  });
+});
+
+describe("mappedWindows", () => {
+  it("keeps mapped, on-screen windows in layout pixels", () => {
+    expect(
+      mappedWindows([
+        {
+          class: "brave-abc-Default",
+          title: "Bank",
+          at: [-120, 40],
+          size: [800, 600],
+          mapped: true,
+          hidden: false,
+        },
+      ]),
+    ).toEqual([
+      { class: "brave-abc-Default", title: "Bank", x: -120, y: 40, width: 800, height: 600 },
+    ]);
+  });
+
+  it("drops windows on hidden workspaces and malformed sizes", () => {
+    const windows = mappedWindows([
+      { class: "hidden", at: [0, 0], size: [10, 10], mapped: false },
+      { class: "special", at: [0, 0], size: [10, 10], mapped: true, hidden: true },
+      { class: "zero", at: [0, 0], size: [0, 0], mapped: true },
+      { class: "shown", at: [0, 0], size: [10, 10], mapped: true },
+    ]);
+    expect(windows.map((window) => window.class)).toEqual(["shown"]);
+  });
+});
+
+const scenarioDir = (name: string): string => {
+  const dir = NodePath.join("/tmp/opencode", `lock-${name}-${process.pid}`);
+  NodeFS.mkdirSync(dir, { recursive: true });
+  return dir;
+};
+
+const writeScript = (dir: string, name: string, body: string): void => {
+  const path = NodePath.join(dir, name);
+  NodeFS.writeFileSync(path, `#!/bin/sh\n${body}\n`, "utf8");
+  NodeFS.chmodSync(path, 0o755);
+};
+
+// The oracle takes its own PATH: no test has to mutate the process environment.
+const onPath = (dir: string) => ({ PATH: dir });
+
+const lockSession: LinuxSession = {
+  waylandDisplay: "wayland-1",
+  xdgRuntimeDir: "/run/user/1000",
+  hyprlandInstance: "sig",
+  uid: 1000,
+};
+
+describe("sessionLocked", () => {
+  it("believes logind's LockedHint when Omarchy's own oracles are gone", async () => {
+    const dir = scenarioDir("logind-locked");
+    writeScript(dir, "gdbus", 'echo "(<true>,)"');
+    expect(await sessionLocked(lockSession, onPath(dir))).toBe(true);
+  });
+
+  it("reads an unlocked logind session as unlocked", async () => {
+    const dir = scenarioDir("logind-open");
+    writeScript(dir, "gdbus", 'echo "(<false>,)"');
+    expect(await sessionLocked(lockSession, onPath(dir))).toBe(false);
+  });
+
+  it("reports unlocked when the second oracle answers with nothing", async () => {
+    const dir = scenarioDir("omarchy-open");
+    writeScript(dir, "omarchy-hyprland-session-locked", "exit 0");
+    expect(await sessionLocked(lockSession, onPath(dir))).toBe(false);
+  });
+
+  it("fails closed when no oracle answers at all", async () => {
+    const dir = scenarioDir("no-oracle");
+    expect(await sessionLocked(lockSession, onPath(dir))).toBe(true);
   });
 });
