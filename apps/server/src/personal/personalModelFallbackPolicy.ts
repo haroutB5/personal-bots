@@ -242,6 +242,13 @@ export interface SwitchBackInput {
   /** Service verifies that this is still the original, ready provider instance. */
   readonly recoveryProviderReady?: boolean;
   readonly limitReason?: string | null;
+  /**
+   * The switch was a provider capacity hit, which spent nothing and reports no
+   * reset. Its stored time is the fixed hold, so a healthy usage snapshot must
+   * not cut it short: capacity is not usage, and the model is tried again when
+   * the hold ends.
+   */
+  readonly capacityHit?: boolean;
 }
 
 export function primaryUsageRecovered(input: SwitchBackInput): boolean {
@@ -292,7 +299,9 @@ export function decideSwitchBack(input: SwitchBackInput): SwitchBackDecision {
   const off = !input.killSwitchOn || !input.botFallbackEnabled;
   if (off) return input.idle ? { kind: "back", reason: "disabled" } : { kind: "wait" };
 
-  if (primaryUsageRecovered(input)) {
+  // A capacity hold is a time to wait, not a usage window: healthy readings
+  // prove only that the account has room, not that the model is serving again.
+  if (input.capacityHit !== true && primaryUsageRecovered(input)) {
     return input.idle ? { kind: "back", reason: "recovered" } : { kind: "wait" };
   }
 

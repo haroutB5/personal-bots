@@ -281,8 +281,39 @@ describe("decideSwitchBack", () => {
     });
   });
 
-  it("with no reset reported it re-checks the readings, and holds a full window without any", () => {
-    const noReset = { ...base, resetAtMs: null } as const;
+  it("a capacity hold is a fixed wait that healthy usage readings cannot cut short", () => {
+    const at = NOW + 60_000;
+    const recovered = {
+      ...usage([{ id: "primary", used: 4 }]),
+      checkedAt: isoAt(at),
+      fullReadAt: isoAt(at),
+    };
+    const capacity = {
+      ...base,
+      nowMs: at,
+      resetAtMs: NOW + FALLBACK_CAPACITY_HOLD_MS,
+      capacityHit: true,
+      recoveryProviderReady: true,
+      homeProvider: snapshot("codex", "codex", recovered),
+    } as const;
+    // Without the flag this same input is an early recovery: usage is healthy.
+    expect(decideSwitchBack({ ...capacity, capacityHit: false })).toEqual({
+      kind: "back",
+      reason: "recovered",
+    });
+    // A capacity hit spent nothing, so a roomy account proves nothing about the
+    // model serving again: the hold, not the reading, decides.
+    expect(decideSwitchBack(capacity)).toEqual({ kind: "wait" });
+    const ended = NOW + FALLBACK_CAPACITY_HOLD_MS + FALLBACK_SWITCH_BACK_GRACE_MS;
+    expect(decideSwitchBack({ ...capacity, nowMs: ended - 1 })).toEqual({ kind: "wait" });
+    expect(decideSwitchBack({ ...capacity, nowMs: ended })).toEqual({
+      kind: "back",
+      reason: "reset",
+    });
+    expect(decideSwitchBack({ ...capacity, nowMs: ended, idle: false })).toEqual({ kind: "wait" });
+  });
+
+  it("with no reset reported it re-checks the readings, and holds a full window without any", () => {    const noReset = { ...base, resetAtMs: null } as const;
     expect(decideSwitchBack({ ...noReset, nowMs: NOW + FALLBACK_RECHECK_MS - 1 })).toEqual({
       kind: "wait",
     });
@@ -761,6 +792,68 @@ it.effect("goes back only after the reset and only when the bot is idle, with on
     expect(yield* hit()).toEqual({ switched: false, skipped: "cooldown" });
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect(
+  "a capacity hit keeps its whole 15-minute hold, then says the model is available again",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      // A capacity hit spends nothing: the account has room, the model does not serve.
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 40 }])),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      expect(
+        yield* hit({
+          retryAt: null,
+          capacity: true,
+          reason: "Selected model is at capacity. Please try a different model.",
+        }),
+      ).toEqual({ switched: true, modelLabel: "Sonnet 5.5 · H" });
+      const state = Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive;
+      expect(DateTime.toEpochMillis(state!.resetAt!)).toBe(NOW + FALLBACK_CAPACITY_HOLD_MS);
+      expect(lines(harness)).toHaveLength(1);
+      expect(lines(harness)[0]).toContain(
+        "Codex is at capacity. IT is on Sonnet 5.5 · H until about ",
+      );
+
+      // Healthy usage one minute in: not proof that the model serves again.
+      const at = NOW + 60_000;
+      const recovered = {
+        ...usage([{ id: "primary", used: 4 }]),
+        checkedAt: isoAt(at),
+        fullReadAt: isoAt(at),
+      };
+      harness.providers = [
+        snapshot("codex", "codex", recovered),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      yield* TestClock.setTime(at);
+      yield* service.sweep;
+      expect(Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive).toBeDefined();
+      expect(lines(harness)).toHaveLength(1);
+
+      // The hold itself ends the fallback, and the line says available again.
+      const ended = NOW + FALLBACK_CAPACITY_HOLD_MS + FALLBACK_SWITCH_BACK_GRACE_MS;
+      const later = { ...recovered, checkedAt: isoAt(ended), fullReadAt: isoAt(ended) };
+      harness.providers = [
+        snapshot("codex", "codex", later),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      yield* TestClock.setTime(ended);
+      yield* service.sweep;
+      expect(Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive).toBeUndefined();
+      const notices = lines(harness);
+      expect(notices).toHaveLength(2);
+      expect(notices[0]).toContain("Codex is at capacity.");
+      expect(notices[1]).toBe("Codex is available again. IT is back on gpt-6.1-sol · H.");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
 
 it.effect(
   "a switch the cooldown holds back is logged with the bot, the reason and the seconds left",

@@ -63,6 +63,7 @@ import {
   FALLBACK_RESWITCH_COOLDOWN_MS,
   FALLBACK_SWEEP_MS,
   fallbackModelLabel,
+  isProviderCapacityError,
   modelFallbackEnabledByEnv,
   PERSONAL_MODEL_FALLBACK_ENV,
 } from "./personalModelFallbackPolicy.ts";
@@ -576,7 +577,9 @@ export const make = Effect.gen(function* () {
       const home = fallbackModelLabel(backOn ?? bot.modelSelection);
       yield* postNotice(
         state.noticeThreadId,
-        `${state.fromProvider} usage limit has reset. ${bot.name} is back on ${home}.`,
+        isProviderCapacityError(state.reason)
+          ? `${state.fromProvider} is available again. ${bot.name} is back on ${home}.`
+          : `${state.fromProvider} usage limit has reset. ${bot.name} is back on ${home}.`,
         { notice: "model-fallback-off", provider: state.fromProvider },
       );
     });
@@ -824,6 +827,9 @@ export const make = Effect.gen(function* () {
               providers.find((candidate) => candidate.instanceId === bot.modelSelection.instanceId),
             ),
           limitReason: state.reason,
+          // The stored reason is the provider's own text: a capacity hit keeps
+          // its fixed hold instead of being cut short by healthy usage readings.
+          capacityHit: isProviderCapacityError(state.reason),
           homeProvider: providers.find(
             (candidate) => candidate.instanceId === bot.modelSelection.instanceId,
           ),
