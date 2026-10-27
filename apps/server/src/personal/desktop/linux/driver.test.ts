@@ -390,3 +390,52 @@ describe("LinuxDesktopDriver", () => {
     expect(move).toBeGreaterThan(panic);
   });
 });
+
+describe("Linux helper environment", () => {
+  it("starts the helper with the five Wayland variables and nothing else", async () => {
+    const dump = NodePath.join(root, "helper-env.txt");
+    const binary = NodePath.join(root, "env-pbdesk-wl");
+    NodeFS.writeFileSync(
+      binary,
+      `#!/bin/sh
+env > "${dump}"
+echo "ready layout=$1 pid=$$"
+while IFS= read -r line; do
+  id=\${line%% *}
+  echo "ok $id 1"
+done
+`,
+      "utf8",
+    );
+    NodeFS.chmodSync(binary, 0o755);
+    process.env.PB_TEST_SECRET = "leak-me";
+    const helper = new LinuxDesktopHelper(session, NodePath.join(root, "helper-env"), "gb", binary);
+    try {
+      await helper.request("ping");
+    } finally {
+      await helper.dispose();
+      delete process.env.PB_TEST_SECRET;
+    }
+    const env = NodeFS.readFileSync(dump, "utf8");
+    // Nothing of the bot's environment travels into a compositor client.
+    expect(env).not.toContain("leak-me");
+    expect(env).not.toContain("PB_TEST_SECRET");
+    expect(env).toContain(`XDG_RUNTIME_DIR=${session.xdgRuntimeDir}\n`);
+    expect(env).toContain("WAYLAND_DISPLAY=wayland-1");
+    expect(env).toContain("HYPRLAND_INSTANCE_SIGNATURE=test-instance");
+    const carried = env
+      .split("\n")
+      // `_`, `PWD` and `SHLVL` are set by the shell that ran the script, not
+      // inherited from hbots.
+      .filter((line) => /^[A-Z_][A-Z0-9_]*=/.test(line) && !/^(_|PWD|SHLVL)=/.test(line))
+      .map((line) => line.slice(0, line.indexOf("=")))
+      .sort();
+    expect(carried).toEqual([
+      "HOME",
+      "HYPRLAND_INSTANCE_SIGNATURE",
+      "PATH",
+      "WAYLAND_DISPLAY",
+      "XDG_RUNTIME_DIR",
+    ]);
+  });
+});

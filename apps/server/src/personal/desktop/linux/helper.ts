@@ -17,10 +17,35 @@ import * as NodeChildProcess from "node:child_process";
 
 import { DesktopHelperError } from "../DesktopHelper.ts";
 import { ensureLinuxHelperBuilt } from "./helperBuild.ts";
-import { type LinuxSession, sessionEnv } from "./session.ts";
+import type { LinuxSession } from "./session.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const READY_TIMEOUT_MS = 15_000;
+
+/**
+ * The helper is a compositor client, not a bot shell: it gets the five
+ * variables Wayland needs and nothing else hbots holds (tokens, provider keys,
+ * the release paths). Everything else is dropped before spawn.
+ */
+const HELPER_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "XDG_RUNTIME_DIR",
+  "WAYLAND_DISPLAY",
+  "HYPRLAND_INSTANCE_SIGNATURE",
+] as const;
+
+export function helperEnv(session: LinuxSession): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of HELPER_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.XDG_RUNTIME_DIR = session.xdgRuntimeDir;
+  env.WAYLAND_DISPLAY = session.waylandDisplay;
+  env.HYPRLAND_INSTANCE_SIGNATURE = session.hyprlandInstance;
+  return env;
+}
 
 interface Pending {
   readonly resolve: (value: Record<string, unknown>) => void;
@@ -76,7 +101,7 @@ export class LinuxDesktopHelper {
       }
       const child = NodeChildProcess.spawn(binary, [this.layout], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: sessionEnv(this.session),
+        env: helperEnv(this.session),
       });
       this.child = child;
       let settled = false;
