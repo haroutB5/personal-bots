@@ -110,6 +110,88 @@ could cancel each other's help in a loop (QA saw 230 prompts in a minute).
 px) and L7 (the pairing 404/400 console lines that did not reproduce on a clean reload) are UI and
 were left to the Computer tab's owner; neither is in this release's brief.
 
+## QA round 2 fixes (27 Oct)
+
+QA tested the second stage (`082a4296c130`): B1 and B2 passed, desktop control had two new highs
+(B3, B4), three mediums (B5, B6, B7) and six lows. All are fixed here, each with a test.
+
+**B3 (high): windows on a hidden workspace blocked clicks.** Hyprland reports a client on any
+loaded workspace as `mapped: true, hidden: false`, so a browser on workspace 8 refused every click
+at the same point on workspace 9.
+
+- `mappedWindows` now keeps only clients on a monitor's `activeWorkspace` or a shown
+  `specialWorkspace`, plus pinned windows; an empty/unknown workspace list keeps the old behaviour.
+- The driver reads `hyprctl monitors` for that set (500 ms cache, cleared on workspace, monitor
+  and config events). `guardPoint` still refuses Brave and password managers under the point.
+- A point refusal is now `point_blocked` with the reason "window under the pointer", not
+  `user_active` (QA's L5), so the feed stops claiming the user is active.
+- Commit `e1fa479424`.
+
+**B4 (high): `computer_type` lowercased capitals.** `keysym_down`/`keysym_up` resolved names with
+`XKB_KEYSYM_CASE_INSENSITIVE`, so `A` resolved to the lowercase keysym at level 0.
+
+- The exact keysym is looked up first (`XKB_KEYSYM_NO_FLAGS`) with the case-insensitive lookup kept
+  as a fallback; `keycode_for` picks the keycode and level, and the helper presses Shift (level 1)
+  or the Mod5/level-3 modifier (levels 2/3) around the key, restoring only what it pressed.
+- Shifted symbols that exist both on a Shift level and an AltGr level now use the first keycode the
+  keymap offers, and a level the keymap cannot reach is refused rather than typed wrong.
+- Commit `533efafa11` (with B7).
+
+**B5 (medium): "using your PC" banners stacked and `·` showed as `Â·`.** Omarchy's quickshell keeps
+a critical card the notification server closed on screen, so close-then-recreate left one banner
+behind per screenshot: QA counted 11+.
+
+- The driver hides the card with Omarchy's own IPC (`omarchy-shell notifications dismiss hbots`)
+  and falls back to `CloseNotification` for other daemons; the first banner of a session clears any
+  card a crash left, and the session end removes the last one. One card at a time, always.
+- The banner and remote-control sentences use a real `·` (the source had `Â·`).
+- Commit `7c56650747`.
+
+**B6 (medium): stale Up next entries and a sticky help card.**
+
+- `waiting` (the "Up next" list) now shows only threads inside a call and never the thread holding
+  the lease. A bot whose call returned or timed out disappears at once; a place kept for a quick
+  retry is not shown.
+- Archiving a chat gives up the browser: both archive RPCs and a `thread.archived` reactor call
+  `releaseThread`, and the lease drops that thread from the line (a waiting call ends with
+  `thread-gone`) and clears a help card it owned.
+- A turn end clears a help card whose task is no longer `waiting_for_browser` (cancelled, archived),
+  so a cancelled task cannot hold the browser; a card whose task is still waiting keeps it (B2).
+- The broker timeout now says it may have been waiting for the shared browser, not only a page.
+- Commits `49d8b322e0`, plus the archive RPC hooks in `ws.ts`/`server.ts`.
+
+**B7 (medium): the helper outlived the server.** `pbdesk-wl` kept running after a stop, still
+registered as a virtual keyboard, and ignored SIGTERM.
+
+- The helper sets `PR_SET_PDEATHSIG` before touching Wayland, ignores SIGPIPE, and installs a
+  flag-only SIGTERM/SIGINT/SIGHUP handler through `sigaction` with `SA_RESTART` off, so the loop
+  wakes from `fgets`/`usleep`, releases every held key and button, destroys its devices and exits.
+  A typed line and a drag also stop early when the flag is set.
+- The node side escalates to SIGKILL (captured PID only) if a stuck helper ignores SIGTERM.
+- Commit `533efafa11`.
+- Real proof: SIGTERM to the helper exits in 53 ms; SIGKILL of its parent exits it in 51 ms; the
+  `hl-virtual-keyboard-pbdesk-wl-...` device is gone after both; a held `a` (auto-repeating into a
+  GTK entry) stops at the kill and only the next typed `ZQ` is appended
+  (`qa/hbots-16698c/helper-lifetime.txt`, `held-key-release.txt`).
+
+**Lows (commit `8c2b0be031`):**
+
+- `computer_hold_key` reports "stopped" when the stop chord cut it short instead of "Done." with
+  the full duration; the driver's hold sleep wakes on the stop, and every action checks the claim
+  after a no-screenshot action too.
+- "pressed 1 key" (singular).
+- A refused step says one "refused"; the card no longer prints "click refused (user active) ·
+  refused", and the server sends "click (user active)" / "click (window under the pointer)".
+- The browser timeout message says it may have been waiting for the browser.
+- Tool descriptions, the screenshot description and the app rules name the machine they run on
+  (`HostProcessPlatform`: Linux PC here) instead of "Windows PC"; the locked note says "secure
+  system prompt".
+- The two console 404s QA saw in a desktop run did not reproduce on the new stage: a clean
+  Computer-tab run made 0 failed requests and every app chunk, icon and manifest entry returned
+  200 (`qa/hbots-16698c/ab-404.log`). The only 4xx was Clerk's own `clerk.t3.codes` client API 400
+  on a test root, outside the app. No app-owned source found; if it recurs, QA's exact URLs will
+  settle it.
+
 ## Gate work
 
 - `scripts/personal/node/gates-linux.json`: the server gate now also runs `src/workspace` and
@@ -182,7 +264,17 @@ After the Security and QA fixes, at head `29f6322a60`:
 - web-tsc: PASS (two configs, exit 0).
 - A targeted rerun after the commit hook reformatted whitespace: 193 server tests and 225 web
   computer tests passed.
-- The five-gate run on the staged release `082a4296c130` is the authoritative evidence below.
+- The five-gate run on the staged release `082a4296c130` was the round-1 evidence; QA then found
+  B3-B7 and it was superseded.
+
+After the QA round 2 fixes, at head `8c2b0be031` on staged release `8c2b0be031e1`:
+
+- server-tests: PASS, 306 files and 3,480 tests passed, 6 skipped.
+- server-tsc: PASS (exit 0).
+- web-tests: PASS, 273 files and 3,136 tests.
+- web-tsc: PASS (exit 0).
+- e2e: PASS, 12 of 12 journeys.
+- The five-gate run on the staged release `8c2b0be031e1` is the authoritative evidence below.
 
 ## Ship-time steps (DevOps)
 
@@ -190,14 +282,14 @@ After the Security and QA fixes, at head `29f6322a60`:
    `/home/harout/.personal-bots/run/hbots-bot-bin/opencode`. Install the drop-in before the
    restart, from the repo root:
    `mkdir -p ~/.config/systemd/user/hbots.service.d && cp scripts/personal/linux/hbots-release/systemd/10-opencode-path.conf ~/.config/systemd/user/hbots.service.d/ && systemctl --user daemon-reload`
-2. Staged release **`082a4296c130`**, 1.66.98, `externals=copied`; gate evidence PASS with all
-   five gates including e2e (`~/.personal-bots/releases/082a4296c130/gate-evidence.json`).
+2. Staged release **`8c2b0be031e1`**, 1.66.98, `externals=copied`; gate evidence PASS with all
+   five gates including e2e (`~/.personal-bots/releases/8c2b0be031e1/gate-evidence.json`).
    Install the runner from the pushed notes commit, then arm the idle waiter.
 3. No migration and no schema change: `--migration-before 114 --migration-after 114`, so the
    runner takes no backup.
 4. Rollback baseline is the live **1.66.97, `c1a7c4bd14c9`** (binary rollback only).
-5. `d3638e88100e`, `0d8171726875` and `078551baf6d2` are superseded stages; they go once this one
-   passes.
+5. `d3638e88100e`, `0d8171726875`, `078551baf6d2` and `082a4296c130` are superseded stages; they
+   go once this one passes.
 
 ## What now works on the Omarchy laptop
 
@@ -258,23 +350,39 @@ source: "desktop", x?, y?, monitor?, chars? }`. `x`/`y` are 0..1 of the captured
 
 ## Proof
 
-- Server gate: 306 files, 3,467 tests passed, 6 skipped. Web gate: 273 files, 3,136 tests passed.
-  Both typechecks clean, and the phone e2e passed 12 of 12 journeys, all on `082a4296c130`. The
+- Server gate on `8c2b0be031e1`: 306 files, 3,480 tests passed, 6 skipped. Web gate: 273 files,
+  3,136 tests passed. Both typechecks clean, and the phone e2e passed 12 of 12 journeys. The
   committed gate evidence is the release proof.
-- New tests this round: the click-point guard (a Brave PWA and a password manager under the point,
-  plus drag/scroll/button points), one-shot take-back, logind true/false/no-oracle, the layout
-  event (virtual keyboard ignored, a real one re-read from the option), the helper environment
-  allowlist, capture permissions, control characters, Shift-typed key masking, the refusal
-  lifetime, the waiting card keeping its lease (B2), the self-declared sensitive card (L1), the
-  activity wording (paused/refused, no doubled bot name), the replaced PC banner, and the
-  argument message (L5).
-- Real desktop checks, empty workspace 9, helper built from this tree, every process killed by a
-  PID captured in the check: a held mouse button was released across a SIGTERM (foot's SGR log
-  showed `<0;53;14M` then `<0;53;14m`), and a held key's autorepeat stopped after SIGTERM and
-  after stdin EOF (M3); a layout named after the virtual keyboard is refused, the helper keeps
-  `layout=us`, stays alive and types (B1). The previous build crashed on that same input.
-- Live check of the runtime bind syntax on this machine: `hyprctl eval 'hl.bind(...)'` returns
-  `ok`; the earlier design proof pressed the chord end to end.
+- New tests this round: visible-workspace filtering for the point guard (a browser on a hidden
+  workspace, the same one on the shown workspace, a pinned one, and the unknown-list fallback);
+  the embedded helper source matching `pbdesk-wl.c` and the XMLs byte for byte plus the B4/B7
+  markers; one banner per session (dismiss IPC, replace id, session end); the queue showing only
+  active waiters; an archived chat leaving the line with `thread-gone`; a help card whose task is
+  gone clearing on turn end; a stopped hold reporting "stopped"; "pressed 1 key"; the point
+  refusal's activity wording; and the activity card not repeating "refused".
+- Real desktop checks on empty workspace 9, from this tree, every process killed by a PID captured
+  in the check (`qa/hbots-16698c/`):
+  - B3: a real Brave window on workspace 8 (hidden) did not block a click on the GTK test app at
+    the same spot on workspace 9 (the app logged CLICKED); moved onto workspace 9 with the app
+    focused, the same click was refused as `point_blocked` and wrote nothing; moved away, the
+    next click landed. Two CLICKED lines, the refused one absent.
+  - B4: on the laptop's **gb** layout, `computer_type` delivered
+    `Hello QA one! @#$%^&*()_+{}|:"<>?~` byte for byte into a GTK entry (`type-proof.txt`), which
+    exercises levels 0, 1 and Mod5/level 3 (`@ { } | < >` need Shift+AltGr here).
+  - B5: one `hbots` banner after the first show and after each of two screenshots, zero after the
+    session ended (`banner-proof.txt`); the screenshots show a single card and a real `·` in
+    "Assistant is using your PC · press Super+Shift+F12 to take it back"
+    (`banner-after-1.png`, `banner-after-2.png`, `banner-end.png`).
+  - B7: SIGTERM exits the helper in 53 ms; SIGKILL of its parent exits it in 51 ms; the
+    `hl-virtual-keyboard-pbdesk-wl-...` device is gone after both; a held, auto-repeating `a` stops
+    when the parent dies and only the new `ZQ` follows (`helper-lifetime.txt`,
+    `held-key-release.txt`).
+- Browser and 404 checks: a clean Computer-tab run on the staged release made zero failed requests
+  and every app chunk, icon and manifest entry returned 200 (`ab-404.log`); the only 4xx was
+  Clerk's external client API 400 on a test root.
+- Earlier rounds' real checks (held button and key across SIGTERM and stdin EOF, a layout named
+  after the virtual keyboard refused) still hold; the helper source they were proven against is
+  unchanged except for B4 and B7.
 
 ## What Harout must run
 
@@ -289,11 +397,12 @@ release, into the app's state directory.
   capture was not exercised on this build (the screensaver was up, so input tests were skipped).
 - Live view is ~4.8 fps at 768x480; phase 2 can move capture into the helper.
 - UTF-8 text beyond the active layout fails loudly with the character named (emoji/CJK are not
-  typed yet); AltGr-only symbols are limited by the same rule.
+  typed yet). Levels 2/3 use the Mod5/level-3 modifier when the keymap has one (proven on gb with
+  `@ { } | < >`); a keymap without Mod5 refuses those characters rather than typing another one.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=082a4296c13069d23905f2bd400c179a5e6c7541 release=082a4296c130 json-sha256=243a155d35b2f3b3c2bce107f435d514da28ee60d96d08601ed531032a56174c result=PASS -->
+<!-- gate-evidence:begin sha=8c2b0be031e117962d3c4241899681673a220fc3 release=8c2b0be031e1 json-sha256=a4dc86002039876bd5936d2c5cd8e844088bd1ecad5fe9c24d6dd0043ec6aa95 result=PASS -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
