@@ -111,6 +111,10 @@ vi.mock("~/session-logic", () => ({
   deriveTimelineEntriesWithState: () => ({ entries: [] }),
   deriveWorkLogEntries: () => [],
 }));
+vi.mock("~/state/lazyThreadShells", () => ({
+  useLazyThreadShells: () => ({ pending: false }),
+  withLazyThreadShells: <A,>(atom: A) => atom,
+}));
 vi.mock("~/state/entities", () => ({
   useProject: () => null,
   useThreadDetail: () => state.thread,

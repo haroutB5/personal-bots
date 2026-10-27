@@ -42,6 +42,10 @@ vi.mock("~/components/ui/menu", () => ({
   MenuPopup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
+vi.mock("~/state/lazyThreadShells", () => ({
+  useLazyThreadShells: () => ({ pending: false }),
+  withLazyThreadShells: <A,>(atom: A) => atom,
+}));
 vi.mock("~/state/entities", () => ({
   useThreadDetail: () => null,
   useThreadShells: () => [],
