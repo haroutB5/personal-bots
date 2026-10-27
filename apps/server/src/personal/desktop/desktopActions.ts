@@ -84,11 +84,44 @@ const pct = (value: number | undefined) => `${Math.round((value ?? 0) * 100)}%`;
 /**
  * Key sequences that look like text (single characters, no "+" chord) are
  * summarised by count: a password entered key by key must not be readable in
- * the user's activity feed. Named keys and shortcuts stay named.
+ * the user's activity feed. A chord whose last part is one character and whose
+ * other parts are all modifiers is the password typed with Shift: it counts as
+ * text too, so "Shift+a Shift+b" never shows the letters. Named keys and real
+ * shortcuts ("ctrl+a", "ctrl+shift+t") stay named.
  */
+const MODIFIER_NAMES: ReadonlySet<string> = new Set([
+  "ctrl",
+  "control",
+  "alt",
+  "option",
+  "shift",
+  "win",
+  "windows",
+  "super",
+  "meta",
+  "cmd",
+  "command",
+]);
+
+function looksLikeTypedChord(group: string): boolean {
+  const parts = group.split("+");
+  if (parts.length < 2) return false;
+  const last = parts[parts.length - 1] ?? "";
+  if (last.length !== 1) return false;
+  return parts.slice(0, -1).every((part) => MODIFIER_NAMES.has(part.toLowerCase()));
+}
+
 function looksLikeTyping(keys: string): boolean {
-  const groups = keys.trim().split(/\s+/).filter((group) => group.length > 0);
-  return groups.length > 0 && groups.every((group) => group.length === 1 && !group.includes("+"));
+  const groups = keys
+    .trim()
+    .split(/\s+/)
+    .filter((group) => group.length > 0);
+  return (
+    groups.length > 0 &&
+    groups.every(
+      (group) => (group.length === 1 && !group.includes("+")) || looksLikeTypedChord(group),
+    )
+  );
 }
 
 /** "at 42%, 61%", for summaries. */
@@ -265,10 +298,7 @@ export async function click(
     ...after,
     activity: {
       ...at,
-      summary:
-        count === 1
-          ? `clicked ${where(at)}`
-          : `clicked ${count} times ${where(at)}`,
+      summary: count === 1 ? `clicked ${where(at)}` : `clicked ${count} times ${where(at)}`,
     },
   };
 }
@@ -354,6 +384,19 @@ export async function scroll(
   };
 }
 
+/**
+ * The first character that is not text but a key press. A newline is the one
+ * control the driver does type: it presses Return between segments.
+ */
+function controlCharacter(text: string): number | null {
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0x0a) continue;
+    if (code < 0x20 || code === 0x7f) return code;
+  }
+  return null;
+}
+
 export async function typeText(
   context: DesktopActionContext,
   input: AfterAction & { text: string },
@@ -362,6 +405,18 @@ export async function typeText(
   if (input.text.length > MAX_TYPE_CHARS) {
     throw new DesktopKeyError(
       `That is ${input.text.length} characters; type at most ${MAX_TYPE_CHARS} per call.`,
+    );
+  }
+  const control = controlCharacter(input.text);
+  if (control !== null) {
+    throw new DesktopKeyError(
+      `That text contains a control character (U+${control
+        .toString(16)
+        .toUpperCase()
+        .padStart(
+          4,
+          "0",
+        )}) that would be sent as a key press. Type text only; use computer_key for Tab or Escape.`,
     );
   }
   await context.driver.request(
@@ -435,14 +490,16 @@ export async function mouseDown(
   const point = optionalPoint(context, input);
   context.markButton(button, true);
   await context.driver.request("button", { button, down: true, ...point });
-  const at =
-    point === null || context.frame === null ? {} : pointActivity(context.frame, point);
+  const at = point === null || context.frame === null ? {} : pointActivity(context.frame, point);
   const after = await afterAction(context, input);
   return {
     ...after,
     activity: {
       ...at,
-      summary: point === null ? `pressed the ${button} button` : `pressed the ${button} button ${where(at)}`,
+      summary:
+        point === null
+          ? `pressed the ${button} button`
+          : `pressed the ${button} button ${where(at)}`,
     },
   };
 }
@@ -465,14 +522,16 @@ export async function mouseUp(
   const point = optionalPoint(context, input);
   await context.driver.request("button", { button, down: false, ...point });
   context.markButton(button, false);
-  const at =
-    point === null || context.frame === null ? {} : pointActivity(context.frame, point);
+  const at = point === null || context.frame === null ? {} : pointActivity(context.frame, point);
   const after = await afterAction(context, input);
   return {
     ...after,
     activity: {
       ...at,
-      summary: point === null ? `let go of the ${button} button` : `let go of the ${button} button ${where(at)}`,
+      summary:
+        point === null
+          ? `let go of the ${button} button`
+          : `let go of the ${button} button ${where(at)}`,
     },
   };
 }

@@ -87,8 +87,45 @@ describe("desktop action activity", () => {
     const { context } = makeContext();
     const typed = await pressKeys(context, { keys: "p a s s w o r d", screenshot: false });
     expect(typed.activity?.summary).toBe("pressed 8 keys");
+    // A character behind a modifier is how a password is typed with Shift.
     const chord = await pressKeys(context, { keys: "ctrl+a", screenshot: false });
-    expect(chord.activity?.summary).toBe("pressed ctrl+a");
+    expect(chord.activity?.summary).toBe("pressed 1 keys");
+    const shifted = await pressKeys(context, {
+      keys: "Shift+a Shift+b Shift+c",
+      screenshot: false,
+    });
+    expect(shifted.activity?.summary).toBe("pressed 3 keys");
+    // A named key is not text, so a real shortcut keeps its name.
+    const named = await pressKeys(context, { keys: "ctrl+Delete", screenshot: false });
+    expect(named.activity?.summary).toBe("pressed ctrl+Delete");
+  });
+
+  it("refuses control characters that would be sent as key presses", async () => {
+    const { context, calls } = makeContext();
+    const cases = [
+      ["a\tb", "U+0009"],
+      ["a\u0000b", "U+0000"],
+      ["a\u0001b", "U+0001"],
+      ["a\u001bb", "U+001B"],
+      ["a\rb", "U+000D"],
+      ["a\u007fb", "U+007F"],
+    ] as const;
+    for (const [text, code] of cases) {
+      await expect(typeText(context, { text, screenshot: false })).rejects.toThrow(
+        `control character (${code})`,
+      );
+    }
+    // The message says what to use instead.
+    await expect(typeText(context, { text: "\t", screenshot: false })).rejects.toThrow(
+      "computer_key for Tab or Escape",
+    );
+    // Nothing reached the driver.
+    expect(calls.some((call) => call.cmd === "type")).toBe(false);
+
+    // A newline is the one control typed on purpose: the driver presses Return.
+    const typed = await typeText(context, { text: "one\ntwo", screenshot: false });
+    expect(typed.activity?.summary).toBe("typed 7 characters");
+    expect(calls.some((call) => call.cmd === "type")).toBe(true);
   });
 
   it("names a held named key but not a held character", async () => {
