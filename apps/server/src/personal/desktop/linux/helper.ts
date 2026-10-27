@@ -299,5 +299,14 @@ export class LinuxDesktopHelper {
       await finished.catch(() => undefined);
     }
     if (child.exitCode === null) child.kill("SIGTERM");
+    // A helper stuck in a compositor roundtrip must not keep the virtual
+    // devices registered after the server is gone (QA's B7): give SIGTERM two
+    // seconds, then kill only this captured PID.
+    if (child.exitCode === null) {
+      const escalate = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, 2_000);
+      escalate.unref?.();
+    }
   }
 }

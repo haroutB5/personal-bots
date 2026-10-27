@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
@@ -53,7 +54,12 @@ static struct xkb_keymap *xkb_map;
 static char g_layout[64] = "us";
 static unsigned char buttons_down[512];
 static unsigned char keys_down[512];
+/* Which help each pressed key got from us, so its release undoes exactly that
+ * (a caller's own Shift must survive a typed capital). */
+static unsigned char shift_added[512];
+static unsigned char level3_added[512];
 static int depressed = 0; /* xkb modifier mask the helper has set */
+static volatile sig_atomic_t g_stop = 0;
 
 static uint32_t now_ms(void) {
   struct timespec ts;
@@ -143,6 +149,7 @@ static int send_keycode(int code, int down) {
 
 /* Find the keycode and shift level for a keysym in the active keymap. */
 static int keycode_for(xkb_keysym_t sym, int *level) {
+  if (xkb_map == NULL) return 0;
   xkb_keycode_t min = xkb_keymap_min_keycode(xkb_map);
   xkb_keycode_t max = xkb_keymap_max_keycode(xkb_map);
   for (xkb_keycode_t kc = min; kc <= max; kc++) {
@@ -160,9 +167,29 @@ static int keycode_for(xkb_keysym_t sym, int *level) {
   return 0;
 }
 
-/* Press a keysym, pressing Shift first when the keymap needs it. */
+/*
+ * A key name as the driver sends it. Exact first: the case-insensitive lookup
+ * turns "A" into lowercase a, which is how capitals were lost (QA's B4). The
+ * fallback keeps loose names like "ENTER" or "space" working.
+ */
+static xkb_keysym_t keysym_for(const char *name) {
+  xkb_keysym_t sym = xkb_keysym_from_name(name, XKB_KEYSYM_NO_FLAGS);
+  if (sym == XKB_KEY_NoSymbol) {
+    sym = xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
+  }
+  return sym;
+}
+
+/* The modifier a level-2/3 keysym needs (AltGr), or 0 when the keymap has none. */
+static int level3_modifier(void) {
+  if (xkb_map == NULL) return 0;
+  int index = xkb_keymap_mod_get_index(xkb_map, "Mod5");
+  return index < 0 ? 0 : (1 << index);
+}
+
+/* Press a keysym, pressing Shift (or AltGr) first when the keymap needs it. */
 static int keysym_down(const char *name) {
-  xkb_keysym_t sym = xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
+  xkb_keysym_t sym = keysym_for(name);
   if (sym == XKB_KEY_NoSymbol) return 0;
   int level = 0;
   int code = keycode_for(sym, &level);
@@ -172,22 +199,44 @@ static int keysym_down(const char *name) {
     depressed |= mask;
     send_mods();
   }
+  int level3 = level3_modifier();
+  if ((level & 2) && level3 == 0) {
+    /* No AltGr in this layout: refuse rather than type the wrong character. */
+    if (mask) {
+      depressed &= ~mask;
+      send_mods();
+    }
+    return 0;
+  }
   if ((level & 1) && !(depressed & 1)) {
     depressed |= 1;
+    shift_added[code] = 1;
+    send_mods();
+  }
+  if ((level & 2) && !(depressed & level3)) {
+    depressed |= level3;
+    level3_added[code] = 1;
     send_mods();
   }
   return send_keycode(code, 1);
 }
 
 static int keysym_up(const char *name) {
-  xkb_keysym_t sym = xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
+  xkb_keysym_t sym = keysym_for(name);
   if (sym == XKB_KEY_NoSymbol) return 0;
   int level = 0;
   int code = keycode_for(sym, &level);
   if (code == 0) return 0;
   int ok = send_keycode(code, 0);
-  if ((level & 1) && (depressed & 1)) {
+  if (shift_added[code]) {
     depressed &= ~1;
+    shift_added[code] = 0;
+    send_mods();
+  }
+  int level3 = level3_modifier();
+  if (level3_added[code]) {
+    if (level3 != 0) depressed &= ~level3;
+    level3_added[code] = 0;
     send_mods();
   }
   int mask = modifier_mask(name);
@@ -206,6 +255,7 @@ static int keysym_up(const char *name) {
 static uint32_t type_text(const char *text) {
   const unsigned char *p = (const unsigned char *)text;
   while (*p) {
+    if (g_stop) return 0;
     uint32_t cp = 0;
     int len = 0;
     if (*p < 0x80) {
@@ -248,6 +298,8 @@ static uint32_t type_text(const char *text) {
 static void release_all(void) {
   for (int i = 0; i < 512; i++) {
     if (keys_down[i]) send_keycode(i, 0);
+    shift_added[i] = 0;
+    level3_added[i] = 0;
   }
   const int modifiers[] = {37 /* Ctrl */, 50 /* Shift */, 64 /* Alt */, 133 /* Super */};
   for (unsigned i = 0; i < sizeof(modifiers) / sizeof(modifiers[0]); i++) {
@@ -267,11 +319,25 @@ static void release_all(void) {
 }
 
 /* The server dying (Stop, a crash, a restart) must not leave a key or button
- * held: the compositor keeps whatever the helper last sent. */
+ * held: the compositor keeps whatever the helper last sent. The handler only
+ * raises a flag: Wayland calls are not signal-safe, so the main loop does the
+ * release. SA_RESTART is off, so a blocking read returns at once (QA's B7). */
 static void on_terminate(int signo) {
   (void)signo;
-  release_all();
-  _exit(0);
+  g_stop = 1;
+}
+
+static void install_signal_handlers(void) {
+  struct sigaction action;
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = on_terminate;
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = 0;
+  sigaction(SIGTERM, &action, NULL);
+  sigaction(SIGINT, &action, NULL);
+  sigaction(SIGHUP, &action, NULL);
+  /* A closed stdout must not kill the process before it releases input. */
+  signal(SIGPIPE, SIG_IGN);
 }
 
 static void teardown_keyboard(void) {
@@ -364,6 +430,12 @@ static int count_set(const unsigned char *flags) {
 
 int main(int argc, char **argv) {
   const char *layout = argc > 1 ? argv[1] : "us";
+  /* Die with the server even if it is killed outright and the pipe never
+   * closes: the compositor would otherwise keep a keyboard device and any
+   * held input forever (QA's B7). */
+  prctl(PR_SET_PDEATHSIG, SIGTERM);
+  install_signal_handlers();
+  if (getppid() == 1) return 0;
   struct wl_display *display = wl_display_connect(NULL);
   if (display == NULL) {
     fprintf(stderr, "pbdesk-wl: cannot connect to WAYLAND_DISPLAY=%s\n",
@@ -391,11 +463,9 @@ int main(int argc, char **argv) {
   wl_display_roundtrip(display);
   printf("ready layout=%s pid=%ld\n", g_layout, (long)getpid());
   fflush(stdout);
-  signal(SIGTERM, on_terminate);
-  signal(SIGINT, on_terminate);
 
   char line[16384];
-  while (fgets(line, sizeof(line), stdin) != NULL) {
+  while (!g_stop && fgets(line, sizeof(line), stdin) != NULL) {
     uint64_t started = now_us();
     long id = 0;
     char cmd[32];
@@ -474,7 +544,7 @@ int main(int argc, char **argv) {
           move_abs(x1, y1, w, h);
           sleep_ms(15);
           button_event(code, 1);
-          for (int i = 1; i <= steps; i++) {
+          for (int i = 1; i <= steps && !g_stop; i++) {
             int x = x1 + (x2 - x1) * i / steps;
             int y = y1 + (y2 - y1) * i / steps;
             zwlr_virtual_pointer_v1_motion_absolute(ptr, now_ms(), (uint32_t)x, (uint32_t)y,
@@ -541,7 +611,8 @@ int main(int argc, char **argv) {
     printf("ok %ld %llu\n", id, (unsigned long long)(now_us() - started));
     fflush(stdout);
   }
-  /* stdin closed (the server went away): nothing may stay held. */
+  /* stdin closed (the server went away) or a stop signal: nothing may stay
+   * held, and the virtual devices go with the process. */
   release_all();
   if (ptr != NULL) zwlr_virtual_pointer_v1_destroy(ptr);
   if (ptr_manager != NULL) zwlr_virtual_pointer_manager_v1_destroy(ptr_manager);
