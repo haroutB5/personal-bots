@@ -40,6 +40,76 @@ the server contract it reads. `personalDesktop.activity` stays in
 teardown path records the close instant, so the idle card can say "closed at HH:MM" instead of
 falling back to the last activity (up to ten idle minutes early).
 
+## Security review fixes (27 Oct)
+
+Security reviewed the staged build `0d8171726875`: PASS with fixes. All eight findings are applied
+here, each with a test.
+
+| Finding                | Fix                                                                                                                                                                                                                                                                                                               | Commit                                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| M1 click rail          | `click`, `drag`, `scroll` and `button` read `hyprctl clients` and refuse when the point is over a mapped browser or password-manager window, focused or not. Browser classes match by prefix, so Brave PWAs (`brave-<app>-Default`) count; an unreadable window list refuses instead of letting the click through | `fe6ad9b2ec`                                 |
+| M2 take-back           | grace 1500 -> 300 ms, `guardInput` drops the cached focus, and a take-back is one-shot until a fresh screenshot acknowledges it                                                                                                                                                                                   | `fe6ad9b2ec`                                 |
+| M3 held input          | `pbdesk-wl` releases everything on SIGTERM/SIGINT and on stdin EOF, so a Stop, crash or restart cannot leave a key or button down                                                                                                                                                                                 | `0caf726c72`                                 |
+| M4 lock oracle         | logind's `LockedHint` (gdbus, system bus, session/auto) joins the two Omarchy oracles; no answer now means locked                                                                                                                                                                                                 | `8cb0706bd7`                                 |
+| L1 control characters  | `typeText` refuses U+0000-001F and U+007F. The newline stays allowed because the driver deliberately types it as Return; Tab, CR and Escape are refused, and the message points at `computer_key`. The helper also refuses any control codepoint                                                                  | `46e6045c40` (driver), `0caf726c72` (helper) |
+| L2 Shift-typed secrets | a key group whose last part is one character and whose other parts are modifiers counts as typed text, so "Shift+a Shift+b" shows as "pressed 2 keys"                                                                                                                                                             | `46e6045c40`                                 |
+| L3 helper environment  | the helper gets PATH, HOME, XDG_RUNTIME_DIR, WAYLAND_DISPLAY and HYPRLAND_INSTANCE_SIGNATURE only                                                                                                                                                                                                                 | `ae5d789022`                                 |
+| L4a capture files      | the capture directory is created 0700 and every grim output is narrowed to 0600                                                                                                                                                                                                                                   | `4d08fa1504`                                 |
+| L4b refusal lifetime   | a refused step now stays refused for the rest of the turn instead of pausing again on the next attempt                                                                                                                                                                                                            | `078551baf6`                                 |
+
+One more change rides with M4: `runCommand` resolves on `close` instead of `exit`. A one-line
+oracle could exit before its stdout was read, so the lock check saw an empty answer. The new tests
+caught it as a flake, and it was a real fail-open path in the guard.
+
+## QA round 1 fixes (27 Oct)
+
+QA tested the first stage (`0d8171726875`) and returned NO-SHIP: two high bugs in the two headline
+features, plus five minor ones. All are fixed here, each with a test.
+
+**B1 (high): `pbdesk-wl` segfaulted on the first key after every server start.** Hyprland's
+`activelayout` event is `KEYBOARD,LAYOUT`, and the driver took the first field as the layout. The
+helper's own virtual keyboard reports its device name there (`hl-virtual-keyboard-pbdesk-wl-...`),
+so the driver rebuilt the keymap with a layout named after the device, the compiler rejected it,
+`vk` stayed NULL, and the next key crashed on it.
+
+- The driver ignores virtual keyboards and re-reads `input:kb_layout` from Hyprland once per burst,
+  sending `layout` only when it really changed (every layout command releases held keys).
+- `send_keycode` returns early while the keyboard object is NULL.
+- `setup_keyboard` compiles the new keymap first and replaces the old one only on success, so a
+  rejected layout keeps the layout in use.
+- Commit `5fa1992885`. Real desktop on empty workspace 9: `layout hl-virtual-keyboard-pbdesk-wl-1234`
+  answers "cannot load that keyboard layout", the helper stays alive, keeps `layout=us`, types `a`
+  and reports `keys=0`; the old build crashed on exactly this.
+
+**B2 (high): a waiting help card was cancelled when another bot used the browser**, and two bots
+could cancel each other's help in a loop (QA saw 230 prompts in a minute).
+
+- `releaseLease` no longer releases a thread with an active help request or a pending approval, so
+  the turn reactor's release at every turn end leaves a waiting card's browser alone.
+- A waiting card refreshes its own lease every 30 s while the question is open. Without that the
+  90 s agent TTL would lapse during a slow answer and the next bot would take over and cancel the
+  card anyway.
+- Other bots keep waiting in Up next, which the queue already does.
+- Commit `980fe21df5`.
+
+**Minor fixes (commit `29f6322a60`):**
+
+- A bot could call `request_browser_help kind=sensitive` with no paused step behind it; the card
+  offered Allow once / Refuse and both answered "there is no paused step to refuse for this bot".
+  The server now turns a self-declared "sensitive" into "other"; only a real pending step makes a
+  sensitive card.
+- The help activity no longer repeats the bot's name ("Assistant assistant asked for help").
+- A sensitive pause and a PC refusal read "paused" / "refused" in the feed instead of "failed".
+  Both activity events carry an optional `outcome`; a client from the previous release ignores it.
+- One "using your PC" notification per control session: it is replaced through `notify-send -r`
+  with its own last id instead of stacking a new banner after every screenshot.
+- A wrong `computer_key` argument reads "The computer_key call was refused: Expected string ... at
+  ["keys"]" instead of "the desktop action failed: AiError".
+
+**Not changed, recorded for QA's next run:** L6 (the Allow card flush against the top edge at 1440
+px) and L7 (the pairing 404/400 console lines that did not reproduce on a clean reload) are UI and
+were left to the Computer tab's owner; neither is in this release's brief.
+
 ## Gate work
 
 - `scripts/personal/node/gates-linux.json`: the server gate now also runs `src/workspace` and
@@ -96,16 +166,23 @@ worktree's own tree (`vp i`, 15 s from the warm store), then rebuild. Proof on t
 `GET /api/orchestration/shell?omitArchivedBotChats=true` on the wire, 6 KB compressed against
 254 KB without it.
 
-## Pre-stage gate results (27 Oct)
+## Gate results in this branch (27 Oct)
 
-Run on the merged tree with this worktree's own dependencies, at head `0d8171726875`.
+At head `0d8171726875`, before the fixes below (this worktree's own dependencies):
 
 - server-tests (personal, mcp, persistence, preview, workspace, assets): PASS, 306 files and
   3,450 tests passed, 6 skipped.
+- server-tsc, web-tests (273 files, 3,135 tests), web-tsc and e2e: PASS.
+
+After the Security and QA fixes, at head `29f6322a60`:
+
+- server-tests: PASS, 306 files and 3,467 tests passed, 6 skipped.
 - server-tsc: PASS (five configs, exit 0).
-- web-tests: PASS, 273 files and 3,135 tests.
+- web-tests: PASS, 273 files and 3,136 tests.
 - web-tsc: PASS (two configs, exit 0).
-- e2e: PASS on the staged release, with the rest of the evidence below.
+- A targeted rerun after the commit hook reformatted whitespace: 193 server tests and 225 web
+  computer tests passed.
+- The five-gate run on the staged release `082a4296c130` is the authoritative evidence below.
 
 ## Ship-time steps (DevOps)
 
@@ -113,25 +190,14 @@ Run on the merged tree with this worktree's own dependencies, at head `0d8171726
    `/home/harout/.personal-bots/run/hbots-bot-bin/opencode`. Install the drop-in before the
    restart, from the repo root:
    `mkdir -p ~/.config/systemd/user/hbots.service.d && cp scripts/personal/linux/hbots-release/systemd/10-opencode-path.conf ~/.config/systemd/user/hbots.service.d/ && systemctl --user daemon-reload`
-2. Staged release **`0d8171726875`**, 1.66.98, `externals=copied`; gate evidence PASS with all
-   five gates including e2e (`~/.personal-bots/releases/0d8171726875/gate-evidence.json`).
+2. Staged release **`082a4296c130`**, 1.66.98, `externals=copied`; gate evidence PASS with all
+   five gates including e2e (`~/.personal-bots/releases/082a4296c130/gate-evidence.json`).
    Install the runner from the pushed notes commit, then arm the idle waiter.
 3. No migration and no schema change: `--migration-before 114 --migration-after 114`, so the
    runner takes no backup.
 4. Rollback baseline is the live **1.66.97, `c1a7c4bd14c9`** (binary rollback only).
-
-## Ship-time steps (DevOps)
-
-1. The OpenCode wrapper is already installed at
-   `/home/harout/.personal-bots/run/hbots-bot-bin/opencode`. Install the drop-in before the
-   restart, from the repo root:
-   `mkdir -p ~/.config/systemd/user/hbots.service.d && cp scripts/personal/linux/hbots-release/systemd/10-opencode-path.conf ~/.config/systemd/user/hbots.service.d/ && systemctl --user daemon-reload`
-2. Staged release **`0d8171726875`**, 1.66.98, `externals=copied`; gate evidence PASS with all
-   five gates including e2e (`~/.personal-bots/releases/0d8171726875/gate-evidence.json`).
-   Install the runner from the pushed notes commit, then arm the idle waiter.
-3. No migration and no schema change: `--migration-before 114 --migration-after 114`, so the
-   runner takes no backup.
-4. Rollback baseline is the live **1.66.97, `c1a7c4bd14c9`** (binary rollback only).
+5. `d3638e88100e`, `0d8171726875` and `078551baf6d2` are superseded stages; they go once this one
+   passes.
 
 ## What now works on the Omarchy laptop
 
@@ -149,11 +215,19 @@ Run on the merged tree with this worktree's own dependencies, at head `0d8171726
   `$XDG_RUNTIME_DIR/hbots-desktop/stop.trigger`, which the server watches. Nothing is written
   to `hyprland.conf`. The app's Stop is unchanged.
 - Take-back: a workspace change the bot did not make, or a focus change to a window it did not
-  act on more than 1.5 s after its last action, refuses the next input with `user_active`.
-  The optional `input` group watcher was not added (it needs a group change); the Hyprland
-  event fallback is what ships.
+  act on more than 300 ms after its last action, refuses the next input with `user_active`.
+  The refusal is one-shot: it stands until a fresh screenshot acknowledges it. The optional
+  `input` group watcher was not added (it needs a group change); the Hyprland event fallback is
+  what ships.
 - Refusals: locked session, screen off, screensaver, Brave/Chromium focused (use the browser
-  tools), and password-manager window classes. Nothing is injected on any of those paths.
+  tools), a mapped browser or password-manager window under the click point (focused or not),
+  and password-manager window classes. Nothing is injected on any of those paths.
+- Typing: control characters are refused with the character named, so a stray Tab or Escape cannot
+  become a key press; the newline is typed as Return. Captures are owner-only (0700 directory, 0600
+  files), and the helper process inherits five Wayland variables and nothing else.
+- The layout comes from `input:kb_layout` and only real keyboards can change it; a keymap the
+  compiler rejects leaves the previous one in place. The "using your PC" banner is one
+  notification, replaced in place.
 - A helper crash or restart always panic-releases held keys and buttons before the next
   command, and a key-map rebuild releases first.
 
@@ -184,15 +258,21 @@ source: "desktop", x?, y?, monitor?, chars? }`. `x`/`y` are 0..1 of the captured
 
 ## Proof
 
-- `cd apps/server && npx tsc --noEmit` — clean.
-- `cd apps/server && vp test run src/personal` — 2,730 tests (2,724 pass, 6 skipped),
-  including 30 new Linux/activity/queue tests. The committed gate evidence is the release proof.
-- New tests: `desktop/linux/driver.test.ts` (fixture binary per primitive: move, click,
-  double click, drag, scroll, type with Enter, keys, buttons, hold, releaseAll, screenshot,
-  info, cursor, Brave refusal, locked refusal, panic release after a crash, key-up after a
-  refused press, and a real compile of the embedded C helper), `session.test.ts`,
-  `keyMap.test.ts`, `PersonalDesktop.activity.test.ts`, `desktopActions.activity.test.ts`,
-  and two browser-lease queue tests plus Allow once / Refuse tests in the egress suite.
+- Server gate: 306 files, 3,467 tests passed, 6 skipped. Web gate: 273 files, 3,136 tests passed.
+  Both typechecks clean, and the phone e2e passed 12 of 12 journeys, all on `082a4296c130`. The
+  committed gate evidence is the release proof.
+- New tests this round: the click-point guard (a Brave PWA and a password manager under the point,
+  plus drag/scroll/button points), one-shot take-back, logind true/false/no-oracle, the layout
+  event (virtual keyboard ignored, a real one re-read from the option), the helper environment
+  allowlist, capture permissions, control characters, Shift-typed key masking, the refusal
+  lifetime, the waiting card keeping its lease (B2), the self-declared sensitive card (L1), the
+  activity wording (paused/refused, no doubled bot name), the replaced PC banner, and the
+  argument message (L5).
+- Real desktop checks, empty workspace 9, helper built from this tree, every process killed by a
+  PID captured in the check: a held mouse button was released across a SIGTERM (foot's SGR log
+  showed `<0;53;14M` then `<0;53;14m`), and a held key's autorepeat stopped after SIGTERM and
+  after stdin EOF (M3); a layout named after the virtual keyboard is refused, the helper keeps
+  `layout=us`, stays alive and types (B1). The previous build crashed on that same input.
 - Live check of the runtime bind syntax on this machine: `hyprctl eval 'hl.bind(...)'` returns
   `ok`; the earlier design proof pressed the chord end to end.
 
@@ -213,7 +293,7 @@ release, into the app's state directory.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=0d8171726875b141b3e7ea633d23d1dd1821e991 release=0d8171726875 json-sha256=63d111eddccebe1515d045106c2bdc0fd31d9f6b52120b10e1909a70ada3a032 result=PASS -->
+<!-- gate-evidence:begin sha=082a4296c13069d23905f2bd400c179a5e6c7541 release=082a4296c130 json-sha256=243a155d35b2f3b3c2bce107f435d514da28ee60d96d08601ed531032a56174c result=PASS -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
