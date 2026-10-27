@@ -1,12 +1,33 @@
-# 1.66.98 — computer use on Omarchy (server side)
+# 1.66.98 — computer use, the Computer tab and the 3G pass
 
 **Windows is unchanged.** The Linux driver is created only when the server runs on Linux;
-on `win32` the same Windows helper as 1.66.97 is used. No migration, no schema change.
+on `win32` the same Windows helper as 1.66.97 is used. No migration, no schema change
+(latest migration is 114, already live in 1.66.97).
 
-This branch is the server half of the approved design: `design/computer-use-linux/SPEC.md` and
-`design/hbots/computer-tab/SPEC.md` section 9 (Harout approved the Computer tab with
-Allow once / Refuse). The Computer tab UI ships from Frontend's branch; these are the server
-pieces it needs.
+This release carries three lines of work:
+
+- **Computer use on Omarchy** (server side of the approved design: `design/computer-use-linux/SPEC.md`
+  and `design/hbots/computer-tab/SPEC.md` section 9). All 13 `computer_*` tools work through one
+  long-lived `pbdesk-wl` helper, screenshots come from grim, live view runs, and **Super+Shift+F12**
+  is the stop chord. Nothing for Harout to run: no sudo, no `input` group, no config edit.
+- **The single Computer tab** (Frontend's `feat/hbots-16698-computer-tab`, head `b8cb5a3231`,
+  merged fast-forward): one live view with Auto follow between Browser and Desktop, take control
+  pauses the bot, and the sensitive-site pause asks **Allow once / Refuse**. Allow once permits
+  exactly one retry of that destination; Refuse resumes the task and never closes the browser.
+- **The slow-3G pass** (Optimizer's `perf/hbots-3g-load`, head `7d866d2a9a`, merged as
+  `d3638e8810`): slim connect-time shell, archived chat links on demand, text previews,
+  tool-update dedupe, smaller favicon/logo/splash, gzip trace uploads, lazy Shiki and Computer
+  panel, route preload and warming, and 3G budgets ratcheted from the final run. Report:
+  `docs/performance/hbots-3g-load-investigation.md`.
+
+On top of the merge, `0d81717268` cherry-picks `1786144fbe` (Frontend, `fix/heavy-lock-read`):
+`heavyJobLock` now counts SHARED (READ) flocks in `/proc/locks`, which the two-slot heavy-job
+design needs. Its 8 targeted tests pass, including one with a real shared flock.
+
+The runner in `scripts/personal/linux/hbots-release/` also gains the **waiting notice**: while the
+idle gate waits, the result records the blockers (command, pid, age), a desktop notification names
+them at 20 and 60 minutes, and a blocker older than 10 minutes is logged as an orphan and ignored,
+so a stale process cannot hold a release for hours.
 
 ## Computer tab merged (27 Oct)
 
@@ -38,18 +59,53 @@ Already in this branch before the Computer tab merge: `2670ee9c3c`, `ff99282934`
 `f76fe5327f` (PINS refresh, OpenCode shell fixture). `fix/release-runner-idle` head
 `f76fe5327f` is an ancestor, so nothing is left to cherry-pick.
 
+## Slow 3G results (rerun on the staged build)
+
+Optimizer's benchmark, same method and settings: Brave at 390x844, CDP throttling 400 kbps down
+and up with 400 ms RTT, cache disabled, fresh profile and a new TCP connection per run, a
+byte-counting proxy in front of the server, median of 3 runs, throwaway server on a reflinked copy
+of the 1.66.97 backup with schedulers off and fake providers (the live database is never opened).
+
+| Journey                    | Optimizer final | merged 0d8171726875 | delta |
+| -------------------------- | --------------: | ------------------: | ----: |
+| cold connect, biggest chat |          36.54s |              36.41s | -0.4% |
+| reconnect, live Bots list  |           8.00s |               7.93s | -0.8% |
+| open chat A                |           2.28s |               2.25s | -1.3% |
+| open chat B                |           2.25s |               2.27s | +0.9% |
+| open chat C                |           2.26s |               2.26s | +0.2% |
+
+Wire for the same runs: cold 1988 to 1991 KB, reconnect 127 to 119 KB, open A 182 to 182 KB,
+open B 362 to 412 KB, open C 161 to 108 KB. All five journeys are inside the 5% band; the open
+chat B wire rise is route-warming bytes that land after first paint (visible time is unchanged).
+
+Method note: the four chats are auto-archived in the current copy. The bench's proxied client
+cannot complete the WS lazy-shell RPC those need, so the rerun cleared the archive flags on the
+three open-chat targets **in the throwaway copy only**, reproducing the shell condition Optimizer
+measured. The archived deep link itself was checked separately on a warm service-worker profile at
+3G: header then transcript in 3.5 s, with `personalBots.threadShells` on the wire.
+
+## Build note (for the next builder on this branch)
+
+This branch changes `packages/contracts`. A worktree that borrows another worktree's
+`node_modules` (`_wt/hbots-16698/node_modules -> _wt/hbots-16697/node_modules`) resolves the **old**
+contracts for `packages/client-runtime`, so the generated client silently loses the new personal
+payload fields. The first build of this branch did exactly that: `omitArchivedBotChats` and
+`textPreviews` were missing from the client, the shell went out whole (254 KB instead of 6 KB) and
+the 3G numbers fell back to 1.66.97 levels. Fix: unlink the borrowed links and install this
+worktree's own tree (`vp i`, 15 s from the warm store), then rebuild. Proof on the shipped build:
+`GET /api/orchestration/shell?omitArchivedBotChats=true` on the wire, 6 KB compressed against
+254 KB without it.
+
 ## Pre-stage gate results (27 Oct)
 
-Server gates re-ran green at head `1412d382b0`; the web gates ran at `dc5f563943` and no web
-file changed after it.
+Run on the merged tree with this worktree's own dependencies, at head `0d8171726875`.
 
-- server-tests (personal, mcp, persistence, preview, workspace, assets): PASS, 304 files and
-  3,440 tests passed, 6 skipped.
+- server-tests (personal, mcp, persistence, preview, workspace, assets): PASS, 306 files and
+  3,450 tests passed, 6 skipped.
 - server-tsc: PASS (five configs, exit 0).
-- web-tests: PASS, 272 files and 3,126 tests.
+- web-tests: PASS, 273 files and 3,135 tests.
 - web-tsc: PASS (two configs, exit 0).
-- e2e: not run before staging; the smoke harness needs a built artifact. It runs with
-  `gate-evidence` on the staged release, after `perf/hbots-3g-load` is merged.
+- e2e: PASS on the staged release, with the rest of the evidence below.
 
 ## Ship-time steps (DevOps)
 
@@ -57,12 +113,25 @@ file changed after it.
    `/home/harout/.personal-bots/run/hbots-bot-bin/opencode`. Install the drop-in before the
    restart, from the repo root:
    `mkdir -p ~/.config/systemd/user/hbots.service.d && cp scripts/personal/linux/hbots-release/systemd/10-opencode-path.conf ~/.config/systemd/user/hbots.service.d/ && systemctl --user daemon-reload`
-2. After Optimizer reports, merge `perf/hbots-3g-load` into this branch, stage with
-   `bash /home/harout/Claude/AI/dev-team/tools/build.sh <repo>`, run `gate-evidence` with
-   `scripts/personal/node/gates-linux.json` (including e2e) and arm the waiter.
-3. No migration and no schema change: `--migration-before` equals `--migration-after`, so the
+2. Staged release **`0d8171726875`**, 1.66.98, `externals=copied`; gate evidence PASS with all
+   five gates including e2e (`~/.personal-bots/releases/0d8171726875/gate-evidence.json`).
+   Install the runner from the pushed notes commit, then arm the idle waiter.
+3. No migration and no schema change: `--migration-before 114 --migration-after 114`, so the
    runner takes no backup.
-4. Rollback baseline is the live 1.66.97 release.
+4. Rollback baseline is the live **1.66.97, `c1a7c4bd14c9`** (binary rollback only).
+
+## Ship-time steps (DevOps)
+
+1. The OpenCode wrapper is already installed at
+   `/home/harout/.personal-bots/run/hbots-bot-bin/opencode`. Install the drop-in before the
+   restart, from the repo root:
+   `mkdir -p ~/.config/systemd/user/hbots.service.d && cp scripts/personal/linux/hbots-release/systemd/10-opencode-path.conf ~/.config/systemd/user/hbots.service.d/ && systemctl --user daemon-reload`
+2. Staged release **`0d8171726875`**, 1.66.98, `externals=copied`; gate evidence PASS with all
+   five gates including e2e (`~/.personal-bots/releases/0d8171726875/gate-evidence.json`).
+   Install the runner from the pushed notes commit, then arm the idle waiter.
+3. No migration and no schema change: `--migration-before 114 --migration-after 114`, so the
+   runner takes no backup.
+4. Rollback baseline is the live **1.66.97, `c1a7c4bd14c9`** (binary rollback only).
 
 ## What now works on the Omarchy laptop
 
@@ -94,7 +163,7 @@ file changed after it.
   `unavailableReason?`; `stopHotkey` now comes from the driver.
 - `personalDesktop.activity` (stream): `Recent { events }` then `Activity { event }`, with
   `PersonalDesktopActivityEvent { id, kind, summary, status, at, threadId, botId, botName,
-  source: "desktop", x?, y?, monitor?, chars? }`. `x`/`y` are 0..1 of the captured monitor;
+source: "desktop", x?, y?, monitor?, chars? }`. `x`/`y` are 0..1 of the captured monitor;
   typing carries `chars`, never the text; single-character key sequences are summarised by
   count. Browser activity events gain an optional `source: "browser"` so the two timelines
   merge.
@@ -141,3 +210,15 @@ release, into the app's state directory.
 - Live view is ~4.8 fps at 768x480; phase 2 can move capture into the helper.
 - UTF-8 text beyond the active layout fails loudly with the character named (emoji/CJK are not
   typed yet); AltGr-only symbols are limited by the same rule.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=0d8171726875b141b3e7ea633d23d1dd1821e991 release=0d8171726875 json-sha256=63d111eddccebe1515d045106c2bdc0fd31d9f6b52120b10e1909a70ada3a032 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
