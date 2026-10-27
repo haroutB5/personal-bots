@@ -8,6 +8,59 @@ This branch is the server half of the approved design: `design/computer-use-linu
 Allow once / Refuse). The Computer tab UI ships from Frontend's branch; these are the server
 pieces it needs.
 
+## Computer tab merged (27 Oct)
+
+`feat/hbots-16698-computer-tab` (head `b8cb5a3231`, which already contained this branch's
+`57509cfb67`) is merged fast-forward, so 1.66.98 carries the single Computer tab UI as well as
+the server contract it reads. `personalDesktop.activity` stays in
+`EnvironmentSubscriptionRpcTag`.
+
+`PersonalBrowserStatus` now carries `lastStop: string | null` (optional on the wire): the one
+teardown path records the close instant, so the idle card can say "closed at HH:MM" instead of
+falling back to the last activity (up to ten idle minutes early).
+
+## Gate work
+
+- `scripts/personal/node/gates-linux.json`: the server gate now also runs `src/workspace` and
+  `src/assets` (the file-links code and Security's tests). Both server and web gates set
+  `NODE_ENV=test` themselves: bot shells export `NODE_ENV=production`, which resolves React's
+  production build and fails the web suite with `act is not a function` (reproduced: 1,053 of
+  3,126 tests failed).
+- Async console writer flake: the "writes console lines through the async writer in order" test
+  waited two `setImmediate` turns for an `fs.write` callback, i.e. on the threadpool's schedule.
+  `AsyncFileWriter.flush()` now resolves on the write callback and the test awaits it. Proof:
+  40 repeated runs (20 sequential, 20 four-at-a-time), 40/40 passed.
+
+## Release-runner commits
+
+Already in this branch before the Computer tab merge: `2670ee9c3c`, `ff99282934`, `be97566ff5`,
+`b6b8db98ee`, `65b0717cb9` (waiting notice and orphan idle waits), plus `3b54b53a32` and
+`f76fe5327f` (PINS refresh, OpenCode shell fixture). `fix/release-runner-idle` head
+`f76fe5327f` is an ancestor, so nothing is left to cherry-pick.
+
+## Pre-stage gate results (27 Oct, head `dc5f563943`)
+
+- server-tests (personal, mcp, persistence, preview, workspace, assets): PASS, 304 files and
+  3,440 tests passed, 6 skipped.
+- server-tsc: PASS (five configs, exit 0).
+- web-tests: PASS, 272 files and 3,126 tests.
+- web-tsc: PASS (two configs, exit 0).
+- e2e: not run before staging; the smoke harness needs a built artifact. It runs with
+  `gate-evidence` on the staged release, after `perf/hbots-3g-load` is merged.
+
+## Ship-time steps (DevOps)
+
+1. The OpenCode wrapper is already installed at
+   `/home/harout/.personal-bots/run/hbots-bot-bin/opencode`. Install the drop-in before the
+   restart, from the repo root:
+   `mkdir -p ~/.config/systemd/user/hbots.service.d && cp scripts/personal/linux/hbots-release/systemd/10-opencode-path.conf ~/.config/systemd/user/hbots.service.d/ && systemctl --user daemon-reload`
+2. After Optimizer reports, merge `perf/hbots-3g-load` into this branch, stage with
+   `bash /home/harout/Claude/AI/dev-team/tools/build.sh <repo>`, run `gate-evidence` with
+   `scripts/personal/node/gates-linux.json` (including e2e) and arm the waiter.
+3. No migration and no schema change: `--migration-before` equals `--migration-after`, so the
+   runner takes no backup.
+4. Rollback baseline is the live 1.66.97 release.
+
 ## What now works on the Omarchy laptop
 
 - `PersonalDesktopStatus.available` is `true`, `stopHotkey` is `Super+Shift+F12`, and
