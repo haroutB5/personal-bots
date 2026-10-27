@@ -189,8 +189,31 @@ test("idle wait: recent event-log activity delays the restart; no restart while 
   }
 });
 
-test("heavy-job lock: waits while another job holds it, never restarts mid-build", async () => {
-  const env = await prepared();
+test("busy tools: only the server's cgroup counts, never a sibling Chromium scope", async () => {
+  const env = await makeEnv();
+  const scope = `chromium-fixture-${env.port}`;
+  let scoped;
+  try {
+    // one process inside the unit's cgroup (the server's child), one outside in its own scope
+    env.start({ child: "sleep 301" });
+    scoped = spawn("systemd-run", ["--user", "--scope", "--quiet", "--collect", `--unit=${scope}`, "--", "sleep", "302"], { stdio: "ignore" });
+    await sleep(1500);
+    const { loadConfig } = await import("../lib/config.mjs");
+    const { takeLook } = await import("../lib/idle.mjs");
+    const look = takeLook(loadConfig(env.processEnv()), null);
+    assert.equal(look.serverRunning, true);
+    assert.match(look.cgDir, new RegExp(env.unit.replaceAll(".", "\\.")));
+    const cmds = look.toolProcs.map((p) => p.cmd).join("\n");
+    assert.match(cmds, /sleep 301/, "a process in hbots.service's cgroup is hbots work");
+    assert.doesNotMatch(cmds, /sleep 302/, "a process in its own scope is not hbots work");
+  } finally {
+    scoped?.kill("SIGTERM");
+    sh("systemctl", ["--user", "stop", `${scope}.scope`]);
+    env.stop();
+  }
+});
+
+test("heavy-job lock: waits while another job holds it, never restarts mid-build", async () => {  const env = await prepared();
   try {
     const lock = path.join(env.tmp, "heavy.lock");
     fs.writeFileSync(lock, "pid=0 label=fixture-build\n");

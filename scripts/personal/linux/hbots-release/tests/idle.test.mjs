@@ -1,6 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { busyReasons, classifyOrphan, dueWaitingAlerts, hasSessionAncestor, sendWaitingAlerts } from '../lib/idle.mjs';
+import { cgroupPathFromProcText, onlyInCgroup } from '../lib/proc.mjs';
+
+test('busy tools are only the server cgroup, never a sibling systemd scope', () => {
+  // A computer-use Chromium is still a process-tree descendant of the server,
+  // but systemd moved it into app-org.chromium.Chromium-*.scope.
+  const tree = [700, 701, 702];
+  const members = new Map([
+    [700, '/user.slice/user-1000.slice/user@1000.service/app.slice/hbots.service'],
+    [701, '/user.slice/user-1000.slice/user@1000.service/app.slice/app-org.chromium.Chromium-123.scope'],
+    [702, '/user.slice/user-1000.slice/user@1000.service/app.slice/app-org.chromium.Chromium-123.scope'],
+  ]);
+  const server = '/user.slice/user-1000.slice/user@1000.service/app.slice/hbots.service';
+  assert.deepEqual([...onlyInCgroup(tree, members, server)], [700]);
+  // Unreadable membership is never guessed into the server's work.
+  assert.deepEqual([...onlyInCgroup(tree, new Map(), server)], []);
+  // With no server cgroup to compare against, keep the tree (old behaviour).
+  assert.deepEqual([...onlyInCgroup(tree, members, null)], tree);
+  assert.equal(
+    cgroupPathFromProcText('0::/user.slice/user-1000.slice/user@1000.service/app.slice/hbots.service\n'),
+    '/user.slice/user-1000.slice/user@1000.service/app.slice/hbots.service',
+  );
+  assert.equal(cgroupPathFromProcText(''), null);
+});
 
 test('orphan is reported and only ignored after ten minutes; pid reuse and a bot turn remain blocking', () => {
   const seen = new Map();

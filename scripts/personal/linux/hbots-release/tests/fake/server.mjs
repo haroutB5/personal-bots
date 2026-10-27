@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const self = fileURLToPath(import.meta.url);
@@ -43,5 +44,11 @@ server.listen(port, "127.0.0.1", () => {
   const file = path.join(home, "run", "server.json");
   fs.writeFileSync(`${file}.tmp`, JSON.stringify(state));
   fs.renameSync(`${file}.tmp`, file);
+  // Tests: one long-lived child inside the unit's own cgroup, so the release
+  // runner's "only the server cgroup counts" rule can be proven both ways.
+  if (process.env.FIXTURE_CHILD) {
+    const child = spawn(process.env.FIXTURE_CHILD, { shell: true, stdio: "ignore" });
+    fs.writeFileSync(path.join(home, "run", "fixture-child.pid"), `${child.pid}\n`);
+  }
 });
 process.on("SIGTERM", () => process.exit(0));

@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { cgroupCpuSeconds, cgroupDirOf, cgroupPids, descendants, liveState, procSnapshot, procStartMs } from "./proc.mjs";
+import { cgroupCpuSeconds, cgroupDirFromPid, cgroupDirOf, cgroupMembership, cgroupPids, cgroupPathFromProcText, descendants, liveState, onlyInCgroup, procSnapshot, procStartMs } from "./proc.mjs";
 import { run, sleep, round1 } from "./util.mjs";
 
 export const isHelper = (cmd) =>
@@ -107,9 +107,29 @@ export function takeLook(cfg, prev, { ignoreLock = false, orphanSince = new Map(
   const state = liveState(cfg);
   if (!state) return { serverRunning: false };
   const now = procSnapshot();
-  const cgDir = prev?.cgDir ?? (cfg.scope || cgroupDirOf(cfg.unit));
+  const serverPid = Number(state.pid);
+  // The server's own cgroup, read from /proc so it never depends on parsing
+  // systemctl output. Fall back to the recorded dir, then to systemctl.
+  const serverCgPath = (() => {
+    try {
+      return cgroupPathFromProcText(fs.readFileSync(`/proc/${serverPid}/cgroup`, "utf8"));
+    } catch {
+      return null;
+    }
+  })();
+  const cgDir =
+    cfg.scope ||
+    cgroupDirFromPid(serverPid) ||
+    prev?.cgDir ||
+    cgroupDirOf(cfg.unit);
   const inCgroup = cgDir ? cgroupPids(cgDir) : null;
-  const pids = inCgroup?.length ? new Set(inCgroup) : descendants(now, Number(state.pid));
+  let pids;
+  if (inCgroup?.length) {
+    pids = new Set(inCgroup);
+  } else {
+    const tree = descendants(now, serverPid);
+    pids = onlyInCgroup(tree, cgroupMembership(tree), serverCgPath);
+  }
   const toolProcs = [];
   let cpu = 0;
   for (const pid of pids) {

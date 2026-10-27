@@ -91,6 +91,49 @@ export function cgroupCpuSeconds(dir) {
   }
 }
 
+/** The unified cgroup path from /proc/<pid>/cgroup's last line ("0::/user.slice/..."), or null. */
+export function cgroupPathFromProcText(text) {
+  const line = text.trim().split("\n").pop() ?? "";
+  const m = /^\d+::(.+)$/.exec(line);
+  return m?.[1] ?? null;
+}
+
+/** The /sys/fs/cgroup directory of one process, read from /proc (no systemctl needed). */
+export function cgroupDirFromPid(pid) {
+  try {
+    const rel = cgroupPathFromProcText(fs.readFileSync(`/proc/${pid}/cgroup`, "utf8"));
+    return rel === null ? null : path.join("/sys/fs/cgroup", rel);
+  } catch {
+    return null;
+  }
+}
+
+/** pid -> cgroup path for a set of pids (null when unreadable). */
+export function cgroupMembership(pids, read = (pid) => fs.readFileSync(`/proc/${pid}/cgroup`, "utf8")) {
+  const map = new Map();
+  for (const pid of pids) {
+    try {
+      map.set(pid, cgroupPathFromProcText(read(pid)));
+    } catch {
+      map.set(pid, null);
+    }
+  }
+  return map;
+}
+
+/**
+ * The process-tree fallback keeps only processes in the server's own cgroup.
+ * A process the server forked but systemd moved into its own scope (the
+ * computer-use Chromium in app-org.chromium.Chromium-*.scope) is still a
+ * descendant, yet it is not work hbots is doing, so it must not hold a release.
+ */
+export function onlyInCgroup(pids, members, serverPath) {
+  if (serverPath === null) return new Set(pids);
+  const out = new Set();
+  for (const pid of pids) if (members.get(pid) === serverPath) out.add(pid);
+  return out;
+}
+
 /** Is this pid inside the given unit's cgroup? (Used to prove the runner is outside hbots.service.) */
 export function cgroupOfPid(pid) {
   try {
