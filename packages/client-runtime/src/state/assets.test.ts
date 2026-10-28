@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   type AssetCreateUrlResult,
+  AssetProtectedFileError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceContextNotFoundError,
@@ -29,11 +30,40 @@ import type { RpcSession } from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { createProjectFaviconCache } from "../projectFaviconCache.ts";
 import {
+  assetUrlStateFromResult,
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   InvalidAssetCollectionKeyError,
   parseAssetCollectionKey,
 } from "./assets.ts";
+
+describe("asset URL failure reasons", () => {
+  const resource = {
+    _tag: "media-file",
+    threadId: ThreadId.make("thread-1"),
+    path: "/home/harout/.personal-bots/dev/userdata/browser-artifacts/shot.png",
+  } as const;
+  const reasonOf = (error: unknown) =>
+    assetUrlStateFromResult(AsyncResult.failure(Cause.fail(error)), "http://127.0.0.1:38472");
+
+  it("marks a missing file so the chat can name the path", () => {
+    expect(reasonOf(new AssetWorkspaceAssetNotFoundError({ resource }))).toEqual({
+      _tag: "Failure",
+      notFound: true,
+    });
+  });
+
+  it("keeps a policy refusal distinct from a missing file", () => {
+    expect(reasonOf(new AssetProtectedFileError({ resource }))).toEqual({
+      _tag: "Failure",
+      protectedFile: true,
+    });
+  });
+
+  it("leaves an unknown failure unexplained", () => {
+    expect(reasonOf(new Error("socket closed"))).toEqual({ _tag: "Failure" });
+  });
+});
 
 describe("asset collection keys", () => {
   it("preserves malformed JSON and its native cause", () => {

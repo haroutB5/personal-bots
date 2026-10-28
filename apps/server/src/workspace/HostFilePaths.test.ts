@@ -99,6 +99,7 @@ describe("isProtectedHostPath", () => {
   it.each([
     "/home/harout/.personal-bots/qa/backend-16697-lock/RESULT.md",
     "/home/harout/.personal-bots/dev/userdata/attachments/a-b.png",
+    "/home/harout/.personal-bots/dev/userdata/browser-artifacts/a-b.png",
     "/home/harout/work/.env.example",
     "/home/harout/work/.env.template",
     "/home/harout/Claude/AI/dev-team/HANDBOOK.md",

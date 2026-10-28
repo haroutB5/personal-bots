@@ -4718,12 +4718,20 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         });
 
+        // The session status and the failure activity are written by separate
+        // steps of the same reaction. Waiting on the status alone can return
+        // before the activity lands, so wait for the exact row the test asserts.
         yield* Effect.promise(() =>
           waitFor(async () => {
             const thread = (await harness.readModel()).threads.find(
               (entry) => entry.id === ThreadId.make("thread-1"),
             );
-            return thread?.session?.status === "stopped";
+            return (
+              thread?.session?.status === "stopped" &&
+              thread.activities.some(
+                (activity) => activity.kind === "provider.turn.interrupt.failed",
+              )
+            );
           }),
         );
 

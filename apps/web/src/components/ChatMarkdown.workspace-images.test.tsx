@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   resources: [] as Array<unknown>,
-  assetState: "success" as "success" | "loading" | "failure",
+  assetState: "success" as "success" | "loading" | "failure" | "not-found" | "protected",
   imageDimensions: undefined as { width: number; height: number } | undefined,
 }));
 
@@ -15,6 +15,8 @@ vi.mock("../assets/assetUrls", () => ({
     testState.resources.push(resource);
     if (testState.assetState === "loading") return { _tag: "Loading" };
     if (testState.assetState === "failure") return { _tag: "Failure" };
+    if (testState.assetState === "not-found") return { _tag: "Failure", notFound: true };
+    if (testState.assetState === "protected") return { _tag: "Failure", protectedFile: true };
     return {
       _tag: "Success",
       url: "https://signed.test/workspace-image.svg",
@@ -426,6 +428,39 @@ describe("ChatMarkdown workspace images", () => {
     expect(testState.resources).toEqual([]);
     expect(html).toContain("Image unavailable");
     expect(html).not.toContain("file://");
+  });
+
+  it("says which generated image path is missing instead of only saying unavailable", () => {
+    testState.assetState = "not-found";
+    const path =
+      "/home/harout/.personal-bots/dev/userdata/browser-artifacts/phone_size_compare.png";
+    const html = render(`![Oppo size chart](${path})`);
+
+    expect(html).toContain("Image unavailable · Oppo size chart");
+    expect(html).toContain(`File not found at ${path}`);
+    expect(testState.resources).toEqual([
+      { _tag: "media-file", threadId: threadRef.threadId, path },
+    ]);
+  });
+
+  it("says when the file safety rules refused a local image", () => {
+    testState.assetState = "protected";
+    const html = render("![secret](/home/harout/.personal-bots/dev/userdata/secrets/key)");
+
+    expect(html).toContain("Not shown by the file safety rules");
+  });
+
+  it("shows a generated image saved in the app's browser-artifacts folder", () => {
+    testState.assetState = "success";
+    const path =
+      "/home/harout/.personal-bots/dev/userdata/browser-artifacts/phone_size_compare.png";
+    const html = render(`![Oppo size chart](${path})`);
+
+    expect(html).toContain('src="https://signed.test/workspace-image.svg"');
+    expect(html).not.toContain("Image unavailable");
+    expect(testState.resources).toEqual([
+      { _tag: "media-file", threadId: threadRef.threadId, path },
+    ]);
   });
 
   it("blocks unsupported image schemes instead of passing them to a raw image", () => {

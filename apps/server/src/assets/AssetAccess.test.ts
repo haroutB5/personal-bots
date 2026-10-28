@@ -1277,6 +1277,56 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(testLayer)),
     );
 
+    it.effect("signs media under the Bots attachments and browser-artifacts folders", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bots-media-" });
+        const userdata = path.join(home, ".personal-bots", "dev", "userdata");
+        const artifacts = path.join(userdata, "browser-artifacts");
+        yield* fs.makeDirectory(artifacts, { recursive: true });
+        yield* fs.makeDirectory(path.join(userdata, "attachments"), { recursive: true });
+        yield* fs.makeDirectory(path.join(userdata, "secrets"), { recursive: true });
+        const screenshot = path.join(artifacts, "phone-compare.png");
+        yield* fs.writeFileString(screenshot, "png");
+        yield* fs.writeFileString(path.join(userdata, "secrets", "key"), "secret");
+
+        yield* withHome(
+          home,
+          undefined,
+          Effect.gen(function* () {
+            // The preview tool writes screenshots here and tells bots to embed the path.
+            for (const requested of [
+              screenshot,
+              path.join(userdata, "attachments", "phone-compare.png"),
+            ]) {
+              yield* fs.writeFileString(requested, "png");
+              const issued = yield* issueAssetUrl({
+                resource: {
+                  _tag: "media-file",
+                  threadId: ThreadId.make("thread-1"),
+                  path: requested,
+                },
+              });
+              const resolved = yield* resolveIssued(issued.relativeUrl);
+              expect(resolved?.kind === "file" ? path.basename(resolved.path) : null).toBe(
+                "phone-compare.png",
+              );
+            }
+
+            const secret = yield* issueAssetUrl({
+              resource: {
+                _tag: "media-file",
+                threadId: ThreadId.make("thread-1"),
+                path: path.join(userdata, "secrets", "key"),
+              },
+            }).pipe(Effect.flip);
+            expect(secret._tag).toBe("AssetProtectedFileError");
+          }),
+        );
+      }).pipe(Effect.provide(testLayer)),
+    );
+
     it.effect("refuses credential files for every resource that reads the host", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

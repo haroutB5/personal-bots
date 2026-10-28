@@ -1517,12 +1517,19 @@ function expandableMarkdownImageProps(
 function ChatMarkdownMediaUnavailableLabel(props: {
   readonly alt: string;
   readonly kind?: "image" | "video" | undefined;
+  /** Why the bytes could not be shown, such as the path that is missing. */
+  readonly detail?: string | undefined;
 }) {
   const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-      {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
+    <span className="inline-flex max-w-full flex-col items-center gap-1">
+      <span className="inline-flex items-center gap-1.5">
+        <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+        {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
+      </span>
+      {props.detail ? (
+        <span className="text-[11px] leading-snug break-words opacity-80">{props.detail}</span>
+      ) : null}
     </span>
   );
 }
@@ -1575,6 +1582,7 @@ function ChatMarkdownImage(props: {
   /** Null while the URL is being resolved; the last decoded image stays up. */
   readonly src: string | null;
   readonly sourceFailed?: boolean | undefined;
+  readonly failureDetail?: string | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly standalone: boolean;
@@ -1676,7 +1684,7 @@ function ChatMarkdownImage(props: {
       >
         {failed ? (
           <span className="flex size-full items-center justify-center p-2 text-center text-xs text-muted-foreground">
-            <ChatMarkdownMediaUnavailableLabel alt={props.alt} />
+            <ChatMarkdownMediaUnavailableLabel alt={props.alt} detail={props.failureDetail} />
           </span>
         ) : src !== null ? (
           <img
@@ -1785,6 +1793,16 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   // The server reads the pixel size from the file header, so the slot can be
   // the image's final box instead of a 16:9 guess. An authored size wins; a
   // caller's height cap shrinks the box while keeping the ratio.
+  const failureDetail =
+    assetUrl._tag !== "Failure"
+      ? undefined
+      : assetUrl.protectedFile === true
+        ? `Not shown by the file safety rules${path ? `: ${path}` : ""}`
+        : assetUrl.notFound === true
+          ? path
+            ? `File not found at ${path}`
+            : "File not found"
+          : undefined;
   const knownSize = assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined;
   const maxHeightRem = props.maxHeightRem ?? 30;
   const style =
@@ -1836,6 +1854,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
       sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+      failureDetail={failureDetail}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}

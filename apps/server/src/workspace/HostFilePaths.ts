@@ -140,10 +140,14 @@ const PROTECTED_PREFIXES = [
 ];
 
 // The Bots data root keeps its database, its sealed secret store and its
-// settings beside the attachments; only the attachments are for showing.
+// settings beside the media folders; only the media folders are for showing.
+// `browser-artifacts` is where the preview tool writes the screenshots it tells
+// bots to embed, so it must be readable through a signed asset URL like
+// `attachments`; everything else under `userdata` stays private.
+const SHOWABLE_BOTS_DATA_DIRS = new Set(["attachments", "browser-artifacts"]);
 function isProtectedBotsData(segments: ReadonlyArray<string>): boolean {
   const index = segments.lastIndexOf("userdata");
-  return index >= 0 && segments[index + 1] !== "attachments";
+  return index >= 0 && !SHOWABLE_BOTS_DATA_DIRS.has(segments[index + 1] ?? "");
 }
 
 const PROTECTED_CONFIG_DIRS = new Set(["gh", "glab-cli", "op", "gcloud", "azure", "rclone"]);
