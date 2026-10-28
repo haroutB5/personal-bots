@@ -40,6 +40,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { providerLimitRetryInfo } from "../providerLimitRetry.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import {
@@ -831,13 +832,19 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
                   activeTurnId: undefined,
                   updatedAt: yield* nowIso,
                 };
+                const errorMessage = acpCauseText(cause);
+                const retry = providerLimitRetryInfo(errorMessage);
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
                   ...(yield* makeEventStamp()),
                   provider: DRIVER,
                   threadId: input.threadId,
                   turnId: continuation.turnId,
-                  payload: { state: "failed", errorMessage: acpCauseText(cause) },
+                  payload: {
+                    state: "failed",
+                    errorMessage,
+                    ...(retry !== undefined ? { retry } : {}),
+                  },
                 });
               }),
             );
@@ -931,13 +938,18 @@ export function makeNativeAcpAdapter(options: NativeAcpAdapterOptions) {
                   activeTurnId: undefined,
                   updatedAt: yield* nowIso,
                 };
+                const retry = providerLimitRetryInfo(detailText);
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
                   ...(yield* makeEventStamp()),
                   provider: DRIVER,
                   threadId: input.threadId,
                   turnId,
-                  payload: { state: "failed", errorMessage: detailText },
+                  payload: {
+                    state: "failed",
+                    errorMessage: detailText,
+                    ...(retry !== undefined ? { retry } : {}),
+                  },
                 });
                 // The agent never answered, so its process may be stuck on the prompt.
                 // Ending the session frees its files; the next turn starts a fresh one.

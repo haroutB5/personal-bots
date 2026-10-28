@@ -13,6 +13,8 @@ import type { ProviderRetryInfo } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+import { isProviderLimitText } from "../providerLimitRetry.ts";
+
 export interface OpenCodeRetryStatus {
   readonly attempt: number;
   readonly message: string;
@@ -24,8 +26,6 @@ export interface OpenCodeRetryStatus {
   };
 }
 
-const RATE_LIMIT_PATTERN =
-  /rate.?limit|too many requests|\b429\b|quota|usage limit|free usage|limit (?:exceeded|reached)|exceeded .{0,30}limit|at capacity|overloaded|try a different model/i;
 const REASON_MAX_LENGTH = 200;
 /** Anything smaller is a delay or garbage, not an epoch-ms time (2001-09-09). */
 const MIN_EPOCH_MS = 1_000_000_000_000;
@@ -43,7 +43,7 @@ export function openCodeRetryInfo(status: OpenCodeRetryStatus): ProviderRetryInf
     status.action?.title,
     status.action?.message,
   ].filter((text): text is string => typeof text === "string" && text.trim().length > 0);
-  const rateLimited = texts.some((text) => RATE_LIMIT_PATTERN.test(text));
+  const rateLimited = isProviderLimitText(...texts);
   const retryAt = isoFromMillis(status.next);
   const rawReason = (status.action?.message ?? status.message ?? "").replaceAll(/\s+/g, " ").trim();
   const reason =

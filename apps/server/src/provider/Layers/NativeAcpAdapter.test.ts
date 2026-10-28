@@ -417,6 +417,83 @@ it.live(
 );
 
 it.live(
+  "an OpenCode free usage limit carries a rate-limit retry so the bot moves to its fallback and the next turn runs",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-limit-" });
+      const threadId = ThreadId.make("native-acp-limit-test");
+      const seen: ProviderRuntimeEvent[] = [];
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        displayName: "OpenCode",
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: root,
+              env: {
+                ...process.env,
+                T3_ACP_DEFECT_PROMPT_ERROR: "Free usage limit reached: quota exhausted",
+                T3_ACP_DEFECT_PROMPT_COUNT: "1",
+              },
+            },
+            cwd: root,
+            authMethodId: null,
+            clientInfo: { name: "hbots-test", version: "1" },
+          }),
+      });
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            seen.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      const refused = yield* adapter.sendTurn({ threadId, input: "free model" }).pipe(Effect.exit);
+      expect(Exit.isFailure(refused)).toBe(true);
+      const failed = seen.filter(
+        (event) => event.type === "turn.completed" && event.payload.state === "failed",
+      );
+      expect(failed).toHaveLength(1);
+      // This is what PersonalChatResumeService.onLimitHit keys off: without it
+      // the chat only says "Usage limit reached" and never switches model.
+      expect(failed[0]).toMatchObject({
+        payload: {
+          state: "failed",
+          retry: {
+            kind: "rate_limited",
+            reason: expect.stringContaining("Free usage limit reached"),
+          },
+        },
+      });
+      const retry = (failed[0] as { payload?: { retry?: Record<string, unknown> } }).payload?.retry;
+      expect(retry).not.toHaveProperty("retryAt");
+
+      // The turn settled, so the fallback model's turn starts at once and completes.
+      const sessions = yield* adapter.listSessions();
+      expect(sessions[0]).toMatchObject({ status: "ready", activeTurnId: undefined });
+      const next = yield* adapter.sendTurn({ threadId, input: "on the fallback" });
+      expect(next.turnId).toBeTruthy();
+      expect(
+        seen.filter(
+          (event) => event.type === "turn.completed" && event.payload.state === "completed",
+        ),
+      ).toHaveLength(1);
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  30_000,
+);
+
+it.live(
   "a busy refusal that never clears fails after the bounded wait and leaves no running turn",
   () =>
     Effect.gen(function* () {
