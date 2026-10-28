@@ -203,7 +203,7 @@ end-to-end results are recorded there with their exit codes.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=34e3ea1c326204bc53e856ef389181d1d0b448c9 release=34e3ea1c3262 json-sha256=39a1c82b1297062a6fbcd37b1168738a6783d5b3a89c52e1da86012dea7349d4 result=PASS -->
+<!-- gate-evidence:begin sha=7f57be06d2c8831926f13ff10f34aa733a52f396 release=7f57be06d2c8 json-sha256=f17e38914221ab45b8edf0f7a3ba793944a46ee04202b7cf7687126e5480a0ee result=PASS -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
