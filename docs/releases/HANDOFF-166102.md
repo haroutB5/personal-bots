@@ -114,6 +114,10 @@ moved; steps 1-2 alone put the unit back.
 
 ## Gate
 
+All six gates and gate evidence ran from `cc04dcff706d` in this worktree with its own
+`node_modules`; the record is in the Gate evidence section below. Server tests: 3506 passed,
+6 skipped. Web tests: 3176 passed. Client runtime: 22 passed. e2e: 12 of 12 journeys passed.
+
 ## Gate evidence
 
 <!-- gate-evidence:begin sha=cc04dcff706de41088c0cfa416a2bd7dbcfb71c1 release=cc04dcff706d json-sha256=5a97e85a75dfbb8a097d76ae47816c2ae6a3cd10811ba528c5c334b87a6c4063 result=PASS -->
