@@ -63,6 +63,9 @@ release prepares a dedicated normal checkout at `/home/harout/Claude/AI/hbots-ru
 - `node /home/harout/Claude/AI/hbots-runtime/scripts/personal/node/hbots.mjs status --root dev`
   runs from it (the CLI only imports Node built-ins and its own `lib/` files, so no
   `node_modules` are needed to serve).
+- The checkout carries the gitignored public `.env`, copied from the current live worktree (same
+  sha256, values never printed), because `serve` passes those values to the server process. Without
+  it the relay and Clerk public config would be empty.
 - The drop-in template is committed at
   `scripts/personal/linux/systemd/hbots-runtime-path.conf`. It changes `WorkingDirectory`,
   `ExecStart`, `ConditionPathExists` and `Documentation` to the runtime checkout, and deliberately
