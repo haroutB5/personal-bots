@@ -110,9 +110,9 @@ moved; steps 1-2 alone put the unit back.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=5fb44b051d2d9dc262eb93d67b56e9737d2fe3bc release=5fb44b051d2d json-sha256=3586de38af53b0e47ac04820d84db1a0765b56df0ff4fe09d29e421efdefe131 result=FAIL -->
+<!-- gate-evidence:begin sha=cc04dcff706de41088c0cfa416a2bd7dbcfb71c1 release=cc04dcff706d json-sha256=5a97e85a75dfbb8a097d76ae47816c2ae6a3cd10811ba528c5c334b87a6c4063 result=PASS -->
 
-- server-tests: FAIL, exit 1
+- server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
 - web-tests: PASS, exit 0
 - web-tsc: PASS, exit 0
