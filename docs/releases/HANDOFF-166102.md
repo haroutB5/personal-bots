@@ -175,6 +175,16 @@ combinations`. A hold cannot re-guard mid-press, so `computer_hold_key` refuses 
   `ComputerSensitiveCard` with Allow once / Refuse, and one approval covers one action. Screenshots
   and the pointer stay available, so the bot can still look. `request_browser_help` accepts a
   desktop pause even when the thread never took the browser lease.
+- **One card at a time, the rest queued.** A second bot that asks while a card is open (a desktop
+  pause or browser help) is parked on `waiting_for_browser` and queued FIFO with its taskId, and is
+  told `Queued: another bot is waiting for the user. End your turn; you'll be resumed when the user
+answers.` When the active card closes (answered, refused, handed back, cancelled, or its task
+  ends), the next entry becomes the active card automatically; Allow once, Refuse and hand-back
+  then resume it through its stored taskId exactly like a normal card. A pause recorded before any
+  card has no taskId: approve/refuse now resume the thread's current task, and if there is none the
+  pause is cleared and logged instead of silently doing nothing. The Computer tab shows only the
+  active card; a queued or stale pause never replaces it. Stopping, cancelling, failing, completing
+  or interrupting a task clears its card and queued entries and promotes the next bot.
 
 **What this is.** A mistake-prevention rail, not a security boundary. It only knows the sites
 Harout marked sensitive in Bots, plus password managers and the shared browser. A site he did not
@@ -192,8 +202,11 @@ Bots app (the second never reaches the helper), the hold-switch refusals, the 60
 sensitive sources a capture reports. `PersonalDesktop.activity.test.ts` proves a capture records
 and a pause blocks typing, clicking, keys and holds without reaching the driver;
 `PersonalBrowser.test.ts` proves the desktop taint is persisted, opens the card without the browser
-lease, and passes one action after Allow once then asks again. The web branding test pins the app
-identity to the manifest and the contract.
+lease, passes one action after Allow once then asks again, keeps A's card while B is queued, promotes
+B when A is answered, resumes B with its own task on Allow once and on Refuse, clears a stopped
+task's card and promotes the next bot, and resumes the thread's running task when a pause has no
+taskId. `ComputerScreen.test.tsx` keeps the active bot's help card when another thread's pause is
+pending. The web branding test pins the app identity to the manifest and the contract.
 
 ## Gate
 
