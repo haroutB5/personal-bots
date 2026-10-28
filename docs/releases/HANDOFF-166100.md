@@ -76,12 +76,12 @@ stays out of scope.
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=fbdc7db9bb1579c7aca00987301e0ec054a82fd4 release=fbdc7db9bb15 json-sha256=ff1da80d943b561fca69dbfd92cca0842a1b0c35e79174052dbef385a14b5474 result=FAIL -->
+<!-- gate-evidence:begin sha=abf8e97d9a6786b5cf149eade0caab569a30c266 release=abf8e97d9a67 json-sha256=9879bd337ec96ef66add7ba9ef2c45b6164949c986575311cfcbef87bc3d3bcf result=PASS -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
 - web-tests: PASS, exit 0
 - web-tsc: PASS, exit 0
-- e2e: FAIL, exit 2
+- e2e: PASS, exit 0
 
 <!-- gate-evidence:end -->
