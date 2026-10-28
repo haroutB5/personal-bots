@@ -468,12 +468,78 @@ function boundProviderEventForLogging(event: unknown): unknown {
     ancestors.delete(value);
     return true;
   };
+  const withinBudget = (value: unknown): boolean => {
+    remainingCharacters = MAX_RECORD_CHARACTERS;
+    remainingFields = MAX_RECORD_FIELDS;
+    try {
+      return fits(value, 0);
+    } catch {
+      // A failing accessor must not escape into provider processing.
+      return false;
+    }
+  };
+  if (withinBudget(event)) return event;
+  // A screenshot or other binary result can push one tool call past the whole
+  // record budget. Keep the call (title, id, status, name) and replace only the
+  // pixels: summarizing the entire event threw the call away with them.
+  const mediaBounded = boundEmbeddedBinary(event);
+  if (mediaBounded !== event && withinBudget(mediaBounded)) return mediaBounded;
+  return summarizeProviderEvent(mediaBounded);
+}
+
+/** Anything smaller is a screenshot thumbnail, not the payload a call carries. */
+const MAX_EMBEDDED_BINARY_CHARS = 8 * 1024;
+const DATA_URL_PATTERN = /^data:[a-z0-9.+-]+\/[a-z0-9.+-]+(?:;[a-z0-9=.+-]+)*;base64,/i;
+const BASE64_BODY_PATTERN = /^[A-Za-z0-9+/=\r\n]+$/;
+
+/**
+ * Replaces large embedded binary strings (a screenshot, an audio clip) with
+ * their length. The surrounding structure is copied only when something was
+ * actually replaced, so ordinary events are never touched.
+ */
+function boundEmbeddedBinary(event: unknown): unknown {
+  const ancestors = new WeakSet<object>();
+  const walk = (value: unknown, depth: number): unknown => {
+    if (typeof value === "string") {
+      if (
+        value.length > MAX_EMBEDDED_BINARY_CHARS &&
+        (DATA_URL_PATTERN.test(value) || BASE64_BODY_PATTERN.test(value))
+      ) {
+        return { omittedCharacters: value.length };
+      }
+      return value;
+    }
+    if (typeof value !== "object" || value === null) return value;
+    if (depth > MAX_RECORD_DEPTH || ancestors.has(value)) return value;
+    ancestors.add(value);
+    if (Array.isArray(value)) {
+      let changed = false;
+      const next = value.map((entry) => {
+        const bounded = walk(entry, depth + 1);
+        if (bounded !== entry) changed = true;
+        return bounded;
+      });
+      ancestors.delete(value);
+      return changed ? next : value;
+    }
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const key in value) {
+      if (!Object.hasOwn(value, key)) continue;
+      const bounded = walk(Reflect.get(value, key), depth + 1);
+      if (bounded !== Reflect.get(value, key)) changed = true;
+      next[key] = bounded;
+    }
+    ancestors.delete(value);
+    return changed ? next : value;
+  };
   try {
-    if (fits(event, 0)) return event;
+    return walk(event, 0);
   } catch {
-    // A failing accessor must not escape into provider processing.
+    // A failing accessor must not escape into provider processing; the caller
+    // falls back to the summary.
+    return event;
   }
-  return summarizeProviderEvent(event);
 }
 
 export function writeBatchedMessages(

@@ -101,6 +101,61 @@ describe("EventNdjsonLogger", () => {
     }).pipe(Effect.provide(Logger.layer([logCapture], { mergeWithExisting: false })));
   });
 
+  it.effect("keeps a tool call whose result is a screenshot instead of dropping it whole", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
+      const pixels = `data:image/png;base64,${"A".repeat(200_000)}`;
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "canonical" });
+        assert.exists(logger);
+        if (!logger) return;
+        yield* logger.write(
+          {
+            type: "item.completed",
+            provider: "opencode",
+            threadId: "thread-1",
+            item: {
+              itemType: "tool",
+              status: "completed",
+              title: "Screenshot the PC",
+              data: {
+                toolCallId: "call-screenshot-1",
+                rawOutput: {
+                  metadata: {
+                    toolCalls: [
+                      {
+                        tool: "t3-code.computer_screenshot",
+                        status: "completed",
+                        input: { monitor: 1 },
+                        output: pixels,
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          ThreadId.make("thread-1"),
+        );
+        yield* logger.close();
+
+        const line = parseLogLine(
+          NodeFS.readFileSync(ownedLogPath(basePath, "thread-1"), "utf8").trim(),
+        );
+        // The call stays readable; only the pixels are replaced by their size.
+        assert.include(line.payload, '"tool":"t3-code.computer_screenshot"');
+        assert.include(line.payload, '"toolCallId":"call-screenshot-1"');
+        assert.include(line.payload, `"omittedCharacters":${pixels.length}`);
+        assert.notInclude(line.payload, "A".repeat(1_024));
+        assert.notInclude(line.payload, '"truncated":true');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("writes effect-style lines to thread-scoped files", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
