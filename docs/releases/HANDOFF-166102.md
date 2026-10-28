@@ -69,6 +69,12 @@ release prepares a dedicated normal checkout at `/home/harout/Claude/AI/hbots-ru
   leaves `EnvironmentFile` and `PATH` alone, so `~/.config/hbots/env` and the existing
   `10-opencode-path.conf` PATH still apply.
 
+Verified before staging: the checkout is at the notes commit with no
+`.git/objects/info/alternates`, `hbots.mjs status --root dev` runs from it (it reported the live
+1.66.101 release), and an offline merged-unit check of the main unit plus both drop-ins resolves
+`WorkingDirectory`, `ExecStart`, `ConditionPathExists` and `Documentation` to the runtime checkout
+while keeping `EnvironmentFile` and the `10-opencode-path.conf` PATH.
+
 Nothing was installed or restarted by this release: `~/.config/systemd` is untouched.
 
 ### Ship-time steps (DevOps, through the idle runner)
