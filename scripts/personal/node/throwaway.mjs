@@ -213,7 +213,7 @@ async function stopRecorded(record) {
   const pgid = Number(record.pgid) || Number(record.pid);
   const leaderRunning = isRunning(record);
   const groupBefore = proc.processGroupPids(pgid);
-  const rootBefore = proc.rootProcessPids(record.root);
+  const rootBefore = proc.fakeProcessPids(record.root);
   if (!leaderRunning && groupBefore.length === 0 && rootBefore.length === 0) {
     return "the PID was not this server any more (left alone)";
   }
@@ -225,7 +225,7 @@ async function stopRecorded(record) {
   }
   // Deleting the root while a fake CLI still reads it would leave that process
   // running from a deleted folder, exactly what tripped the 1.66.99 release.
-  const left = proc.rootProcessPids(record.root);
+  const left = proc.fakeProcessPids(record.root);
   if (left.length > 0) {
     throw new Error(`Refusing to delete ${record.root}: PID(s) ${left.join(", ")} still name it.`);
   }
@@ -276,7 +276,7 @@ async function start({ name, release, port, json, schedulersOff, startTimeout = 
       ? NodeFS.readFileSync(logFile, "utf8").split(/\r?\n/).slice(-8).join("\n")
       : "";
     await proc.stopProcessTree(pid, { pgid: pgid ?? undefined, root });
-    const left = proc.rootProcessPids(root);
+    const left = proc.fakeProcessPids(root);
     if (left.length > 0) {
       throw new Error(
         `The server did not come up on ${origin}, and PID(s) ${left.join(", ")} still use ${root}; the root was kept.`,
@@ -334,7 +334,7 @@ async function main() {
       const record = readRecord(root);
       const stopped = record ? await stopRecorded(record) : "no recorded server";
       if (!record) {
-        const left = proc.rootProcessPids(root);
+        const left = proc.fakeProcessPids(root);
         if (left.length > 0) {
           throw new Error(`Refusing to delete ${root}: PID(s) ${left.join(", ")} still name it.`);
         }

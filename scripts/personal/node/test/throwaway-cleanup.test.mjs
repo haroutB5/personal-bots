@@ -64,8 +64,9 @@ async function spawnTree(root) {
   const script = `
 const { spawn } = require("node:child_process");
 const root = process.argv[1];
-const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", root], { stdio: "ignore" });
-const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", root], { stdio: "ignore" });
+const fake = root + "/fake/fakeok/claude";
+const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", fake], { stdio: "ignore" });
+const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", fake], { stdio: "ignore" });
 console.log(JSON.stringify({ leader: process.pid, child: child.pid, grandchild: grandchild.pid }));
 setInterval(() => {}, 1000);
 `;
@@ -135,7 +136,12 @@ test("stop kills an orphaned process group after the leader crashed", async (t) 
   const root = path.join(os.tmpdir(), ROOT_PREFIX + name);
   fs.mkdirSync(root, { recursive: true });
   const tree = await spawnTree(root);
-  const captured = [tree.leader, tree.child, tree.grandchild];
+  // A harness (the e2e runner) names the root in --root but is not part of the
+  // throwaway tree; the cleanup must leave it alive.
+  const helper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", root], {
+    stdio: "ignore",
+  });
+  const captured = [tree.leader, tree.child, tree.grandchild, helper.pid];
   t.after(() => {
     killCaptured(captured);
     fs.rmSync(root, { recursive: true, force: true });
@@ -153,7 +159,8 @@ test("stop kills an orphaned process group after the leader crashed", async (t) 
   const result = await stop(name);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /stopped the orphaned process group/);
-  assert.ok(await eventually(() => captured.every((pid) => !alive(pid))));
+  assert.ok(await eventually(() => captured.slice(0, 3).every((pid) => !alive(pid))));
+  assert.ok(alive(helper.pid), "a helper that only names the root survives");
   assert.deepEqual(groupPids(tree.leader), []);
   assert.equal(fs.existsSync(root), false, "the root is deleted only after the tree is gone");
 });

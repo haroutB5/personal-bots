@@ -32,15 +32,19 @@ process group (fake CLIs and grandchildren) running while the root was deleted u
 
 - `scripts/personal/node/throwaway.mjs` and the team's
   `/home/harout/Claude/AI/dev-team/tools/throwaway-server.mjs` now record the detached server's
-  process group and stop the **whole tree**: the group, the leader, and every process whose
-  command line still names the throwaway root. This works when the leader is already dead.
-- The root is deleted **only after a verification pass** finds no group member and no root-named
-  process left. Leftovers are reported with their PIDs and the root is kept, instead of leaving
-  processes running from a deleted folder.
+  process group and stop the **whole tree**: the group, the leader, and the root's fake Claude
+  CLIs even if one left the group. This works when the leader is already dead.
+- The first cut matched the root path in any command line and killed the e2e runner, which names
+  the root in `--root`: a cleanup must never touch a helper. The kill now uses the process group
+  and `<root>/fake` paths only, and a helper that only names the root is left alone.
+- The root is deleted **only after a verification pass** finds no group member and no fake CLI
+  left. Leftovers are reported with their PIDs and the root is kept, instead of leaving processes
+  running from a deleted folder.
 - Tests: two in `scripts/personal/node/test/throwaway-cleanup.test.mjs` (orphaned group after a
   crashed leader; live leader's whole group) and two in the dev-team tool's
-  `tests/throwaway-stop.test.mjs`. Each starts a real leader + fake CLI + grandchild and asserts
-  every PID and the group are gone and the root is deleted.
+  `tests/throwaway-stop.test.mjs`. Each starts a real leader + fake CLI + grandchild plus a helper
+  that names the root, then asserts every tree PID and the group are gone, the root is deleted,
+  and the helper survives.
 
 ## The web gate refuses a borrowed test tree (`fix(tools)`)
 
@@ -69,3 +73,15 @@ The assertion now matches the documented contract; **ClaudeAdapter.test.ts passe
 All five gates and gate evidence run from this commit in a clean worktree with its own
 `node_modules`; the result is in the Gate evidence section below. The preview/computer tool merge
 stays out of scope.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=fbdc7db9bb1579c7aca00987301e0ec054a82fd4 release=fbdc7db9bb15 json-sha256=ff1da80d943b561fca69dbfd92cca0842a1b0c35e79174052dbef385a14b5474 result=FAIL -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: FAIL, exit 2
+
+<!-- gate-evidence:end -->
