@@ -6,6 +6,8 @@ When an inbound turn is accepted, every open message-mode question in that threa
 
 Rename chat primes focus in the settings tap, opens the dialog synchronously and selects the title. New Chat opens its name field synchronously as well, including the conversation menu and chat-list entry points. Other reviewed menus open selection controls, settings or full-page forms rather than a directly opened text-field dialog, so those flows were left unchanged.
 
+QA found the conversation menu's item handler reclaimed focus after that tap. The menu now prevents that handler, closes explicitly and suppresses its return focus when opening New Chat. Reused question IDs now follow the newest request and its resolution, including when activities arrive out of order.
+
 The personal server suite passed 2,846 tests (six skipped); the web suite passed 3,119. Both app typechecks, the five-journey e2e gate and changed-file lint passed. The first server gate run hit a timing failure in an unrelated browser-service test; that test passed in isolation and the full server gate passed on retry. Repository-wide lint and typecheck failures were also reproduced on the clean 1.66.102 base and are outside this release gate.
 
 In Brave at 390 × 844 in dark mode, a fake Codex asked a question, a chat steer was sent, and without reload the card changed to “Answered in the chat” while the header changed from waiting to “Thinking.” Server tests cover the separate live `steer_task` dispatch. Rename focus and title selection were checked in the click on phone width and desktop; New Chat focus was also checked. The browser reported no page errors and a Clerk API warning. QA should verify these flows and Harout should confirm the iPhone keyboard and selection after release.
