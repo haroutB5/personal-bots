@@ -18,7 +18,7 @@ import {
   FILL_NAVIGATE_TIMEOUT_MS,
   TIMELINE_LIMIT,
 } from "./browserShared.ts";
-import type { BrowserCore } from "./browserCore.ts";
+import { DESKTOP_APPROVAL_KEY, type BrowserCore } from "./browserCore.ts";
 import type { BrowserLaunch } from "./browserLaunch.ts";
 import type { BrowserTabs } from "./browserTabs.ts";
 import type { BrowserOperations } from "./browserOperations.ts";
@@ -285,6 +285,17 @@ export const makeBrowserControl = (
           // A retry while the card is open returns the same card, whatever
           // holds the browser: a desktop pause may never have taken it.
           if (st.activeHelp?.request.threadId === input.threadId) return st.activeHelp.request;
+          // One card at a time (QA 28 Oct): a desktop pause skips the lease
+          // check below, so without this it replaced another bot's open card
+          // and left that bot parked with nobody ever answering it.
+          if (st.activeHelp !== null) {
+            return yield* Effect.fail(
+              new HostOperationError(
+                "PreviewAutomationControlInterruptedError",
+                "Another bot is waiting for the user right now. End your turn; your step stays paused and you can ask again once it's answered.",
+              ),
+            );
+          }
           const view = yield* lease.view;
           // A desktop screenshot can pause a thread that never took the
           // browser lease; its server-recorded approval is enough to open the
@@ -335,11 +346,13 @@ export const makeBrowserControl = (
                   kind: "sensitive" as const,
                   destination: approval.destination,
                   sources: [...approval.sources],
+                  // The card is answered on the Computer screen, not the
+                  // browser panel: the reply wording differs.
+                  ...(approval.key === DESKTOP_APPROVAL_KEY ? { surface: "desktop" as const } : {}),
                 }),
           };
-          const opening = st.activeHelp === null;
           st.activeHelp = { request, taskId: input.taskId, approval };
-          if (opening) runFork(Effect.ignore(keepLeaseWhileAsking(input.threadId)));
+          runFork(Effect.ignore(keepLeaseWhileAsking(input.threadId)));
           yield* recordActivity({
             kind: "control",
             summary: `asked for help: ${request.reason}`,

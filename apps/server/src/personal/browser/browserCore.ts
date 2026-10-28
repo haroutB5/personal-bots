@@ -57,6 +57,13 @@ import type { PersonalBrowser } from "./PersonalBrowser.ts";
 /** How a paused sensitive step starts its sentence; the activity feed uses it too. */
 export const EGRESS_PAUSE_PREFIX = "Paused:";
 
+/**
+ * The desktop's approval key. It is not an origin: what a screenshot showed
+ * can be typed or pasted into any app on the PC, so one approval covers one
+ * action, never a destination that could be reused.
+ */
+export const DESKTOP_APPROVAL_KEY = "desktop-input";
+
 export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
     const options = rawOptions;
@@ -440,13 +447,6 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
 
     const approvalQuestion = (approval: EgressApproval) =>
       `Allow sending what the bot saw on ${approval.sources.join(", ")} to ${approval.destination}? Choose Allow once to let this one step through, or Refuse to skip it.`;
-
-    /**
-     * The desktop's approval key. It is not an origin: what a screenshot
-     * showed can be typed or pasted into any app on the PC, so one approval
-     * covers one action, never a destination that could be reused.
-     */
-    const DESKTOP_APPROVAL_KEY = "desktop-input";
 
     const recordDesktopExposure: PersonalBrowser["Service"]["recordDesktopExposure"] = (input) =>
       Effect.gen(function* () {

@@ -3701,6 +3701,87 @@ describe("PersonalBrowser", () => {
       },
     );
 
+    // QA 28 Oct: a desktop pause skips the lease check, so B's card replaced
+    // A's open card. A was never told or resumed, and Refuse left "Nobody is
+    // using it" on screen for a request that still belonged to A.
+    it.effect("never replaces another bot's open help card with a desktop pause", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      const other = ThreadId.make("thread-b");
+      const otherTask = PersonalTaskId.make("task-other");
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const a = yield* askHelp(browser);
+        expect((yield* browser.status("session-1")).helpRequest).toEqual(a);
+
+        // B is paused on a desktop step and asks for help while A's card is open.
+        yield* browser.recordDesktopExposure({ threadId: other, value: BANK });
+        const paused = yield* browser.guardDesktopInput({ threadId: other }).pipe(Effect.flip);
+        expect(paused.message).toContain("request_browser_help");
+        const refusedHelp = yield* browser
+          .requestHelp({
+            threadId: other,
+            botId: PersonalBotId.make("bot-other"),
+            botName: "Other",
+            taskId: otherTask,
+            reason: "Type what the screenshot showed",
+          })
+          .pipe(Effect.flip);
+        expect(refusedHelp.message).toBe(
+          "Another bot is waiting for the user right now. End your turn; your step stays paused and you can ask again once it's answered.",
+        );
+
+        // A's card is untouched and B keeps its pause and its taint.
+        expect((yield* browser.status("session-1")).helpRequest).toEqual(a);
+        expect(yield* browser.sensitiveExposure(other)).toEqual([BANK]);
+        expect(harness.waits).toEqual([taskId]);
+
+        // Answering A still works and resumes A's task.
+        expect((yield* browser.takeControl("session-1")).helpRequest).toEqual(a);
+        expect((yield* browser.returnToAgent("session-1")).helpRequest).toBeNull();
+        expect(harness.resumes).toEqual([
+          { taskId, note: "The user finished helping in the browser. Continue the task." },
+        ]);
+
+        // With A answered, B can ask again and gets its own desktop card.
+        const b = yield* browser.requestHelp({
+          threadId: other,
+          botId: PersonalBotId.make("bot-other"),
+          botName: "Other",
+          taskId: otherTask,
+          reason: "Type what the screenshot showed",
+        });
+        expect(b).toMatchObject({
+          threadId: other,
+          kind: "sensitive",
+          destination: "another app on this PC",
+          sources: [BANK],
+          surface: "desktop",
+        });
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("lets exactly one desktop step through on Allow once, then pauses again", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.recordDesktopExposure({ threadId, value: BANK });
+        yield* browser.guardDesktopInput({ threadId }).pipe(Effect.flip);
+        yield* askHelp(browser);
+
+        yield* browser.approveEgress({ threadId, sessionId: "session-1" });
+        // The approved step goes through...
+        yield* browser.guardDesktopInput({ threadId });
+        // ...and the very next one pauses again with a fresh card.
+        const next = yield* browser.guardDesktopInput({ threadId }).pipe(Effect.flip);
+        expect(next.message).toContain("request_browser_help");
+        const card = yield* askHelp(browser);
+        expect(card).toMatchObject({ kind: "sensitive", surface: "desktop" });
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
     it.effect("pauses leaving a sensitive site for another origin until you approve it", () => {
       const fake = makeFakeDriver();
       const harness: TaskHarness = { waits: [], resumes: [] };

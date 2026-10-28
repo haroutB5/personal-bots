@@ -79,6 +79,10 @@ export const PENDING_CONFIRM_NOTE =
   "Not done yet: a Yes/No card in this chat asks Harout to confirm, and only his tap can approve it. Do not retry, rephrase or work around it. Tell him in one line what you asked for and end your turn; his answer arrives as a follow-up message.";
 export const REQUEST_SECRET_NOTE =
   "Requested. The user will enter it in a secure form and choose whether it is brokered (you use it through secret_request and never see it) or an environment variable; you'll be resumed and told which. Never ask for it in chat.";
+export const BROWSER_HELP_NOTE =
+  "The user has been asked to take control from the browser panel in this chat. Tell them in one sentence what to do there, then end your turn. You continue automatically when they return control; do not ask them to tell you.";
+export const DESKTOP_HELP_NOTE =
+  "The user has been asked to approve it on the Computer screen in this chat. Tell them in one sentence what to do there, then end your turn. You continue automatically when they approve; do not ask them to tell you.";
 
 /**
  * The help reason as the user sees it: one line, at most
@@ -848,7 +852,7 @@ const make = Effect.gen(function* () {
     request_browser_help: (input) =>
       Effect.gen(function* () {
         const caller = yield* callerTask();
-        yield* browser
+        const request = yield* browser
           .requestHelp({
             threadId: caller.threadId,
             botId: caller.botId,
@@ -861,7 +865,7 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(readable));
         return {
           requested: true as const,
-          note: "The user has been asked to take control from the browser panel in this chat. Tell them in one sentence what to do there, then end your turn. You continue automatically when they return control; do not ask them to tell you.",
+          note: request.surface === "desktop" ? DESKTOP_HELP_NOTE : BROWSER_HELP_NOTE,
         };
       }),
     // Which thread opened the browser does not gate this: the browser is

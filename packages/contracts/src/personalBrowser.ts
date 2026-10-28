@@ -60,6 +60,11 @@ export const PersonalBrowserHelpRequest = Schema.Struct({
   destination: Schema.optional(Schema.String),
   /** Sensitive step only: the marked origins whose content is at stake. */
   sources: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * Sensitive step only: where the user answers it. `desktop` is a pause on
+   * the Computer screen, which the browser panel's copy would misdescribe.
+   */
+  surface: Schema.optional(Schema.Literal("desktop")),
 });
 export type PersonalBrowserHelpRequest = typeof PersonalBrowserHelpRequest.Type;
 
