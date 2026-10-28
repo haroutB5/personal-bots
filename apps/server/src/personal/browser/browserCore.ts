@@ -441,6 +441,53 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
     const approvalQuestion = (approval: EgressApproval) =>
       `Allow sending what the bot saw on ${approval.sources.join(", ")} to ${approval.destination}? Choose Allow once to let this one step through, or Refuse to skip it.`;
 
+    /**
+     * The desktop's approval key. It is not an origin: what a screenshot
+     * showed can be typed or pasted into any app on the PC, so one approval
+     * covers one action, never a destination that could be reused.
+     */
+    const DESKTOP_APPROVAL_KEY = "desktop-input";
+
+    const recordDesktopExposure: PersonalBrowser["Service"]["recordDesktopExposure"] = (input) =>
+      Effect.gen(function* () {
+        const keys = yield* exposureKeys(input.threadId);
+        yield* recordExposure(keys, "source", input.value);
+      });
+
+    const guardDesktopInput: PersonalBrowser["Service"]["guardDesktopInput"] = (input) =>
+      Effect.gen(function* () {
+        const keys = yield* exposureKeys(input.threadId);
+        const sources = [...(yield* exposureOf(keys)).sources].toSorted();
+        if (sources.length === 0) return;
+        if (oneShotApprovals.get(input.threadId) === DESKTOP_APPROVAL_KEY) {
+          oneShotApprovals.delete(input.threadId);
+          return;
+        }
+        if (refusedApprovals.get(input.threadId) === DESKTOP_APPROVAL_KEY) {
+          pendingApprovals.delete(input.threadId);
+          pendingApprovalAt.delete(input.threadId);
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              "The user refused this step. Do not retry it; carry on without it.",
+            ),
+          );
+        }
+        const approval: EgressApproval = {
+          key: DESKTOP_APPROVAL_KEY,
+          sources,
+          destination: "another app on this PC",
+        };
+        pendingApprovals.set(input.threadId, approval);
+        pendingApprovalAt.set(input.threadId, yield* nowIso);
+        return yield* Effect.fail(
+          new HostOperationError(
+            "PreviewAutomationExecutionError",
+            `${EGRESS_PAUSE_PREFIX} this could carry what you saw on ${sources.join(", ")} (a site the user marked sensitive) to ${approval.destination}. Call request_browser_help now with a one-line reason, tell the user in one sentence what you want to do, then end your turn. You continue automatically if they approve; do not try another route.`,
+          ),
+        );
+      });
+
     const notify = PubSub.publish(statusDirty, undefined).pipe(Effect.asVoid);
 
     /**
@@ -745,6 +792,8 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       safeUrl,
       screencastLock,
       sensitiveExposure,
+      recordDesktopExposure,
+      guardDesktopInput,
       st,
       status,
       statusDirty,

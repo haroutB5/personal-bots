@@ -58,6 +58,7 @@ const makeContext = (overrides: Partial<DesktopActionContext> = {}) => {
     heldButtons: () => new Set<string>(),
     markButton: () => undefined,
     markKeysHeld: () => undefined,
+    exposure: { record: async () => undefined, guard: async () => undefined },
     ...overrides,
   };
   return { context, calls };
@@ -163,5 +164,58 @@ describe("desktop action activity", () => {
     expect(shot.activity?.summary).toBe("screenshot of eDP-1");
     const zoom = await zoomShot(context, { x: 10, y: 10, width: 100, height: 100 });
     expect(zoom.activity?.summary).toBe("zoomed in");
+  });
+
+  it("records the sensitive windows a screenshot carried", async () => {
+    const recorded: string[] = [];
+    const { context: base } = makeContext({
+      exposure: {
+        record: async (value) => {
+          recorded.push(value);
+        },
+        guard: async () => undefined,
+      },
+    });
+    const context: DesktopActionContext = {
+      ...base,
+      driver: {
+        ...base.driver,
+        request: (cmd, params = {}) =>
+          cmd === "screenshot"
+            ? Promise.resolve({
+                mimeType: "image/jpeg",
+                data: "abc",
+                sensitiveSources: ["https://bank.example"],
+              })
+            : base.driver.request(cmd, params),
+      },
+    };
+    await captureShot(context);
+    expect(recorded).toEqual(["https://bank.example"]);
+  });
+
+  it("refuses typing and clicking while the thread carries a sensitive capture", async () => {
+    const { context, calls } = makeContext({
+      exposure: {
+        record: async () => undefined,
+        guard: async () => {
+          throw new Error(
+            "Paused: this could carry what you saw on https://bank.example to another app",
+          );
+        },
+      },
+    });
+    await expect(typeText(context, { text: "hello", screenshot: false })).rejects.toThrow(/Paused/);
+    await expect(click(context, { x: 10, y: 10, screenshot: false })).rejects.toThrow(/Paused/);
+    await expect(pressKeys(context, { keys: "ctrl+v", screenshot: false })).rejects.toThrow(
+      /Paused/,
+    );
+    await expect(
+      holdKey(context, { keys: "Right", durationMs: 100, screenshot: false }),
+    ).rejects.toThrow(/Paused/);
+    expect(calls.some((call) => call.cmd === "type")).toBe(false);
+    expect(calls.some((call) => call.cmd === "click")).toBe(false);
+    expect(calls.some((call) => call.cmd === "keys")).toBe(false);
+    expect(calls.some((call) => call.cmd === "hold")).toBe(false);
   });
 });

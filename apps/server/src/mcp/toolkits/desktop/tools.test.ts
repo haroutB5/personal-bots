@@ -37,6 +37,9 @@ it("registers the 1.66.6 desktop tools and states their limits", () => {
     expect(byName(name).description, name).toMatch(/call again if told/);
     expect(byName(name).description, name).toMatch(/keep your place/);
     expect(byName(name).description, name).toMatch(/latest computer_screenshot/);
+    expect(byName(name).description, name).toMatch(
+      /never sign in, use saved passwords or autofill/,
+    );
   }
   const hold = byName("computer_hold_key").description ?? "";
   expect(hold).toMatch(/up to 30 s/);

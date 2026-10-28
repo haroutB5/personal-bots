@@ -125,6 +125,23 @@ export class PersonalBrowser extends Context.Service<
      * sensitive has been opened, not that the thread is trusted.
      */
     readonly sensitiveExposure: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<string>>;
+    /**
+     * A desktop screenshot carried a window showing a site the user marked
+     * sensitive. Recorded in the same persisted store and under the same
+     * thread/root-task keys as the shared browser's exposure.
+     */
+    readonly recordDesktopExposure: (input: {
+      readonly threadId: ThreadId;
+      readonly value: string;
+    }) => Effect.Effect<void>;
+    /**
+     * Refuses desktop input while the thread carries that exposure, through
+     * the same pause, approval card and one-shot decision as the browser. The
+     * bot is told to call request_browser_help and end its turn.
+     */
+    readonly guardDesktopInput: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<void, HostOperationError>;
     readonly activity: (sessionId: string) => Stream.Stream<PersonalBrowserStreamItem>;
     readonly handleAutomationRequest: (
       request: PreviewAutomationRequest,
@@ -271,6 +288,8 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
       pendingApprovals,
       refusedApprovals,
       sensitiveExposure,
+      recordDesktopExposure,
+      guardDesktopInput,
       st,
       status,
       tasks,
@@ -407,6 +426,8 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
           yield* lease.releaseIfOwner(threadId);
         }).pipe(Effect.asVoid),
       sensitiveExposure,
+      recordDesktopExposure,
+      guardDesktopInput,
       activity,
       handleAutomationRequest,
       fillLogin,

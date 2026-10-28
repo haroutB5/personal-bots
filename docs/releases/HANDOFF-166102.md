@@ -115,36 +115,91 @@ If the runtime path fails after the restart, restore the old unit without deleti
 If the drop-in was installed but the release was refused before its restart, the server never
 moved; steps 1-2 alone put the unit back.
 
-## Desktop control drives the user's own browsers (`fix(server)`)
+## Desktop control drives the user's own browsers, with the Bots app and sensitive captures closed (`fix(server)`)
 
 Computer use on Linux refused every window whose class began with brave, chromium, chrome or
 google-chrome, so a bot could not click in Harout's own Brave (YouTube Music, signed in) or a
-throwaway-profile Chromium, and the shared-browser tools cannot sign in to Google.
+throwaway-profile Chromium, and the shared-browser tools cannot sign in to Google. It now drives
+the user's own Brave, Chromium, Firefox, Edge and Vivaldi windows and still refuses four things:
+the bots' shared browser, the Bots app itself, any window showing a site Harout marked sensitive,
+and password managers. `apps/server/src/personal/desktop/linux/browserWindows.ts` decides per
+window; the focus guard, the point guard and every key chord ask it.
 
-New `apps/server/src/personal/desktop/linux/browserWindows.ts` decides per window, on every
-action, in both the focus guard and the point guard:
+- **Shared browser.** Identified by the window's process, not its class: its `--user-data-dir`
+  sits under `<baseDir>/personal/browser-profiles`. `/proc/<pid>/cmdline` is read through a cache
+  keyed by pid **and** `/proc/<pid>/stat` field 22 (the start time), so a reused pid cannot inherit
+  the previous browser's profile. Both sides are real paths and the folder match needs a path
+  boundary. Brave rewrites its process title, which collapses the argv to spaces on this build, so
+  the parser accepts NUL-separated args first and a collapsed line second; a profile path with a
+  space stays one argument when the NULs survive. The live check below caught the collapsed form.
+- **The Bots app, any window class.** A window whose title is the app's own is refused with
+  `This window is the Bots app; bots can't drive it from the desktop.` The check runs before the
+  browser-class test, so Firefox, Edge, Vivaldi and an Electron window are covered too. The app name
+  and manifest name live in `packages/contracts/src/personalAppIdentity.ts`;
+  `apps/web/src/branding.ts` and the web manifest read the same values, and a web test fails if
+  branding or the manifest drifts. Titles match by containment on `T3 Code` (so a browser's
+  ` - Brave` suffix or a future chat prefix still matches) and exactly on the manifest name `Bots`
+  (which a PWA can show while loading). The installed Bots PWA's window class is read from its
+  `.desktop` shortcut (`StartupWMClass`, or `--app-id` in `Exec`) under `$XDG_DATA_HOME/applications`
+  and `~/.local/share/applications`, cached for a minute; no Bots PWA is installed today, so the list
+  is empty, and installing one adds its class without a code change. If a shortcut cannot be read,
+  an untitled `<browser>-<id>-Default` PWA window is refused (it could be the app loading); another
+  PWA with its own title still passes.
+- **Sensitive sites.** A title that names a saved login with the sensitive flag stays blocked, on
+  the host and the label, case-insensitively, now on word boundaries (`barclays` no longer matches
+  `barclaysian`). If the list cannot be read, browser windows stay blocked as before. The guard
+  reads only `origin` and `label` (`PersonalLoginRepository.sensitiveSites`), never the full login
+  rows with their sealed passwords.
+- **Password managers.** Refused by class (1Password, Bitwarden, KeePassXC, Enpass, Proton Pass)
+  and by browser title (`passwords`, `password manager`, `1password`, `bitwarden`, `keepass`,
+  `proton pass`, `enpass`, `chrome://password-manager`, `brave://password-manager`,
+  `edge://settings/passwords`), which covers their PWAs too. The refusal says which rule fired.
 
-- The bots' shared browser is identified by the window's process, not its class: its
-  `--user-data-dir` sits under `<baseDir>/personal/browser-profiles` (`/proc/<pid>/cmdline`,
-  cached per pid so the guard stays cheap). That window stays blocked.
-- Every other Brave/Chromium/Chrome window, Brave PWAs included, is allowed unless its title
-  names a saved login the user marked sensitive: the same list the shared browser's
-  sensitive-site pause uses (host and label, case-insensitively).
-- If that list cannot be read, browser windows stay blocked as before; password managers are
-  unchanged.
-- The refusal says which rule fired: `This is the bots' shared browser; use the browser tools`,
-  or `This browser window shows a site you marked sensitive`.
+### Keys and sensitive captures
 
-Tests: `browserWindows.test.ts` covers the shared pid, a normal `brave-browser`, a Chromium temp
-profile, a Brave PWA, a sensitive title, an unreadable list and an unidentifiable process;
-`driver.test.ts` exercises both guards, and the password-manager test is unchanged. The web
-ComputerScreen suite (26 tests, including the merged single-control fix) passes.
+- **Every chord is re-guarded.** `computer_key` used to check the focused window once per call;
+  two chords could cross into a sensitive or Bots-app window. Each chord now clears the window
+  cache and runs the focus guard again, and a call is capped at 60 presses across `repeat ×
+combinations`. A hold cannot re-guard mid-press, so `computer_hold_key` refuses chords that
+  switch window or browser tab (`ctrl+tab`, `ctrl+1`-`ctrl+9`, `ctrl+PageUp/PageDown`, `alt+tab`,
+  `super+*`) and tells the bot to use `computer_key`.
+- **Screenshots carry a taint.** Every bot capture (`computer_screenshot`, `computer_zoom`, and the
+  after-action screenshot) lists the mapped windows that overlap the capture rectangle (one
+  `hyprctl clients` read, the same list the point guard uses, no extra process) and records each
+  sensitive origin a browser window in it names. It reuses the shared browser's store
+  (`personal_sensitive_exposures`, migration 077) for the thread **and** its root task, so it
+  survives a restart exactly as the browser's does, and a failed list read is treated as carrying.
+- **While carrying, input pauses.** `computer_type`, `computer_key`, `computer_hold_key`,
+  `computer_click`, `computer_drag` and `computer_mouse_down` are refused with the shared browser's
+  `Paused:` wording: the bot calls `request_browser_help`, the Computer tab shows the same
+  `ComputerSensitiveCard` with Allow once / Refuse, and one approval covers one action. Screenshots
+  and the pointer stay available, so the bot can still look. `request_browser_help` accepts a
+  desktop pause even when the thread never took the browser lease.
+
+**What this is.** A mistake-prevention rail, not a security boundary. It only knows the sites
+Harout marked sensitive in Bots, plus password managers and the shared browser. A site he did not
+mark, another browser profile signed into something else, a bot's own shell, a provider's web tools
+or another machine get no pause. The tool text now also says: in the user's own browser, never sign
+in, use saved passwords or autofill; ask the user.
+
+Tests: `browserWindows.test.ts` covers the shared pid, a reused pid, NUL and title-collapsed
+command lines, a space in the profile path and the boundary check, the user's Brave and temp
+Chromium, a Brave PWA, Firefox/Edge/Vivaldi classes, every Bots title variant and the installed PWA
+class, another app's PWA and the untitled fallback, sensitive labels on word boundaries, password
+manager titles, an unreadable list and an unidentifiable process. `driver.test.ts` covers both
+guards, a Bots window in a Firefox class, a password-manager title, two chords crossing into the
+Bots app (the second never reaches the helper), the hold-switch refusals, the 60-press cap and the
+sensitive sources a capture reports. `PersonalDesktop.activity.test.ts` proves a capture records
+and a pause blocks typing, clicking, keys and holds without reaching the driver;
+`PersonalBrowser.test.ts` proves the desktop taint is persisted, opens the card without the browser
+lease, and passes one action after Allow once then asks again. The web branding test pins the app
+identity to the manifest and the contract.
 
 ## Gate
 
-All six gates and gate evidence ran from `cc04dcff706d` in this worktree with its own
-`node_modules`; the record is in the Gate evidence section below. Server tests: 3506 passed,
-6 skipped. Web tests: 3176 passed. Client runtime: 22 passed. e2e: 12 of 12 journeys passed.
+All six gates and gate evidence run from the final staged sha in this worktree with its own
+`node_modules`; the record is in the Gate evidence section below. Server, web, client-runtime and
+end-to-end results are recorded there with their exit codes.
 
 ## Gate evidence
 

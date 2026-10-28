@@ -282,12 +282,20 @@ export const makeBrowserControl = (
     const requestHelp: PersonalBrowser["Service"]["requestHelp"] = (input) =>
       lease.runExclusive(
         Effect.gen(function* () {
+          // A retry while the card is open returns the same card, whatever
+          // holds the browser: a desktop pause may never have taken it.
+          if (st.activeHelp?.request.threadId === input.threadId) return st.activeHelp.request;
           const view = yield* lease.view;
+          // A desktop screenshot can pause a thread that never took the
+          // browser lease; its server-recorded approval is enough to open the
+          // same card. Everything else still needs the browser's controller.
+          const pendingBefore = pendingApprovals.get(input.threadId) ?? null;
           if (
-            view.ownerType !== "agent" ||
-            view.ownerId !== input.threadId ||
-            !view.agentActive ||
-            view.takeoverPending
+            pendingBefore === null &&
+            (view.ownerType !== "agent" ||
+              view.ownerId !== input.threadId ||
+              !view.agentActive ||
+              view.takeoverPending)
           ) {
             return yield* Effect.fail(
               new HostOperationError(
@@ -296,7 +304,6 @@ export const makeBrowserControl = (
               ),
             );
           }
-          if (st.activeHelp?.request.threadId === input.threadId) return st.activeHelp.request;
           yield* tasks
             .waitForBrowser({ taskId: input.taskId })
             .pipe(

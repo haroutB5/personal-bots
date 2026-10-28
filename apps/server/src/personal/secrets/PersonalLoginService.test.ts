@@ -45,6 +45,7 @@ const makeLayer = (
           setSensitive: (input) =>
             Effect.succeed(Option.some({ ...login, sensitive: input.sensitive })),
           sensitiveOrigins: () => Effect.succeed([]),
+          sensitiveSites: () => Effect.succeed([]),
           ...repository,
         }),
       ),

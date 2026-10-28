@@ -34,13 +34,17 @@ import * as NodePath from "node:path";
 
 import { type DesktopDriver, DesktopHelperError } from "../DesktopHelper.ts";
 import { unionRect, type DesktopRect } from "../desktopGeometry.ts";
-import type { KeyEntry } from "../desktopKeys.ts";
+import { DesktopKeyError, type KeyEntry } from "../desktopKeys.ts";
 import { LinuxScreenCapture } from "./capture.ts";
 import {
   browserWindowRefusal,
   classifyBrowserWindow,
   isBrowserWindowClass,
   makeCommandLineCache,
+  readInstalledBotsPwaWindowClasses,
+  readProcessStartTime,
+  sensitiveSitesInTitle,
+  windowTitleShowsBotsApp,
   type BrowserWindowVerdict,
   type SensitiveSite,
 } from "./browserWindows.ts";
@@ -101,10 +105,44 @@ const PASSWORD_MANAGER_CLASSES = [
  * window, PWAs included, is the user's own and the desktop may drive it.
  */
 const BROWSER_GUARD_TTL_MS = 10_000;
+/** Installed app shortcuts change only when the user installs a PWA. */
+const INSTALLED_APP_TTL_MS = 60_000;
 
 /** Matched by containment: a password manager's class is namespaced. */
 const isPasswordManagerClass = (windowClass: string): boolean =>
   PASSWORD_MANAGER_CLASSES.some((name) => windowClass.includes(name));
+
+/**
+ * The Bots app can approve its own cards, undo memory and edit bots, so no
+ * window showing it is driven — whatever its class (Brave tab, Firefox, the
+ * Electron desktop app). The title is the one `apps/web` sets.
+ */
+const BOTS_APP_REFUSAL = "This window is the Bots app; bots can't drive it from the desktop.";
+
+/** One call's chords: 20 combinations times 50 repeats would be 1000 presses. */
+const MAX_KEY_CHORDS_PER_CALL = 60;
+
+/**
+ * A chord that moves focus or switches the browser tab while held. `keys`
+ * re-guards each chord; a hold cannot, because the window it starts in may not
+ * be the one it ends in, so these are refused for holds outright.
+ */
+const isWindowSwitchChord = (combo: ReadonlyArray<KeyEntry>): boolean => {
+  const hasCode = (code: number) =>
+    combo.some((entry) => typeof entry === "number" && entry === code);
+  const mains = combo.filter((entry) => !isModifierEntry(entry));
+  if (mains.length === 0) return false;
+  const main = mains[0];
+  const code = main !== undefined && typeof main === "number" ? main : null;
+  if (code === null) return false;
+  const ctrl = hasCode(0x11);
+  const alt = hasCode(0x12);
+  const superKey = hasCode(0x5b);
+  if (superKey) return true;
+  if (ctrl && (code === 0x09 || code === 0x21 || code === 0x22)) return true;
+  if (ctrl && code >= 0x31 && code <= 0x39) return true;
+  return alt && code === 0x09;
+};
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -130,8 +168,16 @@ export interface LinuxDesktopDriverOptions {
   readonly sensitiveSites?: () => Promise<ReadonlyArray<SensitiveSite>>;
   /** Where hbots keeps its own browser profiles (`<baseDir>/personal/browser-profiles`). */
   readonly sharedBrowserProfileRoots?: ReadonlyArray<string>;
+  /**
+   * The installed Bots PWA's window classes, read from its application
+   * shortcut. Null when the shortcuts cannot be read; the guard then falls
+   * back to the title and fails closed on an untitled PWA.
+   */
+  readonly readBotsPwaWindowClasses?: () => ReadonlyArray<string> | null;
   /** Test seam: `/proc/<pid>/cmdline` by default. */
   readonly readProcessCommandLine?: (pid: number) => string | null;
+  /** Test seam: field 22 of `/proc/<pid>/stat` by default. */
+  readonly readProcessStartTime?: (pid: number) => string | null;
   readonly log?: (line: string) => void;
 }
 
@@ -164,6 +210,12 @@ export class LinuxDesktopDriver implements DesktopDriver {
     readonly at: number;
   } | null = null;
   private sensitiveSitesFailedAt = 0;
+  /** The installed Bots PWA's window classes, briefly cached; null while unreadable. */
+  private botsPwaClassesCache: {
+    readonly classes: ReadonlyArray<string>;
+    readonly at: number;
+  } | null = null;
+  private botsPwaClassesFailedAt = 0;
   private monitorsCache: ScreenState | null = null;
   private workspaceCache: { workspaces: VisibleWorkspaces; at: number } | null = null;
   private layoutRefresh: Promise<void> | null = null;
@@ -191,7 +243,11 @@ export class LinuxDesktopDriver implements DesktopDriver {
     this.session = session;
     this.options = options;
     this.log = options.log ?? (() => undefined);
-    this.processCommandLine = makeCommandLineCache(options.readProcessCommandLine);
+    this.processCommandLine = makeCommandLineCache(
+      options.readProcessCommandLine,
+      undefined,
+      options.readProcessStartTime ?? readProcessStartTime,
+    );
     this.capture = new LinuxScreenCapture(session, options.tempDir);
     this.helper = new LinuxDesktopHelper(
       session,
@@ -388,7 +444,40 @@ export class LinuxDesktopDriver implements DesktopDriver {
     }
   }
 
-  /** The shared-browser and sensitive-site rule for one window, or null. */
+  /** The installed Bots PWA's classes, cached: installs are rare, guards are not. */
+  private botsPwaWindowClassesOrNull(): ReadonlyArray<string> | null {
+    const now = Date.now();
+    if (
+      this.botsPwaClassesCache !== null &&
+      now - this.botsPwaClassesCache.at < INSTALLED_APP_TTL_MS
+    ) {
+      return this.botsPwaClassesCache.classes;
+    }
+    if (now - this.botsPwaClassesFailedAt < BROWSER_GUARD_TTL_MS) return null;
+    try {
+      const classes = (
+        this.options.readBotsPwaWindowClasses ?? readInstalledBotsPwaWindowClasses
+      )();
+      if (classes === null) {
+        this.botsPwaClassesCache = null;
+        this.botsPwaClassesFailedAt = now;
+        return null;
+      }
+      this.botsPwaClassesCache = { classes, at: now };
+      return classes;
+    } catch (error) {
+      this.botsPwaClassesCache = null;
+      this.botsPwaClassesFailedAt = now;
+      this.log(
+        `installed-app shortcuts unreadable, PWA windows checked by title: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /** The shared-browser, Bots-app and sensitive-site rule for one window, or null. */
   private async browserRefusal(
     window: { readonly class: string; readonly title: string; readonly pid: number },
     atPoint: boolean,
@@ -400,6 +489,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
       commandLine: this.processCommandLine(window.pid),
       profileRoots: this.options.sharedBrowserProfileRoots ?? [],
       sites: await this.sensitiveSitesOrNull(),
+      botsPwaClasses: this.botsPwaWindowClassesOrNull(),
     });
     if (verdict.kind === "allow") return null;
     return new DesktopHelperError(
@@ -434,6 +524,9 @@ export class LinuxDesktopDriver implements DesktopDriver {
       );
     }
     if (window !== null) {
+      if (windowTitleShowsBotsApp(window.title)) {
+        throw new DesktopHelperError("blocked", BOTS_APP_REFUSAL);
+      }
       const refusal = await this.browserRefusal(window, false);
       if (refusal !== null) throw refusal;
     }
@@ -471,6 +564,9 @@ export class LinuxDesktopDriver implements DesktopDriver {
         y < window.y + window.height,
     );
     for (const window of under) {
+      if (windowTitleShowsBotsApp(window.title)) {
+        throw new DesktopHelperError("blocked", BOTS_APP_REFUSAL);
+      }
       const refusal = await this.browserRefusal(window, true);
       if (refusal !== null) throw refusal;
     }
@@ -808,17 +904,67 @@ export class LinuxDesktopDriver implements DesktopDriver {
     params: Readonly<Record<string, unknown>>,
   ): Promise<Record<string, unknown>> {
     return this.withOverlayHidden(async () => {
-      const shot = await this.capture.capture({
+      const rect = {
         x: num(params.x),
         y: num(params.y),
         width: num(params.width, 1),
         height: num(params.height, 1),
+      };
+      const shot = await this.capture.capture({
+        ...rect,
         quality: num(params.quality, 80),
         ...(params.outWidth === undefined ? {} : { outWidth: num(params.outWidth) }),
         ...(params.outHeight === undefined ? {} : { outHeight: num(params.outHeight) }),
       });
-      return { mimeType: "image/jpeg", data: shot.data, width: shot.width, height: shot.height };
+      return {
+        mimeType: "image/jpeg",
+        data: shot.data,
+        width: shot.width,
+        height: shot.height,
+        sensitiveSources: await this.captureSensitiveSources(rect),
+      };
     });
+  }
+
+  /**
+   * The sensitive origins a screenshot just captured. Every bot capture goes
+   * through `screenshot`, including zoom and the after-action shot, so this is
+   * where the thread's exposure is decided. One `hyprctl clients` read, the
+   * same list the point guard uses, and never a window's contents: the title
+   * and the marked sites are enough to know the screenshot carries them.
+   */
+  private async captureSensitiveSources(rect: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  }): Promise<ReadonlyArray<string>> {
+    const sites = await this.sensitiveSitesOrNull();
+    let windows: ReadonlyArray<MappedWindow>;
+    try {
+      windows = await this.mappedWindows();
+    } catch {
+      // The shot exists but cannot be checked: carry it rather than guess.
+      return ["a sensitive site (the window list could not be read)"];
+    }
+    const inCapture = windows.filter(
+      (window) =>
+        window.x < rect.x + rect.width &&
+        window.x + window.width > rect.x &&
+        window.y < rect.y + rect.height &&
+        window.y + window.height > rect.y,
+    );
+    if (sites === null) {
+      return inCapture.some((window) => isBrowserWindowClass(window.class))
+        ? ["a sensitive site (the list could not be read)"]
+        : [];
+    }
+    const sources = new Set<string>();
+    for (const window of inCapture) {
+      if (!isBrowserWindowClass(window.class)) continue;
+      for (const source of sensitiveSitesInTitle(window.title, sites)) sources.add(source);
+    }
+    return [...sources];
   }
 
   async request(
@@ -1040,13 +1186,22 @@ export class LinuxDesktopDriver implements DesktopDriver {
       }
       case "keys": {
         await this.ensureLayout();
-        await this.guardInput();
         const combos = Array.isArray(params.combos)
           ? (params.combos as ReadonlyArray<ReadonlyArray<KeyEntry>>)
           : [];
         const repeat = Math.max(1, Math.min(50, num(params.repeat, 1)));
+        const presses = repeat * combos.length;
+        if (presses > MAX_KEY_CHORDS_PER_CALL) {
+          throw new DesktopKeyError(
+            `That would press ${presses} chords in one call; at most ${MAX_KEY_CHORDS_PER_CALL}. Split it into smaller calls.`,
+          );
+        }
         for (let index = 0; index < repeat; index += 1) {
           for (const combo of combos) {
+            // Every chord gets its own look: the previous chord may have
+            // switched tab or window. Clearing the cache forces a fresh read.
+            this.windowCache = null;
+            await this.guardInput();
             await this.keyChord(combo);
             await sleep(10);
           }
@@ -1075,8 +1230,14 @@ export class LinuxDesktopDriver implements DesktopDriver {
       }
       case "hold": {
         await this.ensureLayout();
-        await this.guardInput();
         const combo = Array.isArray(params.keys) ? (params.keys as ReadonlyArray<KeyEntry>) : [];
+        if (isWindowSwitchChord(combo)) {
+          throw new DesktopKeyError(
+            "That chord switches window or browser tab, so it cannot be held: the window that gets the rest of the hold would not be guarded. Use computer_key instead.",
+          );
+        }
+        this.windowCache = null;
+        await this.guardInput();
         const durationMs = Math.max(0, num(params.durationMs));
         const repeats = params.repeat !== false;
         const modifiers = combo.filter(isModifierEntry);

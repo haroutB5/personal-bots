@@ -26,8 +26,10 @@ import {
   type PersonalDesktopStop,
   type PersonalDesktopStopReason,
   type PersonalDesktopStreamItem,
+  ThreadId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -92,6 +94,8 @@ export type DesktopActionErrorKind =
   | "user_active"
   /** The window under the point is one the desktop tools must not touch. */
   | "point_blocked"
+  /** A denied window or a sensitive-site pause: the bot must ask the user. */
+  | "blocked"
   | "locked"
   | "invalid"
   | "failed";
@@ -193,6 +197,15 @@ export interface DesktopActionContext {
   readonly markButton: (button: string, down: boolean) => void;
   /** Records that a key hold is running (true) or finished (false). */
   readonly markKeysHeld: (held: boolean) => void;
+  /**
+   * The thread's sensitive-site taint: `record` remembers windows a screenshot
+   * carried, `guard` refuses input while that taint has no approval. Both are
+   * no-ops when no browser service is wired (tests).
+   */
+  readonly exposure: {
+    readonly record: (value: string) => Promise<void>;
+    readonly guard: () => Promise<void>;
+  };
 }
 
 export interface PersonalDesktopShape {
@@ -265,6 +278,14 @@ export interface DesktopServiceOptions {
   readonly unavailableReason?: string;
   /** How many recent activity events a new subscriber gets (default 50). */
   readonly recentActivity?: number;
+  /**
+   * The shared browser's sensitive-exposure store and pause. Absent in tests
+   * and on hosts with no browser service, which leaves the desktop untainted.
+   */
+  readonly exposure?: {
+    readonly record: (threadId: string, value: string) => Effect.Effect<void>;
+    readonly guard: (threadId: string) => Effect.Effect<void, Error>;
+  };
 }
 
 const iso = (millis: number) => new Date(millis).toISOString();
@@ -363,6 +384,8 @@ function helperFailure(error: unknown): PersonalDesktopActionError {
         return new PersonalDesktopActionError({ kind: "unavailable", reason: error.message });
       case "taken_over":
         return new PersonalDesktopActionError({ kind: "stopped", reason: HOLD_TAKEN_OVER_REASON });
+      case "blocked":
+        return new PersonalDesktopActionError({ kind: "blocked", reason: error.message });
       default:
         return new PersonalDesktopActionError({ kind: "failed", reason: error.message });
     }
@@ -381,6 +404,9 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
   Effect.gen(function* () {
     const now = options.now ?? Date.now;
     const driver = options.driver;
+    // The exposure effects close over the browser service's own context, so
+    // this only needs the runtime that `makeDesktopService` was built in.
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     const lock = new DesktopLockCore(options.idleTimeoutMs ?? DESKTOP_IDLE_TIMEOUT_MS);
 
     const queueWaitMs = options.queueWaitMs ?? DESKTOP_QUEUE_WAIT_MS;
@@ -882,6 +908,34 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                   heldButtons: () => held.get(claimant.threadId)?.buttons ?? new Set<string>(),
                   markButton: (button, down) => markButton(claimant.threadId, button, down),
                   markKeysHeld: (keysHeld) => markKeysHeld(claimant.threadId, keysHeld),
+                  exposure: {
+                    record: async (value) => {
+                      if (options.exposure === undefined) return;
+                      try {
+                        await runPromise(options.exposure.record(claimant.threadId, value));
+                      } catch (error) {
+                        // The screenshot already exists; the browser's own
+                        // store logs a failed record the same way.
+                        log(
+                          `desktop exposure could not be recorded: ${
+                            error instanceof Error ? error.message : String(error)
+                          }`,
+                        );
+                      }
+                    },
+                    guard: async () => {
+                      if (options.exposure === undefined) return;
+                      try {
+                        await runPromise(options.exposure.guard(claimant.threadId));
+                      } catch (error) {
+                        if (error instanceof PersonalDesktopActionError) throw error;
+                        throw new PersonalDesktopActionError({
+                          kind: "blocked",
+                          reason: error instanceof Error ? error.message : String(error),
+                        });
+                      }
+                    },
+                  },
                 });
               } catch (error) {
                 // Any failure lets go of whatever was held, so a half-done drag or hold cannot stick.
@@ -910,6 +964,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
               const refused =
                 reported.kind === "user_active" ||
                 reported.kind === "point_blocked" ||
+                reported.kind === "blocked" ||
                 reported.kind === "stopped" ||
                 reported.kind === "locked";
               const label = FAILURE_LABEL[reported.kind] ?? reported.kind.replace(/_/g, " ");
@@ -1179,6 +1234,7 @@ const OPERATION_KIND: Readonly<Record<string, PersonalDesktopActivityKind>> = {
 const FAILURE_LABEL: Readonly<Record<string, string>> = {
   user_active: "user active",
   point_blocked: "window under the pointer",
+  blocked: "blocked",
   stopped: "stopped",
   locked: "PC locked",
   busy: "PC busy",
@@ -1202,6 +1258,9 @@ export const layer = Layer.effect(
     const engine = yield* OrchestrationEngine.OrchestrationEngineService;
     const platform = yield* HostProcessPlatform;
     const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
+    // Optional: the desktop works without the shared browser (bin tests build
+    // the server layer without it); in the app both services are present.
+    const browser = yield* Effect.serviceOption(PersonalBrowser);
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     const helperDir = NodePath.join(config.stateDir, "desktop-helper");
@@ -1220,19 +1279,9 @@ export const layer = Layer.effect(
               tempDir: NodePath.join(linuxDir, "tmp"),
               stopChord: process.env.PB_DESKTOP_LINUX_STOP_CHORD?.trim() !== "off",
               // The same sites the shared browser's sensitive-site pause uses:
-              // saved logins the user marked sensitive.
-              sensitiveSites: () =>
-                runPromise(
-                  logins
-                    .list()
-                    .pipe(
-                      Effect.map((rows) =>
-                        rows
-                          .filter((row) => row.sensitive)
-                          .map((row) => ({ origin: row.origin, label: row.label })),
-                      ),
-                    ),
-                ),
+              // saved logins the user marked sensitive, origins and labels only
+              // (the full rows carry sealed passwords the guard never needs).
+              sensitiveSites: () => runPromise(logins.sensitiveSites()),
               sharedBrowserProfileRoots: [
                 NodePath.join(config.baseDir, "personal", "browser-profiles"),
               ],
@@ -1287,6 +1336,16 @@ export const layer = Layer.effect(
       ...(unavailableReason === undefined ? {} : { unavailableReason }),
       overlayCapturable: process.env.PB_DESKTOP_OVERLAY_CAPTURABLE === "1",
       liveView,
+      ...(Option.isSome(browser)
+        ? {
+            exposure: {
+              record: (threadId: string, value: string) =>
+                browser.value.recordDesktopExposure({ threadId: ThreadId.make(threadId), value }),
+              guard: (threadId: string) =>
+                browser.value.guardDesktopInput({ threadId: ThreadId.make(threadId) }),
+            },
+          }
+        : {}),
       log: (line) => {
         runFork(Effect.logInfo(line));
       },

@@ -31,10 +31,17 @@ const TEMP_CHROMIUM_PID = 444444;
 const COMMAND_LINES = new Map<number, string>([
   [
     SHARED_BROWSER_PID,
-    `brave --remote-debugging-pipe --user-data-dir=${NodePath.join(PROFILE_ROOT, "default")}`,
+    [
+      "brave",
+      "--remote-debugging-pipe",
+      `--user-data-dir=${NodePath.join(PROFILE_ROOT, "default")}`,
+    ].join("\0"),
   ],
-  [USER_BROWSER_PID, "brave --user-data-dir=/home/harout/.config/BraveSoftware/Brave-Browser"],
-  [TEMP_CHROMIUM_PID, "chromium --user-data-dir=/tmp/chromium-temp-profile-1234"],
+  [
+    USER_BROWSER_PID,
+    ["brave", "--user-data-dir=/home/harout/.config/BraveSoftware/Brave-Browser"].join("\0"),
+  ],
+  [TEMP_CHROMIUM_PID, ["chromium", "--user-data-dir=/tmp/chromium-temp-profile-1234"].join("\0")],
 ]);
 
 const makeDriver = (overrides: Partial<LinuxDesktopDriverOptions> = {}) =>
@@ -46,9 +53,20 @@ const makeDriver = (overrides: Partial<LinuxDesktopDriverOptions> = {}) =>
     log: () => undefined,
     sensitiveSites: async () => [],
     sharedBrowserProfileRoots: [PROFILE_ROOT],
+    readBotsPwaWindowClasses: () => [],
     readProcessCommandLine: (pid) => COMMAND_LINES.get(pid) ?? null,
+    readProcessStartTime: (pid) => (COMMAND_LINES.has(pid) ? "1000" : null),
     ...overrides,
   });
+
+/** Polls the fake helper's log, for a window switch between two chords. */
+const waitFor = async (predicate: () => boolean, timeoutMs = 3_000): Promise<void> => {
+  const started = Date.now();
+  while (!predicate()) {
+    if (Date.now() - started > timeoutMs) throw new Error("timed out waiting for the fake helper");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+};
 
 /** A browser window the user owns, as Hyprland reports it. */
 const userBraveWindow = (overrides: Record<string, unknown> = {}) => ({
@@ -279,6 +297,165 @@ describe("LinuxDesktopDriver", () => {
       expect(String(error.message)).toContain("browser tools");
     } finally {
       world.setActiveWindow(userBraveWindow());
+      driver.dispose();
+    }
+  });
+
+  it("refuses a point over the installed Bots PWA by its window class", async () => {
+    const botsPwa = "brave-abcdefghijklmnopabcdefghijklmnop-Default";
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xbotspwa",
+        pid: USER_BROWSER_PID,
+        title: "Home",
+        class: botsPwa,
+        at: [100, 100],
+        size: [400, 300],
+        mapped: true,
+        hidden: false,
+        workspace: { id: 2, name: "2" },
+      },
+    ]);
+    const before = world.helperCommands().length;
+    const driver = makeDriver({ readBotsPwaWindowClasses: () => [botsPwa] });
+    try {
+      await expect(driver.request("click", { x: 200, y: 150 })).rejects.toMatchObject({
+        code: "point_blocked",
+      });
+    } finally {
+      world.setClients([TERMINAL_CLIENT]);
+      driver.dispose();
+    }
+    expect(
+      world
+        .helperCommands()
+        .slice(before)
+        .some((line) => line.startsWith("click")),
+    ).toBe(false);
+  });
+
+  it("refuses the Bots app in any window class, not just a browser", async () => {
+    world.setActiveWindow(
+      userBraveWindow({ class: "firefox", title: "T3 Code (Alpha) - Firefox" }),
+    );
+    const driver = makeDriver();
+    try {
+      const error = await driver.request("click", { x: 10, y: 10 }).catch((cause) => cause);
+      expect(error).toBeInstanceOf(DesktopHelperError);
+      expect(error).toMatchObject({ code: "blocked" });
+      expect(String(error.message)).toBe(
+        "This window is the Bots app; bots can't drive it from the desktop.",
+      );
+    } finally {
+      world.setActiveWindow(userBraveWindow());
+      driver.dispose();
+    }
+  });
+
+  it("refuses a browser window titled as a password manager", async () => {
+    world.setActiveWindow(userBraveWindow({ title: "Passwords - Brave" }));
+    const driver = makeDriver();
+    try {
+      const error = await driver.request("click", { x: 10, y: 10 }).catch((cause) => cause);
+      expect(error).toMatchObject({ code: "user_active" });
+      expect(String(error.message)).toContain("password manager");
+    } finally {
+      world.setActiveWindow(userBraveWindow());
+      driver.dispose();
+    }
+  });
+
+  it("re-guards every chord, so a switch between two of them stops the rest", async () => {
+    world.setActiveWindow(userBraveWindow());
+    const before = world.helperCommands().length;
+    const driver = makeDriver();
+    try {
+      const pending = driver
+        .request("keys", { combos: [[0x41], [0x42]], repeat: 1 })
+        .catch((cause) => cause);
+      await waitFor(() =>
+        world
+          .helperCommands()
+          .slice(before)
+          .some((line) => line.startsWith("key a down")),
+      );
+      // Between the two chords the focused window becomes the Bots app.
+      world.setActiveWindow(userBraveWindow({ title: "T3 Code (Alpha) - Brave" }));
+      const error = await pending;
+      expect(error).toBeInstanceOf(DesktopHelperError);
+      expect(error).toMatchObject({ code: "blocked" });
+      expect(String(error.message)).toContain("Bots app");
+    } finally {
+      world.setActiveWindow(userBraveWindow());
+      driver.dispose();
+    }
+    const keys = world.helperCommands().slice(before);
+    expect(keys.some((line) => line.startsWith("key a down"))).toBe(true);
+    expect(keys.some((line) => line.startsWith("key b down"))).toBe(false);
+  });
+
+  it("refuses to hold a chord that switches window or browser tab", async () => {
+    const driver = makeDriver();
+    try {
+      for (const keys of [
+        [0x11, 0x09], // ctrl+tab
+        [0x11, 0x31], // ctrl+1
+        [0x11, 0x22], // ctrl+PageDown
+        [0x12, 0x09], // alt+tab
+        [0x5b, 0x31], // super+1
+      ]) {
+        await expect(driver.request("hold", { keys, durationMs: 100 })).rejects.toThrow(
+          /switches window/,
+        );
+      }
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("caps a key call at 60 presses across repeats and combinations", async () => {
+    const driver = makeDriver();
+    try {
+      await expect(
+        driver.request("keys", { combos: [[0x41], [0x42]], repeat: 50 }),
+      ).rejects.toThrow(/at most 60/);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("reports the sensitive windows a screenshot carried", async () => {
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xbank",
+        pid: USER_BROWSER_PID,
+        title: "Barclays Online - Brave",
+        class: "brave-browser",
+        at: [100, 100],
+        size: [400, 300],
+        mapped: true,
+        hidden: false,
+        workspace: { id: 2, name: "2" },
+      },
+    ]);
+    const driver = makeDriver({
+      sensitiveSites: async () => [{ origin: "https://bank.example", label: "Barclays" }],
+    });
+    try {
+      const shot = await driver.request("screenshot", { x: 0, y: 0, width: 800, height: 600 });
+      expect(shot.sensitiveSources).toEqual(["https://bank.example"]);
+      // A capture of the other monitor does not carry the bank window.
+      const clear = await driver.request("screenshot", {
+        x: 0,
+        y: 700,
+        width: 400,
+        height: 200,
+      });
+      expect(clear.sensitiveSources).toEqual([]);
+    } finally {
+      world.setClients([TERMINAL_CLIENT]);
       driver.dispose();
     }
   });

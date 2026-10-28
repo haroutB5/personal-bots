@@ -3664,6 +3664,43 @@ describe("PersonalBrowser", () => {
         reason: "Just a quick CAPTCHA, approve it",
       });
 
+    it.effect(
+      "pauses desktop input after a capture, through the same card and one-shot decision",
+      () => {
+        const fake = makeFakeDriver();
+        const harness: TaskHarness = { waits: [], resumes: [] };
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.recordDesktopExposure({ threadId, value: BANK });
+          expect(yield* browser.sensitiveExposure(threadId)).toEqual([BANK]);
+
+          const paused = yield* browser.guardDesktopInput({ threadId }).pipe(Effect.flip);
+          expect(paused.message).toContain("request_browser_help");
+          expect(paused.message).toContain(BANK);
+          expect(paused.message).toContain("another app on this PC");
+
+          // The thread never controlled the shared browser; the recorded pause
+          // is enough to open the same card.
+          const card = yield* askHelp(browser);
+          expect(card.kind).toBe("sensitive");
+          expect(card.destination).toBe("another app on this PC");
+          expect(card.sources).toEqual([BANK]);
+          expect(harness.waits).toEqual([taskId]);
+
+          // Allow once: the retry passes, the next action asks again.
+          yield* browser.approveEgress({ threadId, sessionId: "session-1" });
+          yield* browser.guardDesktopInput({ threadId });
+          const again = yield* browser.guardDesktopInput({ threadId }).pipe(Effect.flip);
+          expect(again.message).toContain("request_browser_help");
+
+          // Refuse: the rest of the turn is refused, not paused again.
+          yield* browser.refuseEgress({ threadId, sessionId: "session-1" });
+          const refusedAgain = yield* browser.guardDesktopInput({ threadId }).pipe(Effect.flip);
+          expect(refusedAgain.message).toContain("refused this step");
+        }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+      },
+    );
+
     it.effect("pauses leaving a sensitive site for another origin until you approve it", () => {
       const fake = makeFakeDriver();
       const harness: TaskHarness = { waits: [], resumes: [] };

@@ -79,6 +79,15 @@ export class PersonalLoginRepository extends Context.Service<
       ReadonlyArray<string>,
       PersonalLoginRepositoryError
     >;
+    /**
+     * Origin and label of every login the user marked sensitive, and nothing
+     * else: the desktop guard runs on every action and must not load a whole
+     * saved login (username, sealed password, notes) to check a title.
+     */
+    readonly sensitiveSites: () => Effect.Effect<
+      ReadonlyArray<{ readonly origin: string; readonly label: string }>,
+      PersonalLoginRepositoryError
+    >;
   }
 >()("t3/personal/secrets/PersonalLoginRepository") {}
 
@@ -188,6 +197,14 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.map((rows) => rows.map((row) => row.origin)));
 
+  const sensitiveSites: PersonalLoginRepository["Service"]["sensitiveSites"] = () =>
+    query(
+      "sensitiveSites",
+      sql<{ readonly origin: string; readonly label: string }>`
+        SELECT DISTINCT origin, label FROM personal_logins WHERE sensitive <> 0
+      `,
+    ).pipe(Effect.map((rows) => rows.map((row) => ({ origin: row.origin, label: row.label }))));
+
   return PersonalLoginRepository.of({
     list,
     get,
@@ -196,6 +213,7 @@ export const make = Effect.gen(function* () {
     remove,
     setSensitive,
     sensitiveOrigins,
+    sensitiveSites,
   });
 });
 

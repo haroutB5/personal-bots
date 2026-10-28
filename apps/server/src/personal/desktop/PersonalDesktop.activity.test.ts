@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { DesktopHelperError, type DesktopDriver } from "./DesktopHelper.ts";
+import * as DesktopActions from "./desktopActions.ts";
 import { makeDesktopService } from "./PersonalDesktop.ts";
 
 const ada = { threadId: "t-ada", botId: "b-ada", botName: "Ada" };
@@ -152,6 +153,35 @@ describe("desktop activity", () => {
         status: "succeeded",
         botName: "Ada",
       });
+    }),
+  );
+
+  it.live("turns an exposure pause into a blocked action and says why", () =>
+    Effect.gen(function* () {
+      const driver = new FakeDriver();
+      const { service } = yield* makeDesktopService({
+        driver,
+        exposure: {
+          record: () => Effect.void,
+          guard: () =>
+            Effect.fail(
+              new DesktopHelperError(
+                "blocked",
+                "Paused: this could carry what you saw on https://bank.example",
+              ),
+            ),
+        },
+      });
+      const error = yield* service
+        .act(ada, "type", (context) =>
+          DesktopActions.typeText(context, { text: "hello", screenshot: false }),
+        )
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        kind: "blocked",
+        reason: "Paused: this could carry what you saw on https://bank.example",
+      });
+      expect(driver.calls).not.toContain("type");
     }),
   );
 });

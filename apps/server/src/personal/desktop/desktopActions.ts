@@ -157,6 +157,18 @@ function requireFrame(context: DesktopActionContext): ScreenFrame {
   return context.frame;
 }
 
+/** Remembers the sensitive windows a capture carried, before the bot can act on it. */
+async function recordShotExposure(
+  context: DesktopActionContext,
+  shot: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const sources = shot.sensitiveSources;
+  if (!Array.isArray(sources)) return;
+  for (const value of sources) {
+    if (typeof value === "string" && value.length > 0) await context.exposure.record(value);
+  }
+}
+
 /** Captures a monitor (default: the one the last screenshot showed, else the primary). */
 export async function captureShot(
   context: DesktopActionContext,
@@ -172,6 +184,7 @@ export async function captureShot(
     format: "auto",
     quality: 80,
   });
+  await recordShotExposure(context, shot);
   const cursor = await context.driver.request("cursor");
   context.setFrame(frame);
   const monitorName =
@@ -225,6 +238,7 @@ export async function zoomShot(
     format: "auto",
     quality: 85,
   });
+  await recordShotExposure(context, shot);
   return {
     activity: { summary: "zoomed in" },
     note: "Zoomed view only: keep using coordinates from your latest computer_screenshot.",
@@ -286,6 +300,7 @@ export async function click(
     modifiers?: string | undefined;
   },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const frame = requireFrame(context);
   const point = toPhysical(frame, input);
   const count = Math.max(1, Math.min(3, input.clicks ?? 1));
@@ -329,6 +344,7 @@ export async function drag(
     modifiers?: string | undefined;
   },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const frame = requireFrame(context);
   const from = toPhysical(frame, { x: input.fromX, y: input.fromY });
   const to = toPhysical(frame, { x: input.toX, y: input.toY });
@@ -404,6 +420,7 @@ export async function typeText(
   context: DesktopActionContext,
   input: AfterAction & { text: string },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   if (input.text.length === 0) throw new DesktopKeyError("Nothing to type.");
   if (input.text.length > MAX_TYPE_CHARS) {
     throw new DesktopKeyError(
@@ -438,6 +455,7 @@ export async function pressKeys(
   context: DesktopActionContext,
   input: AfterAction & { keys: string; repeat?: number | undefined },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const combos = parseKeyCombos(input.keys);
   const repeat = Math.max(1, Math.min(50, input.repeat ?? 1));
   await context.driver.request(
@@ -485,6 +503,7 @@ export async function mouseDown(
     button?: "left" | "right" | "middle" | undefined;
   },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const button = input.button ?? "left";
   if (context.heldButtons().has(button)) {
     throw new DesktopKeyError(
@@ -549,6 +568,7 @@ export async function holdKey(
   context: DesktopActionContext,
   input: AfterAction & { keys: string; durationMs: number },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const plan = planHold(input.keys, input.durationMs);
   context.markKeysHeld(true);
   // The helper may wait several seconds for the user's own input to go quiet before it starts.
