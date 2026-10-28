@@ -69,6 +69,7 @@ import {
 import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
 import { TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL } from "../taskChatAutoArchivePolicy.ts";
+import { QUEUED_HELP_NOTE } from "../browser/browserShared.ts";
 
 /**
  * Stand-ins for the orchestration side: commands are recorded, and the
@@ -2818,6 +2819,120 @@ const sweepNow = Effect.gen(function* () {
   const service = yield* PersonalTaskService.PersonalTaskService;
   yield* service.sweep;
   yield* service.drain;
+});
+
+// QA f9e48571 on a0fdc17af83b: a task parked on browser help replies "waiting
+// for ..." (or the queue note for a second bot). The background policy read
+// that as a stated wait and kept the attempt open, so the resume went queued
+// behind a thread the pump still saw as busy and never ran.
+
+it.effect("a help card's reply ends its attempt, and the handed-back task runs", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("browser-help-stated");
+    const thread = threadOf(root);
+    const firstTurn = yield* beginClaudeTurn(harness, thread);
+
+    const waiting = yield* service.waitForBrowser({ taskId: root.taskId });
+    expect(waiting.status).toBe("waiting_for_browser");
+    yield* endClaudeTurn(harness, thread, firstTurn, "Waiting for you to answer the browser card.");
+
+    const parked = yield* service.get({ taskId: root.taskId });
+    expect(parked.task.status).toBe("waiting_for_browser");
+    expect(parked.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(0);
+    const before = turnStarts(harness).filter((command) => command.threadId === thread).length;
+
+    yield* service.resumeFromUser({
+      taskId: root.taskId,
+      noteId: "browser-help:stated",
+      note: "The user handed the browser back. Continue the task.",
+      restartSession: false,
+    });
+    yield* service.drain;
+
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    expect(turnStarts(harness).filter((command) => command.threadId === thread)).toHaveLength(
+      before + 1,
+    );
+    const detail = yield* service.get({ taskId: root.taskId });
+    expect(detail.attempts.map((attempt) => attempt.endedAt === null)).toEqual([false, true]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a queued help reply ends its attempt and resumes on allow or on refuse", () => {
+  const harness = makeHarness();
+  const cases = [
+    {
+      key: "queued-allow",
+      note: "The user allowed this step once. Retry the same action now.",
+    },
+    {
+      key: "queued-refuse",
+      note: "The user refused this step. Do not retry it; carry on without it.",
+    },
+  ] as const;
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    for (const [index, entry] of cases.entries()) {
+      const root = yield* createRoot(entry.key);
+      const thread = threadOf(root);
+      const firstTurn = yield* beginClaudeTurn(harness, thread);
+      yield* service.waitForBrowser({ taskId: root.taskId });
+      yield* endClaudeTurn(harness, thread, firstTurn, QUEUED_HELP_NOTE);
+
+      const parked = yield* service.get({ taskId: root.taskId });
+      expect(parked.task.status).toBe("waiting_for_browser");
+      expect(parked.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(0);
+
+      yield* service.resumeFromUser({
+        taskId: root.taskId,
+        noteId: `browser-help:${entry.key}:${index}`,
+        note: entry.note,
+        restartSession: false,
+      });
+      yield* service.drain;
+
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      const detail = yield* service.get({ taskId: root.taskId });
+      expect(detail.attempts.map((attempt) => attempt.endedAt === null)).toEqual([false, true]);
+      expect(turnStarts(harness).at(-1)?.message.text).toContain(entry.note);
+    }
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a resume closes an earlier turn left open by a stated wait", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("browser-help-stale");
+    const thread = threadOf(root);
+    const firstTurn = yield* beginClaudeTurn(harness, thread);
+    // The stated wait is what holds an attempt open; this is the state a
+    // resume must not inherit from an earlier turn.
+    yield* endClaudeTurn(harness, thread, firstTurn, "Waiting for the build to finish.");
+    const held = yield* service.get({ taskId: root.taskId });
+    expect(held.task.status).toBe("running");
+    expect(held.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(1);
+
+    yield* service.waitForBrowser({ taskId: root.taskId });
+    yield* service.resumeFromUser({
+      taskId: root.taskId,
+      noteId: "browser-help:stale",
+      note: "The user finished helping in the browser. Continue the task.",
+      restartSession: false,
+    });
+    yield* service.drain;
+
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const detail = yield* service.get({ taskId: root.taskId });
+    expect(detail.attempts).toHaveLength(2);
+    expect(detail.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(1);
+    expect(turnStarts(harness).filter((command) => command.threadId === thread)).toHaveLength(2);
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect(

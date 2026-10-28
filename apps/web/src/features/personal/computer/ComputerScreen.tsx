@@ -87,6 +87,7 @@ import {
   desktopDriver,
   driverLine,
   headerSubline,
+  stopLabelFor,
   type HeaderTone,
   type SourceDriver,
 } from "./computerDrivers";
@@ -668,7 +669,6 @@ export function ComputerScreen({
     queue.paused !== null && queue.paused.botName.length <= 14
       ? `Hand back to ${queue.paused.botName}`
       : "Hand back";
-  const stopName = shownDriver.botName;
   const canStop =
     shownDriver.state === "using" ||
     (shown === "browser" && status !== null && canCloseBrowser(status) && !youShown);
@@ -960,7 +960,7 @@ export function ComputerScreen({
           handBackLabel={handBackLabel}
           onTake={() => (help !== null ? takeOver() : void takeControl(shown))}
           onHandBack={() => void handBack()}
-          stopLabel={canStop ? `Stop ${stopName ?? "the bot"}` : null}
+          stopLabel={stopLabelFor({ source: shown, driver: shownDriver, canStop })}
           onStop={() => void stop()}
           stopDisabled={stopBusy}
           className="mt-3"

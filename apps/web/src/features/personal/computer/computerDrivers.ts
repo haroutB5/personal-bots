@@ -182,6 +182,21 @@ export function headerSubline(input: {
   return { text: "Nobody is using it", tone: "idle" };
 }
 
+/**
+ * The square Stop button's name. Only a live holder is a bot to stop; an idle
+ * browser can still be closed, but naming the last bot there offered to stop a
+ * bot that was already gone (QA f9e48571's cosmetic after a task is cancelled).
+ */
+export function stopLabelFor(input: {
+  readonly source: ComputerSource;
+  readonly driver: SourceDriver;
+  readonly canStop: boolean;
+}): string | null {
+  if (!input.canStop) return null;
+  if (input.driver.state === "using") return `Stop ${input.driver.botName ?? "the bot"}`;
+  return input.source === "browser" ? "Close browser" : null;
+}
+
 /** The driver card's one line: "Using Brave · 3 min · clicked Buy". */
 export function driverLine(input: {
   readonly driver: SourceDriver;

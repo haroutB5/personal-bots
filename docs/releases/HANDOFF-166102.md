@@ -185,6 +185,18 @@ answers.` When the active card closes (answered, refused, handed back, cancelled
   pause is cleared and logged instead of silently doing nothing. The Computer tab shows only the
   active card; a queued or stale pause never replaces it. Stopping, cancelling, failing, completing
   or interrupting a task clears its card and queued entries and promotes the next bot.
+- **A parked help turn ends its attempt.** A bot that asks for help ends its turn with wording like
+  "waiting for you..." (or, while queued, the queue note). That used to match the background
+  policy's stated-wait rule, so the attempt stayed open while the task was parked: the answer went
+  `queued` behind a thread the dispatcher still saw as busy and the task never ran. A turn that
+  ends on `waiting_for_browser` now closes its attempt normally, and a resume closes any earlier
+  attempt still open for that task before it starts a new one, so the first turn after the answer
+  always runs. Stamp: this also covers a plain single card handed back, not only a queued one.
+- **A stopped task gives the browser and the PC back.** A task that ends no longer waits out the
+  90 s lease TTL: its terminal transition releases the shared-browser lease at once (and drops any
+  half-recorded Allow/Refuse), and a desktop holder is released, so another bot's first step and
+  its own help request work immediately and the Computer screen stops offering to stop a bot that
+  is gone.
 
 **What this is.** A mistake-prevention rail, not a security boundary. It only knows the sites
 Harout marked sensitive in Bots, plus password managers and the shared browser. A site he did not
@@ -204,9 +216,13 @@ and a pause blocks typing, clicking, keys and holds without reaching the driver;
 `PersonalBrowser.test.ts` proves the desktop taint is persisted, opens the card without the browser
 lease, passes one action after Allow once then asks again, keeps A's card while B is queued, promotes
 B when A is answered, resumes B with its own task on Allow once and on Refuse, clears a stopped
-task's card and promotes the next bot, and resumes the thread's running task when a pause has no
-taskId. `ComputerScreen.test.tsx` keeps the active bot's help card when another thread's pause is
-pending. The web branding test pins the app identity to the manifest and the contract.
+task's card and promotes the next bot, releases a stopped task's lease so the next bot's navigate
+and help request work at once, and resumes the thread's running task when a pause has no taskId.
+`PersonalTaskService.test.ts` proves a parked turn closes its attempt when its reply says it is
+waiting (the queue note, a hand-back, an allow and a refuse all run the resume), and that a resume
+closes an earlier attempt left open. `PersonalTaskEndReactor.test.ts` proves a terminal task
+releases the desktop and a live one does not. `ComputerScreen.test.tsx` keeps the active bot's help
+card when another thread's pause is pending. The web branding test pins the app identity to the manifest and the contract.
 
 ## Gate
 

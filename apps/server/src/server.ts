@@ -89,6 +89,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { PersonalBrowserTurnReactorLive } from "./orchestration/Layers/PersonalBrowserTurnReactor.ts";
+import { PersonalTaskEndReactorLive } from "./orchestration/Layers/PersonalTaskEndReactor.ts";
 import { PersonalBrowserArchiveReactorLive } from "./orchestration/Layers/PersonalBrowserArchiveReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
@@ -348,6 +349,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(PersonalBrowserTurnReactorLive),
   Layer.provideMerge(PersonalBrowserArchiveReactorLive),
+  Layer.provideMerge(PersonalTaskEndReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
   Layer.provideMerge(PullRequestSyncReactor.layer),
   Layer.provideMerge(ThreadPullRequestReactor.layer),

@@ -7,6 +7,7 @@ import {
   desktopDriver,
   driverLine,
   headerSubline,
+  stopLabelFor,
   type SourceDriver,
 } from "./computerDrivers";
 import type { ComputerActivityEvent } from "./computerContract";
@@ -217,6 +218,42 @@ describe("headerSubline", () => {
         }),
       }).text,
     ).toBe("Assistant is waiting for your OK");
+  });
+});
+
+describe("stopLabelFor", () => {
+  const using: SourceDriver = {
+    source: "browser",
+    state: "using",
+    botId: "b1",
+    botName: "Assistant",
+    threadId: "t1",
+    since: NOW,
+  };
+  it("stops the bot that is using the source", () => {
+    expect(stopLabelFor({ source: "browser", driver: using, canStop: true })).toBe(
+      "Stop Assistant",
+    );
+    expect(
+      stopLabelFor({ source: "desktop", driver: { ...using, source: "desktop" }, canStop: true }),
+    ).toBe("Stop Assistant");
+  });
+
+  it("does not name a bot once the lease is released", () => {
+    expect(
+      stopLabelFor({
+        source: "browser",
+        driver: { ...using, state: "idle" },
+        canStop: true,
+      }),
+    ).toBe("Close browser");
+    expect(
+      stopLabelFor({
+        source: "desktop",
+        driver: { ...using, source: "desktop", state: "idle" },
+        canStop: false,
+      }),
+    ).toBeNull();
   });
 });
 

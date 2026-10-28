@@ -42,7 +42,7 @@ import {
   withNote,
 } from "./taskResultPolicy.ts";
 import { PERSONAL_TASK_NOTICE_NOTE_PREFIX } from "./PersonalTaskRepository.ts";
-import { isWaitingForUser, sessionIsAlive } from "./taskSessionPolicy.ts";
+import { isWaitingForUser, sessionIsAlive, sessionIsBusy } from "./taskSessionPolicy.ts";
 import type { TaskCore } from "./taskCore.ts";
 import type { TaskDispatch } from "./taskDispatch.ts";
 
@@ -52,6 +52,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     backgroundByThread,
     botRepository,
     engine,
+    helpParkedAttempts,
     leaseOwner,
     liveness,
     messages,
@@ -70,6 +71,35 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   // allow: a note that needs a fresh provider process waits until the
   // thread's session is gone, so the next turn starts a new process (which
   // is when provider environments are built).
+  /**
+   * A resume starts a fresh attempt, so an earlier one left open for the same
+   * task must not keep its thread looking busy to the pump. Normally the turn
+   * that parked the task closed it; this is the net for a turn that ended
+   * without settling (the stated-wait bug on a0fdc17af83b left exactly that).
+   * A turn still running is not stale: it ends the attempt itself, and the
+   * pump after that settle starts the queued task.
+   */
+  const closeStaleAttempts = Effect.fn("PersonalTaskService.closeStaleAttempts")(function* (
+    task: PersonalTask,
+  ) {
+    const open = (yield* repository.listAttempts(task.taskId)).filter(
+      (attempt) => attempt.endedAt === null,
+    );
+    if (open.length === 0) return;
+    if (task.threadId !== null && sessionIsBusy(yield* readSession(task.threadId))) return;
+    for (const attempt of open) {
+      yield* Effect.logWarning("personal task resumed with an earlier turn still open", {
+        taskId: task.taskId,
+        threadId: attempt.providerThreadId,
+        attempt: attempt.attempt,
+      });
+      yield* finishAttempt(attempt, {
+        kind: "interrupted",
+        message: "The task was resumed while its earlier turn was still open.",
+      });
+    }
+  });
+
   const tryResume = Effect.fn("PersonalTaskService.tryResume")(function* (
     changed: Changed,
     task: PersonalTask,
@@ -81,6 +111,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     if (notes.length === 0) {
       return;
     }
+    yield* closeStaleAttempts(task);
     if (task.threadId !== null && notes.some((note) => note.restartSession)) {
       if (sessionIsAlive(yield* readSession(task.threadId))) {
         resumingThreadIds.add(task.threadId);
@@ -221,6 +252,23 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     session: OrchestrationSession,
     last: ProjectionThreadMessage | undefined,
   ) {
+    // A task parked on browser help (or a desktop pause) is waiting for the
+    // user, not for work: the reply may say "waiting for ..." or carry the
+    // queue note, but nothing is running. Holding the attempt open here left
+    // the resumed task queued forever with no busy thread free (QA f9e48571).
+    const parked =
+      helpParkedAttempts.get(attempt.providerThreadId) === backgroundAttemptKey(attempt) ||
+      Option.match(yield* repository.getTask(attempt.taskId), {
+        onNone: () => false,
+        onSome: (task) => task.status === "waiting_for_browser",
+      });
+    if (parked) {
+      yield* Effect.logInfo("personal task's help request ended its turn", {
+        taskId: attempt.taskId,
+        threadId: attempt.providerThreadId,
+      });
+      return "";
+    }
     const claude = session.providerName === BACKGROUND_WAIT_PROVIDER;
     const pending = claude
       ? liveness

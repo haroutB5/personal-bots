@@ -3869,6 +3869,59 @@ describe("PersonalBrowser", () => {
       });
     });
 
+    // QA f9e48571: a stopped task never runs another turn to release the
+    // lease, so the next bot's navigate waited out the 90 s and its help
+    // request was refused. The task's end now gives the browser back.
+    it.effect("a stopped task gives the lease back at once, so the next bot works", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const changes = yield* Queue.unbounded<PersonalTask>();
+        const harness: TaskHarness = {
+          waits: [],
+          resumes: [],
+          changes: Stream.fromQueue(changes),
+        };
+        yield* Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          expect((yield* browser.status("session-1")).controller).toMatchObject({
+            _tag: "Agent",
+            threadId,
+          });
+          yield* askHelp(browser);
+
+          yield* Queue.offer(changes, {
+            taskId,
+            threadId,
+            status: "cancelled",
+          } as PersonalTask);
+          let freed = false;
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            const status = yield* browser.status("session-1");
+            if (status.helpRequest === null && status.controller._tag === "None") {
+              freed = true;
+              break;
+            }
+            yield* later(10);
+          }
+          expect(freed).toBe(true);
+
+          // The next bot's first step and its own card need no wait.
+          yield* browser.handleAutomationRequest({
+            ...request("navigate", { url: "example.com/other" }),
+            threadId: other,
+            requestId: "request-other-stop",
+          });
+          expect((yield* browser.status("session-1")).controller).toMatchObject({
+            _tag: "Agent",
+            threadId: other,
+          });
+          yield* askOther(browser);
+          expect((yield* browser.status("session-1")).helpRequest?.threadId).toBe(other);
+        }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+      });
+    });
+
     // Bug 1: a pause recorded before request_browser_help has no taskId in the
     // card. Allow/Refuse used to call resume(null) and leave the task parked.
     it.effect("resumes the thread's running task when the pause has no taskId", () => {

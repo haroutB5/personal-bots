@@ -5,6 +5,7 @@ import { CommandId, PersonalTaskId } from "@t3tools/contracts";
 import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import { type Changed, type WorkItem } from "./taskShared.ts";
 import { isWaitingForUser, sessionIsAlive } from "./taskSessionPolicy.ts";
+import { backgroundAttemptKey } from "./taskBackgroundPolicy.ts";
 import type { TaskCore } from "./taskCore.ts";
 import type { TaskSettling } from "./taskSettling.ts";
 import type { PersonalTaskService } from "./PersonalTaskService.ts";
@@ -15,8 +16,10 @@ export const makeTaskWaiting = (
   glue: { readonly worker: { readonly enqueue: (item: WorkItem) => Effect.Effect<void> } },
 ) => {
   const {
+    activeAttemptForThread,
     engine,
     fail,
+    helpParkedAttempts,
     lock,
     publish,
     readSession,
@@ -50,6 +53,15 @@ export const makeTaskWaiting = (
           const waiting = yield* writeTask(changed, task, { status: waitingStatus });
           if (waiting === null) {
             return yield* fail("The task changed while it was being parked; try again.");
+          }
+          // The attempt whose turn ends here is parked on the card, not on
+          // background work: remember it so the settler closes it instead of
+          // holding it on the reply's "waiting for ..." wording.
+          if (waitingStatus === "waiting_for_browser" && task.threadId !== null) {
+            const active = yield* activeAttemptForThread(task.threadId);
+            if (active !== null) {
+              helpParkedAttempts.set(task.threadId, backgroundAttemptKey(active));
+            }
           }
           yield* publish(changed);
           return waiting;

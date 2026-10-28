@@ -319,14 +319,24 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
     } = control;
 
     // A task that ends (stopped, cancelled, failed, completed, interrupted)
-    // leaves no question to answer: its card and any queued entries for that
-    // task or thread go, and the next bot's card comes up. This is the task
-    // status itself, not releaseLease, because a stopped task may never run
-    // another turn to release anything.
+    // leaves no question to answer and no claim on the browser: its card and
+    // any queued entries for that task or thread go, the next bot's card comes
+    // up, and the lease goes back at once. This is the task status itself, not
+    // releaseLease, because a stopped task may never run another turn to
+    // release anything; without it the next bot's first step queued behind a
+    // dead 90 s lease and its help request was refused (QA f9e48571).
     runFork(
       Stream.runForEach(tasks.changes, (task) =>
         PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status)
-          ? clearTaskHelp({ threadId: task.threadId, taskId: task.taskId })
+          ? Effect.gen(function* () {
+              yield* clearTaskHelp({ threadId: task.threadId, taskId: task.taskId });
+              if (task.threadId === null) return;
+              // A decision recorded for a turn that is over approves nothing.
+              pendingApprovals.delete(task.threadId);
+              oneShotApprovals.delete(task.threadId);
+              refusedApprovals.delete(task.threadId);
+              yield* lease.releaseIfOwner(task.threadId);
+            })
           : Effect.void,
       ).pipe(Effect.ignoreCause({ log: true })),
     );

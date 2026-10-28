@@ -71,6 +71,7 @@ export const makeTaskDispatch = (
     engine,
     persistExposureOnChat,
     externalSlots,
+    helpParkedAttempts,
     idleWaitThreadIds,
     latestContextTokens,
     leaseOwner,
@@ -274,7 +275,11 @@ export const makeTaskDispatch = (
     return {
       text: openingTurnText({
         header: openingTurnHeader(sourceLabel(task, delegatorName), attemptNumber),
-        sections: taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null, delegatorName),
+        sections: taskSections(
+          task,
+          Option.isSome(handoff) ? handoff.value.brief : null,
+          delegatorName,
+        ),
         notes,
       }),
       marker: marker(attemptNumber > 1 ? "retry" : "start", delegatorBotId, []),
@@ -505,6 +510,8 @@ export const makeTaskDispatch = (
     if (claimed !== null) {
       const threadId = claimed.attempt.providerThreadId;
       activeThreadIds.add(threadId);
+      // A new attempt is never the one an earlier card parked.
+      helpParkedAttempts.delete(threadId);
       // Work already live in the chat (left by an earlier attempt or by the
       // user's own turn) is not this attempt's to wait for.
       backgroundByThread.set(
