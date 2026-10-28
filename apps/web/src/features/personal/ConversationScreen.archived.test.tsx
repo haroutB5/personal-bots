@@ -223,22 +223,12 @@ vi.mock("./ChatChips", () => ({
   ),
 }));
 vi.mock("./NewChatDialog", () => ({
-  NewChatDialog: ({
-    open,
-    onStart,
-    fieldRef,
-  }: {
-    open: boolean;
-    onStart: (title: string) => void;
-    fieldRef: React.RefObject<HTMLInputElement | null>;
-  }) => {
-    fieldRef.current = { focus: () => state.focusCalls.push("new-chat-field") } as HTMLInputElement;
-    return open ? (
+  NewChatDialog: ({ open, onStart }: { open: boolean; onStart: (title: string) => void }) =>
+    open ? (
       <button type="button" onClick={() => onStart("  Plan B  ")}>
         start named
       </button>
-    ) : null;
-  },
+    ) : null,
 }));
 vi.mock("./ConversationSubtitle", () => ({ ConversationSubtitle: () => null }));
 vi.mock("./botMuteModel", () => ({ botMuteState: () => ({ muted: false }) }));
