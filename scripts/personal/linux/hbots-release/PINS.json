@@ -4,7 +4,7 @@
     "lib/hash.mjs": "a7d5e91da28c5abb37c1dd15c0fc3b193e7533195e7f974c53acb1f63ee4d734",
     "lib/dbcheck.mjs": "81ba177a9b7f7a0217893af5826ead52a0bd42aac3dff876ee7311307999d2d2",
     "lib/fixture.mjs": "0bee9625bcae9382c2b63aad0975a8ce002044f73500ac5ef54e97ec3963a116",
-    "lib/idle.mjs": "5f58b3f3d19808a663d89c0d474b151dd72307713de4b7771d1116170b7f4fe2",
+    "lib/idle.mjs": "02caf3915e8891433a65114bb6a2f35e95616cab26c21f9e612c448280b269ee",
     "lib/backup.mjs": "9d5367aebc3b7f06d62f658d1aab3141cb8411b3f0ddece52636a713a20d9be6",
     "lib/seal.mjs": "3800d2b066731fa2755efcaee90db19d0a7c7043ec213ab3b44ce58dc32108cb",
     "tools/check-release-notes.mjs": "b1501431a607f4e960205f500eb7a7777649d59dacf6d3ee523a004ce5cd2d06",

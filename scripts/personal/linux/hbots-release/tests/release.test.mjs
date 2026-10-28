@@ -189,6 +189,27 @@ test("idle wait: recent event-log activity delays the restart; no restart while 
   }
 });
 
+test("busy tools: the server's desktop helper is idle, while real tools still block", async () => {
+  const env = await makeEnv();
+  try {
+    const helper = path.join(env.home, "dev", "userdata", "desktop-helper-linux", "pbdesk-wl-fixture");
+    fs.mkdirSync(path.dirname(helper), { recursive: true });
+    fs.copyFileSync("/bin/sleep", helper);
+    env.start({ desktopHelper: helper, child: "sleep 302" });
+    await sleep(1500);
+    const { loadConfig } = await import("../lib/config.mjs");
+    const { takeLook, busyReasons } = await import("../lib/idle.mjs");
+    const cfg = loadConfig(env.processEnv());
+    const look = takeLook(cfg, null, { ignoreLock: true });
+    assert.equal(look.serverRunning, true);
+    assert.ok([...look.snapshot.values()].some((p) => p.ppid === env.serverJson().pid && p.cmdline.includes(helper)), "helper is a direct child of the server");
+    assert.doesNotMatch(look.toolProcs.map((p) => p.cmd).join("\n"), /pbdesk-wl-fixture/);
+    assert.match(busyReasons(look, cfg).join("\n"), /sleep 302/);
+  } finally {
+    env.stop();
+  }
+});
+
 test("busy tools: only the server's cgroup counts, never a sibling Chromium scope", async () => {
   const env = await makeEnv();
   const scope = `chromium-fixture-${env.port}`;

@@ -148,11 +148,11 @@ function makeRelease(env, sha, version, { migrates, badLog }) {
   return dir;
 }
 
-export function startUnit(env, { child } = {}) {
+export function startUnit(env, { child, desktopHelper } = {}) {
   const unitFile = path.join(os.homedir(), ".config", "systemd", "user", env.unit);
   const exec = `/bin/sh -c 'exec ${process.execPath} "${env.home}/releases/$$(cat ${env.home}/releases/current.txt)/dist/bin.mjs" serve'`;
   fs.mkdirSync(path.dirname(unitFile), { recursive: true });
-  fs.writeFileSync(unitFile, `[Unit]\nDescription=hbots release runner fixture server (throwaway)\n\n[Service]\nType=simple\nEnvironment=FIXTURE_HOME=${env.home}\nEnvironment=FIXTURE_PORT=${env.port}\n${child === undefined ? "" : `Environment="FIXTURE_CHILD=${child}"\n`}ExecStart=${exec}\nKillMode=control-group\nCPUAccounting=yes\nMemoryAccounting=yes\n`);
+  fs.writeFileSync(unitFile, `[Unit]\nDescription=hbots release runner fixture server (throwaway)\n\n[Service]\nType=simple\nEnvironment=FIXTURE_HOME=${env.home}\nEnvironment=FIXTURE_PORT=${env.port}\n${child === undefined ? "" : `Environment="FIXTURE_CHILD=${child}"\n`}${desktopHelper === undefined ? "" : `Environment="FIXTURE_DESKTOP_HELPER=${desktopHelper}"\n`}ExecStart=${exec}\nKillMode=control-group\nCPUAccounting=yes\nMemoryAccounting=yes\n`);
   env.unitFile = unitFile;
   sh("systemctl", ["--user", "daemon-reload"]);
   const r = sh("systemctl", ["--user", "start", env.unit]);

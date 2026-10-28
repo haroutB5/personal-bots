@@ -17,6 +17,17 @@ export const isHelper = (cmd) =>
 export const isSessionRoot = (cmd) =>
   /\sacp$/.test(cmd) || /codex app-server/.test(cmd) || /claude --output-format stream-json/.test(cmd);
 
+function isServerDesktopHelper(proc, serverPid, stateDir) {
+  if (proc.ppid !== serverPid) return false;
+  try {
+    const executable = fs.readlinkSync(`/proc/${proc.pid}/exe`);
+    const relative = path.relative(path.join(stateDir, "desktop-helper-linux"), executable);
+    return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
+}
+
 export function classifyOrphan(proc, parent, ageMs, nowMs, orphanSince) {
   const orphan = ageMs > 30 * 60_000 && (proc.ppid === 1 || (/^(?:\S*\/)?systemd\s+--user$/.test(parent?.cmdline ?? "")));
   const key = `${proc.pid}:${proc.startTicks}`;
@@ -189,7 +200,7 @@ export function takeLook(cfg, prev, { ignoreLock = false, orphanSince = new Map(
   for (const pid of pids) {
     const proc = now.get(pid);
     if (!proc || pid === Number(state.pid)) continue;
-    if (isHelper(proc.cmdline) || isSessionRoot(proc.cmdline) || /hbots\.mjs\s+serve/.test(proc.cmdline) || /\bbin\.mjs\b.*\bserve\b/.test(proc.cmdline)) continue;
+    if (isServerDesktopHelper(proc, serverPid, cfg.stateDir) || isHelper(proc.cmdline) || isSessionRoot(proc.cmdline) || /hbots\.mjs\s+serve/.test(proc.cmdline) || /\bbin\.mjs\b.*\bserve\b/.test(proc.cmdline)) continue;
     const before = prev?.snapshot?.get(pid);
     const delta = before ? proc.cpu - before.cpu : 0;
     const ageMs = Date.now() - procStartMs(proc.startTicks);

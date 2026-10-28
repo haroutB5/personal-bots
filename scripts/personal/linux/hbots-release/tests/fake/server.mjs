@@ -50,5 +50,8 @@ server.listen(port, "127.0.0.1", () => {
     const child = spawn(process.env.FIXTURE_CHILD, { shell: true, stdio: "ignore" });
     fs.writeFileSync(path.join(home, "run", "fixture-child.pid"), `${child.pid}\n`);
   }
+  if (process.env.FIXTURE_DESKTOP_HELPER) {
+    spawn(process.env.FIXTURE_DESKTOP_HELPER, ["301"], { stdio: "ignore" });
+  }
 });
 process.on("SIGTERM", () => process.exit(0));
