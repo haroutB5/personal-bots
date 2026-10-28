@@ -3,9 +3,12 @@ import { describe, expect, it } from "@effect/vitest";
 import type { PersonalDesktopActivityEvent, PersonalDesktopStreamItem } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
+import { HostOperationError } from "../browser/pageOperations.ts";
 import { DesktopHelperError, type DesktopDriver } from "./DesktopHelper.ts";
 import * as DesktopActions from "./desktopActions.ts";
 import { makeDesktopService } from "./PersonalDesktop.ts";
@@ -156,27 +159,28 @@ describe("desktop activity", () => {
     }),
   );
 
-  it.live("turns an exposure pause into a blocked action and says why", () =>
+  it.live("uses the running browser service's desktop guard", () =>
     Effect.gen(function* () {
       const driver = new FakeDriver();
-      const { service } = yield* makeDesktopService({
-        driver,
-        exposure: {
-          record: () => Effect.void,
-          guard: () =>
-            Effect.fail(
-              new DesktopHelperError(
-                "blocked",
-                "Paused: this could carry what you saw on https://bank.example",
-              ),
+      const guarded: string[] = [];
+      const browser = Layer.mock(PersonalBrowser)({
+        guardDesktopInput: ({ threadId }) => {
+          guarded.push(threadId);
+          return Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              "Paused: this could carry what you saw on https://bank.example",
             ),
+          );
         },
       });
+      const { service } = yield* makeDesktopService({ driver });
       const error = yield* service
         .act(ada, "type", (context) =>
           DesktopActions.typeText(context, { text: "hello", screenshot: false }),
         )
-        .pipe(Effect.flip);
+        .pipe(Effect.provide(browser), Effect.flip);
+      expect(guarded).toEqual([ada.threadId]);
       expect(error).toMatchObject({
         kind: "blocked",
         reason: "Paused: this could carry what you saw on https://bank.example",

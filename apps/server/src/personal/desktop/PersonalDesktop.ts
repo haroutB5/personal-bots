@@ -876,6 +876,22 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
           });
         }
         yield* acquire(claimant);
+        // Resolved per action, from the caller's full server context: the
+        // desktop layer itself must not depend on the browser (the CLI tests
+        // build the server without it), and a sibling in the same layer step
+        // would not be visible at construction time.
+        const browser = yield* Effect.serviceOption(PersonalBrowser);
+        const exposure = Option.isSome(browser)
+          ? {
+              record: (threadId: string, value: string) =>
+                browser.value.recordDesktopExposure({
+                  threadId: ThreadId.make(threadId),
+                  value,
+                }),
+              guard: (threadId: string) =>
+                browser.value.guardDesktopInput({ threadId: ThreadId.make(threadId) }),
+            }
+          : options.exposure;
         let releasedHeld = false;
         const result = yield* Effect.tryPromise({
           try: () =>
@@ -910,9 +926,9 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                   markKeysHeld: (keysHeld) => markKeysHeld(claimant.threadId, keysHeld),
                   exposure: {
                     record: async (value) => {
-                      if (options.exposure === undefined) return;
+                      if (exposure === undefined) return;
                       try {
-                        await runPromise(options.exposure.record(claimant.threadId, value));
+                        await runPromise(exposure.record(claimant.threadId, value));
                       } catch (error) {
                         // The screenshot already exists; the browser's own
                         // store logs a failed record the same way.
@@ -924,9 +940,9 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                       }
                     },
                     guard: async () => {
-                      if (options.exposure === undefined) return;
+                      if (exposure === undefined) return;
                       try {
-                        await runPromise(options.exposure.guard(claimant.threadId));
+                        await runPromise(exposure.guard(claimant.threadId));
                       } catch (error) {
                         if (error instanceof PersonalDesktopActionError) throw error;
                         throw new PersonalDesktopActionError({
@@ -1258,9 +1274,6 @@ export const layer = Layer.effect(
     const engine = yield* OrchestrationEngine.OrchestrationEngineService;
     const platform = yield* HostProcessPlatform;
     const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
-    // Optional: the desktop works without the shared browser (bin tests build
-    // the server layer without it); in the app both services are present.
-    const browser = yield* Effect.serviceOption(PersonalBrowser);
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     const helperDir = NodePath.join(config.stateDir, "desktop-helper");
@@ -1336,16 +1349,6 @@ export const layer = Layer.effect(
       ...(unavailableReason === undefined ? {} : { unavailableReason }),
       overlayCapturable: process.env.PB_DESKTOP_OVERLAY_CAPTURABLE === "1",
       liveView,
-      ...(Option.isSome(browser)
-        ? {
-            exposure: {
-              record: (threadId: string, value: string) =>
-                browser.value.recordDesktopExposure({ threadId: ThreadId.make(threadId), value }),
-              guard: (threadId: string) =>
-                browser.value.guardDesktopInput({ threadId: ThreadId.make(threadId) }),
-            },
-          }
-        : {}),
       log: (line) => {
         runFork(Effect.logInfo(line));
       },
