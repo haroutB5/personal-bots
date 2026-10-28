@@ -65,3 +65,15 @@ that path first (a symlink, a planted record) between the existence check and `m
 
 All five gates and gate evidence run from this commit in a clean worktree with its own
 `node_modules`; the result is in the Gate evidence section below.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=40a329351033d7cda4599e85191f83852c5fa204 release=40a329351033 json-sha256=7a3e042d0b5e5f5a2b9cf25d499f99c4c2afd0988ef26f4d53c9a017ff4371de result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
