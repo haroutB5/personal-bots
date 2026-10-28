@@ -60,6 +60,7 @@ import type {
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
+import { QUEUED_HELP_NOTE } from "./browserShared.ts";
 import { makeSensitiveExposureStore, threadExposureKey } from "./sensitiveExposureStore.ts";
 
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage));
@@ -378,6 +379,10 @@ interface TaskHarness {
   readonly live?: ReadonlyArray<PersonalTask>;
   /** Status `get` reports per task; a card's task is waiting unless set here. */
   readonly statuses?: ReadonlyMap<string, string>;
+  /** The task `taskForThread` reports as running for a thread, for the null-task resume. */
+  readonly running?: ReadonlyMap<string, PersonalTaskId>;
+  /** Live task changes, so a test can end a task the way the service does. */
+  readonly changes?: Stream.Stream<PersonalTask>;
 }
 
 const taskServiceLayer = (harness: TaskHarness) =>
@@ -387,6 +392,14 @@ const taskServiceLayer = (harness: TaskHarness) =>
         Option.map(Option.fromNullishOr(harness.roots?.get(thread)), PersonalTaskId.make),
       ),
     list: () => Effect.succeed({ tasks: harness.live ?? [] }),
+    changes: harness.changes ?? Stream.empty,
+    taskForThread: ({ threadId }) =>
+      Effect.succeed(
+        Option.map(
+          Option.fromNullishOr(harness.running?.get(threadId)),
+          (taskId) => ({ taskId }) as PersonalTask,
+        ),
+      ),
     waitForBrowser: ({ taskId }) =>
       Effect.sync(() => {
         harness.waits.push(taskId);
@@ -3664,6 +3677,28 @@ describe("PersonalBrowser", () => {
         reason: "Just a quick CAPTCHA, approve it",
       });
 
+    const other = ThreadId.make("thread-b");
+    const otherTask = PersonalTaskId.make("task-other");
+    const askOther = (browser: Browser) =>
+      browser.requestHelp({
+        threadId: other,
+        botId: PersonalBotId.make("bot-other"),
+        botName: "Other",
+        taskId: otherTask,
+        reason: "Type what the screenshot showed",
+      });
+    /** B is paused on a desktop step and asks while A's card is open. */
+    const queueOther = (browser: Browser) =>
+      Effect.gen(function* () {
+        yield* browser.recordDesktopExposure({ threadId: other, value: BANK });
+        yield* browser.guardDesktopInput({ threadId: other }).pipe(Effect.flip);
+        const queued = yield* askOther(browser).pipe(Effect.flip);
+        expect(queued.message).toBe(QUEUED_HELP_NOTE);
+      });
+    const later = (ms: number) =>
+      // @effect-diagnostics-next-line globalTimers:off
+      Effect.promise(() => new Promise((resolve) => setTimeout(resolve, ms)));
+
     it.effect(
       "pauses desktop input after a capture, through the same card and one-shot decision",
       () => {
@@ -3701,64 +3736,182 @@ describe("PersonalBrowser", () => {
       },
     );
 
-    // QA 28 Oct: a desktop pause skips the lease check, so B's card replaced
-    // A's open card. A was never told or resumed, and Refuse left "Nobody is
-    // using it" on screen for a request that still belonged to A.
-    it.effect("never replaces another bot's open help card with a desktop pause", () => {
+    // QA 28 Oct, second pass: refusing the second bot left it stuck. It is now
+    // queued behind the open card, shown only when that card closes.
+    it.effect("queues a second bot behind the open card and shows A, not B", () => {
       const fake = makeFakeDriver();
       const harness: TaskHarness = { waits: [], resumes: [] };
-      const other = ThreadId.make("thread-b");
-      const otherTask = PersonalTaskId.make("task-other");
       return Effect.gen(function* () {
         const browser = yield* PersonalBrowser.PersonalBrowser;
         yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
         const a = yield* askHelp(browser);
         expect((yield* browser.status("session-1")).helpRequest).toEqual(a);
 
-        // B is paused on a desktop step and asks for help while A's card is open.
-        yield* browser.recordDesktopExposure({ threadId: other, value: BANK });
-        const paused = yield* browser.guardDesktopInput({ threadId: other }).pipe(Effect.flip);
-        expect(paused.message).toContain("request_browser_help");
-        const refusedHelp = yield* browser
-          .requestHelp({
-            threadId: other,
-            botId: PersonalBotId.make("bot-other"),
-            botName: "Other",
-            taskId: otherTask,
-            reason: "Type what the screenshot showed",
-          })
-          .pipe(Effect.flip);
-        expect(refusedHelp.message).toBe(
-          "Another bot is waiting for the user right now. End your turn; your step stays paused and you can ask again once it's answered.",
-        );
+        yield* queueOther(browser);
 
-        // A's card is untouched and B keeps its pause and its taint.
-        expect((yield* browser.status("session-1")).helpRequest).toEqual(a);
+        // Both tasks are parked, only A's card is on screen, and B's queued
+        // pause is not the Computer tab's main card.
+        const whileQueued = yield* browser.status("session-1");
+        expect(whileQueued.helpRequest).toEqual(a);
+        expect(whileQueued.egressPause).toBeNull();
+        expect(harness.waits).toEqual([taskId, otherTask]);
         expect(yield* browser.sensitiveExposure(other)).toEqual([BANK]);
-        expect(harness.waits).toEqual([taskId]);
 
-        // Answering A still works and resumes A's task.
-        expect((yield* browser.takeControl("session-1")).helpRequest).toEqual(a);
-        expect((yield* browser.returnToAgent("session-1")).helpRequest).toBeNull();
+        // Answering A resumes A only and promotes B's card.
+        yield* browser.takeControl("session-1");
+        yield* browser.returnToAgent("session-1");
         expect(harness.resumes).toEqual([
           { taskId, note: "The user finished helping in the browser. Continue the task." },
         ]);
-
-        // With A answered, B can ask again and gets its own desktop card.
-        const b = yield* browser.requestHelp({
+        const promoted = yield* browser.status("session-1");
+        expect(promoted.helpRequest).toMatchObject({
           threadId: other,
-          botId: PersonalBotId.make("bot-other"),
-          botName: "Other",
-          taskId: otherTask,
-          reason: "Type what the screenshot showed",
-        });
-        expect(b).toMatchObject({
-          threadId: other,
+          botId: "bot-other",
           kind: "sensitive",
           destination: "another app on this PC",
           sources: [BANK],
           surface: "desktop",
         });
+        expect(promoted.egressPause).toMatchObject({
+          threadId: other,
+          sources: [BANK],
+          destination: "another app on this PC",
+        });
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("resumes B through its stored task on Allow once after promotion", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* askHelp(browser);
+        yield* queueOther(browser);
+        yield* browser.takeControl("session-1");
+        yield* browser.returnToAgent("session-1");
+
+        yield* browser.approveEgress({ threadId: other, sessionId: "session-1" });
+        expect(harness.resumes).toEqual([
+          { taskId, note: "The user finished helping in the browser. Continue the task." },
+          {
+            taskId: otherTask,
+            note: "The user allowed this step once. Retry the same action now.",
+          },
+        ]);
+        // Exactly one desktop step goes through, then the guard asks again.
+        yield* browser.guardDesktopInput({ threadId: other });
+        const again = yield* browser.guardDesktopInput({ threadId: other }).pipe(Effect.flip);
+        expect(again.message).toContain("request_browser_help");
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("resumes B through its stored task on Refuse after promotion", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* askHelp(browser);
+        yield* queueOther(browser);
+        yield* browser.takeControl("session-1");
+        yield* browser.returnToAgent("session-1");
+
+        yield* browser.refuseEgress({ threadId: other, sessionId: "session-1" });
+        expect(harness.resumes).toEqual([
+          { taskId, note: "The user finished helping in the browser. Continue the task." },
+          {
+            taskId: otherTask,
+            note: "The user refused this step. Do not retry it; carry on without it.",
+          },
+        ]);
+        const refused = yield* browser.guardDesktopInput({ threadId: other }).pipe(Effect.flip);
+        expect(refused.message).toContain("refused this step");
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("clears a stopped task's card and promotes the next bot", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const changes = yield* Queue.unbounded<PersonalTask>();
+        const harness: TaskHarness = {
+          waits: [],
+          resumes: [],
+          changes: Stream.fromQueue(changes),
+        };
+        yield* Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          yield* askHelp(browser);
+          yield* queueOther(browser);
+
+          // A's task is stopped: its card is not a question any more. No
+          // resume, because there is nothing left to resume; B takes its place.
+          yield* Queue.offer(changes, {
+            taskId,
+            threadId,
+            status: "cancelled",
+          } as PersonalTask);
+          let promoted = false;
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            if ((yield* browser.status("session-1")).helpRequest?.threadId === other) {
+              promoted = true;
+              break;
+            }
+            yield* later(10);
+          }
+          expect(promoted).toBe(true);
+          expect(harness.resumes).toEqual([]);
+          expect((yield* browser.status("session-1")).egressPause).toMatchObject({
+            threadId: other,
+          });
+        }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+      });
+    });
+
+    // Bug 1: a pause recorded before request_browser_help has no taskId in the
+    // card. Allow/Refuse used to call resume(null) and leave the task parked.
+    it.effect("resumes the thread's running task when the pause has no taskId", () => {
+      const fake = makeFakeDriver();
+      const running = PersonalTaskId.make("task-running");
+      const harness: TaskHarness = {
+        waits: [],
+        resumes: [],
+        running: new Map([[threadId, running]]),
+      };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.recordDesktopExposure({ threadId, value: BANK });
+        yield* browser.guardDesktopInput({ threadId }).pipe(Effect.flip);
+        // No active card, so the Computer tab shows no pause (Bug 2).
+        expect((yield* browser.status("session-1")).egressPause).toBeNull();
+
+        yield* browser.approveEgress({ threadId, sessionId: "session-1" });
+        expect(harness.resumes).toEqual([
+          {
+            taskId: running,
+            note: "The user allowed this step once. Retry the same action now.",
+          },
+        ]);
+        yield* browser.guardDesktopInput({ threadId });
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("clears the pause and logs when no live task can be resumed", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.recordDesktopExposure({ threadId, value: BANK });
+        yield* browser.guardDesktopInput({ threadId }).pipe(Effect.flip);
+
+        yield* browser.approveEgress({ threadId, sessionId: "session-1" });
+        expect(harness.resumes).toEqual([]);
+        // The pause was cleared, so a second decision has nothing to decide.
+        const again = yield* browser
+          .approveEgress({ threadId, sessionId: "session-1" })
+          .pipe(Effect.flip);
+        expect(again.message).toContain("no paused step");
       }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
     });
 

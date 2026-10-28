@@ -22,6 +22,7 @@ import type { BrowserPage } from "./driver.ts";
 export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
   const {
     abandonHelp,
+    clearHelpForThread,
     lease,
     notify,
     openPage,
@@ -196,9 +197,10 @@ export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
         yield* Effect.promise(() => tab.page.close().catch(() => undefined));
         yield* onTabPageClosed(tab);
       }
-      // Not a resume: the thread is being deleted, and the delete cancels its task.
-      if (st.activeHelp?.request.threadId === threadId) st.activeHelp = null;
+      // Not a resume: the thread is being deleted, and the delete cancels its
+      // task. Its queued entries go too, and the next bot's card comes up.
       yield* lease.releaseThread(threadId);
+      yield* clearHelpForThread(threadId);
       yield* notify;
     });
 

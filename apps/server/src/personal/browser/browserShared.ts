@@ -162,6 +162,9 @@ export const HELP_ENDED_BY_CRASH =
   "Chrome exited before the user finished helping, so your browser help request was cancelled. Reopen the page and call request_browser_help again if you are still blocked, or tell the user in one sentence what you still need.";
 export const HELP_ENDED_BY_SWITCH =
   "Another chat started using the shared browser before the user finished helping, so your browser help request was cancelled. Tell the user in one sentence what you still need, or call request_browser_help again once you have the browser back.";
+/** A second bot asked while another card was open; its task is parked in line. */
+export const QUEUED_HELP_NOTE =
+  "Queued: another bot is waiting for the user. End your turn; you'll be resumed when the user answers.";
 
 export const decodeInputMessage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PersonalBrowserInputMessage),

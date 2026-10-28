@@ -3,12 +3,14 @@
 import * as NodeCrypto from "node:crypto";
 import {
   PersonalBrowserError,
+  ThreadId,
   type PersonalBrowserHelpRequest,
   type PersonalTaskId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { loginOriginCovering } from "./loginOrigins.ts";
 import { HostOperationError, performFillLogin } from "./pageOperations.ts";
 import { resolveBrowserUrl } from "./urlPolicy.ts";
@@ -16,6 +18,7 @@ import {
   CONTROL_CHECK_INTERVAL_MS,
   CONTROL_GRACE_MS,
   FILL_NAVIGATE_TIMEOUT_MS,
+  QUEUED_HELP_NOTE,
   TIMELINE_LIMIT,
 } from "./browserShared.ts";
 import { DESKTOP_APPROVAL_KEY, type BrowserCore } from "./browserCore.ts";
@@ -33,6 +36,7 @@ export const makeBrowserControl = (
 ) =>
   Effect.gen(function* () {
     const {
+      activateHelp,
       approvalQuestion,
       botForThread,
       exposeIfSensitive,
@@ -47,6 +51,7 @@ export const makeBrowserControl = (
       pendingApprovals,
       pendingApprovalAt,
       persistProtections,
+      promoteNextHelp,
       recordActivity,
       redactError,
       redactor,
@@ -258,50 +263,27 @@ export const makeBrowserControl = (
         return yield* status(sessionId);
       });
 
-    /** How often a waiting card refreshes the lease it is keeping (90 s TTL). */
-    const HELP_LEASE_REFRESH_MS = 30_000;
-
-    /**
-     * A card can wait minutes on the user, and the agent lease lives 90 s
-     * without a heartbeat. While the question is open the thread keeps its
-     * place with a quiet refresh, so the lease cannot lapse and let the next
-     * bot cancel the card the user is answering (QA's B2).
-     */
-    const keepLeaseWhileAsking = (threadId: string) =>
-      Effect.gen(function* () {
-        while (true) {
-          yield* Effect.sleep(HELP_LEASE_REFRESH_MS);
-          const help = st.activeHelp;
-          if (help === null || help.request.threadId !== threadId) return;
-          yield* lease
-            .runAgentOp({ threadId, operation: "help-wait" }, Effect.void)
-            .pipe(Effect.ignore);
-        }
-      });
-
     const requestHelp: PersonalBrowser["Service"]["requestHelp"] = (input) =>
       lease.runExclusive(
         Effect.gen(function* () {
           // A retry while the card is open returns the same card, whatever
           // holds the browser: a desktop pause may never have taken it.
           if (st.activeHelp?.request.threadId === input.threadId) return st.activeHelp.request;
-          // One card at a time (QA 28 Oct): a desktop pause skips the lease
-          // check below, so without this it replaced another bot's open card
-          // and left that bot parked with nobody ever answering it.
-          if (st.activeHelp !== null) {
+          // Already queued: the bot is parked and will be resumed when its
+          // card comes up. Tell it the same thing again rather than queue twice.
+          if (st.helpQueue.some((entry) => entry.request.threadId === input.threadId)) {
             return yield* Effect.fail(
-              new HostOperationError(
-                "PreviewAutomationControlInterruptedError",
-                "Another bot is waiting for the user right now. End your turn; your step stays paused and you can ask again once it's answered.",
-              ),
+              new HostOperationError("PreviewAutomationControlInterruptedError", QUEUED_HELP_NOTE),
             );
           }
+          const waitsForCard = st.activeHelp !== null;
           const view = yield* lease.view;
           // A desktop screenshot can pause a thread that never took the
           // browser lease; its server-recorded approval is enough to open the
           // same card. Everything else still needs the browser's controller.
           const pendingBefore = pendingApprovals.get(input.threadId) ?? null;
           if (
+            !waitsForCard &&
             pendingBefore === null &&
             (view.ownerType !== "agent" ||
               view.ownerId !== input.threadId ||
@@ -326,6 +308,7 @@ export const makeBrowserControl = (
           // on the server's account of where the data would go, not the page's.
           const approval = pendingApprovals.get(input.threadId) ?? null;
           pendingApprovals.delete(input.threadId);
+          pendingApprovalAt.delete(input.threadId);
           const request: PersonalBrowserHelpRequest = {
             threadId: input.threadId,
             botId: input.botId,
@@ -351,16 +334,23 @@ export const makeBrowserControl = (
                   ...(approval.key === DESKTOP_APPROVAL_KEY ? { surface: "desktop" as const } : {}),
                 }),
           };
-          st.activeHelp = { request, taskId: input.taskId, approval };
-          runFork(Effect.ignore(keepLeaseWhileAsking(input.threadId)));
-          yield* recordActivity({
-            kind: "control",
-            summary: `asked for help: ${request.reason}`,
-            status: "succeeded",
-            threadId: input.threadId,
-            botName: input.botName,
-          });
-          yield* notify;
+          const entry = { request, taskId: input.taskId, approval };
+          // One card at a time (QA 28 Oct): a desktop pause skips the lease
+          // check, so a second bot used to replace the open card and leave the
+          // first parked with nobody ever answering it. It now waits its turn,
+          // already parked, and is promoted when the active card closes.
+          if (waitsForCard) {
+            st.helpQueue.push(entry);
+            yield* Effect.logInfo("personal browser help queued behind another card", {
+              threadId: input.threadId,
+              activeThreadId: st.activeHelp?.request.threadId ?? null,
+              queued: st.helpQueue.length,
+            });
+            return yield* Effect.fail(
+              new HostOperationError("PreviewAutomationControlInterruptedError", QUEUED_HELP_NOTE),
+            );
+          }
+          yield* activateHelp(entry);
           return request;
         }),
       );
@@ -413,6 +403,8 @@ export const makeBrowserControl = (
                 ),
               );
           }
+          // The user is done with this card: the next queued bot gets it.
+          yield* promoteNextHelp;
         }
         yield* notify;
         return yield* status(sessionId);
@@ -440,27 +432,47 @@ export const makeBrowserControl = (
       };
     };
 
+    /**
+     * Resumes the task a paused step belongs to. A pending approval recorded
+     * before any card exists has no taskId, and a null resume used to leave
+     * that task parked forever: fall back to the thread's current task, and if
+     * it has none, clear the pause and say so (CTO's Bug 1 safety net).
+     */
     const resumePausedTask = (
+      threadId: string,
       taskId: PersonalTaskId | null,
       requestedAt: string | null,
       note: string,
     ) =>
-      taskId === null
-        ? Effect.void
-        : tasks
-            .resumeFromUser({
-              taskId,
-              noteId: `browser-help:${requestedAt ?? "pending"}`,
-              note,
-              restartSession: false,
-            })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("personal browser egress continuation could not be queued", {
-                  cause: Cause.pretty(cause),
-                }),
-              ),
-            );
+      Effect.gen(function* () {
+        let target = taskId;
+        if (target === null) {
+          const current = Option.flatten(
+            yield* tasks.taskForThread({ threadId: ThreadId.make(threadId) }).pipe(Effect.option),
+          );
+          if (Option.isSome(current)) target = current.value.taskId;
+        }
+        if (target === null) {
+          yield* Effect.logInfo("personal browser pause cleared with no live task to resume", {
+            threadId,
+          });
+          return;
+        }
+        yield* tasks
+          .resumeFromUser({
+            taskId: target,
+            noteId: `browser-help:${requestedAt ?? "pending"}`,
+            note,
+            restartSession: false,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("personal browser egress continuation could not be queued", {
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+      });
 
     const approveEgress: PersonalBrowser["Service"]["approveEgress"] = (input) =>
       Effect.gen(function* () {
@@ -480,10 +492,12 @@ export const makeBrowserControl = (
         const help = st.activeHelp;
         if (help !== null && help.request.threadId === input.threadId) st.activeHelp = null;
         yield* resumePausedTask(
+          input.threadId,
           paused.taskId,
           paused.requestedAt,
           "The user allowed this step once. Retry the same action now.",
         );
+        yield* promoteNextHelp;
         const bot = yield* botForThread(input.threadId);
         yield* recordActivity({
           kind: "control",
@@ -516,10 +530,12 @@ export const makeBrowserControl = (
         const help = st.activeHelp;
         if (help !== null && help.request.threadId === input.threadId) st.activeHelp = null;
         yield* resumePausedTask(
+          input.threadId,
           paused.taskId,
           paused.requestedAt,
           "The user refused this step. Do not retry it; carry on without it.",
         );
+        yield* promoteNextHelp;
         const bot = yield* botForThread(input.threadId);
         // The browser, the page and every other bot stay exactly as they are.
         yield* recordActivity({

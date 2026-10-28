@@ -351,7 +351,15 @@ export function ComputerScreen({
       ? "desktop"
       : null;
   const help = status?.helpRequest ?? null;
-  const pause = egressPause(status);
+  const pauseCandidate = egressPause(status);
+  // Only the ACTIVE card is shown. A pause from another thread (a queued bot,
+  // or one recorded before its card exists) must never replace the help card
+  // the user is reading; the server sets egressPause only for the active entry,
+  // and this keeps an older or stale status honest too.
+  const pause =
+    pauseCandidate !== null && (help === null || pauseCandidate.threadId === help.threadId)
+      ? pauseCandidate
+      : null;
   const helpOpen = help !== null || pause !== null;
 
   // ---- Auto follow --------------------------------------------------------

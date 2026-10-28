@@ -793,6 +793,33 @@ describe("sensitive-site pause (1.66.98)", () => {
     },
   } as unknown as PersonalBrowserStatus;
 
+  it("shows the active bot's help card, never another thread's queued pause", async () => {
+    stubBrowserGlobals();
+    feedState.status = {
+      ...STATUS,
+      helpRequest: {
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-1"),
+        botName: "Developer",
+        reason: "Please help with the page",
+        requestedAt: "2026-09-15T10:00:00.000Z",
+      },
+      egressPause: {
+        threadId: "thread-b",
+        botId: "bot-b",
+        botName: "Other",
+        sources: ["Chase"],
+        destination: "slack.com",
+        requestedAt: "2026-09-15T10:00:01.000Z",
+      },
+    } as unknown as PersonalBrowserStatus;
+    await renderScreen();
+
+    expect(renderer!.root.findAllByProps({ "aria-label": "Developer needs you" })).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Allow this step?" })).toHaveLength(0);
+    expect(plainButton("Allow once")).toBeUndefined();
+  });
+
   it("sends Allow once and Refuse to the server for the paused chat", async () => {
     stubBrowserGlobals();
     feedState.status = PAUSED;

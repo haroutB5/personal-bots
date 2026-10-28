@@ -10,6 +10,7 @@
  * screencast that runs only while at least one viewer socket is attached.
  */
 import {
+  PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalBrowserError,
   ThreadId,
   type PersonalBotId,
@@ -281,12 +282,14 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
     const core = yield* makeBrowserCore(rawOptions);
     const {
+      clearHelpForThread,
+      clearTaskHelp,
       lease,
-      notify,
       oneShotApprovals,
       options,
       pendingApprovals,
       refusedApprovals,
+      runFork,
       sensitiveExposure,
       recordDesktopExposure,
       guardDesktopInput,
@@ -314,6 +317,19 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
       returnToAgent,
       takeControl,
     } = control;
+
+    // A task that ends (stopped, cancelled, failed, completed, interrupted)
+    // leaves no question to answer: its card and any queued entries for that
+    // task or thread go, and the next bot's card comes up. This is the task
+    // status itself, not releaseLease, because a stopped task may never run
+    // another turn to release anything.
+    runFork(
+      Stream.runForEach(tasks.changes, (task) =>
+        PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status)
+          ? clearTaskHelp({ threadId: task.threadId, taskId: task.taskId })
+          : Effect.void,
+      ).pipe(Effect.ignoreCause({ log: true })),
+    );
 
     const lifecycle = yield* makeBrowserLifecycle(core, launch, tabs);
     const { activity, closeBrowser, listFiles, resolveFile } = lifecycle;
@@ -416,8 +432,7 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
             const waitingForBrowser =
               Option.isSome(detail) && detail.value.task.status === "waiting_for_browser";
             if (waitingForBrowser) return;
-            st.activeHelp = null;
-            yield* notify;
+            yield* clearHelpForThread(threadId);
           }
           if (pendingApprovals.has(threadId)) return;
           // Approval decisions never outlive the turn that asked for them.
