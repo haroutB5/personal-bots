@@ -1,6 +1,7 @@
 import type { EnvironmentId, PersonalBotId } from "@t3tools/contracts";
 import type { JSX } from "react";
 import { useCallback, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { NewChatDialog } from "./NewChatDialog";
 import { renameChatDraftTitle } from "./renameChat";
@@ -40,6 +41,7 @@ export function useNewChatPrompt(
   const [isOpen, setIsOpen] = useState(false);
   // The server's refusal of the last Start (a name another chat took meanwhile).
   const [refusal, setRefusal] = useState<string | null>(null);
+  const fieldRef = useRef<HTMLInputElement>(null);
   const options = useRef<NewChatPromptOptions>({});
   // A second Start chat before the first has finished must not make a second chat.
   const busy = useRef(false);
@@ -48,9 +50,12 @@ export function useNewChatPrompt(
     (next?: NewChatPromptOptions) => {
       if (botId === null) return;
       options.current = next ?? {};
-      setRefusal(null);
-      setMounted(true);
-      setIsOpen(true);
+      flushSync(() => {
+        setRefusal(null);
+        setMounted(true);
+        setIsOpen(true);
+      });
+      fieldRef.current?.focus();
     },
     [botId],
   );
@@ -87,6 +92,7 @@ export function useNewChatPrompt(
     bot !== null && mounted ? (
       <NewChatDialog
         open={isOpen}
+        fieldRef={fieldRef}
         environmentId={environmentId}
         botId={bot.botId}
         botName={bot.name}
