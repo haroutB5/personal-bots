@@ -667,7 +667,9 @@ export function ComputerScreen({
   const takeDisabled =
     !reachable ||
     takingShown ||
-    (shown === "browser" ? status === null : !desktopAvailable || !deskControl.canControl);
+    (help !== null || shown === "browser"
+      ? status === null
+      : !desktopAvailable || !deskControl.canControl);
 
   const stageShell = (source: ComputerSource, content: ReactNode) => (
     <div
@@ -768,8 +770,6 @@ export function ComputerScreen({
         reason={help.reason}
         requestedAt={help.requestedAt}
         now={now}
-        busy={takingShown}
-        onTakeOver={takeOver}
         onOpenChat={() => botChatTarget({ botId: help.botId, threadId: help.threadId })}
         className={cn("mt-1", widePage && "min-[1100px]:mt-0")}
       />
@@ -950,7 +950,7 @@ export function ComputerScreen({
           inControl={youShown || otherDevice === true}
           takeDisabled={takeDisabled}
           handBackLabel={handBackLabel}
-          onTake={() => void takeControl(shown)}
+          onTake={() => (help !== null ? takeOver() : void takeControl(shown))}
           onHandBack={() => void handBack()}
           stopLabel={canStop ? `Stop ${stopName ?? "the bot"}` : null}
           onStop={() => void stop()}
