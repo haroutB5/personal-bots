@@ -61,7 +61,8 @@ interface ChatState {
   archivedAt: string | null;
   linkArchivedAt: string | null;
   deleted: boolean;
-  latestTurnId: TurnId;
+  /** Null before the turn projection has the failed turn. */
+  latestTurnId: TurnId | null;
 }
 
 interface Harness {
@@ -117,7 +118,7 @@ const depsLayer = (harness: Harness, fallback?: PersonalModelFallback.PersonalMo
             id: threadId,
             session: state.session,
             archivedAt: state.archivedAt,
-            latestTurn: { turnId: state.latestTurnId },
+            latestTurn: state.latestTurnId === null ? null : { turnId: state.latestTurnId },
             modelSelection: { instanceId: INSTANCE, model: "claude-opus-5-5" },
             runtimeMode: "full-access",
             interactionMode: "default",
@@ -366,6 +367,41 @@ describe("PersonalChatResume", () => {
       yield* TestClock.setTime(RESET_MS + 60 * 60_000);
       yield* service.sweep;
       expect(turnStarts(harness)).toHaveLength(1);
+    }).pipe(Effect.provide(dbLayer)),
+  );
+
+  it.effect("one limit reported twice writes one row and one notice", () =>
+    Effect.gen(function* () {
+      yield* setup;
+      const harness = makeHarness();
+      const service = yield* bootService(harness);
+      yield* insertUserMessage(CHAT_A, "owner-1", HIT_MS - 60_000);
+      // The failed turn's completion, then the error session the server writes
+      // right after it from a read that had no turn yet: the same limit, two
+      // events, and only one row may come of them.
+      chat(harness, CHAT_A).latestTurnId = null;
+      yield* service.ingestDomainEvent(sessionEvent(harness, CHAT_A, limitSession(CHAT_A)));
+      yield* service.drain;
+      chat(harness, CHAT_A).latestTurnId = TurnId.make("turn-a1");
+      // The error session the server writes after it: same limit, its own
+      // observation time, and no turn when it read the chat.
+      yield* service.ingestDomainEvent(
+        sessionEvent(
+          harness,
+          CHAT_A,
+          limitSession(CHAT_A, {
+            kind: "rate_limited",
+            retryAt: RESET_ISO,
+            reason: "five_hour",
+            provider: "claudeAgent",
+            observedAt: isoAt(HIT_MS - 4_000),
+          }),
+        ),
+      );
+      yield* service.drain;
+
+      expect((yield* resumeRows).map((row) => row.status)).toEqual(["scheduled"]);
+      expect(notices(harness)).toHaveLength(1);
     }).pipe(Effect.provide(dbLayer)),
   );
 

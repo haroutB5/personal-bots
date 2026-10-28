@@ -38,6 +38,7 @@ import {
   PERSONAL_CHAT_FALLBACK_RESUME_PROMPT,
   PERSONAL_CHAT_RESUME_PROMPT,
   PERSONAL_CHAT_RESUME_PROVIDER_GAP_MS,
+  PERSONAL_CHAT_RESUME_SAME_HIT_MS,
   PERSONAL_CHAT_RESUME_SLOT_MAX_MS,
   PERSONAL_CHAT_RESUME_SWEEP_MS,
   PERSONAL_NOTICE_MESSAGE_ID_PREFIX,
@@ -248,6 +249,19 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(shell)) return;
     const hitKey = shell.value.latestTurn?.turnId ?? session.updatedAt;
     const now = yield* nowMs;
+    // One limit can reach this service twice: the failed turn's completion,
+    // then the error session the server writes right after it. A row this
+    // recent for the same provider and reason is the same hit, not a second
+    // one; without this the owner got a second "paused" line for one limit.
+    const sameHit = yield* sql<{ readonly hit: number }>`
+      SELECT 1 AS hit FROM personal_chat_resumes
+      WHERE thread_id = ${threadId}
+        AND provider = ${session.providerName ?? "unknown"}
+        AND COALESCE(limit_reason, '') = ${retry.reason ?? ""}
+        AND hit_at > ${iso(now - PERSONAL_CHAT_RESUME_SAME_HIT_MS)}
+      LIMIT 1
+    `;
+    if (sameHit.length > 0) return;
     const counted = yield* sql<{ readonly consecutive: number }>`
       SELECT count(*) AS consecutive FROM personal_chat_resumes
       WHERE thread_id = ${threadId} AND status = 'resumed'

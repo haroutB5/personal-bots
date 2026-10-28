@@ -23,6 +23,12 @@ export const PERSONAL_CHAT_RESUME_MAX_CONSECUTIVE = 2;
 export const PERSONAL_CHAT_RESUME_BUSY_WAIT_MS = 30 * 60_000;
 /** A resumed turn gives its task slot back after this long, however it ends. */
 export const PERSONAL_CHAT_RESUME_SLOT_MAX_MS = 3 * 60 * 60_000;
+/**
+ * The same limit can arrive twice (the failed turn's completion and the error
+ * session written right after it); a row this recent for the same provider and
+ * reason is that same hit, not a new one.
+ */
+export const PERSONAL_CHAT_RESUME_SAME_HIT_MS = 30_000;
 
 /** Server-written turn message ids: `personal-resume-<resumeId>`. */
 export const PERSONAL_RESUME_MESSAGE_ID_PREFIX = "personal-resume-";

@@ -405,10 +405,19 @@ export function turnErrorNotice(input: {
    * last user-role message is not the owner's, so there is nothing to retry.
    */
   readonly lastMessageTurnStarted: boolean | null;
+  /**
+   * The bot's usage-limit fallback took over after that message: the chat
+   * already carries the server's "hit its usage limit" line and the fallback
+   * reply is coming, so a red "Couldn't send" card with Retry would be wrong.
+   */
+  readonly fallbackTookOver?: boolean | undefined;
 }): TurnErrorNotice | null {
   const { session, state } = input;
   const retry = session?.providerRetry;
   const failedOnLimit = state === "rate_limited" && session?.status === "error";
+  // A limit that already moved the bot to its fallback model is not a failure
+  // the owner has to act on: the fallback turn is on its way.
+  if (input.fallbackTookOver === true && (failedOnLimit || state === "error")) return null;
   const notice = autoRetryNotice(retry);
   if (state !== "error" && !failedOnLimit && notice === null) return null;
   const raw = session?.lastError ?? "The last turn failed.";

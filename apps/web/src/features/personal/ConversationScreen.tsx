@@ -168,7 +168,7 @@ import { setPersonalPreference, usePersonalPreference } from "./personalPreferen
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
-import { readChatNotice } from "./chatNotices";
+import { fallbackTookOverSinceLastOwnerMessage, readChatNotice } from "./chatNotices";
 import {
   isChatUnread,
   useChatSeenState,
@@ -1159,6 +1159,9 @@ export function ConversationScreen({
     state: conversationState,
     session: thread?.session ?? null,
     lastMessageTurnStarted: retryTarget?.turnStarted ?? null,
+    // A limit that already moved the bot to its fallback model: its line is in
+    // the transcript and its reply is on the way, so no red "Couldn't send".
+    fallbackTookOver: fallbackTookOverSinceLastOwnerMessage(messages),
   });
   // What stops the composer from sending at all: the bot's provider is down.
   // A laptop that is away does not: a message sent then is saved on this device

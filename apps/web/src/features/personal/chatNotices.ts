@@ -62,6 +62,28 @@ export function isChatNoticeMessageId(messageId: string): boolean {
 }
 
 /**
+ * The bot's usage-limit fallback took over after the owner's last message: the
+ * server wrote its "hit its usage limit, now on <fallback>" line above, and
+ * the failed turn's red "Couldn't send" card would contradict it while the
+ * fallback reply is on its way. Only notices after the owner's own message
+ * count, so an old switch does not hide a later failure.
+ */
+export function fallbackTookOverSinceLastOwnerMessage(
+  messages: ReadonlyArray<{
+    readonly role: string;
+    readonly context?: OrchestrationMessageContext | undefined;
+  }>,
+): boolean {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message === undefined) continue;
+    if (readChatNotice(message)?.notice === "model-fallback-on") return true;
+    if (message.role === "user") return false;
+  }
+  return false;
+}
+
+/**
  * Notices that are the server's user-role turn message (the provider needs a
  * prompt): shown as an expandable system row, and they start a new turn.
  */
