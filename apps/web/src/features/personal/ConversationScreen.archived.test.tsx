@@ -223,12 +223,22 @@ vi.mock("./ChatChips", () => ({
   ),
 }));
 vi.mock("./NewChatDialog", () => ({
-  NewChatDialog: ({ open, onStart }: { open: boolean; onStart: (title: string) => void }) =>
-    open ? (
+  NewChatDialog: ({
+    open,
+    onStart,
+    fieldRef,
+  }: {
+    open: boolean;
+    onStart: (title: string) => void;
+    fieldRef: React.RefObject<HTMLInputElement | null>;
+  }) => {
+    fieldRef.current = { focus: () => state.focusCalls.push("new-chat-field") } as HTMLInputElement;
+    return open ? (
       <button type="button" onClick={() => onStart("  Plan B  ")}>
         start named
       </button>
-    ) : null,
+    ) : null;
+  },
 }));
 vi.mock("./ConversationSubtitle", () => ({ ConversationSubtitle: () => null }));
 vi.mock("./botMuteModel", () => ({ botMuteState: () => ({ muted: false }) }));
@@ -984,6 +994,22 @@ const otherChat = () => {
 };
 
 describe("the three-dots menu", () => {
+  it("prevents the menu item handler and opens New chat", async () => {
+    openChat();
+    await renderScreen();
+    const preventBaseUIHandler = vi.fn();
+    const item = renderer!.root.findAll(
+      (node) =>
+        node.type === "button" &&
+        node.props["data-menu-item"] !== undefined &&
+        firstString(node) === "New chat",
+    )[0]!;
+    act(() => {
+      item.props.onClick({ preventBaseUIHandler });
+      expect(preventBaseUIHandler).toHaveBeenCalledOnce();
+    });
+    expect(buttonsLabelled("start named")).toHaveLength(1);
+  });
   it("holds Chat settings…, New chat and All chats, and none of the chat's own actions", async () => {
     openChat();
     await renderScreen();

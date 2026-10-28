@@ -1226,6 +1226,8 @@ export function ConversationScreen({
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const settingsOpener = useRef<HTMLElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const skipMenuReturnFocus = useRef(false);
   const holdHintId = useId();
   const openSettings = useCallback((target: string, opener: HTMLElement | null) => {
     settingsOpener.current =
@@ -1557,7 +1559,13 @@ export function ConversationScreen({
             )}
           </button>
         ) : null}
-        <Menu>
+        <Menu
+          open={chatMenuOpen}
+          onOpenChange={(open) => {
+            if (open) skipMenuReturnFocus.current = false;
+            setChatMenuOpen(open);
+          }}
+        >
           <MenuTrigger
             render={
               <button
@@ -1570,7 +1578,11 @@ export function ConversationScreen({
           >
             <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </MenuTrigger>
-          <MenuPopup align="end" className="personal-app personal-menu min-w-48">
+          <MenuPopup
+            align="end"
+            finalFocus={() => (skipMenuReturnFocus.current ? false : undefined)}
+            className="personal-app personal-menu min-w-48"
+          >
             {interruptInput !== null ? (
               <MenuItem onClick={() => void onStopFromMenu()}>Stop</MenuItem>
             ) : null}
@@ -1607,7 +1619,17 @@ export function ConversationScreen({
             ) : null}
             <MenuSeparator />
             {bot !== null ? (
-              <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
+              <MenuItem
+                disabled={newChat.starting}
+                onClick={(event) => {
+                  (
+                    event as typeof event & { preventBaseUIHandler?: () => void }
+                  ).preventBaseUIHandler?.();
+                  skipMenuReturnFocus.current = true;
+                  flushSync(() => setChatMenuOpen(false));
+                  newChat.open();
+                }}
+              >
                 New chat
               </MenuItem>
             ) : null}
