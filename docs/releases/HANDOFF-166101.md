@@ -135,3 +135,13 @@ All five gates and gate evidence run from this commit in a clean worktree with i
 (`scripts/personal/node/test/*.test.mjs`) passes 43 of 43.
 
 ## Gate evidence
+
+<!-- gate-evidence:begin sha=58a4c899b3df60b28d492546a03e62dd059b19d8 release=58a4c899b3df json-sha256=7c8a2e7724f52d251ecd68915cd62013f3af7269bbce403e37cbc9465ea7d9f7 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
