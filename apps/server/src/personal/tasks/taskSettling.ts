@@ -309,7 +309,14 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
   // Decides whether the attempt's turn has ended, reading the projected
   // session (authoritative) rather than trusting event order. A session state
   // older than the attempt belongs to an earlier turn on the same thread.
-  const settle = Effect.fn("PersonalTaskService.settle")(function* (threadId: ThreadId) {
+  // `eventProviderRetry` is the wait carried by the event that asked for this
+  // settle: the session error written right after a failed turn can drop the
+  // limit the turn's own completion reported (a stale read on the server, fixed
+  // in 1.66.101 but not in older events), and this keeps that limit.
+  const settle = Effect.fn("PersonalTaskService.settle")(function* (
+    threadId: ThreadId,
+    eventProviderRetry?: OrchestrationSession["providerRetry"],
+  ) {
     const attempt = yield* activeAttemptForThread(threadId);
     if (attempt === null) {
       return;
@@ -319,6 +326,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
     if (session === null || session === undefined) {
       return;
     }
+    const providerRetry = session.providerRetry ?? eventProviderRetry;
     // Everything after this attempt's own user message belongs to it; a
     // session state or reply from an earlier attempt on the same thread does
     // not. Ordering by the anchor, not by clock, keeps equal timestamps safe.
@@ -428,7 +436,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
           lostConversation: isMissingProviderConversationText(session.lastError),
           renewalWaitSinceMs: renewalWaitSince.get(renewalKey),
           nowMs: DateTime.toEpochMillis(now),
-          providerRetry: session.providerRetry,
+          providerRetry,
           attemptStartedAtMs: DateTime.toEpochMillis(attempt.startedAt),
           providerName: session.providerName,
           activeTurnId: session.activeTurnId,
@@ -542,7 +550,9 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
         }
       }
     }
-    yield* settle(threadId);
+    // A settle asked for by a session change keeps the wait that event carried:
+    // the next session write can drop it before the projection is read.
+    yield* settle(threadId, session.providerRetry);
   });
 
   const sweepOnce = Effect.fn("PersonalTaskService.sweepOnce")(function* () {

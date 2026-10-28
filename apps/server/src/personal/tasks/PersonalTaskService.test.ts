@@ -4394,6 +4394,64 @@ it.effect(
   },
 );
 
+it.effect(
+  "a failed turn's limit moves the task to its fallback when the error session lost it",
+  () => {
+    const harness = makeHarness();
+    const providers: Array<unknown> = fallbackProviders(10);
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("fb-lost-retry", "developer");
+      const thread = threadOf(root);
+      yield* beginTurn(harness, thread);
+      const startsBefore = turnStarts(harness).length;
+      const first = yield* DateTime.now;
+      const retry = { ...providerWait("rate_limited", first, 6 * 60 * 60_000), provider: "codex" };
+      // The projection has already moved on to the error the reactor writes
+      // from a stale read: it carries no wait, the event below still does.
+      const lost = makeSession({
+        threadId: thread,
+        status: "error",
+        activeTurnId: null,
+        lastError: CODEX_LIMIT_ERROR,
+        updatedAt: DateTime.formatIso(DateTime.add(first, { milliseconds: 5 })),
+      });
+      harness.sessions.set(thread, lost);
+      yield* service.ingestDomainEvent(
+        sessionEvent(
+          harness,
+          makeSession({
+            threadId: thread,
+            status: "error",
+            activeTurnId: null,
+            lastError: CODEX_LIMIT_ERROR,
+            providerRetry: retry,
+            updatedAt: DateTime.formatIso(first),
+          }),
+        ),
+      );
+      yield* service.ingestDomainEvent(sessionEvent(harness, lost));
+      yield* service.drain;
+
+      // The bot moved to its fallback model and the task ran again at once,
+      // instead of spending the unreported-limit backoff.
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: botId("developer") })).fallbackActive,
+      ).toBeDefined();
+      const starts = turnStarts(harness).slice(startsBefore);
+      expect(starts).toHaveLength(1);
+      expect(starts[0]?.modelSelection).toMatchObject({ instanceId: "claudeAgent" });
+      // ... and that attempt completes on the fallback; the task never parks.
+      yield* postAttemptMessage(harness, root.taskId, thread, 2);
+      const secondTurn = yield* beginTurn(harness, thread);
+      yield* endTurn(harness, thread, secondTurn, "Done on the fallback.");
+      expect((yield* reload(root.taskId)).status).toBe("completed");
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, providers)));
+  },
+);
+
 it.effect("an error that does not read like a limit still settles at once", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
