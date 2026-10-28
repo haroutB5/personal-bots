@@ -13,8 +13,12 @@
  * Safety rails live here, not in the helper (SPEC.md 9):
  * - no input while the session is locked, the screen is off, or the screensaver
  *   is up;
- * - no desktop input while Brave (or another Chromium) is focused: the shared
- *   browser has a lease and a sensitive-site pause the desktop would bypass;
+ * - no desktop input while the bots' shared Brave (the window whose process
+ *   carries a browser-profiles directory) is focused: it has a lease and a
+ *   sensitive-site pause the desktop would bypass; the user's own Brave,
+ *   Chromium and Brave PWAs are allowed, unless their title names a site the
+ *   user marked sensitive, and a sensitive list that cannot be read blocks
+ *   every browser window as before;
  * - no input into a password manager by window class;
  * - no input at a point where a mapped browser or password-manager window sits,
  *   whatever holds focus: a click can land on Brave while a text editor is
@@ -32,6 +36,14 @@ import { type DesktopDriver, DesktopHelperError } from "../DesktopHelper.ts";
 import { unionRect, type DesktopRect } from "../desktopGeometry.ts";
 import type { KeyEntry } from "../desktopKeys.ts";
 import { LinuxScreenCapture } from "./capture.ts";
+import {
+  browserWindowRefusal,
+  classifyBrowserWindow,
+  isBrowserWindowClass,
+  makeCommandLineCache,
+  type BrowserWindowVerdict,
+  type SensitiveSite,
+} from "./browserWindows.ts";
 import { LinuxDesktopHelper } from "./helper.ts";
 import { isModifierEntry, keysymName } from "./keyMap.ts";
 import {
@@ -84,13 +96,11 @@ const PASSWORD_MANAGER_CLASSES = [
   "protonpass",
 ];
 /**
- * Matched by prefix, not equality: a Brave PWA is `brave-<app>-Default`, and
- * the focus guard and the point guard must both see it as the shared browser.
+ * A browser window is hbots' shared Brave only when its process carries a
+ * browser-profiles directory (see browserWindows.ts). Every other browser
+ * window, PWAs included, is the user's own and the desktop may drive it.
  */
-const BROWSER_CLASS_PREFIXES = ["brave", "chromium", "chrome", "google-chrome"];
-
-const isBrowserClass = (windowClass: string): boolean =>
-  BROWSER_CLASS_PREFIXES.some((prefix) => windowClass.startsWith(prefix));
+const BROWSER_GUARD_TTL_MS = 10_000;
 
 /** Matched by containment: a password manager's class is namespaced. */
 const isPasswordManagerClass = (windowClass: string): boolean =>
@@ -112,6 +122,16 @@ export interface LinuxDesktopDriverOptions {
   readonly stopChord?: boolean;
   /** A prebuilt helper; production builds it from the embedded source. */
   readonly helperBinary?: string;
+  /**
+   * The user's sensitive sites: the origins and labels of the saved logins they
+   * marked sensitive. Read when a browser window is guarded; a failure blocks
+   * browser windows, as before this guard learned to tell them apart.
+   */
+  readonly sensitiveSites?: () => Promise<ReadonlyArray<SensitiveSite>>;
+  /** Where hbots keeps its own browser profiles (`<baseDir>/personal/browser-profiles`). */
+  readonly sharedBrowserProfileRoots?: ReadonlyArray<string>;
+  /** Test seam: `/proc/<pid>/cmdline` by default. */
+  readonly readProcessCommandLine?: (pid: number) => string | null;
   readonly log?: (line: string) => void;
 }
 
@@ -136,6 +156,14 @@ export class LinuxDesktopDriver implements DesktopDriver {
   /** True while computer_mouse_down has a button down. */
   private buttonDown = false;
   private readonly log: (line: string) => void;
+  /** `/proc/<pid>/cmdline`, cached per pid: guards run on every action. */
+  private readonly processCommandLine: (pid: number) => string | null;
+  /** The user's sensitive sites, briefly cached; null while unreadable. */
+  private sensitiveSitesCache: {
+    readonly sites: ReadonlyArray<SensitiveSite>;
+    readonly at: number;
+  } | null = null;
+  private sensitiveSitesFailedAt = 0;
   private monitorsCache: ScreenState | null = null;
   private workspaceCache: { workspaces: VisibleWorkspaces; at: number } | null = null;
   private layoutRefresh: Promise<void> | null = null;
@@ -163,6 +191,7 @@ export class LinuxDesktopDriver implements DesktopDriver {
     this.session = session;
     this.options = options;
     this.log = options.log ?? (() => undefined);
+    this.processCommandLine = makeCommandLineCache(options.readProcessCommandLine);
     this.capture = new LinuxScreenCapture(session, options.tempDir);
     this.helper = new LinuxDesktopHelper(
       session,
@@ -327,6 +356,58 @@ export class LinuxDesktopDriver implements DesktopDriver {
     return locked;
   }
 
+  /** The user's sensitive sites, briefly cached: guards run on every action. */
+  private async sensitiveSitesOrNull(): Promise<ReadonlyArray<SensitiveSite> | null> {
+    const now = Date.now();
+    if (
+      this.sensitiveSitesCache !== null &&
+      now - this.sensitiveSitesCache.at < BROWSER_GUARD_TTL_MS
+    ) {
+      return this.sensitiveSitesCache.sites;
+    }
+    // A failure is remembered for the same window: a broken list must not turn
+    // every click into a fresh database read. Both paths fail closed.
+    if (now - this.sensitiveSitesFailedAt < BROWSER_GUARD_TTL_MS) return null;
+    if (this.options.sensitiveSites === undefined) {
+      this.sensitiveSitesFailedAt = now;
+      return null;
+    }
+    try {
+      const sites = await this.options.sensitiveSites();
+      this.sensitiveSitesCache = { sites, at: now };
+      return sites;
+    } catch (error) {
+      this.sensitiveSitesCache = null;
+      this.sensitiveSitesFailedAt = now;
+      this.log(
+        `sensitive-site list unreadable, browser windows blocked: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /** The shared-browser and sensitive-site rule for one window, or null. */
+  private async browserRefusal(
+    window: { readonly class: string; readonly title: string; readonly pid: number },
+    atPoint: boolean,
+  ): Promise<DesktopHelperError | null> {
+    if (!isBrowserWindowClass(window.class)) return null;
+    const verdict: BrowserWindowVerdict = classifyBrowserWindow({
+      windowClass: window.class,
+      title: window.title,
+      commandLine: this.processCommandLine(window.pid),
+      profileRoots: this.options.sharedBrowserProfileRoots ?? [],
+      sites: await this.sensitiveSitesOrNull(),
+    });
+    if (verdict.kind === "allow") return null;
+    return new DesktopHelperError(
+      atPoint ? "point_blocked" : "user_active",
+      browserWindowRefusal(verdict.kind, atPoint),
+    );
+  }
+
   /** Last line of defence before anything is injected; never called for release. */
   private async guardInput(): Promise<void> {
     if (await this.locked()) {
@@ -352,11 +433,9 @@ export class LinuxDesktopDriver implements DesktopDriver {
         "The screensaver is up, so the user is away. Nothing was clicked or typed; do not dismiss it.",
       );
     }
-    if (isBrowserClass(windowClass)) {
-      throw new DesktopHelperError(
-        "user_active",
-        "Brave is the shared browser. Use the browser tools so the lease and the sensitive-site pause apply. The desktop cannot drive it.",
-      );
+    if (window !== null) {
+      const refusal = await this.browserRefusal(window, false);
+      if (refusal !== null) throw refusal;
     }
     if (isPasswordManagerClass(windowClass)) {
       throw new DesktopHelperError(
@@ -376,7 +455,8 @@ export class LinuxDesktopDriver implements DesktopDriver {
 
   /**
    * The window under the point decides, not the focused one: a click can land
-   * on Brave or a password manager while a text editor keeps focus.
+   * on the shared browser, a sensitive tab or a password manager while a text
+   * editor keeps focus.
    */
   private async guardPoint(point: { readonly x: number; readonly y: number }): Promise<void> {
     const { union } = await this.extents();
@@ -390,11 +470,9 @@ export class LinuxDesktopDriver implements DesktopDriver {
         y >= window.y &&
         y < window.y + window.height,
     );
-    if (under.some((window) => isBrowserClass(window.class.toLowerCase()))) {
-      throw new DesktopHelperError(
-        "point_blocked",
-        "Brave is the shared browser and a browser window is under that point. Use the browser tools so the lease and the sensitive-site pause apply. The desktop cannot click it.",
-      );
+    for (const window of under) {
+      const refusal = await this.browserRefusal(window, true);
+      if (refusal !== null) throw refusal;
     }
     if (under.some((window) => isPasswordManagerClass(window.class.toLowerCase()))) {
       throw new DesktopHelperError(

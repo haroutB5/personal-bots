@@ -78,6 +78,7 @@ describe("activeWindow", () => {
     expect(
       activeWindow({
         address: "0x1",
+        pid: 321,
         title: "  Notes ",
         class: "foot",
         workspace: { id: 2, name: "2" },
@@ -86,6 +87,7 @@ describe("activeWindow", () => {
     ).toEqual({
       title: "Notes",
       class: "foot",
+      pid: 321,
       address: "0x1",
       workspace: "2",
       monitor: 0,
@@ -134,6 +136,7 @@ describe("mappedWindows", () => {
       mappedWindows([
         {
           class: "brave-abc-Default",
+          pid: 4321,
           title: "Bank",
           at: [-120, 40],
           size: [800, 600],
@@ -142,7 +145,15 @@ describe("mappedWindows", () => {
         },
       ]),
     ).toEqual([
-      { class: "brave-abc-Default", title: "Bank", x: -120, y: 40, width: 800, height: 600 },
+      {
+        class: "brave-abc-Default",
+        title: "Bank",
+        pid: 4321,
+        x: -120,
+        y: 40,
+        width: 800,
+        height: 600,
+      },
     ]);
   });
 

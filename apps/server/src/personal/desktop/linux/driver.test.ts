@@ -7,7 +7,7 @@ import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 
 import { DesktopHelperError } from "../DesktopHelper.ts";
-import { LinuxDesktopDriver } from "./driver.ts";
+import { LinuxDesktopDriver, type LinuxDesktopDriverOptions } from "./driver.ts";
 import { ensureLinuxHelperBuilt } from "./helperBuild.ts";
 import { LinuxDesktopHelper } from "./helper.ts";
 import type { LinuxSession } from "./session.ts";
@@ -24,14 +24,42 @@ const session: LinuxSession = {
 let world: FakeWorld;
 let savedPath: string | undefined;
 
-const makeDriver = () =>
+const PROFILE_ROOT = NodePath.join(root, "personal", "browser-profiles");
+const SHARED_BROWSER_PID = 424242;
+const USER_BROWSER_PID = 434343;
+const TEMP_CHROMIUM_PID = 444444;
+const COMMAND_LINES = new Map<number, string>([
+  [
+    SHARED_BROWSER_PID,
+    `brave --remote-debugging-pipe --user-data-dir=${NodePath.join(PROFILE_ROOT, "default")}`,
+  ],
+  [USER_BROWSER_PID, "brave --user-data-dir=/home/harout/.config/BraveSoftware/Brave-Browser"],
+  [TEMP_CHROMIUM_PID, "chromium --user-data-dir=/tmp/chromium-temp-profile-1234"],
+]);
+
+const makeDriver = (overrides: Partial<LinuxDesktopDriverOptions> = {}) =>
   new LinuxDesktopDriver(session, {
     helperDir: NodePath.join(root, "helper"),
     tempDir: NodePath.join(root, "tmp"),
     stopChord: false,
     helperBinary: world.helperPath,
     log: () => undefined,
+    sensitiveSites: async () => [],
+    sharedBrowserProfileRoots: [PROFILE_ROOT],
+    readProcessCommandLine: (pid) => COMMAND_LINES.get(pid) ?? null,
+    ...overrides,
   });
+
+/** A browser window the user owns, as Hyprland reports it. */
+const userBraveWindow = (overrides: Record<string, unknown> = {}) => ({
+  address: "0xuserbrave",
+  pid: USER_BROWSER_PID,
+  title: "YouTube Music - Brave",
+  class: "brave-browser",
+  workspace: { id: 2, name: "2" },
+  monitor: 0,
+  ...overrides,
+});
 
 /** The terminal fills the monitor, so any point lands on it by default. */
 const TERMINAL_CLIENT = {
@@ -233,19 +261,35 @@ describe("LinuxDesktopDriver", () => {
     expect(commands).toContain("key Right up");
   });
 
-  it("refuses desktop input into Brave", async () => {
+  it("refuses desktop input into the bots' shared browser, by pid", async () => {
     world.setActiveWindow({
-      address: "0xbrave",
-      title: "Brave",
+      address: "0xshared",
+      pid: SHARED_BROWSER_PID,
+      title: "New Tab",
       class: "brave-browser",
       workspace: { id: 2, name: "2" },
       monitor: 0,
     });
     const driver = makeDriver();
     try {
-      await expect(driver.request("click", { x: 10, y: 10 })).rejects.toMatchObject({
-        code: "user_active",
-      });
+      const error = await driver.request("click", { x: 10, y: 10 }).catch((cause) => cause);
+      expect(error).toBeInstanceOf(DesktopHelperError);
+      expect(error).toMatchObject({ code: "user_active" });
+      expect(String(error.message)).toContain("shared browser");
+      expect(String(error.message)).toContain("browser tools");
+    } finally {
+      world.setActiveWindow(userBraveWindow());
+      driver.dispose();
+    }
+  });
+
+  it("drives the user's own Brave window, including YouTube Music", async () => {
+    world.setActiveWindow(userBraveWindow());
+    const before = world.helperCommands().length;
+    const driver = makeDriver();
+    try {
+      await driver.request("click", { x: 10, y: 10 });
+      await driver.request("type", { text: "hello" });
     } finally {
       world.setActiveWindow({
         address: "0xabc",
@@ -256,14 +300,87 @@ describe("LinuxDesktopDriver", () => {
       });
       driver.dispose();
     }
+    const commands = world.helperCommands().slice(before);
+    expect(commands.some((line) => line.startsWith("click"))).toBe(true);
+    expect(commands).toContain("type hello");
   });
 
-  it("refuses a point over a Brave PWA while a text editor has focus", async () => {
+  it("drives a Chromium window with a temporary profile", async () => {
+    world.setActiveWindow(
+      userBraveWindow({ address: "0xchromium", pid: TEMP_CHROMIUM_PID, class: "chromium" }),
+    );
+    const before = world.helperCommands().length;
+    const driver = makeDriver();
+    try {
+      await driver.request("click", { x: 10, y: 10 });
+    } finally {
+      world.setActiveWindow(userBraveWindow());
+      driver.dispose();
+    }
+    expect(
+      world
+        .helperCommands()
+        .slice(before)
+        .some((line) => line.startsWith("click")),
+    ).toBe(true);
+  });
+
+  it("drives a Brave PWA window", async () => {
+    world.setActiveWindow(userBraveWindow({ class: "brave-abc-Default", title: "Calendar" }));
+    const before = world.helperCommands().length;
+    const driver = makeDriver();
+    try {
+      await driver.request("click", { x: 10, y: 10 });
+    } finally {
+      world.setActiveWindow(userBraveWindow());
+      driver.dispose();
+    }
+    expect(
+      world
+        .helperCommands()
+        .slice(before)
+        .some((line) => line.startsWith("click")),
+    ).toBe(true);
+  });
+
+  it("refuses a window titled with a site the user marked sensitive", async () => {
+    world.setActiveWindow(userBraveWindow({ title: "Barclays Online - Brave" }));
+    const driver = makeDriver({
+      sensitiveSites: async () => [{ origin: "https://bank.example", label: "Barclays" }],
+    });
+    try {
+      const error = await driver.request("click", { x: 10, y: 10 }).catch((cause) => cause);
+      expect(error).toMatchObject({ code: "user_active" });
+      expect(String(error.message)).toContain("marked sensitive");
+    } finally {
+      world.setActiveWindow(userBraveWindow());
+      driver.dispose();
+    }
+  });
+
+  it("blocks browser windows when the sensitive list cannot be read", async () => {
+    world.setActiveWindow(userBraveWindow());
+    const driver = makeDriver({
+      sensitiveSites: async () => {
+        throw new Error("database is locked");
+      },
+    });
+    try {
+      const error = await driver.request("click", { x: 10, y: 10 }).catch((cause) => cause);
+      expect(error).toMatchObject({ code: "user_active" });
+      expect(String(error.message)).toContain("could not be checked");
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("drives a point over the user's Brave PWA while a text editor has focus", async () => {
     world.setClients([
       TERMINAL_CLIENT,
       {
         address: "0xbrave",
-        title: "Bank",
+        pid: USER_BROWSER_PID,
+        title: "Calendar",
         class: "brave-abc-Default",
         at: [100, 100],
         size: [400, 300],
@@ -275,20 +392,44 @@ describe("LinuxDesktopDriver", () => {
     const before = world.helperCommands().length;
     const driver = makeDriver();
     try {
-      // Focus is the terminal; the click point is inside the Brave window.
+      // Focus is the terminal; the click point is inside the user's PWA.
+      await driver.request("click", { x: 200, y: 150 });
+      await driver.request("drag", { fromX: 10, fromY: 10, toX: 200, toY: 150 });
+    } finally {
+      world.setClients([TERMINAL_CLIENT]);
+      driver.dispose();
+    }
+    const commands = world.helperCommands().slice(before);
+    expect(commands.some((line) => line.startsWith("click"))).toBe(true);
+    expect(commands.some((line) => line.startsWith("drag"))).toBe(true);
+  });
+
+  it("refuses a point over a window titled with a sensitive site", async () => {
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xbrave",
+        pid: USER_BROWSER_PID,
+        title: "Barclays Online - Brave",
+        class: "brave-browser",
+        at: [100, 100],
+        size: [400, 300],
+        mapped: true,
+        hidden: false,
+        workspace: { id: 2, name: "2" },
+      },
+    ]);
+    const before = world.helperCommands().length;
+    const driver = makeDriver({
+      sensitiveSites: async () => [{ origin: "https://bank.example", label: "Barclays" }],
+    });
+    try {
       await expect(driver.request("click", { x: 200, y: 150 })).rejects.toMatchObject({
         code: "point_blocked",
       });
-      // The point is checked for both ends of a drag.
       await expect(
         driver.request("drag", { fromX: 10, fromY: 10, toX: 200, toY: 150 }),
       ).rejects.toMatchObject({ code: "point_blocked" });
-      await expect(driver.request("scroll", { x: 200, y: 150, dy: 3 })).rejects.toMatchObject({
-        code: "point_blocked",
-      });
-      await expect(driver.request("button", { x: 200, y: 150, down: true })).rejects.toMatchObject({
-        code: "point_blocked",
-      });
     } finally {
       world.setClients([TERMINAL_CLIENT]);
       driver.dispose();
@@ -299,11 +440,38 @@ describe("LinuxDesktopDriver", () => {
         .slice(before)
         .some((line) => line.startsWith("click")),
     ).toBe(false);
+  });
+
+  it("refuses a point over the bots' shared browser while a text editor has focus", async () => {
+    world.setClients([
+      TERMINAL_CLIENT,
+      {
+        address: "0xshared",
+        pid: SHARED_BROWSER_PID,
+        title: "New Tab",
+        class: "brave-browser",
+        at: [100, 100],
+        size: [400, 300],
+        mapped: true,
+        hidden: false,
+        workspace: { id: 2, name: "2" },
+      },
+    ]);
+    const before = world.helperCommands().length;
+    const driver = makeDriver();
+    try {
+      const error = await driver.request("click", { x: 200, y: 150 }).catch((cause) => cause);
+      expect(error).toMatchObject({ code: "point_blocked" });
+      expect(String(error.message)).toContain("shared browser");
+    } finally {
+      world.setClients([TERMINAL_CLIENT]);
+      driver.dispose();
+    }
     expect(
       world
         .helperCommands()
         .slice(before)
-        .some((line) => line.startsWith("drag")),
+        .some((line) => line.startsWith("click")),
     ).toBe(false);
   });
 
@@ -315,7 +483,8 @@ describe("LinuxDesktopDriver", () => {
       TERMINAL_CLIENT,
       {
         address: "0xbrave",
-        title: "Bank",
+        pid: USER_BROWSER_PID,
+        title: "Calendar",
         class: "brave-abc-Default",
         at: [100, 100],
         size: [400, 300],
@@ -341,14 +510,15 @@ describe("LinuxDesktopDriver", () => {
 
   it("blocks the same point once the monitor shows that workspace", async () => {
     // The point guard follows the monitor's active workspace, not a stale
-    // window list: switch the monitor to workspace 6 and the same Brave
-    // window is on screen and must block.
+    // window list: switch the monitor to workspace 6 and the shared browser
+    // is on screen and must block.
     world.setClients([
       TERMINAL_CLIENT,
       {
-        address: "0xbrave",
-        title: "Bank",
-        class: "brave-abc-Default",
+        address: "0xshared",
+        pid: SHARED_BROWSER_PID,
+        title: "New Tab",
+        class: "brave-browser",
         at: [100, 100],
         size: [400, 300],
         mapped: true,
@@ -397,13 +567,14 @@ describe("LinuxDesktopDriver", () => {
     }
   });
 
-  it("keeps a pinned browser window in the guard, whatever workspace it sits on", async () => {
+  it("keeps a pinned shared-browser window in the guard, whatever workspace it sits on", async () => {
     world.setClients([
       TERMINAL_CLIENT,
       {
-        address: "0xbrave",
-        title: "Bank",
-        class: "brave-abc-Default",
+        address: "0xshared",
+        pid: SHARED_BROWSER_PID,
+        title: "New Tab",
+        class: "brave-browser",
         at: [100, 100],
         size: [400, 300],
         mapped: true,

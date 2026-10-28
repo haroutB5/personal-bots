@@ -317,6 +317,7 @@ export function logicalMonitors(raw: ReadonlyArray<RawMonitor>): LogicalMonitor[
 
 export interface RawActiveWindow {
   readonly address?: string;
+  readonly pid?: number;
   readonly title?: string;
   readonly class?: string;
   readonly workspace?: { readonly id?: number; readonly name?: string };
@@ -328,6 +329,8 @@ export interface RawActiveWindow {
 export interface ActiveWindow {
   readonly title: string;
   readonly class: string;
+  /** The process that owns the window; 0 when Hyprland did not report one. */
+  readonly pid: number;
   readonly address: string;
   readonly workspace: string;
   readonly monitor: number;
@@ -341,6 +344,7 @@ export function activeWindow(raw: RawActiveWindow | null | undefined): ActiveWin
   return {
     title,
     class: windowClass,
+    pid: typeof raw.pid === "number" && Number.isFinite(raw.pid) ? raw.pid : 0,
     address: typeof raw.address === "string" ? raw.address : "",
     workspace:
       typeof raw.workspace?.name === "string"
@@ -352,6 +356,7 @@ export function activeWindow(raw: RawActiveWindow | null | undefined): ActiveWin
 
 export interface RawClient {
   readonly class?: string;
+  readonly pid?: number;
   readonly title?: string;
   readonly at?: ReadonlyArray<number>;
   readonly size?: ReadonlyArray<number>;
@@ -401,6 +406,8 @@ export function visibleWorkspaces(
 export interface MappedWindow {
   readonly class: string;
   readonly title: string;
+  /** The process that owns the window; 0 when Hyprland did not report one. */
+  readonly pid: number;
   readonly x: number;
   readonly y: number;
   readonly width: number;
@@ -440,6 +447,7 @@ export function mappedWindows(
     windows.push({
       class: typeof entry.class === "string" ? entry.class : "",
       title: typeof entry.title === "string" ? entry.title : "",
+      pid: typeof entry.pid === "number" && Number.isFinite(entry.pid) ? entry.pid : 0,
       x: Number(at[0]) || 0,
       y: Number(at[1]) || 0,
       width,

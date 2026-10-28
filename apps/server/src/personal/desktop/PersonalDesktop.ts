@@ -41,6 +41,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import { type DesktopDriver, DesktopHelperError, WindowsDesktopDriver } from "./DesktopHelper.ts";
 import { createLinuxDesktopDriver } from "./linux/driver.ts";
 import {
@@ -1200,7 +1201,9 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const engine = yield* OrchestrationEngine.OrchestrationEngineService;
     const platform = yield* HostProcessPlatform;
+    const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     const helperDir = NodePath.join(config.stateDir, "desktop-helper");
     let unavailableReason: string | undefined;
 
@@ -1216,6 +1219,23 @@ export const layer = Layer.effect(
               helperDir: linuxDir,
               tempDir: NodePath.join(linuxDir, "tmp"),
               stopChord: process.env.PB_DESKTOP_LINUX_STOP_CHORD?.trim() !== "off",
+              // The same sites the shared browser's sensitive-site pause uses:
+              // saved logins the user marked sensitive.
+              sensitiveSites: () =>
+                runPromise(
+                  logins
+                    .list()
+                    .pipe(
+                      Effect.map((rows) =>
+                        rows
+                          .filter((row) => row.sensitive)
+                          .map((row) => ({ origin: row.origin, label: row.label })),
+                      ),
+                    ),
+                ),
+              sharedBrowserProfileRoots: [
+                NodePath.join(config.baseDir, "personal", "browser-profiles"),
+              ],
               log: (line) => {
                 runFork(Effect.logInfo(line));
               },
