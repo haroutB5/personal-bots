@@ -504,7 +504,9 @@ export function ConversationScreen({
   const sameThreadAsSeen = seenUserInputs.threadId === threadId;
   if (
     !sameThreadAsSeen ||
-    userInputs.some((request) => !seenUserInputs.requests.has(request.requestId))
+    userInputs.some(
+      (request) => seenUserInputs.requests.get(request.requestId)?.createdAt !== request.createdAt,
+    )
   ) {
     const requests = new Map(sameThreadAsSeen ? seenUserInputs.requests : []);
     for (const request of userInputs) requests.set(request.requestId, request);
@@ -526,7 +528,10 @@ export function ConversationScreen({
     // A thread switch that has not settled yet must not show the previous
     // chat's cards.
     if (seenUserInputs.threadId === threadId) {
-      for (const [requestId, request] of seenUserInputs.requests) asked.set(requestId, request);
+      for (const [requestId, request] of seenUserInputs.requests) {
+        if ((asked.get(requestId)?.createdAt ?? "") < request.createdAt)
+          asked.set(requestId, request);
+      }
     }
     return deriveQuestionCards(userInputs, asked, deriveUserInputResolutions(activities));
   }, [activities, seenUserInputs, threadId, userInputs]);

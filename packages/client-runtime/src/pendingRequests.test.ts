@@ -26,6 +26,34 @@ function makeActivity(overrides: {
   };
 }
 
+it("reopens a reused question ID only for a request newer than its resolution", () => {
+  const questions = [{ id: "q", header: "Q", question: "First?", options: [], multiSelect: false }];
+  const first = makeActivity({
+    kind: "user-input.requested",
+    createdAt: "2026-02-23T00:00:01.000Z",
+    payload: { requestId: "reused", questions },
+  });
+  const resolved = makeActivity({
+    kind: "user-input.resolved",
+    createdAt: "2026-02-23T00:00:02.000Z",
+    payload: { requestId: "reused" },
+  });
+  const again = makeActivity({
+    kind: "user-input.requested",
+    createdAt: "2026-02-23T00:00:03.000Z",
+    payload: { requestId: "reused", questions: [{ ...questions[0], question: "Again?" }] },
+  });
+  const activities = [again, resolved, first];
+  expect(derivePendingRequests(activities).userInputs[0]?.questions[0]?.question).toBe("Again?");
+  expect(deriveUserInputHistory(activities)[0]?.questions[0]?.question).toBe("Again?");
+  const last = makeActivity({
+    kind: "user-input.resolved",
+    createdAt: "2026-02-23T00:00:04.000Z",
+    payload: { requestId: "reused" },
+  });
+  expect(derivePendingRequests([last, ...activities]).userInputs).toEqual([]);
+});
+
 describe("pending approvals", () => {
   it.each([{}, { requestType: "unknown" }])(
     "exposes legacy OpenCode approvals without a known request kind: %j",

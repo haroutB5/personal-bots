@@ -55,12 +55,26 @@ export function deriveUserInputResolutions(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyMap<string, UserInputAnswers | "superseded" | null> {
   const resolutions = new Map<string, UserInputAnswers | "superseded" | null>();
+  const latestAsk = new Map<string, string>();
+  const latestResolution = new Map<string, string>();
+  for (const activity of activities) {
+    if (activity.kind !== "user-input.requested") continue;
+    const payload = activity.payload;
+    if (typeof payload !== "object" || payload === null) continue;
+    const requestId = (payload as { requestId?: unknown }).requestId;
+    if (typeof requestId === "string" && (latestAsk.get(requestId) ?? "") < activity.createdAt) {
+      latestAsk.set(requestId, activity.createdAt);
+    }
+  }
   for (const activity of activities) {
     if (activity.kind !== "user-input.resolved") continue;
     const payload = activity.payload;
     if (typeof payload !== "object" || payload === null) continue;
     const requestId = (payload as { requestId?: unknown }).requestId;
     if (typeof requestId !== "string") continue;
+    if ((latestAsk.get(requestId) ?? "") > activity.createdAt) continue;
+    if ((latestResolution.get(requestId) ?? "") > activity.createdAt) continue;
+    latestResolution.set(requestId, activity.createdAt);
     if ((payload as { responseMode?: unknown }).responseMode === "superseded") {
       resolutions.set(requestId, "superseded");
       continue;
