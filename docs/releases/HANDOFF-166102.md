@@ -29,9 +29,9 @@ Changes:
 - `isProtectedBotsData` now allows the two media folders, `attachments` and `browser-artifacts`, and
   keeps every other entry under `userdata` private (database, sealed secrets, settings). The check
   still looks through `..` and symlinks (requested path and real path).
-- The runtime instructions now tell every bot to save generated media in the chat workspace or
-  `/tmp`, and that media under the Bots data folder displays only from `userdata/attachments` and
-  `userdata/browser-artifacts` (`apps/server/src/provider/RuntimeInstructions.ts`).
+- The runtime instructions are unchanged: the context budget only ratchets down, and this release
+  raises no prompt or tool text. The deny-list fix alone makes the path the preview tool hands to
+  bots displayable.
 - The chat failure now explains itself instead of only saying "Image unavailable"
   (`apps/web/src/components/ChatMarkdown.tsx`, `packages/client-runtime/src/state/assets.ts`):
   a missing file shows `File not found at <path>`, and a policy refusal shows
@@ -107,3 +107,16 @@ If the drop-in was installed but the release was refused before its restart, the
 moved; steps 1-2 alone put the unit back.
 
 ## Gate
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=5fb44b051d2d9dc262eb93d67b56e9737d2fe3bc release=5fb44b051d2d json-sha256=3586de38af53b0e47ac04820d84db1a0765b56df0ff4fe09d29e421efdefe131 result=FAIL -->
+
+- server-tests: FAIL, exit 1
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- client-runtime-tests: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
