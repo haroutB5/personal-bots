@@ -1631,8 +1631,8 @@ export function ConversationScreen({
                     event as typeof event & { preventBaseUIHandler?: () => void }
                   ).preventBaseUIHandler?.();
                   skipMenuReturnFocus.current = true;
-                  flushSync(() => setChatMenuOpen(false));
                   newChat.open();
+                  setChatMenuOpen(false);
                 }}
               >
                 New chat
