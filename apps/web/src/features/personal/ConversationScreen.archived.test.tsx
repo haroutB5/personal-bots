@@ -35,6 +35,7 @@ const state = vi.hoisted(() => ({
     turnsKey: string;
   },
   renamed: [] as Array<[string, string]>,
+  focusCalls: [] as string[],
   bulk: (() => {}) as (...args: unknown[]) => unknown,
   linkPinned: false,
   /** A second chat of the bot (thread-2, "hbots"): its link and shell. */
@@ -483,12 +484,21 @@ vi.mock("./ChatSettingsSheet", async (importOriginal) => {
     // Base UI's dialog needs a DOM: the content inside it is what the screen drives.
     ChatSettingsSheet: ({
       returnFocusTo: _returnFocusTo,
+      primingInputRef,
       ...props
-    }: Parameters<typeof actual.ChatSettingsContent>[0] & { returnFocusTo: unknown }) => (
-      <div data-chat-settings-sheet="">
-        <actual.ChatSettingsContent {...props} />
-      </div>
-    ),
+    }: Parameters<typeof actual.ChatSettingsContent>[0] & {
+      returnFocusTo: unknown;
+      primingInputRef: React.RefObject<HTMLInputElement | null>;
+    }) => {
+      primingInputRef.current = {
+        focus: () => state.focusCalls.push("prime"),
+      } as unknown as HTMLInputElement;
+      return (
+        <div data-chat-settings-sheet="">
+          <actual.ChatSettingsContent {...props} />
+        </div>
+      );
+    },
   };
 });
 vi.mock("./chatState", async (importOriginal) => await importOriginal());
@@ -497,13 +507,18 @@ vi.mock("./RenameChatDialog", () => ({
   RenameChatDialog: ({
     open,
     initialTitle,
+    fieldRef,
     onSave,
   }: {
     open: boolean;
+    fieldRef: React.RefObject<HTMLInputElement | null>;
     initialTitle: string;
     onSave: (title: string) => Promise<string | null>;
-  }) =>
-    open ? (
+  }) => {
+    fieldRef.current = {
+      focus: () => state.focusCalls.push("field"),
+    } as unknown as HTMLInputElement;
+    return open ? (
       <button
         type="button"
         data-rename-dialog={initialTitle}
@@ -511,7 +526,8 @@ vi.mock("./RenameChatDialog", () => ({
       >
         save rename
       </button>
-    ) : null,
+    ) : null;
+  },
 }));
 vi.mock("./pendingOutgoing", () => ({ pendingForThread: () => [] }));
 vi.mock("./renameChat", () => ({
@@ -597,6 +613,7 @@ beforeEach(() => {
   clearPendingWrapup();
   clearChipFreeze();
   state.renamed = [];
+  state.focusCalls = [];
   state.prewarm = [];
   state.viewing = [];
   state.messageListProps = [];
@@ -794,6 +811,7 @@ it("Unarchive archives=false in place, and the composer and session come back", 
   // The server clears archivedAt on the shell and the link.
   state.shell = { title: "Plans", archivedAt: null };
   state.linkArchivedAt = null;
+  state.focusCalls = [];
   state.prewarm = [];
   state.viewing = [];
   await rerender();
@@ -1117,6 +1135,16 @@ describe("the sheet on the open chat", () => {
     await openOwnSheet();
     await chooseRow("wrapup");
     expect(String(lastMessageListProps().errorText)).toContain("Couldn't start the wrapup");
+  });
+
+  it("focuses the rename field synchronously in the settings click", async () => {
+    openChat();
+    await renderScreen();
+    await openOwnSheet();
+    act(() => {
+      rowNode("rename").props.onClick();
+      expect(state.focusCalls).toEqual(["prime", "field"]);
+    });
   });
 
   it("Rename chat opens the dialog with this chat's title and renames this chat", async () => {
