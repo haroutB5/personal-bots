@@ -115,6 +115,31 @@ If the runtime path fails after the restart, restore the old unit without deleti
 If the drop-in was installed but the release was refused before its restart, the server never
 moved; steps 1-2 alone put the unit back.
 
+## Desktop control drives the user's own browsers (`fix(server)`)
+
+Computer use on Linux refused every window whose class began with brave, chromium, chrome or
+google-chrome, so a bot could not click in Harout's own Brave (YouTube Music, signed in) or a
+throwaway-profile Chromium, and the shared-browser tools cannot sign in to Google.
+
+New `apps/server/src/personal/desktop/linux/browserWindows.ts` decides per window, on every
+action, in both the focus guard and the point guard:
+
+- The bots' shared browser is identified by the window's process, not its class: its
+  `--user-data-dir` sits under `<baseDir>/personal/browser-profiles` (`/proc/<pid>/cmdline`,
+  cached per pid so the guard stays cheap). That window stays blocked.
+- Every other Brave/Chromium/Chrome window, Brave PWAs included, is allowed unless its title
+  names a saved login the user marked sensitive: the same list the shared browser's
+  sensitive-site pause uses (host and label, case-insensitively).
+- If that list cannot be read, browser windows stay blocked as before; password managers are
+  unchanged.
+- The refusal says which rule fired: `This is the bots' shared browser; use the browser tools`,
+  or `This browser window shows a site you marked sensitive`.
+
+Tests: `browserWindows.test.ts` covers the shared pid, a normal `brave-browser`, a Chromium temp
+profile, a Brave PWA, a sensitive title, an unreadable list and an unidentifiable process;
+`driver.test.ts` exercises both guards, and the password-manager test is unchanged. The web
+ComputerScreen suite (26 tests, including the merged single-control fix) passes.
+
 ## Gate
 
 All six gates and gate evidence ran from `cc04dcff706d` in this worktree with its own
