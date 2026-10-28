@@ -29,6 +29,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
+import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import {
   PERSONAL_CHAT_RESUME_GRACE_MS,
   PERSONAL_CHAT_RESUME_PROMPT,
@@ -97,7 +98,7 @@ function chatState(turnId: string): ChatState {
 
 const chat = (harness: Harness, threadId: ThreadId) => harness.chats.get(threadId)!;
 
-const depsLayer = (harness: Harness) =>
+const depsLayer = (harness: Harness, fallback?: PersonalModelFallback.PersonalModelFallbackShape) =>
   Layer.mergeAll(
     Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
       dispatch: (command: OrchestrationCommand) =>
@@ -148,12 +149,17 @@ const depsLayer = (harness: Harness) =>
           if (harness.reserved.delete(key)) harness.freeSlots += 1;
         }),
     }),
+    ...(fallback === undefined
+      ? []
+      : [Layer.succeed(PersonalModelFallback.PersonalModelFallback, fallback)]),
     NodeServices.layer,
   );
 
 /** A fresh service on the shared database: a server start. */
-const bootService = (harness: Harness) =>
-  PersonalChatResume.make.pipe(Effect.provide(depsLayer(harness)));
+const bootService = (
+  harness: Harness,
+  fallback?: PersonalModelFallback.PersonalModelFallbackShape,
+) => PersonalChatResume.make.pipe(Effect.provide(depsLayer(harness, fallback)));
 
 const setup = Effect.gen(function* () {
   yield* runMigrations();
@@ -453,6 +459,47 @@ describe("PersonalChatResume", () => {
         { threadId: CHAT_A, status: "notice_only", outcome: "no_reset", resumeAt: null },
       ]);
     }).pipe(Effect.provide(dbLayer)),
+  );
+
+  it.effect(
+    "a free usage limit with no reset time switches to the fallback and continues now",
+    () =>
+      Effect.gen(function* () {
+        yield* setup;
+        const harness = makeHarness();
+        const hits: Array<PersonalModelFallback.LimitHitInput> = [];
+        const fallback: PersonalModelFallback.PersonalModelFallbackShape = {
+          onLimitHit: (input) =>
+            Effect.sync(() => {
+              hits.push(input);
+              return { switched: true, modelLabel: "Sonnet 5.5 · H" };
+            }),
+          start: () => Effect.void,
+          sweep: Effect.void,
+        };
+        const service = yield* bootService(harness, fallback);
+        // The OpenCode free window reports no reset time; before this fix the
+        // chat only showed "Usage limit reached" and never moved models.
+        yield* hitLimit(service, harness, CHAT_A, {
+          kind: "rate_limited",
+          reason: "Free usage limit reached: quota exhausted",
+          provider: "opencode",
+          observedAt: isoAt(HIT_MS),
+        });
+        expect(hits).toHaveLength(1);
+        expect(hits[0]).toMatchObject({
+          botId: BOT,
+          threadId: CHAT_A,
+          source: "chat",
+          reason: "Free usage limit reached: quota exhausted",
+        });
+        expect(hits[0]?.retryAt ?? null).toBeNull();
+        // A switched hit writes no "Paused" notice and is due at once.
+        expect(notices(harness)).toEqual([]);
+        yield* service.sweep;
+        expect(turnStarts(harness).map((turn) => turn.threadId)).toEqual([CHAT_A]);
+        expect(yield* resumeRows).toMatchObject([{ threadId: CHAT_A, status: "resumed" }]);
+      }).pipe(Effect.provide(dbLayer)),
   );
 
   it.effect("leaves task and group turns to their own retry", () =>
