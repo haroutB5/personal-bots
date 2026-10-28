@@ -68,7 +68,7 @@ All five gates and gate evidence run from this commit in a clean worktree with i
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=40a329351033d7cda4599e85191f83852c5fa204 release=40a329351033 json-sha256=7a3e042d0b5e5f5a2b9cf25d499f99c4c2afd0988ef26f4d53c9a017ff4371de result=PASS -->
+<!-- gate-evidence:begin sha=ac925163880e4454853d38763849c4fb420832f1 release=ac925163880e json-sha256=57e01e4f972ba1452b315e9b0d8f0d06352d0f5f75f4ac638a0c0aa382c94dda result=PASS -->
 
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
