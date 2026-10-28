@@ -209,6 +209,41 @@ const buttonWith = (label: string) =>
     .find((node) => node.findAllByType("span").some((span) => span.children.includes(label)));
 
 describe("ComputerScreen take control", () => {
+  it.each(["Browser", "Desktop"])("keeps one action for pending help on %s", async (source) => {
+    stubBrowserGlobals();
+    feedState.status = {
+      ...STATUS,
+      helpRequest: {
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-1"),
+        botName: "Developer",
+        reason: "Please help with the page",
+        requestedAt: "2026-09-15T10:00:00.000Z",
+      },
+    };
+    await renderScreen();
+    const tab = renderer!.root
+      .findAllByProps({ role: "tab" })
+      .find((node) => node.findAllByType("span").some((span) => span.children.includes(source)));
+    await act(async () => tab!.props.onClick());
+    const card = renderer!.root.findByProps({ "aria-label": "Developer needs you" });
+    expect(
+      card.findAllByType("p").some((node) => node.children.includes("Please help with the page")),
+    ).toBe(true);
+    expect(card.findAllByType("button").map((node) => node.children.join(""))).toEqual([
+      "Open chat",
+    ]);
+    const actions = renderer!.root
+      .findAllByType("button")
+      .filter((node) =>
+        node.findAllByType("span").some((span) => span.children.includes("Take control")),
+      );
+    expect(actions).toHaveLength(1);
+    expect(actions[0]!.props.disabled).toBeFalsy();
+    await act(async () => actions[0]!.props.onClick());
+    expect(state.takeControl).toHaveBeenCalledTimes(1);
+  });
+
   it("opens full screen and takes control from one tap", async () => {
     stubBrowserGlobals();
     feedState.status = STATUS;

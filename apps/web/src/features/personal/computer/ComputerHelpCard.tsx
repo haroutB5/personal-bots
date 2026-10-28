@@ -1,4 +1,4 @@
-import { Hand, MousePointer2, Shield } from "lucide-react";
+import { Hand, Shield } from "lucide-react";
 import type { JSX, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -65,8 +65,6 @@ export function ComputerHelpCard(props: {
   /** ISO instant the bot asked. */
   readonly requestedAt: string;
   readonly now: number;
-  readonly busy: boolean;
-  readonly onTakeOver: () => void;
   readonly onOpenChat: () => void;
   readonly className?: string;
 }): JSX.Element {
@@ -95,18 +93,6 @@ export function ComputerHelpCard(props: {
       </div>
       <p className="mt-2.5 text-[14px] leading-5">{helpBody(props)}</p>
       <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          disabled={props.busy}
-          onClick={props.onTakeOver}
-          className={cn(
-            BUTTON,
-            "flex-1 bg-[var(--personal-primary)] text-[var(--personal-primary-text)]",
-          )}
-        >
-          <MousePointer2 className="size-[18px]" strokeWidth={ICON_STROKE} aria-hidden />
-          Take over
-        </button>
         <button
           type="button"
           onClick={props.onOpenChat}
