@@ -24,6 +24,12 @@ export type QuestionCardItem =
       readonly answers: UserInputAnswers;
     }
   | {
+      readonly kind: "superseded";
+      readonly requestId: string;
+      readonly createdAt: string;
+      readonly questions: ReadonlyArray<UserInputQuestion>;
+    }
+  | {
       readonly kind: "closed";
       readonly requestId: string;
       readonly createdAt: string;
@@ -47,14 +53,18 @@ function coerceAnswer(value: unknown): string | string[] | null {
  */
 export function deriveUserInputResolutions(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
-): ReadonlyMap<string, UserInputAnswers | null> {
-  const resolutions = new Map<string, UserInputAnswers | null>();
+): ReadonlyMap<string, UserInputAnswers | "superseded" | null> {
+  const resolutions = new Map<string, UserInputAnswers | "superseded" | null>();
   for (const activity of activities) {
     if (activity.kind !== "user-input.resolved") continue;
     const payload = activity.payload;
     if (typeof payload !== "object" || payload === null) continue;
     const requestId = (payload as { requestId?: unknown }).requestId;
     if (typeof requestId !== "string") continue;
+    if ((payload as { responseMode?: unknown }).responseMode === "superseded") {
+      resolutions.set(requestId, "superseded");
+      continue;
+    }
     const rawAnswers = (payload as { answers?: unknown }).answers;
     if (typeof rawAnswers !== "object" || rawAnswers === null || Array.isArray(rawAnswers)) {
       resolutions.set(requestId, null);
@@ -81,7 +91,7 @@ export function deriveUserInputResolutions(
 export function deriveQuestionCards(
   pending: ReadonlyArray<PendingUserInput>,
   seen: ReadonlyMap<string, PendingUserInput>,
-  resolutions: ReadonlyMap<string, UserInputAnswers | null>,
+  resolutions: ReadonlyMap<string, UserInputAnswers | "superseded" | null>,
 ): ReadonlyArray<QuestionCardItem> {
   const pendingById = new Map(pending.map((request) => [request.requestId as string, request]));
   const requests = new Map<string, PendingUserInput>(seen);
@@ -97,6 +107,15 @@ export function deriveQuestionCards(
       continue;
     }
     const answers = resolutions.get(requestId) ?? null;
+    if (answers === "superseded") {
+      cards.push({
+        kind: "superseded",
+        requestId,
+        createdAt: request.createdAt,
+        questions: request.questions,
+      });
+      continue;
+    }
     if (answers !== null) {
       cards.push({
         kind: "answered",

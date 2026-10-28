@@ -1961,6 +1961,23 @@ pending_approval_requests AS (
       `,
   });
 
+  const getPendingInputActivities: ProjectionSnapshotQueryShape["getPendingInputActivities"] = (
+    threadId,
+  ) =>
+    listPinnedThreadActivityRowsByThread({ threadId }).pipe(
+      Effect.map((rows) =>
+        rows
+          .map(mapThreadActivityRow)
+          .filter((activity) => activity.kind === "user-input.requested"),
+      ),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getPendingInputActivities:query",
+          "ProjectionSnapshotQuery.getPendingInputActivities:decodeRows",
+        ),
+      ),
+    );
+
   const listPinnedThreadActivityIdsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadActivityIdRowSchema,
@@ -3846,6 +3863,7 @@ pending_approval_requests AS (
   return {
     getCommandReadModel,
     getUserInputActivity,
+    getPendingInputActivities,
     listActivitiesByKind,
     getSnapshot,
     getShellSnapshot,

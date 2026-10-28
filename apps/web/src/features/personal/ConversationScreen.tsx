@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -1069,6 +1070,9 @@ export function ConversationScreen({
     readonly isOpenChat: boolean;
   } | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
+  const renamePrimeRef = useRef<HTMLInputElement>(null);
+  const renameFieldRef = useRef<HTMLInputElement>(null);
+  const skipSettingsReturnFocus = useRef(false);
   const chatTitle = threadShell?.title ?? thread?.title;
 
   // Chat chips: the owner's other chats with this bot, one tap away in the
@@ -1299,8 +1303,8 @@ export function ConversationScreen({
   };
   const onSettingsSelect = async (id: Exclude<ChatSettingsRowId, "snooze">) => {
     const target = settingsTarget;
-    setSettingsFor(null);
     if (target === null) return;
+    if (id !== "rename") setSettingsFor(null);
     switch (id) {
       case "pin":
       case "unpin":
@@ -1313,12 +1317,18 @@ export function ConversationScreen({
         return;
       }
       case "rename":
-        setRenameTarget({
-          threadId: ThreadId.make(target.threadId),
-          title: target.title,
-          isOpenChat: target.isOpenChat,
+        renamePrimeRef.current?.focus();
+        skipSettingsReturnFocus.current = true;
+        flushSync(() => {
+          setSettingsFor(null);
+          setRenameTarget({
+            threadId: ThreadId.make(target.threadId),
+            title: target.title,
+            isOpenChat: target.isOpenChat,
+          });
+          setRenameOpen(true);
         });
-        setRenameOpen(true);
+        renameFieldRef.current?.focus();
         return;
       case "wrapup":
         if (target.isOpenChat) {
@@ -1629,6 +1639,8 @@ export function ConversationScreen({
       {settingsTarget !== null && settingsRows !== null ? (
         <ChatSettingsSheet
           returnFocusTo={settingsOpener}
+          primingInputRef={renamePrimeRef}
+          skipReturnFocus={skipSettingsReturnFocus}
           header={chatSettingsHeader(settingsTarget, now.getTime())}
           groups={settingsRows}
           chatName={settingsTarget.title}
@@ -1639,11 +1651,15 @@ export function ConversationScreen({
       ) : null}
       <RenameChatDialog
         open={renameOpen}
+        fieldRef={renameFieldRef}
         initialTitle={renameChatInitialTitle(renameTarget?.title ?? chatTitle)}
         takenTitles={openChatNames
           .filter((chat) => chat.threadId !== (renameTarget?.threadId ?? threadId))
           .map((chat) => chat.title)}
-        onOpenChange={setRenameOpen}
+        onOpenChange={(open) => {
+          setRenameOpen(open);
+          if (!open) skipSettingsReturnFocus.current = false;
+        }}
         onSave={async (title) => {
           const target = renameTarget;
           if (target === null) return null;

@@ -212,10 +212,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
+  pendingInputActivities,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  readonly pendingInputActivities?: ReadonlyArray<OrchestrationThreadActivity>;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -1528,8 +1530,40 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
+      const supersededEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      for (const request of pendingInputActivities ?? openRequests(targetThread).values()) {
+        if (
+          request.kind !== "user-input.requested" ||
+          !Predicate.isObject(request.payload) ||
+          request.payload.responseMode !== "message" ||
+          typeof request.payload.requestId !== "string"
+        )
+          continue;
+        supersededEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: command.threadId,
+            activity: {
+              id: EventId.make(`superseded:${command.commandId}:${request.payload.requestId}`),
+              kind: "user-input.resolved",
+              summary: "Answered in the chat",
+              tone: "info",
+              turnId: request.turnId,
+              createdAt: command.createdAt,
+              payload: { requestId: request.payload.requestId, responseMode: "superseded" },
+            },
+          },
+        });
+      }
       return [
         ...lifecycleResetEvents,
+        ...supersededEvents,
         ...(userMessageEvent ? [userMessageEvent] : []),
         turnStartRequestedEvent,
       ];
@@ -1632,6 +1666,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const request = userInputActivity;
+      if (
+        request?.kind === "user-input.resolved" &&
+        Predicate.isObject(request.payload) &&
+        request.payload.responseMode === "superseded"
+      ) {
+        return {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: command.threadId,
+            activity: { ...request, id: EventId.make(`superseded-tap:${command.commandId}`) },
+          },
+        };
+      }
       const attachments = Object.values(command.attachmentsByQuestionId ?? {}).flat();
       let questionTextById: Record<string, string> = {};
       if (attachments.length > 0) {

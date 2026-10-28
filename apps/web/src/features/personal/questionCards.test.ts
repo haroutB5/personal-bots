@@ -99,3 +99,12 @@ it("reads a multi-select answer as every chosen label", () => {
 it("shows a typed answer as typed", () => {
   expect(describeAnswer(question, "neither, rewrite it")).toEqual(["neither, rewrite it"]);
 });
+
+it("shows a question answered in the chat after supersession", () => {
+  const activity = resolvedActivity("req-1");
+  const resolutions = deriveUserInputResolutions([
+    { ...activity, payload: { requestId: "req-1", responseMode: "superseded" } },
+  ]);
+  const cards = deriveQuestionCards([], new Map([["req-1", request("req-1")]]), resolutions);
+  expect(cards[0]?.kind).toBe("superseded");
+});

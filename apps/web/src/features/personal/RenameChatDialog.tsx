@@ -142,13 +142,15 @@ export function RenameChatForm(props: {
  */
 export function RenameChatDialog(props: {
   readonly open: boolean;
+  readonly fieldRef?: React.RefObject<HTMLInputElement | null>;
   readonly initialTitle: string;
   /** The names of the bot's other open chats (not the one being renamed). */
   readonly takenTitles?: ReadonlyArray<string>;
   readonly onOpenChange: (open: boolean) => void;
   readonly onSave: (title: string) => Promise<string | null>;
 }): JSX.Element {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const internalInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = props.fieldRef ?? internalInputRef;
   const keyboardInset = useKeyboardInset();
   // A fresh form per opening, so it always starts from the current title,
   // while the old one stays on screen through the closing animation.
