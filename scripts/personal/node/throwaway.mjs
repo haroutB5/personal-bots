@@ -68,8 +68,36 @@ export function randomRoot(name) {
   );
 }
 
-/** The root this name currently owns, found by its record, never by guessing. */
-export function existingRootFor(name) {
+/**
+ * Why a folder may not be an owned throwaway root, or null when it may. A
+ * record alone proves nothing: any process can create `/tmp/hbots-tw-<name>-*`
+ * with a JSON file in it, and before 1.66.101 `stop` believed it and killed the
+ * PIDs it named. Only the owner's own 0700 folder, not a symlink, is trusted.
+ */
+export function rootRejection(root) {
+  let stats;
+  try {
+    stats = NodeFS.lstatSync(root);
+  } catch {
+    return "it is gone";
+  }
+  if (stats.isSymbolicLink()) return "it is a symlink";
+  if (!stats.isDirectory()) return "it is not a folder";
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    return "another user owns it";
+  }
+  const mode = stats.mode & 0o777;
+  return mode === 0o700 ? null : `its mode is 0${mode.toString(8)}`;
+}
+
+const rootRecordMatches = (root, record) =>
+  record !== undefined &&
+  record !== null &&
+  typeof record.root === "string" &&
+  NodePath.resolve(record.root) === NodePath.resolve(root);
+
+/** The folder a name matches by its record, trusted or not. `stop` explains a refusal. */
+export function foundRootFor(name) {
   assertName(name);
   const prefix = `${ROOT_PREFIX}${name}-`;
   let entries;
@@ -85,6 +113,15 @@ export function existingRootFor(name) {
     if (record?.name === name) return root;
   }
   return null;
+}
+
+/** The root this name currently owns, found by its record, never by guessing. */
+export function existingRootFor(name) {
+  const root = foundRootFor(name);
+  if (root === null) return null;
+  if (rootRejection(root) !== null) return null;
+  if (!rootRecordMatches(root, readRecord(root))) return null;
+  return root;
 }
 
 const readRecord = (root) => {
@@ -248,10 +285,24 @@ function pairingLink(record) {
 async function stopRecorded(record) {
   const pgid = Number(record.pgid) || Number(record.pid);
   const leaderRunning = isRunning(record);
+  const leaderAlive = Number.isInteger(Number(record.pid)) && proc.isAlive(Number(record.pid));
   const groupBefore = proc.processGroupPids(pgid);
   const rootBefore = proc.fakeProcessPids(record.root);
   if (!leaderRunning && groupBefore.length === 0 && rootBefore.length === 0) {
     return "the PID was not this server any more (left alone)";
+  }
+  // A live PID the record names, whose own command line does not name this
+  // root, is not ours (a recycled PID or a planted record). Nothing is stopped
+  // and the root is kept: killing it would hit an unrelated process.
+  if (
+    !leaderRunning &&
+    leaderAlive &&
+    !groupBefore.some((member) => proc.namesRoot(member, record.root)) &&
+    rootBefore.length === 0
+  ) {
+    throw new Error(
+      `Refusing to stop '${record.name}': PID ${record.pid} does not name ${record.root}.`,
+    );
   }
   const ok = await proc.stopProcessTree(Number(record.pid), { pgid, root: record.root });
   if (!ok) {
@@ -287,7 +338,10 @@ async function start({ name, release, port, json, schedulersOff, startTimeout = 
   const bin = resolveBin(release);
   const chosenPort = Number(port) > 0 ? Number(port) : await freePort();
   const origin = `http://127.0.0.1:${chosenPort}`;
-  NodeFS.mkdirSync(root);
+  // 0700: `stop` only trusts a root the owner made and nobody else can write
+  // into, which is what a planted record has to pass to be believed.
+  NodeFS.mkdirSync(root, { mode: 0o700 });
+  NodeFS.chmodSync(root, 0o700);
   writeFakeClaude(root);
   writeSettings(root);
   const { pid, pgid, logFile } = startServer({
@@ -363,21 +417,21 @@ async function main() {
       });
       return;
     case "stop": {
-      const root = existingRootFor(name);
-      if (root === null) {
+      const found = foundRootFor(name);
+      if (found === null) {
         console.log(`No throwaway root for '${name}' (${ROOT_PREFIX}${name}-*). Nothing to do.`);
         return;
       }
-      const record = readRecord(root);
-      const stopped = record ? await stopRecorded(record) : "no recorded server";
-      if (!record) {
-        const left = proc.fakeProcessPids(root);
-        if (left.length > 0) {
-          throw new Error(`Refusing to delete ${root}: PID(s) ${left.join(", ")} still name it.`);
-        }
+      const rejection = rootRejection(found);
+      const record = readRecord(found);
+      if (rejection !== null || record === null || !rootRecordMatches(found, record)) {
+        throw new Error(
+          `Refusing to touch ${found}: ${rejection ?? "its record names another folder"}. Nothing was stopped or deleted.`,
+        );
       }
-      removeRoot(root);
-      console.log(`Stopped '${name}': ${stopped}; deleted ${root}.`);
+      const stopped = await stopRecorded(record);
+      removeRoot(found);
+      console.log(`Stopped '${name}': ${stopped}; deleted ${found}.`);
       return;
     }
     case "down": {

@@ -218,8 +218,10 @@ export function fakeProcessPids(root) {
 }
 
 async function waitTreeGone({ pid, group, root, trustedGroup }, timeoutMs) {
+  // A live PID that no longer names the root is not the tree's any more (a
+  // recycled id): waiting for it would hold the stop open for nothing.
   const stillThere = () =>
-    isAlive(pid) ||
+    (isAlive(pid) && (root === undefined || namesRoot(pid, root))) ||
     (trustedGroup && processGroupPids(group).length > 0) ||
     (root !== undefined && fakeProcessPids(root).length > 0);
   const deadline = Date.now() + timeoutMs;
@@ -230,15 +232,32 @@ async function waitTreeGone({ pid, group, root, trustedGroup }, timeoutMs) {
   return !stillThere();
 }
 
+/** True when a live PID's command line names this root: the only proof it is the tree's. */
+export function namesRoot(pid, root) {
+  if (root === undefined) return false;
+  const text = commandLine(pid);
+  return text !== null && samePath(text, root);
+}
+
+/**
+ * PIDs that may be signalled for a root: each one's own command line must name
+ * the root. A record planted in /tmp can name any PID or group; without this
+ * check its stop would kill an unrelated process.
+ */
+function ownedByRoot(pids, root) {
+  return pids.filter((pid) => pid !== process.pid && namesRoot(pid, root));
+}
+
 /**
  * Stops a throwaway server's whole tree, not just its leader: the recorded PID,
  * its process group and anything whose command line still names the root. A
  * detached server leads its own group, so the group reaches the relay, the fake
  * Claude CLIs and their children.
  *
- * The leader may already be gone (a crash) while its orphaned group still runs.
- * The group is then only trusted when one of its processes still names the
- * root, so a recycled group id cannot take an unrelated process down with it.
+ * Every process is signalled only when its own command line still names the
+ * root, so a recycled group id, a stale record or a planted one cannot take an
+ * unrelated process down with it. The group is signalled as a group only when
+ * one of its members names the root.
  *
  * `root` and `pgid` are optional for the other callers that stop one PID tree.
  */
@@ -251,16 +270,43 @@ export async function stopProcessTree(pid, { timeoutMs = 15000, pgid, root } = {
     });
     return waitGone(pid, timeoutMs);
   }
+  // No root to verify against (the live server's own stop): the recorded PID is
+  // the identity, as before.
+  if (root === undefined) {
+    const group = Number.isInteger(pgid) && pgid > 1 ? pgid : pid;
+    const groupBefore = processGroupPids(group);
+    if (!isAlive(pid) && groupBefore.length === 0) return true;
+    const trustedGroup = isAlive(pid) || groupBefore.length > 0;
+    const signal = (name) => {
+      if (trustedGroup) {
+        try {
+          process.kill(-group, name);
+        } catch {
+          /* no members left in the group */
+        }
+      }
+      for (const target of new Set([...(trustedGroup ? [] : groupBefore), pid])) {
+        try {
+          process.kill(target, name);
+        } catch {
+          /* already gone */
+        }
+      }
+    };
+    signal("SIGTERM");
+    const gone = () => waitTreeGone({ pid, group, root: undefined, trustedGroup }, timeoutMs);
+    if (await gone()) return true;
+    signal("SIGKILL");
+    return waitTreeGone({ pid, group, root: undefined, trustedGroup }, 5000);
+  }
   const group = Number.isInteger(pgid) && pgid > 1 ? pgid : pid;
-  const groupBefore = processGroupPids(group);
-  const fakeBefore = root === undefined ? [] : fakeProcessPids(root);
-  if (!isAlive(pid) && groupBefore.length === 0 && fakeBefore.length === 0) return true;
-  const trustedGroup =
-    isAlive(pid) ||
-    groupBefore.some((member) => {
-      const text = commandLine(member);
-      return text !== null && root !== undefined && text.includes(path.resolve(root));
-    });
+  const groupBefore = ownedByRoot(processGroupPids(group), root);
+  const fakeBefore = fakeProcessPids(root);
+  const leaderBefore = ownedByRoot([pid], root);
+  if (groupBefore.length === 0 && fakeBefore.length === 0 && leaderBefore.length === 0) {
+    return true;
+  }
+  const trustedGroup = leaderBefore.length > 0 || groupBefore.length > 0;
   const signal = (name) => {
     // The whole group when it is ours. A fake CLI that left the group is still
     // ours and is killed by its captured PID; a test harness that only names
@@ -272,9 +318,7 @@ export async function stopProcessTree(pid, { timeoutMs = 15000, pgid, root } = {
         /* no members left in the group */
       }
     }
-    const targets = new Set([...fakeBefore, ...(trustedGroup ? [] : groupBefore)]);
-    if (!trustedGroup && isAlive(pid)) targets.add(pid);
-    for (const target of targets) {
+    for (const target of new Set([...leaderBefore, ...fakeBefore, ...groupBefore])) {
       try {
         process.kill(target, name);
       } catch {

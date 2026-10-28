@@ -23,6 +23,7 @@ test("a later command finds the root through its record, not by guessing the pat
   const name = uniqueName("lookup");
   const root = randomRoot(name);
   fs.mkdirSync(root, { recursive: true });
+  fs.chmodSync(root, 0o700);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
   assert.equal(existingRootFor(name), null, "an unrecorded root is not this name's");

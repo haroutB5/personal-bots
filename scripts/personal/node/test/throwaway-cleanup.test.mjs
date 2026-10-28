@@ -6,9 +6,10 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { randomRoot } from "../throwaway.mjs";
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const THROWAWAY = path.join(HERE, "..", "throwaway.mjs");
-const ROOT_PREFIX = "hbots-tw-";
 let sequence = 0;
 
 function alive(pid) {
@@ -133,8 +134,9 @@ function killCaptured(pids) {
 
 test("stop kills an orphaned process group after the leader crashed", async (t) => {
   const name = makeName();
-  const root = path.join(os.tmpdir(), ROOT_PREFIX + name);
+  const root = randomRoot(name);
   fs.mkdirSync(root, { recursive: true });
+  fs.chmodSync(root, 0o700);
   const tree = await spawnTree(root);
   // A harness (the e2e runner) names the root in --root but is not part of the
   // throwaway tree; the cleanup must leave it alive.
@@ -167,8 +169,9 @@ test("stop kills an orphaned process group after the leader crashed", async (t) 
 
 test("stop kills a live leader's whole group before deleting the root", async (t) => {
   const name = makeName();
-  const root = path.join(os.tmpdir(), ROOT_PREFIX + name);
+  const root = randomRoot(name);
   fs.mkdirSync(root, { recursive: true });
+  fs.chmodSync(root, 0o700);
   const tree = await spawnTree(root);
   const captured = [tree.leader, tree.child, tree.grandchild];
   t.after(() => {
@@ -183,4 +186,59 @@ test("stop kills a live leader's whole group before deleting the root", async (t
   assert.ok(await eventually(() => captured.every((pid) => !alive(pid))));
   assert.deepEqual(groupPids(tree.leader), []);
   assert.equal(fs.existsSync(root), false);
+});
+
+// QA 1.66.101: a record planted under a matching name made `stop` kill the
+// process group it named and delete the folder. A record proves nothing; the
+// root and every process have to prove they are the tree's.
+
+async function detachedUnrelated() {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  return child.pid;
+}
+
+test("a planted record in a folder other than 0700 kills and deletes nothing", async (t) => {
+  const name = makeName();
+  const root = randomRoot(name);
+  fs.mkdirSync(root, { recursive: true });
+  fs.chmodSync(root, 0o755);
+  const victim = await detachedUnrelated();
+  const captured = [victim];
+  t.after(() => {
+    killCaptured(captured);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  writeRecord({ name, root, pid: victim, pgid: victim });
+
+  const result = await stop(name);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /Refusing to touch/);
+  assert.ok(alive(victim), "the recorded process is untouched");
+  assert.equal(fs.existsSync(root), true, "nothing was deleted");
+});
+
+test("a planted record that passes the folder checks still kills nothing", async (t) => {
+  const name = makeName();
+  const root = randomRoot(name);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  fs.chmodSync(root, 0o700);
+  const victim = await detachedUnrelated();
+  const captured = [victim];
+  t.after(() => {
+    killCaptured(captured);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  // Owner, mode, no symlink and record.root all look right; only the process's
+  // own command line gives it away (it does not name the root).
+  writeRecord({ name, root, pid: victim, pgid: victim });
+
+  const result = await stop(name);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /does not name/);
+  assert.ok(alive(victim), "an unrelated process group survives");
+  assert.equal(fs.existsSync(root), true, "the planted folder is kept");
 });
