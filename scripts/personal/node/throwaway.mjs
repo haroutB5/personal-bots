@@ -11,7 +11,9 @@
 //
 // A fake Claude CLI is installed in the root (never a real account), the seed
 // model is Sonnet 5.5, every provider home points inside the root, and the
-// server listens on 127.0.0.1 only. PIDs are only touched after
+// server listens on 127.0.0.1 only. Each root is `hbots-tw-<name>-<8 hex>`:
+// the random suffix keeps the path unpredictable, and later commands find it
+// through the record inside it. PIDs are only touched after
 // /proc/<pid>/cmdline still names the recorded binary and root.
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -19,12 +21,15 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
+import { randomBytes } from "node:crypto";
 
 import * as proc from "./lib/proc.mjs";
 import { getPaths } from "./lib/paths.mjs";
 
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const ROOT_PREFIX = "hbots-tw-";
+export const ROOT_PREFIX = "hbots-tw-";
+/** Four random bytes (eight hex characters): enough that a root cannot be guessed. */
+const ROOT_RANDOM_BYTES = 4;
 const RECORD = "throwaway.json";
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const FAKE_SOURCE = NodePath.join(HERE, "..", "testing", "fake-claude");
@@ -42,13 +47,44 @@ function parseArgs(argv) {
   return out;
 }
 
-function rootFor(name) {
+function assertName(name) {
   if (!NAME_PATTERN.test(name ?? "")) {
     throw new Error(
       `Name '${name}' must be 1 to 31 characters: lower-case letters, digits and dashes, starting with a letter or digit.`,
     );
   }
-  return NodePath.join(NodeOS.tmpdir(), ROOT_PREFIX + name);
+}
+
+/**
+ * A fresh root the caller cannot predict. The name stays readable
+ * (`hbots-tw-<name>-<8 hex>`); the suffix is what stops another process from
+ * planting a symlink at the path between our check and our `mkdir`.
+ */
+export function randomRoot(name) {
+  assertName(name);
+  return NodePath.join(
+    NodeOS.tmpdir(),
+    `${ROOT_PREFIX}${name}-${randomBytes(ROOT_RANDOM_BYTES).toString("hex")}`,
+  );
+}
+
+/** The root this name currently owns, found by its record, never by guessing. */
+export function existingRootFor(name) {
+  assertName(name);
+  const prefix = `${ROOT_PREFIX}${name}-`;
+  let entries;
+  try {
+    entries = NodeFS.readdirSync(NodeOS.tmpdir());
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const root = NodePath.join(NodeOS.tmpdir(), entry);
+    const record = readRecord(root);
+    if (record?.name === name) return root;
+  }
+  return null;
 }
 
 const readRecord = (root) => {
@@ -241,16 +277,17 @@ function removeRoot(root) {
 }
 
 async function start({ name, release, port, json, schedulersOff, startTimeout = 300 }) {
-  const root = rootFor(name);
-  if (NodeFS.existsSync(root)) {
+  const existing = existingRootFor(name);
+  if (existing !== null) {
     throw new Error(
-      `${root} already exists. Run stop --name ${name} first: every throwaway starts fresh.`,
+      `${existing} already exists. Run stop --name ${name} first: every throwaway starts fresh.`,
     );
   }
+  const root = randomRoot(name);
   const bin = resolveBin(release);
   const chosenPort = Number(port) > 0 ? Number(port) : await freePort();
   const origin = `http://127.0.0.1:${chosenPort}`;
-  NodeFS.mkdirSync(root, { recursive: true });
+  NodeFS.mkdirSync(root);
   writeFakeClaude(root);
   writeSettings(root);
   const { pid, pgid, logFile } = startServer({
@@ -326,9 +363,9 @@ async function main() {
       });
       return;
     case "stop": {
-      const root = rootFor(name);
-      if (!NodeFS.existsSync(root)) {
-        console.log(`No throwaway root for '${name}' (${root}). Nothing to do.`);
+      const root = existingRootFor(name);
+      if (root === null) {
+        console.log(`No throwaway root for '${name}' (${ROOT_PREFIX}${name}-*). Nothing to do.`);
         return;
       }
       const record = readRecord(root);
@@ -344,7 +381,8 @@ async function main() {
       return;
     }
     case "down": {
-      const record = readRecord(rootFor(name));
+      const root = existingRootFor(name);
+      const record = root === null ? null : readRecord(root);
       if (!record) throw new Error(`No throwaway root for '${name}'.`);
       if (!isRunning(record)) {
         console.log(`'${name}' is not running. Nothing stopped.`);
@@ -358,8 +396,8 @@ async function main() {
       return;
     }
     case "up": {
-      const root = rootFor(name);
-      const record = readRecord(root);
+      const root = existingRootFor(name);
+      const record = root === null ? null : readRecord(root);
       if (!record) throw new Error(`No throwaway root for '${name}'.`);
       if (isRunning(record)) {
         console.log(`'${name}' is already running (PID ${record.pid}).`);
@@ -383,7 +421,8 @@ async function main() {
       return;
     }
     case "pair": {
-      const record = readRecord(rootFor(name));
+      const root = existingRootFor(name);
+      const record = root === null ? null : readRecord(root);
       if (!record || !isRunning(record)) {
         throw new Error(
           `'${name}' is not running. Start it with start --name ${name} --release <release>.`,
@@ -399,7 +438,7 @@ async function main() {
           const root = NodePath.join(NodeOS.tmpdir(), entry);
           const record = readRecord(root);
           return {
-            name: entry.slice(ROOT_PREFIX.length),
+            name: record?.name ?? entry.slice(ROOT_PREFIX.length),
             root,
             port: record?.port ?? null,
             pid: record?.pid ?? null,
@@ -438,7 +477,12 @@ function portListening(port) {
   });
 }
 
-main().catch((error) => {
-  console.error(error.message ?? String(error));
-  process.exit(1);
-});
+const isMain =
+  process.argv[1] !== undefined &&
+  NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url);
+if (isMain) {
+  main().catch((error) => {
+    console.error(error.message ?? String(error));
+    process.exit(1);
+  });
+}
