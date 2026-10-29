@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 
 import type { ModelSelection, ThreadId } from "@t3tools/contracts";
 
+import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import type * as PersonalBotRepository from "./PersonalBotRepository.ts";
 
 /**
@@ -27,6 +28,13 @@ export const sendModelSelection = (
  * default (Codex: medium). It is read at turn time, so a bot edited after its
  * thread was created gets the new setting, the same as a typed message.
  *
+ * A bot on a usage-limit fallback runs its turns on the fallback model until
+ * the row ends. A bot that stays busy on a task never goes idle, so the idle
+ * switch-back sweep cannot end it; when a turn is about to start on a chat
+ * that is between turns, the fallback service gets to end the row there
+ * (1.66.104). The selection is then read again, so this turn already runs on
+ * the bot's own model. A chat with a turn running is left alone.
+ *
  * Returns undefined for a thread that is not a bot chat, and treats a failed
  * lookup the same way: the turn still runs, as it did before.
  */
@@ -38,14 +46,26 @@ export const botModelSelectionForThread = (
   Effect.gen(function* () {
     const link = yield* bots.getThreadLink({ threadId });
     if (Option.isNone(link)) return undefined;
-    const bot = yield* bots.getBotById({ botId: link.value.botId });
-    if (Option.isNone(bot)) return undefined;
+    const found = yield* bots.getBotById({ botId: link.value.botId });
+    if (Option.isNone(found)) return undefined;
+    let bot = found.value;
     // A bot on its usage-limit fallback runs its turns on the fallback model,
     // whatever provider the chat's old session was on; its saved model comes
     // back when the fallback ends (the reactor then moves the chat again).
-    const fallback = bot.value.fallbackActive?.modelSelection;
+    if (bot.fallbackActive !== undefined) {
+      const modelFallback = yield* Effect.serviceOption(
+        PersonalModelFallback.PersonalModelFallback,
+      );
+      if (Option.isSome(modelFallback)) {
+        yield* modelFallback.value.switchBackAtTurnBoundary({ botId: bot.botId, threadId });
+        // The row may have ended: read the bot again so this turn sees it.
+        const after = yield* bots.getBotById({ botId: bot.botId });
+        if (Option.isSome(after)) bot = after.value;
+      }
+    }
+    const fallback = bot.fallbackActive?.modelSelection;
     if (fallback !== undefined) return fallback;
     return threadModelSelection === undefined
-      ? bot.value.modelSelection
-      : sendModelSelection(bot.value.modelSelection, threadModelSelection);
+      ? bot.modelSelection
+      : sendModelSelection(bot.modelSelection, threadModelSelection);
   }).pipe(Effect.orElseSucceed(() => undefined));

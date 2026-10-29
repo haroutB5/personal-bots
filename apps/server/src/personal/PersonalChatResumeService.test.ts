@@ -510,6 +510,7 @@ describe("PersonalChatResume", () => {
               hits.push(input);
               return { switched: true, modelLabel: "Sonnet 5.5 · H" };
             }),
+          switchBackAtTurnBoundary: () => Effect.void,
           start: () => Effect.void,
           sweep: Effect.void,
         };

@@ -313,7 +313,8 @@ describe("decideSwitchBack", () => {
     expect(decideSwitchBack({ ...capacity, nowMs: ended, idle: false })).toEqual({ kind: "wait" });
   });
 
-  it("with no reset reported it re-checks the readings, and holds a full window without any", () => {    const noReset = { ...base, resetAtMs: null } as const;
+  it("with no reset reported it re-checks the readings, and holds a full window without any", () => {
+    const noReset = { ...base, resetAtMs: null } as const;
     expect(decideSwitchBack({ ...noReset, nowMs: NOW + FALLBACK_RECHECK_MS - 1 })).toEqual({
       kind: "wait",
     });
@@ -794,6 +795,148 @@ it.effect("goes back only after the reset and only when the bot is idle, with on
 });
 
 it.effect(
+  "a reset that passed while a task runs switches the task's next turn back, never the running one",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const sql = yield* SqlClient.SqlClient;
+      yield* hit();
+      yield* sql`INSERT INTO personal_tasks (
+        task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+        depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
+      ) VALUES ('busy-task', 'busy-task', ${BOT}, 't', 'o', 'running', 'user',
+        'busy-task', 0, 2, 5, ${isoAt(NOW)}, ${isoAt(NOW)}, ${isoAt(NOW)}, ${CHAT})`;
+
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 3 }])),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      yield* TestClock.setTime(RESET + FALLBACK_SWITCH_BACK_GRACE_MS + 1000);
+
+      // The chat's turn is still running: the selection does not change mid-turn.
+      yield* setBusy(true);
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeDefined();
+
+      // Between the task's turns: the next turn starts on the bot's own model,
+      // the row is gone, and the task itself is still running.
+      yield* setBusy(false);
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(HOME);
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeUndefined();
+      expect(
+        (yield* bots.listBots()).find((bot) => bot.botId === BOT)?.fallbackActive,
+      ).toBeUndefined();
+      expect(
+        yield* sql<{ readonly status: string }>`
+          SELECT status FROM personal_tasks WHERE task_id = 'busy-task'
+        `,
+      ).toEqual([{ status: "running" }]);
+      expect(lines(harness)).toEqual([
+        "Codex hit its usage limit. IT is on Sonnet 5.5 · H until it resets (about 18:40).",
+        "Codex usage limit has reset. IT is back on gpt-6.1-sol · H.",
+      ]);
+
+      // A limit straight after the boundary switch back does not bounce it again.
+      expect(yield* hit()).toEqual({ switched: false, skipped: "cooldown" });
+      // Once the guard has passed, a real re-hit falls back again.
+      yield* TestClock.adjust(FALLBACK_RESWITCH_COOLDOWN_MS + 1000);
+      const reopenedAt = yield* DateTime.now;
+      const laterReset = isoAt(DateTime.toEpochMillis(reopenedAt) + 3 * 3600_000);
+      expect(yield* hit({ retryAt: laterReset })).toEqual({
+        switched: true,
+        modelLabel: "Sonnet 5.5 · H",
+      });
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeDefined();
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("the early-reset probe clears the row at the next turn boundary", () => {
+  const harness = makeHarness();
+  const recoveredAt = NOW + 60_000;
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* hit();
+    yield* sql`INSERT INTO personal_tasks (
+      task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+      depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
+    ) VALUES ('probe-task', 'probe-task', ${BOT}, 't', 'o', 'running', 'user',
+      'probe-task', 0, 2, 5, ${isoAt(NOW)}, ${isoAt(NOW)}, ${isoAt(NOW)}, ${CHAT})`;
+
+    // The provider resets before the recorded reset time; the sweep's own
+    // re-probe (bounded to every 2 minutes) is the proof.
+    harness.onRefresh = () => {
+      harness.providers = [
+        snapshot("codex", "codex", {
+          ...usage([{ id: "primary", used: 3 }]),
+          checkedAt: isoAt(recoveredAt),
+          fullReadAt: isoAt(recoveredAt),
+        }),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+    };
+    yield* TestClock.setTime(recoveredAt);
+    yield* setBusy(true);
+    yield* service.sweep;
+    expect(harness.refreshed).toContain("codex");
+    // Mid-turn the sweep leaves the row; the next boundary ends it.
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+    yield* setBusy(false);
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(HOME);
+    expect(
+      Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+    ).toBeUndefined();
+    expect(lines(harness).at(-1)).toBe(
+      "Codex usage limit has reset. IT is back on gpt-6.1-sol · H.",
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a schedule or peak row keeps its idle-gated switch back", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const base = {
+      botId: BOT,
+      fallbackModel: FALLBACK,
+      fromInstanceId: CODEX,
+      fromProvider: "Codex",
+      startedAt: isoAt(NOW),
+      resetAt: isoAt(RESET),
+      noticeThreadId: null,
+    };
+    yield* bots.startFallback({ ...base, reason: PERSONAL_FALLBACK_REASON_SCHEDULE });
+    yield* TestClock.setTime(RESET + FALLBACK_SWITCH_BACK_GRACE_MS + 1000);
+    yield* setBusy(false);
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+    expect(Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive?.reason).toBe(
+      PERSONAL_FALLBACK_REASON_SCHEDULE,
+    );
+
+    yield* bots.switchFallback({ ...base, reason: PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK });
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+    expect(Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive?.reason).toBe(
+      PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
   "a capacity hit keeps its whole 15-minute hold, then says the model is available again",
   () => {
     const harness = makeHarness();
@@ -834,7 +977,9 @@ it.effect(
       ];
       yield* TestClock.setTime(at);
       yield* service.sweep;
-      expect(Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive).toBeDefined();
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeDefined();
       expect(lines(harness)).toHaveLength(1);
 
       // The hold itself ends the fallback, and the line says available again.
@@ -846,7 +991,9 @@ it.effect(
       ];
       yield* TestClock.setTime(ended);
       yield* service.sweep;
-      expect(Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive).toBeUndefined();
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeUndefined();
       const notices = lines(harness);
       expect(notices).toHaveLength(2);
       expect(notices[0]).toContain("Codex is at capacity.");

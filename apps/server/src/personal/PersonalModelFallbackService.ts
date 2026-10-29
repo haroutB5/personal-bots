@@ -106,6 +106,14 @@ import {
  * starts only while the bot is idle for the schedule (between turns). Never
  * mid-turn.
  *
+ * A usage-limit row is also cleared at a turn boundary (1.66.104): a bot that
+ * stays busy on a long task never goes idle, so its next turn on a chat that
+ * is between turns ends the row before the turn starts and runs on the bot's
+ * own model. The running turn is never touched; the provider switch that
+ * carries the chat over is the one every other model change uses. The provider
+ * re-probe in the sweep (every 2 minutes) supplies the early-reset proof too.
+ * A schedule or a peak row stays idle-gated.
+ *
  * Kill switches: `PERSONAL_MODEL_FALLBACK=off` (limits),
  * `PERSONAL_DEEPSEEK_PEAK_SWITCH=off` (peak) and `PERSONAL_MODEL_SCHEDULE=off`
  * (schedule), plus the DeepSeek instance's own "during peak hours" setting. Each
@@ -122,6 +130,17 @@ export class PersonalModelFallback extends Context.Service<
      * switched (a turn that was in flight). Never fails.
      */
     readonly onLimitHit: (input: LimitHitInput) => Effect.Effect<LimitHitResult>;
+    /**
+     * Called just before a turn starts on one of the bot's chats. A usage-limit
+     * row whose reset has passed, or that the provider probe now shows
+     * recovered, ends here so this turn runs on the bot's own model; the row is
+     * never touched while the chat's own turn is running. A schedule or a peak
+     * row keeps its idle-gated switch back. Never fails.
+     */
+    readonly switchBackAtTurnBoundary: (input: {
+      readonly botId: PersonalBotId;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<void>;
     /** Starts the switch-back sweep. Park-aware. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     /** One switch-back pass (the start() loop runs it every 30 s). */
@@ -506,6 +525,15 @@ export const make = Effect.gen(function* () {
       LIMIT 1
     `.pipe(Effect.map((rows) => rows.length === 0));
 
+  /** One of the bot's chats is in the middle of a turn right now. */
+  const threadIsBusy = (threadId: string) =>
+    sql<{ readonly busy: number }>`
+      SELECT 1 AS "busy"
+      FROM projection_thread_sessions
+      WHERE thread_id = ${threadId} AND status IN ('running', 'starting')
+      LIMIT 1
+    `.pipe(Effect.map((rows) => rows.length > 0));
+
   const probe = (bot: PersonalBot, instanceId: string, now: number) =>
     Effect.gen(function* () {
       const last = lastProbeAtMs.get(instanceId);
@@ -532,6 +560,11 @@ export const make = Effect.gen(function* () {
     now: number,
     /** The model the bot runs on next when that is not its own (a schedule window is open). */
     backOn?: ModelSelection,
+    /**
+     * True for the idle sweep. False at a turn boundary: another task of the
+     * same bot may still be running, and only this chat's turn is between turns.
+     */
+    requireIdle = true,
   ) =>
     Effect.gen(function* () {
       // Persist the switch and wakeups together: a restart cannot lose the
@@ -539,7 +572,7 @@ export const make = Effect.gen(function* () {
       // of claiming tasks and chats; this never starts a turn itself.
       const ended = yield* sql.withTransaction(
         Effect.gen(function* () {
-          if (!(yield* botIsIdle(state.botId))) return false;
+          if (requireIdle && !(yield* botIsIdle(state.botId))) return false;
           const ended = yield* bots.endFallback(state.botId);
           if (!ended || bot === undefined || reason === "disabled") return ended;
           yield* sql`
@@ -583,6 +616,85 @@ export const make = Effect.gen(function* () {
         { notice: "model-fallback-off", provider: state.fromProvider },
       );
     });
+
+  /** The switch-back decision for one usage-limit row, from the current provider readings. */
+  const switchBackDecisionFor = (
+    state: PersonalBotRepository.PersonalBotFallbackState,
+    bot: PersonalBot,
+    list: ReadonlyArray<ServerProvider>,
+    now: number,
+    idle: boolean,
+    on: boolean,
+  ) => {
+    const startedAtMs = Date.parse(state.startedAt);
+    const resetAtMs = state.resetAt === null ? null : Date.parse(state.resetAt);
+    return decideSwitchBack({
+      killSwitchOn: on,
+      botFallbackEnabled: bot.fallback?.enabled !== false,
+      nowMs: now,
+      startedAtMs,
+      resetAtMs: resetAtMs !== null && Number.isFinite(resetAtMs) ? resetAtMs : null,
+      home: bot.modelSelection,
+      recoveryProviderReady:
+        state.fromInstanceId === bot.modelSelection.instanceId &&
+        providerReady(
+          list.find((candidate) => candidate.instanceId === bot.modelSelection.instanceId),
+        ),
+      limitReason: state.reason,
+      // The stored reason is the provider's own text: a capacity hit keeps
+      // its fixed hold instead of being cut short by healthy usage readings.
+      capacityHit: isProviderCapacityError(state.reason),
+      homeProvider: list.find(
+        (candidate) => candidate.instanceId === bot.modelSelection.instanceId,
+      ),
+      idle,
+    });
+  };
+
+  /**
+   * The turn-boundary switch back (1.66.104). A bot on a usage-limit row that
+   * stays busy on a task never goes idle, so the sweep can never end the row;
+   * this runs before the next turn starts, when this chat is between turns, and
+   * clears it through the ordinary switch-back path (cooldown, task wakeup,
+   * notice, and the provider switch that carries the chat over). The running
+   * turn is never touched. A chat with a turn running is left alone, so a steer
+   * keeps the selection the turn started on.
+   */
+  const switchBackAtTurnBoundary: PersonalModelFallbackShape["switchBackAtTurnBoundary"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      if (yield* threadIsBusy(input.threadId)) return;
+      const botOption = yield* bots.getBotById({ botId: input.botId });
+      if (Option.isNone(botOption)) return;
+      const bot = botOption.value;
+      const state = (yield* bots.listFallbackStates()).find(
+        (candidate) => candidate.botId === bot.botId,
+      );
+      if (state === undefined) return;
+      // The schedule and the DeepSeek peak switch keep their idle-gated switch back.
+      if (isScheduleFallback(state) || isPeakFallback(state)) return;
+      const on = yield* killSwitchOn;
+      const now = yield* nowMs;
+      const list = yield* providers.getProviders;
+      const decision = switchBackDecisionFor(state, bot, list, now, true, on);
+      if (decision.kind === "extend") {
+        yield* bots.updateFallbackReset({ botId: state.botId, resetAt: iso(decision.resetAtMs) });
+        return;
+      }
+      if (decision.kind !== "back") return;
+      yield* switchBack(state, bot, decision.reason, now, undefined, false);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal model fallback could not switch back at a turn boundary", {
+              botId: input.botId,
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
 
   /**
    * Clears a DeepSeek peak or model schedule state. Idle-gated like every other
@@ -806,36 +918,12 @@ export const make = Effect.gen(function* () {
         continue;
       }
       const enabled = bot.fallback?.enabled !== false;
-      const startedAtMs = Date.parse(state.startedAt);
-      const resetAtMs = state.resetAt === null ? null : Date.parse(state.resetAt);
       // Early redemption can happen outside this app. Probe on the same bounded
       // cadence even when the recorded reset is still days away.
       if (on && enabled) yield* probe(bot, bot.modelSelection.instanceId, now);
       now = yield* nowMs;
       const idle = yield* botIsIdle(state.botId);
-      const evaluate = (providers: ReadonlyArray<ServerProvider>) =>
-        decideSwitchBack({
-          killSwitchOn: on,
-          botFallbackEnabled: enabled,
-          nowMs: now,
-          startedAtMs,
-          resetAtMs: resetAtMs !== null && Number.isFinite(resetAtMs) ? resetAtMs : null,
-          home: bot.modelSelection,
-          recoveryProviderReady:
-            state.fromInstanceId === bot.modelSelection.instanceId &&
-            providerReady(
-              providers.find((candidate) => candidate.instanceId === bot.modelSelection.instanceId),
-            ),
-          limitReason: state.reason,
-          // The stored reason is the provider's own text: a capacity hit keeps
-          // its fixed hold instead of being cut short by healthy usage readings.
-          capacityHit: isProviderCapacityError(state.reason),
-          homeProvider: providers.find(
-            (candidate) => candidate.instanceId === bot.modelSelection.instanceId,
-          ),
-          idle,
-        });
-      const decision = evaluate(list);
+      const decision = switchBackDecisionFor(state, bot, list, now, idle, on);
       if (decision.kind === "extend") {
         yield* bots.updateFallbackReset({ botId: state.botId, resetAt: iso(decision.resetAtMs) });
         continue;
@@ -945,7 +1033,12 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return { onLimitHit, start, sweep } satisfies PersonalModelFallbackShape;
+  return {
+    onLimitHit,
+    switchBackAtTurnBoundary,
+    start,
+    sweep,
+  } satisfies PersonalModelFallbackShape;
 });
 
 export const layer = Layer.effect(PersonalModelFallback, make);
