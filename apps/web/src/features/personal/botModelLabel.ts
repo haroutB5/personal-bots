@@ -83,12 +83,26 @@ function resolveSelection(selection: ModelSelection, providers: ReadonlyArray<Se
 }
 
 /**
+ * A readable name for a Claude model the provider has not listed, as a fresh
+ * install or a brand-new model has it: "claude-haiku-5-5" -> "Haiku 5.5". Any
+ * other id is returned unchanged: there is no pattern worth guessing from.
+ */
+export function unlistedModelName(slug: string): string {
+  const match = /^claude-(opus|sonnet|haiku|fable)-(\d+(?:[.-]\d+)*)$/i.exec(slug.trim());
+  if (match === null) return slug;
+  const family = match[1]!;
+  const version = match[2]!.replace(/-/g, ".");
+  return `${family[0]!.toUpperCase()}${family.slice(1)} ${version}`;
+}
+
+/**
  * The short model line beside a bot's name: "Opus 5.5 medium", "Sonnet 5",
  * "GPT-6 Astra medium". The model's name as the picker shows it, without the
  * "Claude" every Claude model repeats, plus the chosen effort (or OpenCode
  * variant) when one is set; a bot on the model's default effort shows none.
  * A model the provider does not list (not loaded yet, or retired) falls back
- * to its id, the only name there is. Null without a model.
+ * to its id, or to a readable Claude name ("Haiku 5.5") when the id is one.
+ * Null without a model.
  */
 export function botModelLabel(
   selection: ModelSelection,
@@ -98,7 +112,7 @@ export function botModelLabel(
   if (resolved === null) return null;
   const { slug, provider, listedName, effortId, effort, agentMode } = resolved;
   const mode = agentMode ?? "";
-  const name = (listedName ?? slug).replace(/^Claude\s+/, "");
+  const name = (listedName ?? unlistedModelName(slug)).replace(/^Claude\s+/, "");
   if (effort === undefined) return `${name}${mode}`;
   const optionLabel =
     provider?.models === undefined
@@ -143,7 +157,8 @@ export function shortModelName(name: string): string {
  * "GPT-6 Astra · M", "Haiku 4.5" (no effort set). The effort is L, M, H, X or
  * Max; an effort with no abbreviation (an OpenCode variant such as "minimal")
  * is left out rather than guessed. A model the provider does not list keeps
- * its raw id, which the tile then shrinks or cuts. Null without a model.
+ * its id, or gets a readable Claude name ("Haiku 5.5") when the id is one, and
+ * the tile then shrinks or cuts it. Null without a model.
  */
 export function botModelShortLabel(
   selection: ModelSelection,
@@ -153,7 +168,7 @@ export function botModelShortLabel(
   if (resolved === null) return null;
   const name =
     resolved.listedName === undefined
-      ? resolved.slug
+      ? unlistedModelName(resolved.slug)
       : shortModelName(resolved.listedName) || resolved.slug;
   const effort = resolved.effort;
   const mode = resolved.agentMode ?? "";

@@ -294,6 +294,7 @@ describe("decideSwitchBack", () => {
       resetAtMs: NOW + FALLBACK_CAPACITY_HOLD_MS,
       capacityHit: true,
       recoveryProviderReady: true,
+      freshAfterMs: NOW,
       homeProvider: snapshot("codex", "codex", recovered),
     } as const;
     // Without the flag this same input is an early recovery: usage is healthy.
@@ -383,6 +384,7 @@ describe("confirmed early recovery", () => {
     home: HOME,
     idle: true,
     recoveryProviderReady: true,
+    freshAfterMs: NOW,
     homeProvider: snapshot("codex", "codex", recovered),
   };
   it("overrides a future reset only at idle, including unreported resets", () => {
@@ -535,6 +537,8 @@ interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   providers: ServerProvider[];
   readonly refreshed: string[];
+  /** Instances whose cached usage read was dropped before a re-probe. */
+  readonly invalidated: string[];
   readonly running: Set<string>;
   sequence: number;
   onRefresh?: () => void;
@@ -547,6 +551,7 @@ const makeHarness = (): Harness => ({
     snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
   ],
   refreshed: [],
+  invalidated: [],
   running: new Set(),
   sequence: 0,
 });
@@ -579,6 +584,10 @@ const makeLayer = (
             harness.refreshed.push(instanceId);
             harness.onRefresh?.();
             return harness.providers;
+          }),
+        invalidateUsage: (instanceId: string) =>
+          Effect.sync(() => {
+            harness.invalidated.push(instanceId);
           }),
       } as unknown as ProviderRegistry.ProviderRegistryShape),
     ),
@@ -1314,6 +1323,95 @@ it.effect("a late hit from the home provider is no longer treated as in flight",
     expect(yield* hit()).toEqual({ switched: false, skipped: "already_on_fallback" });
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect("a second chat's hit while the bot is already on its fallback runs there", () => {
+  const harness = makeHarness();
+  const other = ThreadId.make("chat-it-2");
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    expect(yield* hit()).toEqual({ switched: true, modelLabel: "Sonnet 5.5 · H" });
+    // The chat that was switched: an unnamed hit is its own fallback turn
+    // reporting the fallback's limit, so it waits.
+    expect(yield* hit({ instanceId: undefined })).toEqual({
+      switched: false,
+      skipped: "already_on_fallback",
+    });
+    // The second chat's turn started before the row existed and died on the
+    // home limit: the bot is already on the fallback, so the work runs there
+    // instead of pausing until the reset.
+    expect(yield* hit({ threadId: other, source: "task" })).toEqual({
+      switched: true,
+      modelLabel: "Sonnet 5.5 · H",
+    });
+    // The provider named no instance (the failed turn settled before its
+    // session recorded one): the row is trusted once for that.
+    expect(yield* hit({ threadId: other, source: "task", instanceId: undefined })).toEqual({
+      switched: true,
+      modelLabel: "Sonnet 5.5 · H",
+    });
+    // A second unnamed hit on the same row is not trusted again: the fallback
+    // itself may be the model that is out of room, and retrying would loop.
+    expect(yield* hit({ threadId: other, source: "task", instanceId: undefined })).toEqual({
+      switched: false,
+      skipped: "already_on_fallback",
+    });
+    // A hit from the fallback's own instance means both models are spent.
+    expect(yield* hit({ threadId: other, source: "task", instanceId: CLAUDE })).toEqual({
+      switched: false,
+      skipped: "already_on_fallback",
+    });
+    expect(yield* bots.listFallbackStates()).toHaveLength(1);
+    // One chat line for the switch, none for the hits that continued on it.
+    expect(lines(harness)).toHaveLength(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a re-stamped pre-hit reading cannot end the row; the probe drops the cache first",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      yield* hit();
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      const claude = harness.providers[1]!;
+      const at = NOW + 20_000;
+      // The driver's 5-minute cache: the answer from before the hit, stamped
+      // fresh every time it is handed back. A real re-probe says 100%.
+      const cached = snapshot("codex", "codex", {
+        ...usage([{ id: "primary", used: 10, resetsAt: isoAt(RESET + 3_600_000) }]),
+        checkedAt: isoAt(at),
+        fullReadAt: isoAt(at),
+      });
+      harness.providers = [cached, claude];
+      harness.onRefresh = () => {
+        const probed = harness.invalidated.includes("codex");
+        harness.providers = [
+          probed
+            ? snapshot("codex", "codex", {
+                ...usage([{ id: "primary", used: 100, resetsAt: isoAt(RESET) }]),
+                checkedAt: isoAt(at),
+                fullReadAt: isoAt(at),
+              })
+            : cached,
+          claude,
+        ];
+      };
+      yield* TestClock.setTime(at);
+      yield* service.sweep;
+      expect(harness.invalidated).toContain("codex");
+      expect(harness.refreshed).toContain("codex");
+      // The cached answer reads 10% and looks fresh, but the limit has not reset:
+      // the row stays.
+      expect(yield* bots.listFallbackStates()).toHaveLength(1);
+      expect(lines(harness)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
 
 it.effect("recovery isolates old provider waits and rolls back a failed wake", () => {
   const harness = makeHarness();

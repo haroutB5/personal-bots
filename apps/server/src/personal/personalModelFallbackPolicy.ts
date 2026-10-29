@@ -237,6 +237,14 @@ export interface SwitchBackInput {
   readonly home: ModelSelection;
   /** The home provider's latest usage readings (re-read just before this call when due). */
   readonly homeProvider: Pick<ServerProvider, "usageLimits"> | undefined;
+  /**
+   * The earliest reading that can prove early recovery: the start of the full
+   * probe whose answer this is. A reading older than this was taken before the
+   * probe and cannot prove the limit reset, however its timestamp reads. Left
+   * out, nothing proves an early recovery: only the stored reset time can end
+   * the row.
+   */
+  readonly freshAfterMs?: number;
   /** No turn of the bot is running and no task is running for it. */
   readonly idle: boolean;
   /** Service verifies that this is still the original, ready provider instance. */
@@ -253,11 +261,13 @@ export interface SwitchBackInput {
 
 export function primaryUsageRecovered(input: SwitchBackInput): boolean {
   const usage = input.homeProvider?.usageLimits;
-  // Only an unchanged full-probe snapshot can prove early recovery. The UI
-  // also publishes sparse runtime merges, whose aggregate age says nothing
-  // about an omitted allowance. Those snapshots carry no full-read proof.
+  // Only a reading from a full probe that began after the limit hit can prove
+  // early recovery. The driver can hand back the answer it took before the hit
+  // stamped with the current time, so a reading with no such probe behind it is
+  // no proof at all.
   if (
     !input.recoveryProviderReady ||
+    input.freshAfterMs === undefined ||
     usage === undefined ||
     usage.unavailable ||
     usage.refreshFailed ||
@@ -269,6 +279,7 @@ export function primaryUsageRecovered(input: SwitchBackInput): boolean {
   if (
     !Number.isFinite(checked) ||
     checked <= input.startedAtMs ||
+    (input.freshAfterMs !== undefined && checked < input.freshAfterMs) ||
     checked > input.nowMs ||
     input.nowMs - checked > FALLBACK_RECOVERY_FRESH_MS ||
     input.nowMs - input.startedAtMs < FALLBACK_SWITCH_BACK_GRACE_MS

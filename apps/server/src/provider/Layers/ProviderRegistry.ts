@@ -967,6 +967,11 @@ export const ProviderRegistryLive = Layer.effect(
       ) => refreshInstance(instanceId, options).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
+      invalidateUsage: (instanceId: ProviderInstanceId) =>
+        instanceRegistry.getInstance(instanceId).pipe(
+          Effect.flatMap((instance) => instance?.invalidateUsage ?? Effect.void),
+          Effect.asVoid,
+        ),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

@@ -112,7 +112,17 @@ import {
  * own model. The running turn is never touched; the provider switch that
  * carries the chat over is the one every other model change uses. The provider
  * re-probe in the sweep (every 2 minutes) supplies the early-reset proof too.
- * A schedule or a peak row stays idle-gated.
+ * That probe drops the driver's cached usage read first, and only a reading from
+ * a probe that began after the row did counts as proof: a cached answer from
+ * before the hit is stamped fresh by the driver (1.66.105). A schedule or a peak
+ * row stays idle-gated.
+ *
+ * A limit that arrives while a usage-limit row is already there continues on
+ * that row instead of pausing the work when it is an older turn on the home
+ * model: a hit from the home instance soon after the switch, or a hit from
+ * another chat that named no instance (that one once per row, so a limited
+ * fallback cannot retry in a loop). A hit from the fallback's own instance, or
+ * from the chat that was switched, means both models are spent (1.66.105).
  *
  * Kill switches: `PERSONAL_MODEL_FALLBACK=off` (limits),
  * `PERSONAL_DEEPSEEK_PEAK_SWITCH=off` (peak) and `PERSONAL_MODEL_SCHEDULE=off`
@@ -249,6 +259,8 @@ export const make = Effect.gen(function* () {
 
   const lastSwitchBackAtMs = new Map<string, number>();
   const lastProbeAtMs = new Map<string, number>();
+  /** The usage-limit row that already let one unnamed-instance hit continue on it. */
+  const rescuedRows = new Map<string, string>();
 
   const providerSnapshot = (instanceId: string) =>
     providers.getProviders.pipe(
@@ -376,22 +388,47 @@ export const make = Effect.gen(function* () {
 
       // A turn that was already running on the home provider when the bot
       // switched: it died on the home limit, so it continues on the fallback too.
-      if (active !== undefined && on && input.instanceId != null) {
+      //
+      // While a usage-limit row is already there, a hit whose provider named no
+      // instance (the failed turn settled before its session recorded one) is
+      // that same older turn: the bot is already on the model that can run it,
+      // so the work continues there instead of pausing until the reset. The row
+      // is trusted once per row, so a fallback that is itself limited cannot
+      // retry in a loop. A hit from the fallback's own instance always waits.
+      if (active !== undefined && on && peakActive === undefined) {
         const states = yield* bots.listFallbackStates();
         const state = states.find((candidate) => candidate.botId === bot.botId);
-        // Only a hit from the home provider, soon after the switch (a turn that was
-        // in flight). A fallback on the home provider itself cannot tell its own
-        // hits from the home's, and a late hit means the fallback is limited too.
-        if (
-          state !== undefined &&
-          state.fromInstanceId === input.instanceId &&
-          fallback.modelSelection.instanceId !== input.instanceId &&
-          now - Date.parse(state.startedAt) < IN_FLIGHT_WINDOW_MS
-        ) {
-          return {
-            switched: true,
-            modelLabel: fallbackModelLabel(active.modelSelection),
-          } satisfies LimitHitResult;
+        const fallbackInstance = state?.fallbackModel.instanceId;
+        // The provider's own error names the instance when it has one; the
+        // chat's session row is the next best account of the model that ran.
+        const hitInstance =
+          input.instanceId ??
+          (input.threadId === null ? null : yield* sessionInstanceOf(input.threadId));
+        const continuesOnRow = {
+          switched: true,
+          modelLabel: fallbackModelLabel(active.modelSelection),
+        } satisfies LimitHitResult;
+        if (state !== undefined && fallbackInstance !== state.fromInstanceId) {
+          if (hitInstance == null) {
+            // Neither the provider nor the session named an instance. The chat
+            // that was switched is the row's own chat: its unnamed hit is the
+            // fallback hitting its limit. Another chat's is an older turn on the
+            // home model, which runs on the row. Trust that once per row, so a
+            // fallback that is itself limited cannot retry in a loop.
+            const sameChat =
+              state.noticeThreadId !== null && input.threadId === state.noticeThreadId;
+            if (!sameChat && rescuedRows.get(bot.botId) !== state.startedAt) {
+              rescuedRows.set(bot.botId, state.startedAt);
+              return continuesOnRow;
+            }
+          } else if (
+            // A hit from the home provider soon after the switch is a turn that
+            // was already running; a late one means the fallback is limited too.
+            hitInstance === state.fromInstanceId &&
+            now - Date.parse(state.startedAt) < IN_FLIGHT_WINDOW_MS
+          ) {
+            return continuesOnRow;
+          }
         }
       }
 
@@ -534,14 +571,32 @@ export const make = Effect.gen(function* () {
       LIMIT 1
     `.pipe(Effect.map((rows) => rows.length > 0));
 
+  /** The instance a chat's session last ran on, for a hit that did not name one. */
+  const sessionInstanceOf = (threadId: string) =>
+    sql<{ readonly instanceId: string | null }>`
+      SELECT provider_instance_id AS "instanceId"
+      FROM projection_thread_sessions
+      WHERE thread_id = ${threadId}
+      LIMIT 1
+    `.pipe(Effect.map((rows) => rows[0]?.instanceId ?? null));
+
+  /**
+   * Ask the provider for a usage reading taken now. The driver keeps its last
+   * probe for a few minutes, so the cached answer is dropped first: without that
+   * a refresh returns the reading from before the limit hit with a fresh
+   * timestamp, and the sweep reads it as proof of an early reset (1.66.105).
+   * Returns the refreshed snapshots; undefined when the probe was not due.
+   */
   const probe = (bot: PersonalBot, instanceId: string, now: number) =>
     Effect.gen(function* () {
       const last = lastProbeAtMs.get(instanceId);
-      if (last !== undefined && now - last < PROBE_MIN_GAP_MS) return;
+      if (last !== undefined && now - last < PROBE_MIN_GAP_MS) return undefined;
       lastProbeAtMs.set(instanceId, now);
-      yield* providers
-        .refreshInstance(instanceId as ProviderInstanceId)
-        .pipe(Effect.timeoutOption(PROBE_TIMEOUT), Effect.asVoid);
+      yield* providers.invalidateUsage(instanceId as ProviderInstanceId);
+      return yield* providers.refreshInstance(instanceId as ProviderInstanceId).pipe(
+        Effect.timeoutOption(PROBE_TIMEOUT),
+        Effect.map((timeout) => Option.getOrUndefined(timeout)),
+      );
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -549,7 +604,7 @@ export const make = Effect.gen(function* () {
           : Effect.logDebug("personal model fallback could not re-probe the provider", {
               botId: bot.botId,
               cause: Cause.pretty(cause),
-            }),
+            }).pipe(Effect.as(undefined)),
       ),
     );
 
@@ -625,9 +680,20 @@ export const make = Effect.gen(function* () {
     now: number,
     idle: boolean,
     on: boolean,
+    /**
+     * When the full probe whose reading this decision may trust started. An
+     * older reading, however it is stamped, is not proof of early recovery.
+     */
+    readingFromMs?: number,
   ) => {
     const startedAtMs = Date.parse(state.startedAt);
     const resetAtMs = state.resetAt === null ? null : Date.parse(state.resetAt);
+    // Only a reading from a probe that began after this row did can prove the
+    // limit reset: the driver re-stamps a cached answer with the current time.
+    const freshAfterMs =
+      readingFromMs !== undefined && Number.isFinite(readingFromMs) && readingFromMs >= startedAtMs
+        ? readingFromMs
+        : undefined;
     return decideSwitchBack({
       killSwitchOn: on,
       botFallbackEnabled: bot.fallback?.enabled !== false,
@@ -648,6 +714,7 @@ export const make = Effect.gen(function* () {
         (candidate) => candidate.instanceId === bot.modelSelection.instanceId,
       ),
       idle,
+      ...(freshAfterMs === undefined ? {} : { freshAfterMs }),
     });
   };
 
@@ -677,7 +744,15 @@ export const make = Effect.gen(function* () {
       const on = yield* killSwitchOn;
       const now = yield* nowMs;
       const list = yield* providers.getProviders;
-      const decision = switchBackDecisionFor(state, bot, list, now, true, on);
+      const decision = switchBackDecisionFor(
+        state,
+        bot,
+        list,
+        now,
+        true,
+        on,
+        lastProbeAtMs.get(bot.modelSelection.instanceId),
+      );
       if (decision.kind === "extend") {
         yield* bots.updateFallbackReset({ botId: state.botId, resetAt: iso(decision.resetAtMs) });
         return;
@@ -919,11 +994,21 @@ export const make = Effect.gen(function* () {
       }
       const enabled = bot.fallback?.enabled !== false;
       // Early redemption can happen outside this app. Probe on the same bounded
-      // cadence even when the recorded reset is still days away.
-      if (on && enabled) yield* probe(bot, bot.modelSelection.instanceId, now);
+      // cadence even when the recorded reset is still days away, and decide from
+      // the snapshots that probe returned: the pass-wide list was read before it.
+      const probed =
+        on && enabled ? yield* probe(bot, bot.modelSelection.instanceId, now) : undefined;
       now = yield* nowMs;
       const idle = yield* botIsIdle(state.botId);
-      const decision = switchBackDecisionFor(state, bot, list, now, idle, on);
+      const decision = switchBackDecisionFor(
+        state,
+        bot,
+        probed ?? list,
+        now,
+        idle,
+        on,
+        lastProbeAtMs.get(bot.modelSelection.instanceId),
+      );
       if (decision.kind === "extend") {
         yield* bots.updateFallbackReset({ botId: state.botId, resetAt: iso(decision.resetAtMs) });
         continue;
