@@ -1757,7 +1757,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               threadId: command.threadId,
               createdAt: command.createdAt,
               activity: {
-                id: EventId.make(`async-answer:${command.requestId}`),
+                id: EventId.make(`async-answer:${command.commandId}:${command.requestId}`),
                 kind: "user-input.resolved",
                 summary: "User input submitted",
                 tone: "info",
@@ -1781,7 +1781,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               runtimeMode: thread.runtimeMode,
               interactionMode: thread.interactionMode,
               message: {
-                messageId: MessageId.make(`async-answer:${command.requestId}`),
+                messageId: MessageId.make(`async-answer:${command.commandId}:${command.requestId}`),
                 role: "user",
                 text: replies.join("\n\n"),
                 attachments,
