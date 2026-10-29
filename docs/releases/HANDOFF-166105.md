@@ -13,5 +13,3 @@ The re-probe now drops the cached usage read (`invalidateUsage`, the same call t
 **3. A model with no catalog entry showed its raw id (low).** The Bots list showed `claude-haiku-…` and the chat header read "Working · · fallback" because the short label fell back to the raw model id. A Claude id the provider has not listed now reads "Haiku 5.5 · H" (`unlistedModelName`: `claude-haiku-5-5` -> "Haiku 5.5"); a family the code does not know still keeps its id. The header gets a name short enough to leave the marker room.
 
 Tests: `PersonalModelFallbackService.test.ts` covers the cached pre-hit reading (a re-stamped 10% answer with the probe's fresh invalidation reading 100% keeps the row), the second chat's hit continuing on the row, the chat that was switched waiting, the once-per-row unnamed rescue, and the fallback's own instance waiting; the web label suite covers the unlisted Claude name. The fake home CLI now reports 100% for its spent window (resets_at is the limit's end), so a cached 10% answer can never pass as proof in a live check.
-
-## Gate evidence
