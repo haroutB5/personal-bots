@@ -132,6 +132,29 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it("preserves each answer when a message-mode question ID is reused", async () => {
+    const system = await createOrchestrationSystem();
+    const threadId = ThreadId.make("reasked-thread");
+    const projectId = ProjectId.make("reasked-project");
+    const requestId = ApprovalRequestId.make("test-question");
+    try {
+      await system.run(system.engine.dispatch({ type: "project.create", commandId: CommandId.make("reasked-project"), projectId, title: "Questions", workspaceRoot: "/tmp/reasked", createdAt: now() }));
+      await system.run(system.engine.dispatch({ type: "thread.create", commandId: CommandId.make("reasked-thread"), threadId, projectId, title: "Questions", modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" }, runtimeMode: "full-access", interactionMode: "default", branch: null, worktreePath: null, createdAt: now() }));
+      for (const [index, answer] of ["One", "Two"].entries()) {
+        const createdAt = `2026-01-01T00:00:0${index * 2 + 1}.000Z`;
+        await system.run(system.engine.dispatch({ type: "thread.activity.append", commandId: CommandId.make(`ask-${index}`), threadId, createdAt, activity: { id: EventId.make(`ask-${index}`), kind: "user-input.requested", summary: "Question", tone: "info", turnId: null, createdAt, payload: { requestId, responseMode: "message", questions: [{ id: "q", header: "Question", question: "Which option?", options: [{ label: "One", description: "" }, { label: "Two", description: "" }] }] } } }));
+        await system.run(system.engine.dispatch({ type: "thread.user-input.respond", commandId: CommandId.make(`answer-${index}`), threadId, requestId, answers: { q: answer }, createdAt: `2026-01-01T00:00:0${index * 2 + 2}.000Z` }));
+      }
+      const thread = (await system.readModel()).threads[0]!;
+      expect(thread.messages.map((message) => message.text)).toEqual(["Which option?\nOne", "Which option?\nTwo"]);
+      expect(thread.activities.filter((activity) => activity.kind === "user-input.resolved").map((activity) => activity.payload)).toMatchObject([{ answers: { q: "One" } }, { answers: { q: "Two" } }]);
+      const events = Array.from(await system.run(Stream.runCollect(system.engine.readEvents(0))));
+      expect(events.filter((event) => event.type === "thread.turn-start-requested")).toHaveLength(2);
+    } finally {
+      await system.dispose();
+    }
+  });
+
   it.each(["personal-task:task:steer:1", "personal-task:task:retry:1", "owner-message"])(
     "supersedes an open async question on inbound command %s after restart",
     async (commandId) => {
