@@ -82,6 +82,22 @@ const parameterValidationMessage = (description: string): string => {
 };
 
 /**
+ * The sentence a refused tool call shows the model. A declared refusal carries
+ * its own `reason`; a caller-input failure from a validated argument names the
+ * tool and what it expected, instead of the bare error tag (QA's L5).
+ */
+export const toolFailureText = (error: unknown): string | null => {
+  if (typeof error !== "object" || error === null) return null;
+  const reason = (error as { readonly reason?: unknown }).reason;
+  if (typeof reason === "string") return reason;
+  if (Schema.is(AiError.AiError)(error) && error.reason._tag === "ToolParameterValidationError") {
+    return `The ${error.reason.toolName} call was refused: ${parameterValidationMessage(error.reason.description)}`;
+  }
+  const message = (error as { readonly message?: unknown }).message;
+  return typeof message === "string" && message.length > 0 ? message : null;
+};
+
+/**
  * The refusals a cause is made of, or null when it holds anything else: a
  * defect, an interruption, or an error type that is not a declared refusal.
  * A refusal's `tag` is its error tag, or the tool name for a schema failure.

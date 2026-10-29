@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - a plain directory inbox written by scripts/personal/notify-release.ps1; renames are the whole protocol.
+// @effect-diagnostics globalDateInEffect:off - result timestamps and filesystem mtimes use the host wall clock.
+// @effect-diagnostics preferSchemaOverJson:off - the runner owns this small local JSON protocol.
 /**
  * Release-landed wake-up: tells the chat that asked for an hbots release how
  * it went, the moment the release waiter knows.
@@ -78,7 +80,7 @@ export const ReleaseNotice = Schema.Struct({
    * previous release is back and passed its smoke. rollback_failed: the smoke
    * failed and so did the rollback. failed: stopped before activating.
    */
-  outcome: Schema.Literals(["live", "rolled_back", "rollback_failed", "failed"]),
+  outcome: Schema.Literals(["live", "rolled_back", "rollback_failed", "failed", "waiting"]),
   smokeExit: Schema.optional(ExitCode),
   rollbackRelease: Schema.optional(Text),
   rollbackExit: Schema.optional(ExitCode),
@@ -99,7 +101,9 @@ export function releaseNoticeText(notice: ReleaseNotice): string {
   const name = `hbots ${notice.version} (release ${notice.release})`;
   const rollbackTo = notice.rollbackRelease ?? "the previous release";
   const head =
-    notice.outcome === "live"
+    notice.outcome === "waiting"
+      ? `Release waiting: ${name} is still waiting for idle.`
+      : notice.outcome === "live"
       ? `Release landed: ${name} is live. Smoke ${exitText(notice.smokeExit)}. No rollback.`
       : notice.outcome === "rolled_back"
         ? `Release failed: ${name} failed its smoke (${exitText(notice.smokeExit)}) and was rolled back to ${rollbackTo}: rollback ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}.`
@@ -107,7 +111,9 @@ export function releaseNoticeText(notice: ReleaseNotice): string {
           ? `Release failed and the rollback failed too: ${name} smoke ${exitText(notice.smokeExit)}; rollback to ${rollbackTo} ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}. The server may be down or on the wrong release.`
           : `Release not activated: ${name} stopped before the restart. Nothing changed on the live server.`;
   const next =
-    notice.outcome === "live"
+    notice.outcome === "waiting"
+      ? "Check the blockers and the log; the waiter is still running."
+      : notice.outcome === "live"
       ? "Confirm the live release and start QA now."
       : notice.outcome === "rollback_failed"
         ? "Check status.ps1 and the log now and tell Harout plainly."
@@ -306,8 +312,54 @@ export const make = Effect.gen(function* () {
   // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): pending notices stay in the inbox.
   const schedulersOff = personalSchedulersOff();
 
+  // The installed Linux runner records desktop alerts in its result file. Older
+  // servers ignore them; this consumer starts only with the next server release.
+  let nextWaitingScan = 0;
+  const queueWaitingAlerts = Effect.promise(async () => {
+    if (Date.now() < nextWaitingScan) return;
+    nextWaitingScan = Date.now() + 30_000;
+    const runDir = NodePath.join(NodePath.basename(config.baseDir) === "dev" ? NodePath.dirname(config.baseDir) : config.baseDir, "run");
+    const files = await NodeFSP.readdir(runDir).catch(() => [] as string[]);
+    for (const file of files) {
+      if (!/^restart-\d+\.\d+\.\d+-result\.json$/.test(file)) continue;
+      try {
+        const source = NodePath.join(runDir, file);
+        const stat = await NodeFSP.stat(source);
+        if (stat.size > 1_000_000 || Date.now() - stat.mtimeMs > 90_000) continue;
+        const result: unknown = JSON.parse(await NodeFSP.readFile(source, "utf8"));
+        if (typeof result !== "object" || result === null) continue;
+        const r = result as Record<string, unknown>;
+        const a = r.waitingAlert;
+        if (r.status !== "waiting_for_idle" || r.mode !== "run" || r.runner !== "hbots-release.mjs (linux)" ||
+            typeof r.notifyThread !== "string" || typeof r.version !== "string" ||
+            typeof r.release !== "string" || typeof r.runnerPid !== "number" ||
+            typeof r.updatedAt !== "string" || !Number.isFinite(Date.parse(r.updatedAt)) ||
+            Date.now() - Date.parse(r.updatedAt) > 90_000 || Date.parse(r.updatedAt) > Date.now() + 5_000 ||
+            typeof a !== "object" || a === null) continue;
+        const alert = a as Record<string, unknown>;
+        if ((alert.minutes !== 20 && alert.minutes !== 60) || typeof alert.text !== "string" ||
+            typeof alert.at !== "string" || !Number.isFinite(Date.parse(alert.at))) continue;
+        // The runner delivered this alert into the inbox itself (1.66.99): the
+        // durable file is already there, so a second one would double-post.
+        if (typeof alert.noticeFile === "string") continue;
+        const id = `waiting-${r.runnerPid}-${alert.minutes}-${Date.parse(alert.at)}`;
+        const name = `${id}.json`;
+        const exists = async (p: string) => NodeFSP.access(p).then(() => true, () => false);
+        if (await exists(NodePath.join(inbox, "posted", name)) || await exists(NodePath.join(inbox, "rejected", name))) continue;
+        await NodeFSP.mkdir(inbox, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(inbox, name), JSON.stringify({
+          threadId: r.notifyThread, version: r.version, release: r.release,
+          outcome: "waiting", detail: alert.text.slice(0, DETAIL_MAX_CHARS), writtenAt: alert.at,
+        }), { flag: "wx" });
+      } catch {
+        // Files can change between listing and reading; the next sweep retries.
+      }
+    }
+  });
+
   const scheduledSweep: PersonalReleaseNotices["Service"]["sweep"] = lock.withPermit(
     Effect.gen(function* () {
+      yield* queueWaitingAlerts;
       const names = yield* Effect.promise(() =>
         NodeFSP.readdir(inbox, { withFileTypes: true }).then(
           (entries) =>

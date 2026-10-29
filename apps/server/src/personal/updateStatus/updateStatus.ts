@@ -64,6 +64,23 @@ export function restartResultVersion(fileName: string): string | null {
 }
 
 /**
+ * Compares two dotted versions numerically ("1.66.9" < "1.66.10"). Used only
+ * to break an mtime tie: file info carries mtime as a `Date`, so two result
+ * files written inside the same millisecond report the same time, and the
+ * higher version was the one written later in that millisecond.
+ */
+export function compareVersions(a: string, b: string): number {
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  const length = Math.max(left.length, right.length);
+  for (let i = 0; i < length; i++) {
+    const difference = (left[i] ?? 0) - (right[i] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
  * Every status the release runner writes in a real run (run/hbots-release.ps1),
  * plus the one the old waiters wrote for a superseded waiter. A status outside
  * this set is a file this build does not understand and shows nothing.

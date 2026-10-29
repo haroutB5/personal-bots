@@ -67,6 +67,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -82,6 +83,7 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveTimelineEntries,
   selectMessageImageResources,
+  withFullToolCommand,
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
@@ -157,6 +159,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThread } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
+import { useThreadFullText } from "../../state/threadFullText";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
@@ -2734,6 +2737,22 @@ function remarkThoughtPreview(fallback: string) {
 }
 
 /**
+ * An expanded thought. A chat open may have sent only a preview of it
+ * (`textTruncated`, the `text-previews` switch); the rest loads here.
+ */
+function ReasoningMarkdown({
+  message,
+  ...props
+}: Omit<ComponentProps<typeof ChatMarkdown>, "text"> & { message: ChatMessage }) {
+  const ctx = use(TimelineRowCtx);
+  const full = useThreadFullText(
+    ctx.threadRef,
+    message.textTruncated === true ? { messageId: message.id } : null,
+  );
+  return <ChatMarkdown {...props} text={full.text ?? message.text} />;
+}
+
+/**
  * Thinking inside a tool group has its own disclosure, preserved across recycling.
  * A group whose row already reads "Thought" (no visible tool) skips the header.
  */
@@ -2805,10 +2824,10 @@ function ReasoningTraceBlock({
       {expanded ? (
         <div className="ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text">
           {messages.map((reasoningMessage) => (
-            <ChatMarkdown
+            <ReasoningMarkdown
               key={reasoningMessage.id}
+              message={reasoningMessage}
               className="text-foreground"
-              text={reasoningMessage.text}
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={streaming && reasoningMessage.streaming}
@@ -2874,9 +2893,9 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
       </button>
       {expanded ? (
         <div className="mt-1 ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text">
-          <ChatMarkdown
+          <ReasoningMarkdown
+            message={message}
             className="text-foreground"
-            text={message.text}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             lineBreaks
@@ -4780,9 +4799,14 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       workEntry.changedFiles?.length ||
       viewedImage,
     );
+  // A chat open may have sent only a preview of a long command; load the rest.
+  const fullCommand = useThreadFullText(
+    threadRef,
+    expanded && workEntry.commandPreviewOf ? { activityId: workEntry.commandPreviewOf } : null,
+  );
   const expandedBody = expanded
     ? buildToolCallExpandedBody(
-        workEntry,
+        withFullToolCommand(workEntry, fullCommand.payload),
         workspaceRoot,
         previewText,
         viewedImage ? viewedImagePath : null,

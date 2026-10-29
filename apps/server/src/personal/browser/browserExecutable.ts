@@ -93,8 +93,10 @@ export function discoverBraveExecutable(
   return braveExecutableCandidates(env, platform).find((candidate) => exists(candidate));
 }
 
-const isBraveExecutable = (path: string) =>
-  BRAVE_IMAGE.test(NodePath.basename(path));
+/** The file name of a path on either platform (a Windows path in a Linux test still resolves). */
+const baseNameOf = (value: string): string => value.split(/[\\/]/).pop() ?? value;
+
+const isBraveExecutable = (path: string) => BRAVE_IMAGE.test(baseNameOf(path));
 
 /**
  * Resolves the executable the shared browser must launch.

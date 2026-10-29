@@ -1,0 +1,42 @@
+[
+  {
+    "id": "server-tests",
+    "kind": "vitest",
+    "title": "Server fork gate (personal, mcp, persistence, preview, workspace, assets)",
+    "cwd": "apps/server",
+    "commands": [
+      "NODE_ENV=test vp test run src/personal src/mcp src/persistence src/preview src/workspace src/assets"
+    ]
+  },
+  {
+    "id": "server-tsc",
+    "kind": "tsc",
+    "title": "Server typecheck",
+    "cwd": "apps/server",
+    "commands": ["node ../../scripts/personal/node/typecheck-lean.mjs"]
+  },
+  {
+    "id": "web-tests",
+    "kind": "vitest",
+    "title": "Web fork gate",
+    "cwd": "apps/web",
+    "commands": [
+      "node ../../scripts/personal/node/check-test-tree.mjs --package web",
+      "NODE_ENV=test vp test run --project unit src/features/personal src/authBootstrap.test.ts"
+    ]
+  },
+  {
+    "id": "web-tsc",
+    "kind": "tsc",
+    "title": "Web typecheck",
+    "cwd": "apps/web",
+    "commands": ["node ../../scripts/personal/node/typecheck-lean.mjs"]
+  },
+  {
+    "id": "e2e",
+    "kind": "e2e",
+    "title": "Phone e2e smoke on Linux (five journeys)",
+    "cwd": ".",
+    "commands": ["node scripts/personal/node/e2e-smoke.mjs --suite-timeout 600 --json"]
+  }
+]

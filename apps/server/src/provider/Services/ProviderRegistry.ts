@@ -72,6 +72,15 @@ export interface ProviderRegistryShape {
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
+   * Drop the driver's cached usage read so the next `refreshInstance` asks the
+   * provider again instead of handing back the previous answer with a fresh
+   * timestamp. Used by the model fallback's re-probe, which must not treat a
+   * reading taken before a limit hit as proof that the limit has reset. An
+   * unknown instance, or a driver with no cache, does nothing.
+   */
+  readonly invalidateUsage: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
+
+  /**
    * Resolve the maintenance capabilities owned by one live provider instance.
    * Falls back to manual-only capabilities when the instance is not live.
    * `fresh` re-derives ownership from the executable instead of the cache.

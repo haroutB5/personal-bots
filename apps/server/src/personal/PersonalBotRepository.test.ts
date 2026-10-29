@@ -277,6 +277,10 @@ it.effect("previews only each bot's two newest eligible chats", () =>
       "t-relay": null,
       "t-newest": "text of t-newest",
     });
+    // Archive counts match rows with a visible shell and never include relays.
+    yield* sql`UPDATE personal_bot_threads SET archived_at = '2026-09-14T00:00:00.000Z' WHERE thread_id IN ('t-relay', 't-second')`;
+    yield* sql`UPDATE projection_threads SET deleted_at = '2026-09-14T00:00:00.000Z' WHERE thread_id = 't-second'`;
+    expect(yield* repository.listArchivedChatCounts()).toEqual([{ botId, count: 1 }]);
   }).pipe(Effect.provide(testLayer)),
 );
 

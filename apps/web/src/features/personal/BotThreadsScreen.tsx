@@ -12,6 +12,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 
 import { useThreadDetail, useThreadShells } from "~/state/entities";
+import { useLazyThreadShells } from "~/state/lazyThreadShells";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -29,6 +30,7 @@ import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import {
   personalBotArchiveThread,
   usePersonalBotsList,
+  usePersonalArchivedLinks,
   usePersonalEnvironmentId,
 } from "./usePersonalBots";
 import { useWrapupChat } from "./wrapupChat";
@@ -335,6 +337,25 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const backTarget = usePersonalBackTarget();
   const laptopOffline = useLaptopOffline();
   const list = usePersonalBotsList(environmentId);
+  const [archiveRequested, setArchiveRequested] = useState(false);
+  const archivedLinks = usePersonalArchivedLinks(
+    environmentId,
+    list.data?.archivedCounts === undefined || !archiveRequested ? null : { botId },
+    list.dataUpdatedAt,
+  );
+  const links = useMemo(() => {
+    const active = list.data?.threads ?? [];
+    if (list.data?.archivedCounts === undefined) return active;
+    const activeIds = new Set(active.map((link) => link.threadId));
+    return [
+      ...active,
+      ...(archivedLinks.data?.threads.filter(
+        (link) => link.archivedAt !== null && !activeIds.has(link.threadId),
+      ) ?? []),
+    ];
+  }, [list.data, archivedLinks.data]);
+  // The connect-time shell has no idle archived chats: load this bot's.
+  useLazyThreadShells(environmentId, { botId });
   const shells = useThreadShells();
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -352,6 +373,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     tasks,
     refresh: list.refresh,
     shells,
+    omitsArchived: list.data?.archivedCounts !== undefined,
   });
 
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
@@ -364,13 +386,17 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
         ? { active: [], archived: [], snoozed: [] }
         : botThreadRows(
             bot.botId,
-            list.data.threads,
+            links,
             shells.filter((shell) => shell.environmentId === environmentId),
             relayThreadIds,
             wakeClock,
           ),
-    [bot, environmentId, list.data, relayThreadIds, shells, wakeClock],
+    [bot, environmentId, list.data, links, relayThreadIds, shells, wakeClock],
   );
+  const archivedCount =
+    list.data?.archivedCounts === undefined
+      ? rows.archived.length
+      : (list.data.archivedCounts[botId] ?? 0);
   // Unread dots for every bot's chats, from the same list; archived rows never get one. The chat
   // chips mark a chat unread for any bot, so the list must too (only the Bots home list keeps its
   // count badges for team leads, `showsUnreadChats`). They mark only the chats the chips show
@@ -609,8 +635,13 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                   >
                     Select chats
                   </MenuItem>
-                  {rows.archived.length > 0 ? (
-                    <MenuItem onClick={() => enterSelect("archived", null)}>
+                  {archivedCount > 0 ? (
+                    <MenuItem
+                      onClick={() => {
+                        setArchiveRequested(true);
+                        enterSelect("archived", null);
+                      }}
+                    >
                       Select archived chats
                     </MenuItem>
                   ) : null}
@@ -641,10 +672,22 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
           {noticeLine}
           {selection.section === "archived" ? (
             <h2 className="mt-4 text-[15px] font-medium text-[var(--personal-text-secondary)]">
-              Archived chats ({rows.archived.length})
+              Archived chats ({archivedCount})
             </h2>
           ) : null}
-          {sectionRows.length === 0 ? (
+          {selection.section === "archived" &&
+          list.data?.archivedCounts !== undefined &&
+          !archivedLinks.isSuccess ? (
+            <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
+              {archivedLinks.error ? (
+                <button type="button" onClick={archivedLinks.refresh}>
+                  Could not load chats. Try again
+                </button>
+              ) : (
+                "Loading archived chats…"
+              )}
+            </p>
+          ) : sectionRows.length === 0 ? (
             <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
               No chats here.
             </p>
@@ -800,11 +843,25 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
             </details>
           ) : null}
 
-          {rows.archived.length > 0 ? (
-            <details className="mt-6">
+          {archivedCount > 0 ? (
+            <details
+              className="mt-6"
+              onToggle={(event) => {
+                if (event.currentTarget.open) setArchiveRequested(true);
+              }}
+            >
               <summary className="flex min-h-11 cursor-pointer items-center text-[15px] font-medium text-[var(--personal-text-secondary)]">
-                Archived chats ({rows.archived.length})
+                Archived chats ({archivedCount})
               </summary>
+              {archivedLinks.isPending ? <p>Loading archived chats…</p> : null}
+              {archivedLinks.error ? (
+                <p>
+                  Could not load archived chats.{" "}
+                  <button type="button" onClick={archivedLinks.refresh}>
+                    Try again
+                  </button>
+                </p>
+              ) : null}
               <ul className="divide-y divide-[var(--personal-border)]">
                 {rows.archived.map((row) => (
                   <ThreadRow

@@ -156,6 +156,48 @@ describe("failed turn state", () => {
     ).toBe(true);
   });
 
+  it("does not show the failed-limit card once the fallback took over", () => {
+    const limited = session({
+      status: "error",
+      lastError: "Usage limit reached. Try again later.",
+      providerRetry: {
+        kind: "rate_limited",
+        provider: "opencode",
+        reason: "Usage limit reached. Try again later.",
+        observedAt: "2026-09-30T10:00:00.000Z",
+      },
+    });
+    const state = derive(limited);
+    expect(state).toBe("rate_limited");
+    // Without a fallback it is a failure the owner has to act on: Retry.
+    expect(
+      turnErrorNotice({ state, session: limited, lastMessageTurnStarted: true }),
+    ).toMatchObject({ tone: "danger", canRetry: false });
+    // With one, the server's own "hit its usage limit" line is above and the
+    // fallback reply is coming.
+    expect(
+      turnErrorNotice({
+        state,
+        session: limited,
+        lastMessageTurnStarted: true,
+        fallbackTookOver: true,
+      }),
+    ).toBeNull();
+    // The error written before the retry marker is projected reads the same.
+    const lost = session({ status: "error", lastError: "Usage limit reached. Try again later." });
+    expect(
+      turnErrorNotice({
+        state: "error",
+        session: lost,
+        lastMessageTurnStarted: true,
+        fallbackTookOver: true,
+      }),
+    ).toBeNull();
+    expect(
+      turnErrorNotice({ state: "error", session: lost, lastMessageTurnStarted: true }),
+    ).not.toBeNull();
+  });
+
   it("never shows secrets from the provider's line", () => {
     const friendly = friendlyTurnError(
       "Error: 401 invalid x-api-key sk-ant-api03-abcdefghijklmnop Authorization: Bearer abcdefghijklmnopqrstuvwxyz",

@@ -11,6 +11,7 @@ import {
   FALLBACK_OFF_NOTICE_TEXT,
   FALLBACK_ON_NOTICE_TEXT,
   FALLBACK_RESUMED_NOTICE_LABEL,
+  fallbackTookOverSinceLastOwnerMessage,
   isServerTurnNotice,
   readChatNotice,
   RESUMED_NOTICE_LABEL,
@@ -254,6 +255,27 @@ describe("1.60.22: a note line carries its Undo", () => {
 
 describe("1.65.0: the usage-limit model fallback rows", () => {
   const read = (marker: object) => readChatNotice({ context: context(marker) } as never)!;
+
+  it("knows when a usage-limit fallback took over after the owner's last message", () => {
+    const on = context({ notice: "model-fallback-on", provider: "Codex" });
+    expect(
+      fallbackTookOverSinceLastOwnerMessage([
+        { role: "user" },
+        { role: "assistant", context: on },
+      ] as never),
+    ).toBe(true);
+    // An old switch before the owner's own message does not count: a later
+    // failure of the fallback turn must keep its card.
+    expect(
+      fallbackTookOverSinceLastOwnerMessage([
+        { role: "assistant", context: on },
+        { role: "user" },
+        { role: "assistant" },
+      ] as never),
+    ).toBe(false);
+    expect(fallbackTookOverSinceLastOwnerMessage([{ role: "user" }] as never)).toBe(false);
+    expect(fallbackTookOverSinceLastOwnerMessage([])).toBe(false);
+  });
 
   it("shows the switch and the return as plain lines, with a fallback text when empty", () => {
     const on = read({ notice: "model-fallback-on", provider: "Codex" });

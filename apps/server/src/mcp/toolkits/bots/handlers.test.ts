@@ -76,6 +76,8 @@ interface Harness {
     readonly threadId: ThreadId;
     readonly reason: string;
   }>;
+  /** What the shared browser reports for the card's surface. */
+  browserHelpSurface: "desktop" | null;
   /** A thread's messages as the tools read them, oldest first. */
   readonly messages: Map<string, Array<{ messageId: string; role: string; text: string }>>;
   /** The shared browser as the tools see it: current state, and what closed it. */
@@ -119,6 +121,7 @@ const makeLayer = (harness: Harness) =>
               botName: input.botName,
               reason: input.reason,
               requestedAt: "2026-09-15T10:00:00.000Z",
+              ...(harness.browserHelpSurface === "desktop" ? { surface: "desktop" as const } : {}),
             };
           }),
         // The real service re-checks human control inside the lease lock, so a
@@ -277,6 +280,7 @@ const withHarness = <A, E>(
     sessions: new Map(),
     loginUses: [],
     browserHelpRequests: [],
+    browserHelpSurface: null,
     messages: new Map(),
     browser: {
       state: "connected",
@@ -1198,9 +1202,29 @@ describe("bots toolkit handlers", () => {
 
         expect(result.requested).toBe(true);
         expect(result.note).toContain("end your turn");
+        expect(result.note).toContain("browser panel");
         expect(harness.browserHelpRequests).toEqual([
           { threadId: CALLER_THREAD, reason: "CAPTCHA on amazon.co.uk" },
         ]);
+      }),
+    ),
+  );
+
+  // QA 28 Oct: a desktop pause is answered on the Computer screen, so the
+  // browser panel's wording sent the bot and the user to the wrong place.
+  it.effect("request_browser_help points a desktop pause at the Computer screen", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        harness.browserHelpSurface = "desktop";
+
+        const result = yield* call("request_browser_help", {
+          reason: "Type what the screenshot showed",
+        });
+
+        expect(result.requested).toBe(true);
+        expect(result.note).toContain("Computer screen");
+        expect(result.note).not.toContain("browser panel");
       }),
     ),
   );

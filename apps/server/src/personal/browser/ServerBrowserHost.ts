@@ -80,7 +80,9 @@ export const answerBeforeBrokerDeadline = <A, E, R>(
         : Effect.fail(
             new HostOperationError(
               "PreviewAutomationTimeoutError",
-              `The browser did not finish within ${timeoutMs}ms. It is still available; take a snapshot to see where the page is.`,
+              // Not only a slow page: the call may have been waiting in line
+              // for another bot's browser (QA's L7).
+              `The browser did not finish within ${timeoutMs}ms: it was still waiting for the shared browser or for a page that had not answered. It is still available, and nothing was clicked or typed; call the same tool again to keep your place in line, or take a snapshot to see where the page is.`,
             ),
           ),
     ),

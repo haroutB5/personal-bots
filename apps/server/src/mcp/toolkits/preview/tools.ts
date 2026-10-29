@@ -57,7 +57,7 @@ const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
 
 const PreviewStatusTool = Tool.make("preview_status", {
   description:
-    "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
+    "Report a tab's URL, title, visibility, loading state, viewport mode and CSS-pixel size.",
   parameters: PreviewAutomationTabTargetInput,
   success: PreviewAutomationStatus,
   failure: PreviewAutomationError,
@@ -71,7 +71,7 @@ const PreviewStatusTool = Tool.make("preview_status", {
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
+      "Open a browser tab for this thread and show the inline preview. open=false keeps it in the background. Reuses your current tab unless tabId or reuseExistingTab=false says otherwise.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -84,7 +84,7 @@ const PreviewOpenTool = browserTool(
 const PreviewNavigateTool = safeBrowserTool(
   Tool.make("preview_navigate", {
     description:
-      "Navigate a collaborative browser tab. Pass tabId to target a specific tab, plus {url:'https://t3.chat'} for a website or {target:{kind:'environment-port',port:5173}} for a dev server. Exactly one of url or target is required.",
+      "Navigate a tab. Pass url for a website, or target:{kind:'environment-port',port} for a dev server. Exactly one of url or target.",
     parameters: PreviewAutomationNavigateInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -95,7 +95,7 @@ const PreviewNavigateTool = safeBrowserTool(
 const PreviewResizeTool = safeBrowserTool(
   Tool.make("preview_resize", {
     description:
-      "Resize a collaborative browser tab, optionally selected by tabId. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-12-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent.",
+      "Resize a tab: {mode:'fill'}, {mode:'freeform',width,height}, or {mode:'preset',preset,orientation}. Changes CSS size only, not the user agent.",
     parameters: PreviewAutomationResizeInput,
     success: Schema.Struct({ ...PreviewAutomationResizeResult.fields, ...presentationFields }),
     failure: PreviewAutomationError,
@@ -108,7 +108,7 @@ const PreviewResizeTool = safeBrowserTool(
 const PreviewSetAppearanceTool = safeBrowserTool(
   Tool.make("preview_set_appearance", {
     description:
-      "Emulate prefers-color-scheme in a collaborative browser tab, optionally selected by tabId. Use {colorScheme:'dark'} or {colorScheme:'light'} to preview the page in that appearance, and {colorScheme:'system'} to clear the override and follow the OS appearance.",
+      "Dark/light mode for a browser tab (prefers-color-scheme): 'dark', 'light' or 'system' (clears).",
     parameters: PreviewAutomationSetColorSchemeInput,
     success: Schema.Struct({
       ...PreviewAutomationSetColorSchemeResult.fields,
@@ -124,19 +124,18 @@ const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. The text is capped near 20 KB and lists what it omitted; use preview_evaluate to read more. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; with includeImage=false, save=true returns only the url and screenshotPath. Embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
+      "Inspect a page before interacting. Returns page state, semantic elements, diagnostics, action history and a PNG screenshot. Text is capped near 20 KB and lists what it omits; use preview_evaluate to read more. includeImage=false gives text only. save=true also writes the PNG and returns screenshotPath; with includeImage=false it returns only url and screenshotPath. Embed the path in your reply as ![alt](screenshotPath): this is the only way to show the user a screenshot.",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(
         Schema.Boolean.annotate({
-          description:
-            "Include the PNG image in the tool response. Defaults to true. Set false for text-only output.",
+          description: "Include the PNG. Default true.",
         }),
       ),
       save: Schema.optional(
         Schema.Boolean.annotate({
           description:
-            "Write the screenshot PNG to disk and return its absolute path as screenshotPath. With includeImage=false, return only the url and screenshotPath. Defaults to false.",
+            "Write the PNG to disk and return its absolute path as screenshotPath. Default false.",
         }),
       ),
     }),
@@ -149,7 +148,7 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
 const PreviewClickTool = browserTool(
   Tool.make("preview_click", {
     description:
-      "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together. Optional button (left, right or middle), clicks (1 to 3: 2 is a double click) and modifiers (Alt, Control, Meta, Shift held during the click) work with a locator and with x/y. A right click fires the page's contextmenu event; the browser's own menu is not shown. A Control-click or middle-click on a link opens a background tab that the preview tools cannot drive: open that address yourself with preview_open or preview_navigate. In a tab where a saved login was filled only plain left clicks work, and only by x/y. If the click opens a native dialog it fails at once saying so, and the dialog stays open until answered.",
+      "Click one target. Prefer a locator; selector takes legacy CSS; x and y go together. button (left, right, middle), clicks (1 to 3; 2 is a double click) and modifiers work with a locator and with x/y. A right click fires the page's contextmenu event; the browser's own menu is not shown. A Control-click or middle-click on a link opens a background tab the preview tools cannot drive: open that address with preview_open or preview_navigate. In a tab where a saved login was filled, only plain left clicks by x/y work. If the click opens a native dialog it fails at once saying so, and the dialog stays open until answered.",
     parameters: PreviewAutomationClickInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -160,7 +159,7 @@ const PreviewClickTool = browserTool(
 const PreviewHoverTool = safeBrowserTool(
   Tool.make("preview_hover", {
     description:
-      "Move the pointer onto one target in the tab selected by tabId, or this agent session's current tab when omitted, without clicking: opens hover menus and tooltips. Give a Playwright locator (selector accepts legacy CSS) or an x and y pair together. The pointer stays there, so take a preview_snapshot afterwards to see what appeared. In a tab where a saved login was filled only x/y works.",
+      "Move the pointer onto one target without clicking, for hover menus and tooltips. Give a locator (selector takes legacy CSS) or x and y together. The pointer stays there: take a preview_snapshot to see what appeared. In a tab where a saved login was filled, only x/y works.",
     parameters: PreviewAutomationHoverInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -171,7 +170,7 @@ const PreviewHoverTool = safeBrowserTool(
 const PreviewDragTool = browserTool(
   Tool.make("preview_drag", {
     description:
-      "Press on one place, move to another and let go, in the tab selected by tabId, or this agent session's current tab when omitted: drag and drop, sliders, reordering. Give fromLocator and toLocator (Playwright locators, CSS works too), or fromX, fromY, toX and toY together. Do not mix the two forms. The button is always released again, even when the move fails. Dragging files from the computer into a page is not available. In a tab where a saved login was filled only x/y works.",
+      "Press on one place, move to another and let go: drag and drop, sliders, reordering. Give fromLocator and toLocator, or fromX, fromY, toX and toY together; do not mix. The button is always released, even if the move fails. Dragging files from the computer into a page is not available. In a tab where a saved login was filled, only x/y works.",
     parameters: PreviewAutomationDragInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -184,7 +183,7 @@ const PreviewDragTool = browserTool(
 const PreviewHistoryTool = browserTool(
   Tool.make("preview_history", {
     description:
-      "Go back or forward one step in the tab's history, or reload it, in the tab selected by tabId or this agent session's current tab when omitted. Returns the tab's status after the page settles (readiness load by default, domContentLoaded or none). It fails at once when there is no earlier or later page. A reload or a step that would move the tab to a site other than the sensitive site this chat has read needs the same approval as preview_navigate. Disabled in a tab where a saved login was filled: open a new tab instead.",
+      "Go back or forward one step in the tab's history, or reload. Returns the tab's status once the page settles. Fails at once when there is no earlier or later page. A reload or a step that moves the tab to a site other than the sensitive site this chat has read needs the same approval as preview_navigate. Disabled in a tab where a saved login was filled: open a new tab instead.",
     parameters: PreviewAutomationHistoryInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -195,7 +194,7 @@ const PreviewHistoryTool = browserTool(
 const PreviewCloseTabTool = browserTool(
   Tool.make("preview_close_tab", {
     description:
-      "Close one of this agent session's own browser tabs, named by tabId (it is required: the current tab is never closed by default). The other tabs and the browser stay open; the result lists the tabs that remain. Fails while the user is controlling the browser, like close_browser, and for a tab that belongs to another chat. Use close_browser to shut the whole browser.",
+      "Close one of your own tabs by tabId (required; the current tab is never closed by default). Other tabs stay open and the result lists them. Fails while the user is controlling the browser, and for another chat's tab. Use close_browser to shut the whole browser.",
     parameters: PreviewAutomationCloseTabInput,
     success: Schema.Struct({ ...PreviewAutomationCloseTabResult.fields, ...presentationFields }),
     failure: PreviewAutomationError,
@@ -206,7 +205,7 @@ const PreviewCloseTabTool = browserTool(
 const PreviewTypeTool = browserTool(
   Tool.make("preview_type", {
     description:
-      "Insert literal text into one input in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; set clear=true to replace existing text.",
+      "Insert literal text into one input. Prefer a locator; clear=true replaces existing text.",
     parameters: PreviewAutomationTypeInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -217,7 +216,7 @@ const PreviewTypeTool = browserTool(
 const PreviewPressTool = browserTool(
   Tool.make("preview_press", {
     description:
-      "Press one keyboard key in the tab selected by tabId, or this agent session's current tab when omitted. Examples: {key:'Enter'}, {key:'Escape'}, or {key:'a',modifiers:['Meta']}. When the page has a native dialog open (alert, confirm, prompt, leave-page), {key:'Enter'} answers OK and {key:'Escape'} answers Cancel; for a prompt, preview_type sets the answer first. Never OK a destructive confirm on your own judgement: hand it to the user with request_browser_help.",
+      "Press one key, e.g. {key:'Enter'} or {key:'a',modifiers:['Meta']}. With a native dialog open (alert, confirm, prompt, leave-page), Enter answers OK and Escape answers Cancel; for a prompt, preview_type sets the answer first. Never OK a destructive confirm on your own judgement: hand it to the user with request_browser_help.",
     parameters: PreviewAutomationPressInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -227,8 +226,7 @@ const PreviewPressTool = browserTool(
 
 const PreviewScrollTool = safeBrowserTool(
   Tool.make("preview_scroll", {
-    description:
-      "Scroll the tab selected by tabId, or this agent session's current tab when omitted. Positive deltaY scrolls down and positive deltaX scrolls right; a locator/selector targets a container.",
+    description: "Scroll the viewport, or a container given by locator or selector.",
     parameters: PreviewAutomationScrollInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -251,7 +249,7 @@ export const PreviewEvaluateResult = Schema.Struct({
 const PreviewEvaluateTool = browserTool(
   Tool.make("preview_evaluate", {
     description:
-      "Evaluate JavaScript in the tab selected by tabId, or this agent session's current tab when omitted. Returns {value} with a serializable result up to 64 KB; the expression may mutate page state. After the user takes the browser and hands it back, it is refused until a preview_snapshot has succeeded, because a script can click, type or submit.",
+      "Evaluate JavaScript in the page. Returns {value}, a serializable result up to 64 KB; the expression may mutate page state. After the user takes the browser and hands it back, it is refused until a preview_snapshot has succeeded, because a script can click, type or submit.",
     parameters: PreviewAutomationEvaluateInput,
     success: PreviewEvaluateResult,
     failure: PreviewAutomationError,
@@ -261,8 +259,7 @@ const PreviewEvaluateTool = browserTool(
 
 const PreviewWaitForTool = readonlyBrowserTool(
   Tool.make("preview_wait_for", {
-    description:
-      "Wait in the tab selected by tabId, or this agent session's current tab when omitted, until all supplied locator, selector, text, and URL conditions match.",
+    description: "Wait until all given locator, selector, text and URL conditions match.",
     parameters: PreviewAutomationWaitForInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -272,8 +269,7 @@ const PreviewWaitForTool = readonlyBrowserTool(
 
 const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
-    description:
-      "Start recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted.",
+    description: "Start recording a browser tab. Stop it with preview_recording_stop.",
     parameters: PreviewAutomationTabTargetInput,
     success: Schema.Struct({ ...PreviewAutomationRecordingStatus.fields, ...presentationFields }),
     failure: PreviewAutomationError,
@@ -284,7 +280,7 @@ const PreviewRecordingStartTool = safeBrowserTool(
 const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
     description:
-      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and transfer the compressed recording once (up to 50 MiB) to an evidence file readable in this agent's environment. Returns its environment-local path after transfer succeeds.",
+      "Stop recording and transfer the compressed recording (up to 50 MiB) to an evidence file in this agent's environment. Returns its local path.",
     parameters: PreviewAutomationTabTargetInput,
     success: Schema.Struct({ ...PreviewAutomationRecordingArtifact.fields, ...presentationFields }),
     failure: PreviewAutomationError,

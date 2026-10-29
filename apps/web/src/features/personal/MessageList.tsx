@@ -821,6 +821,7 @@ export function MessageList({
   onReply,
   onChoose,
   choicesBusy = false,
+  statusLine = null,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -918,6 +919,13 @@ export function MessageList({
   onChoose?: ((text: string) => Promise<boolean>) | undefined;
   /** The chat cannot take a message now (the bot is busy, offline, ...): open choices wait. */
   choicesBusy?: boolean;
+  /**
+   * A one-line status that belongs to the top of the transcript (the working
+   * chat's progress note). A short transcript sits at the bottom of the screen,
+   * so a status pinned under the header would read as a line followed by a
+   * blank void. Drawn here, the line stays glued to the first row instead.
+   */
+  statusLine?: ReactNode;
 }): JSX.Element {
   const openFile = useChatFilePreview();
   const choicesById = useMemo(() => choicesStates(items, choicesBusy), [items, choicesBusy]);
@@ -1437,6 +1445,10 @@ export function MessageList({
   }, [items, working]);
 
   const empty = items.length === 0 && pending.length === 0 && queued.length === 0;
+  // With a status line the scroller is only as tall as its rows (down to the
+  // room left), and the root pushes line and rows to the bottom together, so
+  // the void of a short transcript sits above the line, not under it.
+  const hugRows = statusLine !== null && !empty;
   // A chat chip switch eases the new transcript in (chatChipHandoff.ts).
   const [enterClass] = useState(() => (consumeChatSwitched() ? "personal-chat-enter" : undefined));
 
@@ -1444,14 +1456,20 @@ export function MessageList({
     // The jump button floats over the transcript's bottom edge, just above the
     // composer and any strip resting on it, so it never shifts the layout and
     // rides up with the keyboard.
-    <div className={cn("relative flex min-h-0 flex-1 flex-col", enterClass)}>
+    <div
+      className={cn("relative flex min-h-0 flex-1 flex-col", hugRows && "justify-end", enterClass)}
+    >
+      {statusLine}
       {/* `relative`: the scroller must be the containing block of the
           sr-only speaker labels (absolute). Otherwise they escape it, sit at
           their place deep in a long transcript and make the page column
           above the chat scrollable, so the whole chat drags up off screen. */}
       <div
         ref={scrollerRef}
-        className="personal-column personal-scroll-quiet relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
+        className={cn(
+          "personal-column personal-scroll-quiet relative min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain px-4",
+          hugRows ? "flex-initial" : "flex-1",
+        )}
       >
         <div
           ref={contentRef}

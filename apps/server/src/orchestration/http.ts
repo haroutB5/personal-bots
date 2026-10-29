@@ -6,7 +6,9 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { maybeApplyThreadTextPreviews } from "../personal/threadTextPreviews.ts";
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
 import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./Normalizer.ts";
 import {
@@ -16,6 +18,7 @@ import {
   failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { maybeSlimShellSnapshot } from "../personal/personalShellSlim.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -27,6 +30,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
     const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+    const sql = yield* SqlClient.SqlClient;
 
     return handlers
       .handle(
@@ -53,13 +57,15 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* projectionSnapshotQuery
-            .getShellSnapshot()
-            .pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("orchestration_snapshot_failed", cause),
-              ),
-            );
+          return yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+            Effect.flatMap((snapshot) =>
+              maybeSlimShellSnapshot(snapshot, args.payload.omitArchivedBotChats === "true"),
+            ),
+            Effect.provideService(SqlClient.SqlClient, sql),
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_snapshot_failed", cause),
+            ),
+          );
         }),
       )
       .handle(
@@ -87,9 +93,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           if (Option.isNone(snapshot)) {
             return yield* failEnvironmentNotFound("thread_not_found");
           }
-          return projectThreadDetailSnapshot(
-            snapshot.value,
-            args.payload.reasoningMessages === "true",
+          return maybeApplyThreadTextPreviews(
+            projectThreadDetailSnapshot(snapshot.value, args.payload.reasoningMessages === "true"),
+            args.payload.textPreviews === "true",
           );
         }),
       )

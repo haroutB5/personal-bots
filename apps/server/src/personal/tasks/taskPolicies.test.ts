@@ -54,6 +54,7 @@ import {
   reopenNote,
   sourceLabel,
   steerText,
+  stripSelfAttribution,
   taskSections,
 } from "./taskTurnPolicy.ts";
 
@@ -237,6 +238,32 @@ describe("limit policy", () => {
       const out = settleSessionError({ ...base, providerRetry: retry() });
       expect(out).toMatchObject({ kind: "finish", category: "rate_limited" });
       expect(out).not.toHaveProperty("resetAtMs");
+    });
+
+    it("treats a provider capacity error as a limit that carries its own reason", () => {
+      expect(
+        settleSessionError({
+          ...base,
+          lastError: "Selected model is at capacity. Please try a different model.",
+          providerName: "opencode",
+        }),
+      ).toEqual({
+        kind: "finish",
+        clearRenewalWait: false,
+        category: "rate_limited",
+        limit: {
+          provider: "opencode",
+          reason: "Selected model is at capacity. Please try a different model.",
+          capacity: true,
+        },
+      });
+      const overloaded = settleSessionError({ ...base, lastError: "model is overloaded" });
+      expect(overloaded).toMatchObject({
+        kind: "finish",
+        category: "rate_limited",
+        limit: { capacity: true },
+      });
+      expect(overloaded).not.toHaveProperty("limit.retryAt");
     });
   });
 });
@@ -425,8 +452,81 @@ describe("turn policy", () => {
 
   it("keeps a steer's own prefix, and adds one otherwise", () => {
     expect(steerText("CTO", "Update from CTO: go")).toBe("Update from CTO: go");
+    expect(steerText("CTO", "Update from Frontend: go")).toBe("Update from Frontend: go");
     expect(steerText("CTO", "  go  ")).toBe("Update from CTO: go");
     expect(steerText("  ", "go")).toBe("Update from your delegator: go");
+  });
+
+  it("drops the sender's own attribution so the label is not repeated", () => {
+    // Harout's report: the app's label plus a text that began "From CTO."
+    expect(steerText("CTO", "From CTO. Harout: ship it")).toBe("Update from CTO: Harout: ship it");
+    expect(steerText("CTO", "from cto! narrow the scope")).toBe(
+      "Update from CTO: narrow the scope",
+    );
+    expect(steerText("CTO", "CTO: check the logs")).toBe("Update from CTO: check the logs");
+    expect(steerText("CTO", "CTO here. Check the logs")).toBe(
+      "Update from CTO: Check the logs",
+    );
+    expect(steerText("CTO", "Update from CTO. Check the logs")).toBe(
+      "Update from CTO: Check the logs",
+    );
+    // A name in the middle of a sentence, or another bot's attribution, is not touched.
+    expect(steerText("CTO", "The CTO asked for this")).toBe("Update from CTO: The CTO asked for this");
+    expect(steerText("CTO", "Frontend: check this")).toBe("Update from CTO: Frontend: check this");
+    // Nothing is left: keep the words rather than send an empty steer.
+    expect(steerText("CTO", "From CTO.")).toBe("Update from CTO: From CTO.");
+  });
+
+  it("only drops a name that ends at a word boundary", () => {
+    // "From Assistants notes" is not a message from "Assistant", and a longer
+    // name that merely starts with the sender's is another sender.
+    expect(stripSelfAttribution("Assistant", "From Assistants notes")).toBe(
+      "From Assistants notes",
+    );
+    expect(stripSelfAttribution("Dev", "From Developer notes")).toBe("From Developer notes");
+    // A possessive is part of the sentence, not an attribution.
+    expect(stripSelfAttribution("CTO", "From CTO's review")).toBe("From CTO's review");
+    // The real shapes still strip, including punctuation after the name.
+    expect(stripSelfAttribution("CTO", "From CTO. Review it")).toBe("Review it");
+    expect(stripSelfAttribution("CTO", "From CTO, narrow it")).toBe("narrow it");
+    expect(stripSelfAttribution("CTO", "From CTO here. Narrow it")).toBe("Narrow it");
+    expect(stripSelfAttribution("Dev", "Dev here: narrow it")).toBe("narrow it");
+    expect(steerText("Assistant", "From Assistants notes")).toBe(
+      "Update from Assistant: From Assistants notes",
+    );
+    expect(steerText("Dev", "From Developer notes")).toBe(
+      "Update from Dev: From Developer notes",
+    );
+  });
+
+  it("drops a delegator's own attribution from the brief it labels", () => {
+    // taskSections only needs these five fields; the task id is a branded string in real rows.
+    const delegation = {
+      taskId: "t1" as never,
+      title: "Title",
+      objective: "From Nova. Do it",
+      acceptanceCriteria: "",
+      expectedOutput: "Done",
+    };
+    expect(taskSections(delegation, null, "Nova")).toContain("Objective:\nDo it");
+    expect(
+      taskSections(
+        delegation,
+        { title: "T", context: "Nova here. ctx", constraints: "Nova: no", targetBot: "b" } as never,
+        "Nova",
+      ),
+    ).toEqual([
+      "Task id: t1",
+      "Title: Title",
+      "Objective:\nDo it",
+      "Context:\nctx",
+      "Constraints:\nno",
+      "Expected output:\nDone",
+    ]);
+    // A user's task keeps its words exactly.
+    expect(
+      taskSections({ ...delegation, objective: "From CTO. Do it" }, null),
+    ).toContain("Objective:\nFrom CTO. Do it");
   });
 });
 

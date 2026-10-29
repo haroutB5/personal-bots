@@ -15,12 +15,12 @@ const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isNonEmpty())
   .check(Schema.isMaxLength(2048));
 const URL_GUIDANCE =
-  "Absolute http(s) URL or a schemeless host such as t3.chat or localhost:5173. Schemeless public hosts use https; loopback hosts use http.";
+  "Absolute http(s) URL or schemeless host (t3.chat, localhost:5173). Public hosts default to https, loopback to http.";
 const OptionalTimeoutMs = Schema.optional(
   Schema.Int.check(Schema.isGreaterThan(0))
     .check(Schema.isLessThanOrEqualTo(60_000))
-    .annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." }),
-).annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." });
+    .annotate({ description: "Max wait in ms. Default 15000, max 60000." }),
+).annotate({ description: "Max wait in ms. Default 15000, max 60000." });
 
 /** Operations understood by desktop hosts predating viewport resizing. */
 export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
@@ -56,12 +56,10 @@ export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
 const PreviewAutomationTabTargetFields = {
   tabId: Schema.optional(
     PreviewTabId.annotate({
-      description:
-        "Exact collaborative browser tab to target. Omit to use this agent session's current tab.",
+      description: "Tab to target. Omit for this session's current tab.",
     }),
   ).annotate({
-    description:
-      "Exact collaborative browser tab to target. Omit to use this agent session's current tab.",
+    description: "Tab to target. Omit for this session's current tab.",
   }),
 };
 
@@ -85,24 +83,21 @@ export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 export const PreviewAutomationOpenInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   url: Schema.optional(BoundedUrl).annotate({
-    description: `Optional initial page URL. ${URL_GUIDANCE} Omit to open a blank tab.`,
+    description: `Initial URL. ${URL_GUIDANCE} Omit for a blank tab.`,
   }),
   open: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Whether to open the thread-bound inline preview for the human. Defaults to true; set false for background-only automation.",
+      description: "Show the inline preview to the user. Default true; false for background only.",
     }),
   ),
   show: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Deprecated alias for open. Whether to reveal the thread-bound inline preview to the human.",
+      description: "Deprecated alias for open.",
     }),
   ),
   reuseExistingTab: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Reuse tabId when supplied, otherwise this agent session's current tab. Defaults to true; set false to create a new tab.",
+      description: "Reuse tabId, else the current tab. Default true; false creates a new tab.",
     }),
   ),
 })
@@ -115,34 +110,34 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
+      "Opens a browser tab for this thread. Use preview_navigate when you need readiness waiting.",
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
 
 export const BrowserNavigationTarget = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("url").annotate({
-      description: "Selects direct URL navigation.",
+      description: "Direct URL.",
     }),
     url: BoundedUrl.annotate({
-      description: `Direct website URL. ${URL_GUIDANCE}`,
+      description: "Website URL.",
     }),
   }),
   Schema.Struct({
     kind: Schema.Literal("environment-port").annotate({
-      description: "Selects a dev-server port relative to the current execution environment.",
+      description: "Dev-server port in this environment.",
     }),
     port: Schema.Int.check(Schema.isGreaterThan(0))
       .check(Schema.isLessThan(65_536))
-      .annotate({ description: "Dev-server TCP port inside the current environment." }),
+      .annotate({ description: "Port number." }),
     protocol: Schema.optional(
       Schema.Literals(["http", "https"]).annotate({
-        description: "Dev-server protocol. Defaults to http.",
+        description: "Default http.",
       }),
     ),
     path: Schema.optional(
       Schema.String.annotate({
-        description: "Optional path, query, and fragment, for example /settings?tab=account.",
+        description: "Path, query and fragment, e.g. /settings?tab=account.",
       }),
     ),
   }),
@@ -152,25 +147,21 @@ export type BrowserNavigationTarget = typeof BrowserNavigationTarget.Type;
 export const PreviewAutomationNavigateInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   url: Schema.optional(BoundedUrl).annotate({
-    description: `Website URL. ${URL_GUIDANCE} Use this for public pages and directly reachable URLs.`,
+    description: `Website URL. ${URL_GUIDANCE}`,
   }),
   target: Schema.optional(
     BrowserNavigationTarget.annotate({
-      description:
-        "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment.",
+      description: "Dev-server target, e.g. {kind:'environment-port',port:5173}.",
     }),
   ).annotate({
-    description:
-      "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment.",
+    description: "Dev-server target, e.g. {kind:'environment-port',port:5173}.",
   }),
   readiness: Schema.optional(
     Schema.Literals(["load", "domContentLoaded", "none"]).annotate({
-      description:
-        "Readiness milestone before returning. 'load' waits for loading to stop (default), 'domContentLoaded' waits for an interactive document, and 'none' returns immediately.",
+      description: "When to return: load (default), domContentLoaded, or none (immediately).",
     }),
   ).annotate({
-    description:
-      "Readiness milestone before returning. 'load' is the default; use 'none' only when a later wait call will verify the page.",
+    description: "When to return: load (default), domContentLoaded, or none (immediately).",
   }),
   timeoutMs: OptionalTimeoutMs,
 })
@@ -182,8 +173,7 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
     ),
   )
   .annotate({
-    description:
-      "Navigates the active browser tab. Provide exactly one of url or target; for most public pages use url.",
+    description: "Navigates a tab. Exactly one of url or target.",
   });
 export type PreviewAutomationNavigateInput = typeof PreviewAutomationNavigateInput.Type;
 
@@ -191,37 +181,35 @@ export const PreviewAutomationResizeInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   mode: Schema.Literals(["fill", "freeform", "preset"]).annotate({
     description:
-      "Viewport mode: fill follows the preview panel, freeform uses exact independently resizable dimensions, and preset uses a named device size.",
+      "fill follows the panel, freeform uses width and height, preset uses a named device.",
   }),
   preset: Schema.optional(
     PreviewViewportPresetId.annotate({
-      description: "Named viewport from Chrome DevTools' standard device catalog.",
+      description: "Device preset.",
     }),
   ).annotate({
-    description: "Named device size. Required only when mode is preset.",
+    description: "Device preset. Preset mode only.",
   }),
   width: Schema.optional(
     PreviewViewportSize.fields.width.annotate({
-      description: "Freeform viewport width in CSS pixels. Required only in freeform mode.",
+      description: "Width in CSS pixels. Freeform mode only.",
     }),
   ).annotate({
-    description: "Freeform viewport width in CSS pixels. Required only in freeform mode.",
+    description: "Width in CSS pixels. Freeform mode only.",
   }),
   height: Schema.optional(
     PreviewViewportSize.fields.height.annotate({
-      description: "Freeform viewport height in CSS pixels. Required only in freeform mode.",
+      description: "Height in CSS pixels. Freeform mode only.",
     }),
   ).annotate({
-    description: "Freeform viewport height in CSS pixels. Required only in freeform mode.",
+    description: "Height in CSS pixels. Freeform mode only.",
   }),
   orientation: Schema.optional(
     Schema.Literals(["portrait", "landscape"]).annotate({
-      description:
-        "Orientation for a fixed device preset. Defaults to the preset's native orientation.",
+      description: "Preset mode only. Default: the preset's orientation.",
     }),
   ).annotate({
-    description:
-      "Orientation for a named device preset. It is not accepted in fill or freeform mode.",
+    description: "Preset mode only. Default: the preset's orientation.",
   }),
   timeoutMs: OptionalTimeoutMs,
 })
@@ -250,8 +238,7 @@ export const PreviewAutomationResizeInput = Schema.Struct({
     }),
   )
   .annotate({
-    description:
-      "Sets the active browser tab to fill-panel, independently resizable freeform, or named device-preset sizing.",
+    description: "Sets a tab's viewport: fill, freeform, or device preset.",
   });
 export type PreviewAutomationResizeInput = typeof PreviewAutomationResizeInput.Type;
 
@@ -269,12 +256,10 @@ export type PreviewAutomationColorScheme = typeof PreviewAutomationColorScheme.T
 export const PreviewAutomationSetColorSchemeInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   colorScheme: PreviewAutomationColorScheme.annotate({
-    description:
-      "Emulated prefers-color-scheme for the page: light, dark, or system to follow the OS appearance.",
+    description: "prefers-color-scheme to emulate. system follows the OS.",
   }),
 }).annotate({
-  description:
-    "Emulates prefers-color-scheme in the active browser tab without changing the OS or app theme.",
+  description: "Emulates prefers-color-scheme in a tab. The OS and app theme are unchanged.",
 });
 export type PreviewAutomationSetColorSchemeInput = typeof PreviewAutomationSetColorSchemeInput.Type;
 
@@ -287,51 +272,47 @@ export type PreviewAutomationSetColorSchemeResult =
 
 const Locator = TrimmedNonEmptyString.annotate({
   description:
-    "Playwright selector, preferably role/text based, for example role=button[name='Send'] or text=Continue. Use snapshot first to inspect the page.",
+    "Playwright selector from a snapshot, e.g. role=button[name='Send'] or text=Continue. Prefer over x/y.",
 });
 
 const LegacySelector = TrimmedNonEmptyString.annotate({
-  description:
-    "Legacy CSS selector such as button[type='submit']. Prefer locator for resilient role/text targeting.",
+  description: "Legacy CSS selector. Prefer locator.",
 });
 
 /** Keys held while a pointer action runs, the same names preview_press takes. */
 export const PreviewAutomationInputModifiers = Schema.Array(
   Schema.Literals(["Alt", "Control", "Meta", "Shift"]),
 ).annotate({
-  description:
-    'Keys held during the action: any of "Alt", "Control", "Meta", "Shift". Control-click on a link opens it in a new background tab.',
+  description: "Keys held during the action. Control-click on a link opens a background tab.",
 });
 
 export const PreviewAutomationClickInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   selector: Schema.optional(LegacySelector).annotate({
-    description:
-      "Legacy CSS selector such as button[type='submit']. Prefer locator for resilient role/text targeting.",
+    description: "Legacy CSS selector. Prefer locator.",
   }),
   locator: Schema.optional(Locator).annotate({
     description:
-      "Playwright selector, preferably role/text based, for example role=button[name='Send'] or text=Continue. Use snapshot first to inspect the page.",
+      "Playwright selector from a snapshot, e.g. role=button[name='Send'] or text=Continue. Prefer over x/y.",
   }),
   x: Schema.optional(
     Schema.Finite.annotate({
-      description: "Viewport-relative X coordinate in CSS pixels. Must be paired with y.",
+      description: "Viewport X in CSS pixels. Pair with y.",
     }),
   ),
   y: Schema.optional(
     Schema.Finite.annotate({
-      description: "Viewport-relative Y coordinate in CSS pixels. Must be paired with x.",
+      description: "Viewport Y in CSS pixels. Pair with x.",
     }),
   ),
   button: Schema.optional(
     Schema.Literals(["left", "right", "middle"]).annotate({
-      description:
-        "Mouse button: left (default), right (fires the page's contextmenu event) or middle.",
+      description: "Default left. Right fires the page's contextmenu event.",
     }),
   ),
   clicks: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 })).annotate({
-      description: "1 (default), 2 for a double click, 3 for a triple click.",
+      description: "1 (default), 2 double, 3 triple.",
     }),
   ),
   modifiers: Schema.optional(PreviewAutomationInputModifiers),
@@ -349,29 +330,26 @@ export const PreviewAutomationClickInput = Schema.Struct({
     }),
   )
   .annotate({
-    description:
-      "Clicks one target. Provide exactly one of locator, selector, or the x/y coordinate pair. Optional button, clicks (1-3) and modifiers apply to both forms.",
+    description: "Clicks one target: exactly one of locator, selector, or x with y.",
   });
 export type PreviewAutomationClickInput = typeof PreviewAutomationClickInput.Type;
 
 export const PreviewAutomationHoverInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   selector: Schema.optional(LegacySelector).annotate({
-    description:
-      "Legacy CSS selector for the element to hover. Prefer locator for resilient role/text targeting.",
+    description: "Legacy CSS selector. Prefer locator.",
   }),
   locator: Schema.optional(Locator).annotate({
-    description:
-      "Playwright selector for the element to hover, for example text=Menu. Use snapshot first to inspect the page.",
+    description: "Playwright selector from a snapshot, e.g. text=Menu. Prefer over x/y.",
   }),
   x: Schema.optional(
     Schema.Finite.annotate({
-      description: "Viewport-relative X coordinate in CSS pixels. Must be paired with y.",
+      description: "Viewport X in CSS pixels. Pair with y.",
     }),
   ),
   y: Schema.optional(
     Schema.Finite.annotate({
-      description: "Viewport-relative Y coordinate in CSS pixels. Must be paired with x.",
+      description: "Viewport Y in CSS pixels. Pair with x.",
     }),
   ),
   timeoutMs: OptionalTimeoutMs,
@@ -388,38 +366,36 @@ export const PreviewAutomationHoverInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Moves the pointer onto one target without clicking. Provide exactly one of locator, selector, or the x/y coordinate pair.",
+      "Moves the pointer onto one target without clicking: exactly one of locator, selector, or x with y.",
   });
 export type PreviewAutomationHoverInput = typeof PreviewAutomationHoverInput.Type;
 
 export const PreviewAutomationDragInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   fromLocator: Schema.optional(Locator).annotate({
-    description:
-      "Playwright selector (CSS also works) for the element to pick up. Pair it with toLocator.",
+    description: "Element to pick up (Playwright selector or CSS). Pair with toLocator.",
   }),
   toLocator: Schema.optional(Locator).annotate({
-    description:
-      "Playwright selector (CSS also works) for the element to drop on. Pair it with fromLocator.",
+    description: "Element to drop on. Pair with fromLocator.",
   }),
   fromX: Schema.optional(
     Schema.Finite.annotate({
-      description: "Viewport-relative X in CSS pixels to press at. Pair with fromY, toX and toY.",
+      description: "Press X in CSS pixels. Pair with fromY, toX, toY.",
     }),
   ),
   fromY: Schema.optional(
     Schema.Finite.annotate({
-      description: "Viewport-relative Y in CSS pixels to press at. Pair with fromX, toX and toY.",
+      description: "Press Y in CSS pixels. Pair with fromX, toX, toY.",
     }),
   ),
   toX: Schema.optional(
     Schema.Finite.annotate({
-      description: "Viewport-relative X in CSS pixels to release at. Pair with toY, fromX, fromY.",
+      description: "Release X in CSS pixels. Pair with toY, fromX, fromY.",
     }),
   ),
   toY: Schema.optional(
     Schema.Finite.annotate({
-      description: "Viewport-relative Y in CSS pixels to release at. Pair with toX, fromX, fromY.",
+      description: "Release Y in CSS pixels. Pair with toX, fromX, fromY.",
     }),
   ),
   timeoutMs: OptionalTimeoutMs,
@@ -452,30 +428,28 @@ export const PreviewAutomationDragInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Presses on one point or element, moves to another and releases, for drag-and-drop and sliders. Use locator to locator, or x/y to x/y.",
+      "Drag and drop or sliders: fromLocator with toLocator, or fromX/fromY with toX/toY.",
   });
 export type PreviewAutomationDragInput = typeof PreviewAutomationDragInput.Type;
 
 export const PreviewAutomationHistoryInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   action: Schema.Literals(["back", "forward", "reload"]).annotate({
-    description:
-      "back and forward move one step through the tab's history; reload loads the current page again.",
+    description: "back and forward move one step; reload reloads.",
   }),
   readiness: Schema.optional(
     Schema.Literals(["load", "domContentLoaded", "none"]).annotate({
-      description:
-        "Readiness milestone before returning. 'load' waits for loading to stop (default), 'domContentLoaded' waits for an interactive document, and 'none' returns immediately.",
+      description: "When to return: load (default), domContentLoaded, or none (immediately).",
     }),
   ),
   timeoutMs: OptionalTimeoutMs,
 }).annotate({
-  description: "Steps back or forward through a tab's history, or reloads it.",
+  description: "Steps back or forward in a tab's history, or reloads it.",
 });
 export type PreviewAutomationHistoryInput = typeof PreviewAutomationHistoryInput.Type;
 
 const CLOSE_TAB_ID_DESCRIPTION =
-  "The exact tab to close, as returned by preview_open or preview_status. Must be one of this agent session's own tabs.";
+  "Tab to close, from preview_open or preview_status. Must be your own tab.";
 
 export const PreviewAutomationCloseTabInput = Schema.Struct({
   // A plain checked string, not PreviewTabId: a required branded field loses its description in the tool's JSON schema.
@@ -485,14 +459,14 @@ export const PreviewAutomationCloseTabInput = Schema.Struct({
     Schema.isNonEmpty({ description: CLOSE_TAB_ID_DESCRIPTION }),
     Schema.isMaxLength(128),
   ).annotateKey({ description: CLOSE_TAB_ID_DESCRIPTION }),
-}).annotate({ description: "Closes one collaborative browser tab." });
+}).annotate({ description: "Closes one browser tab." });
 export type PreviewAutomationCloseTabInput = typeof PreviewAutomationCloseTabInput.Type;
 
 export const PreviewAutomationCloseTabResult = Schema.Struct({
   tabId: Schema.Null,
   closedTabId: PreviewTabId,
   remainingTabIds: Schema.Array(PreviewTabId).annotate({
-    description: "This agent session's tabs that are still open.",
+    description: "Your tabs still open.",
   }),
 });
 export type PreviewAutomationCloseTabResult = typeof PreviewAutomationCloseTabResult.Type;
@@ -504,12 +478,11 @@ export const PreviewAutomationTypeInput = Schema.Struct({
     description: "Legacy CSS selector for the input. Prefer locator.",
   }),
   locator: Schema.optional(Locator).annotate({
-    description:
-      "Playwright selector for the input, for example role=textbox[name='Message'] or textarea[placeholder*='Message'].",
+    description: "Playwright selector for the input, e.g. role=textbox[name='Message'].",
   }),
   clear: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Clear the existing input value before inserting text. Defaults to false.",
+      description: "Clear the existing value first. Default false.",
     }),
   ),
   timeoutMs: OptionalTimeoutMs,
@@ -522,8 +495,7 @@ export const PreviewAutomationTypeInput = Schema.Struct({
     ),
   )
   .annotate({
-    description:
-      "Types into locator/selector, or into the currently focused element when neither target is provided.",
+    description: "Types into the target, or the focused element when none is given.",
   });
 export type PreviewAutomationTypeInput = typeof PreviewAutomationTypeInput.Type;
 
@@ -532,39 +504,37 @@ export const PreviewAutomationPressInput = Schema.Struct({
   key: Schema.String.check(Schema.isTrimmed())
     .check(
       Schema.isNonEmpty({
-        description:
-          "Keyboard key name such as Enter, Escape, Tab, ArrowDown, Backspace, or a single character.",
+        description: "Key name such as Enter, Escape, Tab, ArrowDown, or a single character.",
       }),
     )
     .annotateKey({
-      description:
-        "Keyboard key name such as Enter, Escape, Tab, ArrowDown, Backspace, or a single character.",
+      description: "Key name such as Enter, Escape, Tab, ArrowDown, or a single character.",
     }),
   modifiers: Schema.optional(
     Schema.Array(Schema.Literals(["Alt", "Control", "Meta", "Shift"])).annotate({
-      description: "Modifier keys held while pressing key.",
+      description: "Modifier keys held.",
     }),
   ),
-}).annotate({ description: "Presses one keyboard key in the active browser tab." });
+}).annotate({ description: "Presses one key." });
 export type PreviewAutomationPressInput = typeof PreviewAutomationPressInput.Type;
 
 export const PreviewAutomationScrollInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   deltaX: Schema.optional(
     Schema.Finite.annotate({
-      description: "Horizontal scroll delta in CSS pixels. Positive scrolls right. Defaults to 0.",
+      description: "CSS pixels. Positive scrolls right. Default 0.",
     }),
   ),
   deltaY: Schema.optional(
     Schema.Finite.annotate({
-      description: "Vertical scroll delta in CSS pixels. Positive scrolls down. Defaults to 0.",
+      description: "CSS pixels. Positive scrolls down. Default 0.",
     }),
   ),
   selector: Schema.optional(LegacySelector).annotate({
-    description: "Legacy CSS selector for a scrollable container. Omit to scroll the viewport.",
+    description: "Legacy CSS selector of a scrollable container. Omit for the viewport.",
   }),
   locator: Schema.optional(Locator).annotate({
-    description: "Playwright selector for a scrollable container. Omit to scroll the viewport.",
+    description: "Playwright selector of a scrollable container. Omit for the viewport.",
   }),
 })
   .check(
@@ -578,8 +548,7 @@ export const PreviewAutomationScrollInput = Schema.Struct({
     }),
   )
   .annotate({
-    description:
-      "Scrolls the viewport, or a locator/selector container. Provide deltaX, deltaY, or both.",
+    description: "Scrolls the viewport or a container. Give deltaX, deltaY, or both.",
   });
 export type PreviewAutomationScrollInput = typeof PreviewAutomationScrollInput.Type;
 
@@ -588,27 +557,24 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
   expression: Schema.String.check(Schema.isTrimmed())
     .check(
       Schema.isNonEmpty({
-        description:
-          "JavaScript expression evaluated in the page's main frame, for example document.title or (() => ({href: location.href}))().",
+        description: "JavaScript expression run in the main frame, e.g. document.title.",
       }),
     )
     .check(Schema.isMaxLength(64_000))
     .annotateKey({
-      description:
-        "JavaScript expression evaluated in the page's main frame, for example document.title or (() => ({href: location.href}))().",
+      description: "JavaScript expression run in the main frame, e.g. document.title.",
     }),
   awaitPromise: Schema.optional(
     Schema.Boolean.annotate({ description: "Await a returned Promise. Defaults to true." }),
   ),
   returnByValue: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Serialize and return the value instead of a remote object reference. Defaults to true.",
+      description: "Return the value, not a remote reference. Default true.",
     }),
   ),
 }).annotate({
   description:
-    "Evaluates JavaScript in the page. Prefer snapshot and semantic actions; use evaluate for inspection or unsupported interactions.",
+    "Evaluates JavaScript in the page. Prefer snapshot and semantic actions; use evaluate only to inspect or for interactions they lack.",
 });
 export type PreviewAutomationEvaluateInput = typeof PreviewAutomationEvaluateInput.Type;
 
@@ -618,21 +584,20 @@ export const PreviewAutomationWaitForInput = Schema.Struct({
     description: "Legacy CSS selector that must match an element. Prefer locator.",
   }),
   locator: Schema.optional(Locator).annotate({
-    description:
-      "Playwright selector that must match an element, for example role=button[name='Send'].",
+    description: "Playwright selector that must match, e.g. role=button[name='Send'].",
   }),
   text: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "Case-sensitive substring that must appear in visible document text.",
+      description: "Case-sensitive text that must be visible.",
     }),
   ).annotate({
-    description: "Case-sensitive substring that must appear in visible document text.",
+    description: "Case-sensitive text that must be visible.",
   }),
   urlIncludes: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "Substring that must appear in the current absolute URL.",
+      description: "Substring of the current URL.",
     }),
-  ).annotate({ description: "Substring that must appear in the current absolute URL." }),
+  ).annotate({ description: "Substring of the current URL." }),
   timeoutMs: OptionalTimeoutMs,
 })
   .check(
@@ -651,7 +616,7 @@ export const PreviewAutomationWaitForInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Waits until all provided conditions match. Use after click/type when the page changes asynchronously.",
+      "Waits until all given conditions match. Use after click or type when the page changes asynchronously.",
   });
 export type PreviewAutomationWaitForInput = typeof PreviewAutomationWaitForInput.Type;
 

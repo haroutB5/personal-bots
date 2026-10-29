@@ -347,17 +347,25 @@ export function formatFileSize(bytes: number): string {
 /** Route base shared by the viewport socket and file downloads. */
 export const PERSONAL_BROWSER_ROUTE_BASE = "/api/personal/browser";
 
-/**
- * A segment the next Computer screen opens on, asked for by a link elsewhere
- * (the Bots page's CPU, RAM and disk line opens Performance). Taken once.
- */
-let requestedSegment: "performance" | null = null;
+/** What a link elsewhere can ask the next Computer screen to open on. */
+export type ComputerRequest = "browser" | "desktop" | "files" | "performance";
 
-export function requestComputerPerformance(): void {
-  requestedSegment = "performance";
+/**
+ * Taken once by the next Computer screen. The Bots page's CPU, RAM and disk
+ * line asks for Performance (a sheet); a deep link can pin Browser or Desktop;
+ * "files" sends the screen on to the Files tab.
+ */
+let requestedSegment: ComputerRequest | null = null;
+
+export function requestComputerSegment(segment: ComputerRequest): void {
+  requestedSegment = segment;
 }
 
-export function takeRequestedComputerSegment(): "performance" | null {
+export function requestComputerPerformance(): void {
+  requestComputerSegment("performance");
+}
+
+export function takeRequestedComputerSegment(): ComputerRequest | null {
   const segment = requestedSegment;
   requestedSegment = null;
   return segment;

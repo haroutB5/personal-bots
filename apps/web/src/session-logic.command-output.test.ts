@@ -1,7 +1,7 @@
 import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveWorkLogEntries } from "./session-logic";
+import { deriveWorkLogEntries, withFullToolCommand } from "./session-logic";
 
 function makeCommandActivity(
   id: string,
@@ -168,5 +168,38 @@ describe("deriveWorkLogEntries command output", () => {
 
     expect(entry?.command).toBe("true");
     expect(entry?.detail).toBeUndefined();
+  });
+});
+
+describe("command previews", () => {
+  const full = `cat <<'EOF'\n${"y".repeat(3_000)}\nEOF`;
+  const preview = `${full.slice(0, 1_000)}…`;
+
+  it("marks a previewed command and swaps in the whole one", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("long-command", {
+        itemType: "command_execution",
+        title: "Ran command",
+        data: { command: preview, commandTruncated: true },
+      }),
+    ]);
+    expect(entry?.commandPreviewOf).toBe("long-command");
+    const swapped = withFullToolCommand(entry!, {
+      itemType: "command_execution",
+      data: { command: full },
+    });
+    expect(swapped.command).toBe(full);
+    expect(withFullToolCommand(entry!, null)).toBe(entry);
+  });
+
+  it("leaves a whole command unmarked", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("short-command", {
+        itemType: "command_execution",
+        title: "Ran command",
+        data: { command: "ls" },
+      }),
+    ]);
+    expect(entry).not.toHaveProperty("commandPreviewOf");
   });
 });

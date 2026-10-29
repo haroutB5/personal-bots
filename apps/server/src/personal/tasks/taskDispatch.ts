@@ -53,7 +53,12 @@ import type { TaskCore } from "./taskCore.ts";
 
 export const makeTaskDispatch = (
   core: TaskCore,
-  concurrency: number,
+  /**
+   * The slot limit, read on every pass: the machine-aware limit drops to 5
+   * while a heavy job holds the shared lock and returns to 8 when it ends, and
+   * a running turn is never stopped for it (only new starts wait).
+   */
+  concurrency: number | (() => number),
   /** T3CODE_PERSONAL_SCHEDULERS=off (a restored test copy): the pump never starts a task. */
   options: { readonly startsTasks: boolean } = { startsTasks: true },
 ) => {
@@ -66,6 +71,7 @@ export const makeTaskDispatch = (
     engine,
     persistExposureOnChat,
     externalSlots,
+    helpParkedAttempts,
     idleWaitThreadIds,
     latestContextTokens,
     leaseOwner,
@@ -108,6 +114,7 @@ export const makeTaskDispatch = (
                     providerName: outcome.limit?.provider,
                     reason: outcome.limit?.reason,
                     retryAt: outcome.limit?.retryAt,
+                    capacity: outcome.limit?.capacity === true,
                   }),
             ),
           )
@@ -268,7 +275,11 @@ export const makeTaskDispatch = (
     return {
       text: openingTurnText({
         header: openingTurnHeader(sourceLabel(task, delegatorName), attemptNumber),
-        sections: taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null),
+        sections: taskSections(
+          task,
+          Option.isSome(handoff) ? handoff.value.brief : null,
+          delegatorName,
+        ),
         notes,
       }),
       marker: marker(attemptNumber > 1 ? "retry" : "start", delegatorBotId, []),
@@ -499,6 +510,8 @@ export const makeTaskDispatch = (
     if (claimed !== null) {
       const threadId = claimed.attempt.providerThreadId;
       activeThreadIds.add(threadId);
+      // A new attempt is never the one an earlier card parked.
+      helpParkedAttempts.delete(threadId);
       // Work already live in the chat (left by an earlier attempt or by the
       // user's own turn) is not this attempt's to wait for.
       backgroundByThread.set(
@@ -532,9 +545,10 @@ export const makeTaskDispatch = (
   // waiting on children has ended its attempt and holds nothing.
   const pump = Effect.fn("PersonalTaskService.pump")(function* () {
     if (!options.startsTasks) return;
+    const limitNow = typeof concurrency === "function" ? concurrency : () => concurrency;
     while (true) {
       const active = yield* repository.listActiveAttempts();
-      if (active.length + externalSlots.size >= concurrency) {
+      if (active.length + externalSlots.size >= limitNow()) {
         return;
       }
       const busyThreads = new Set<string>(active.map((attempt) => attempt.providerThreadId));

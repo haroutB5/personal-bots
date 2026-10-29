@@ -75,6 +75,8 @@ export type AttemptOutcome =
         readonly instanceId?: string | undefined;
         readonly reason?: string | undefined;
         readonly retryAt?: string | undefined;
+        /** The provider was at capacity: no window spent, no reset, short hold. */
+        readonly capacity?: boolean;
       };
     };
 

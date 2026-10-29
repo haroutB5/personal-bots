@@ -4,7 +4,9 @@
 // file into <root>/fake/fakeok and <root>/fake/fakelimit (the folder name picks the persona):
 //   fakeok    answers every prompt; its usage reading is "Session 10%" (100% when <pidDir>/usage-full exists).
 //   fakelimit the "home provider that hits its limit": while <pidDir>/limit-until holds a future epoch
-//             in ms it answers every prompt with a rejected 5-hour window (the usage-limit shape).
+//             in ms it answers every prompt with a rejected 5-hour window (the usage-limit shape),
+//             and its get_usage reports that window at 100% until it ends (a cached pre-hit answer
+//             still says 10%, which is how a stale read is told from a real reset, 1.66.105).
 // Prompt triggers (both personas):
 //   QUIET  says one line, then sends NOTHING for QUIET_SECONDS (default 150), then answers.
 //   ASKQ   asks the owner a question (AskUserQuestion) and waits for the answer.
@@ -16,6 +18,8 @@
 //   text is streamed first (message_start, content_block_*), as the real CLI sends it.
 //   TABLEMSG  a markdown table wider than a 390 px phone.   TABLEFIT  a table that fits the screen.
 //   WIDECODE  an unwrapped code block wider than a phone (the sideways-scroll checks drag them).
+//   FILELINKS  a list of file links in every shape a bot writes: home-relative, absolute, ~/, a mapped
+//     Windows path, pdf, png, json, an unknown type and files that hold secrets (1.66.97).
 //   MDFIX  markdown the upstream-pick fixes cover: a wide ordered-list marker, model ids in inline code,
 //     a bare <A> placeholder, and a link and image whose destination is a Windows path.
 //   DELEGATE:<botId>  calls the delegate_task MCP tool (not on a [Task continuation] turn, which quotes
@@ -47,6 +51,7 @@
 // Usage-probe flags (files in <pidDir>, so a test flips them while the server runs; all off by default):
 //   usage-weekly  adds a seven_day window (31%, resets in 3 days) beside the five-hour one.
 //   usage-fail    get_usage answers with an error: the SDK probe cannot read usage.
+//   usage-full    fakeok reports its five-hour window spent (100%).
 //   version-hang  `--version` takes 15 s (the server gives up after 4 s: the 7 Oct boot-probe failure).
 // State and log: FAKE_CLAUDE_PID_DIR (set by the script; default the OS temp folder).
 import * as NodeFS from "node:fs";
@@ -360,14 +365,21 @@ lines.on("line", async (line) => {
           },
         });
       }
+      // The home provider's own reading while its window is spent: 100%, and
+      // the window ends when the limit-until marker says. A cached answer from
+      // before the hit still reads 10%, so the two cannot be confused (1.66.105).
+      const limitUntil = Number(flag("limit-until") || 0);
+      const limited = NAME === "fakelimit" && Date.now() < limitUntil;
       return respond(message, {
         session: {},
         subscription_type: "max",
         rate_limits_available: true,
         rate_limits: {
           five_hour: {
-            utilization: flag("usage-full") !== "" && NAME === "fakeok" ? 100 : 10,
-            resets_at: new Date(Date.now() + 3600e3).toISOString(),
+            utilization: limited || (flag("usage-full") !== "" && NAME === "fakeok") ? 100 : 10,
+            resets_at: limited
+              ? new Date(limitUntil).toISOString()
+              : new Date(Date.now() + 3600e3).toISOString(),
           },
           ...(flag("usage-weekly") !== ""
             ? {
@@ -573,6 +585,16 @@ lines.on("line", async (line) => {
     finish("ok", false);
     return;
   }
+  if (text.includes("FILELINKS")) {
+    // File links in every shape a bot writes (1.66.97): home-relative, absolute, ~/, a Windows path
+    // the server maps, a PDF, a PNG, a JSON, an unknown type and two files that hold secrets.
+    const home = (process.env.HOME ?? "").replaceAll("\\", "/");
+    assistant(
+      `Files:\n\n- [home-relative](.personal-bots/qa/run/RESULT.md)\n- [absolute](${home}/docs/ABSOLUTE.md)\n- [tilde](~/docs/TILDE.md)\n- [windows](C:/Claude/AI/reports/WINDOWS.md)\n- [pdf](docs/spec.pdf)\n- [png](docs/shot.png)\n- [json](docs/data.json)\n- [binary](docs/blob.bin)\n- [env](docs/.env)\n- [auth](~/auth.json)\n- [ssh](~/.ssh/id_rsa)\n`,
+    );
+    finish("ok", false);
+    return;
+  }
   if (text.includes("MDFIX")) {
     assistant(
       `Markdown check.
@@ -742,7 +764,8 @@ Text after the placeholder.
         }
       }
       if (end !== -1) {
-        const json = text.slice(open, end + 1);
+        // open/end are indices in ownerText, the string the match ran on.
+        const json = ownerText.slice(open, end + 1);
         if (!toolCandidates.some((candidate) => candidate.json === json)) {
           toolCandidates.push({ name: hit[1], json });
         }

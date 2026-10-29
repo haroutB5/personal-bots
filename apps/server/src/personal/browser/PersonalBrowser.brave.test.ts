@@ -22,6 +22,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -88,6 +89,7 @@ const FIXTURE = `<!doctype html>
 const taskService = Layer.mock(PersonalTaskService.PersonalTaskService)({
   rootTaskIdForThread: () => Effect.succeed(Option.none<ReturnType<typeof PersonalTaskId.make>>()),
   list: () => Effect.succeed({ tasks: [] }),
+  changes: Stream.empty,
   waitForBrowser: () => Effect.succeed({} as PersonalTask),
   resumeFromUser: () => Effect.succeed({} as PersonalTask),
 });

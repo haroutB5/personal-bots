@@ -1,0 +1,19 @@
+[Unit]
+Description=Urgot memory server
+After=network-online.target
+# The Windows task opened a terminal and ran the `urgot` launcher. On Linux the
+# launcher must exist on PATH (migrated with Harout's shell config); until it
+# does, this unit is skipped rather than failing every boot.
+ConditionPathExists=@AI@/urgot
+ConditionPathExists=@HOME@/.local/bin/urgot
+
+[Service]
+Type=simple
+WorkingDirectory=@AI@/urgot
+ExecStart=@HOME@/.local/bin/urgot
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

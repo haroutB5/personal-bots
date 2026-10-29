@@ -11,6 +11,7 @@ import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 
 import { useThreadShells } from "~/state/entities";
+import { useLazyThreadShells } from "~/state/lazyThreadShells";
 
 import { BotAvatar } from "./BotAvatar";
 import { ROW_CLASS } from "./BotRow";
@@ -160,6 +161,12 @@ export function MessageSearchResults({
   readonly groups: ReadonlyArray<PersonalGroup>;
 }): JSX.Element | null {
   const search = useMessageSearch(environmentId, query);
+  // Hits in archived chats need their titles, which the connect-time shell leaves out.
+  const hitThreadIds = useMemo(
+    () => search.hits.filter((hit) => hit.groupId === null).map((hit) => hit.threadId as string),
+    [search.hits],
+  );
+  useLazyThreadShells(environmentId, { threadIds: hitThreadIds });
   const shells = useThreadShells();
   const titles = useMemo(() => {
     const byId = new Map<string, string>();

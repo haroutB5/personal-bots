@@ -46,9 +46,22 @@ import { makeTaskWaiting } from "./taskWaiting.ts";
 import { SWEEP_INTERVAL, type WorkItem } from "./taskShared.ts";
 import { sessionIsBusy } from "./taskSessionPolicy.ts";
 import { personalSchedulersOff } from "../schedulersSwitch.ts";
+import { heavyJobLockHeld } from "./heavyJobLock.ts";
 
-/** Global cap on active provider turns started by the dispatcher. */
+/**
+ * Global cap on active provider turns started by the dispatcher while a heavy
+ * job holds the shared machine lock (a build, a full typecheck, the e2e suite).
+ * The laptop has little RAM left then, so fewer turns run at once.
+ */
 export const PERSONAL_TASKS_CONCURRENCY = 5;
+
+/**
+ * The same cap with no heavy job running (Harout, 26 Oct: 8 normally, 5 while a
+ * heavy job holds `run/omarchy-heavy.lock`). Running turns are never stopped
+ * when the limit drops; the dispatcher simply stops starting new ones until
+ * the count is under the smaller limit again.
+ */
+export const PERSONAL_TASKS_CONCURRENCY_NORMAL = 8;
 export {
   PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
   PERSONAL_TASKS_MAX_CHILDREN_ENV,
@@ -373,9 +386,11 @@ export const make = Effect.gen(function* () {
 
   // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off): no sweep, and queued tasks stay queued.
   const schedulersOff = personalSchedulersOff();
-  const dispatch = makeTaskDispatch(core, PERSONAL_TASKS_CONCURRENCY, {
-    startsTasks: !schedulersOff,
-  });
+  const dispatch = makeTaskDispatch(
+    core,
+    () => (heavyJobLockHeld() ? PERSONAL_TASKS_CONCURRENCY : PERSONAL_TASKS_CONCURRENCY_NORMAL),
+    { startsTasks: !schedulersOff },
+  );
   const { pump } = dispatch;
 
   const settling = makeTaskSettling(core, dispatch);
@@ -474,7 +489,11 @@ export const make = Effect.gen(function* () {
     workRecord,
   } = queries;
 
-  const callers = makeTaskCallers(core, PERSONAL_TASKS_CONCURRENCY, { worker });
+  const callers = makeTaskCallers(
+    core,
+    () => (heavyJobLockHeld() ? PERSONAL_TASKS_CONCURRENCY : PERSONAL_TASKS_CONCURRENCY_NORMAL),
+    { worker },
+  );
   const {
     ownsThreadTurn,
     releaseExternalSlot,

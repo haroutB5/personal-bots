@@ -24,8 +24,18 @@ export const MAX_SETTLE_MS = 5_000;
 /** Keeps one typing call well inside the MCP client's 60 s tool timeout. */
 export const MAX_TYPE_CHARS = 2_000;
 
+/** What the Computer tab's activity row says about one finished action. */
+export interface DesktopActivity {
+  readonly summary: string;
+  readonly x?: number | undefined;
+  readonly y?: number | undefined;
+  readonly monitor?: number | undefined;
+  readonly chars?: number | undefined;
+}
+
 export interface DesktopShot {
   readonly note?: string;
+  readonly activity?: DesktopActivity;
   readonly screenshot?: {
     readonly mimeType: string;
     readonly data: string;
@@ -54,6 +64,69 @@ export interface AfterAction {
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A logical point as a 0..1 share of the frame it was clicked in. */
+function pointActivity(
+  frame: ScreenFrame,
+  point: { readonly x: number; readonly y: number },
+): Pick<DesktopActivity, "x" | "y" | "monitor"> {
+  const share = (value: number, origin: number, size: number) =>
+    Math.min(1, Math.max(0, Math.round(((value - origin) / Math.max(1, size)) * 1000) / 1000));
+  return {
+    x: share(point.x, frame.region.x, frame.region.width),
+    y: share(point.y, frame.region.y, frame.region.height),
+    ...(typeof frame.monitor === "number" ? { monitor: frame.monitor } : {}),
+  };
+}
+
+const pct = (value: number | undefined) => `${Math.round((value ?? 0) * 100)}%`;
+
+/**
+ * Key sequences that look like text (single characters, no "+" chord) are
+ * summarised by count: a password entered key by key must not be readable in
+ * the user's activity feed. A chord whose last part is one character and whose
+ * other parts are all modifiers is the password typed with Shift: it counts as
+ * text too, so "Shift+a Shift+b" never shows the letters. Named keys and real
+ * shortcuts ("ctrl+a", "ctrl+shift+t") stay named.
+ */
+const MODIFIER_NAMES: ReadonlySet<string> = new Set([
+  "ctrl",
+  "control",
+  "alt",
+  "option",
+  "shift",
+  "win",
+  "windows",
+  "super",
+  "meta",
+  "cmd",
+  "command",
+]);
+
+function looksLikeTypedChord(group: string): boolean {
+  const parts = group.split("+");
+  if (parts.length < 2) return false;
+  const last = parts[parts.length - 1] ?? "";
+  if (last.length !== 1) return false;
+  return parts.slice(0, -1).every((part) => MODIFIER_NAMES.has(part.toLowerCase()));
+}
+
+function looksLikeTyping(keys: string): boolean {
+  const groups = keys
+    .trim()
+    .split(/\s+/)
+    .filter((group) => group.length > 0);
+  return (
+    groups.length > 0 &&
+    groups.every(
+      (group) => (group.length === 1 && !group.includes("+")) || looksLikeTypedChord(group),
+    )
+  );
+}
+
+/** "at 42%, 61%", for summaries. */
+const where = (activity: Pick<DesktopActivity, "x" | "y">) =>
+  `at ${pct(activity.x)}, ${pct(activity.y)}`;
 
 const num = (value: unknown): number => (typeof value === "number" ? value : Number(value));
 
@@ -84,6 +157,18 @@ function requireFrame(context: DesktopActionContext): ScreenFrame {
   return context.frame;
 }
 
+/** Remembers the sensitive windows a capture carried, before the bot can act on it. */
+async function recordShotExposure(
+  context: DesktopActionContext,
+  shot: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const sources = shot.sensitiveSources;
+  if (!Array.isArray(sources)) return;
+  for (const value of sources) {
+    if (typeof value === "string" && value.length > 0) await context.exposure.record(value);
+  }
+}
+
 /** Captures a monitor (default: the one the last screenshot showed, else the primary). */
 export async function captureShot(
   context: DesktopActionContext,
@@ -99,12 +184,19 @@ export async function captureShot(
     format: "auto",
     quality: 80,
   });
+  await recordShotExposure(context, shot);
   const cursor = await context.driver.request("cursor");
   context.setFrame(frame);
+  const monitorName =
+    target.monitor === "all"
+      ? "all monitors"
+      : (monitors.find((entry) => entry.index === target.monitor)?.name ??
+        `monitor ${target.monitor}`);
   return {
+    activity: { summary: `screenshot of ${monitorName}` },
     ...(locked
       ? {
-          note: "The PC is locked (or a secure Windows prompt is showing): clicks and typing are refused until the user unlocks it. Never try to unlock it yourself.",
+          note: "The PC is locked (or a secure system prompt is showing): clicks and typing are refused until the user unlocks it. Never try to unlock it yourself.",
         }
       : {}),
     screenshot: {
@@ -146,7 +238,9 @@ export async function zoomShot(
     format: "auto",
     quality: 85,
   });
+  await recordShotExposure(context, shot);
   return {
+    activity: { summary: "zoomed in" },
     note: "Zoomed view only: keep using coordinates from your latest computer_screenshot.",
     screenshot: {
       mimeType: String(shot.mimeType ?? "image/png"),
@@ -162,11 +256,14 @@ async function afterAction(
   context: DesktopActionContext,
   after: AfterAction,
 ): Promise<DesktopShot> {
+  // The user may have hit stop while the action ran: then the PC is theirs
+  // again and the action must say it was stopped, not "Done." (QA's L6).
+  if (!context.stillHeld()) {
+    throw new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
+  }
   if (after.screenshot === false) return { note: "Done." };
   const settle = Math.max(0, Math.min(MAX_SETTLE_MS, after.settleMs ?? DEFAULT_SETTLE_MS));
   if (settle > 0) await sleep(settle);
-  // The user may have hit stop while the screen settled: then the PC is
-  // theirs again, and a screenshot of it is no longer this bot's to take.
   if (!context.stillHeld()) {
     throw new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
   }
@@ -203,23 +300,37 @@ export async function click(
     modifiers?: string | undefined;
   },
 ): Promise<DesktopShot> {
-  const point = toPhysical(requireFrame(context), input);
+  await context.exposure.guard();
+  const frame = requireFrame(context);
+  const point = toPhysical(frame, input);
+  const count = Math.max(1, Math.min(3, input.clicks ?? 1));
   await context.driver.request("click", {
     ...point,
     button: input.button ?? "left",
-    count: Math.max(1, Math.min(3, input.clicks ?? 1)),
+    count,
     modifiers: modifierKeys(input.modifiers),
   });
-  return afterAction(context, input);
+  const at = pointActivity(frame, point);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary: count === 1 ? `clicked ${where(at)}` : `clicked ${count} times ${where(at)}`,
+    },
+  };
 }
 
 export async function move(
   context: DesktopActionContext,
   input: AfterAction & { x: number; y: number },
 ): Promise<DesktopShot> {
-  const point = toPhysical(requireFrame(context), input);
+  const frame = requireFrame(context);
+  const point = toPhysical(frame, input);
   await context.driver.request("move", { x: point.x, y: point.y });
-  return afterAction(context, input);
+  const at = pointActivity(frame, point);
+  const after = await afterAction(context, input);
+  return { ...after, activity: { ...at, summary: `moved ${where(at)}` } };
 }
 
 export async function drag(
@@ -233,6 +344,7 @@ export async function drag(
     modifiers?: string | undefined;
   },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const frame = requireFrame(context);
   const from = toPhysical(frame, { x: input.fromX, y: input.fromY });
   const to = toPhysical(frame, { x: input.toX, y: input.toY });
@@ -244,7 +356,16 @@ export async function drag(
     button: input.button ?? "left",
     modifiers: modifierKeys(input.modifiers),
   });
-  return afterAction(context, input);
+  const at = pointActivity(frame, to);
+  const start = pointActivity(frame, from);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary: `dragged from ${pct(start.x)}, ${pct(start.y)} to ${pct(at.x)}, ${pct(at.y)}`,
+    },
+  };
 }
 
 export async function scroll(
@@ -271,17 +392,51 @@ export async function scroll(
     dx: input.direction === "right" ? amount : input.direction === "left" ? -amount : 0,
     modifiers: modifierKeys(input.modifiers),
   });
-  return afterAction(context, input);
+  const at = point === null ? {} : pointActivity(requireFrame(context), point);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary: `scrolled ${input.direction} ${amount}`,
+    },
+  };
+}
+
+/**
+ * The first character that is not text but a key press. A newline is the one
+ * control the driver does type: it presses Return between segments.
+ */
+function controlCharacter(text: string): number | null {
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0x0a) continue;
+    if (code < 0x20 || code === 0x7f) return code;
+  }
+  return null;
 }
 
 export async function typeText(
   context: DesktopActionContext,
   input: AfterAction & { text: string },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   if (input.text.length === 0) throw new DesktopKeyError("Nothing to type.");
   if (input.text.length > MAX_TYPE_CHARS) {
     throw new DesktopKeyError(
       `That is ${input.text.length} characters; type at most ${MAX_TYPE_CHARS} per call.`,
+    );
+  }
+  const control = controlCharacter(input.text);
+  if (control !== null) {
+    throw new DesktopKeyError(
+      `That text contains a control character (U+${control
+        .toString(16)
+        .toUpperCase()
+        .padStart(
+          4,
+          "0",
+        )}) that would be sent as a key press. Type text only; use computer_key for Tab or Escape.`,
     );
   }
   await context.driver.request(
@@ -289,13 +444,18 @@ export async function typeText(
     { text: input.text },
     Math.min(55_000, 10_000 + input.text.length * 20),
   );
-  return afterAction(context, input);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: { chars: input.text.length, summary: `typed ${input.text.length} characters` },
+  };
 }
 
 export async function pressKeys(
   context: DesktopActionContext,
   input: AfterAction & { keys: string; repeat?: number | undefined },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const combos = parseKeyCombos(input.keys);
   const repeat = Math.max(1, Math.min(50, input.repeat ?? 1));
   await context.driver.request(
@@ -303,7 +463,18 @@ export async function pressKeys(
     { combos, repeat },
     Math.min(55_000, 10_000 + repeat * combos.length * 200),
   );
-  return afterAction(context, input);
+  const after = await afterAction(context, input);
+  const typed = input.keys.trim().split(/\s+/).length;
+  return {
+    ...after,
+    activity: {
+      summary: looksLikeTyping(input.keys)
+        ? `pressed ${typed} key${typed === 1 ? "" : "s"}`
+        : repeat === 1
+          ? `pressed ${input.keys}`
+          : `pressed ${input.keys} ${repeat} times`,
+    },
+  };
 }
 
 /** A point given by both x and y, or by neither (then the pointer stays where it is). */
@@ -332,6 +503,7 @@ export async function mouseDown(
     button?: "left" | "right" | "middle" | undefined;
   },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const button = input.button ?? "left";
   if (context.heldButtons().has(button)) {
     throw new DesktopKeyError(
@@ -341,7 +513,18 @@ export async function mouseDown(
   const point = optionalPoint(context, input);
   context.markButton(button, true);
   await context.driver.request("button", { button, down: true, ...point });
-  return afterAction(context, input);
+  const at = point === null || context.frame === null ? {} : pointActivity(context.frame, point);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary:
+        point === null
+          ? `pressed the ${button} button`
+          : `pressed the ${button} button ${where(at)}`,
+    },
+  };
 }
 
 /** Lets go of a button pressed with computer_mouse_down, optionally after moving to a point. */
@@ -362,7 +545,18 @@ export async function mouseUp(
   const point = optionalPoint(context, input);
   await context.driver.request("button", { button, down: false, ...point });
   context.markButton(button, false);
-  return afterAction(context, input);
+  const at = point === null || context.frame === null ? {} : pointActivity(context.frame, point);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      ...at,
+      summary:
+        point === null
+          ? `let go of the ${button} button`
+          : `let go of the ${button} button ${where(at)}`,
+    },
+  };
 }
 
 /**
@@ -374,6 +568,7 @@ export async function holdKey(
   context: DesktopActionContext,
   input: AfterAction & { keys: string; durationMs: number },
 ): Promise<DesktopShot> {
+  await context.exposure.guard();
   const plan = planHold(input.keys, input.durationMs);
   context.markKeysHeld(true);
   // The helper may wait several seconds for the user's own input to go quiet before it starts.
@@ -383,7 +578,15 @@ export async function holdKey(
     input.durationMs + 12_000,
   );
   context.markKeysHeld(false);
-  return afterAction(context, input);
+  const after = await afterAction(context, input);
+  return {
+    ...after,
+    activity: {
+      summary: looksLikeTyping(input.keys)
+        ? `held a key ${(input.durationMs / 1000).toFixed(1)} s`
+        : `held ${input.keys} ${(input.durationMs / 1000).toFixed(1)} s`,
+    },
+  };
 }
 
 export async function cursorPosition(

@@ -5,6 +5,7 @@ import {
   FINISHED_PHASE_WINDOW_MS,
   PROGRESS_PHASE_STALE_MS,
   RESTART_RESULT_MAX_AGE_MS,
+  compareVersions,
   readRestartResult,
   restartResultVersion,
   restartStatusOf,
@@ -38,6 +39,16 @@ describe("which files are a run's result", () => {
     expect(restartResultVersion("restart-1.66.34.pid")).toBeNull();
     expect(restartResultVersion("server.json")).toBeNull();
     expect(restartResultVersion("restart-1.66.34-result.json.bak")).toBeNull();
+  });
+
+  it("orders versions numerically, so a same-millisecond tie has one answer", () => {
+    // File info carries mtime as a Date (whole ms); two result files written
+    // inside one millisecond tie, and the newer run is the higher version.
+    expect(compareVersions("1.66.36", "1.66.35")).toBeGreaterThan(0);
+    expect(compareVersions("1.66.10", "1.66.9")).toBeGreaterThan(0);
+    expect(compareVersions("1.66.9", "1.66.10")).toBeLessThan(0);
+    expect(compareVersions("1.67.0", "1.66.99")).toBeGreaterThan(0);
+    expect(compareVersions("1.66.36", "1.66.36")).toBe(0);
   });
 
   it("reads the runner's file, BOM and all", () => {

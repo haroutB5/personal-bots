@@ -79,7 +79,12 @@ export default mergeConfig(
       // subcommand there instead of a sibling script.
       entry: packExecutable
         ? ["src/bin.ts"]
-        : ["src/bin.ts", "src/claude-history-worker.ts", "src/usage-transcript-worker.ts"],
+        : [
+            "src/bin.ts",
+            "src/claude-history-worker.ts",
+            "src/usage-transcript-worker.ts",
+            "src/perf-linux-helper.ts",
+          ],
       outDir: packExecutable ? "dist-exe" : "dist",
       sourcemap: !packExecutable,
       clean: true,

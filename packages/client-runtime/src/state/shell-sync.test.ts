@@ -240,101 +240,109 @@ describe("environment shell synchronization", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("requests a full socket snapshot when the HTTP refresh fails", () =>
-    Effect.gen(function* () {
-      const cachedSnapshot: OrchestrationShellSnapshot = {
-        snapshotSequence: 5,
-        projects: [],
-        threads: [{ id: "cached-thread" } as never],
-        updatedAt: "2026-06-06T00:00:00.000Z",
-      };
-      const resetSnapshot: OrchestrationShellSnapshot = {
-        ...cachedSnapshot,
-        snapshotSequence: 9_999,
-        threads: [],
-        updatedAt: "2026-06-07T00:00:00.000Z",
-      };
-      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
-      const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
-      const subscribeInputs = yield* Queue.unbounded<{
-        readonly afterSequence?: number;
-        readonly requestCompletionMarker?: boolean;
-      }>();
-      const loaderCalls = yield* Ref.make(0);
-      const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
+  // The Bots app's loader asks for the slim shell; the socket's fallback
+  // snapshot must be slim too, and plain clients must not ask for it.
+  it.effect.each([false, true])(
+    "requests a full socket snapshot when the HTTP refresh fails (slim %s)",
+    (omit) =>
+      Effect.gen(function* () {
+        const cachedSnapshot: OrchestrationShellSnapshot = {
+          snapshotSequence: 5,
+          projects: [],
+          threads: [{ id: "cached-thread" } as never],
+          updatedAt: "2026-06-06T00:00:00.000Z",
+        };
+        const resetSnapshot: OrchestrationShellSnapshot = {
+          ...cachedSnapshot,
+          snapshotSequence: 9_999,
+          threads: [],
+          updatedAt: "2026-06-07T00:00:00.000Z",
+        };
+        const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+        const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
+        const subscribeInputs = yield* Queue.unbounded<{
           readonly afterSequence?: number;
           readonly requestCompletionMarker?: boolean;
-        }) =>
-          Stream.unwrap(
-            Queue.offer(subscribeInputs, input).pipe(Effect.as(Stream.fromQueue(events))),
+          readonly omitArchivedBotChats?: boolean;
+        }>();
+        const loaderCalls = yield* Ref.make(0);
+        const client = {
+          [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
+            readonly afterSequence?: number;
+            readonly requestCompletionMarker?: boolean;
+          }) =>
+            Stream.unwrap(
+              Queue.offer(subscribeInputs, input).pipe(Effect.as(Stream.fromQueue(events))),
+            ),
+        } as unknown as WsRpcProtocolClient;
+        const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
+        const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
+          Option.some(session(client)),
+        );
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: supervisorState,
+          session: activeSession,
+          prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const cache = Persistence.EnvironmentCacheStore.of({
+          loadShell: () => Effect.succeedSome(cachedSnapshot),
+          saveShell: () => Effect.void,
+          loadThread: () => Effect.succeedNone,
+          saveThread: () => Effect.void,
+          removeThread: () => Effect.void,
+          loadServerConfig: () => Effect.succeedNone,
+          saveServerConfig: () => Effect.void,
+          loadVcsRefs: () => Effect.succeedNone,
+          saveVcsRefs: () => Effect.void,
+          removeVcsRefs: () => Effect.void,
+          clearVcsRefs: () => Effect.void,
+          clear: () => Effect.void,
+        });
+        const snapshotLoader = ShellSnapshotLoader.of({
+          load: () => Ref.update(loaderCalls, (count) => count + 1).pipe(Effect.as(Option.none())),
+          ...(omit ? { omitArchivedBotChats: () => true } : {}),
+        });
+        const shellState = yield* makeEnvironmentShellState().pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+          Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+          Effect.provideService(
+            ConnectionWakeups.ConnectionWakeups,
+            ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
           ),
-      } as unknown as WsRpcProtocolClient;
-      const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
-      const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-        Option.some(session(client)),
-      );
-      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-        target: TARGET,
-        state: supervisorState,
-        session: activeSession,
-        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
-        connect: Effect.void,
-        disconnect: Effect.void,
-        retryNow: Effect.void,
-      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-      const cache = Persistence.EnvironmentCacheStore.of({
-        loadShell: () => Effect.succeedSome(cachedSnapshot),
-        saveShell: () => Effect.void,
-        loadThread: () => Effect.succeedNone,
-        saveThread: () => Effect.void,
-        removeThread: () => Effect.void,
-        loadServerConfig: () => Effect.succeedNone,
-        saveServerConfig: () => Effect.void,
-        loadVcsRefs: () => Effect.succeedNone,
-        saveVcsRefs: () => Effect.void,
-        removeVcsRefs: () => Effect.void,
-        clearVcsRefs: () => Effect.void,
-        clear: () => Effect.void,
-      });
-      const snapshotLoader = ShellSnapshotLoader.of({
-        load: () => Ref.update(loaderCalls, (count) => count + 1).pipe(Effect.as(Option.none())),
-      });
-      const shellState = yield* makeEnvironmentShellState().pipe(
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
-        Effect.provideService(
-          ConnectionWakeups.ConnectionWakeups,
-          ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
-        ),
-      );
+        );
 
-      const subscribeInput = yield* Queue.take(subscribeInputs);
-      expect(subscribeInput.afterSequence).toBeUndefined();
-      expect(subscribeInput.requestCompletionMarker).toBe(true);
-      expect(yield* Ref.get(loaderCalls)).toBe(1);
-      const synchronizing = yield* SubscriptionRef.get(shellState);
-      expect(synchronizing.status).toBe("synchronizing");
-      expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(cachedSnapshot);
+        const subscribeInput = yield* Queue.take(subscribeInputs);
+        expect(subscribeInput.afterSequence).toBeUndefined();
+        expect(subscribeInput.requestCompletionMarker).toBe(true);
+        expect(subscribeInput.omitArchivedBotChats).toBe(omit ? true : undefined);
+        expect(yield* Ref.get(loaderCalls)).toBe(1);
+        const synchronizing = yield* SubscriptionRef.get(shellState);
+        expect(synchronizing.status).toBe("synchronizing");
+        expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(cachedSnapshot);
 
-      yield* Queue.offer(events, { kind: "snapshot", snapshot: resetSnapshot });
-      yield* Queue.offer(events, { kind: "synchronized" });
-      yield* SubscriptionRef.changes(shellState).pipe(
-        Stream.filter((value) => value.status === "live"),
-        Stream.runHead,
-      );
+        yield* Queue.offer(events, { kind: "snapshot", snapshot: resetSnapshot });
+        yield* Queue.offer(events, { kind: "synchronized" });
+        yield* SubscriptionRef.changes(shellState).pipe(
+          Stream.filter((value) => value.status === "live"),
+          Stream.runHead,
+        );
 
-      const live = yield* SubscriptionRef.get(shellState);
-      expect(Option.getOrThrow(live.snapshot)).toEqual(resetSnapshot);
-      expect(yield* Ref.get(loaderCalls)).toBe(1);
+        const live = yield* SubscriptionRef.get(shellState);
+        expect(Option.getOrThrow(live.snapshot)).toEqual(resetSnapshot);
+        expect(yield* Ref.get(loaderCalls)).toBe(1);
 
-      yield* Queue.offer(wakeups, "application-active");
-      const resumedInput = yield* Queue.take(subscribeInputs);
-      expect(resumedInput.afterSequence).toBe(resetSnapshot.snapshotSequence);
-      expect(resumedInput.requestCompletionMarker).toBe(true);
-      expect(yield* Ref.get(loaderCalls)).toBe(1);
-    }),
+        yield* Queue.offer(wakeups, "application-active");
+        const resumedInput = yield* Queue.take(subscribeInputs);
+        expect(resumedInput.afterSequence).toBe(resetSnapshot.snapshotSequence);
+        expect(resumedInput.requestCompletionMarker).toBe(true);
+        expect(resumedInput.omitArchivedBotChats).toBe(omit ? true : undefined);
+        expect(yield* Ref.get(loaderCalls)).toBe(1);
+      }),
   );
 
   it.effect("resubscribes from the in-memory shell cursor when the app becomes active", () =>

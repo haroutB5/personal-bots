@@ -1,0 +1,25 @@
+[Unit]
+Description=Matchday SofaScore direct fetcher
+After=network-online.target
+ConditionPathExists=@AI@/_wt/matchday-sofascore-fetcher/sofascore-fetcher/.venv/bin/python
+
+[Service]
+Type=simple
+WorkingDirectory=@AI@/_wt/matchday-sofascore-fetcher/sofascore-fetcher
+Environment=SS_HTTP_TRANSPORT=browser
+Environment=SS_MIN_INTERVAL_MS=2000
+Environment=SS_MAX_CALLS_PER_MIN=30
+Environment=SS_DAILY_TARGET=10000
+Environment=SS_DAILY_HARD_CAP=15000
+Environment=SS_BACKFILL_PER_HOUR=400
+Environment=SS_BROWSER_PROFILE=@HOME@/AI/_wt/matchday-sofascore-fetcher/sofascore-fetcher/state/browser-profile-brave
+ExecStart=@AI@/_wt/matchday-sofascore-fetcher/sofascore-fetcher/.venv/bin/python -m sofascore_direct --run-seconds 0 --env-file @AI@/matchday/.env.local
+Restart=always
+RestartSec=20
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

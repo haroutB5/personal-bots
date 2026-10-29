@@ -248,9 +248,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        const pendingInputActivities =
+          envelope.command.type === "thread.turn.start"
+            ? yield* projectionSnapshotQuery.getPendingInputActivities(envelope.command.threadId)
+            : undefined;
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          ...(pendingInputActivities !== undefined ? { pendingInputActivities } : {}),
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),

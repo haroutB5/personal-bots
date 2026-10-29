@@ -80,7 +80,9 @@ export function QuestionCard({
         {card.questions[0]?.question}
       </p>
       <p className="mt-0.5 text-[15px] text-[var(--personal-text-secondary)]">
-        This question closed without an answer.
+        {card.kind === "superseded"
+          ? "Answered in the chat"
+          : "This question closed without an answer."}
       </p>
     </section>
   );

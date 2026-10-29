@@ -9,8 +9,11 @@ import {
   PERSONAL_DESKTOP_STREAM_PATH,
   WS_METHODS,
   type EnvironmentId,
+  type PersonalDesktopActivityEvent,
   type PersonalDesktopStatus,
+  type PersonalDesktopStreamItem,
 } from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { useEnvironmentQuery } from "~/state/query";
@@ -27,7 +30,39 @@ export const desktopEnvironment = {
     label: "environment-data:personal-desktop:stop",
     tag: WS_METHODS.personalDesktopStop,
   }),
+  /** What bots did on the desktop: recent history, then live events. */
+  activity: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:personal-desktop:activity",
+    tag: WS_METHODS.personalDesktopActivity,
+    transform: (stream) => stream.pipe(Stream.scan(EMPTY_DESKTOP_EVENTS, reduceDesktopEvents)),
+  }),
 };
+
+const DESKTOP_EVENT_LIMIT = 30;
+export const EMPTY_DESKTOP_EVENTS: ReadonlyArray<PersonalDesktopActivityEvent> = [];
+
+export function reduceDesktopEvents(
+  events: ReadonlyArray<PersonalDesktopActivityEvent>,
+  item: PersonalDesktopStreamItem,
+): ReadonlyArray<PersonalDesktopActivityEvent> {
+  switch (item._tag) {
+    case "Recent":
+      return item.events.slice(-DESKTOP_EVENT_LIMIT);
+    case "Activity":
+      return events.some((event) => event.id === item.event.id)
+        ? events
+        : [...events, item.event].slice(-DESKTOP_EVENT_LIMIT);
+  }
+}
+
+export function useDesktopActivity(
+  environmentId: EnvironmentId | null,
+): ReadonlyArray<PersonalDesktopActivityEvent> {
+  const query = useEnvironmentQuery(
+    environmentId === null ? null : desktopEnvironment.activity({ environmentId, input: {} }),
+  );
+  return query.data ?? EMPTY_DESKTOP_EVENTS;
+}
 
 export function useDesktopStatus(
   environmentId: EnvironmentId | null,

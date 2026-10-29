@@ -5,6 +5,7 @@ import { CircleCheck, File, Laptop, MessageCircle, type LucideIcon } from "lucid
 
 import { cn } from "~/lib/utils";
 
+import { useComputerAsk } from "./computer/useComputerAsk";
 import { PERSONAL_TABS, type PersonalTab } from "./personalMode";
 
 const TAB_ICONS: Record<PersonalTab, LucideIcon> = {
@@ -21,6 +22,7 @@ const TAB_ICONS: Record<PersonalTab, LucideIcon> = {
  * check mark are knocked out in the surface colour).
  */
 export function PersonalTabBar({ active }: { active: PersonalTab }): JSX.Element {
+  const computerAsks = useComputerAsk();
   return (
     <nav
       aria-label="Primary"
@@ -30,6 +32,7 @@ export function PersonalTabBar({ active }: { active: PersonalTab }): JSX.Element
         {PERSONAL_TABS.map(({ tab, label, to }) => {
           const Icon = TAB_ICONS[tab];
           const isActive = tab === active;
+          const dotted = tab === "computer" && computerAsks;
           return (
             <li key={tab} className="flex">
               <Link
@@ -46,18 +49,28 @@ export function PersonalTabBar({ active }: { active: PersonalTab }): JSX.Element
                     : "font-normal text-[var(--personal-text-secondary)]",
                 )}
               >
-                <Icon
-                  aria-hidden="true"
-                  className={cn(
-                    "size-6",
-                    isActive &&
-                      tab === "tasks" &&
-                      "[&>path]:stroke-[var(--personal-surface)] [&>path]:[stroke-width:2.25]",
-                  )}
-                  strokeWidth={1.75}
-                  fill={isActive ? "currentColor" : "none"}
-                />
+                <span className="relative flex">
+                  <Icon
+                    aria-hidden="true"
+                    className={cn(
+                      "size-6",
+                      isActive &&
+                        tab === "tasks" &&
+                        "[&>path]:stroke-[var(--personal-surface)] [&>path]:[stroke-width:2.25]",
+                    )}
+                    strokeWidth={1.75}
+                    fill={isActive ? "currentColor" : "none"}
+                  />
+                  {dotted ? (
+                    <span
+                      data-testid="computer-ask-dot"
+                      aria-hidden="true"
+                      className="absolute -top-0.5 -right-1 size-2.5 rounded-full bg-[var(--personal-review)] ring-2 ring-[var(--personal-bg)]"
+                    />
+                  ) : null}
+                </span>
                 <span>{label}</span>
+                {dotted ? <span className="sr-only">, a bot needs you</span> : null}
               </Link>
             </li>
           );

@@ -99,3 +99,31 @@ it("reads a multi-select answer as every chosen label", () => {
 it("shows a typed answer as typed", () => {
   expect(describeAnswer(question, "neither, rewrite it")).toEqual(["neither, rewrite it"]);
 });
+
+it("shows a question answered in the chat after supersession", () => {
+  const activity = resolvedActivity("req-1");
+  const resolutions = deriveUserInputResolutions([
+    { ...activity, payload: { requestId: "req-1", responseMode: "superseded" } },
+  ]);
+  const cards = deriveQuestionCards([], new Map([["req-1", request("req-1")]]), resolutions);
+  expect(cards[0]?.kind).toBe("superseded");
+});
+
+it("does not apply an old answer to a newer request with the same ID", () => {
+  const old = resolvedActivity("req-1");
+  const asked = {
+    ...old,
+    kind: "user-input.requested",
+    createdAt: "2026-09-16T10:00:06.000Z",
+    payload: { requestId: "req-1" },
+  } as OrchestrationThreadActivity;
+  const resolutions = deriveUserInputResolutions([
+    asked,
+    { ...old, payload: { requestId: "req-1", responseMode: "superseded" } },
+  ]);
+  const newest = request("req-1", asked.createdAt);
+  expect(deriveQuestionCards([newest], new Map(), resolutions)[0]?.kind).toBe("pending");
+  expect(deriveQuestionCards([], new Map([["req-1", newest]]), resolutions)[0]?.kind).toBe(
+    "closed",
+  );
+});

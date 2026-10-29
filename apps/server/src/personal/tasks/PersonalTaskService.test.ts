@@ -1,4 +1,8 @@
 // @effect-diagnostics preferSchemaOverJson:off - builds provider activity rows
+// These tests assert the five-slot cap and how work queues behind it, so the
+// heavy-job probe is pinned to "held" for the whole file. The 8/5 policy itself
+// is covered in heavyJobLock.test.ts.
+process.env.PERSONAL_TASKS_HEAVY_PROBE = "held";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeURL from "node:url";
 import {
@@ -65,6 +69,7 @@ import {
 import { withSchedulersEnv } from "../schedulersSwitch.testFixtures.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
 import { TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL } from "../taskChatAutoArchivePolicy.ts";
+import { QUEUED_HELP_NOTE } from "../browser/browserShared.ts";
 
 /**
  * Stand-ins for the orchestration side: commands are recorded, and the
@@ -2043,9 +2048,16 @@ it.live(
       const threadId = threadOf(task);
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-task-steer-acp-" });
+      let releaseCancellation: Effect.Effect<void> = Effect.void;
       const adapter = yield* makeNativeAcpAdapter({
         provider: ProviderDriverKind.make("opencode"),
         instanceId: ProviderInstanceId.make("opencode-v2"),
+        configureTurn: (runtime) =>
+          Effect.sync(() => {
+            releaseCancellation = runtime
+              .request("_test/finish-cancel", {})
+              .pipe(Effect.asVoid, Effect.orDie);
+          }),
         runtimeOptions: () =>
           Effect.succeed({
             spawn: {
@@ -2123,9 +2135,12 @@ it.live(
       const second = yield* adapter
         .sendTurn({ threadId, input: command.message.text })
         .pipe(Effect.forkChild);
-      yield* Fiber.join(first);
       yield* service.drain;
       expect((yield* reload(task.taskId)).status).toBe("running");
+      // A steer now waits for the remote prompt, rather than detaching its
+      // local RPC. Let the mock agent acknowledge the cancellation explicitly.
+      yield* releaseCancellation;
+      yield* Fiber.join(first);
       yield* Fiber.join(second);
       yield* Deferred.await(finished);
       const done = yield* reload(task.taskId);
@@ -2804,6 +2819,120 @@ const sweepNow = Effect.gen(function* () {
   const service = yield* PersonalTaskService.PersonalTaskService;
   yield* service.sweep;
   yield* service.drain;
+});
+
+// QA f9e48571 on a0fdc17af83b: a task parked on browser help replies "waiting
+// for ..." (or the queue note for a second bot). The background policy read
+// that as a stated wait and kept the attempt open, so the resume went queued
+// behind a thread the pump still saw as busy and never ran.
+
+it.effect("a help card's reply ends its attempt, and the handed-back task runs", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("browser-help-stated");
+    const thread = threadOf(root);
+    const firstTurn = yield* beginClaudeTurn(harness, thread);
+
+    const waiting = yield* service.waitForBrowser({ taskId: root.taskId });
+    expect(waiting.status).toBe("waiting_for_browser");
+    yield* endClaudeTurn(harness, thread, firstTurn, "Waiting for you to answer the browser card.");
+
+    const parked = yield* service.get({ taskId: root.taskId });
+    expect(parked.task.status).toBe("waiting_for_browser");
+    expect(parked.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(0);
+    const before = turnStarts(harness).filter((command) => command.threadId === thread).length;
+
+    yield* service.resumeFromUser({
+      taskId: root.taskId,
+      noteId: "browser-help:stated",
+      note: "The user handed the browser back. Continue the task.",
+      restartSession: false,
+    });
+    yield* service.drain;
+
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    expect(turnStarts(harness).filter((command) => command.threadId === thread)).toHaveLength(
+      before + 1,
+    );
+    const detail = yield* service.get({ taskId: root.taskId });
+    expect(detail.attempts.map((attempt) => attempt.endedAt === null)).toEqual([false, true]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a queued help reply ends its attempt and resumes on allow or on refuse", () => {
+  const harness = makeHarness();
+  const cases = [
+    {
+      key: "queued-allow",
+      note: "The user allowed this step once. Retry the same action now.",
+    },
+    {
+      key: "queued-refuse",
+      note: "The user refused this step. Do not retry it; carry on without it.",
+    },
+  ] as const;
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    for (const [index, entry] of cases.entries()) {
+      const root = yield* createRoot(entry.key);
+      const thread = threadOf(root);
+      const firstTurn = yield* beginClaudeTurn(harness, thread);
+      yield* service.waitForBrowser({ taskId: root.taskId });
+      yield* endClaudeTurn(harness, thread, firstTurn, QUEUED_HELP_NOTE);
+
+      const parked = yield* service.get({ taskId: root.taskId });
+      expect(parked.task.status).toBe("waiting_for_browser");
+      expect(parked.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(0);
+
+      yield* service.resumeFromUser({
+        taskId: root.taskId,
+        noteId: `browser-help:${entry.key}:${index}`,
+        note: entry.note,
+        restartSession: false,
+      });
+      yield* service.drain;
+
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      const detail = yield* service.get({ taskId: root.taskId });
+      expect(detail.attempts.map((attempt) => attempt.endedAt === null)).toEqual([false, true]);
+      expect(turnStarts(harness).at(-1)?.message.text).toContain(entry.note);
+    }
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a resume closes an earlier turn left open by a stated wait", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("browser-help-stale");
+    const thread = threadOf(root);
+    const firstTurn = yield* beginClaudeTurn(harness, thread);
+    // The stated wait is what holds an attempt open; this is the state a
+    // resume must not inherit from an earlier turn.
+    yield* endClaudeTurn(harness, thread, firstTurn, "Waiting for the build to finish.");
+    const held = yield* service.get({ taskId: root.taskId });
+    expect(held.task.status).toBe("running");
+    expect(held.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(1);
+
+    yield* service.waitForBrowser({ taskId: root.taskId });
+    yield* service.resumeFromUser({
+      taskId: root.taskId,
+      noteId: "browser-help:stale",
+      note: "The user finished helping in the browser. Continue the task.",
+      restartSession: false,
+    });
+    yield* service.drain;
+
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const detail = yield* service.get({ taskId: root.taskId });
+    expect(detail.attempts).toHaveLength(2);
+    expect(detail.attempts.filter((attempt) => attempt.endedAt === null)).toHaveLength(1);
+    expect(turnStarts(harness).filter((command) => command.threadId === thread)).toHaveLength(2);
+  }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 it.effect(
@@ -4377,6 +4506,64 @@ it.effect(
       const settled = yield* reload(root.taskId);
       expect([settled.status, settled.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
     }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(100))));
+  },
+);
+
+it.effect(
+  "a failed turn's limit moves the task to its fallback when the error session lost it",
+  () => {
+    const harness = makeHarness();
+    const providers: Array<unknown> = fallbackProviders(10);
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("fb-lost-retry", "developer");
+      const thread = threadOf(root);
+      yield* beginTurn(harness, thread);
+      const startsBefore = turnStarts(harness).length;
+      const first = yield* DateTime.now;
+      const retry = { ...providerWait("rate_limited", first, 6 * 60 * 60_000), provider: "codex" };
+      // The projection has already moved on to the error the reactor writes
+      // from a stale read: it carries no wait, the event below still does.
+      const lost = makeSession({
+        threadId: thread,
+        status: "error",
+        activeTurnId: null,
+        lastError: CODEX_LIMIT_ERROR,
+        updatedAt: DateTime.formatIso(DateTime.add(first, { milliseconds: 5 })),
+      });
+      harness.sessions.set(thread, lost);
+      yield* service.ingestDomainEvent(
+        sessionEvent(
+          harness,
+          makeSession({
+            threadId: thread,
+            status: "error",
+            activeTurnId: null,
+            lastError: CODEX_LIMIT_ERROR,
+            providerRetry: retry,
+            updatedAt: DateTime.formatIso(first),
+          }),
+        ),
+      );
+      yield* service.ingestDomainEvent(sessionEvent(harness, lost));
+      yield* service.drain;
+
+      // The bot moved to its fallback model and the task ran again at once,
+      // instead of spending the unreported-limit backoff.
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: botId("developer") })).fallbackActive,
+      ).toBeDefined();
+      const starts = turnStarts(harness).slice(startsBefore);
+      expect(starts).toHaveLength(1);
+      expect(starts[0]?.modelSelection).toMatchObject({ instanceId: "claudeAgent" });
+      // ... and that attempt completes on the fallback; the task never parks.
+      yield* postAttemptMessage(harness, root.taskId, thread, 2);
+      const secondTurn = yield* beginTurn(harness, thread);
+      yield* endTurn(harness, thread, secondTurn, "Done on the fallback.");
+      expect((yield* reload(root.taskId)).status).toBe("completed");
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, providers)));
   },
 );
 

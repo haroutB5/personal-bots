@@ -36,6 +36,19 @@ describe("openCodeRetryInfo", () => {
     );
   });
 
+  it("reads a model at capacity or overloaded as a limit, so the bot moves to its fallback", () => {
+    expect(
+      openCodeRetryInfo({
+        attempt: 1,
+        message: "Selected model is at capacity. Please try a different model.",
+        next: NEXT,
+      }).kind,
+    ).toBe("rate_limited");
+    expect(openCodeRetryInfo({ attempt: 1, message: "model is overloaded", next: NEXT }).kind).toBe(
+      "rate_limited",
+    );
+  });
+
   it("never invents a retry time from a delay-sized or missing value", () => {
     expect(openCodeRetryInfo({ attempt: 1, message: "429", next: 30_000 }).retryAt).toBeUndefined();
     expect(openCodeRetryInfo({ attempt: 1, message: "429", next: 0 }).retryAt).toBeUndefined();

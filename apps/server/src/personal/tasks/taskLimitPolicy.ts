@@ -2,6 +2,8 @@ import * as DateTime from "effect/DateTime";
 
 import type { OrchestrationSession } from "@t3tools/contracts";
 
+import { isProviderCapacityError } from "../personalModelFallbackPolicy.ts";
+
 /**
  * What a task does when its provider says no: a rate limit, a usage limit, a
  * retry wait, a conversation the provider lost. Pure functions over what the
@@ -32,7 +34,7 @@ export const PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS = 2 * 60_000;
 export const PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS = 10_000;
 
 const RATE_LIMIT_PATTERN =
-  /rate.?limit|too many requests|\b429\b|\b529\b|overloaded|quota|usage limit|provider.{0,40}unavailable|service unavailable|\b503\b/i;
+  /rate.?limit|too many requests|\b429\b|\b529\b|overloaded|capacity|try a different model|quota|usage limit|provider.{0,40}unavailable|service unavailable|\b503\b/i;
 
 /** Rate limits and an unreachable provider back off; anything else fails the attempt. */
 export const classifyProviderError = (message: string | null): "rate_limited" | "provider_error" =>
@@ -144,7 +146,9 @@ export type SessionErrorSettlement =
       readonly limit?: {
         readonly provider: string;
         readonly reason: string | undefined;
-        readonly retryAt: string | undefined;
+        readonly retryAt?: string | undefined;
+        /** The provider was at capacity, not out of a usage window. */
+        readonly capacity?: boolean;
       };
       /** The reset the provider reported for the limit, when it named one. */
       readonly resetAtMs?: number;
@@ -159,6 +163,8 @@ export const settleSessionError = (input: {
   readonly nowMs: number;
   readonly providerRetry: OrchestrationSession["providerRetry"];
   readonly attemptStartedAtMs: number;
+  /** The provider that ran the attempt, for a limit it did not report itself. */
+  readonly providerName?: string | null | undefined;
   readonly activeTurnId: string | null;
   /** When the session last changed, epoch ms (NaN when unparseable). */
   readonly sessionUpdatedAtMs: number;
@@ -187,12 +193,24 @@ export const settleSessionError = (input: {
     return { kind: "wait" };
   }
   const resetMs = limit?.retryAt === undefined ? Number.NaN : Date.parse(limit.retryAt);
+  // A capacity/overloaded error spends no window and reports no retry, but it
+  // is not a broken turn either: it takes the same fallback path as a limit so
+  // the task carries on on the bot's fallback model instead of ending.
+  const capacity = limit === undefined && isProviderCapacityError(input.lastError);
   return {
     kind: "finish",
     clearRenewalWait,
-    category: limit !== undefined ? "rate_limited" : classifyProviderError(input.lastError),
+    category: limit !== undefined || capacity ? "rate_limited" : classifyProviderError(input.lastError),
     ...(limit === undefined
-      ? {}
+      ? capacity
+        ? {
+            limit: {
+              provider: input.providerName ?? "",
+              reason: input.lastError ?? undefined,
+              capacity: true,
+            },
+          }
+        : {}
       : { limit: { provider: limit.provider, reason: limit.reason, retryAt: limit.retryAt } }),
     ...(Number.isFinite(resetMs) ? { resetAtMs: resetMs } : {}),
   };

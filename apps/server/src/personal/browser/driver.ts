@@ -224,6 +224,8 @@ export interface BrowserContextHandle {
 export interface BrowserLaunchOptions {
   readonly userDataDir: string;
   readonly headless: boolean;
+  /** The graphical session found at launch, merged over the server's own environment. */
+  readonly env?: NodeJS.ProcessEnv | undefined;
   readonly executablePath: string | undefined;
   readonly downloadsDir: string;
   readonly onDownloadSaved: (file: { readonly name: string; readonly path: string }) => void;
@@ -807,7 +809,9 @@ export interface PlaywrightDriverOptions {
 }
 
 /** Real Brave via playwright-core. Loaded lazily so tests never import it. */
-export const makePlaywrightDriver = (driverOptions: PlaywrightDriverOptions = {}): BrowserDriver => ({
+export const makePlaywrightDriver = (
+  driverOptions: PlaywrightDriverOptions = {},
+): BrowserDriver => ({
   launch: async (options) => {
     const { chromium } = await import("playwright-core");
     const resolveExecutable =
@@ -821,12 +825,19 @@ export const makePlaywrightDriver = (driverOptions: PlaywrightDriverOptions = {}
     const context = await chromium.launchPersistentContext(options.userDataDir, {
       executablePath,
       headless: options.headless,
+      ...(options.env === undefined ? {} : { env: options.env }),
       // Follow the real window; per-tab overrides go through CDP emulation.
       viewport: null,
       acceptDownloads: true,
       args: [
         "--no-first-run",
         "--no-default-browser-check",
+        // Chromium defaults to X11. On a Wayland-only session (Hyprland, no
+        // DISPLAY) it then dies with "no XServer"; point it at the compositor
+        // the launch discovered.
+        ...(options.env?.WAYLAND_DISPLAY !== undefined && (options.env.DISPLAY ?? "") === ""
+          ? ["--ozone-platform=wayland"]
+          : []),
         // Covers the brief CDP attach window of a script-opened popup too.
         "--disable-features=WebAuthenticationUseNativeWinApi",
         // Ad and tracker hosts fail to resolve; T3CODE_PERSONAL_BROWSER_ADBLOCK=off drops this.

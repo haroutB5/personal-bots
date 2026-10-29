@@ -244,6 +244,17 @@ describe("botModelShortLabel", () => {
     expect(botModelShortLabel(selection("codex", "gpt-6-luna"), [])).toBe("gpt-6-luna");
     expect(botModelShortLabel(selection("codex", ""), providers)).toBeNull();
   });
+
+  it("names an unlisted Claude model instead of showing its id", () => {
+    // A fresh install, or a bot on the default fallback before the model
+    // catalog has caught up: "claude-haiku-5-5" is not in `providers` here.
+    expect(short("claudeAgent", "claude-haiku-5-5", [["effort", "high"]])).toBe("Haiku 5.5 · H");
+    expect(
+      botModelLabel(selection("claudeAgent", "claude-haiku-5-5", [["effort", "high"]]), providers),
+    ).toBe("Haiku 5.5 high");
+    // A family this code does not know keeps its id: nothing to name it from.
+    expect(short("claudeAgent", "claude-mystery-9")).toBe("claude-mystery-9");
+  });
 });
 
 describe("a bot on its fallback model", () => {

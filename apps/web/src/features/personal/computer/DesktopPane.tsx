@@ -3,11 +3,12 @@
  * same Stop as the chat line, and remote control.
  *
  * Watching is view only and stays the default, so a stray tap can never click
- * the PC. Turning on Control (full screen only) makes the user the PC's
- * holder: a bot using it is stopped, bots in line wait, and taps, drags, the
- * wheel and the keyboard go to the PC. Control ends on the switch, leaving
- * full screen, the app going to the background, the PC locking, or two
- * minutes without input (server side).
+ * the PC. The Computer screen's Take control button (`wantControl`, full
+ * screen only) makes the user the PC's holder: a bot using it is paused, bots
+ * in line wait, and taps, drags, the wheel and the keyboard go to the PC.
+ * Control ends on Hand back, leaving full screen, the app going to the
+ * background, the PC locking, or two minutes without input (server side); the
+ * pane tells the screen through `onControlState`.
  *
  * The socket is open only while this pane is mounted and the page is visible,
  * and the server captures only while a socket is open, so a closed view or a
@@ -16,6 +17,7 @@
 import type {
   EnvironmentId,
   PersonalDesktopModifier,
+  PersonalDesktopStatus,
   PersonalDesktopViewInput,
   PersonalDesktopViewRegion,
   PersonalDesktopViewState,
@@ -27,13 +29,13 @@ import {
   ArrowUp,
   ChevronLeft,
   Eye,
+  Hand,
   Keyboard,
   Lock,
   Maximize2,
   Monitor,
   MonitorOff,
   MousePointer2,
-  ZoomOut,
 } from "lucide-react";
 import {
   type JSX,
@@ -47,9 +49,9 @@ import {
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
-import { useAtomCommand } from "~/state/use-atom-command";
 
 import { useKeyboardInset } from "../useKeyboardInset";
+import { focusedWindow, isLinuxDesktop } from "./computerContract";
 import { fitFrame, type ViewportBox } from "./computerModel";
 import { refreshComputerAccess, useComputerAccess } from "./computerState";
 import { TouchGestureRecognizer, type GestureAction } from "./desktopGestures";
@@ -67,12 +69,7 @@ import {
   type ViewTransform,
   zoomView,
 } from "./desktopRemoteInput";
-import {
-  desktopEnvironment,
-  desktopHolderLine,
-  desktopStreamUrl,
-  useDesktopStatus,
-} from "./desktopState";
+import { desktopStreamUrl, useDesktopStatus } from "./desktopState";
 import {
   connectDesktopView,
   type DesktopFocus,
@@ -140,18 +137,46 @@ export function usePageVisible(): boolean {
   return visible;
 }
 
+/** What the pane tells the Computer screen about remote control. */
+export interface DesktopControlState {
+  /** Control was asked for and is still wanted (the screen's Take control). */
+  readonly wanted: boolean;
+  /** The server confirmed this socket controls the PC. */
+  readonly on: boolean;
+  /** A refusal or drop the screen should say out loud, or null. */
+  readonly notice: string | null;
+  /** The PC can be controlled right now (available and not locked). */
+  readonly canControl: boolean;
+}
+
 export function DesktopPane(props: {
   readonly environmentId: EnvironmentId | null;
   readonly fullScreen: boolean;
   readonly onOpenFullScreen: () => void;
   readonly onExitFullScreen: () => void;
+  /** The desktop status the screen already holds; read here when omitted. */
+  readonly status?: PersonalDesktopStatus | null;
+  /** Take control is wanted; the screen's button sets and clears it. */
+  readonly wantControl?: boolean;
+  readonly onControlState?: (state: DesktopControlState) => void;
+  /** The screen draws the in-control top bar, so this pane leaves its own out. */
+  readonly hideBar?: boolean;
+  /** One line under the picture in full screen (who carries on, who is next). */
+  readonly footnote?: string | null;
+  /** Hand back, for the landscape rail where the screen's top bar is not drawn. */
+  readonly onHandBack?: () => void;
+  /** Control runs in the page, not full screen (the wide Computer page). */
+  readonly inline?: boolean;
+  /** Not on screen for a while: let go of the socket. */
+  readonly paused?: boolean;
 }): JSX.Element {
   const { environmentId, fullScreen } = props;
-  const status = useDesktopStatus(environmentId);
-  const stop = useAtomCommand(desktopEnvironment.stop);
-  const [stopping, setStopping] = useState(false);
+  const mayControl = fullScreen || props.inline === true;
+  const ownStatus = useDesktopStatus(props.status === undefined ? environmentId : null);
+  const status = props.status === undefined ? ownStatus : props.status;
+  const linux = isLinuxDesktop(status);
+  const windowTitle = focusedWindow(status)?.title ?? null;
   const pageVisible = usePageVisible();
-  const holder = desktopHolderLine(status);
   const available = status?.available !== false;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const keyboardInset = useKeyboardInset(rootRef);
@@ -162,7 +187,7 @@ export function DesktopPane(props: {
   const [viewState, setViewState] = useState<PersonalDesktopViewState | null>(null);
   const locked = viewState === "locked";
   const canControl = environmentId !== null && available && !locked;
-  /** What the switch says; control itself also needs full screen and a visible page. */
+  /** What Take control asked; control itself also needs full screen and a visible page. */
   const [controlWanted, setControlWanted] = useState(false);
   /** The server confirmed this socket controls the PC. */
   const [controlOn, setControlOn] = useState(false);
@@ -179,19 +204,24 @@ export function DesktopPane(props: {
   // Leaving full screen, backgrounding the app or the PC locking ends control
   // for good: coming back never quietly resumes it. (State adjusted during
   // render, React's pattern for resetting on a prop change.)
-  const endKey = `${fullScreen}|${pageVisible}|${locked}`;
+  const endKey = `${mayControl}|${pageVisible}|${locked}`;
   const [seenEndKey, setSeenEndKey] = useState(endKey);
   if (seenEndKey !== endKey) {
     setSeenEndKey(endKey);
-    if (!fullScreen || !pageVisible || locked) {
+    if (!mayControl || !pageVisible || locked) {
       if (controlWanted && locked) setNotice(REMOTE_LOCKED_TEXT);
       setControlWanted(false);
       setControlOn(false);
       setSticky(new Set());
     }
   }
-  const controlActive = controlWanted && fullScreen && pageVisible && canControl;
+  const controlActive = controlWanted && mayControl && pageVisible && canControl;
   const inControl = controlOn && controlActive;
+  // The gesture card shows for the first few times you take control.
+  const [hint, setHint] = useState(false);
+  useEffect(() => {
+    setHint(inControl && takeHintSession());
+  }, [inControl]);
 
   useEffect(() => {
     if (notice === null) return;
@@ -199,18 +229,33 @@ export function DesktopPane(props: {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const toggleControl = () => {
-    if (controlWanted) {
+  // The screen's Take control / Hand back arrive as `wantControl` (adjusted
+  // during render, React's pattern for reacting to a prop change).
+  const wantProp = props.wantControl === true;
+  const [seenWant, setSeenWant] = useState(false);
+  if (seenWant !== wantProp) {
+    setSeenWant(wantProp);
+    if (wantProp) {
+      if (canControl) {
+        setNotice(null);
+        setControlWanted(true);
+      }
+    } else {
       setControlWanted(false);
       setControlOn(false);
       setSticky(new Set());
-      return;
     }
-    if (!canControl) return;
-    setNotice(null);
-    setControlWanted(true);
-    if (!fullScreen) props.onOpenFullScreen();
-  };
+  }
+  const onControlStateRef = useRef(props.onControlState);
+  onControlStateRef.current = props.onControlState;
+  useEffect(() => {
+    onControlStateRef.current?.({
+      wanted: controlWanted,
+      on: controlOn && controlWanted,
+      notice,
+      canControl,
+    });
+  }, [controlWanted, controlOn, notice, canControl]);
 
   const send: SendInput = (message) => sendRef.current?.(message);
   const takeSticky = (): ReadonlySet<PersonalDesktopModifier> => {
@@ -219,14 +264,40 @@ export function DesktopPane(props: {
     return held;
   };
 
-  const userHolds = status?.holder?.kind === "user";
-  const statusLine =
-    notice ??
-    (inControl
-      ? `You're in control${status !== null && status.waiting.length > 0 ? ` · ${status.waiting.length} bot${status.waiting.length === 1 ? "" : "s"} waiting` : ""}`
-      : controlActive
-        ? "Taking control…"
-        : holder.text);
+  const statusLine = notice ?? (fullScreen || inControl ? (props.footnote ?? null) : null);
+  const barLabel = `${linux ? "Omarchy laptop" : "Your PC"}${windowTitle === null ? "" : ` · ${windowTitle}`}`;
+
+  const below = (
+    <>
+      {hint && inControl && !rail ? <GestureHint /> : null}
+      {statusLine === null ? null : (
+        <div
+          className={cn(
+            "flex gap-2",
+            rail
+              ? "col-start-1 row-start-2 flex-col items-start pt-2 pr-1 pl-[calc(env(safe-area-inset-left)+0.75rem)]"
+              : "mt-2.5 min-h-11 items-center",
+            fullScreen && !rail && "shrink-0 px-3 pb-3",
+            inControl && !rail && "mt-1",
+          )}
+        >
+          <p
+            role={notice === null ? undefined : "status"}
+            className={cn(
+              "min-w-0 text-[13px] text-[var(--personal-text-secondary)]",
+              rail
+                ? "line-clamp-5 text-[12px] leading-4"
+                : inControl
+                  ? "flex-1 leading-4"
+                  : "flex-1 truncate",
+            )}
+          >
+            {statusLine}
+          </p>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div
@@ -246,63 +317,69 @@ export function DesktopPane(props: {
           : {}),
       }}
     >
-      <div
-        className={cn(
-          "flex shrink-0 gap-1",
-          rail
-            ? "col-start-1 row-start-1 flex-col items-start pt-1 pl-[env(safe-area-inset-left)]"
-            : "min-h-14 items-center",
-          fullScreen && !rail && "pr-3 pl-1",
-        )}
-      >
-        {fullScreen ? (
-          <button
-            type="button"
-            aria-label="Exit full screen"
-            onClick={props.onExitFullScreen}
-            className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-          >
-            <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
-          </button>
-        ) : null}
+      {props.hideBar === true && !rail ? null : (
         <div
           className={cn(
-            "flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[10px] bg-[var(--personal-fill-muted)] px-3",
-            rail && "hidden",
+            "flex shrink-0 gap-1",
+            rail
+              ? "col-start-1 row-start-1 flex-col items-start pt-1 pl-[env(safe-area-inset-left)]"
+              : "min-h-14 items-center",
+            fullScreen && !rail && "pr-3 pl-1",
           )}
         >
-          <Monitor className="size-4 shrink-0" strokeWidth={ICON_STROKE} aria-hidden />
-          <span className="min-w-0 flex-1 truncate text-[14px]">Your PC</span>
-          <span className="inline-flex shrink-0 items-center gap-1 text-[12px] text-[var(--personal-text-secondary)]">
-            {inControl ? (
-              <>
-                <MousePointer2 className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden />
-                In control
-              </>
-            ) : (
-              <>
-                <Eye className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden />
-                View only
-              </>
+          {fullScreen ? (
+            <button
+              type="button"
+              aria-label="Exit full screen"
+              onClick={props.onExitFullScreen}
+              className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
+              <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
+            </button>
+          ) : null}
+          <div
+            className={cn(
+              "flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[10px] bg-[var(--personal-fill-muted)] px-3",
+              rail && "hidden",
             )}
-          </span>
-        </div>
-        <ControlSwitch
-          on={controlWanted}
-          disabled={!canControl && !controlWanted}
-          onToggle={toggleControl}
-        />
-        {fullScreen ? null : (
-          <button
-            type="button"
-            aria-label="Open desktop full screen"
-            onClick={props.onOpenFullScreen}
-            className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
           >
-            <Maximize2 className="size-5" strokeWidth={ICON_STROKE} />
-          </button>
-        )}
-      </div>
+            <Monitor className="size-4 shrink-0" strokeWidth={ICON_STROKE} aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-[14px]">{barLabel}</span>
+            <span className="inline-flex shrink-0 items-center gap-1 text-[12px] text-[var(--personal-text-secondary)]">
+              {inControl ? (
+                <>
+                  <MousePointer2 className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden />
+                  In control
+                </>
+              ) : (
+                <>
+                  <Eye className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden />
+                  View only
+                </>
+              )}
+            </span>
+          </div>
+          {rail && inControl && props.onHandBack !== undefined ? (
+            <button
+              type="button"
+              onClick={props.onHandBack}
+              className="flex min-h-11 shrink-0 items-center rounded-full px-3 text-[13px] font-medium text-[var(--personal-control)] ring-1 ring-inset ring-[var(--personal-control)] outline-none focus-visible:ring-2"
+            >
+              Hand back
+            </button>
+          ) : null}
+          {fullScreen ? null : (
+            <button
+              type="button"
+              aria-label="Open desktop full screen"
+              onClick={props.onOpenFullScreen}
+              className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
+              <Maximize2 className="size-5" strokeWidth={ICON_STROKE} />
+            </button>
+          )}
+        </div>
+      )}
 
       <div
         className={cn(
@@ -314,7 +391,7 @@ export function DesktopPane(props: {
         {environmentId !== null && available ? (
           <LiveDesktop
             environmentId={environmentId}
-            active={pageVisible}
+            active={pageVisible && props.paused !== true}
             fit={fullScreen}
             controlWanted={controlActive}
             interactive={inControl}
@@ -364,8 +441,15 @@ export function DesktopPane(props: {
             fill={fullScreen}
           />
         )}
+        {inControl ? (
+          <span
+            aria-hidden
+            className="computer-control-ring pointer-events-none absolute inset-0 ring-2 ring-[var(--personal-control)] ring-inset"
+          />
+        ) : null}
       </div>
 
+      {inControl && !rail ? below : null}
       {inControl ? (
         <ControlBar
           send={send}
@@ -384,100 +468,12 @@ export function DesktopPane(props: {
           keyboardOpen={keyboardOpen}
           onKeyboardOpen={setKeyboardOpen}
           offerKeyboard={pcFocus?.editable === true}
+          linux={linux}
         />
       ) : null}
 
-      <div
-        className={cn(
-          "flex gap-2",
-          rail
-            ? "col-start-1 row-start-2 flex-col items-start pt-2 pr-1 pl-[calc(env(safe-area-inset-left)+0.75rem)]"
-            : "mt-2.5 min-h-11 items-center",
-          fullScreen && !rail && "shrink-0 px-3 pb-3",
-          inControl && !rail && "mt-1",
-        )}
-      >
-        <span
-          aria-hidden
-          className="inline-block size-2 shrink-0 rounded-full"
-          style={{
-            backgroundColor:
-              holder.busy || inControl ? "var(--personal-live)" : "var(--personal-text-tertiary)",
-          }}
-        />
-        <p
-          role={notice === null ? undefined : "status"}
-          className={cn(
-            "min-w-0 text-[13px]",
-            rail ? "line-clamp-5 text-[12px] leading-4" : "flex-1 truncate",
-            (holder.busy || inControl) && notice === null
-              ? "font-medium text-[var(--personal-review-text)]"
-              : "text-[var(--personal-text-secondary)]",
-          )}
-        >
-          {statusLine}
-        </p>
-        {status?.holder != null && !userHolds && environmentId !== null ? (
-          <button
-            type="button"
-            disabled={stopping}
-            onClick={() => {
-              setStopping(true);
-              void stop({ environmentId, input: {} }).finally(() => setStopping(false));
-            }}
-            className={cn(
-              "min-h-11 shrink-0 rounded-[var(--personal-radius-button)] px-3 text-[13px] font-medium outline-none",
-              "text-[var(--personal-danger)] personal-row-hover active:opacity-70",
-              "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50",
-            )}
-          >
-            {stopping ? "Stopping…" : "Stop"}
-          </button>
-        ) : null}
-      </div>
-      {fullScreen ? null : (
-        <p className="mt-1 text-[13px] leading-5 text-[var(--personal-text-tertiary)]">
-          Bots use the PC one at a time. Turn on Control to use it yourself; on the PC, press{" "}
-          {status?.stopHotkey ?? "Esc"} to take it back.
-        </p>
-      )}
+      {inControl && !rail ? null : below}
     </div>
-  );
-}
-
-function ControlSwitch(props: {
-  readonly on: boolean;
-  readonly disabled: boolean;
-  readonly onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={props.on}
-      aria-label="Control"
-      disabled={props.disabled}
-      onClick={props.onToggle}
-      className="flex min-h-11 shrink-0 items-center gap-2 rounded-full px-2 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
-    >
-      <span>Control</span>
-      <span
-        aria-hidden
-        className={cn(
-          "relative inline-flex h-[22px] w-[38px] shrink-0 rounded-full transition-colors",
-          props.on
-            ? "bg-[var(--personal-live)]"
-            : "bg-[var(--personal-track)] ring-1 ring-inset ring-[var(--personal-border-strong)]",
-        )}
-      >
-        <span
-          className={cn(
-            "absolute top-[3px] size-4 rounded-full bg-[var(--personal-surface)] shadow-[var(--personal-shadow-card)] transition-transform",
-            props.on ? "translate-x-[19px]" : "translate-x-[3px]",
-          )}
-        />
-      </span>
-    </button>
   );
 }
 
@@ -499,6 +495,8 @@ function ControlBar(props: {
   readonly onKeyboardOpen: (open: boolean) => void;
   /** The PC's focus is in a text field: offer the keyboard while it is down. */
   readonly offerKeyboard: boolean;
+  /** The PC runs Linux: the Win key is the Super key and there is no Start menu. */
+  readonly linux?: boolean;
 }) {
   const { send, fieldRef, keyboardOpen } = props;
   const setKeyboardOpen = props.onKeyboardOpen;
@@ -598,7 +596,7 @@ function ControlBar(props: {
         {modifier("ctrl", "Ctrl")}
         {modifier("alt", "Alt")}
         {modifier("shift", "Shift")}
-        {modifier("win", "Win")}
+        {modifier("win", props.linux === true ? "Super" : "Win")}
         <Divider />
         {key(<ArrowLeft className="size-4" strokeWidth={ICON_STROKE} />, "left", "Left arrow")}
         {key(<ArrowUp className="size-4" strokeWidth={ICON_STROKE} />, "up", "Up arrow")}
@@ -630,12 +628,14 @@ function ControlBar(props: {
           onPress={() => combo("alt+tab")}
           keepFocus={keepFocus}
         />
-        <KeyButton
-          label="Start"
-          aria="Start menu (Win)"
-          onPress={() => combo("win")}
-          keepFocus={keepFocus}
-        />
+        {props.linux === true ? null : (
+          <KeyButton
+            label="Start"
+            aria="Start menu (Win)"
+            onPress={() => combo("win")}
+            keepFocus={keepFocus}
+          />
+        )}
       </div>
     </div>
   );
@@ -677,7 +677,7 @@ function KeyButton(props: {
         "flex h-11 min-w-11 shrink-0 items-center justify-center rounded-[10px] border px-2.5 text-[13px] font-medium outline-none",
         "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-70",
         props.pressed === true
-          ? "border-transparent bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
+          ? "border-transparent bg-[var(--personal-control)] text-[var(--personal-primary-text)]"
           : "border-[var(--personal-border)] bg-[var(--personal-surface)]",
         props.attention && "personal-keyboard-ready",
       )}
@@ -1060,14 +1060,14 @@ function LiveDesktop(props: {
           style={{ left: ripple.x, top: ripple.y }}
         />
       ))}
-      {view.scale > 1 && !locked ? (
+      {(view.scale > 1 || interactive) && !locked ? (
         <button
           type="button"
           aria-label="Reset zoom"
           onClick={() => updateView(() => IDENTITY_VIEW)}
-          className="absolute top-2 right-2 z-10 flex size-11 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] shadow-[var(--personal-shadow-card)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="absolute right-2 bottom-2 z-10 flex size-11 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[14px] font-semibold shadow-[var(--personal-shadow-card)] outline-none tabular-nums focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
-          <ZoomOut className="size-5" strokeWidth={ICON_STROKE} />
+          {Math.round(view.scale * 10) / 10}×
         </button>
       ) : null}
       {locked ? (
@@ -1743,4 +1743,32 @@ function measureView(
     height: Math.round(height * scale),
     region: WHOLE_REGION,
   };
+}
+
+const HINT_KEY = "hbots.computer.hint";
+const HINT_SESSIONS = 3;
+
+/** True for the first few times the owner takes control, counting this one. */
+function takeHintSession(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    const seen = Number(window.localStorage.getItem(HINT_KEY) ?? "0");
+    if (!(seen < HINT_SESSIONS)) return false;
+    window.localStorage.setItem(HINT_KEY, String(seen + 1));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function GestureHint(): JSX.Element {
+  return (
+    <div className="mx-3 mt-3 flex shrink-0 items-start gap-3 rounded-[14px] border border-[var(--personal-border-strong)] px-3.5 py-3 text-[14px] leading-5 text-[var(--personal-text-secondary)]">
+      <Hand className="mt-0.5 size-5 shrink-0" strokeWidth={ICON_STROKE} aria-hidden />
+      <p>
+        Tap to click · hold to right-click · hold, then drag · two fingers to scroll · pinch to
+        zoom. Turn the phone sideways for a bigger view.
+      </p>
+    </div>
+  );
 }

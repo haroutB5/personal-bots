@@ -13,6 +13,7 @@ function ComputerRouteView() {
     <div className="flex min-h-0 flex-1 flex-col">
       <ComputerScreen
         origin={origin}
+        onOpenFiles={() => void navigate({ to: "/files" })}
         onBackToChat={(target) =>
           void (target === null
             ? navigate({ to: "/bots" })

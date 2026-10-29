@@ -29,6 +29,7 @@ const keepFieldFocus = (event: React.SyntheticEvent) => event.preventDefault();
  */
 export function NewChatDialog(props: {
   readonly open: boolean;
+  readonly fieldRef?: React.RefObject<HTMLInputElement | null>;
   readonly environmentId: EnvironmentId | null;
   readonly botId: string;
   readonly botName: string;
@@ -39,7 +40,8 @@ export function NewChatDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onStart: (title: string) => void;
 }): JSX.Element {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const internalInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = props.fieldRef ?? internalInputRef;
   const keyboardInset = useKeyboardInset();
   const errorId = useId();
   const openChats = useBotOpenChatNames(props.environmentId, props.botId);

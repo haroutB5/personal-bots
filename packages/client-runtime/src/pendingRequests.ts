@@ -125,7 +125,7 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
   const approvals = new Map<ApprovalRequestId, PendingApproval>();
   const userInputs = new Map<ApprovalRequestId, PendingUserInput>();
   const closedApprovals = new Set<ApprovalRequestId>();
-  const closedUserInputs = new Set<ApprovalRequestId>();
+  const closedUserInputs = new Map<ApprovalRequestId, string>();
 
   // Request IDs are unique. A terminal event stays final even when provider
   // sequences and server-generated activities arrive in a different order.
@@ -161,7 +161,8 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
         ...(options.length > 0 ? { options } : {}),
       });
     } else if (activity.kind === "user-input.requested") {
-      if (closedUserInputs.has(requestId)) continue;
+      if ((closedUserInputs.get(requestId) ?? "") >= activity.createdAt) continue;
+      if ((userInputs.get(requestId)?.createdAt ?? "") > activity.createdAt) continue;
       const questions = parseQuestions(payload.questions);
       if (questions.length === 0) continue;
       userInputs.set(requestId, {
@@ -182,8 +183,12 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
       (activity.kind === "provider.user-input.respond.failed" &&
         isStaleRequestFailure(activity.kind, payload))
     ) {
-      closedUserInputs.add(requestId);
-      userInputs.delete(requestId);
+      if ((closedUserInputs.get(requestId) ?? "") < activity.createdAt) {
+        closedUserInputs.set(requestId, activity.createdAt);
+      }
+      if ((userInputs.get(requestId)?.createdAt ?? "") <= activity.createdAt) {
+        userInputs.delete(requestId);
+      }
     }
   }
 
@@ -215,8 +220,8 @@ export function deriveUserInputHistory(
     if (!payload || !isRequestId(payload.requestId)) continue;
     const questions = parseQuestions(payload.questions);
     if (questions.length === 0) continue;
-    // First ask wins: a re-delivered request keeps the time it was first shown.
-    if (asked.has(payload.requestId)) continue;
+    // A provider can reuse an ID for a later question.
+    if ((asked.get(payload.requestId)?.createdAt ?? "") >= activity.createdAt) continue;
     asked.set(payload.requestId, {
       requestId: payload.requestId,
       createdAt: activity.createdAt,

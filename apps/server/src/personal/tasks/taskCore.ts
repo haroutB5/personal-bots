@@ -90,10 +90,20 @@ export const makeTaskCore = () =>
      * is empty and the attempt is closed by its expired lease anyway.
      */
     const backgroundByThread = new Map<string, BackgroundWait>();
+    /**
+     * Thread -> active attempt that asked the user for browser help (or a
+     * desktop pause, which parks the same way). Its turn ends where it stands:
+     * the reply names the wait, but the wait is the card, never background
+     * work, so the attempt must close or the queued resume can never start.
+     * Keyed by attempt so a later attempt on the same thread is never mistaken
+     * for the parked one (QA's FIX on a0fdc17af83b).
+     */
+    const helpParkedAttempts = new Map<string, string>();
 
     const releaseThread = (threadId: string, nowMs: number) => {
       activeThreadIds.delete(threadId);
       backgroundByThread.delete(threadId);
+      helpParkedAttempts.delete(threadId);
       settledThreadAtMs.set(threadId, nowMs);
     };
 
@@ -595,6 +605,7 @@ export const makeTaskCore = () =>
       engine,
       externalSlots,
       fail,
+      helpParkedAttempts,
       idleWaitThreadIds,
       latestContextTokens,
       leaseOwner,

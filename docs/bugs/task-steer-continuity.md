@@ -52,6 +52,20 @@ concurrent steers and errors from superseded prompts cannot settle the task.
 A failed final replacement still reports failure. Explicit Stop still aborts
 the logical turn, including during the handoff or busy-prompt retry.
 
+Pre-release QA found a second race in 1.66.94: task `ea3327a6` accepted a
+steer at 22:20:26.079Z, then failed at 22:20:37.278Z with `Session already
+has an active ACP prompt` while its shell command was still running. The
+runtime's `cancel` interrupted the local RPC fiber before the remote prompt
+acknowledged cancellation. That released the turn queue early; the new
+prompt exhausted its 40 retries at 250 ms while the old tool still owned the
+remote session.
+
+Steering now uses `requestCancel`: it sends `session/cancel` without
+interrupting the local RPC. The existing turn queue waits for the real
+prompt response before submitting any replacement. The agent's response
+gates the handoff. Explicit Stop still uses `cancel`, so it can interrupt
+that wait immediately. No other adapter uses the new operation.
+
 Rollback: `PERSONAL_TASK_STEER_CONTINUITY=off` restores the previous cancel,
 abort, new-turn behavior. The switch is checked for every send. No migration,
 task concurrency change, model call, live-task reproduction or deployment is
@@ -77,6 +91,25 @@ Native ACP checks cover concurrent steers, a failed middle setup followed by
 later work, a failed final setup, cancelled-prompt rejection, busy-prompt
 retry and explicit Stop.
 
+`NativeAcpSteerHandoff.test.ts` holds a real child command behind a release
+file. It accepts cancellation but keeps the prompt busy for at least 11
+seconds, beyond the old retry window. Before the fix the test fails because
+the replacement emits `turn.completed` while the command is still held.
+After the fix, one steer and two concurrent steers retain one turn, emit
+one completion, and send exactly one prompt per requested update, with no
+busy retries. Explicit Stop during the same held handoff aborts once and
+submits no replacement. The three new scenarios and all existing native
+adapter and Stop/retry tests pass (18 tests).
+
+Waiting for the real response also delivers the cancelled prompt's closing
+text, which carries the logical turn id. The adapter drops assistant text
+while a steer is pending and no prompt owns the turn, so the steered reply
+is only the new prompt's answer. Tool updates still pass through.
+
+QA's original report is `C:/Users/Ht/.personal-bots/qa/hbots-16694-pre/REPORT.md`.
+The deterministic before/after logs and final release proof are in
+`C:/Users/Ht/.personal-bots/qa/hbots-16694-acp-race/`.
+
 The full fork gate passed on this branch:
 
 | Check                                        | Result                  |
@@ -101,9 +134,11 @@ and `final-gate-summary.json` are in
 
 ## Combining branches
 
-Based on `a81db54eef` (`release/hbots-16693`). Only production file changed:
-`apps/server/src/provider/Layers/NativeAcpAdapter.ts`. Task settling and
-background policy are untouched.
+Based on `a81db54eef` (`release/hbots-16693`). The steer changes are in
+`NativeAcpAdapter.ts` and the request-only cancellation operation in
+`acp/AcpSessionRuntime.ts`. Task settling and background policy are
+untouched by the steer fix. The final 1.66.94 branch combines them with the
+separate task wait changes.
 
 `fix/hbots-task-stated-wait` changes task settling and adds tests later in
 `PersonalTaskService.test.ts`; this branch adds steering tests around the

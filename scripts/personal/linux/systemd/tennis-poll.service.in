@@ -1,0 +1,13 @@
+[Unit]
+Description=Tennis poll (weekly Friday 12:00 local)
+ConditionPathExists=@AI@/tennis-poll/src/run.ts
+
+[Service]
+Type=oneshot
+WorkingDirectory=@AI@/tennis-poll
+ExecStart=/usr/bin/bash -c 'exec @NODE@ src/run.ts poll >> data/runtime/task.out.log 2>&1'
+TimeoutStartSec=900
+Nice=10
+
+[Install]
+WantedBy=default.target

@@ -825,7 +825,7 @@ describe("Fable follow-up (1.60.21): tool texts match how memory reaches bots", 
 
   it("save_memory says a preference for yourself waits for a tap and sensitive chats save nothing", () => {
     const description = PersonalToolkit.tools.save_memory.description ?? "";
-    expect(description).toContain("A preference (even one for yourself only)");
+    expect(description).toContain("You never save a preference yourself, even for you alone");
     expect(description).toContain("not even for yourself");
   });
 });
@@ -1726,8 +1726,8 @@ describe("1.60.42: a rule the user states is saved at once, from their own words
 
   it("the tools say a rule is saved at once, in the user's own words", () => {
     const save = PersonalToolkit.tools.save_memory.description ?? "";
-    expect(save).toContain("saved at once, with a 'Saved a rule' line and Undo");
-    expect(save).toContain("in the user's own words");
+    expect(save).toContain("'Saved a rule' and Undo");
+    expect(save).toContain("are the user's own, so write it in their words");
     const forget = PersonalToolkit.tools.forget_memory.description ?? "";
     expect(forget).toContain("forgotten at once, with a line and an Undo");
   });

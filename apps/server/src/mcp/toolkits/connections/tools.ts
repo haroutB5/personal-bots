@@ -43,11 +43,11 @@ export type ListConnectionsResult = typeof ListConnectionsResult.Type;
 export const ConnectionCallInput = Schema.Struct({
   operation: TrimmedNonEmptyString.annotate({
     description:
-      "Exact operation name from list_connections, e.g. 'github.create_repository'. Nothing else runs.",
+      "Exact operation name from list_connections, e.g. 'github.create_repository'; nothing else runs.",
   }),
   arguments: Schema.Record(Schema.String, Schema.Unknown).annotate({
     description:
-      "Arguments exactly as the operation's schema describes them. Extra or missing fields are refused.",
+      "Arguments exactly as the operation's schema; extra or missing fields are refused.",
   }),
 });
 export type ConnectionCallInput = typeof ConnectionCallInput.Type;
@@ -67,20 +67,18 @@ export type ConnectionCallResult = typeof ConnectionCallResult.Type;
 export const CreateAppInput = Schema.Struct({
   appName: TrimmedNonEmptyString.annotate({
     description:
-      "The app's name. Used for the GitHub repository and the Vercel project, so letters, digits, dot, dash and underscore only.",
+      "App name, used for the GitHub repository and Vercel project: letters, digits, dot, dash, underscore only.",
   }),
   visibility: Schema.Literals(["private", "public"]).annotate({
-    description:
-      "Whether the GitHub repository is readable by anyone. Ask the user; never choose for them.",
+    description: "Whether anyone can read the GitHub repository. Ask the user; never choose.",
   }),
   deploymentTarget: Schema.Literals(["preview", "production"]).annotate({
-    description:
-      "Which environment to deploy. There is no default: ask the user which one they mean.",
+    description: "Environment to deploy. No default: ask the user.",
   }),
   storage: Schema.optional(
     Schema.Array(Schema.Literals(["postgres", "redis"])).annotate({
       description:
-        "Databases the app needs, if any. 'postgres' is a Neon database for records the app keeps; 'redis' is an Upstash cache for short-lived values. Each one is created on its free tier and its connection details are put into the app's environment by the server, never shown to you. Omit it for an app that stores nothing; ask the user rather than guessing, because each one is a real resource in their account.",
+        "Databases needed. 'postgres' is Neon (records); 'redis' is Upstash (short-lived cache). Each is a real free-tier resource in the user's account, so ask the user rather than guess; omit if the app stores nothing. Connection details go into the app's environment, never to you.",
     }),
   ),
 });
@@ -121,7 +119,7 @@ export type CreateAppStatusInput = typeof CreateAppStatusInput.Type;
 
 const CreateAppTool = Tool.make("create_app", {
   description:
-    "Build a new web app from a pinned template and put it live: a GitHub repository, a first commit, a Vercel project, its environment variables, a deployment, and a check that the URL actually answers. The server writes one plan describing every account, name, target and cost, and the user approves it once; you get status 'awaiting_approval', you say in one sentence what you are about to build, and you end your turn. You are resumed automatically when they answer, and the whole run then happens without further questions. Call it again with the same arguments to continue; the same plan is never approved twice. Changing any argument is a different plan and needs a new approval.",
+    "Build a new web app from a pinned template and deploy it: GitHub repository, first commit, Vercel project, environment variables, deployment, and a check that the URL answers. The server writes one plan and the user approves it once: you get status 'awaiting_approval', say in one sentence what you will build, and end your turn. You are resumed when they answer and the run then needs no more questions. Call again with the same arguments to continue (the same plan is never approved twice); changing any argument is a new plan needing new approval.",
   parameters: CreateAppInput,
   success: CreateAppResult,
   failure: ConnectionsToolFailure,
@@ -137,7 +135,7 @@ const CreateAppTool = Tool.make("create_app", {
 
 const CreateAppStatusTool = Tool.make("create_app_status", {
   description:
-    "Read where a create_app run got to: which steps are done, what each one created, and the app's URL once one answered. Use this to tell the user what exists after a run stopped part-way; do not use it to poll, you are resumed when the run ends.",
+    "Read how far a create_app run got: steps done, what each created, and the app URL once live. Use it to report what exists after a run stopped part-way. Do not poll: you are resumed when the run ends.",
   parameters: CreateAppStatusInput,
   success: CreateAppResult,
   failure: ConnectionsToolFailure,
@@ -151,7 +149,7 @@ const CreateAppStatusTool = Tool.make("create_app_status", {
 
 const ListConnectionsTool = Tool.make("list_connections", {
   description:
-    "List the services the user has connected (GitHub, Vercel, Neon, Upstash) and exactly which operations you may ask for, with their argument schemas. Only connected services appear. You cannot connect, switch or change a connection yourself; only the user can, in Settings.",
+    "List connected services (GitHub, Vercel, Neon, Upstash) and the operations you may ask for, with argument schemas. Only the user can connect or change a connection, in Settings.",
   success: ListConnectionsResult,
   failure: ConnectionsToolFailure,
   dependencies,
@@ -164,7 +162,7 @@ const ListConnectionsTool = Tool.make("list_connections", {
 
 const ConnectionCallTool = Tool.make("connection_call", {
   description:
-    "Run one reviewed operation against a connected service. The server validates your arguments, decides from them whether the user must approve, holds the credential itself and returns only reviewed fields; you never see or handle a token. Anything that writes, deploys, publishes, runs SQL or runs a Redis command waits for the user: you get status 'awaiting_approval', you say in one sentence what you want to do, and you end your turn. You are resumed automatically when they answer. Do not retry a declined action or work around it.",
+    "Run one reviewed operation on a connected service. The server holds the credential and returns only reviewed fields; you never see or handle a token. Anything that writes, deploys, publishes, or runs SQL or Redis commands needs user approval: you get status 'awaiting_approval', say in one sentence what you want to do, and end your turn. You are resumed when they answer. Do not retry a declined action or work around it.",
   parameters: ConnectionCallInput,
   success: ConnectionCallResult,
   failure: ConnectionsToolFailure,

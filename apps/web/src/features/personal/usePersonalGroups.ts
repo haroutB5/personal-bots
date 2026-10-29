@@ -19,7 +19,7 @@ import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
 import { feedStartsWith } from "./feedStartsWith";
 import { groupRelayThreadIds } from "./groupModel";
-import { personalBotsList } from "./usePersonalBots";
+import { personalBotsList, personalBotsListInput } from "./usePersonalBots";
 
 /** Groups and their live rounds for one environment. */
 export const personalGroupsList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -119,7 +119,9 @@ const refreshGroupsAndBots = (
 ) =>
   Effect.sync(() => {
     registry.refresh(personalGroupsList({ environmentId: target.environmentId, input: {} }));
-    registry.refresh(personalBotsList({ environmentId: target.environmentId, input: {} }));
+    registry.refresh(
+      personalBotsList({ environmentId: target.environmentId, input: personalBotsListInput() }),
+    );
   });
 
 export const personalGroupCreate = createEnvironmentRpcCommand(connectionAtomRuntime, {

@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -60,6 +61,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { perfOptimizationOn } from "./perfFlags";
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
+import { useLazyThreadShells } from "~/state/lazyThreadShells";
 import { AllChatsCount } from "./AllChatsCount";
 import { ArchivedChatBar } from "./ArchivedChatBar";
 import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
@@ -167,7 +169,7 @@ import { setPersonalPreference, usePersonalPreference } from "./personalPreferen
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
-import { readChatNotice } from "./chatNotices";
+import { fallbackTookOverSinceLastOwnerMessage, readChatNotice } from "./chatNotices";
 import {
   isChatUnread,
   useChatSeenState,
@@ -197,6 +199,7 @@ import { usePrewarmChatSession } from "./usePrewarmChatSession";
 import { mergeTaskLists } from "./taskPresentation";
 import {
   personalBotArchiveThread,
+  usePersonalArchivedLinks,
   usePersonalBotsList,
   usePersonalEnvironmentId,
 } from "./usePersonalBots";
@@ -266,12 +269,34 @@ export function ConversationScreen({
   // An archived chat opens read-only: the history, an "Archived" bar with
   // Unarchive and Delete in the composer's place, and nothing that starts a
   // turn or a provider session.
-  const link = list.data?.threads.find((candidate) => candidate.threadId === threadIdParam) ?? null;
-  const archived =
+  const activeLink =
+    list.data?.threads.find((candidate) => candidate.threadId === threadIdParam) ?? null;
+  const needsArchiveLookup = list.data?.archivedCounts !== undefined && activeLink === null;
+  const archivedLinks = usePersonalArchivedLinks(
+    environmentId,
+    needsArchiveLookup ? { threadId: threadIdParam } : null,
+    list.dataUpdatedAt,
+  );
+  const link =
+    activeLink ??
+    archivedLinks.data?.threads.find((candidate) => candidate.threadId === threadIdParam) ??
+    null;
+  // Read-only only while the loaded list says this chat is not an active one
+  // and its archived link is still on the way. Before the list arrives the
+  // chat's shell decides, as before slim lists, so a cold deep link's composer
+  // does not wait for personalBots.list.
+  const archiveUnresolved = needsArchiveLookup && !archivedLinks.isSuccess;
+  const isArchived =
     (threadShell?.archivedAt ?? null) !== null || (link?.archivedAt ?? null) !== null;
+  const archived = archiveUnresolved || isArchived;
+  // The connect-time shell leaves idle archived chats out: load this one's.
+  useLazyThreadShells(
+    environmentId,
+    (link?.archivedAt ?? null) !== null ? { threadIds: [threadIdParam] } : null,
+  );
   // Reopened by a relaunch but deleted or archived since (deleting a bot
   // deletes its chats): back to Bots without a word.
-  useLeaveResumedChatIfGone(`/bots/${botId}/${threadIdParam}`, status === "deleted" || archived);
+  useLeaveResumedChatIfGone(`/bots/${botId}/${threadIdParam}`, status === "deleted" || isArchived);
 
   // A cold deep link (notification tap, PWA relaunch) makes this the first
   // screen: nothing else has loaded the bots list, and a query that failed
@@ -479,7 +504,9 @@ export function ConversationScreen({
   const sameThreadAsSeen = seenUserInputs.threadId === threadId;
   if (
     !sameThreadAsSeen ||
-    userInputs.some((request) => !seenUserInputs.requests.has(request.requestId))
+    userInputs.some(
+      (request) => seenUserInputs.requests.get(request.requestId)?.createdAt !== request.createdAt,
+    )
   ) {
     const requests = new Map(sameThreadAsSeen ? seenUserInputs.requests : []);
     for (const request of userInputs) requests.set(request.requestId, request);
@@ -501,7 +528,10 @@ export function ConversationScreen({
     // A thread switch that has not settled yet must not show the previous
     // chat's cards.
     if (seenUserInputs.threadId === threadId) {
-      for (const [requestId, request] of seenUserInputs.requests) asked.set(requestId, request);
+      for (const [requestId, request] of seenUserInputs.requests) {
+        if ((asked.get(requestId)?.createdAt ?? "") < request.createdAt)
+          asked.set(requestId, request);
+      }
     }
     return deriveQuestionCards(userInputs, asked, deriveUserInputResolutions(activities));
   }, [activities, seenUserInputs, threadId, userInputs]);
@@ -1045,6 +1075,9 @@ export function ConversationScreen({
     readonly isOpenChat: boolean;
   } | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
+  const renamePrimeRef = useRef<HTMLInputElement>(null);
+  const renameFieldRef = useRef<HTMLInputElement>(null);
+  const skipSettingsReturnFocus = useRef(false);
   const chatTitle = threadShell?.title ?? thread?.title;
 
   // Chat chips: the owner's other chats with this bot, one tap away in the
@@ -1135,6 +1168,9 @@ export function ConversationScreen({
     state: conversationState,
     session: thread?.session ?? null,
     lastMessageTurnStarted: retryTarget?.turnStarted ?? null,
+    // A limit that already moved the bot to its fallback model: its line is in
+    // the transcript and its reply is on the way, so no red "Couldn't send".
+    fallbackTookOver: fallbackTookOverSinceLastOwnerMessage(messages),
   });
   // What stops the composer from sending at all: the bot's provider is down.
   // A laptop that is away does not: a message sent then is saved on this device
@@ -1195,6 +1231,8 @@ export function ConversationScreen({
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const settingsOpener = useRef<HTMLElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const skipMenuReturnFocus = useRef(false);
   const holdHintId = useId();
   const openSettings = useCallback((target: string, opener: HTMLElement | null) => {
     settingsOpener.current =
@@ -1272,8 +1310,8 @@ export function ConversationScreen({
   };
   const onSettingsSelect = async (id: Exclude<ChatSettingsRowId, "snooze">) => {
     const target = settingsTarget;
-    setSettingsFor(null);
     if (target === null) return;
+    if (id !== "rename") setSettingsFor(null);
     switch (id) {
       case "pin":
       case "unpin":
@@ -1286,12 +1324,18 @@ export function ConversationScreen({
         return;
       }
       case "rename":
-        setRenameTarget({
-          threadId: ThreadId.make(target.threadId),
-          title: target.title,
-          isOpenChat: target.isOpenChat,
+        renamePrimeRef.current?.focus();
+        skipSettingsReturnFocus.current = true;
+        flushSync(() => {
+          setSettingsFor(null);
+          setRenameTarget({
+            threadId: ThreadId.make(target.threadId),
+            title: target.title,
+            isOpenChat: target.isOpenChat,
+          });
+          setRenameOpen(true);
         });
-        setRenameOpen(true);
+        renameFieldRef.current?.focus();
         return;
       case "wrapup":
         if (target.isOpenChat) {
@@ -1520,7 +1564,13 @@ export function ConversationScreen({
             )}
           </button>
         ) : null}
-        <Menu>
+        <Menu
+          open={chatMenuOpen}
+          onOpenChange={(open) => {
+            if (open) skipMenuReturnFocus.current = false;
+            setChatMenuOpen(open);
+          }}
+        >
           <MenuTrigger
             render={
               <button
@@ -1533,7 +1583,11 @@ export function ConversationScreen({
           >
             <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </MenuTrigger>
-          <MenuPopup align="end" className="personal-app personal-menu min-w-48">
+          <MenuPopup
+            align="end"
+            finalFocus={() => (skipMenuReturnFocus.current ? false : undefined)}
+            className="personal-app personal-menu min-w-48"
+          >
             {interruptInput !== null ? (
               <MenuItem onClick={() => void onStopFromMenu()}>Stop</MenuItem>
             ) : null}
@@ -1549,7 +1603,10 @@ export function ConversationScreen({
             {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
             {/* The one door to the chat's own actions (pin, snooze, rename, archive...): the sheet
                 holds them, so the menu keeps no copies. */}
-            <MenuItem onClick={() => openSettings(threadIdParam, menuButtonRef.current)}>
+            <MenuItem
+              disabled={archiveUnresolved}
+              onClick={() => openSettings(threadIdParam, menuButtonRef.current)}
+            >
               Chat settings…
               <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)]">
                 {chatSettingsHint(chipsShown)}
@@ -1557,7 +1614,7 @@ export function ConversationScreen({
             </MenuItem>
             {/* The second door to a call, and the one that also works while the
                 field has text in it (spec 2). */}
-            {bot !== null && voice !== null && botVoiceCallsEnabled(bot) ? (
+            {!archived && bot !== null && voice !== null && botVoiceCallsEnabled(bot) ? (
               <MenuItem
                 disabled={voice.call !== null && voice.call.threadId !== threadId}
                 onClick={startVoiceCall}
@@ -1567,7 +1624,17 @@ export function ConversationScreen({
             ) : null}
             <MenuSeparator />
             {bot !== null ? (
-              <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
+              <MenuItem
+                disabled={newChat.starting}
+                onClick={(event) => {
+                  (
+                    event as typeof event & { preventBaseUIHandler?: () => void }
+                  ).preventBaseUIHandler?.();
+                  skipMenuReturnFocus.current = true;
+                  newChat.open();
+                  setChatMenuOpen(false);
+                }}
+              >
                 New chat
               </MenuItem>
             ) : null}
@@ -1578,6 +1645,7 @@ export function ConversationScreen({
                   environmentId={environmentId}
                   botId={botId}
                   links={list.data.threads}
+                  archivedCount={list.data.archivedCounts?.[botId]}
                 />
               ) : null}
             </MenuItem>
@@ -1598,6 +1666,8 @@ export function ConversationScreen({
       {settingsTarget !== null && settingsRows !== null ? (
         <ChatSettingsSheet
           returnFocusTo={settingsOpener}
+          primingInputRef={renamePrimeRef}
+          skipReturnFocus={skipSettingsReturnFocus}
           header={chatSettingsHeader(settingsTarget, now.getTime())}
           groups={settingsRows}
           chatName={settingsTarget.title}
@@ -1608,11 +1678,15 @@ export function ConversationScreen({
       ) : null}
       <RenameChatDialog
         open={renameOpen}
+        fieldRef={renameFieldRef}
         initialTitle={renameChatInitialTitle(renameTarget?.title ?? chatTitle)}
         takenTitles={openChatNames
           .filter((chat) => chat.threadId !== (renameTarget?.threadId ?? threadId))
           .map((chat) => chat.title)}
-        onOpenChange={setRenameOpen}
+        onOpenChange={(open) => {
+          setRenameOpen(open);
+          if (!open) skipSettingsReturnFocus.current = false;
+        }}
         onSave={async (title) => {
           const target = renameTarget;
           if (target === null) return null;
@@ -1624,8 +1698,6 @@ export function ConversationScreen({
         }}
       />
 
-      <ProgressNoteLine note={progressNote} />
-
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>
           <ChatFilePreviewProvider
@@ -1636,6 +1708,7 @@ export function ConversationScreen({
               environmentId={environmentId}
               threadRef={threadRef}
               showContextUsed
+              statusLine={progressNote === null ? null : <ProgressNoteLine note={progressNote} />}
               items={items}
               pending={visiblePending}
               queued={queuedMessages.rows}
@@ -1716,7 +1789,20 @@ export function ConversationScreen({
               onHide={() => setPersonalPreference("showRoutinesStrip", false)}
             />
           ) : null}
-          {archived ? (
+          {archiveUnresolved ? (
+            <div className="p-4 text-sm text-[var(--personal-text-secondary)]" role="status">
+              {archivedLinks.error ? (
+                <>
+                  Could not check this chat.{" "}
+                  <button type="button" onClick={archivedLinks.refresh}>
+                    Try again
+                  </button>
+                </>
+              ) : (
+                "Loading chat…"
+              )}
+            </div>
+          ) : archived ? (
             <ArchivedChatBar
               hint="Unarchive to send messages again."
               unarchiving={unarchiving}

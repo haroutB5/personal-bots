@@ -1,4 +1,4 @@
-// @effect-diagnostics preferSchemaOverJson:off - the fake transport returns the raw Gemini body, which is the point of the test.
+// @effect-diagnostics preferSchemaOverJson:off nodeBuiltinImport:off - the fake transport returns the raw Gemini body, which is the point of the test, and the test deletes its own temp root with plain node fs.
 /**
  * Settings > Voice calls: one short clip per voice, made once with the saved
  * key and cached on disk after that (spec section 8, Astra review finding 9).
@@ -8,8 +8,10 @@
  * is one of the allow-listed thirty (it can never ask Google for anything
  * else).
  */
-import * as NodeCrypto from "node:crypto";
-import { describe, expect, it } from "@effect/vitest";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -116,13 +118,24 @@ const withService = <A, E, R>(
     return yield* body(service, options.baseDir);
   }).pipe(Effect.provide(makeHarness(options)));
 
+/** Test roots this file made, removed after each test so a run leaves none. */
+const tempRoots: Array<string> = [];
+
 /**
- * A fresh data root per test, so one test's cache cannot answer another's. It
- * lives in the machine's temp folder, never in the repo: a test that leaves a
- * cache behind must not be able to commit it.
+ * A fresh data root per test, so one test's cache cannot answer another's.
+ * It lives in the machine's temp folder (`os.tmpdir()` follows TMPDIR on Linux,
+ * so it never lands in the repo) and is removed again by `afterEach`.
  */
-const tempBaseDir = () =>
-  `${process.env["TEMP"] ?? process.env["TMP"] ?? "."}/hbots-voice-sample-${NodeCrypto.randomUUID()}`;
+const tempBaseDir = () => {
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-voice-sample-"));
+  tempRoots.push(dir);
+  return dir;
+};
+
+afterEach(() => {
+  for (const dir of tempRoots.splice(0)) NodeFS.rmSync(dir, { recursive: true, force: true });
+});
+
 describe("PersonalVoiceSampleService", () => {
   it.effect("makes one clip for an allowed voice, with the fixed text only", () => {
     const calls: Array<HttpCall> = [];

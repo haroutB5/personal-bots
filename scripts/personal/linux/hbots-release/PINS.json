@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "files": {
+    "lib/hash.mjs": "a7d5e91da28c5abb37c1dd15c0fc3b193e7533195e7f974c53acb1f63ee4d734",
+    "lib/dbcheck.mjs": "81ba177a9b7f7a0217893af5826ead52a0bd42aac3dff876ee7311307999d2d2",
+    "lib/fixture.mjs": "0bee9625bcae9382c2b63aad0975a8ce002044f73500ac5ef54e97ec3963a116",
+    "lib/idle.mjs": "5f58b3f3d19808a663d89c0d474b151dd72307713de4b7771d1116170b7f4fe2",
+    "lib/backup.mjs": "9d5367aebc3b7f06d62f658d1aab3141cb8411b3f0ddece52636a713a20d9be6",
+    "lib/seal.mjs": "3800d2b066731fa2755efcaee90db19d0a7c7043ec213ab3b44ce58dc32108cb",
+    "tools/check-release-notes.mjs": "b1501431a607f4e960205f500eb7a7777649d59dacf6d3ee523a004ce5cd2d06",
+    "tools/check-gate-evidence.mjs": "a397e27254c5dac7cbb7c042911ee9a7cc5de70f3adb8ea7dd5ce7fe640c4510",
+    "tools/gate-common.mjs": "33f6bf330848aa42dc6eb1ee9d94cc7eefd509ba781e95dc2497f0faadbc7018",
+    "tools/ops-common.mjs": "197fcb32a02ca5da3c6da2a0caeb4cfe22a05375e1d36b4dc6f14eb0f3cc6377",
+    "tools/notify-release.mjs": "a7f1b2f9156ff4f362cb332bfcdeda0b0518b2b1a58897696d99dfff27b71942"
+  }
+}

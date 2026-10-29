@@ -483,7 +483,7 @@ export const DeviceToolOpenInput = Schema.Struct({
   deviceId: Schema.optional(
     DeviceId.annotate({
       description:
-        "Simulator udid or emulator serial from device_list. Omit to use the booted device for the platform, or the most recently used one.",
+        "Simulator udid or emulator serial from device_list. Omit for the booted device of the platform, else the most recently used.",
     }),
   ),
   platform: Schema.optional(
@@ -496,7 +496,7 @@ export const DeviceToolOpenInput = Schema.Struct({
   ),
 }).annotate({
   description:
-    "Boots the device if needed, starts its live stream, and opens the Device panel so the user can watch. Returns how to drive it with the agent-device CLI.",
+    "Boots the device if needed and opens the Device panel. Returns how to drive it with the agent-device CLI.",
 });
 export type DeviceToolOpenInput = typeof DeviceToolOpenInput.Type;
 
@@ -515,8 +515,7 @@ export type DeviceToolOpenResult = typeof DeviceToolOpenResult.Type;
 export const DeviceToolTargetInput = Schema.Struct({
   deviceId: Schema.optional(
     DeviceId.annotate({
-      description:
-        "Device from device_list. Omit to use the device most recently opened in this thread.",
+      description: "Device from device_list. Omit for the most recently opened in this thread.",
     }),
   ),
   hostId: Schema.optional(DeviceHostId),

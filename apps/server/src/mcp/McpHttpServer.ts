@@ -20,6 +20,7 @@ import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PersonalBotRepository from "../personal/PersonalBotRepository.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { toolFailureText } from "../expectedToolRefusals.ts";
 import { guardedToolkit, guardMcpServer } from "./McpSecretGuard.ts";
 import { normalizeJsonResult } from "./jsonResult.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -674,13 +675,8 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
 });
 
 /** The reason a desktop tool refused, for the model; any other failure keeps only its tag. */
-const desktopFailureText = (error: unknown): string | null =>
-  typeof error === "object" &&
-  error !== null &&
-  "reason" in error &&
-  typeof (error as { readonly reason: unknown }).reason === "string"
-    ? (error as { readonly reason: string }).reason
-    : null;
+/** A refusal's own sentence, or a clear one for a bad tool argument. */
+const desktopFailureText = toolFailureText;
 
 /**
  * Desktop tools answer with an optional screenshot, sent as image content so

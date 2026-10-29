@@ -1,14 +1,20 @@
 import * as Schema from "effect/Schema";
 
+import { ThreadId } from "./baseSchemas.ts";
+import { PersonalBotId } from "./personalBots.ts";
+
 /**
- * The user's real Windows desktop, driven by one bot at a time. A bot holds it
- * from its first desktop action until the turn ends, it calls
- * `computer_release`, it goes idle, or the user stops it (hotkey or app).
- * Other bots queue behind the holder.
+ * The user's real desktop, driven by one bot at a time. A bot holds it from
+ * its first desktop action until the turn ends, it calls `computer_release`,
+ * it goes idle, or the user stops it (hotkey or app). Other bots queue behind
+ * the holder. Windows and Hyprland/Omarchy both speak this contract; the
+ * `stopHotkey` the server reports is the one that works on its machine.
  */
 
-/** The key that stops a bot and takes the PC back (Ctrl+Alt+Esc works too). */
+/** The key that stops a bot and takes the PC back on Windows. */
 export const PERSONAL_DESKTOP_STOP_HOTKEY = "Esc";
+/** The Linux stop chord (SPEC.md 8.4); the driver fills `stopHotkey` with it. */
+export const PERSONAL_DESKTOP_LINUX_STOP_HOTKEY = "Super+Shift+F12";
 
 export const PersonalDesktopClaimant = Schema.Struct({
   threadId: Schema.String,
@@ -44,16 +50,84 @@ export const PersonalDesktopStop = Schema.Struct({
 });
 export type PersonalDesktopStop = typeof PersonalDesktopStop.Type;
 
+/** The window the Desktop bar names ("Omarchy laptop · <title>"). */
+export const PersonalDesktopFocusedWindow = Schema.Struct({
+  title: Schema.String,
+  /** The window class, for the driver and the diagnostics line only. */
+  windowClass: Schema.optional(Schema.String),
+});
+export type PersonalDesktopFocusedWindow = typeof PersonalDesktopFocusedWindow.Type;
+
 export const PersonalDesktopStatus = Schema.Struct({
-  /** False where the server cannot drive a desktop (not Windows). */
+  /** False where the server cannot drive a desktop. */
   available: Schema.Boolean,
+  /** Why the desktop is unavailable; shown in the Computer tab instead of hiding it. */
+  unavailableReason: Schema.optional(Schema.String),
   holder: Schema.NullOr(PersonalDesktopHolder),
   /** Bots waiting for the PC, first in line first. */
   waiting: Schema.Array(PersonalDesktopClaimant),
   lastStop: Schema.NullOr(PersonalDesktopStop),
   stopHotkey: Schema.String,
+  /** The focused window, when the driver can tell (Windows and Hyprland). */
+  focusedWindow: Schema.optional(Schema.NullOr(PersonalDesktopFocusedWindow)),
 });
 export type PersonalDesktopStatus = typeof PersonalDesktopStatus.Type;
+
+/**
+ * One thing a bot did on the desktop: the Computer tab's activity row. The
+ * same shape as a browser event, plus `source`, so the UI can merge both
+ * timelines. Typing carries a character count, never the text; a held key
+ * carries the key name, never a password.
+ */
+export const PersonalDesktopActivityKind = Schema.Literals([
+  "click",
+  "drag",
+  "scroll",
+  "move",
+  "type",
+  "key",
+  "hold",
+  "screenshot",
+  "zoom",
+  "control",
+  "release",
+  "stop",
+  "help",
+]);
+export type PersonalDesktopActivityKind = typeof PersonalDesktopActivityKind.Type;
+
+export const PersonalDesktopActivityEvent = Schema.Struct({
+  id: Schema.String,
+  kind: PersonalDesktopActivityKind,
+  summary: Schema.String,
+  status: Schema.Literals(["succeeded", "failed"]),
+  /**
+   * Why a step did not succeed when it was not a failure: the PC refused the
+   * input (`refused`). Optional so an older client still reads the event.
+   */
+  outcome: Schema.optional(Schema.Literals(["paused", "refused"])),
+  /** ISO-8601 UTC instant from the host clock. */
+  at: Schema.String,
+  threadId: Schema.NullOr(ThreadId),
+  botId: Schema.NullOr(PersonalBotId),
+  botName: Schema.NullOr(Schema.String),
+  source: Schema.Literal("desktop"),
+  /** Pointer actions: the point as a fraction (0..1) of the captured monitor. */
+  x: Schema.optional(Schema.Number),
+  y: Schema.optional(Schema.Number),
+  /** Pointer actions: the monitor index the point belongs to. */
+  monitor: Schema.optional(Schema.Number),
+  /** Typing only: how many characters, never which. */
+  chars: Schema.optional(Schema.Number),
+});
+export type PersonalDesktopActivityEvent = typeof PersonalDesktopActivityEvent.Type;
+
+/** `personalDesktop.activity` emits recent history first, then live items. */
+export const PersonalDesktopStreamItem = Schema.Union([
+  Schema.TaggedStruct("Recent", { events: Schema.Array(PersonalDesktopActivityEvent) }),
+  Schema.TaggedStruct("Activity", { event: PersonalDesktopActivityEvent }),
+]);
+export type PersonalDesktopStreamItem = typeof PersonalDesktopStreamItem.Type;
 
 export class PersonalDesktopError extends Schema.TaggedError<PersonalDesktopError>()(
   "PersonalDesktopError",

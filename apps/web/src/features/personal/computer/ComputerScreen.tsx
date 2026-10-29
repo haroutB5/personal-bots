@@ -1,16 +1,17 @@
 /**
- * Computer tab: the shared, server-owned Chrome. Mount it inside the personal
- * shell's Computer route: `<ComputerScreen onBackToChat={...} />`. It targets
- * the primary environment and needs nothing else from the router.
+ * Computer tab: one live view of the machine the bots work on. Mount it inside
+ * the personal shell's Computer route: `<ComputerScreen onBackToChat={...} />`.
+ * It targets the primary environment and needs nothing else from the router.
  *
- * The viewport socket is open only while the Browser segment is showing, the
- * document is visible and the browser is running; unmounting closes it, and
- * the server stops its screencast when no viewer is left. The Desktop segment
- * (the user's real PC, view only) follows the same rule for its own socket.
+ * The Browser (the shared, server-owned Brave) and the Desktop (the laptop's
+ * own screen) are two sources of one stage. Auto follows the bot between them;
+ * tapping a source pins it. Each source's socket is open only while it is
+ * showing (or just left), the document is visible and the source is running;
+ * unmounting closes it, and the server stops its screencast when no viewer is
+ * left.
  */
 import type {
   EnvironmentId,
-  PersonalBrowserActivityEvent,
   PersonalBrowserFile,
   PersonalBrowserFrameMeta,
   PersonalBrowserInputMessage,
@@ -18,22 +19,21 @@ import type {
   PersonalBrowserDialog,
 } from "@t3tools/contracts";
 import {
-  Bot,
+  Activity,
+  Hand,
+  ArrowLeft,
   Camera,
   ChevronLeft,
   Download,
-  FileCheck,
+  Eye,
   FileText,
   Film,
   Globe,
-  Hand,
   Keyboard,
   Lock,
   Maximize2,
   Monitor,
   MoreHorizontal,
-  MousePointer2,
-  MousePointerClick,
   Power,
   PowerOff,
   RotateCw,
@@ -44,6 +44,7 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
@@ -52,26 +53,50 @@ import {
   useState,
 } from "react";
 
-import { requestConfirmDialog } from "~/confirmDialog";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { requestConfirmDialog } from "~/confirmDialog";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { useThreadShells } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { usePersonalEnvironmentId, usePersonalBotsList } from "../usePersonalBots";
-import { usePersonalTasks } from "../usePersonalAutomation";
-import { useAtomCommand } from "~/state/use-atom-command";
 
 import { AvatarOrbitLayer } from "../BotAvatar";
 import { isThreadLive } from "../botSummaries";
-import { commandFailureMessage } from "../commandFeedback";
 import { inertOutside } from "../overlayInert";
+import { useSystemSummary } from "../SystemStatsLine";
+import { usePersonalTasks } from "../usePersonalAutomation";
+import { usePersonalBotsList, usePersonalEnvironmentId } from "../usePersonalBots";
+import { ComputerActivityCard, ComputerActivitySheet } from "./ComputerActivityCard";
+import { mergeActivity, latestBotAction } from "./computerActivity";
 import {
-  activeAgentLine,
+  browserLastStop,
+  desktopUnavailableReason,
+  readBrowserEvent,
+  readDesktopEvent,
+  egressPause,
+  helpKind,
+  helpOrigin,
+  type ComputerSource,
+} from "./computerContract";
+import { useComputerData } from "./computerData";
+import { ComputerControlTopBar, FollowToast, HelpStrip } from "./ComputerControlBar";
+import { ComputerActions, ComputerDriverCard } from "./ComputerDriverCard";
+import {
+  browserDriver,
+  buildQueue,
+  desktopDriver,
+  driverLine,
+  headerSubline,
+  stopLabelFor,
+  type HeaderTone,
+  type SourceDriver,
+} from "./computerDrivers";
+import { ComputerHelpCard, ComputerSensitiveCard } from "./ComputerHelpCard";
+import {
   type BackToChatTarget,
   canCloseBrowser,
   closeBrowserConfirmMessage,
   computerBackTarget,
-  describeComputerState,
   fitFrame,
   formatActivityTime,
   formatFileSize,
@@ -79,21 +104,30 @@ import {
   mapViewportPoint,
   planViewportRequest,
   takeRequestedComputerSegment,
-  type ComputerDotTone,
   type SentViewport,
   type ViewportBox,
 } from "./computerModel";
+import { ComputerSheet } from "./ComputerSheet";
+import {
+  AUTO_TAP_GRACE_MS,
+  followedToast,
+  loadSourcePrefs,
+  resolveSource,
+  saveSourcePrefs,
+  type SourcePrefs,
+} from "./computerSource";
+import { ICON_STROKE, ComputerSourceRow, type SourceBadge } from "./ComputerSourceRow";
 import {
   computerEnvironment,
   fileDownloadUrl,
   refreshComputerAccess,
   useComputerAccess,
-  useComputerFeed,
   viewportStreamUrl,
 } from "./computerState";
-import { DesktopPane } from "./DesktopPane";
-import { useDesktopStatus } from "./desktopState";
+import { IdleStage, OfflineStage } from "./ComputerStageNotice";
+import { DesktopPane, type DesktopControlState } from "./DesktopPane";
 import { createTimedNotice } from "./timedNotice";
+import { useBotFaces } from "./useBotFaces";
 import { connectViewport, type RemoteField, type ViewportClient } from "./viewportClient";
 
 export interface ComputerScreenProps {
@@ -110,9 +144,9 @@ export interface ComputerScreenProps {
    * there) and the title is a section heading under the chat's own h1.
    */
   readonly variant?: "screen" | "panel";
+  /** Open the Files tab (a link from an activity row). Without it the See-all sheet opens. */
+  readonly onOpenFiles?: () => void;
 }
-
-const ICON_STROKE = 1.75;
 
 /**
  * The Performance pane is its own chunk: its charts, model and feed together
@@ -130,19 +164,32 @@ const PerformancePane = lazy(() =>
  */
 const PERF_ORBIT = <AvatarOrbitLayer shape="roundedSquare" />;
 
-type ComputerSegment = "browser" | "desktop" | "files" | "performance";
-const SEGMENT_LABELS: Record<ComputerSegment, string> = {
-  browser: "Browser",
-  desktop: "Desktop",
-  files: "Files",
-  performance: "Performance",
+const NOW_TICK_MS = 5000;
+const TOAST_MS = 2400;
+const TAKE_ERROR_MS = 10_000;
+/** The source left in the background keeps its socket this long. */
+const BACKGROUND_PAUSE_MS = 10_000;
+const WIDE_PAGE_QUERY = "(min-width: 1100px)";
+const COMPACT_LANDSCAPE_QUERY = "(orientation: landscape) and (max-height: 540px)";
+const NO_DESK_CONTROL: DesktopControlState = {
+  wanted: false,
+  on: false,
+  notice: null,
+  canControl: false,
 };
-/**
- * The last chosen segment, for the app session only (spec section 0.1): a
- * trip to a chat and Back reopens Performance, a fresh launch starts on the
- * Browser.
- */
-let lastSegment: ComputerSegment | null = null;
+/** From 1100 px the Computer page is a stage column and a 340 px rail. */
+const D2_HEADER = "min-[1100px]:col-start-1 min-[1100px]:row-start-1";
+const D2_ROW = "min-[1100px]:col-start-1 min-[1100px]:row-start-2";
+const D2_STAGE = "min-[1100px]:col-start-1 min-[1100px]:row-start-3";
+const D2_RAIL = "min-[1100px]:col-start-2 min-[1100px]:row-span-3 min-[1100px]:row-start-1";
+const HEADER_DOT: Record<HeaderTone, string> = {
+  live: "var(--personal-live)",
+  pending: "var(--personal-review)",
+  problem: "var(--personal-error)",
+  idle: "var(--personal-text-tertiary)",
+  control: "var(--personal-control)",
+  review: "var(--personal-review)",
+};
 const MAX_RECONNECTS = 5;
 const SCROLL_SLOP_PX = 8;
 /** Rotation and the keyboard resize the box in steps; the page relays out once. */
@@ -171,13 +218,6 @@ const SPECIAL_KEYS = new Set([
   "PageUp",
   "PageDown",
 ]);
-
-const DOT_COLORS: Record<ComputerDotTone, string> = {
-  live: "var(--personal-live)",
-  pending: "var(--personal-review)",
-  problem: "var(--personal-error)",
-  idle: "var(--personal-text-tertiary)",
-};
 
 /**
  * The phone keyboard for the remote field. A password field gets the plain
@@ -224,16 +264,6 @@ function resetKeyboardField(field: HTMLInputElement): void {
   }
 }
 
-function StatusDot({ tone }: { readonly tone: ComputerDotTone }) {
-  return (
-    <span
-      aria-hidden
-      className="inline-block size-2 shrink-0 rounded-full"
-      style={{ backgroundColor: DOT_COLORS[tone] }}
-    />
-  );
-}
-
 function usePageVisible(): boolean {
   const [visible, setVisible] = useState(() => document.visibilityState === "visible");
   useEffect(() => {
@@ -248,27 +278,331 @@ export function ComputerScreen({
   onBackToChat,
   origin = null,
   variant = "screen",
+  onOpenFiles,
 }: ComputerScreenProps) {
   const environmentId = usePersonalEnvironmentId();
-  const { feed, error, loading } = useComputerFeed(environmentId);
-  const [segment, setSegment] = useState<ComputerSegment>(
-    () => takeRequestedComputerSegment() ?? lastSegment ?? "browser",
-  );
-  const desktopStatus = useDesktopStatus(environmentId);
-  // The PC's live view where there is a PC to show (the server runs on Windows).
-  const segments: ReadonlyArray<ComputerSegment> =
-    desktopStatus?.available === false
-      ? ["browser", "files", "performance"]
-      : ["browser", "desktop", "files", "performance"];
-  const shownSegment = segments.includes(segment) ? segment : "browser";
+  const data = useComputerData(environmentId);
+  const { feed, error, loading, desktop: desktopStatus, commands } = data;
+  const status = feed.status;
+  const reachable = environmentId !== null && error === null;
+  const faceOf = useBotFaces(environmentId);
+  const panel = variant === "panel";
+  const compactLandscape = useMediaQuery(COMPACT_LANDSCAPE_QUERY);
+  // The wide page keeps desktop control in the page (the rail stays); the
+  // phone, the panel and browser control go full screen.
+  const widePage = useMediaQuery(WIDE_PAGE_QUERY) && !panel;
+
+  // A link elsewhere can ask for a source, Files or Performance (taken once).
+  const [request] = useState(() => takeRequestedComputerSegment());
+  const [prefs, setPrefs] = useState<SourcePrefs>(() => {
+    const stored = loadSourcePrefs(typeof window === "undefined" ? null : window.localStorage);
+    return request === "browser" || request === "desktop"
+      ? { auto: false, pinned: request }
+      : stored;
+  });
   useEffect(() => {
-    lastSegment = shownSegment;
-  }, [shownSegment]);
-  // "N bots busy" and "M tasks running" for the Performance summary: the
-  // app's own live data, the same rule the Bots list and Team card read.
+    saveSourcePrefs(typeof window === "undefined" ? null : window.localStorage, prefs);
+  }, [prefs]);
+  const [shown, setShown] = useState<ComputerSource>(prefs.auto ? "browser" : prefs.pinned);
+  const [tapAt, setTapAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), NOW_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const [perfOpen, setPerfOpen] = useState(request === "performance");
+  const [activityOpen, setActivityOpen] = useState(false);
+  useEffect(() => {
+    if (request === "files") onOpenFiles?.();
+  }, [request, onOpenFiles]);
+
+  const [fullScreen, setFullScreen] = useState(false);
+  const screenRef = useRef<HTMLDivElement | null>(null);
+
+  const events = useMemo(
+    () =>
+      mergeActivity([
+        ...feed.events.map(readBrowserEvent),
+        ...data.desktopEvents.map(readDesktopEvent),
+      ]),
+    [feed.events, data.desktopEvents],
+  );
+  const lastAction = useMemo(() => latestBotAction(events), [events]);
+
+  // ---- who is at which source -------------------------------------------
+  const controller = status?.controller;
+  const youBrowser = controller?._tag === "Human" && controller.self;
+  const otherDevice = controller?._tag === "Human" && !controller.self;
+  const [takeSource, setTakeSource] = useState<ComputerSource | null>(null);
+  const [takeError, setTakeError] = useState<string | null>(null);
+  const [paused, setPaused] = useState<SourceDriver | null>(null);
+  const [deskControl, setDeskControl] = useState<DesktopControlState>(NO_DESK_CONTROL);
+  const onDeskControl = useCallback((next: DesktopControlState) => setDeskControl(next), []);
+  const youDesktop = takeSource === "desktop" && deskControl.on;
+  const desktopAvailable = desktopStatus?.available !== false;
+
+  const driverOf: Record<ComputerSource, SourceDriver> = {
+    browser: browserDriver(status, events, youBrowser),
+    desktop: desktopDriver(desktopStatus, youDesktop),
+  };
+  const controlSource: ComputerSource | null = youBrowser
+    ? "browser"
+    : takeSource === "desktop"
+      ? "desktop"
+      : null;
+  const help = status?.helpRequest ?? null;
+  const pauseCandidate = egressPause(status);
+  // Only the ACTIVE card is shown. A pause from another thread (a queued bot,
+  // or one recorded before its card exists) must never replace the help card
+  // the user is reading; the server sets egressPause only for the active entry,
+  // and this keeps an older or stale status honest too.
+  const pause =
+    pauseCandidate !== null && (help === null || pauseCandidate.threadId === help.threadId)
+      ? pauseCandidate
+      : null;
+  const helpOpen = help !== null || pause !== null;
+
+  // ---- Auto follow --------------------------------------------------------
+  const resolved = resolveSource({
+    prefs,
+    current: shown,
+    helpOpen,
+    controlSource,
+    lastBotAction: lastAction === null ? null : { source: lastAction.source, at: lastAction.at },
+    lastTapAt: tapAt,
+    now,
+    desktopAvailable,
+  });
+  const [toast, setToast] = useState<string | null>(null);
+  const flash = useCallback((text: string) => {
+    setToast(text);
+  }, []);
+  useEffect(() => {
+    if (toast === null) return;
+    const timer = window.setTimeout(() => setToast(null), TOAST_MS);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+  useEffect(() => {
+    if (resolved === shown) return;
+    setShown(resolved);
+    if (prefs.auto && controlSource === null && !helpOpen) {
+      const text = followedToast(shown, resolved, lastAction?.botName ?? null);
+      if (text !== null) flash(text);
+    }
+  }, [resolved, shown, prefs.auto, controlSource, helpOpen, lastAction?.botName, flash]);
+
+  const selectSource = (source: ComputerSource) => {
+    setPrefs({ auto: false, pinned: source });
+    setShown(source);
+    setTapAt(Date.now());
+  };
+  const toggleAuto = () => {
+    setPrefs((current) => ({ auto: !current.auto, pinned: shown }));
+    setTapAt(Date.now());
+    window.setTimeout(() => setNow(Date.now()), AUTO_TAP_GRACE_MS + 100);
+  };
+  // The other source's driver acted while it is not on screen: pulse its dot once.
+  const [pulse, setPulse] = useState<ComputerSource | null>(null);
+  const actionKey = lastAction === null ? null : `${lastAction.source}:${lastAction.at}`;
+  useEffect(() => {
+    if (actionKey === null || lastAction === null || lastAction.source === shown) return;
+    setPulse(lastAction.source);
+    const timer = window.setTimeout(() => setPulse(null), 1400);
+    return () => window.clearTimeout(timer);
+    // `shown` is read at the moment of the action only.
+  }, [actionKey]);
+
+  // The unshown stage keeps its socket for a moment, then lets go.
+  const [backgroundPaused, setBackgroundPaused] = useState<ComputerSource | null>(null);
+  useEffect(() => {
+    setBackgroundPaused(null);
+    const timer = window.setTimeout(
+      () => setBackgroundPaused(shown === "browser" ? "desktop" : "browser"),
+      BACKGROUND_PAUSE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [shown]);
+  const [mounted, setMounted] = useState<ReadonlySet<ComputerSource>>(() => new Set([shown]));
+  if (!mounted.has(shown)) setMounted(new Set([...mounted, shown]));
+
+  // ---- control ------------------------------------------------------------
+  const youShown = shown === "browser" ? youBrowser : youDesktop;
+  const takingShown = takeSource === shown && !youShown;
+  const seenControlRef = useRef(false);
+  useEffect(() => {
+    if (takeSource === null) {
+      seenControlRef.current = false;
+      return;
+    }
+    const confirmed = takeSource === "browser" ? youBrowser : deskControl.on;
+    if (confirmed) {
+      seenControlRef.current = true;
+      return;
+    }
+    // Control was in place and is gone: the screen follows.
+    if (seenControlRef.current) {
+      setTakeSource(null);
+      if (takeSource === "desktop" && deskControl.notice !== null) {
+        setTakeError(deskControl.notice);
+      }
+    } else if (takeSource === "desktop" && !deskControl.wanted && deskControl.notice !== null) {
+      setTakeSource(null);
+      setTakeError(deskControl.notice);
+    }
+  }, [takeSource, youBrowser, deskControl]);
+  useEffect(() => {
+    if (takeError === null) return;
+    const timer = window.setTimeout(() => setTakeError(null), TAKE_ERROR_MS);
+    return () => window.clearTimeout(timer);
+  }, [takeError]);
+
+  const takeControl = async (source: ComputerSource) => {
+    setTakeError(null);
+    const driver = driverOf[source];
+    setPaused(driver.state === "using" ? driver : null);
+    setTakeSource(source);
+    if (!(source === "desktop" && widePage)) setFullScreen(true);
+    if (source === "browser") {
+      const failure = await commands.takeBrowser();
+      if (failure !== null) {
+        setTakeSource(null);
+        setPaused(null);
+        setTakeError(failure);
+        setFullScreen(false);
+      }
+    }
+  };
+  const handBack = async () => {
+    const source = controlSource ?? takeSource ?? shown;
+    const resume = paused;
+    if (source === "browser") {
+      const failure = await commands.returnBrowser();
+      if (failure !== null) {
+        setTakeError(failure);
+        return;
+      }
+    }
+    setTakeSource(null);
+    setPaused(null);
+    if (resume?.botName) flash(`${resume.botName} has it again`);
+  };
+  const takeOver = () => {
+    selectSource("browser");
+    void takeControl("browser");
+  };
+  const [stopBusy, setStopBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const stop = async () => {
+    if (stopBusy) return;
+    setActionError(null);
+    const driver = driverOf[shown];
+    const who = driver.botName ?? "the bot";
+    const message =
+      shown === "browser"
+        ? closeBrowserConfirmMessage(status, controller?._tag === "Agent")
+        : `Stop ${who} using the desktop?\nIts task is told you stopped it.`;
+    if (message !== null) {
+      const confirmed =
+        (await requestConfirmDialog(message, {
+          variant: "destructive",
+          confirmLabel: shown === "browser" ? "Close browser" : "Stop",
+        })) ?? window.confirm(message);
+      if (!confirmed) return;
+    }
+    setStopBusy(true);
+    try {
+      const failure = await (shown === "browser"
+        ? commands.closeBrowser()
+        : commands.stopDesktop());
+      if (failure !== null) setActionError(failure);
+    } finally {
+      setStopBusy(false);
+    }
+  };
+
+  const [egressBusy, setEgressBusy] = useState(false);
+  const [egressError, setEgressError] = useState<string | null>(null);
+  const decideEgress = async (kind: "approve" | "refuse") => {
+    if (pause === null || egressBusy) return;
+    setEgressBusy(true);
+    setEgressError(null);
+    try {
+      const failure = await commands.egress[kind](pause.threadId);
+      if (failure !== null) setEgressError(failure);
+    } finally {
+      setEgressBusy(false);
+    }
+  };
+
+  // ---- derived copy ---------------------------------------------------------
+  const shownDriver = driverOf[shown];
+  const otherSource: ComputerSource = shown === "browser" ? "desktop" : "browser";
+  const otherDriver = driverOf[otherSource];
+  const queue = buildQueue({
+    browser: status,
+    desktop: desktopStatus,
+    paused: youShown ? paused : null,
+  });
+  const header = headerSubline({
+    shown,
+    reachable,
+    browser: status,
+    browserDriver: driverOf.browser,
+    desktopDriver: driverOf.desktop,
+    youControl: youShown,
+    otherDevice: shown === "browser" && otherDevice,
+    connecting: loading && status === null,
+  });
+  const queueNote = [
+    queue.paused ? `${queue.paused.botName} is paused` : null,
+    queue.next.length > 0 ? `${queue.next.length} waiting` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+  // "CTO carries on when you hand back. Frontend and DevOps are next."
+  const nextNames = queue.next.map((entry) => entry.botName);
+  const carryNote =
+    queue.paused === null
+      ? ""
+      : [
+          `${queue.paused.botName} carries on when you hand back.`,
+          nextNames.length === 0
+            ? null
+            : nextNames.length === 1
+              ? `${nextNames[0]} is next.`
+              : nextNames.length === 2
+                ? `${nextNames[0]} and ${nextNames[1]} are next.`
+                : `${nextNames[0]}, ${nextNames[1]} and ${nextNames.length - 2} more are next.`,
+        ]
+          .filter((part): part is string => part !== null)
+          .join(" ");
+  // The laptop's own key that stops a bot and takes the PC back.
+  const stopNote =
+    desktopStatus?.available === true && desktopStatus.stopHotkey !== ""
+      ? `Stop key on the laptop: ${desktopStatus.stopHotkey}.`
+      : "";
+  const controlFootnote = [carryNote, stopNote].filter((part) => part !== "").join(" ");
+  const goBackToChat = () => onBackToChat(computerBackTarget(status, origin));
+  const botChatTarget = (ref: { botId: string; threadId: string }) => onBackToChat(ref);
+  const filesOpen = onOpenFiles ?? (() => setActivityOpen(true));
+  const badges: Record<ComputerSource, SourceBadge> = {
+    browser: {
+      face: faceOf({ botId: driverOf.browser.botId, botName: driverOf.browser.botName }),
+      state: driverOf.browser.state,
+      pulse: pulse === "browser",
+    },
+    desktop: {
+      face: faceOf({ botId: driverOf.desktop.botId, botName: driverOf.desktop.botName }),
+      state: driverOf.desktop.state,
+      pulse: pulse === "desktop",
+    },
+  };
+
+  // "N bots busy" and "M tasks running" for the Performance sheet.
   const shells = useThreadShells();
-  const botsList = usePersonalBotsList(environmentId);
-  const { tasks } = usePersonalTasks(shownSegment === "performance" ? environmentId : null);
+  const botsList = usePersonalBotsList(perfOpen ? environmentId : null);
+  const { tasks } = usePersonalTasks(perfOpen ? environmentId : null);
   const botsBusy = useMemo(() => {
     const links = botsList.data?.threads ?? [];
     const live = new Set<string>();
@@ -289,14 +623,7 @@ export function ComputerScreen({
       ).length,
     [tasks],
   );
-  const [fullScreen, setFullScreen] = useState(false);
-  const screenRef = useRef<HTMLDivElement | null>(null);
-  const state = describeComputerState({
-    status: feed.status,
-    reachable: environmentId !== null && error === null,
-    loading,
-  });
-  const goBackToChat = () => onBackToChat(computerBackTarget(feed.status, origin));
+  const summary = useSystemSummary();
 
   useEffect(() => {
     if (!fullScreen) return;
@@ -318,6 +645,344 @@ export function ComputerScreen({
     };
   }, [fullScreen]);
 
+  // ---- the stage ------------------------------------------------------------
+  const idle =
+    shown === "browser" &&
+    status !== null &&
+    status.state === "offline" &&
+    driverOf.desktop.state !== "using";
+  const browserPlaceholder = !reachable ? (
+    <OfflineStage />
+  ) : idle ? (
+    <IdleStage
+      canOpenBrave={!takingShown && status !== null}
+      canViewDesktop={desktopAvailable}
+      onOpenBrave={() => void takeControl("browser")}
+      onViewDesktop={() => selectSource("desktop")}
+    />
+  ) : undefined;
+  const controlBarShown = fullScreen && (youShown || takingShown);
+  const inlineControl = widePage && shown === "desktop" && !fullScreen && (youShown || takingShown);
+  const railLayout = compactLandscape && fullScreen && shown === "desktop";
+  const helpText = help === null ? null : `${help.botName}: ${help.reason}`;
+  const handBackLabel =
+    queue.paused !== null && queue.paused.botName.length <= 14
+      ? `Hand back to ${queue.paused.botName}`
+      : "Hand back";
+  const canStop =
+    shownDriver.state === "using" ||
+    (shown === "browser" && status !== null && canCloseBrowser(status) && !youShown);
+  const takeDisabled =
+    !reachable ||
+    takingShown ||
+    (help !== null || shown === "browser"
+      ? status === null
+      : !desktopAvailable || !deskControl.canControl);
+
+  const stageShell = (source: ComputerSource, content: ReactNode) => (
+    <div
+      key={source}
+      aria-hidden={shown !== source}
+      className={cn(
+        "computer-stage-pane",
+        shown === source
+          ? "relative opacity-100"
+          : "pointer-events-none invisible absolute inset-x-0 top-0 opacity-0",
+        fullScreen && "h-full min-h-0",
+      )}
+    >
+      {content}
+    </div>
+  );
+
+  const headerBlock = (
+    <header
+      className={cn(
+        "flex min-h-16 items-center gap-1",
+        !panel && D2_HEADER,
+        fullScreen && "hidden",
+      )}
+    >
+      {panel ? null : (
+        <button
+          type="button"
+          aria-label="Back to chat"
+          onClick={goBackToChat}
+          className="-ml-3 flex size-11 shrink-0 items-center justify-center rounded-full"
+        >
+          <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
+        </button>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          {panel ? (
+            <h2 className="text-[17px] font-bold leading-tight">Computer</h2>
+          ) : (
+            <h1 className="text-[19px] font-bold leading-tight">Computer</h1>
+          )}
+          <span
+            aria-hidden
+            data-tone={header.tone}
+            className="inline-block size-2 shrink-0 rounded-full"
+            style={{ backgroundColor: HEADER_DOT[header.tone] }}
+          />
+        </div>
+        <p className="truncate text-[14px] text-[var(--personal-text-secondary)]">
+          {inlineControl
+            ? ["You're in control of the desktop", queueNote].filter(Boolean).join(" · ")
+            : header.text}
+        </p>
+      </div>
+      {summary !== null && reachable && summary.cpuPct !== null && summary.memUsedPct !== null ? (
+        <button
+          type="button"
+          onClick={() => setPerfOpen(true)}
+          aria-label={`Performance, CPU ${Math.round(summary.cpuPct)} percent, RAM ${Math.round(summary.memUsedPct)} percent`}
+          className="flex h-11 shrink-0 items-center gap-1.5 rounded-full bg-[var(--personal-fill-muted)] px-3 text-[13px] text-[var(--personal-text-secondary)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        >
+          <Activity className="size-4" strokeWidth={ICON_STROKE} aria-hidden />
+          <span>
+            CPU{" "}
+            <b className="font-semibold text-[var(--personal-text)]">
+              {Math.round(summary.cpuPct)}%
+            </b>
+            {" · "}RAM{" "}
+            <b className="font-semibold text-[var(--personal-text)]">
+              {Math.round(summary.memUsedPct)}%
+            </b>
+          </span>
+        </button>
+      ) : null}
+    </header>
+  );
+
+  const helpBlock =
+    fullScreen || (help === null && pause === null) ? null : pause !== null ? (
+      <ComputerSensitiveCard
+        botName={pause.botName}
+        sources={pause.sources}
+        destination={pause.destination}
+        canDecide={commands.egress.available}
+        busy={egressBusy}
+        error={egressError}
+        onAllow={() => void decideEgress("approve")}
+        onRefuse={() => void decideEgress("refuse")}
+        onTakeControl={takeOver}
+        className={cn("mt-1", widePage && "min-[1100px]:mt-0")}
+      />
+    ) : help !== null ? (
+      <ComputerHelpCard
+        botName={help.botName}
+        kind={helpKind(status)}
+        origin={helpOrigin(status)}
+        reason={help.reason}
+        requestedAt={help.requestedAt}
+        now={now}
+        onOpenChat={() => botChatTarget({ botId: help.botId, threadId: help.threadId })}
+        className={cn("mt-1", widePage && "min-[1100px]:mt-0")}
+      />
+    ) : null;
+
+  const rowBlock = fullScreen ? null : (
+    <ComputerSourceRow
+      trailing={
+        inlineControl ? (
+          <>
+            <p className="hidden min-w-0 text-[13px] text-[var(--personal-text-secondary)] min-[1700px]:block">
+              Keyboard and mouse go to the laptop
+            </p>
+            <button
+              type="button"
+              onClick={() => void handBack()}
+              className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
+              <Hand className="size-4" strokeWidth={ICON_STROKE} aria-hidden />
+              {handBackLabel}
+            </button>
+          </>
+        ) : null
+      }
+      shown={shown}
+      auto={prefs.auto}
+      badges={badges}
+      desktopAvailable={desktopAvailable}
+      desktopUnavailableReason={desktopUnavailableReason(desktopStatus)}
+      disabled={!reachable}
+      onSelect={selectSource}
+      onToggleAuto={toggleAuto}
+      tabsClassName={panel ? undefined : "min-[1100px]:max-w-[360px]"}
+      className={cn("mt-3", !panel && D2_ROW)}
+    />
+  );
+
+  const stage = !reachable ? (
+    <div
+      className={cn(
+        "mt-2.5 overflow-hidden rounded-[12px] border border-[var(--personal-border)]",
+        !panel && D2_STAGE,
+        fullScreen && "min-h-0 flex-1",
+      )}
+    >
+      <OfflineStage />
+    </div>
+  ) : (
+    <div
+      className={cn("relative", fullScreen ? "min-h-0 flex-1" : "mt-2.5", !panel && D2_STAGE)}
+      data-testid="computer-stage"
+    >
+      {mounted.has("browser")
+        ? stageShell(
+            "browser",
+            <ComputerBrowserPane
+              environmentId={environmentId}
+              status={status}
+              reachable={reachable}
+              fullScreen={fullScreen}
+              showExit={fullScreen && !controlBarShown}
+              onExit={() => setFullScreen(false)}
+              onOpenFullScreen={() => setFullScreen(true)}
+              paused={backgroundPaused === "browser" && shown !== "browser"}
+              placeholder={browserPlaceholder}
+              onClose={() => void stop()}
+            />,
+          )
+        : null}
+      {mounted.has("desktop") && desktopAvailable
+        ? stageShell(
+            "desktop",
+            <DesktopPane
+              environmentId={environmentId}
+              status={desktopStatus}
+              fullScreen={fullScreen}
+              inline={widePage}
+              onOpenFullScreen={() => setFullScreen(true)}
+              onExitFullScreen={() => setFullScreen(false)}
+              wantControl={takeSource === "desktop"}
+              onControlState={onDeskControl}
+              hideBar={controlBarShown}
+              footnote={controlFootnote === "" ? null : controlFootnote}
+              onHandBack={() => void handBack()}
+              paused={backgroundPaused === "desktop" && shown !== "desktop"}
+            />,
+          )
+        : null}
+      {toast === null ? null : <FollowToast text={toast} belowBar={!controlBarShown} />}
+    </div>
+  );
+
+  // Nothing is on screen: the stage buttons stand in for Take control, and
+  // the only card is who used the browser last.
+  const nothingOnScreen = !reachable || idle;
+  const lastAgent = idle ? (status?.lastAgent ?? null) : null;
+  const lastUsedEvent =
+    lastAgent === null
+      ? undefined
+      : events.find(
+          (event) =>
+            event.source === "browser" &&
+            event.threadId === lastAgent.threadId &&
+            event.botName !== null,
+        );
+  const lastUsed =
+    lastAgent === null
+      ? null
+      : {
+          face: faceOf({ botId: lastAgent.botId, botName: lastUsedEvent?.botName ?? null }),
+          at: browserLastStop(status) ?? lastUsedEvent?.at ?? null,
+          threadId: lastAgent.threadId,
+          botId: lastAgent.botId,
+        };
+  const lastUsedBlock =
+    lastUsed === null || lastUsed.face === null ? null : (
+      <ComputerDriverCard
+        face={lastUsed.face}
+        title={`Last used by ${lastUsed.face.name}`}
+        state="idle"
+        line={
+          lastUsed.at === null
+            ? "Brave · closed"
+            : `Brave · closed at ${formatActivityTime(lastUsed.at)}`
+        }
+        resolveFace={faceOf}
+        onOpenChat={() => botChatTarget({ botId: lastUsed.botId, threadId: lastUsed.threadId })}
+        className="mt-3"
+      />
+    );
+
+  const driverBlock = fullScreen ? null : nothingOnScreen ? (
+    lastUsedBlock
+  ) : (
+    <>
+      <ComputerDriverCard
+        face={
+          shownDriver.state === "using" || shownDriver.state === "idle"
+            ? faceOf({ botId: shownDriver.botId, botName: shownDriver.botName })
+            : null
+        }
+        state={shownDriver.state}
+        line={driverLine({
+          driver: shownDriver,
+          events: events.filter((event) => event.source === shown),
+          now,
+        })}
+        queue={queue}
+        resolveFace={faceOf}
+        onOpenChat={
+          shownDriver.threadId !== null && shownDriver.botId !== null
+            ? () => botChatTarget({ botId: shownDriver.botId!, threadId: shownDriver.threadId! })
+            : undefined
+        }
+        className="mt-3"
+      />
+      {otherDriver.state === "using" ? (
+        <ComputerDriverCard
+          face={faceOf({ botId: otherDriver.botId, botName: otherDriver.botName })}
+          state="using"
+          line={`${driverLine({
+            driver: otherDriver,
+            events: events.filter((event) => event.source === otherSource),
+            now,
+          })} · in the background`}
+          resolveFace={faceOf}
+          onClick={() => selectSource(otherSource)}
+          className="mt-2 opacity-80"
+        />
+      ) : null}
+    </>
+  );
+
+  const actionsBlock =
+    fullScreen || nothingOnScreen || inlineControl ? null : (
+      <>
+        <ComputerActions
+          inControl={youShown || otherDevice === true}
+          takeDisabled={takeDisabled}
+          handBackLabel={handBackLabel}
+          onTake={() => (help !== null ? takeOver() : void takeControl(shown))}
+          onHandBack={() => void handBack()}
+          stopLabel={stopLabelFor({ source: shown, driver: shownDriver, canStop })}
+          onStop={() => void stop()}
+          stopDisabled={stopBusy}
+          className="mt-3"
+        />
+        {takeError !== null || actionError !== null ? (
+          <p role="alert" className="mt-2 text-[13px] text-[var(--personal-danger)]">
+            {takeError ?? actionError}
+          </p>
+        ) : null}
+      </>
+    );
+
+  const activityBlock = fullScreen ? null : (
+    <ComputerActivityCard
+      events={events}
+      limit={panel ? 4 : 5}
+      onSeeAll={() => setActivityOpen(true)}
+      onOpenFiles={filesOpen}
+      className="mt-3"
+    />
+  );
+
   return (
     <div
       ref={screenRef}
@@ -325,11 +990,12 @@ export function ComputerScreen({
       aria-modal={fullScreen || undefined}
       role={fullScreen ? "dialog" : undefined}
       tabIndex={fullScreen ? -1 : undefined}
+      data-source={shown}
       className={cn(
         "personal-app flex min-h-0 flex-1 flex-col outline-none",
         fullScreen
           ? "fixed inset-0 z-50 overflow-hidden bg-[var(--personal-bg)] pb-[env(safe-area-inset-bottom)]"
-          : variant === "panel"
+          : panel
             ? // Content height, not the rest of the panel: the routines follow
               // straight on instead of sitting at the bottom past a gap.
               "personal-scroll-quiet flex-initial overflow-y-auto px-4 pb-4"
@@ -337,105 +1003,63 @@ export function ComputerScreen({
       )}
       style={{ paddingTop: "env(safe-area-inset-top)" }}
     >
-      <header className={cn("flex min-h-16 items-center gap-1", fullScreen && "hidden")}>
-        {variant === "panel" ? null : (
-          <button
-            type="button"
-            aria-label="Back to chat"
-            onClick={goBackToChat}
-            className="-ml-3 flex size-11 shrink-0 items-center justify-center rounded-full"
-          >
-            <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
-          </button>
-        )}
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            {variant === "panel" ? (
-              <h2 className="text-[17px] font-bold leading-tight">Computer</h2>
-            ) : (
-              <h1 className="text-[19px] font-bold leading-tight">Computer</h1>
-            )}
-            <StatusDot tone={state.tone} />
-          </div>
-          <p className="truncate text-[14px] text-[var(--personal-text-secondary)]">
-            {state.label}
-            {feed.status?.detail && state.tone === "problem" ? ` · ${feed.status.detail}` : ""}
-          </p>
-        </div>
-      </header>
+      {controlBarShown && !railLayout ? (
+        <ComputerControlTopBar
+          title={youShown ? "You're in control" : "Taking control…"}
+          subline={queueNote === "" ? (shown === "desktop" ? "Desktop" : "Browser") : queueNote}
+          onExit={() => setFullScreen(false)}
+          onHandBack={() => void handBack()}
+        />
+      ) : null}
+      {controlBarShown && helpText !== null && !railLayout ? <HelpStrip text={helpText} /> : null}
 
       <div
-        role="tablist"
-        aria-label="Computer view"
         className={cn(
-          // No track padding on the phone: each tab is the full 44 px, its
-          // own padding draws the inset pill (was 40 px targets).
-          "mt-3 grid h-11 rounded-[10px] bg-[var(--personal-fill-muted)] md:h-9",
-          segments.length === 4
-            ? "grid-cols-4"
-            : segments.length === 3
-              ? "grid-cols-3"
-              : "grid-cols-2",
-          fullScreen && "hidden",
+          fullScreen
+            ? "flex min-h-0 flex-1 flex-col"
+            : panel
+              ? "flex flex-col"
+              : "flex flex-col min-[1100px]:grid min-[1100px]:grid-cols-[minmax(0,1fr)_340px] min-[1100px]:gap-x-5",
         )}
       >
-        {segments.map((value) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={shownSegment === value}
-            onClick={() => setSegment(value)}
-            className={cn(
-              "flex h-11 rounded-[10px] p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-inset md:h-9",
-              // Four labels at 390 px: 13/16 keeps "Performance" on one line.
-              segments.length === 4 ? "text-[13px]" : "text-[14px]",
-            )}
-          >
-            <span
-              className={cn(
-                "flex flex-1 items-center justify-center rounded-[8px]",
-                shownSegment === value
-                  ? "bg-[var(--personal-surface)] font-semibold shadow-[var(--personal-shadow-card)]"
-                  : "text-[var(--personal-text-secondary)]",
-              )}
-            >
-              {SEGMENT_LABELS[value]}
-            </span>
-          </button>
-        ))}
+        {headerBlock}
+        {widePage ? null : helpBlock}
+        {rowBlock}
+        {stage}
+        <div className={cn(fullScreen ? "hidden" : "flex flex-col", !panel && D2_RAIL)}>
+          {widePage ? helpBlock : null}
+          {driverBlock}
+          {actionsBlock}
+          {activityBlock}
+        </div>
       </div>
 
-      {shownSegment === "browser" ? (
-        <ComputerBrowserPane
-          environmentId={environmentId}
-          status={feed.status}
-          events={feed.events}
-          reachable={environmentId !== null && error === null}
-          fullScreen={fullScreen}
-          onOpenFullScreen={() => setFullScreen(true)}
-          onBackToChat={fullScreen ? () => setFullScreen(false) : goBackToChat}
-        />
-      ) : shownSegment === "desktop" ? (
-        <DesktopPane
-          environmentId={environmentId}
-          fullScreen={fullScreen}
-          onOpenFullScreen={() => setFullScreen(true)}
-          onExitFullScreen={() => setFullScreen(false)}
-        />
-      ) : shownSegment === "performance" ? (
-        <Suspense
-          fallback={
-            <p className="mt-6 text-center text-[14px] text-[var(--personal-text-secondary)]">
-              Loading the dashboard.
-            </p>
-          }
+      {perfOpen ? (
+        <ComputerSheet
+          title="Performance"
+          subtitle="Omarchy laptop · live"
+          onClose={() => setPerfOpen(false)}
+          testId="computer-performance-sheet"
         >
-          <PerformancePane botsBusy={botsBusy} tasksRunning={tasksRunning} orbit={PERF_ORBIT} />
-        </Suspense>
-      ) : (
-        <FilesPane environmentId={environmentId} />
-      )}
+          <Suspense
+            fallback={
+              <p className="mt-6 text-center text-[14px] text-[var(--personal-text-secondary)]">
+                Loading the dashboard.
+              </p>
+            }
+          >
+            <PerformancePane botsBusy={botsBusy} tasksRunning={tasksRunning} orbit={PERF_ORBIT} />
+          </Suspense>
+        </ComputerSheet>
+      ) : null}
+      {activityOpen ? (
+        <ComputerActivitySheet
+          events={events}
+          files={<FilesPane environmentId={environmentId} />}
+          onClose={() => setActivityOpen(false)}
+          onOpenFiles={filesOpen}
+        />
+      ) : null}
     </div>
   );
 }
@@ -443,43 +1067,31 @@ export function ComputerScreen({
 export function ComputerBrowserPane(props: {
   readonly environmentId: EnvironmentId | null;
   readonly status: PersonalBrowserStatus | null;
-  readonly events: ReadonlyArray<PersonalBrowserActivityEvent>;
   readonly reachable: boolean;
-  readonly onBackToChat?: () => void;
   readonly fullScreen?: boolean;
-  readonly compact?: boolean;
+  /** Full screen without the screen's own control bar: show the exit chevron. */
+  readonly showExit?: boolean;
+  readonly onExit?: () => void;
   readonly onOpenFullScreen?: () => void;
-  /** Told after the browser is actually closed, so a host panel can stand down. */
-  readonly onClosed?: () => void;
+  /** Not on screen for a while: let go of the socket. */
+  readonly paused?: boolean;
+  /** Stands in for the live view (idle, offline); the address bar steps aside. */
+  readonly placeholder?: ReactNode;
+  /** Close the browser (the screen confirms and runs it). */
+  readonly onClose?: () => void;
 }) {
   const { environmentId, status } = props;
-  const takeControl = useAtomCommand(computerEnvironment.takeControl);
-  const returnToAgent = useAtomCommand(computerEnvironment.returnToAgent);
-  const closeBrowser = useAtomCommand(computerEnvironment.close);
-  const [pending, setPending] = useState(false);
-  const [closeError, setCloseError] = useState<string | null>(null);
   const sendRef = useRef<((message: PersonalBrowserInputMessage) => void) | null>(null);
   const [inputReady, setInputReady] = useState(false);
   // Counts the addresses and reloads sent from the toolbar: a refusal shown for the last one is dropped.
   const [navigationAttempts, setNavigationAttempts] = useState(0);
   const pageVisible = usePageVisible();
+  const keyboardToggleRef = useRef<(() => void) | null>(null);
+  const [keyboard, setKeyboard] = useState({ open: false, ready: false });
 
   const controller = status?.controller;
   const inControl = controller?._tag === "Human" && controller.self;
-  const otherDeviceInControl = controller?._tag === "Human" && !controller.self;
-  // "is using the browser" only while the lease holder's turn really runs; the
-  // same shells feed the chat header, so the two never disagree.
-  const shells = useThreadShells();
-  const agentThreadId = controller?._tag === "Agent" ? (controller.threadId as string) : null;
-  const agentShell =
-    agentThreadId === null ? undefined : shells.find((shell) => shell.id === agentThreadId);
-  const agentTurnRunning = agentShell !== undefined && isThreadLive(agentShell);
-  const agentLine = activeAgentLine(status, agentTurnRunning);
-  const agentTone: ComputerDotTone =
-    status?.helpRequest != null ? "pending" : agentTurnRunning ? "live" : "idle";
   const page = status?.page ?? null;
-  const canClose = canCloseBrowser(status);
-  const compact = props.compact === true;
   const fullScreen = props.fullScreen === true;
 
   const onClient = useCallback((client: ViewportClient | null) => {
@@ -490,118 +1102,67 @@ export function ComputerBrowserPane(props: {
     (message: PersonalBrowserInputMessage) => sendRef.current?.(message),
     [],
   );
-
-  /** `returnOnly`: hand control back to the agent even when another device holds it. */
-  const toggleControl = async (returnOnly = false) => {
-    if (environmentId === null || pending) return;
-    setPending(true);
-    try {
-      await (inControl || returnOnly ? returnToAgent : takeControl)({ environmentId, input: {} });
-    } finally {
-      setPending(false);
-    }
-  };
-
-  /**
-   * Closing is destructive for whoever is mid-task, so a live agent lease is
-   * confirmed first. A refusal has to reach the screen: without it a failed
-   * close looks exactly like a cancelled one.
-   */
-  const close = async () => {
-    if (environmentId === null || pending) return;
-    setCloseError(null);
-    const confirmMessage = closeBrowserConfirmMessage(status, agentTurnRunning);
-    if (confirmMessage !== null) {
-      const confirmed =
-        (await requestConfirmDialog(confirmMessage, {
-          variant: "destructive",
-          confirmLabel: "Close browser",
-        })) ?? window.confirm(confirmMessage);
-      if (!confirmed) return;
-    }
-    setPending(true);
-    try {
-      const result = await closeBrowser({ environmentId, input: {} });
-      const failure = commandFailureMessage(result, "Couldn't close the browser. Try again.");
-      if (failure !== null) {
-        setCloseError(failure);
-        return;
-      }
-      props.onClosed?.();
-    } finally {
-      setPending(false);
-    }
-  };
-
-  const controlDisabled = environmentId === null || !props.reachable || status === null || pending;
-  const openAndToggleControl = () => {
-    props.onOpenFullScreen?.();
-    void toggleControl();
-  };
+  const keyboardDock = useMemo(() => ({ toggleRef: keyboardToggleRef, onState: setKeyboard }), []);
+  const ready = inputReady;
+  const dock = fullScreen && inControl && ready;
 
   return (
     // A plain wrapper, not a fragment: going full screen must not change the
     // shape of this subtree, or React would remount LiveViewport and the
     // screencast socket would reconnect.
     <div className={cn(fullScreen && "flex h-full min-h-0 flex-col")}>
-      <BrowserToolbar
-        page={page}
-        showBack={fullScreen === true}
-        backLabel={fullScreen ? "Exit full screen" : "Back to chat"}
-        {...(props.onBackToChat === undefined ? {} : { onBackToChat: props.onBackToChat })}
-        editable={inControl && inputReady}
-        onNavigate={(url) => {
-          setNavigationAttempts((count) => count + 1);
-          send({ _tag: "Navigate", url });
-        }}
-        canReload={inputReady && page !== null}
-        canClose={canClose}
-        closeDisabled={environmentId === null || !props.reachable || pending}
-        onReload={() => {
-          setNavigationAttempts((count) => count + 1);
-          send({ _tag: "Reload" });
-        }}
-        onClose={() => {
-          void close();
-        }}
-        {...(props.onOpenFullScreen === undefined
-          ? {}
-          : { onOpenFullScreen: props.onOpenFullScreen })}
-        {...(compact ? { className: "hidden" } : {})}
-      />
+      {props.placeholder !== undefined ? null : (
+        <BrowserToolbar
+          page={page}
+          showBack={props.showExit === true}
+          backLabel="Exit full screen"
+          {...(props.onExit === undefined ? {} : { onBackToChat: props.onExit })}
+          editable={inControl && ready}
+          onNavigate={(url) => {
+            setNavigationAttempts((count) => count + 1);
+            send({ _tag: "Navigate", url });
+          }}
+          canReload={ready && page !== null}
+          canClose={canCloseBrowser(status)}
+          closeDisabled={environmentId === null || !props.reachable}
+          onReload={() => {
+            setNavigationAttempts((count) => count + 1);
+            send({ _tag: "Reload" });
+          }}
+          onClose={() => props.onClose?.()}
+          {...(props.onOpenFullScreen === undefined || fullScreen
+            ? {}
+            : { onOpenFullScreen: props.onOpenFullScreen })}
+        />
+      )}
 
       <div
         className={cn(
           "relative overflow-hidden border border-[var(--personal-border)] bg-[var(--personal-surface)]",
-          compact
-            ? "h-[200px] rounded-none border-x-0 border-y-0"
-            : fullScreen
-              ? "min-h-0 flex-1 rounded-none border-x-0"
-              : "mt-2.5 rounded-[12px]",
+          fullScreen ? "min-h-0 flex-1 rounded-none border-x-0" : "mt-2.5 rounded-[12px]",
         )}
       >
-        {environmentId !== null && hasLiveViewport(status) ? (
+        {props.placeholder !== undefined ? (
+          props.placeholder
+        ) : environmentId !== null && hasLiveViewport(status) ? (
           <LiveViewport
             environmentId={environmentId}
-            active={pageVisible}
-            interactive={!compact && inControl}
-            fit={fullScreen === true}
+            active={pageVisible && props.paused !== true}
+            interactive={inControl}
+            fit={fullScreen}
             syncViewport={fullScreen && inControl}
             attemptKey={navigationAttempts}
             onClient={onClient}
+            keyboardDock={keyboardDock}
           />
         ) : (
-          <ViewportPlaceholder
-            status={status}
-            reachable={props.reachable}
-            fill={fullScreen || compact}
-          />
+          <ViewportPlaceholder status={status} reachable={props.reachable} fill={fullScreen} />
         )}
-        {!compact && status?.dialog != null ? (
+        {status?.dialog != null ? (
           <PageDialogCard
             key={`${status.dialog.type}:${status.dialog.message}`}
             dialog={status.dialog}
-            canAnswer={inControl && inputReady}
+            canAnswer={inControl && ready}
             onAnswer={(accept, promptText) => {
               send({
                 _tag: "AnswerDialog",
@@ -611,87 +1172,104 @@ export function ComputerBrowserPane(props: {
             }}
           />
         ) : null}
-        {compact ? (
-          <>
-            <button
-              type="button"
-              aria-label="Open browser full screen"
-              onClick={props.onOpenFullScreen}
-              className="absolute inset-0 z-10 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
-            />
-            <button
-              type="button"
-              disabled={controlDisabled}
-              onClick={openAndToggleControl}
-              className="absolute right-3 bottom-3 z-20 flex h-9 items-center gap-1.5 rounded-full bg-[var(--personal-primary)] px-3 text-[13px] font-semibold text-[var(--personal-primary-text)] shadow-[var(--personal-shadow-card)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
-            >
-              {inControl ? (
-                <Bot className="size-4" strokeWidth={ICON_STROKE} />
-              ) : (
-                <MousePointer2 className="size-4" strokeWidth={ICON_STROKE} />
-              )}
-              {inControl ? "Return to bot" : "Take control"}
-            </button>
-          </>
+        {inControl ? (
+          <span
+            aria-hidden
+            className="computer-control-ring pointer-events-none absolute inset-0 z-10 ring-2 ring-[var(--personal-control)] ring-inset"
+          />
         ) : null}
       </div>
 
-      <div className={cn("min-h-0", compact && "hidden", fullScreen && "px-3")}>
-        {agentLine !== null ? (
-          <p className="mt-2.5 flex items-center gap-2 text-[13px] text-[var(--personal-text-secondary)]">
-            <StatusDot tone={agentTone} />
-            {agentLine}
-          </p>
-        ) : otherDeviceInControl ? (
-          <p className="mt-2.5 flex items-center gap-2 text-[13px] text-[var(--personal-text-secondary)]">
-            <StatusDot tone="pending" />
-            {controller.connected
-              ? "You are controlling the browser from another device"
-              : "Controlled from another device (disconnected). It goes back to the agent by itself after a minute, or return it now."}
-          </p>
-        ) : null}
-      </div>
-
-      <div className={cn("mt-2.5", compact && "hidden", fullScreen && "shrink-0 px-3 pb-3")}>
-        <button
-          type="button"
-          disabled={controlDisabled}
-          onClick={() => void toggleControl()}
-          className="flex h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
-        >
-          {inControl ? (
-            <Bot className="size-[18px]" strokeWidth={ICON_STROKE} />
-          ) : (
-            <MousePointer2 className="size-[18px]" strokeWidth={ICON_STROKE} />
-          )}
-          {inControl ? "Return to bot" : "Take control"}
-        </button>
-        {otherDeviceInControl ? (
-          <button
-            type="button"
-            disabled={controlDisabled}
-            onClick={() => void toggleControl(true)}
-            className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] px-4 text-[15px] font-semibold text-[var(--personal-text)] disabled:opacity-50"
-          >
-            <Bot className="size-[18px]" strokeWidth={ICON_STROKE} />
-            Return to agent
-          </button>
-        ) : null}
-      </div>
-
-      {closeError !== null ? (
-        <p
-          role="alert"
-          className={cn(
-            "mt-2.5 text-[13px] text-[var(--personal-danger)]",
-            fullScreen && "px-3 pb-3",
-          )}
-        >
-          {closeError}
-        </p>
+      {dock ? (
+        <BrowserKeyDock
+          keyboardOpen={keyboard.open}
+          keyboardReady={keyboard.ready}
+          onKeyboard={() => keyboardToggleRef.current?.()}
+          send={send}
+        />
       ) : null}
+    </div>
+  );
+}
 
-      {!props.fullScreen && !compact ? <ActivityCard events={props.events} /> : null}
+/** Keyboard, Page back, Tab, Enter and the rest, for driving the page full screen. */
+function BrowserKeyDock(props: {
+  readonly keyboardOpen: boolean;
+  readonly keyboardReady: boolean;
+  readonly onKeyboard: () => void;
+  readonly send: (message: PersonalBrowserInputMessage) => void;
+}) {
+  const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
+  const button =
+    "flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-[10px] border px-2.5 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-70";
+  return (
+    <div
+      role="toolbar"
+      aria-label="Keys for the browser"
+      className="personal-scroll-quiet flex shrink-0 items-center gap-1.5 overflow-x-auto px-3 py-1.5"
+    >
+      <button
+        type="button"
+        aria-label={props.keyboardOpen ? "Hide keyboard" : "Show keyboard"}
+        aria-pressed={props.keyboardOpen}
+        aria-description={props.keyboardReady ? "A text field is ready for typing" : undefined}
+        onMouseDown={keepFocus}
+        onClick={props.onKeyboard}
+        className={cn(
+          button,
+          props.keyboardOpen
+            ? "border-transparent bg-[var(--personal-control)] text-[var(--personal-primary-text)]"
+            : "border-[var(--personal-border)] bg-[var(--personal-surface)]",
+          props.keyboardReady && "personal-keyboard-ready",
+        )}
+      >
+        <Keyboard className="size-[18px]" strokeWidth={ICON_STROKE} />
+      </button>
+      <span aria-hidden className="h-6 w-px shrink-0 bg-[var(--personal-border)]" />
+      <button
+        type="button"
+        aria-label="Page back"
+        onMouseDown={keepFocus}
+        onClick={() => props.send({ _tag: "Back" })}
+        className={cn(button, "border-[var(--personal-border)] bg-[var(--personal-surface)]")}
+      >
+        <ArrowLeft className="size-4" strokeWidth={ICON_STROKE} />
+        Back
+      </button>
+      <button
+        type="button"
+        aria-label="Tab"
+        onMouseDown={keepFocus}
+        onClick={() => props.send({ _tag: "Key", key: "Tab" })}
+        className={cn(button, "border-[var(--personal-border)] bg-[var(--personal-surface)]")}
+      >
+        Tab
+      </button>
+      <button
+        type="button"
+        aria-label="Enter"
+        onMouseDown={keepFocus}
+        onClick={() => props.send({ _tag: "Key", key: "Enter" })}
+        className={cn(button, "border-[var(--personal-border)] bg-[var(--personal-surface)]")}
+      >
+        Enter
+      </button>
+      <Menu>
+        <MenuTrigger
+          aria-label="More keys"
+          className={cn(button, "border-[var(--personal-border)] bg-[var(--personal-surface)]")}
+        >
+          <MoreHorizontal className="size-5" strokeWidth={ICON_STROKE} />
+        </MenuTrigger>
+        <MenuPopup align="end" className="personal-app personal-menu w-48">
+          <MenuItem onClick={() => props.send({ _tag: "Forward" })}>Page forward</MenuItem>
+          <MenuItem onClick={() => props.send({ _tag: "Reload" })}>
+            <RotateCw />
+            Reload
+          </MenuItem>
+          <MenuItem onClick={() => props.send({ _tag: "Key", key: "Escape" })}>Escape</MenuItem>
+        </MenuPopup>
+      </Menu>
     </div>
   );
 }
@@ -789,7 +1367,13 @@ function BrowserToolbar(props: {
             />
           </form>
         ) : (
-          <span className="min-w-0 flex-1 truncate text-[14px]">{addressLabel(page)}</span>
+          <>
+            <span className="min-w-0 flex-1 truncate text-[14px]">{addressLabel(page)}</span>
+            <span className="flex shrink-0 items-center gap-1 text-[12px] text-[var(--personal-text-secondary)]">
+              <Eye className="size-4" strokeWidth={ICON_STROKE} aria-hidden />
+              View only
+            </span>
+          </>
         )}
       </div>
       {props.onOpenFullScreen !== undefined && !props.showBack ? (
@@ -919,11 +1503,11 @@ function ViewportPlaceholder(props: {
     : status === null
       ? "Connecting to the laptop."
       : status.state === "starting"
-        ? "Starting Chrome on the laptop."
+        ? "Starting Brave on the laptop."
         : status.state === "locked"
-          ? `Chrome's profile is in use by another window${status.lockedByPid === null ? "" : ` (pid ${status.lockedByPid})`}. Close it on the laptop, then take control to retry.`
+          ? `Brave's profile is in use by another window${status.lockedByPid === null ? "" : ` (pid ${status.lockedByPid})`}. Close it on the laptop, then take control to retry.`
           : status.state === "crashed"
-            ? `${status.detail ?? "Chrome stopped."} Take control to restart it.`
+            ? `${status.detail ?? "Brave stopped."} Take control to restart it.`
             : "The browser is not running. It starts when a bot needs it, or when you take control.";
   if (props.fill) {
     return (
@@ -964,6 +1548,14 @@ function LiveViewport(props: {
   /** Changes when the owner sends a new address or reload: the last refusal stops showing. */
   readonly attemptKey?: number;
   readonly onClient: (client: ViewportClient | null) => void;
+  /**
+   * The key dock owns the keyboard button: this viewport hides its own and
+   * reports the state the dock needs, plus a way to toggle the keyboard.
+   */
+  readonly keyboardDock?: {
+    readonly toggleRef: { current: (() => void) | null };
+    readonly onState: (state: { readonly open: boolean; readonly ready: boolean }) => void;
+  };
 }) {
   const { environmentId, active, interactive, onClient, attemptKey } = props;
   const fit = props.fit === true;
@@ -1179,6 +1771,30 @@ function LiveViewport(props: {
     resetKeyboardField(field);
   };
 
+  const toggleKeyboard = () => {
+    if (keyboardOpen) {
+      keyboardPinnedRef.current = false;
+      keyboardRef.current?.blur();
+      return;
+    }
+    keyboardPinnedRef.current = true;
+    openKeyboard();
+  };
+  const dock = props.keyboardDock;
+  const toggleKeyboardRef = useRef(toggleKeyboard);
+  toggleKeyboardRef.current = toggleKeyboard;
+  useEffect(() => {
+    if (dock === undefined) return;
+    dock.toggleRef.current = () => toggleKeyboardRef.current();
+    return () => {
+      dock.toggleRef.current = null;
+    };
+  }, [dock]);
+  const dockState = dock?.onState;
+  useEffect(() => {
+    dockState?.({ open: keyboardOpen, ready: remoteEditable && !keyboardOpen });
+  }, [dockState, keyboardOpen, remoteEditable]);
+
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!interactive) return;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1384,17 +2000,10 @@ function LiveViewport(props: {
               remoteEditable && !keyboardOpen ? "A text field is ready for typing" : undefined
             }
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              if (keyboardOpen) {
-                keyboardPinnedRef.current = false;
-                keyboardRef.current?.blur();
-                return;
-              }
-              keyboardPinnedRef.current = true;
-              openKeyboard();
-            }}
+            onClick={toggleKeyboard}
             className={cn(
-              "absolute right-2 bottom-2 flex size-11 items-center justify-center rounded-full border border-[var(--personal-border)]",
+              "absolute right-2 bottom-2 size-11 items-center justify-center rounded-full border border-[var(--personal-border)]",
+              dock === undefined ? "flex" : "hidden",
               keyboardOpen
                 ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
                 : "bg-[var(--personal-surface)]",
@@ -1428,56 +2037,6 @@ function LiveViewport(props: {
   );
 }
 
-const ACTIVITY_ICONS: Partial<Record<PersonalBrowserActivityEvent["kind"], typeof Globe>> = {
-  open: Globe,
-  navigate: Globe,
-  snapshot: FileCheck,
-  screenshot: Camera,
-  download: Download,
-  control: Hand,
-};
-
-function ActivityCard({
-  events,
-}: {
-  readonly events: ReadonlyArray<PersonalBrowserActivityEvent>;
-}) {
-  const newest = events.toReversed().slice(0, 6);
-  return (
-    <section className="mt-3 rounded-[14px] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5">
-      <h2 className="text-[15px] font-semibold">Recent activity</h2>
-      {newest.length === 0 ? (
-        <p className="mt-2 text-[13px] text-[var(--personal-text-secondary)]">
-          Nothing yet. Bot browser actions show up here as they happen.
-        </p>
-      ) : (
-        <ul className="mt-2.5 flex flex-col gap-2.5">
-          {newest.map((event) => {
-            const Icon = ACTIVITY_ICONS[event.kind] ?? MousePointerClick;
-            return (
-              <li key={event.id} className="flex items-center gap-2.5 text-[13px]">
-                <Icon
-                  className="size-4 shrink-0 text-[var(--personal-text-secondary)]"
-                  strokeWidth={ICON_STROKE}
-                  aria-hidden
-                />
-                <span className="min-w-0 flex-1 truncate text-[var(--personal-text-secondary)]">
-                  {event.botName && event.kind !== "control" ? `${event.botName}: ` : ""}
-                  {event.summary}
-                  {event.status === "failed" ? " (failed)" : ""}
-                </span>
-                <time dateTime={event.at} className="shrink-0 text-[var(--personal-text-tertiary)]">
-                  {formatActivityTime(event.at)}
-                </time>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}
-
 const FILE_ICONS: Record<PersonalBrowserFile["kind"], typeof Globe> = {
   screenshot: Camera,
   download: Download,
@@ -1485,7 +2044,7 @@ const FILE_ICONS: Record<PersonalBrowserFile["kind"], typeof Globe> = {
   other: FileText,
 };
 
-function FilesPane({ environmentId }: { readonly environmentId: EnvironmentId | null }) {
+export function FilesPane({ environmentId }: { readonly environmentId: EnvironmentId | null }) {
   const query = useEnvironmentQuery(
     environmentId === null ? null : computerEnvironment.files({ environmentId, input: {} }),
   );

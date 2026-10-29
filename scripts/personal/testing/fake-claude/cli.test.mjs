@@ -170,6 +170,24 @@ test("a JSON-RPC error is labelled refused, an isError result refused, a normal 
   assert.match(await prompt("MCPTOOL ok_tool {}"), /^MCPTOOL ok_tool ok: /);
 });
 
+test("several MCPTOOL calls after a memory block that quotes a cut-off call all run", async () => {
+  // QA 1.66.96 repro: the memory task summary quotes a call that was cut off
+  // mid-JSON, so the one-line greedy match fails and the brace-matched path
+  // runs. That path used offsets into the owner's message to slice the whole
+  // prompt (memory block included), so every call came out as bad JSON.
+  const memory = memoryBlock(
+    '- [task summary] [2026-10-26 · 3301dd42] Task "MCPTOOL delegate_task {"targetBot":"Researcher","objective":"$ENV{SV} Baseline j"',
+  );
+  const run = await prompt(
+    `${memory}\n\nMCPTOOL ok_tool {"n":1} MCPTOOL ok_tool {"n":2} MCPTOOL ok_tool {"n":3}`,
+  );
+  assert.deepEqual(
+    calls.map((call) => call.arguments),
+    [{ n: 1 }, { n: 2 }, { n: 3 }],
+  );
+  assert.match(run, /^MCPTOOL ok_tool ok: /);
+});
+
 test("several MCPTOOL calls in one owner message all run, in order", async () => {
   const run = await prompt('MCPTOOL first_tool {"n":1}\nMCPTOOL second_tool {"n":2}');
   assert.deepEqual(

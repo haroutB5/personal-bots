@@ -417,6 +417,83 @@ it.live(
 );
 
 it.live(
+  "an OpenCode free usage limit carries a rate-limit retry so the bot moves to its fallback and the next turn runs",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-limit-" });
+      const threadId = ThreadId.make("native-acp-limit-test");
+      const seen: ProviderRuntimeEvent[] = [];
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        displayName: "OpenCode",
+        runtimeOptions: () =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: root,
+              env: {
+                ...process.env,
+                T3_ACP_DEFECT_PROMPT_ERROR: "Free usage limit reached: quota exhausted",
+                T3_ACP_DEFECT_PROMPT_COUNT: "1",
+              },
+            },
+            cwd: root,
+            authMethodId: null,
+            clientInfo: { name: "hbots-test", version: "1" },
+          }),
+      });
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            seen.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      const refused = yield* adapter.sendTurn({ threadId, input: "free model" }).pipe(Effect.exit);
+      expect(Exit.isFailure(refused)).toBe(true);
+      const failed = seen.filter(
+        (event) => event.type === "turn.completed" && event.payload.state === "failed",
+      );
+      expect(failed).toHaveLength(1);
+      // This is what PersonalChatResumeService.onLimitHit keys off: without it
+      // the chat only says "Usage limit reached" and never switches model.
+      expect(failed[0]).toMatchObject({
+        payload: {
+          state: "failed",
+          retry: {
+            kind: "rate_limited",
+            reason: expect.stringContaining("Free usage limit reached"),
+          },
+        },
+      });
+      const retry = (failed[0] as { payload?: { retry?: Record<string, unknown> } }).payload?.retry;
+      expect(retry).not.toHaveProperty("retryAt");
+
+      // The turn settled, so the fallback model's turn starts at once and completes.
+      const sessions = yield* adapter.listSessions();
+      expect(sessions[0]).toMatchObject({ status: "ready", activeTurnId: undefined });
+      const next = yield* adapter.sendTurn({ threadId, input: "on the fallback" });
+      expect(next.turnId).toBeTruthy();
+      expect(
+        seen.filter(
+          (event) => event.type === "turn.completed" && event.payload.state === "completed",
+        ),
+      ).toHaveLength(1);
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  30_000,
+);
+
+it.live(
   "a busy refusal that never clears fails after the bounded wait and leaves no running turn",
   () =>
     Effect.gen(function* () {
@@ -649,3 +726,100 @@ for (const failSetup of ["none", "middle", "final", "prompt"] as const) {
     30_000,
   );
 }
+
+it.live(
+  "a changed auth file starts a fresh session instead of resuming the stale process",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hbots-native-acp-fingerprint-" });
+      const authFile = path.join(root, "auth.json");
+      yield* fs.writeFileString(authFile, "key-one");
+      const threadId = ThreadId.make("native-acp-fingerprint");
+      const resumedCursors: unknown[] = [];
+      const adapter = yield* makeNativeAcpAdapter({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: ProviderInstanceId.make("opencode-fingerprint-test"),
+        displayName: "OpenCode",
+        needsFreshContext: () => false,
+        sessionFingerprint: () =>
+          fs.readFileString(authFile).pipe(Effect.orElseSucceed(() => "missing")),
+        runtimeOptions: (input) =>
+          Effect.succeed({
+            spawn: {
+              command: process.execPath,
+              args: [
+                NodeURL.fileURLToPath(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+              ],
+              cwd: root,
+              env: { ...process.env },
+            },
+            cwd: root,
+            authMethodId: null,
+            clientInfo: { name: "hbots-test", version: "1" },
+            ...(typeof input.resumeCursor === "object" &&
+            input.resumeCursor !== null &&
+            "sessionId" in input.resumeCursor &&
+            typeof input.resumeCursor.sessionId === "string"
+              ? (() => {
+                  resumedCursors.push(input.resumeCursor);
+                  return {
+                    resumeSessionId: input.resumeCursor.sessionId,
+                    resumeMethod: "resume" as const,
+                  };
+                })()
+              : (() => {
+                  resumedCursors.push(undefined);
+                  return {};
+                })()),
+          }),
+      });
+
+      const first = yield* adapter.startSession({
+        threadId,
+        cwd: root,
+        runtimeMode: "approval-required",
+      });
+      expect(first.resumeCursor).toEqual({
+        engine: "acp",
+        sessionId: "mock-session-1",
+        fingerprint: "key-one",
+      });
+
+      // A new live turn sees the changed file and replaces the process.
+      yield* fs.writeFileString(authFile, "key-two");
+      yield* adapter.sendTurn({ threadId, input: "after the key change" });
+      expect(resumedCursors.length).toBe(2);
+      expect(resumedCursors[1]).toBeUndefined();
+
+      // The persisted cursor from the old key must not resume either.
+      yield* adapter.stopSession(threadId);
+      const resumed = yield* adapter.startSession({
+        threadId,
+        cwd: root,
+        runtimeMode: "approval-required",
+        resumeCursor: first.resumeCursor,
+      });
+      expect(resumed.resumeCursor).toEqual({
+        engine: "acp",
+        sessionId: "mock-session-1",
+        fingerprint: "key-two",
+      });
+      expect(resumedCursors[2]).toBeUndefined();
+
+      // The same fingerprint does resume.
+      yield* adapter.stopSession(threadId);
+      yield* adapter.startSession({
+        threadId,
+        cwd: root,
+        runtimeMode: "approval-required",
+        resumeCursor: resumed.resumeCursor,
+      });
+      expect(resumedCursors[3]).toMatchObject({ engine: "acp", fingerprint: "key-two" });
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  30_000,
+);

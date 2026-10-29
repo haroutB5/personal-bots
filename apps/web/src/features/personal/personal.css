@@ -42,6 +42,7 @@
    * effectively invisible, so dark carries a stronger value. */
   --personal-border-strong: #e6e6e3;
   --personal-live: #34a853;
+  --personal-control: #3987e5; /* you drive the PC: ring, pill, top bar */
   --personal-review: #d4a017; /* dots, bars, borders, connectors: never text */
   /* Amber for GLYPHS ("Needs you", "Weekly 89% used", "Update available").
    * The bright amber above is only 2.3:1 on the page, fine for a dot and
@@ -180,6 +181,7 @@
   --personal-provider-codex: #008300;
   --personal-provider-other: #8c8c88;
   --personal-live: #3ecf6b; /* status dot, 9.5:1 on bg (needs 3:1) */
+  --personal-control: #3987e5; /* 5.4:1 on bg */
   --personal-review: #e3b855; /* 8.8:1 on --personal-review-bg */
   /* Dark already clears AA with the bright amber: 10.3:1 on bg, 9.3:1 on
    * surface, 8.8:1 on --personal-review-bg. */
@@ -1352,5 +1354,68 @@
 @media (prefers-reduced-motion: reduce) {
   .prov-progress-slide {
     animation: none;
+  }
+}
+
+/* Computer tab: a driver's dot pulses once when it acts on the source that is
+ * not on screen; the control ring fades in once control is confirmed; the
+ * "followed" toast slides in, holds and leaves. All of it stands still under
+ * reduced motion (the toast still shows). */
+@keyframes computer-dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--personal-live) 70%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--personal-live) 0%, transparent);
+  }
+}
+@keyframes computer-ring-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes computer-toast {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  7% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  92% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+}
+.computer-driver-dot[data-pulse] {
+  animation: computer-dot-pulse 600ms ease-out 1;
+}
+.computer-control-ring {
+  animation: computer-ring-in 160ms ease-out both;
+}
+.computer-toast {
+  animation: computer-toast 2.4s ease-out both;
+}
+.computer-stage-pane {
+  transition: opacity 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .computer-driver-dot[data-pulse],
+  .computer-control-ring {
+    animation: none;
+  }
+  .computer-toast {
+    animation: none;
+  }
+  .computer-stage-pane {
+    transition: none;
   }
 }

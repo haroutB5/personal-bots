@@ -50,6 +50,7 @@ import { personalBotSystemInstructions } from "../../personal/personalBotInstruc
 import { buildChatHandoff } from "../../personal/sessionHandoff.ts";
 import { botModelSelectionForThread } from "../../personal/botModelSelection.ts";
 import { isMissingProviderConversationText } from "../../provider/missingProviderConversation.ts";
+import { providerLimitRetryInfo } from "../../provider/providerLimitRetry.ts";
 import {
   isPersonalTaskMessageId,
   PERSONAL_THREAD_TITLE,
@@ -690,6 +691,26 @@ const make = Effect.gen(function* () {
       currentSession?.providerRetry?.reason === SESSION_RENEWED_REASON
         ? (({ providerRetry: _renewal, ...rest }) => rest)(currentSession)
         : currentSession;
+    // The projection this read came from can lag the failed turn's own
+    // `turn.completed`, whose limit the runtime ingestion writes a moment
+    // before this error. Losing it here left `provider_retry_json` null, and a
+    // task then backed off instead of moving to its fallback model. The
+    // failure's own wording is the text the adapters classify, so the error
+    // carries the limit even when the read missed it.
+    const failureLimit = providerLimitRetryInfo(input.detail);
+    const keptRetry =
+      currentSession?.providerRetry?.reason === SESSION_RENEWED_REASON
+        ? undefined
+        : currentSession?.providerRetry;
+    const providerRetry =
+      keptRetry ??
+      (failureLimit === undefined
+        ? undefined
+        : {
+            ...failureLimit,
+            provider: session?.providerName ?? thread.modelSelection.instanceId,
+            observedAt: input.createdAt,
+          });
     yield* setThreadSession({
       threadId: input.threadId,
       session: {
@@ -704,6 +725,7 @@ const make = Effect.gen(function* () {
         status: "error",
         activeTurnId: null,
         lastError: input.detail,
+        ...(providerRetry !== undefined ? { providerRetry } : {}),
         updatedAt: input.createdAt,
       },
       createdAt: input.createdAt,

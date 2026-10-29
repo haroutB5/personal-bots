@@ -194,6 +194,24 @@ export function translateDshFailure(message: string): {
   return { text: message, rateLimited: false };
 }
 
+/**
+ * The failed turn an owner sees when a launch, or the turn itself, failed. A
+ * limit keeps `retry`, or the bot's usage-limit fallback never takes over:
+ * both the chat resume service and the task dispatcher key off
+ * `providerRetry.kind`.
+ */
+function dshFailedTurnPayload(
+  translated: ReturnType<typeof translateDshFailure>,
+): TurnCompletedPayload {
+  return {
+    state: "failed",
+    errorMessage: translated.text,
+    ...(translated.rateLimited
+      ? { retry: { kind: "rate_limited" as const, reason: "deepseek_usage_limit" } }
+      : {}),
+  };
+}
+
 interface PendingApproval {
   readonly request: EffectAcpSchema.RequestPermissionRequest;
   readonly response: Deferred.Deferred<{
@@ -1392,13 +1410,7 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
           settled === undefined
             ? { text: "DeepSeek turn failed: the harness sent no result.", rateLimited: false }
             : translateDshFailure(Cause.pretty(settled.cause));
-        yield* finishTurn(context, plan.turnId, {
-          state: "failed",
-          errorMessage: translated.text,
-          ...(translated.rateLimited
-            ? { retry: { kind: "rate_limited" as const, reason: "deepseek_usage_limit" } }
-            : {}),
-        });
+        yield* finishTurn(context, plan.turnId, dshFailedTurnPayload(translated));
       }),
     );
   });
@@ -1466,10 +1478,11 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
                   threadId: context.threadId,
                   cause: Cause.pretty(cause),
                 });
-                yield* finishTurn(context, next.turnId, {
-                  state: "failed",
-                  errorMessage: translateDshFailure(Cause.pretty(cause)).text,
-                }).pipe(Effect.ignore);
+                yield* finishTurn(
+                  context,
+                  next.turnId,
+                  dshFailedTurnPayload(translateDshFailure(Cause.pretty(cause))),
+                ).pipe(Effect.ignore);
                 return "failed" as const;
               }),
         ),
@@ -1567,10 +1580,11 @@ export const makeDeepSeekDshAdapter = Effect.fn("makeDeepSeekDshAdapter")(functi
           Cause.hasInterruptsOnly(cause)
             ? Effect.succeed("closed" as const)
             : Effect.gen(function* () {
-                yield* finishTurn(context, turnId, {
-                  state: "failed",
-                  errorMessage: translateDshFailure(Cause.pretty(cause)).text,
-                });
+                yield* finishTurn(
+                  context,
+                  turnId,
+                  dshFailedTurnPayload(translateDshFailure(Cause.pretty(cause))),
+                );
                 return "done" as const;
               }),
         ),

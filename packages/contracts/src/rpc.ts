@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderCatalogAddInput,
   ProviderCatalogAddResult,
@@ -301,6 +301,10 @@ import {
   PersonalBotDeleteThreadsInput,
   PersonalBotsError,
   PersonalBotsListResult,
+  PersonalBotThreadShellsInput,
+  PersonalBotThreadShellsResult,
+  PersonalThreadFullTextInput,
+  PersonalThreadFullTextResult,
   PersonalBotThread,
   PersonalBotThreadsBatchResult,
   PersonalFileDeleteInput,
@@ -415,7 +419,11 @@ import {
   PersonalLoginUpdateInput,
   PersonalLoginSetSensitiveInput,
 } from "./personalLogins.ts";
-import { PersonalDesktopError, PersonalDesktopStatus } from "./personalDesktop.ts";
+import {
+  PersonalDesktopError,
+  PersonalDesktopStatus,
+  PersonalDesktopStreamItem,
+} from "./personalDesktop.ts";
 import {
   PersonalLoginRequest,
   PersonalLoginRequestsListInput,
@@ -657,6 +665,8 @@ export const WS_METHODS = {
   personalBotsArchiveThread: "personalBots.archiveThread",
   personalBotsDeleteThread: "personalBots.deleteThread",
   personalBotsArchiveThreads: "personalBots.archiveThreads",
+  personalBotsThreadShells: "personalBots.threadShells",
+  personalBotsThreadFullText: "personalBots.threadFullText",
   personalBotsUpdateThreads: "personalBots.updateThreads",
   personalBotsSearchMessages: "personalBots.searchMessages",
   personalBotsWorkingProgress: "personalBots.workingProgress",
@@ -758,9 +768,12 @@ export const WS_METHODS = {
   personalBrowserClose: "personalBrowser.close",
   personalBrowserListFiles: "personalBrowser.listFiles",
   personalBrowserActivity: "personalBrowser.activity",
+  personalBrowserApproveEgress: "personalBrowser.approveEgress",
+  personalBrowserRefuseEgress: "personalBrowser.refuseEgress",
   // personal desktop (the user's real PC)
   personalDesktopStatus: "personalDesktop.status",
   personalDesktopStop: "personalDesktop.stop",
+  personalDesktopActivity: "personalDesktop.activity",
   // Personal routines methods
   personalRoutinesList: "personalRoutines.list",
   personalRoutinesCreate: "personalRoutines.create",
@@ -1339,7 +1352,11 @@ const WsSourceControlPublishRepositoryRpc = Rpc.make(WS_METHODS.sourceControlPub
 const PersonalBotsRpcError = Schema.Union([PersonalBotsError, EnvironmentAuthorizationError]);
 
 const WsPersonalBotsListRpc = Rpc.make(WS_METHODS.personalBotsList, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({
+    omitArchived: Schema.optional(Schema.Boolean),
+    archivedBotId: Schema.optional(Schema.String),
+    archivedThreadId: Schema.optional(Schema.String),
+  }),
   success: PersonalBotsListResult,
   error: PersonalBotsRpcError,
 });
@@ -1383,6 +1400,18 @@ const WsPersonalBotsPrewarmThreadRpc = Rpc.make(WS_METHODS.personalBotsPrewarmTh
 const WsPersonalBotsDeleteThreadRpc = Rpc.make(WS_METHODS.personalBotsDeleteThread, {
   payload: PersonalBotDeleteThreadInput,
   success: Schema.Struct({}),
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsThreadShellsRpc = Rpc.make(WS_METHODS.personalBotsThreadShells, {
+  payload: PersonalBotThreadShellsInput,
+  success: PersonalBotThreadShellsResult,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsThreadFullTextRpc = Rpc.make(WS_METHODS.personalBotsThreadFullText, {
+  payload: PersonalThreadFullTextInput,
+  success: PersonalThreadFullTextResult,
   error: PersonalBotsRpcError,
 });
 
@@ -1928,6 +1957,20 @@ const WsPersonalBrowserReturnToAgentRpc = Rpc.make(WS_METHODS.personalBrowserRet
   error: PersonalBrowserRpcError,
 });
 
+/** Lets the paused step through once; the next identical step asks again. */
+const WsPersonalBrowserApproveEgressRpc = Rpc.make(WS_METHODS.personalBrowserApproveEgress, {
+  payload: Schema.Struct({ threadId: ThreadId }),
+  success: PersonalBrowserStatus,
+  error: PersonalBrowserRpcError,
+});
+
+/** Refuses that one step; the browser, the page and other bots stay as they are. */
+const WsPersonalBrowserRefuseEgressRpc = Rpc.make(WS_METHODS.personalBrowserRefuseEgress, {
+  payload: Schema.Struct({ threadId: ThreadId }),
+  success: PersonalBrowserStatus,
+  error: PersonalBrowserRpcError,
+});
+
 /** Ends the shared browser session: tabs closed, Chrome stopped, lease released. */
 const WsPersonalBrowserCloseRpc = Rpc.make(WS_METHODS.personalBrowserClose, {
   payload: Schema.Struct({}),
@@ -1963,6 +2006,14 @@ const WsPersonalDesktopStopRpc = Rpc.make(WS_METHODS.personalDesktopStop, {
   payload: Schema.Struct({}),
   success: PersonalDesktopStatus,
   error: PersonalDesktopRpcError,
+});
+
+/** The desktop's activity timeline: recent history, then live events. */
+const WsPersonalDesktopActivityRpc = Rpc.make(WS_METHODS.personalDesktopActivity, {
+  payload: Schema.Struct({}),
+  success: PersonalDesktopStreamItem,
+  error: PersonalDesktopRpcError,
+  stream: true,
 });
 
 const PersonalRoutinesRpcError = Schema.Union([
@@ -2785,6 +2836,8 @@ export const WsPullRequestRpcGroup = RpcGroup.make(
  */
 export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsListRpc,
+  WsPersonalBotsThreadShellsRpc,
+  WsPersonalBotsThreadFullTextRpc,
   WsPersonalBotsCreateRpc,
   WsPersonalBotsUpdateRpc,
   WsPersonalBotsDeleteRpc,
@@ -2875,8 +2928,11 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBrowserCloseRpc,
   WsPersonalBrowserListFilesRpc,
   WsPersonalBrowserActivityRpc,
+  WsPersonalBrowserApproveEgressRpc,
+  WsPersonalBrowserRefuseEgressRpc,
   WsPersonalDesktopStatusRpc,
   WsPersonalDesktopStopRpc,
+  WsPersonalDesktopActivityRpc,
   WsPersonalRoutinesListRpc,
   WsPersonalRoutinesCreateRpc,
   WsPersonalRoutinesUpdateRpc,

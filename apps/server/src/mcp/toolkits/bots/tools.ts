@@ -61,11 +61,10 @@ export const BotEntry = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   provider: Schema.String.annotate({
-    description: "Provider instance of the model the bot is set to (its own, not a fallback).",
+    description: "Provider instance of the bot's own model (not the fallback).",
   }),
   model: Schema.String.annotate({
-    description:
-      "The model the bot is set to. While `fallback` is present it runs on that instead.",
+    description: "The bot's own model. While `fallback` is present it runs that instead.",
   }),
   isYou: Schema.Boolean.annotate({ description: "True for the bot making this call." }),
   fallback: Schema.optional(BotFallbackEntry),
@@ -77,14 +76,14 @@ export type ListBotsResult = typeof ListBotsResult.Type;
 
 export const DelegateTaskInput = Schema.Struct({
   targetBot: TrimmedNonEmptyString.annotate({
-    description: "The bot to hand the work to: its name (as list_bots shows it) or its botId.",
+    description: "Bot name (as list_bots shows it) or botId.",
   }),
   objective: TrimmedNonEmptyString.annotate({
-    description: "What the other bot must achieve, stated so it can work without asking you.",
+    description: "What the bot must achieve, stated so it can work without asking you.",
   }),
   title: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "Short title for the task list. Defaults to the start of the objective.",
+      description: "Short title. Defaults to the start of the objective.",
     }),
   ),
   context: Schema.optional(
@@ -102,7 +101,7 @@ export const DelegateTaskInput = Schema.Struct({
   continueChatId: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "A chat id from list_bot_chats. Give it when the work follows up on something this bot already discussed with the user in that chat: the task then runs as a new turn in that chat, so the bot answers with the earlier conversation in its context, instead of starting from nothing in a new task chat.",
+        "A chat id from list_bot_chats. Use it when the work follows up on something this bot discussed with the user in that chat: the task runs as a new turn there, with the earlier conversation in context.",
     }),
   ),
 });
@@ -110,25 +109,25 @@ export type DelegateTaskInput = typeof DelegateTaskInput.Type;
 
 export const ListBotChatsInput = Schema.Struct({
   bot: TrimmedNonEmptyString.annotate({
-    description: "The bot whose chats to list: its name (as list_bots shows it) or its botId.",
+    description: "Bot name (as list_bots shows it) or botId.",
   }),
   limit: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 })).annotate({
-      description: "How many chats, 1 to 25. Defaults to 10.",
+      description: "1 to 25. Defaults to 10.",
     }),
   ),
 });
 export type ListBotChatsInput = typeof ListBotChatsInput.Type;
 
 export const BotChatEntry = Schema.Struct({
-  chatId: Schema.String.annotate({ description: "Pass this as continueChatId to delegate_task." }),
+  chatId: Schema.String.annotate({ description: "Pass as continueChatId to delegate_task." }),
   title: Schema.String,
   lastActivityAt: Schema.String.annotate({ description: "Time of the last message (ISO, UTC)." }),
   archived: Schema.Boolean.annotate({
-    description: "An archived chat can still be continued; the new turn reopens it.",
+    description: "Archived chats can be continued; the turn reopens it.",
   }),
   busy: Schema.Boolean.annotate({
-    description: "A turn is running in it now; work handed in waits until it is idle.",
+    description: "A turn is running; handed-in work waits until idle.",
   }),
 });
 export type BotChatEntry = typeof BotChatEntry.Type;
@@ -195,7 +194,7 @@ export const UpdateWorkRecordInput = Schema.Struct({
   decisions: Schema.optional(
     Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(6)).annotate({
       description:
-        "Decisions made since your last update, each one short and self-contained. They are added to the record.",
+        "Decisions since your last update, each short and self-contained. Added to the record.",
     }),
   ),
   evidence: Schema.optional(
@@ -213,7 +212,7 @@ export const UpdateWorkRecordInput = Schema.Struct({
   outstanding: Schema.optional(
     Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(10)).annotate({
       description:
-        "Everything still left to do. This REPLACES the list, so send the whole current list (an empty list says nothing is left).",
+        "Everything still left to do. REPLACES the list: send the whole list (empty means nothing is left).",
     }),
   ),
   nextStep: Schema.optional(
@@ -231,13 +230,12 @@ export const UpdateWorkRecordResult = Schema.Struct({
 
 export const NotifyUserInput = Schema.Struct({
   notify: Schema.Boolean.annotate({
-    description:
-      "true: the user should be notified (push) when this run finishes. false: stay silent for this run.",
+    description: "true: push-notify the user when this run finishes. false: stay silent.",
   }),
   message: Schema.optional(
     Schema.String.annotate({
       description:
-        "With notify true: one short line for the notification itself, saying what is worth their attention (for example 'Price dropped to 120'). Plain text, at most about 200 characters; longer is cut. Never put secrets in it. Left out, the notification shows the task title.",
+        "With notify true: one plain-text line saying what is worth their attention (e.g. 'Price dropped to 120'), at most about 200 characters; longer is cut. Never put secrets in it. Left out, the task title is shown.",
     }),
   ),
 });
@@ -257,12 +255,12 @@ export const ReadChatHistoryInput = Schema.Struct({
   ),
   beforeMessageId: Schema.optional(
     Schema.String.annotate({
-      description: "Page further back: the messageId of the oldest message you already have.",
+      description: "messageId of the oldest message you have, to page further back.",
     }),
   ),
   limit: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })).annotate({
-      description: "How many messages, 1 to 20. Defaults to 10.",
+      description: "1 to 20. Defaults to 10.",
     }),
   ),
 });
@@ -285,13 +283,12 @@ export const ReadChatHistoryResult = Schema.Struct({
 export const StopTaskInput = Schema.Struct({
   taskId: PersonalTaskId.annotate({ description: "A task id from delegate_task or list_tasks." }),
   reason: Schema.String.annotate({
-    description:
-      "Why you are stopping it, in one line. It shows on this tool call in the chat; the stopped bot is not told.",
+    description: "Why, in one line. Shown in the chat; the stopped bot is not told.",
   }),
   redirectObjective: Schema.optional(
     Schema.String.annotate({
       description:
-        "New objective for the same bot. Given this, the stopped task is replaced by a fresh one in the same step, so the work never sits cancelled and forgotten. The new task carries only this text, with no context or constraints, so make it self-contained.",
+        "New objective for the same bot. The stopped task is replaced by a fresh one carrying only this text, so make it self-contained.",
     }),
   ),
 });
@@ -305,12 +302,11 @@ export type StopTaskResult = typeof StopTaskResult.Type;
 
 export const SteerTaskInput = Schema.Struct({
   taskId: PersonalTaskId.annotate({
-    description:
-      "A task id from delegate_task, list_tasks or an earlier result (a finished task keeps its id).",
+    description: "A task id from delegate_task, list_tasks or an earlier result.",
   }),
   message: TrimmedNonEmptyString.annotate({
     description:
-      "The update, written to the bot doing the task: what to change, narrow, add or drop, or for a finished task what is still left to do. It arrives as 'Update from <your name>: <message>', so make it make sense on its own.",
+      "The update for the bot doing the task: what to change, narrow, add or drop, or for a finished task what is left. Arrives as 'Update from <your name>: <message>', so make it stand alone.",
   }),
 });
 
@@ -347,20 +343,19 @@ export type ListTasksResult = typeof ListTasksResult.Type;
 export const RequestSecretInput = Schema.Struct({
   name: PersonalSecretName.annotate({
     description:
-      "UPPER_SNAKE name such as GITHUB_TOKEN. By default the key is brokered: you use it through secret_request with {{secret:NAME}} and never see the value. If the user saves it as an environment variable instead, it is PB_SECRET_<NAME> in new shell commands.",
+      "UPPER_SNAKE name such as GITHUB_TOKEN. A brokered key (default) is used via secret_request with {{secret:NAME}}; you never see the value. If saved as an environment variable it is PB_SECRET_<NAME> in new shell commands.",
   }),
   origins: Schema.optional(
     Schema.Array(Schema.String).check(Schema.isMaxLength(8)).annotate({
       description:
-        "The HTTPS origin(s) of the API the key is for, e.g. ['https://api.vercel.com']. Shown on the form for the user to confirm; a brokered key can only be sent there.",
+        "HTTPS origin(s) of the API the key is for, e.g. ['https://api.vercel.com']. The user confirms them; a brokered key can only be sent there.",
     }),
   ),
   label: TrimmedNonEmptyString.annotate({
-    description:
-      "What the user sees on the secure form, for example 'GitHub personal access token'.",
+    description: "What the user sees on the form, e.g. 'GitHub personal access token'.",
   }),
   purpose: TrimmedNonEmptyString.annotate({
-    description: "One sentence on why you need it and what you will do with it.",
+    description: "One sentence: why you need it and what you will do with it.",
   }),
 });
 
@@ -405,8 +400,19 @@ export const BROWSER_HELP_REASON_MAX_LENGTH = 160;
 // to ask for help at all. The handler shortens the reason instead.
 export const RequestBrowserHelpInput = Schema.Struct({
   reason: TrimmedNonEmptyString.annotate({
-    description: `One short line saying why the user must take over, for example 'CAPTCHA on amazon.co.uk'. Anything past ${BROWSER_HELP_REASON_MAX_LENGTH} characters is cut off.`,
+    description: `One short line on why the user must take over, e.g. 'CAPTCHA on amazon.co.uk'. Cut off past ${BROWSER_HELP_REASON_MAX_LENGTH} characters.`,
   }),
+  kind: Schema.optional(
+    Schema.Literals(["captcha", "code", "login", "sensitive", "other"]).annotate({
+      description:
+        "What you need (code means a one-time code). The card wording follows it; omitted, the card shows your reason.",
+    }),
+  ),
+  origin: Schema.optional(
+    Schema.String.annotate({
+      description: "Origin the user must act on, e.g. https://amazon.co.uk. Omit if unknown.",
+    }),
+  ),
 });
 export type RequestBrowserHelpInput = typeof RequestBrowserHelpInput.Type;
 
@@ -419,12 +425,12 @@ export type RequestBrowserHelpResult = typeof RequestBrowserHelpResult.Type;
 export const CallVoteInput = Schema.Struct({
   question: TrimmedNonEmptyString.annotate({
     description:
-      "The single decision the group is settling, as one question. Asking the same thing again in this conversation, however you reword it, is refused.",
+      "The single decision, as one question. Asking the same thing again in this conversation, however reworded, is refused.",
   }),
   options: Schema.Array(
     TrimmedNonEmptyString.annotate({ description: "One answer members can choose." }),
   ).annotate({
-    description: `The answers on the ballot: between ${PERSONAL_GROUP_VOTE_MIN_OPTIONS} and ${PERSONAL_GROUP_VOTE_MAX_OPTIONS} of them, each distinct. Name a bot in an option ("@Dev writes it") to say who would carry it out.`,
+    description: `Between ${PERSONAL_GROUP_VOTE_MIN_OPTIONS} and ${PERSONAL_GROUP_VOTE_MAX_OPTIONS} distinct answers. Name a bot ("@Dev writes it") to say who would carry it out.`,
   }),
 });
 export type CallVoteInput = typeof CallVoteInput.Type;
@@ -441,13 +447,13 @@ export type CallVoteResult = typeof CallVoteResult.Type;
 
 export const CastVoteInput = Schema.Struct({
   voteId: PersonalGroupVoteId.annotate({
-    description: "The open vote's id, as call_vote returned it or as the group chat announced it.",
+    description: "The open vote's id, from call_vote or the group chat.",
   }),
   option: TrimmedNonEmptyString.annotate({
     description: "Exactly one of that vote's options.",
   }),
   reason: TrimmedNonEmptyString.annotate({
-    description: "One line saying why. The user sees it beside your choice on the tally.",
+    description: "One line why. The user sees it beside your choice.",
   }),
 });
 export type CastVoteInput = typeof CastVoteInput.Type;
@@ -464,7 +470,7 @@ export type CastVoteResult = typeof CastVoteResult.Type;
 const LEAD_ONLY = "Team leads only.";
 const NOT_SETTABLE = "Not settable by a lead: any value is refused.";
 const USER_MADE_RULE =
-  "A bot you created yourself is yours to manage while it stays on your team. Any other bot (one the user set up, another lead made, or one moved since) is not: removing it, or changing its name, instructions, description, model, effort, usage-limit fallback or model schedule, is not done at once. It puts a Yes/No card in this chat and nothing changes until Harout taps Yes himself; the call returns pending, so tell him in one line what you asked for and end your turn, and his answer arrives as a follow-up message. It works only from a chat turn Harout started (a routine, task or group turn is refused, so ask him to request it in chat). Title, avatar, mute and memory auto-save stay open. The built-in system bots (Updates, Sync reports and the seeded defaults) are never yours to change.";
+  "A bot you created is yours to manage while it stays on your team. For any other bot (user-made, another lead's, or moved since), removing it or changing its name, instructions, description, model, effort, fallback or schedule posts a Yes/No card in this chat and nothing changes until Harout taps Yes. The call returns pending: tell him in one line what you asked for and end your turn; his answer arrives as a follow-up message. Only from a chat turn Harout started (routine, task and group turns are refused: ask him to request it in chat). Title, avatar, mute and memory auto-save stay open. Built-in system bots (Updates, Sync reports, seeded defaults) are never yours to change.";
 
 /** The fields create_bot and update_bot share. Every one is optional. */
 const BotFieldsShape = {
@@ -475,13 +481,13 @@ const BotFieldsShape = {
   ),
   description: Schema.optional(
     Schema.String.annotate({
-      description: "What the bot is for, one or two sentences (at most 500 characters).",
+      description: "What the bot is for, at most 500 characters.",
     }),
   ),
   instructions: Schema.optional(
     Schema.String.annotate({
       description:
-        "The bot's standing instructions (at most 20000 characters). Never put a secret, key or password in them.",
+        "Standing instructions, at most 20000 characters. Never put a secret, key or password in them.",
     }),
   ),
   avatarShape: Schema.optional(BotAvatarShape.annotate({ description: "Avatar shape." })),
@@ -491,35 +497,34 @@ const BotFieldsShape = {
   provider: Schema.optional(
     Schema.String.annotate({
       description:
-        "Provider instance the bot runs on (as list_bots shows under provider). Default: the bot's current one, or yours for a new bot.",
+        "Provider instance, as list_bots shows. Default: the bot's current one, or yours for a new bot.",
     }),
   ),
   model: Schema.optional(
     Schema.String.annotate({
       description:
-        "A model slug that provider offers, for example claude-sonnet-5-5. Fable and Mythos models are refused. Default for a new bot: the standard seed model (Opus 5.5 at medium effort).",
+        "A model slug that provider offers, e.g. claude-sonnet-5-5. Fable and Mythos are refused. New bot default: Opus 5.5, medium effort.",
     }),
   ),
   effort: Schema.optional(
     Schema.String.annotate({
-      description: "An effort the model offers: low, medium, high, xhigh or max.",
+      description: "An effort the model offers.",
     }),
   ),
   notificationsMute: Schema.optional(
     PersonalBotNotificationMute.annotate({
-      description:
-        'Silence this bot\'s notifications: "indefinitely", { "forMinutes": n } or "on" to turn them back on.',
+      description: '"indefinitely", { "forMinutes": n }, or "on" to unmute.',
     }),
   ),
   memoryAutoSave: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Let the bot save memories without the user asking each time.",
+      description: "Let the bot save memories unasked.",
     }),
   ),
   fallbackEnabled: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Switch the bot to its fallback model when its provider reports a usage limit (on by default for every bot). false turns the switch off: the bot then waits for the reset.",
+        "Switch to the fallback model on a usage limit (default on). false: the bot waits for the reset.",
     }),
   ),
   fallbackModel: Schema.optional(
@@ -527,46 +532,45 @@ const BotFieldsShape = {
       provider: Schema.optional(
         Schema.String.annotate({
           description:
-            "Provider instance for the fallback model, as list_bots shows it. Default: the bot's current fallback provider (Claude for a new bot).",
+            "Fallback provider instance, as list_bots shows. Default: current (Claude for a new bot).",
         }),
       ),
       model: Schema.optional(
         Schema.String.annotate({
           description:
-            "A model slug that provider offers, for example claude-sonnet-5-5. Fable and Mythos models are refused. Default: the bot's current fallback model (a new bot: Sonnet 5.5).",
+            "A model slug that provider offers. Fable and Mythos are refused. Default: current (new bot: Sonnet 5.5).",
         }),
       ),
       effort: Schema.optional(
         Schema.String.annotate({
-          description: "An effort the fallback model offers: low, medium, high, xhigh or max.",
+          description: "An effort the fallback model offers.",
         }),
       ),
       context: Schema.optional(
         Schema.String.annotate({
-          description:
-            'A context window the fallback model offers, for example "1m". Only some models offer a choice.',
+          description: 'A context window the model offers, e.g. "1m". Only some offer a choice.',
         }),
       ),
     }).annotate({
       description:
-        "The model the bot switches to when its usage limit is hit. Fields left out stay as the bot has them (a new bot starts from Sonnet 5.5, high effort, 1M context).",
+        "Model used on a usage limit. Omitted fields stay as they are (new bot: Sonnet 5.5, high effort, 1M context).",
     }),
   ),
   scheduleEnabled: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Run the bot on a different model at set times every day (its model schedule), between scheduleFrom and scheduleTo, and on its own model the rest of the time. false turns the schedule off and keeps its times and model. A usage-limit fallback always takes priority over it. On when you give scheduleFrom and scheduleTo.",
+        "Run a different model daily between scheduleFrom and scheduleTo, the bot's own model otherwise. false turns it off, keeping times and model. A usage-limit fallback takes priority. On when you give scheduleFrom and scheduleTo.",
     }),
   ),
   scheduleFrom: Schema.optional(
     Schema.String.annotate({
       description:
-        'When the scheduled model starts, 24 hour "HH:MM" in local time on the laptop, for example "22:00". An overnight range such as 22:00 to 07:00 is fine; From and To cannot be equal.',
+        'Start, 24 hour "HH:MM" local time on the laptop, e.g. "22:00". Overnight ranges are fine; From and To cannot be equal.',
     }),
   ),
   scheduleTo: Schema.optional(
     Schema.String.annotate({
-      description: 'When it ends, 24 hour "HH:MM", for example "07:00".',
+      description: 'End, 24 hour "HH:MM".',
     }),
   ),
   scheduleModel: Schema.optional(
@@ -574,29 +578,28 @@ const BotFieldsShape = {
       provider: Schema.optional(
         Schema.String.annotate({
           description:
-            "Provider instance for the scheduled model, as list_bots shows it. Default: the schedule's current provider (Claude for a new schedule).",
+            "Scheduled provider instance, as list_bots shows. Default: current (Claude for a new schedule).",
         }),
       ),
       model: Schema.optional(
         Schema.String.annotate({
           description:
-            "A model slug that provider offers, for example claude-sonnet-5-5. Fable and Mythos models are refused, and it must differ from the bot's own model. Default: the schedule's current model (a new schedule: Sonnet 5.5).",
+            "A model slug that provider offers. Fable and Mythos are refused; must differ from the bot's own model. Default: current (new schedule: Sonnet 5.5).",
         }),
       ),
       effort: Schema.optional(
         Schema.String.annotate({
-          description: "An effort the scheduled model offers: low, medium, high, xhigh or max.",
+          description: "An effort the scheduled model offers.",
         }),
       ),
       context: Schema.optional(
         Schema.String.annotate({
-          description:
-            'A context window the scheduled model offers, for example "1m". Only some models offer a choice.',
+          description: 'A context window the model offers, e.g. "1m". Only some offer a choice.',
         }),
       ),
     }).annotate({
       description:
-        "The model the bot runs on between scheduleFrom and scheduleTo. Fields left out stay as they are (a new schedule starts from Sonnet 5.5, high effort, 1M context).",
+        "Model used between scheduleFrom and scheduleTo. Omitted fields stay as they are (new schedule: Sonnet 5.5, high effort, 1M context).",
     }),
   ),
   team: Schema.optional(Schema.Unknown.annotate({ description: NOT_SETTABLE })),
@@ -606,7 +609,7 @@ const BotFieldsShape = {
 
 export const CreateBotInput = Schema.Struct({
   name: TrimmedNonEmptyString.annotate({
-    description: "The new bot's name, at most 60 characters. Unique among all bots.",
+    description: "At most 60 characters. Unique among all bots.",
   }),
   ...BotFieldsShape,
 });
@@ -614,7 +617,7 @@ export type CreateBotInput = typeof CreateBotInput.Type;
 
 export const UpdateBotInput = Schema.Struct({
   bot: TrimmedNonEmptyString.annotate({
-    description: "The bot to change: its botId or name as list_bots shows it.",
+    description: "botId or name, as list_bots shows.",
   }),
   name: Schema.optional(
     TrimmedNonEmptyString.annotate({ description: "A new name, at most 60 characters." }),
@@ -625,11 +628,10 @@ export type UpdateBotInput = typeof UpdateBotInput.Type;
 
 export const RemoveBotInput = Schema.Struct({
   bot: TrimmedNonEmptyString.annotate({
-    description: "The bot to remove: its botId or name as list_bots shows it.",
+    description: "botId or name, as list_bots shows.",
   }),
   reason: TrimmedNonEmptyString.annotate({
-    description:
-      "Why, in one line. It is shown to the user with the notification and kept in the audit record.",
+    description: "Why, in one line. Shown to the user and kept in the audit record.",
   }),
 });
 export type RemoveBotInput = typeof RemoveBotInput.Type;
@@ -647,7 +649,7 @@ export const LeadBotResult = Schema.Struct({
   }),
   pending: Schema.Boolean.annotate({
     description:
-      "True when nothing has changed yet: Harout has a Yes/No card to answer. Do not retry; his answer arrives later.",
+      "True when nothing changed yet: Harout has a Yes/No card to answer. Do not retry; his answer arrives later.",
   }),
   note: Schema.String,
 });
@@ -655,7 +657,7 @@ export type LeadBotResult = typeof LeadBotResult.Type;
 
 const ListBotsTool = Tool.make("list_bots", {
   description:
-    "List the personal bots on your team, the ones you can delegate work to: each one's name, what it is for, the provider and model it is set to, a fallback entry while a usage limit has it on its fallback model (the model doing its work right now, and until when), and which entry is you. Bots on the other team are left out; delegate_task accepts one of them only once the user's own latest message names it. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
+    "List the bots on your team that you can delegate to: name, purpose, provider and model, a fallback entry while a usage limit has it on its fallback model (what runs now, and until when), and which entry is you. Bots on the other team are left out; delegate_task accepts one only once the user's own latest message names it. The roster changes at any time, so call this fresh before every delegate_task.",
   success: ListBotsResult,
   failure: BotsToolFailure,
   dependencies,
@@ -668,7 +670,7 @@ const ListBotsTool = Tool.make("list_bots", {
 
 const ListBotChatsTool = Tool.make("list_bot_chats", {
   description:
-    "List the recent direct chats between the user and one of the bots you can delegate to: chat id, title, last activity, whether it is archived and whether a turn is running in it. Call it before delegate_task when the work follows up on something that bot discussed with the user (a review, a plan, an earlier build), then pass the chat's id as continueChatId so the bot keeps that conversation. Only chats the user talks in are listed: group conversations, chats made for delegated tasks or routine runs and deleted chats are left out. Same reach as delegate_task: a bot on your team, or one on the other team only once the user's own latest message names it; never yourself. It shows titles and times only, never message text.",
+    "List recent direct chats between the user and one bot you can delegate to: chat id, title, last activity, archived, busy. Call it before delegate_task when the work follows up on something that bot discussed with the user, then pass the chat id as continueChatId. Group, task, routine and deleted chats are left out. Same reach as delegate_task: a bot on your team, or on the other team only once the user's own latest message names it; never yourself. Titles and times only, never message text.",
   parameters: ListBotChatsInput,
   success: ListBotChatsResult,
   failure: BotsToolFailure,
@@ -682,7 +684,7 @@ const ListBotChatsTool = Tool.make("list_bot_chats", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Hand a self-contained piece of work to another bot on your team. By default the other bot starts from nothing but what you pass here, so put what it needs in objective, context, constraints, acceptanceCriteria and expectedOutput. When the work follows up on something that bot already discussed with the user in one of its chats (a review it did, a plan it drew up), prefer continuing that chat: find it with list_bot_chats and pass its id as continueChatId. The task then runs as a new turn in that chat, so the bot answers with the whole earlier conversation in its context, your brief shows there as coming from you (not from the user), and the chat stays an ordinary chat afterwards. It starts once the chat is idle, and an archived chat reopens. Refused for a chat of another bot, a group conversation, a chat made for a task or routine run, and a deleted chat. It runs in the background; you receive its result in a follow-up message, so end your turn after delegating instead of waiting. steer_task, stop_task and get_task work on it as on any task. Calling again with the same bot and objective in the same request returns the task that already covers it, rather than a second one. Refused for: a bot on the other team, unless the user's own latest message names it; a bot already working above you on this request (handing work back to the bot that took the original request is allowed); and more than two levels of delegation. There is no cap on how many tasks one request may delegate: delegate as many as the work needs, since only five turns run at once and the rest queue.",
+    "Hand a self-contained piece of work to another bot on your team. The bot starts with only what you pass here, so put what it needs in objective, context, constraints, acceptanceCriteria and expectedOutput. When the work follows up on something that bot discussed with the user in one of its chats, prefer continuing that chat: find it with list_bot_chats and pass its id as continueChatId. The task then runs as a new turn there with the earlier conversation in context; your brief shows as coming from you, not the user. It starts once the chat is idle; an archived chat reopens. Refused for another bot's chat, group, task, routine and deleted chats. It runs in the background and the result arrives as a follow-up message, so end your turn after delegating. steer_task, stop_task and get_task work on it. Repeating the same bot and objective in the same request returns the existing task. Refused for: a bot on the other team unless the user's own latest message names it; a bot already working above you on this request (handing back to the bot that took the original request is allowed); more than two levels of delegation. No cap on tasks per request; only five turns run at once and the rest queue.",
   parameters: DelegateTaskInput,
   success: DelegateTaskResult,
   failure: BotsToolFailure,
@@ -696,7 +698,7 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 
 const GetTaskTool = Tool.make("get_task", {
   description:
-    "Read one task in your current request's task tree (the request you are working on and everything delegated from it): its status, result summary or error, its direct children and the updates sent to it with steer_task. A task that is still running but whose bot has already replied (it is only waiting on background work it started) shows that reply in resultSummary with waitingOnBackgroundSince set; it is not the final result. A team lead can also read any unfinished task of a bot on its own team, whoever started it (another chat, a routine). You can also read, without changing it, a finished task that steer_task could reopen: one that ended within 24 hours and was delegated from this chat, or, for a team lead, belongs to a bot on your team; its workRecord shows where it stood, so read it before you steer. Any other id reads as not found. You do not need this to collect results: a delegated task's result arrives on its own as a follow-up message.",
+    "Read one task in your current request's task tree (this request and everything delegated from it): status, result summary or error, direct children and the updates sent with steer_task. A running task whose bot has replied and is only waiting on background work shows that reply in resultSummary with waitingOnBackgroundSince set; it is not the final result. A team lead can also read any unfinished task of a bot on its own team, whoever started it. You can also read a finished task that steer_task could reopen (ended within 24 hours and delegated from this chat, or, for a team lead, a bot on your team); its workRecord shows where it stood, so read it before you steer. Any other id reads as not found. You do not need this to collect results: they arrive as a follow-up message.",
   parameters: GetTaskInput,
   success: GetTaskResult,
   failure: BotsToolFailure,
@@ -710,7 +712,7 @@ const GetTaskTool = Tool.make("get_task", {
 
 const UpdateWorkRecordTool = Tool.make("update_work_record", {
   description:
-    "Keep this task's work record up to date: the short, durable state of the work that survives a long chat, a compaction or a restart. Call it when you decide something, find proof, or the list of what is left changes; a few lines each time, not a report. Decisions and evidence are added; outstanding work and the next step are replaced by what you send. If this task is reopened later after a long chat, you start from this record instead of the whole conversation, so write what a colleague would need to carry on. Only for a task you are running (a delegated task, a routine run or a reopened task); never put passwords, tokens or keys in it, and it keeps nothing from a chat that had a site the user marked sensitive open.",
+    "Keep this task's work record up to date: the short, durable state that survives a long chat, compaction or restart. Call it when you decide something, find proof, or what is left changes; a few lines, not a report. Decisions and evidence are added; outstanding work and the next step are replaced. A reopened task starts from this record, so write what a colleague would need to carry on. Only for a task you are running (delegated, routine run or reopened); never put passwords, tokens or keys in it. It keeps nothing from a chat that had a site the user marked sensitive open.",
   parameters: UpdateWorkRecordInput,
   success: UpdateWorkRecordResult,
   failure: BotsToolFailure,
@@ -724,7 +726,7 @@ const UpdateWorkRecordTool = Tool.make("update_work_record", {
 
 const NotifyUserTool = Tool.make("notify_user", {
   description:
-    "Decide whether the user gets a push notification when THIS routine run or task finishes. Call it once, near the end of the run, with notify true and a one-line message when the result is worth the user's attention (something changed, something needs a decision), or notify false when there is nothing to tell them. A routine set to 'bot decides' notifies only if you called it with notify true; a routine that notifies every run uses your message as the notification text. The last call wins. A run that fails, or that needs the user (a secret, browser help), always notifies whatever you say. Your reply still lands in the chat either way. Only works inside a task or routine run; in a normal chat the user is already notified when you reply, so it does nothing there.",
+    "Decide whether the user gets a push notification when THIS routine run or task finishes. Call it once, near the end, with notify true and a one-line message when the result deserves attention (something changed or needs a decision), or notify false when there is nothing to tell. A routine set to 'bot decides' notifies only if you called it with notify true; one that notifies every run uses your message as the text. The last call wins. A failed run, or one that needs the user (a secret, browser help), always notifies. Your reply lands in the chat either way. Only works inside a task or routine run; in a normal chat it does nothing.",
   parameters: NotifyUserInput,
   success: NotifyUserResult,
   failure: BotsToolFailure,
@@ -738,7 +740,7 @@ const NotifyUserTool = Tool.make("notify_user", {
 
 const ReadChatHistoryTool = Tool.make("read_chat_history", {
   description:
-    "Read earlier messages of THIS chat, newest first, when you need an exact detail (a command, a message, a number, a result) that is not in your context. A reopened task can start a fresh session with only its work record and the end of the chat, and this is how you reach the rest: search with query, or page back with beforeMessageId (use the messageId of the oldest message you have). Each text is cut at 1,200 characters. It reads messages only: it cannot show tool output (files you read, command results), so run the command or read the file again if you need it. It reads only this chat, never another.",
+    "Read earlier messages of THIS chat, newest first, when you need an exact detail (a command, number or result) not in your context. Search with query, or page back with beforeMessageId. Each text is cut at 1,200 characters. Messages only: no tool output, so rerun the command or reread the file if needed. Only this chat, never another.",
   parameters: ReadChatHistoryInput,
   success: ReadChatHistoryResult,
   failure: BotsToolFailure,
@@ -752,7 +754,7 @@ const ReadChatHistoryTool = Tool.make("read_chat_history", {
 
 const ListTasksTool = Tool.make("list_tasks", {
   description:
-    "List the tasks in your current request's task tree (the root request and everything delegated from it), newest first, optionally only those in one status. Empty when you are not working on a task. A team lead also gets teamTasks: every unfinished task of a bot on its own team from outside that tree, such as work a routine or another chat started. Useful before steer_task or stop_task, to see what is still running; results of delegated tasks arrive on their own, so there is no need to poll.",
+    "List the tasks in your current request's task tree, newest first, optionally one status. Empty when you are not working on a task. A team lead also gets teamTasks: unfinished tasks of its team's bots from outside that tree (routines, other chats). Use before steer_task or stop_task. Results arrive on their own, so do not poll.",
   parameters: ListTasksInput,
   success: ListTasksResult,
   failure: BotsToolFailure,
@@ -766,7 +768,7 @@ const ListTasksTool = Tool.make("list_tasks", {
 
 const StopTaskTool = Tool.make("stop_task", {
   description:
-    "Stop a task you delegated that is still running, and optionally hand the same bot a new objective in its place. The bot loses everything it had done: a redirect starts a fresh task from the new objective alone. To narrow, correct or add to the work while keeping its progress, use steer_task instead; stop only when the work itself has been overtaken by events. You can stop tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team; never your own. Tasks the stopped one delegated stop with it.",
+    "Stop a delegated task that is still running, optionally giving the same bot a new objective in its place. The bot loses all progress; a redirect starts fresh from the new objective alone. To narrow, correct or add to the work while keeping progress, use steer_task; stop only when events have overtaken the work. You can stop tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team; never your own. Its sub-tasks stop with it.",
   parameters: StopTaskInput,
   success: StopTaskResult,
   failure: BotsToolFailure,
@@ -780,7 +782,7 @@ const StopTaskTool = Tool.make("stop_task", {
 
 const SteerTaskTool = Tool.make("steer_task", {
   description:
-    "Send an update into a task that is still unfinished, without restarting it: the bot keeps its context and everything it has done so far. A running task gets it in its live turn now; a queued or waiting task gets it at the start of its next turn (a queued task starts with it as part of its brief). Prefer this over stop_task to narrow, correct or add to the work. The update shows in that bot's chat and on the task (get_task). It also reopens a task that has ended (completed, failed, interrupted or cancelled): the same bot continues in the same chat and session from where it stopped, with your update, and its new result comes back to you like the first one (for a task you handed into a bot's existing chat with continueChatId that is the user's chat, and the earlier conversation stays in the bot's context). Reopen when a task stopped short (it was paused or interrupted, ended with a mid-work line, or missed part of the brief) and the same work should carry on; this reopens the same task instead of adding a new one, so do not delegate a new task or make a routine for it. Delegate a new task only for genuinely new work. You can steer tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team, whoever started it; a finished one you can reopen within 24 hours if it was delegated from this chat, or, for a team lead, if its bot is on your team. Never your own task, and not a task of a deleted bot.",
+    "Send an update into an unfinished task without restarting it: the bot keeps its context and progress. A running task gets it in its live turn now; a queued or waiting task at the start of its next turn. It shows in that bot's chat and on the task. Prefer this over stop_task to narrow, correct or add to the work. It also reopens an ended task (completed, failed, interrupted or cancelled): the same bot continues in the same chat and session with your update, and the new result comes back to you. Reopen when a task stopped short (paused, interrupted, ended mid-work, or missed part of the brief) and the same work should carry on; do not delegate a new task or make a routine for that. Delegate a new task only for genuinely new work. You can steer tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team; an ended one can be reopened within 24 hours if it was delegated from this chat, or, for a team lead, if its bot is on your team. Never your own task, and not a deleted bot's.",
   parameters: SteerTaskInput,
   success: SteerTaskResult,
   failure: BotsToolFailure,
@@ -794,7 +796,7 @@ const SteerTaskTool = Tool.make("steer_task", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    "Ask the user for an API key or token through a secure form. Never use this for website passwords: those are the user's saved logins, filled by use_login. Never ask for secrets in chat and never print one. When the secret is already saved, the result says so and no form is shown. Pass origins (the API's HTTPS origin) so the user can confirm where the key may be sent. Otherwise end your turn after calling this: you are resumed in a fresh session. A brokered key (the default) is used only through secret_request with a {{secret:NAME}} placeholder, so you never see its value; if the user saves it as an environment variable the result says so and it is PB_SECRET_<NAME> for shell commands.",
+    "Ask the user for an API key or token through a secure form. Never use this for website passwords: those are saved logins, filled by use_login. Never ask for secrets in chat and never print one. If the secret is already saved, the result says so and no form is shown. Pass origins (the API's HTTPS origin) so the user can confirm where the key may be sent. Otherwise end your turn after calling this; you resume in a fresh session. A brokered key (default) is used only through secret_request with a {{secret:NAME}} placeholder; if saved as an environment variable the result says so (PB_SECRET_<NAME> in shell commands).",
   parameters: RequestSecretInput,
   success: RequestSecretResult,
   failure: BotsToolFailure,
@@ -808,7 +810,7 @@ const RequestSecretTool = Tool.make("request_secret", {
 
 const UseLoginTool = Tool.make("use_login", {
   description:
-    "Fill a saved website login. Pass the login label or exact origin. Every bot may use every saved login, but only while your current tab is already on that exact origin. The server then opens a fresh tab of its own on that page, fills the username and password there and closes your tab on that origin, because a page script you ran earlier could otherwise read the value. You never receive the password; never type or paste one yourself. Your next browser call lands on the new tab, so submit with a known button or Enter; reads stay disabled on the credential-bearing tab, and the fill is refused outright on any origin where preview_evaluate has been used. If the site then asks for a 2FA or one-time code, call request_browser_help.",
+    "Fill a saved website login. Pass the login label or exact origin. Any bot may use any saved login, but only while your current tab is already on that exact origin. The server opens a fresh tab there, fills the username and password and closes your tab on that origin. You never receive the password; never type or paste one yourself. Your next browser call lands on the new tab, so submit with a known button or Enter; reads stay disabled on that tab, and the fill is refused on any origin where preview_evaluate has been used. If the site then asks for 2FA or a one-time code, call request_browser_help.",
   parameters: UseLoginInput,
   success: UseLoginResult,
   failure: BotsToolFailure,
@@ -822,7 +824,7 @@ const UseLoginTool = Tool.make("use_login", {
 
 const RequestLoginTool = Tool.make("request_login", {
   description:
-    "On a website sign-in page with no saved login, ask the user through an in-chat username/password card. Pass the exact HTTPS origin of your current shared-browser tab, with an optional one-line reason or label. Never ask for a password or username in chat, never type a password, and never use request_secret for website logins. If a saved login matches, use use_login instead. End your turn after requesting the card: the server fills the form itself, saves by default unless the user turns saving off, and resumes you with only filled, cancelled, expired, origin-mismatch or fill-failed plus whether saved. Credentials never reach you. A filled form still needs a known submit button or Enter; then check the result and report in chat whether sign-in worked. Use request_browser_help for CAPTCHA, 2FA/OTP and passkeys.",
+    "On a sign-in page with no saved login, ask the user through an in-chat username/password card. Pass the exact HTTPS origin of your current shared-browser tab, with an optional one-line reason or label. Never ask for a password or username in chat, never type a password, and never use request_secret for website logins. If a saved login matches, use use_login. End your turn after requesting the card: the server fills the form (saving by default unless the user turns it off) and resumes you with only filled, cancelled, expired, origin-mismatch or fill-failed, plus whether saved. Credentials never reach you. A filled form still needs a known submit button or Enter; then check and report in chat whether sign-in worked. Use request_browser_help for CAPTCHA, 2FA/OTP and passkeys.",
   parameters: Schema.Struct({
     origin: TrimmedNonEmptyString,
     reason: Schema.optional(Schema.String),
@@ -844,7 +846,7 @@ const RequestLoginTool = Tool.make("request_login", {
 
 const CloseBrowserTool = Tool.make("close_browser", {
   description:
-    "Close the shared browser when you are done with it, or when the user asks you to. Every tab is closed, Chrome is stopped and the session ends, so do this only when no further browsing is expected; the browser starts again on the next browser tool call. Refused while the user is controlling the browser themselves. Closing an already-closed browser is safe and does nothing.",
+    "Close the shared browser when done or when the user asks. Every tab closes and the session ends, so do this only when no more browsing is expected; the next browser tool call restarts it. Refused while the user controls the browser. Closing a closed browser is harmless.",
   success: CloseBrowserResult,
   failure: BotsToolFailure,
   dependencies,
@@ -857,7 +859,7 @@ const CloseBrowserTool = Tool.make("close_browser", {
 
 const RequestBrowserHelpTool = Tool.make("request_browser_help", {
   description:
-    "Ask the user to take over the shared browser when a CAPTCHA, human-verification check, login, 2FA or one-time-code prompt blocks you, or when a browser action was paused because it could carry data from a site the user marked sensitive to another site (the user then sees the server's own description of that action). Give one short reason, tell the user what you need in one sentence, then end your turn. Never try to solve a CAPTCHA yourself.",
+    "Ask the user to take over the shared browser when a CAPTCHA, human-verification check, login, 2FA or one-time-code prompt blocks you, or when an action was paused because it could carry data from a site the user marked sensitive to another site. Give one short reason, tell the user what you need in one sentence, then end your turn. Never try to solve a CAPTCHA yourself.",
   parameters: RequestBrowserHelpInput,
   success: RequestBrowserHelpResult,
   failure: BotsToolFailure,
@@ -871,7 +873,7 @@ const RequestBrowserHelpTool = Tool.make("request_browser_help", {
 
 const CallVoteTool = Tool.make("call_vote", {
   description:
-    "Put a decision to the group you are talking in, so every member answers it on the record. Only works while you are speaking in a group chat. One vote at a time, and a question the group already settled in this conversation cannot be reopened. Cast your own ballot with cast_vote in this same turn; calling a vote does not buy you an extra turn. The result never acts on its own: the user sees every member's choice and reason and decides whether it happens.",
+    "Put a decision to the group you are in, so every member answers on the record. Only works in a group chat. One vote at a time; a question already settled in this conversation cannot be reopened. Cast your own ballot with cast_vote in this same turn. The result never acts on its own: the user sees every choice and reason and decides.",
   parameters: CallVoteInput,
   success: CallVoteResult,
   failure: BotsToolFailure,
@@ -885,7 +887,7 @@ const CallVoteTool = Tool.make("call_vote", {
 
 const CastVoteTool = Tool.make("cast_vote", {
   description:
-    "Answer the open vote in the group you are talking in. One ballot per bot: it is cast once and cannot be changed or withdrawn, so decide before you call this. Give the reason in one line, because the user reads it beside your choice. Only works while you are speaking in a group chat.",
+    "Answer the open vote in your group. One ballot per bot, final: it cannot be changed or withdrawn. Give the reason in one line. Only works in a group chat.",
   parameters: CastVoteInput,
   success: CastVoteResult,
   failure: BotsToolFailure,
@@ -900,7 +902,7 @@ const CastVoteTool = Tool.make("cast_vote", {
   .annotate(Tool.OpenWorld, false);
 
 const CreateBotTool = Tool.make("create_bot", {
-  description: `${LEAD_ONLY} Create a new bot on your own team, always as an ordinary member: never a lead, never pinned, never on another team. It appears in list_bots at once, so you can delegate to it. Give it a clear name, a description and instructions, and pick a model and effort that fit the work (a cheaper model for simple jobs). Every bot switches to a fallback model when its usage limit is hit (Sonnet 5.5, high effort, 1M context unless you set fallbackEnabled or fallbackModel). It can also run on another model at set times every day (scheduleFrom, scheduleTo, scheduleModel). Only models a provider actually offers are accepted, and never a Fable or Mythos model. The new bot gets no secrets or connections; the user grants those himself. Limited to 5 new bots per rolling 24 hours. Every create is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Create a new bot on your own team, always as an ordinary member: never a lead, never pinned, never on another team. It appears in list_bots at once, so you can delegate to it. Give it a clear name, description and instructions, and a model and effort that fit the work (cheaper for simple jobs). It falls back to Sonnet 5.5, high effort, 1M context on a usage limit unless you set fallbackEnabled or fallbackModel, and can run another model at set daily times (scheduleFrom, scheduleTo, scheduleModel). Only models a provider offers are accepted, never Fable or Mythos. The new bot gets no secrets or connections; the user grants those. Limit 5 new bots per rolling 24 hours. Each create is posted in your chat and notified to the user. Refused unless you are a team lead right now.`,
   parameters: CreateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,
@@ -913,7 +915,7 @@ const CreateBotTool = Tool.make("create_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const UpdateBotTool = Tool.make("update_bot", {
-  description: `${LEAD_ONLY} Change a bot that is on your own team: its name, title, description, instructions, avatar shape or colour, model and effort, usage-limit fallback (fallbackEnabled and fallbackModel), daily model schedule (scheduleEnabled, scheduleFrom, scheduleTo and scheduleModel), notification mute or memory auto-save. Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, and you cannot change anyone's team, lead flag or pinned state. ${USER_MADE_RULE} Ask the user before making a large change to the instructions of a bot you created (rewriting them, or changing what the bot may do); small tweaks are fine. Names need at least 3 characters with a letter, one alphabet only, and no invisible characters. A Fable or Mythos bot keeps its model and effort as they are. Every edit is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Change a bot on your own team (name, title, description, instructions, avatar, model, effort, fallback, daily model schedule, notification mute, memory auto-save). Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, or anyone's team, lead flag or pinned state. ${USER_MADE_RULE} Ask the user before a large change to the instructions of a bot you created (rewriting them, or changing what it may do); small tweaks are fine. Names need at least 3 characters with a letter, one alphabet only, no invisible characters. A Fable or Mythos bot keeps its model and effort. Each edit is posted in your chat and notified to the user. Refused unless you are a team lead right now.`,
   parameters: UpdateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,
@@ -926,7 +928,7 @@ const UpdateBotTool = Tool.make("update_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const RemoveBotTool = Tool.make("remove_bot", {
-  description: `${LEAD_ONLY} Remove a bot that is on your own team. It is a soft delete: the bot disappears from every list, but its chats and memories are kept and the user can restore it. Ask the user before removing a bot. ${USER_MADE_RULE} Give the reason in one line: it is kept in the record and shown to the user. Refused while the bot has an unfinished task (stop it with stop_task first), a turn in progress or a routine switched on, and for yourself, another lead or a bot on another team. Posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Remove a bot on your own team. Soft delete: it leaves every list, but chats and memories are kept and the user can restore it. Ask the user before removing a bot. ${USER_MADE_RULE} Give the reason in one line. Refused while the bot has an unfinished task (stop_task it first), a turn in progress or a routine switched on, and for yourself, another lead or a bot on another team. Posted in your chat and notified to the user. Refused unless you are a team lead right now.`,
   parameters: RemoveBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,

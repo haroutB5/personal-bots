@@ -65,7 +65,7 @@ vi.mock("./desktopViewClient", () => ({
   },
 }));
 
-import { DesktopPane } from "./DesktopPane";
+import { DesktopPane, type DesktopControlState } from "./DesktopPane";
 
 const IDLE: PersonalDesktopStatus = {
   available: true,
@@ -130,6 +130,8 @@ afterEach(async () => {
   mediaListeners.clear();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  paneState = { fullScreen: false, want: false };
+  lastControl = null;
 });
 
 /**
@@ -188,7 +190,6 @@ const text = () => JSON.stringify(renderer!.toJSON());
 type Node = { readonly children: ReadonlyArray<Node | string> };
 const textOf = (node: Node | string): string =>
   typeof node === "string" ? node : node.children.map(textOf).join("");
-const buttonLabels = () => renderer!.root.findAllByType("button").map((button) => textOf(button));
 
 describe("DesktopPane live view", () => {
   it("opens one authenticated socket while the view is on screen, sized for the phone", async () => {
@@ -268,25 +269,6 @@ describe("DesktopPane live view", () => {
     expect(text()).not.toContain("PC is locked");
   });
 
-  it("says which bot holds the PC and stops it from the phone", async () => {
-    state.status = HELD;
-    await render();
-    expect(text()).toContain("Assistant is using your PC");
-    const stopButton = renderer!.root
-      .findAllByType("button")
-      .find((button) => textOf(button) === "Stop");
-    expect(stopButton).toBeDefined();
-    await act(async () => stopButton!.props.onClick());
-    expect(state.stop).toHaveBeenCalledWith({ environmentId: "env-1", input: {} });
-  });
-
-  it("has no Stop while nobody holds the PC", async () => {
-    state.status = IDLE;
-    await render();
-    expect(text()).toContain("No bot is using your PC");
-    expect(buttonLabels()).not.toContain("Stop");
-  });
-
   it("does not connect where there is no desktop to show", async () => {
     state.status = { ...IDLE, available: false };
     await render();
@@ -322,10 +304,8 @@ describe("DesktopPane live view", () => {
       for (const listener of mediaListeners) listener();
     });
     expect(root()[0]!.props["data-layout"]).toBe("rail");
-    // Still the way back, the switch and Stop, and one socket.
+    // Still the way back, and one socket.
     expect(renderer!.root.findByProps({ "aria-label": "Exit full screen" })).toBeDefined();
-    expect(renderer!.root.findByProps({ role: "switch" })).toBeDefined();
-    expect(buttonLabels()).toContain("Stop");
     expect(state.sockets).toHaveLength(1);
     expect(state.sockets[0]!.closed).toBe(false);
   });
@@ -457,23 +437,43 @@ describe("DesktopPane view-only zoom", () => {
   });
 });
 
-async function renderPane(fullScreen: boolean, onOpenFullScreen = vi.fn()) {
+/** What the screen would hold: the layout and whether Take control was tapped. */
+let paneState = { fullScreen: false, want: false };
+/** The last state the pane reported through `onControlState`. */
+let lastControl: DesktopControlState | null = null;
+const onOpenFullScreen = vi.fn();
+const onHandBack = vi.fn();
+
+const paneElement = () => (
+  <DesktopPane
+    environmentId={EnvironmentId.make("env-1")}
+    fullScreen={paneState.fullScreen}
+    wantControl={paneState.want}
+    onControlState={(next) => {
+      lastControl = next;
+    }}
+    onHandBack={onHandBack}
+    onOpenFullScreen={onOpenFullScreen}
+    onExitFullScreen={vi.fn()}
+  />
+);
+
+async function setPane(patch: Partial<typeof paneState>) {
+  paneState = { ...paneState, ...patch };
+  await act(async () => renderer!.update(paneElement()));
+}
+
+async function renderPane(fullScreen: boolean) {
+  paneState = { fullScreen, want: false };
+  lastControl = null;
   await act(async () => {
-    renderer = create(
-      <DesktopPane
-        environmentId={EnvironmentId.make("env-1")}
-        fullScreen={fullScreen}
-        onOpenFullScreen={onOpenFullScreen}
-        onExitFullScreen={vi.fn()}
-      />,
-      { createNodeMock: nodeMock },
-    );
+    renderer = create(paneElement(), { createNodeMock: nodeMock });
   });
   await act(async () => new Promise((resolve) => setTimeout(resolve, 5)));
   await act(async () => state.sockets[0]?.callbacks.onOpen());
 }
 
-const controlSwitch = () => renderer!.root.findByProps({ role: "switch" });
+const takeControl = () => setPane({ want: true });
 
 /** Full screen, control granted by the server, one frame drawn (1170x731 on a 390x244 box). */
 async function inControl() {
@@ -485,7 +485,7 @@ async function inControl() {
       { width: 1170, height: 731 },
     );
   });
-  await act(async () => controlSwitch().props.onClick());
+  await takeControl();
   await act(async () => state.sockets[0]!.callbacks.onControl?.(true, null));
   return renderer!.root.findByProps({ role: "application" });
 }
@@ -511,30 +511,39 @@ const pointer = (
 });
 
 describe("DesktopPane remote control", () => {
-  it("is off by default; turning it on from the inline view opens full screen first", async () => {
+  it("is view only until the screen asks for control; in the inline view nothing is asked of the PC", async () => {
     state.status = IDLE;
-    const onOpenFullScreen = vi.fn();
-    await renderPane(false, onOpenFullScreen);
-    expect(controlSwitch().props["aria-checked"]).toBe(false);
+    await renderPane(false);
     expect(text()).toContain("View only");
-    await act(async () => controlSwitch().props.onClick());
-    expect(onOpenFullScreen).toHaveBeenCalled();
-    // Not full screen yet: nothing asked of the PC.
+    expect(lastControl).toMatchObject({ wanted: false, on: false, canControl: true });
+    await takeControl();
+    // Not full screen: the screen opens it, nothing is asked of the PC yet.
     expect(sentOf()).toEqual([]);
+    expect(renderer!.root.findAllByProps({ role: "application" })).toHaveLength(0);
   });
 
   it("in full screen asks the server for control and only then takes input", async () => {
     state.status = IDLE;
     await renderPane(true);
-    await act(async () => controlSwitch().props.onClick());
+    await takeControl();
     expect(sentOf()).toEqual([{ _tag: "Control", on: true }]);
     // Not granted yet: still no input surface.
     expect(renderer!.root.findAllByProps({ role: "application" })).toHaveLength(0);
-    expect(text()).toContain("Taking control");
+    expect(lastControl).toMatchObject({ wanted: true, on: false });
+    expect(text()).toContain("View only");
     await act(async () => state.sockets[0]!.callbacks.onControl?.(true, null));
     expect(renderer!.root.findAllByProps({ role: "application" })).toHaveLength(1);
+    expect(lastControl).toMatchObject({ wanted: true, on: true });
     expect(text()).toContain("In control");
     expect(pictureCanvas().props["aria-label"]).toContain("in control");
+  });
+
+  it("handing back (the screen drops the request) gives control back to the owner", async () => {
+    await inControl();
+    await setPane({ want: false });
+    expect(sentOf().at(-1)).toEqual({ _tag: "Control", on: false });
+    expect(lastControl).toMatchObject({ wanted: false, on: false });
+    expect(renderer!.root.findAllByProps({ role: "application" })).toHaveLength(0);
   });
 
   it("a tap clicks the PC at the frame point under the finger", async () => {
@@ -764,7 +773,7 @@ describe("DesktopPane remote control", () => {
     expect(sentOf().at(-1)).toEqual({ _tag: "Keys", keys: "backspace" });
   });
 
-  it("control ended by the server says why and turns the switch off", async () => {
+  it("control ended by the server says why and stops wanting it", async () => {
     await inControl();
     await act(async () =>
       state.sockets[0]!.callbacks.onControl?.(
@@ -772,50 +781,34 @@ describe("DesktopPane remote control", () => {
         "Remote control ended after 2 minutes without input.",
       ),
     );
-    expect(controlSwitch().props["aria-checked"]).toBe(false);
+    expect(lastControl).toMatchObject({ wanted: false, on: false });
     expect(renderer!.root.findAllByProps({ role: "application" })).toHaveLength(0);
     expect(text()).toContain("Remote control ended after 2 minutes without input.");
   });
 
-  it("a PC that locks ends control, says it can't be unlocked remotely, and disables the switch", async () => {
+  it("a PC that locks ends control, says it can't be unlocked remotely, and can no longer be controlled", async () => {
     await inControl();
     await act(async () => state.sockets[0]!.callbacks.onState("locked", null));
     expect(sentOf().at(-1)).toEqual({ _tag: "Control", on: false });
     expect(text()).toContain("PC is locked; it can't be unlocked remotely.");
-    expect(controlSwitch().props.disabled).toBe(true);
+    expect(lastControl).toMatchObject({ canControl: false, wanted: false });
     expect(renderer!.root.findAllByProps({ role: "application" })).toHaveLength(0);
   });
 
   it("leaving full screen hands control back", async () => {
     await inControl();
-    await act(async () =>
-      renderer!.update(
-        <DesktopPane
-          environmentId={EnvironmentId.make("env-1")}
-          fullScreen={false}
-          onOpenFullScreen={vi.fn()}
-          onExitFullScreen={vi.fn()}
-        />,
-      ),
-    );
+    await setPane({ fullScreen: false });
     expect(sentOf().at(-1)).toEqual({ _tag: "Control", on: false });
-    expect(controlSwitch().props["aria-checked"]).toBe(false);
+    expect(lastControl).toMatchObject({ wanted: false, on: false });
   });
 
-  it("while the owner controls the PC there is no Stop for it, and the line says so", async () => {
-    state.status = {
-      ...IDLE,
-      holder: {
-        threadId: "remote-user",
-        botId: "",
-        botName: "You",
-        since: "2026-09-24T07:00:00.000Z",
-        lastActionAt: "2026-09-24T07:00:03.000Z",
-        kind: "user",
-      },
-    };
-    await renderPane(false);
-    expect(text()).toContain("You are controlling your PC");
-    expect(buttonLabels()).not.toContain("Stop");
+  it("on its side the rail carries a Hand back pill while in control", async () => {
+    landscape = true;
+    await inControl();
+    expect(renderer!.root.findByProps({ "data-layout": "rail" })).toBeDefined();
+    const pill = renderer!.root.findAllByType("button").find((b) => textOf(b) === "Hand back");
+    expect(pill).toBeDefined();
+    await act(async () => pill!.props.onClick());
+    expect(onHandBack).toHaveBeenCalled();
   });
 });

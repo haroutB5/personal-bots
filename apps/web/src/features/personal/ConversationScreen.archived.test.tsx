@@ -11,6 +11,9 @@ type Outcome = { status: "done" } | { status: "cancelled" } | { status: "failed"
 const state = vi.hoisted(() => ({
   shell: null as null | { title: string; archivedAt: string | null },
   linkArchivedAt: null as string | null,
+  slimLookup: false,
+  listPending: false,
+  lookupResolved: false,
   thread: null as unknown,
   navigate: (() => {}) as (...args: unknown[]) => unknown,
   archive: (() => {}) as (...args: unknown[]) => unknown,
@@ -32,6 +35,7 @@ const state = vi.hoisted(() => ({
     turnsKey: string;
   },
   renamed: [] as Array<[string, string]>,
+  focusCalls: [] as string[],
   bulk: (() => {}) as (...args: unknown[]) => unknown,
   linkPinned: false,
   /** A second chat of the bot (thread-2, "hbots"): its link and shell. */
@@ -110,6 +114,10 @@ vi.mock("~/session-logic", () => ({
   derivePhase: () => "ready",
   deriveTimelineEntriesWithState: () => ({ entries: [] }),
   deriveWorkLogEntries: () => [],
+}));
+vi.mock("~/state/lazyThreadShells", () => ({
+  useLazyThreadShells: () => ({ pending: false }),
+  withLazyThreadShells: <A,>(atom: A) => atom,
 }));
 vi.mock("~/state/entities", () => ({
   useProject: () => null,
@@ -396,44 +404,63 @@ vi.mock("./taskPresentation", () => ({ mergeTaskLists: () => null }));
 vi.mock("./usePersonalBots", async () => {
   const DateTime = await import("effect/DateTime");
   return {
+    usePersonalArchivedLinks: () => ({
+      data: state.lookupResolved
+        ? {
+            threads: [
+              { botId: "bot-a", threadId: "thread-1", archivedAt: "2026-09-30T10:00:00.000Z" },
+            ],
+          }
+        : null,
+      isPending: !state.lookupResolved,
+      isSuccess: state.lookupResolved,
+      error: null,
+    }),
     personalBotArchiveThread: ARCHIVE_COMMAND,
     usePersonalEnvironmentId: () => "env-1",
     usePersonalBotsList: () => ({
-      data: {
-        bots: [
-          {
-            botId: "bot-a",
-            name: "Ada",
-            avatarShape: "pill",
-            avatarColor: "#E8711A",
-            modelSelection: {},
+      data: state.listPending
+        ? null
+        : {
+            bots: [
+              {
+                botId: "bot-a",
+                name: "Ada",
+                avatarShape: "pill",
+                avatarColor: "#E8711A",
+                modelSelection: {},
+              },
+            ],
+            ...(state.slimLookup ? { archivedCounts: { "bot-a": 1 } } : {}),
+            threads: [
+              ...(!state.slimLookup
+                ? [
+                    {
+                      botId: "bot-a",
+                      threadId: "thread-1",
+                      archivedAt: state.linkArchivedAt,
+                      ...(state.linkPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
+                      ...(state.linkSnoozedUntil === null
+                        ? {}
+                        : { snoozedUntil: DateTime.makeUnsafe(state.linkSnoozedUntil) }),
+                    },
+                  ]
+                : []),
+              ...(state.twoChats
+                ? [
+                    {
+                      botId: "bot-a",
+                      threadId: "thread-2",
+                      archivedAt: null,
+                      ...(state.otherPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
+                      ...(state.otherSnoozedUntil === null
+                        ? {}
+                        : { snoozedUntil: DateTime.makeUnsafe(state.otherSnoozedUntil) }),
+                    },
+                  ]
+                : []),
+            ],
           },
-        ],
-        threads: [
-          {
-            botId: "bot-a",
-            threadId: "thread-1",
-            archivedAt: state.linkArchivedAt,
-            ...(state.linkPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
-            ...(state.linkSnoozedUntil === null
-              ? {}
-              : { snoozedUntil: DateTime.makeUnsafe(state.linkSnoozedUntil) }),
-          },
-          ...(state.twoChats
-            ? [
-                {
-                  botId: "bot-a",
-                  threadId: "thread-2",
-                  archivedAt: null,
-                  ...(state.otherPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
-                  ...(state.otherSnoozedUntil === null
-                    ? {}
-                    : { snoozedUntil: DateTime.makeUnsafe(state.otherSnoozedUntil) }),
-                },
-              ]
-            : []),
-        ],
-      },
       isPending: false,
       error: null,
       refresh: () => {},
@@ -457,12 +484,21 @@ vi.mock("./ChatSettingsSheet", async (importOriginal) => {
     // Base UI's dialog needs a DOM: the content inside it is what the screen drives.
     ChatSettingsSheet: ({
       returnFocusTo: _returnFocusTo,
+      primingInputRef,
       ...props
-    }: Parameters<typeof actual.ChatSettingsContent>[0] & { returnFocusTo: unknown }) => (
-      <div data-chat-settings-sheet="">
-        <actual.ChatSettingsContent {...props} />
-      </div>
-    ),
+    }: Parameters<typeof actual.ChatSettingsContent>[0] & {
+      returnFocusTo: unknown;
+      primingInputRef: React.RefObject<HTMLInputElement | null>;
+    }) => {
+      primingInputRef.current = {
+        focus: () => state.focusCalls.push("prime"),
+      } as unknown as HTMLInputElement;
+      return (
+        <div data-chat-settings-sheet="">
+          <actual.ChatSettingsContent {...props} />
+        </div>
+      );
+    },
   };
 });
 vi.mock("./chatState", async (importOriginal) => await importOriginal());
@@ -471,13 +507,18 @@ vi.mock("./RenameChatDialog", () => ({
   RenameChatDialog: ({
     open,
     initialTitle,
+    fieldRef,
     onSave,
   }: {
     open: boolean;
+    fieldRef: React.RefObject<HTMLInputElement | null>;
     initialTitle: string;
     onSave: (title: string) => Promise<string | null>;
-  }) =>
-    open ? (
+  }) => {
+    fieldRef.current = {
+      focus: () => state.focusCalls.push("field"),
+    } as unknown as HTMLInputElement;
+    return open ? (
       <button
         type="button"
         data-rename-dialog={initialTitle}
@@ -485,7 +526,8 @@ vi.mock("./RenameChatDialog", () => ({
       >
         save rename
       </button>
-    ) : null,
+    ) : null;
+  },
 }));
 vi.mock("./pendingOutgoing", () => ({ pendingForThread: () => [] }));
 vi.mock("./renameChat", () => ({
@@ -542,6 +584,9 @@ beforeEach(() => {
   });
   state.shell = { title: "Plans", archivedAt: "2026-09-30T10:00:00.000Z" };
   state.linkArchivedAt = "2026-09-30T10:00:00.000Z";
+  state.slimLookup = false;
+  state.listPending = false;
+  state.lookupResolved = false;
   state.thread = THREAD;
   state.navigate = vi.fn(async () => undefined);
   state.archive = vi.fn(async () => ({ _tag: "Success", value: {} }));
@@ -568,6 +613,7 @@ beforeEach(() => {
   clearPendingWrapup();
   clearChipFreeze();
   state.renamed = [];
+  state.focusCalls = [];
   state.prewarm = [];
   state.viewing = [];
   state.messageListProps = [];
@@ -687,6 +733,30 @@ function announced(): string {
     : region.children.filter((child) => typeof child === "string").join("");
 }
 
+it("keeps an archived deep link read-only while its link loads", async () => {
+  state.shell = { title: "Plans", archivedAt: null };
+  state.slimLookup = true;
+  await renderScreen();
+  expect(hasComposer()).toBe(false);
+  expect(hasArchivedBar()).toBe(false);
+  expect(text()).toContain("Loading chat");
+  expect(lastMessageListProps().readOnly).toBe(true);
+  state.lookupResolved = true;
+  await act(async () => renderer!.update(<ConversationScreen botId="bot-a" threadId="thread-1" />));
+  expect(hasComposer()).toBe(false);
+  expect(hasArchivedBar()).toBe(true);
+});
+
+it("does not hold an active chat's composer for the bots list", async () => {
+  // A cold deep link: the shell is in, personalBots.list is still on the way.
+  state.shell = { title: "Plans", archivedAt: null };
+  state.listPending = true;
+  await renderScreen();
+  expect(hasComposer()).toBe(true);
+  expect(hasArchivedBar()).toBe(false);
+  expect(lastMessageListProps().readOnly).toBe(false);
+});
+
 it("opens an archived chat read-only: the Archived bar, no composer, no session, no retry", async () => {
   await renderScreen();
 
@@ -741,6 +811,7 @@ it("Unarchive archives=false in place, and the composer and session come back", 
   // The server clears archivedAt on the shell and the link.
   state.shell = { title: "Plans", archivedAt: null };
   state.linkArchivedAt = null;
+  state.focusCalls = [];
   state.prewarm = [];
   state.viewing = [];
   await rerender();
@@ -913,6 +984,22 @@ const otherChat = () => {
 };
 
 describe("the three-dots menu", () => {
+  it("prevents the menu item handler and opens New chat", async () => {
+    openChat();
+    await renderScreen();
+    const preventBaseUIHandler = vi.fn();
+    const item = renderer!.root.findAll(
+      (node) =>
+        node.type === "button" &&
+        node.props["data-menu-item"] !== undefined &&
+        firstString(node) === "New chat",
+    )[0]!;
+    act(() => {
+      item.props.onClick({ preventBaseUIHandler });
+      expect(preventBaseUIHandler).toHaveBeenCalledOnce();
+    });
+    expect(buttonsLabelled("start named")).toHaveLength(1);
+  });
   it("holds Chat settings…, New chat and All chats, and none of the chat's own actions", async () => {
     openChat();
     await renderScreen();
@@ -1064,6 +1151,16 @@ describe("the sheet on the open chat", () => {
     await openOwnSheet();
     await chooseRow("wrapup");
     expect(String(lastMessageListProps().errorText)).toContain("Couldn't start the wrapup");
+  });
+
+  it("focuses the rename field synchronously in the settings click", async () => {
+    openChat();
+    await renderScreen();
+    await openOwnSheet();
+    act(() => {
+      rowNode("rename").props.onClick();
+      expect(state.focusCalls).toEqual(["prime", "field"]);
+    });
   });
 
   it("Rename chat opens the dialog with this chat's title and renames this chat", async () => {

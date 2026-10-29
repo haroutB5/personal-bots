@@ -1,6 +1,7 @@
 import {
   CommandId,
   EventId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -104,6 +105,66 @@ it.layer(NodeServices.layer)("user input dismiss decider", (it) => {
       const projected = yield* projectEvent(readModel, { ...events[0]!, sequence: 1 });
       expect(projected.threads[0]?.messages).toEqual([]);
       expect(projected.threads[0]?.latestTurn).toBeNull();
+    }),
+  );
+
+  it.effect("supersedes message-mode questions on an inbound turn and leaves callbacks open", () =>
+    Effect.gen(function* () {
+      const asyncRequest = makeRequest("message");
+      const nativeRequest = {
+        ...makeRequest(undefined),
+        id: EventId.make("native"),
+        payload: {
+          requestId: "native",
+          questions: [{ id: "0", header: "Q", question: "Continue?", options: [] }],
+        },
+      };
+      const secondRequest = {
+        ...asyncRequest,
+        id: EventId.make("second-question"),
+        payload: {
+          requestId: "second-question",
+          responseMode: "message",
+          questions: [{ id: "0", header: "Q", question: "Continue?", options: [] }],
+        },
+      };
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          commandId: CommandId.make("inbound"),
+          threadId,
+          createdAt: NOW,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          message: {
+            messageId: MessageId.make("inbound"),
+            role: "user",
+            text: "Continue",
+            attachments: [],
+          },
+        },
+        readModel: makeReadModel([]),
+        pendingInputActivities: [asyncRequest, secondRequest, nativeRequest],
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.activity-appended",
+        "thread.activity-appended",
+        "thread.message-sent",
+        "thread.turn-start-requested",
+      ]);
+      expect(events[0]?.payload).toMatchObject({
+        activity: {
+          kind: "user-input.resolved",
+          payload: { requestId, responseMode: "superseded" },
+        },
+      });
+      expect(events[1]?.payload).toMatchObject({
+        activity: {
+          kind: "user-input.resolved",
+          payload: { requestId: "second-question", responseMode: "superseded" },
+        },
+      });
     }),
   );
 

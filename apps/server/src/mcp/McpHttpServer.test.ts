@@ -15,16 +15,19 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
+import { McpProtocol, McpSchema, McpServer, type Tool } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import { secretRedactor } from "../personal/secrets/secretRedaction.ts";
+import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { PreviewSnapshotToolkit, PreviewStandardToolkit } from "./toolkits/preview/tools.ts";
+import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -518,7 +521,7 @@ it.effect(
       const linkTool = server.tools.find(({ tool }) => tool.name === "link_pull_request");
       expect(linkTool?.tool.annotations?.idempotentHint).toBe(true);
       expect(linkTool?.tool.annotations?.openWorldHint).toBe(false);
-      expect(linkTool?.tool.description).toContain("Register every pull request you open");
+      expect(linkTool?.tool.description).toContain("Link every PR you open for this thread");
 
       const denied = yield* server
         .callTool({ name: "list_thread_pull_requests", arguments: {} })
@@ -793,6 +796,25 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       expect(reusedSessionResponse.status).toBe(404);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+const expectCompactSchemas = (byName: Record<string, Tool.Any>) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    expect(server.tools.length).toBe(Object.keys(byName).length);
+    for (const { tool } of server.tools) {
+      expect(tool.inputSchema, tool.name).toEqual(advertisedJsonSchema(byName[tool.name]!));
+    }
+  });
+
+it.effect("advertises the compact input schema for every preview tool", () =>
+  expectCompactSchemas({ ...PreviewStandardToolkit.tools, ...PreviewSnapshotToolkit.tools }).pipe(
+    Effect.provide(TestLayer),
+  ),
+);
+
+it.effect("advertises the compact input schema for every pull request tool", () =>
+  expectCompactSchemas(PullRequestsToolkit.tools).pipe(Effect.provide(PullRequestsTestLayer)),
 );
 
 it.effect("registers annotated tools and preserves authenticated request context", () =>

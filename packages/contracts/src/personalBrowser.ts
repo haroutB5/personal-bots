@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PersonalDesktopClaimant } from "./personalDesktop.ts";
 import { PersonalBotId } from "./personalBots.ts";
 
 /**
@@ -47,8 +48,40 @@ export const PersonalBrowserHelpRequest = Schema.Struct({
   reason: Schema.String,
   /** ISO-8601 UTC instant from the host clock. */
   requestedAt: Schema.String,
+  /**
+   * What the user is being asked for, so the card picks its copy: a CAPTCHA,
+   * a one-time code, a sign-in, a sensitive-site step, or anything else.
+   * Absent from older servers: the card shows `reason`.
+   */
+  kind: Schema.optional(Schema.Literals(["captcha", "code", "login", "sensitive", "other"])),
+  /** The site the user has to act on. */
+  origin: Schema.optional(Schema.String),
+  /** Sensitive step only: where the data could go. */
+  destination: Schema.optional(Schema.String),
+  /** Sensitive step only: the marked origins whose content is at stake. */
+  sources: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * Sensitive step only: where the user answers it. `desktop` is a pause on
+   * the Computer screen, which the browser panel's copy would misdescribe.
+   */
+  surface: Schema.optional(Schema.Literal("desktop")),
 });
 export type PersonalBrowserHelpRequest = typeof PersonalBrowserHelpRequest.Type;
+
+/**
+ * A paused sensitive-site step, shown even before the bot calls
+ * request_browser_help. `approveEgress` / `refuseEgress` decide it.
+ */
+export const PersonalBrowserEgressPause = Schema.Struct({
+  threadId: ThreadId,
+  botId: PersonalBotId,
+  botName: Schema.String,
+  sources: Schema.Array(Schema.String),
+  destination: Schema.String,
+  /** ISO-8601 UTC instant the step was paused. */
+  requestedAt: Schema.String,
+});
+export type PersonalBrowserEgressPause = typeof PersonalBrowserEgressPause.Type;
 
 /** A bot and the chat it drove the browser from. */
 export const PersonalBrowserAgentRef = Schema.Struct({
@@ -81,6 +114,18 @@ export const PersonalBrowserStatus = Schema.Struct({
   page: Schema.NullOr(PersonalBrowserPage),
   /** A bot blocked on the shared page until the user takes over and returns it. */
   helpRequest: Schema.NullOr(PersonalBrowserHelpRequest),
+  /**
+   * Bots waiting for the shared browser lease, first in line first. The
+   * Computer tab's "Up next" merges this with the desktop's `waiting`; the
+   * stream an entry belongs to is its source, so no source field is carried.
+   * Optional: an older server has no browser queue.
+   */
+  waiting: Schema.optional(Schema.Array(PersonalDesktopClaimant)),
+  /**
+   * A sensitive-site step paused for the user's decision. Set before the bot
+   * necessarily calls request_browser_help, so the card can show at once.
+   */
+  egressPause: Schema.optional(Schema.NullOr(PersonalBrowserEgressPause)),
   /** The dialog open on the viewport page. Optional: older servers never send it. */
   dialog: Schema.optional(Schema.NullOr(PersonalBrowserDialog)),
   /**
@@ -91,6 +136,12 @@ export const PersonalBrowserStatus = Schema.Struct({
    * is what "Back to chat" on the Computer tab steers by.
    */
   lastAgent: Schema.NullOr(PersonalBrowserAgentRef),
+  /**
+   * ISO-8601 UTC instant the browser last closed, kept while it is offline so
+   * the Computer tab's idle card can say "closed at HH:MM". Optional: an older
+   * server never sends it and the client falls back to the last activity.
+   */
+  lastStop: Schema.optional(Schema.NullOr(Schema.String)),
   viewers: Schema.Int,
 });
 export type PersonalBrowserStatus = typeof PersonalBrowserStatus.Type;
@@ -123,10 +174,22 @@ export const PersonalBrowserActivityEvent = Schema.Struct({
   kind: PersonalBrowserActivityKind,
   summary: Schema.String,
   status: Schema.Literals(["succeeded", "failed"]),
+  /**
+   * Why a step did not succeed when it was not a failure: a sensitive pause
+   * (`paused`) or the PC refusing input (`refused`). Optional so an older
+   * client still reads the event.
+   */
+  outcome: Schema.optional(Schema.Literals(["paused", "refused"])),
   /** ISO-8601 UTC instant from the host clock. */
   at: Schema.String,
   threadId: Schema.NullOr(ThreadId),
   botName: Schema.NullOr(Schema.String),
+  /**
+   * Which driver the event came from. Optional and `"browser"` here: older
+   * servers omit it, and the desktop has its own event type carrying
+   * `"desktop"`. The Computer tab merges the two timelines by this field.
+   */
+  source: Schema.optional(Schema.Literal("browser")),
 });
 export type PersonalBrowserActivityEvent = typeof PersonalBrowserActivityEvent.Type;
 

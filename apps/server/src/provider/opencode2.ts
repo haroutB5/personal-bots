@@ -5,6 +5,7 @@ import {
   type ProviderSessionStartInput,
   type ProviderSendTurnInput,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -163,6 +164,43 @@ export const openCode2Environment = Effect.fn("openCode2Environment")(function* 
     ...(key ? { OPENCODE_API_KEY: key } : {}),
   } satisfies NodeJS.ProcessEnv;
 });
+
+/**
+ * The inputs OpenCode 2 reads once, when the ACP process starts. A running
+ * process keeps the key and binary it was launched with, so a session may only
+ * be resumed when this value still matches. The key itself is hashed, never
+ * stored or logged.
+ */
+export const openCode2SessionFingerprint = Effect.fn("openCode2SessionFingerprint")(
+  function* (input: {
+    readonly base: NodeJS.ProcessEnv;
+    readonly stateDir: string;
+    readonly binaryPath: string;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dataHome =
+      input.base.XDG_DATA_HOME ||
+      path.join(input.base.HOME || input.base.USERPROFILE || "", ".local", "share");
+    const authPath = path.join(dataHome, "opencode", "auth.json");
+    const fileAuth = yield* fs.readFileString(authPath).pipe(Effect.orElseSucceed(() => ""));
+    const auth = input.base.OPENCODE_AUTH_CONTENT ?? fileAuth;
+    const hash = NodeCrypto.createHash("sha256");
+    hash.update("hbots-opencode2-session-v1\0");
+    hash.update(auth);
+    hash.update("\0");
+    hash.update(input.binaryPath);
+    hash.update("\0");
+    hash.update(input.stateDir);
+    hash.update("\0");
+    hash.update(input.base.OPENCODE_API_KEY ?? "");
+    hash.update("\0");
+    hash.update(input.base.XDG_DATA_HOME ?? "");
+    hash.update("\0");
+    hash.update(input.base.HOME ?? input.base.USERPROFILE ?? "");
+    return hash.digest("hex").slice(0, 32);
+  },
+);
 
 export const configureOpenCode2Turn = (
   runtime: Pick<
@@ -366,6 +404,15 @@ export const makeOpenCode2Instance = Effect.fn("makeOpenCode2Instance")(function
         typeof session.resumeCursor === "object" &&
         "engine" in session.resumeCursor &&
         session.resumeCursor.engine === "acp"
+      ),
+    sessionFingerprint: () =>
+      openCode2SessionFingerprint({
+        base: input.environment,
+        stateDir: config.stateDir,
+        binaryPath: input.config.binaryPath,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
       ),
     runtimeOptions,
     configureTurn: configureOpenCode2Turn,

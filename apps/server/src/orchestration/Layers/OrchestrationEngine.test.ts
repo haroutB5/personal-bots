@@ -109,6 +109,8 @@ async function createOrchestrationSystem(
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     readThread: (threadId: ThreadId) =>
       runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
+    readShell: (threadId: ThreadId) =>
+      runtime.runPromise(snapshotQuery.getThreadShellById(threadId)),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
@@ -130,6 +132,103 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it.each(["personal-task:task:steer:1", "personal-task:task:retry:1", "owner-message"])(
+    "supersedes an open async question on inbound command %s after restart",
+    async (commandId) => {
+      const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-supersede-"));
+      const databasePath = NodePath.join(directory, "state.sqlite");
+      let system = await createOrchestrationSystem(databasePath);
+      const threadId = ThreadId.make("supersede-thread");
+      const projectId = ProjectId.make("supersede-project");
+      const requestId = ApprovalRequestId.make("codex-async:question");
+      try {
+        await system.run(
+          system.engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("project"),
+            projectId,
+            title: "Test",
+            workspaceRoot: "/tmp/test",
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("thread"),
+            threadId,
+            projectId,
+            title: "Test",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make("question"),
+            threadId,
+            createdAt: now(),
+            activity: {
+              id: EventId.make("question"),
+              kind: "user-input.requested",
+              summary: "Question",
+              tone: "info",
+              turnId: null,
+              createdAt: now(),
+              payload: {
+                requestId,
+                responseMode: "message",
+                questions: [{ id: "0", header: "Q", question: "Continue?", options: [] }],
+              },
+            },
+          }),
+        );
+        expect(Option.getOrThrow(await system.readShell(threadId)).hasPendingUserInput).toBe(true);
+        await system.dispose();
+        system = await createOrchestrationSystem(databasePath);
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(commandId),
+            threadId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            message: {
+              messageId: MessageId.make(commandId),
+              role: "user",
+              text: "Continue",
+              attachments: [],
+            },
+            createdAt: "2026-01-01T00:00:01.000Z",
+          }),
+        );
+        const thread = (await system.readModel()).threads[0]!;
+        expect(Option.getOrThrow(await system.readShell(threadId)).hasPendingUserInput).toBe(false);
+        expect(
+          thread.activities.find((activity) => activity.kind === "user-input.resolved")?.payload,
+        ).toMatchObject({ requestId, responseMode: "superseded" });
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.user-input.respond",
+            commandId: CommandId.make("stale-tap"),
+            threadId,
+            requestId,
+            answers: { "0": "yes" },
+            createdAt: "2026-01-01T00:00:02.000Z",
+          }),
+        );
+        const after = (await system.readModel()).threads[0]!;
+        expect(after.messages.filter((message) => message.role === "user")).toHaveLength(1);
+      } finally {
+        await system.dispose();
+      }
+    },
+  );
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
@@ -420,6 +519,7 @@ describe("OrchestrationEngine", () => {
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
           getUserInputActivity: () => Effect.die("unused"),
+          getPendingInputActivities: () => Effect.succeed([]),
           listActivitiesByKind: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>

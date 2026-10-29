@@ -36,16 +36,21 @@ export const taskSections = (
     "taskId" | "title" | "objective" | "acceptanceCriteria" | "expectedOutput"
   >,
   brief: PersonalDelegationBrief | null,
-): Array<string> =>
-  [
+  /** The delegating bot, when the task came from one: its own "From <name>" is dropped. */
+  delegatorName: string | null = null,
+): Array<string> => {
+  const own = (text: string) =>
+    delegatorName === null ? text : stripSelfAttribution(delegatorName, text);
+  return [
     `Task id: ${task.taskId}`,
     `Title: ${task.title}`,
-    `Objective:\n${task.objective}`,
-    brief?.context ? `Context:\n${brief.context}` : null,
-    brief?.constraints ? `Constraints:\n${brief.constraints}` : null,
+    `Objective:\n${own(task.objective)}`,
+    brief?.context ? `Context:\n${own(brief.context)}` : null,
+    brief?.constraints ? `Constraints:\n${own(brief.constraints)}` : null,
     task.acceptanceCriteria ? `Acceptance criteria:\n${task.acceptanceCriteria}` : null,
     task.expectedOutput ? `Expected output:\n${task.expectedOutput}` : null,
-  ].filter((section) => section !== null);
+  ].filter((section) => section !== null) as Array<string>;
+};
 
 /** A parent's turn once delegated tasks have returned results. */
 export const delegationContinuationText = (input: {
@@ -112,8 +117,39 @@ export const openingTurnHeader = (label: string, attemptNumber: number) =>
 // so the bot does not read "Update from CTO: Update from CTO: ...".
 const ALREADY_PREFIXED = /^update from [^:\n]{1,80}:/i;
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Drops a sender's own attribution from the start of a message the app is
+ * about to label itself: "From CTO.", "Update from CTO", "CTO:", "CTO here".
+ * A steer "From CTO. Harout: ship it" then reads "Update from CTO: Harout:
+ * ship it" instead of repeating "From CTO". Only the sender's own name is
+ * dropped, case-insensitively, and only when text remains.
+ */
+export function stripSelfAttribution(fromName: string, message: string): string {
+  const text = message.trim();
+  const name = fromName.trim();
+  if (name.length === 0) return text;
+  const n = escapeRegExp(name);
+  // Already labelled with the sender's name and a colon: keep the sender's own
+  // wording (and case) exactly; ALREADY_PREFIXED below leaves it alone.
+  if (new RegExp(`^update\\s+from\\s+${n}\\s*:`, "i").test(text)) return text;
+  // The name has to end where it ends: "From Assistants notes" is not from
+  // "Assistant", "From CTO's review" keeps its possessive and "From Developer
+  // notes" is not from "Dev".
+  const end = `(?![\\w'’])`;
+  const prefix = new RegExp(
+    `^(?:(?:update\\s+)?from\\s+${n}${end}(?:\\s+here\\b)?|${n}\\s+here\\b|${n}\\s*:)[\\s:,.!;\\-–—]*`,
+    "i",
+  );
+  const stripped = text.replace(prefix, "").trim();
+  return stripped.length > 0 ? stripped : text;
+}
+
 /** The text a steer is stored and delivered as. */
-export const steerText = (fromName: string, message: string) =>
-  ALREADY_PREFIXED.test(message.trim())
-    ? message.trim()
-    : `Update from ${fromName.trim() || "your delegator"}: ${message.trim()}`;
+export const steerText = (fromName: string, message: string) => {
+  const text = stripSelfAttribution(fromName, message);
+  return ALREADY_PREFIXED.test(text)
+    ? text
+    : `Update from ${fromName.trim() || "your delegator"}: ${text}`;
+};

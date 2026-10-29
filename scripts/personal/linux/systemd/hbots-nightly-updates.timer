@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Personal Bots dependency update (04:00 local)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

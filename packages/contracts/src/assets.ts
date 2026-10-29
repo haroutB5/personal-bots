@@ -29,6 +29,15 @@ export const AssetResource = Schema.Union([
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
+  // One host file named by a chat link. The path resolves like the chat shows
+  // it: workspace, then home folder, `~/`, or a mapped Windows path. `inline`
+  // serves the types a browser can show (image, PDF, HTML, audio, video);
+  // `download` serves any type as an attachment, never rendered.
+  Schema.TaggedStruct("host-file", {
+    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.Literals(["inline", "download"]),
+  }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
     /** Display name and mime from the `ChatAttachment` the caller holds. The
@@ -189,9 +198,22 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedError<AssetPre
   override get message(): string {
     // Draft resources serve absolute paths through the same host-media
     // validation as media files, so they share its message.
-    return this.resource._tag === "media-file" || this.resource._tag === "draft-workspace-file"
+    return this.resource._tag === "media-file" ||
+      this.resource._tag === "draft-workspace-file" ||
+      this.resource._tag === "host-file"
       ? "Only images, videos, audio, HTML, and PDF files can be previewed."
       : "Only browser documents and images can be previewed.";
+  }
+}
+
+export class AssetProtectedFileError extends Schema.TaggedError<AssetProtectedFileError>()(
+  "AssetProtectedFileError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "This file holds credentials or machine state and is never shown or downloaded.";
   }
 }
 
@@ -203,7 +225,7 @@ export class AssetWorkspaceAssetInspectionError extends Schema.TaggedError<Asset
   },
 ) {
   override get message(): string {
-    return this.resource._tag === "media-file"
+    return this.resource._tag === "media-file" || this.resource._tag === "host-file"
       ? "Failed to inspect the media file."
       : "Failed to inspect the workspace asset.";
   }
@@ -216,7 +238,7 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   },
 ) {
   override get message(): string {
-    return this.resource._tag === "media-file"
+    return this.resource._tag === "media-file" || this.resource._tag === "host-file"
       ? "Media file was not found."
       : "Workspace asset was not found.";
   }
@@ -307,6 +329,7 @@ export const AssetAccessError = Schema.Union([
   AssetWorkspaceRootNormalizationError,
   AssetWorkspacePathValidationError,
   AssetPreviewTypeValidationError,
+  AssetProtectedFileError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceResolutionError,

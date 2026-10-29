@@ -10,6 +10,7 @@
  * screencast that runs only while at least one viewer socket is attached.
  */
 import {
+  PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalBrowserError,
   ThreadId,
   type PersonalBotId,
@@ -43,6 +44,7 @@ import { makeBrowserLifecycle } from "./browserLifecycle.ts";
 import { makeBrowserOperations } from "./browserOperations.ts";
 import { makeBrowserTabs } from "./browserTabs.ts";
 import { makeBrowserViewers } from "./browserViewers.ts";
+import { browserModePinned, resolveBrowserHeadless } from "./headlessMode.ts";
 
 export {
   CONTROL_GRACE_MS,
@@ -67,7 +69,28 @@ export class PersonalBrowser extends Context.Service<
       readonly botName: string;
       readonly taskId: PersonalTaskId;
       readonly reason: string;
+      /** What the user is being asked for, so the card picks its copy. */
+      readonly kind?: "captcha" | "code" | "login" | "sensitive" | "other" | undefined;
+      /** The site the user has to act on, when the bot knows it. */
+      readonly origin?: string | undefined;
     }) => Effect.Effect<PersonalBrowserHelpRequest, HostOperationError>;
+    /**
+     * Allows the paused sensitive-site step once for that bot. The next
+     * identical step asks again; nothing else is approved, and the browser,
+     * the page and every other bot are untouched.
+     */
+    readonly approveEgress: (input: {
+      readonly threadId: ThreadId;
+      readonly sessionId: string;
+    }) => Effect.Effect<PersonalBrowserStatus, PersonalBrowserError>;
+    /**
+     * Refuses that one step and lets the bot carry on without it. Never closes
+     * the browser and never touches another bot's page.
+     */
+    readonly refuseEgress: (input: {
+      readonly threadId: ThreadId;
+      readonly sessionId: string;
+    }) => Effect.Effect<PersonalBrowserStatus, PersonalBrowserError>;
     /**
      * Ends the shared browser session outright: every tab closed, Chrome
      * stopped, the lease released whoever held it, and the saved page dropped
@@ -93,6 +116,8 @@ export class PersonalBrowser extends Context.Service<
      * browser's controller, or have its page reopened by a later restart.
      */
     readonly releaseThread: (threadId: ThreadId) => Effect.Effect<void>;
+    /** A finished turn gives up the lease when that thread owns it. */
+    readonly releaseLease: (threadId: ThreadId) => Effect.Effect<void>;
     /**
      * The user-marked sensitive origins this thread, and the delegation tree
      * it works in, has had open — sorted. Read by the egress channels the
@@ -101,6 +126,23 @@ export class PersonalBrowser extends Context.Service<
      * sensitive has been opened, not that the thread is trusted.
      */
     readonly sensitiveExposure: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<string>>;
+    /**
+     * A desktop screenshot carried a window showing a site the user marked
+     * sensitive. Recorded in the same persisted store and under the same
+     * thread/root-task keys as the shared browser's exposure.
+     */
+    readonly recordDesktopExposure: (input: {
+      readonly threadId: ThreadId;
+      readonly value: string;
+    }) => Effect.Effect<void>;
+    /**
+     * Refuses desktop input while the thread carries that exposure, through
+     * the same pause, approval card and one-shot decision as the browser. The
+     * bot is told to call request_browser_help and end its turn.
+     */
+    readonly guardDesktopInput: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<void, HostOperationError>;
     readonly activity: (sessionId: string) => Stream.Stream<PersonalBrowserStreamItem>;
     readonly handleAutomationRequest: (
       request: PreviewAutomationRequest,
@@ -135,6 +177,12 @@ export class PersonalBrowser extends Context.Service<
 export interface PersonalBrowserOptions {
   readonly driver: BrowserDriver;
   readonly headless: boolean;
+  /**
+   * True when nothing pinned the mode, so the launch may decide from the
+   * session it finds (headless when a boot-started service has no display).
+   * Left undefined by tests and callers that set `headless` on purpose.
+   */
+  readonly headlessAuto?: boolean;
   readonly executablePath: string | undefined;
   /** Stream telemetry log lines (default on). */
   readonly streamTelemetry?: boolean;
@@ -167,8 +215,10 @@ export interface PersonalBrowserOptions {
 }
 
 /**
- * Headed by default so the user can sign in on the laptop.
- * `T3CODE_PERSONAL_BROWSER_HEADLESS=1` runs headless. The shared browser is
+ * Headed by default so the user can sign in on the laptop; a Linux host with no
+ * graphical session (a systemd service without DISPLAY) runs headless instead
+ * of failing, see `headlessMode.ts`. `T3CODE_PERSONAL_BROWSER_HEADLESS=1` runs
+ * headless. The shared browser is
  * Brave: the installed Brave is discovered when no path is given, and
  * `T3CODE_PERSONAL_BROWSER_EXECUTABLE` overrides it with another Brave build.
  * Chrome is never used as a fallback.
@@ -197,7 +247,8 @@ const controlGraceMsFromEnvironment = (value: string | undefined): number | unde
 
 export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   driver: makePlaywrightDriver(),
-  headless: /^(1|true|yes)$/i.test(process.env.T3CODE_PERSONAL_BROWSER_HEADLESS ?? ""),
+  headless: resolveBrowserHeadless(process.env),
+  headlessAuto: !browserModePinned(),
   executablePath: process.env.T3CODE_PERSONAL_BROWSER_EXECUTABLE?.trim() || undefined,
   // Kill switch: T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY=off stops the stream log lines.
   streamTelemetry: process.env.T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY?.trim() !== "off",
@@ -224,11 +275,29 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   ),
 });
 
+const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
     const core = yield* makeBrowserCore(rawOptions);
-    const { lease, options, sensitiveExposure, status, viewers } = core;
+    const {
+      clearHelpForThread,
+      clearTaskHelp,
+      lease,
+      oneShotApprovals,
+      options,
+      pendingApprovals,
+      refusedApprovals,
+      runFork,
+      sensitiveExposure,
+      recordDesktopExposure,
+      guardDesktopInput,
+      st,
+      status,
+      tasks,
+      viewers,
+    } = core;
 
     const launch = yield* makeBrowserLaunch(core);
 
@@ -239,7 +308,38 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
     const { handleAutomationRequest, navigateTab } = operations;
 
     const control = yield* makeBrowserControl(core, launch, tabs, operations);
-    const { fillLogin, loginPage, requestHelp, returnToAgent, takeControl } = control;
+    const {
+      approveEgress,
+      fillLogin,
+      loginPage,
+      refuseEgress,
+      requestHelp,
+      returnToAgent,
+      takeControl,
+    } = control;
+
+    // A task that ends (stopped, cancelled, failed, completed, interrupted)
+    // leaves no question to answer and no claim on the browser: its card and
+    // any queued entries for that task or thread go, the next bot's card comes
+    // up, and the lease goes back at once. This is the task status itself, not
+    // releaseLease, because a stopped task may never run another turn to
+    // release anything; without it the next bot's first step queued behind a
+    // dead 90 s lease and its help request was refused (QA f9e48571).
+    runFork(
+      Stream.runForEach(tasks.changes, (task) =>
+        PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status)
+          ? Effect.gen(function* () {
+              yield* clearTaskHelp({ threadId: task.threadId, taskId: task.taskId });
+              if (task.threadId === null) return;
+              // A decision recorded for a turn that is over approves nothing.
+              pendingApprovals.delete(task.threadId);
+              oneShotApprovals.delete(task.threadId);
+              refusedApprovals.delete(task.threadId);
+              yield* lease.releaseIfOwner(task.threadId);
+            })
+          : Effect.void,
+      ).pipe(Effect.ignoreCause({ log: true })),
+    );
 
     const lifecycle = yield* makeBrowserLifecycle(core, launch, tabs);
     const { activity, closeBrowser, listFiles, resolveFile } = lifecycle;
@@ -318,12 +418,41 @@ export const make = (rawOptions: PersonalBrowserOptions) =>
       status,
       takeControl,
       requestHelp,
+      approveEgress,
+      refuseEgress,
       returnToAgent,
       closeBrowser,
       listFiles,
       resolveFile,
       releaseThread,
+      releaseLease: (threadId) =>
+        Effect.gen(function* () {
+          // The user is still answering a card for this thread. Releasing now
+          // would hand the browser to the next bot and cancel the question it
+          // is waiting on, which is how two bots could cancel each other's
+          // help forever (QA's B2). A card whose task is gone (cancelled, or
+          // the chat archived) is not a question any more: it goes and the
+          // lease with it (QA's B6).
+          if (st.activeHelp?.request.threadId === threadId) {
+            const card = st.activeHelp;
+            const detail = yield* tasks.get({ taskId: card.taskId }).pipe(
+              Effect.option,
+              Effect.catchCause(() => Effect.succeed(Option.none())),
+            );
+            const waitingForBrowser =
+              Option.isSome(detail) && detail.value.task.status === "waiting_for_browser";
+            if (waitingForBrowser) return;
+            yield* clearHelpForThread(threadId);
+          }
+          if (pendingApprovals.has(threadId)) return;
+          // Approval decisions never outlive the turn that asked for them.
+          oneShotApprovals.delete(threadId);
+          refusedApprovals.delete(threadId);
+          yield* lease.releaseIfOwner(threadId);
+        }).pipe(Effect.asVoid),
       sensitiveExposure,
+      recordDesktopExposure,
+      guardDesktopInput,
       activity,
       handleAutomationRequest,
       fillLogin,

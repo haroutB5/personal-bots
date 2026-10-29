@@ -78,6 +78,8 @@ export class AsyncFileWriter {
   private droppedLines = 0;
   private writing = false;
   private failed = false;
+  /** Resolved when the queue and the in-flight write are done; see {@link flush}. */
+  private readonly drainWaiters: Array<() => void> = [];
 
   constructor(fd: number) {
     this.fd = fd;
@@ -117,6 +119,22 @@ export class AsyncFileWriter {
     return this.droppedLines;
   }
 
+  /**
+   * Resolves once everything accepted so far has been written (or the writer
+   * has failed and stopped accepting). There is no timer and no polling: the
+   * promise settles on the write callback itself, so a caller never has to
+   * guess how many event-loop turns a disk write takes.
+   */
+  flush(): Promise<void> {
+    if (this.failed || (!this.writing && this.queue.length === 0)) return Promise.resolve();
+    return new Promise<void>((resolve) => this.drainWaiters.push(resolve));
+  }
+
+  private settleDrain(): void {
+    if (this.writing || this.queue.length > 0) return;
+    for (const resolve of this.drainWaiters.splice(0)) resolve();
+  }
+
   private trimBacklog(): void {
     while (this.queuedBytes > MAX_QUEUED_BYTES && this.queue.length > 0) {
       const dropped = this.queue.shift()!;
@@ -128,7 +146,10 @@ export class AsyncFileWriter {
   private pump(): void {
     if (this.writing) return;
     const batch = this.takeBatch();
-    if (batch === undefined) return;
+    if (batch === undefined) {
+      this.settleDrain();
+      return;
+    }
     this.writing = true;
     this.writeBuffer(batch, 0);
   }
@@ -163,6 +184,9 @@ export class AsyncFileWriter {
       if (error !== null && error !== undefined) {
         this.writing = false;
         this.failed = true;
+        this.queue.length = 0;
+        this.queuedBytes = 0;
+        this.settleDrain();
         return;
       }
       const next = offset + written;

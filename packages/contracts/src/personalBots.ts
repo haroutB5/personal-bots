@@ -10,7 +10,11 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
-import { ModelSelection, OrchestrationMessageRole } from "./orchestration.ts";
+import {
+  ModelSelection,
+  OrchestrationMessageRole,
+  OrchestrationThreadShell,
+} from "./orchestration.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { VoiceCallSettings, VoiceCallSettingsInput } from "./personalVoiceCallSettings.ts";
 import { UsageProviderKind } from "./usage.ts";
@@ -588,6 +592,45 @@ export const PersonalBotArchiveThreadsInput = Schema.Struct({
 });
 export type PersonalBotArchiveThreadsInput = typeof PersonalBotArchiveThreadsInput.Type;
 
+/**
+ * The thread shells the slim shell leaves out (archived bot chats), for one
+ * bot's chat list, an open chat or search titles: every chat of `botId` plus
+ * the named `threadIds`.
+ */
+export const PersonalBotThreadShellsInput = Schema.Struct({
+  botId: Schema.optionalKey(PersonalBotId),
+  threadIds: Schema.optionalKey(
+    Schema.Array(ThreadId).check(Schema.isMaxLength(PERSONAL_BOT_THREADS_BATCH_MAX)),
+  ),
+});
+export type PersonalBotThreadShellsInput = typeof PersonalBotThreadShellsInput.Type;
+
+export const PersonalBotThreadShellsResult = Schema.Struct({
+  threads: Schema.Array(OrchestrationThreadShell),
+});
+export type PersonalBotThreadShellsResult = typeof PersonalBotThreadShellsResult.Type;
+
+/** The whole text behind previews a thread read sent (see `textPreviews`). */
+export const PERSONAL_THREAD_FULL_TEXT_MAX = 50;
+
+export const PersonalThreadFullTextInput = Schema.Struct({
+  threadId: ThreadId,
+  messageIds: Schema.optionalKey(
+    Schema.Array(MessageId).check(Schema.isMaxLength(PERSONAL_THREAD_FULL_TEXT_MAX)),
+  ),
+  activityIds: Schema.optionalKey(
+    Schema.Array(Schema.String).check(Schema.isMaxLength(PERSONAL_THREAD_FULL_TEXT_MAX)),
+  ),
+});
+export type PersonalThreadFullTextInput = typeof PersonalThreadFullTextInput.Type;
+
+export const PersonalThreadFullTextResult = Schema.Struct({
+  messages: Schema.Array(Schema.Struct({ messageId: MessageId, text: Schema.String })),
+  /** Each activity's payload, slimmed like a thread read but without previews. */
+  activities: Schema.Array(Schema.Struct({ activityId: Schema.String, payload: Schema.Unknown })),
+});
+export type PersonalThreadFullTextResult = typeof PersonalThreadFullTextResult.Type;
+
 /** Deletes several chats, one at a time, each exactly as `deleteThread` would. */
 export const PersonalBotDeleteThreadsInput = Schema.Struct({
   threadIds: PersonalBotThreadIdBatch,
@@ -846,6 +889,7 @@ export const PersonalBotsListResult = Schema.Struct({
   bots: Schema.Array(PersonalBot),
   threads: Schema.Array(PersonalBotThread),
   personalProjectId: Schema.NullOr(ProjectId),
+  archivedCounts: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
 });
 export type PersonalBotsListResult = typeof PersonalBotsListResult.Type;
 

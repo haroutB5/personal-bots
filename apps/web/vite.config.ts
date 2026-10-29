@@ -13,6 +13,7 @@ import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
+import { routePreloadPlugin } from "./vite/routePreload";
 import { tailwindPlugins } from "./vite/tailwind";
 
 const repoEnv = loadRepoEnv();
@@ -85,6 +86,19 @@ const unitTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
+// Vitest defaults to one fork per core but one less (19 on the Omarchy laptop):
+// 3.3-3.7 GiB and 312 s CPU for the web gate. Four forks run the same 3,080
+// tests in 1.4 GiB and 179 s CPU, 37 s wall instead of 21 s (Optimizer, 26 Oct,
+// qa/build-diet-20261026). HBOTS_TEST_WORKERS=default is the kill switch back
+// to Vitest's own choice; a number or a percentage such as 50% also works.
+const testWorkersEnv = process.env.HBOTS_TEST_WORKERS?.trim() || "4";
+const testMaxWorkers =
+  testWorkersEnv === "default"
+    ? undefined
+    : /^[1-9][0-9]*$/.test(testWorkersEnv)
+      ? Number(testWorkersEnv)
+      : testWorkersEnv;
+
 function resolveDevProxyTarget(
   backendPort: string | undefined,
   wsUrl: string | undefined,
@@ -152,6 +166,8 @@ function devCompressionPlugin(): Plugin {
 const LUCIDE_DYNAMIC_IMPORTER = /lucide-react[\\/]dist[\\/]esm[\\/]dynamicIconImports\.js$/;
 const LUCIDE_DYNAMIC_QUERY = "?lucide-dynamic";
 const LUCIDE_ICON_MODULE = /lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/][^\\/]+\.js/;
+const HAST_TO_HTML_MODULE =
+  /[\\/]node_modules[\\/](?:\.pnpm[\\/])?(?:hast-util-to-html|zwitch|html-void-elements|character-entities-legacy|character-entities-html4|stringify-entities)[@\\/]/;
 
 function lucideDynamicIconsPlugin(): Plugin {
   return {
@@ -206,6 +222,7 @@ export default defineConfig(() => {
         presets: [reactCompilerPreset()],
       }),
       tailwindPlugins(bundledDev),
+      routePreloadPlugin(),
     ],
     optimizeDeps: {
       include: [
@@ -318,12 +335,23 @@ export default defineConfig(() => {
                 test: (id) => LUCIDE_ICON_MODULE.test(id) && !id.includes(LUCIDE_DYNAMIC_QUERY),
                 priority: 2,
               },
+              // hast-util-to-html and its leaf helpers are shared by ChatMarkdown and
+              // Shiki. Left to the default split they land in the Shiki chunk, so
+              // every chat paid ~61 KB gzip of highlighter on its startup path.
+              {
+                name: "hast-to-html",
+                test: HAST_TO_HTML_MODULE,
+                priority: 1,
+              },
             ],
           },
         },
       },
     },
     test: {
+      // Omitted rather than undefined: the config type does not accept an
+      // explicit undefined for maxWorkers (exactOptionalPropertyTypes).
+      ...(testMaxWorkers === undefined ? {} : { maxWorkers: testMaxWorkers }),
       projects: [defineProject(unitTestProject)],
     },
   };

@@ -31,36 +31,69 @@ const SOURCE = String.raw`
 const { parentPort, workerData } = require('node:worker_threads');
 const { DatabaseSync } = require('node:sqlite');
 const { closeSync, openSync, readSync, statSync } = require('node:fs');
-const { endianness } = require('node:os');
 const db = new DatabaseSync(workerData.filename, { timeout: 0 });
 db.exec('PRAGMA synchronous=' + workerData.synchronous);
 db.exec('PRAGMA wal_autocheckpoint=0');
 db.exec('PRAGMA cache_size=-2000');
 const checkpoint = db.prepare('PRAGMA wal_checkpoint(PASSIVE)');
-const header = Buffer.alloc(100);
 let lastWarning = 0;
-function walIndex() {
-  let fd;
-  try { fd = openSync(workerData.filename + '-shm', 'r'); }
+// Frames the last checkpoint copied into the database. PASSIVE cannot copy the
+// frames a reader pins, so the next tick tries again until it catches up.
+let backfilled = 0;
+// Never open the database or its -shm here. On Linux, closing any descriptor
+// of a file drops EVERY POSIX lock this process holds on it, and SQLite keeps
+// its WAL-index locks on the -shm: one close from this worker made the running
+// server's locks vanish under it (SIGBUS, 15-26 Oct). The -wal file carries no
+// locks, so the frame count comes from its own header and frame headers.
+function walFrames() {
+  let size;
+  try { size = statSync(workerData.filename + '-wal').size; }
   catch (e) { if (e.code === 'ENOENT') return null; throw e; }
-  try { if (readSync(fd, header, 0, 100, 0) < 100) return null; }
-  finally { closeSync(fd); }
-  // https://sqlite.org/walformat.html: two copies of the 48-byte wal-index
-  // header (mxFrame at 16), then nBackfill at 96, in native byte order.
-  // Copies that differ mean a writer is mid-update: skip this tick.
-  if (header.compare(header, 0, 48, 48, 96) !== 0) return null;
-  const le = endianness() === 'LE';
-  const u32 = (offset) => (le ? header.readUInt32LE(offset) : header.readUInt32BE(offset));
-  const version = u32(0);
-  if (version === 0 || header[12] !== 1) return null;
-  if (version !== 3007000) throw new Error('Unrecognised SQLite wal-index version ' + version);
-  return { frames: u32(16), backfilled: u32(96) };
+  if (size <= 32) return null;
+  let fd;
+  try { fd = openSync(workerData.filename + '-wal', 'r'); }
+  catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+  try {
+    const header = Buffer.alloc(32);
+    if (readSync(fd, header, 0, 32, 0) < 32) return null;
+    // https://sqlite.org/walformat.html: big-endian magic, the page size, then
+    // the two salts that every frame of this WAL repeats, in native byte order.
+    const magic = header.readUInt32BE(0);
+    if (magic !== 0x377f0682 && magic !== 0x377f0683) return null;
+    const pageSize = header.readUInt32BE(8);
+    if (pageSize < 512 || pageSize > 65536 || (pageSize & (pageSize - 1)) !== 0) return null;
+    const frameSize = pageSize + 24;
+    const slots = Math.floor((size - 32) / frameSize);
+    if (slots < 1) return null;
+    const salt1 = header.readUInt32BE(16);
+    const salt2 = header.readUInt32BE(20);
+    const frame = Buffer.alloc(24);
+    const inThisWal = (index) => {
+      if (readSync(fd, frame, 0, 24, 32 + (index - 1) * frameSize) < 24) return false;
+      return frame.readUInt32BE(8) === salt1 && frame.readUInt32BE(12) === salt2;
+    };
+    // A complete checkpoint restarts the log in place: the writer overwrites
+    // frame 1 onwards, and the frames past the new end keep the older salt, so
+    // this WAL's frames are the first N slots. A writer appending right now can
+    // make N one or two short of the truth, which a 1000-frame trigger ignores.
+    let low = 1;
+    let high = slots;
+    let frames = 0;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (inThisWal(middle)) { frames = middle; low = middle + 1; } else high = middle - 1;
+    }
+    return { frames };
+  } finally { closeSync(fd); }
 }
 function tick() {
-  const index = walIndex();
+  const wal = walFrames();
+  if (wal === null) return;
+  // Restarting the log zeroes SQLite's backfill counter with it.
+  if (wal.frames < backfilled) backfilled = 0;
   // Below the threshold, or already fully backfilled: a checkpoint now would
   // only make the next commit restart the WAL (one more main-thread sync).
-  if (!index || index.frames < workerData.thresholdFrames || index.backfilled >= index.frames) return;
+  if (wal.frames < workerData.thresholdFrames || wal.frames <= backfilled) return;
   const start = performance.now();
   let row;
   let previousLog = -1;
@@ -72,6 +105,7 @@ function tick() {
     if (row.busy || row.log !== row.checkpointed || row.log === previousLog) break;
     previousLog = row.log;
   }
+  backfilled = row.checkpointed;
   const ms = performance.now() - start;
   let bytes = 0;
   try { bytes = statSync(workerData.filename + '-wal').size; } catch {}

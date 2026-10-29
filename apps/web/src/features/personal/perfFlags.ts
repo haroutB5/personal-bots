@@ -74,7 +74,26 @@ export type PerfOptimization =
   // Once the app is quiet it preloads the personal screens' code (Team, Settings,
   // Memory, Files, Tasks, Computer) so they still open when the phone loses its
   // network (warmRoutes.ts, 1.66.11); off: each is fetched when first opened.
-  | "warm-routes";
+  | "warm-routes"
+  // The shell loaded at connect leaves out idle archived bot chats; a bot's chat
+  // list, an open archived chat and search load theirs on demand
+  // (lazyThreadShells.ts, 1.67.x); off: the full shell at every connect, as before.
+  | "shell-omit-archived"
+  // personalBots.list leaves out archived chat links and sends a count per bot;
+  // a bot's chat list or an archived deep link fetches its own on demand
+  // (usePersonalArchivedLinks, 1.66.x); off: every link at every connect, as before.
+  | "archive-links"
+  // Chat opens get previews of finished reasoning and long tool commands
+  // outside a running turn; the classic timeline loads the rest on expand
+  // (threadFullText.ts, 1.67.x); off: whole text in every chat open, as before.
+  | "text-previews"
+  // Trace exports are sent gzipped (traceGzip.ts, 1.67.x); off: plain JSON.
+  | "trace-gzip"
+  // index.html adds modulepreload hints for main's scripts and the opened
+  // page's route chunks (vite/routePreload.ts, 1.66.x), so a cold launch does
+  // not wait on bootstrap, then main, then the route; off: no hints, as before.
+  // Read by the inline script itself, so it applies from the next launch.
+  | "route-preload";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

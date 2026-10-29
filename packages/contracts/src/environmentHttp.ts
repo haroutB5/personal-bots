@@ -497,8 +497,19 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
 // Query-string window for windowed thread snapshots (GET payloads must encode
 // to strings). Both fields optional: omitting them keeps the full-snapshot
 // behavior, so pagination stays opt-in per request.
+/**
+ * `omitArchivedBotChats=true` leaves out the bot chats the owner archived,
+ * unless one is working or waiting on the owner. The Bots app loads those on
+ * demand (`personalBots.threadShells`). Servers that predate it ignore it.
+ */
+const EnvironmentOrchestrationShellSnapshotQuery = {
+  omitArchivedBotChats: Schema.optional(Schema.Literal("true")),
+};
+
 const EnvironmentOrchestrationThreadSnapshotQuery = {
   reasoningMessages: Schema.optional(Schema.Literal("true")),
+  /** Like the thread subscription's `textPreviews`. */
+  textPreviews: Schema.optional(Schema.Literal("true")),
   turnLimit: Schema.optional(
     Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   ),
@@ -516,6 +527,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OptionalBearerHeaders,
+      payload: EnvironmentOrchestrationShellSnapshotQuery,
       success: OrchestrationShellSnapshot,
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

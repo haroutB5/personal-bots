@@ -19,10 +19,16 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { isHostedStaticApp } from "../hostedPairing";
+import { withLazyThreadShells } from "./lazyThreadShells";
 
 export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntime);
 export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
-export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
+/** The shell as the server sent it (slim: no idle archived bot chats). */
+export const environmentBaseSnapshotAtom = createEnvironmentSnapshotAtom(
+  environmentShell.stateAtom,
+);
+/** The shell plus the archived bot chats a mounted screen asked for (lazyThreadShells.ts). */
+export const environmentSnapshotAtom = withLazyThreadShells(environmentBaseSnapshotAtom);
 
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));

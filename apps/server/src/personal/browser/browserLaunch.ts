@@ -27,11 +27,16 @@ import {
   PAGE_INFO_REFRESH_MS,
   PHONE_DEVICE_SCALE_FACTOR,
   PersonalBrowserLaunchError,
+  clearStaleProfileLock,
   detectProfileLock,
   encodeViewerMessage,
-  firstLine,
 } from "./browserShared.ts";
 import type { BrowserCore } from "./browserCore.ts";
+import {
+  describeLaunchFailure as launchFailureDetail,
+  discoverGraphicalSession,
+  resolveBrowserHeadless,
+} from "./headlessMode.ts";
 
 export const makeBrowserLaunch = (core: BrowserCore) =>
   Effect.gen(function* () {
@@ -294,12 +299,35 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
         runtime.detail = null;
         runtime.lockedByPid = null;
         yield* notify;
+        // A killed Chrome (a crash, or the server's own teardown) leaves the
+        // POSIX singleton files behind; clear them only when the process they
+        // name has exited, so a real second instance is still reported.
+        const clearedStaleLock = yield* Effect.promise(() =>
+          clearStaleProfileLock(profileDir).catch(() => false),
+        );
+        if (clearedStaleLock) {
+          yield* Effect.logInfo("Cleared a stale browser profile lock (its process had exited).");
+        }
+        // hbots starts at boot, before the desktop session exists: the live
+        // session is looked up now, never frozen at service start.
+        const session = discoverGraphicalSession();
+        const headless =
+          options.headlessAuto === true
+            ? resolveBrowserHeadless(process.env, undefined, session.available)
+            : options.headless;
+        const launchEnv = { ...process.env, ...session.env };
+        yield* Effect.logInfo("Starting the shared browser", {
+          headless,
+          session: session.detail,
+          executablePath: options.executablePath ?? "(discovered)",
+        });
         const exit = yield* Effect.exit(
           Effect.tryPromise({
             try: () =>
               options.driver.launch({
                 userDataDir: profileDir,
-                headless: options.headless,
+                headless,
+                env: launchEnv,
                 executablePath: options.executablePath,
                 downloadsDir,
                 onDownloadSaved: (file) =>
@@ -331,7 +359,7 @@ export const makeBrowserLaunch = (core: BrowserCore) =>
             ? lock.pid === null
               ? "The browser profile is in use by another Chrome process."
               : `Locked by pid ${lock.pid}`
-            : `Chrome failed to start: ${firstLine(message)}`;
+            : launchFailureDetail(message);
           runtime.phase = lock.locked ? "locked" : "crashed";
           runtime.lockedByPid = lock.locked ? lock.pid : null;
           runtime.detail = detail;

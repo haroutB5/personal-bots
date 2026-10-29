@@ -33,6 +33,8 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
+  /** Leave out idle archived bot chats (the Bots app loads them on demand). */
+  readonly omitArchivedBotChats?: boolean;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
@@ -40,7 +42,11 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     method: "GET",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/orchestration/shell"),
     timeoutMs: input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
-    request: ({ client, headers }) => client.shellSnapshot({ headers }),
+    request: ({ client, headers }) =>
+      client.shellSnapshot({
+        payload: input.omitArchivedBotChats === true ? { omitArchivedBotChats: "true" } : {},
+        headers,
+      }),
   });
 });
 
@@ -56,35 +62,54 @@ export class ShellSnapshotLoader extends Context.Service<
     readonly load: (
       prepared: PreparedConnection,
     ) => Effect.Effect<Option.Option<OrchestrationShellSnapshot>>;
+    /**
+     * Whether the shell (HTTP and the socket's fallback snapshot) leaves out
+     * idle archived bot chats. Read on every load, so a kill switch applies
+     * at the next connect.
+     */
+    readonly omitArchivedBotChats?: () => boolean;
   }
 >()("@t3tools/client-runtime/state/shellSnapshotHttp/ShellSnapshotLoader") {}
+
+export const makeShellSnapshotLoaderLayer = (
+  options: { readonly omitArchivedBotChats?: () => boolean } = {},
+): Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClient> =>
+  Layer.effect(
+    ShellSnapshotLoader,
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+      // Resolve the DPoP signer optionally: it is only needed for relay/DPoP
+      // connections, so the loader must not hard-require it.
+      const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+      const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+      return ShellSnapshotLoader.of({
+        ...(options.omitArchivedBotChats !== undefined
+          ? { omitArchivedBotChats: options.omitArchivedBotChats }
+          : {}),
+        load: (prepared: PreparedConnection) =>
+          fetchEnvironmentShellSnapshot({
+            prepared,
+            signer,
+            remoteAuthorization,
+            omitArchivedBotChats: options.omitArchivedBotChats?.() === true,
+          }).pipe(
+            Effect.map(Option.some<OrchestrationShellSnapshot>),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "Could not load the environment shell snapshot over HTTP; using the socket snapshot instead.",
+              ).pipe(
+                Effect.annotateLogs({ cause: Cause.pretty(cause) }),
+                Effect.as(Option.none<OrchestrationShellSnapshot>()),
+              ),
+            ),
+          ),
+      });
+    }),
+  );
 
 export const shellSnapshotLoaderLayer: Layer.Layer<
   ShellSnapshotLoader,
   never,
   HttpClient.HttpClient
-> = Layer.effect(
-  ShellSnapshotLoader,
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    // Resolve the DPoP signer optionally: it is only needed for relay/DPoP
-    // connections, so the loader must not hard-require it.
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
-    return ShellSnapshotLoader.of({
-      load: (prepared: PreparedConnection) =>
-        fetchEnvironmentShellSnapshot({ prepared, signer, remoteAuthorization }).pipe(
-          Effect.map(Option.some<OrchestrationShellSnapshot>),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.catchCause((cause) =>
-            Effect.logWarning(
-              "Could not load the environment shell snapshot over HTTP; using the socket snapshot instead.",
-            ).pipe(
-              Effect.annotateLogs({ cause: Cause.pretty(cause) }),
-              Effect.as(Option.none<OrchestrationShellSnapshot>()),
-            ),
-          ),
-        ),
-    });
-  }),
-);
+> = makeShellSnapshotLoaderLayer();

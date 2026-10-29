@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": true
+  },
+  "include": ["src/personal/**/*.test.ts", "src/personal/**/*.test.tsx"]
+}

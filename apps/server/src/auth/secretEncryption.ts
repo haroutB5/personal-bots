@@ -21,7 +21,7 @@ import * as NodeOS from "node:os";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
-/** "T3SEC1" — distinguishes a sealed file from a legacy plaintext one. */
+/** "T3SEC1" â€” distinguishes a sealed file from a legacy plaintext one. */
 const ENVELOPE_MAGIC = Uint8Array.from([0x54, 0x33, 0x53, 0x45, 0x43, 0x31]);
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
@@ -143,34 +143,42 @@ export interface WrappedDataKeyFile {
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const fromBase64 = (value: string) => Uint8Array.from(Buffer.from(value, "base64"));
 
-export const createWrappedDataKey = (): {
-  readonly dataKey: Uint8Array;
-  readonly file: WrappedDataKeyFile;
-} => {
-  const resolved = resolveMachineMaterial();
-  if (resolved === null) throw new Error("No machine material is available to protect secrets.");
-  const dataKey = Uint8Array.from(NodeCrypto.randomBytes(KEY_BYTES));
+/**
+ * Wraps an EXISTING data key with the machine's material. A migration import
+ * must keep the same key: a fresh one would leave every saved secret sealed
+ * with a key nothing can open.
+ */
+export const wrapDataKey = (dataKey: Uint8Array, resolved: MachineMaterial): WrappedDataKeyFile => {
   const salt = NodeCrypto.randomBytes(SALT_BYTES);
   const wrappingKey = deriveWrappingKey(resolved.material, salt);
   const iv = NodeCrypto.randomBytes(IV_BYTES);
   const cipher = NodeCrypto.createCipheriv("aes-256-gcm", wrappingKey, iv);
   const body = Buffer.concat([cipher.update(dataKey), cipher.final()]);
   return {
-    dataKey,
-    file: {
-      v: 1,
-      source: resolved.source,
-      salt: base64(salt),
-      iv: base64(iv),
-      tag: base64(cipher.getAuthTag()),
-      key: base64(body),
-    },
+    v: 1,
+    source: resolved.source,
+    salt: base64(salt),
+    iv: base64(iv),
+    tag: base64(cipher.getAuthTag()),
+    key: base64(body),
   };
 };
 
-export const unwrapDataKey = (file: WrappedDataKeyFile): Uint8Array => {
+export const createWrappedDataKey = (
+  material?: MachineMaterial,
+): {
+  readonly dataKey: Uint8Array;
+  readonly file: WrappedDataKeyFile;
+} => {
+  const resolved = material ?? resolveMachineMaterial();
+  if (resolved === null) throw new Error("No machine material is available to protect secrets.");
+  const dataKey = Uint8Array.from(NodeCrypto.randomBytes(KEY_BYTES));
+  return { dataKey, file: wrapDataKey(dataKey, resolved) };
+};
+
+export const unwrapDataKey = (file: WrappedDataKeyFile, material?: MachineMaterial): Uint8Array => {
   if (file.v !== 1) throw new Error(`Unsupported secret key file version ${String(file.v)}.`);
-  const resolved = resolveMachineMaterial(file.source);
+  const resolved = material ?? resolveMachineMaterial(file.source);
   if (resolved === null) {
     throw new Error(`Machine material "${file.source}" is not available on this machine.`);
   }

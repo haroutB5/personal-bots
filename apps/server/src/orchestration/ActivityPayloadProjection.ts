@@ -7,6 +7,8 @@ import type {
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
+import { serverPerfOptimizationOn } from "../personal/perfFlags.ts";
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -604,6 +606,13 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
  * update rows: zero dropped rows held a client-merged field — detail, title,
  * command, item, kind, files — their completion lacked), so no expanded-row
  * content is lost.
+ *
+ * A completion stamped with the same `createdAt` as the update supersedes it
+ * too, whichever sorts first: Claude restamps its final in-flight update with
+ * the call's start time, so equal timestamps tie-break by row id and half of
+ * those completions sort before their update. One 10-turn window carried 51
+ * such rows (109 KB), each a field-for-field subset of its completion.
+ * Kill switch: PB_PERF_OFF=tool-update-tie-dedup restores the strict order.
  */
 function dropSupersededToolUpdatedActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
@@ -630,6 +639,7 @@ function dropSupersededToolUpdatedActivities(
     return activities;
   }
 
+  const tieDedup = serverPerfOptimizationOn("tool-update-tie-dedup");
   return activities.filter((activity, index) => {
     if (activity.kind !== "tool.updated") {
       return true;
@@ -639,7 +649,11 @@ function dropSupersededToolUpdatedActivities(
       return true;
     }
     const indices = completionIndicesByKey.get(`${activity.turnId ?? ""}\u0000${identity}`);
-    return !indices?.some((completionIndex) => completionIndex > index);
+    return !indices?.some(
+      (completionIndex) =>
+        completionIndex > index ||
+        (tieDedup && activities[completionIndex]!.createdAt === activity.createdAt),
+    );
   });
 }
 

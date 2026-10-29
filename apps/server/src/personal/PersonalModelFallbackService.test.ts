@@ -49,6 +49,7 @@ import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import {
   decideFallback,
   decideSwitchBack,
+  FALLBACK_CAPACITY_HOLD_MS,
   FALLBACK_DEFAULT_HOLD_MS,
   FALLBACK_RECHECK_MS,
   FALLBACK_RESWITCH_COOLDOWN_MS,
@@ -224,6 +225,29 @@ describe("decideFallback", () => {
       resetAtMs: null,
     });
   });
+
+  it("a capacity hit holds the fallback for a short window, not a whole reset", () => {
+    expect(decideFallback(baseDecision({ retryAtMs: null, capacityHit: true }))).toEqual({
+      kind: "switch",
+      resetAtMs: NOW + FALLBACK_CAPACITY_HOLD_MS,
+    });
+    // A reset the provider did report still wins.
+    expect(decideFallback(baseDecision({ capacityHit: true }))).toEqual({
+      kind: "switch",
+      resetAtMs: RESET,
+    });
+  });
+
+  it("a capacity hit may switch to another model on the same provider", () => {
+    const other = { instanceId: HOME.instanceId, model: "opencode/glm-5" } as ModelSelection;
+    expect(
+      decideFallback(baseDecision({ home: HOME, fallback: other, capacityHit: true })).kind,
+    ).toBe("switch");
+    expect(decideFallback(baseDecision({ home: HOME, fallback: other }))).toEqual({
+      kind: "none",
+      reason: "same_pool",
+    });
+  });
 });
 
 describe("decideSwitchBack", () => {
@@ -255,6 +279,39 @@ describe("decideSwitchBack", () => {
       kind: "extend",
       resetAtMs: later,
     });
+  });
+
+  it("a capacity hold is a fixed wait that healthy usage readings cannot cut short", () => {
+    const at = NOW + 60_000;
+    const recovered = {
+      ...usage([{ id: "primary", used: 4 }]),
+      checkedAt: isoAt(at),
+      fullReadAt: isoAt(at),
+    };
+    const capacity = {
+      ...base,
+      nowMs: at,
+      resetAtMs: NOW + FALLBACK_CAPACITY_HOLD_MS,
+      capacityHit: true,
+      recoveryProviderReady: true,
+      freshAfterMs: NOW,
+      homeProvider: snapshot("codex", "codex", recovered),
+    } as const;
+    // Without the flag this same input is an early recovery: usage is healthy.
+    expect(decideSwitchBack({ ...capacity, capacityHit: false })).toEqual({
+      kind: "back",
+      reason: "recovered",
+    });
+    // A capacity hit spent nothing, so a roomy account proves nothing about the
+    // model serving again: the hold, not the reading, decides.
+    expect(decideSwitchBack(capacity)).toEqual({ kind: "wait" });
+    const ended = NOW + FALLBACK_CAPACITY_HOLD_MS + FALLBACK_SWITCH_BACK_GRACE_MS;
+    expect(decideSwitchBack({ ...capacity, nowMs: ended - 1 })).toEqual({ kind: "wait" });
+    expect(decideSwitchBack({ ...capacity, nowMs: ended })).toEqual({
+      kind: "back",
+      reason: "reset",
+    });
+    expect(decideSwitchBack({ ...capacity, nowMs: ended, idle: false })).toEqual({ kind: "wait" });
   });
 
   it("with no reset reported it re-checks the readings, and holds a full window without any", () => {
@@ -327,6 +384,7 @@ describe("confirmed early recovery", () => {
     home: HOME,
     idle: true,
     recoveryProviderReady: true,
+    freshAfterMs: NOW,
     homeProvider: snapshot("codex", "codex", recovered),
   };
   it("overrides a future reset only at idle, including unreported resets", () => {
@@ -479,6 +537,8 @@ interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   providers: ServerProvider[];
   readonly refreshed: string[];
+  /** Instances whose cached usage read was dropped before a re-probe. */
+  readonly invalidated: string[];
   readonly running: Set<string>;
   sequence: number;
   onRefresh?: () => void;
@@ -491,6 +551,7 @@ const makeHarness = (): Harness => ({
     snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
   ],
   refreshed: [],
+  invalidated: [],
   running: new Set(),
   sequence: 0,
 });
@@ -523,6 +584,10 @@ const makeLayer = (
             harness.refreshed.push(instanceId);
             harness.onRefresh?.();
             return harness.providers;
+          }),
+        invalidateUsage: (instanceId: string) =>
+          Effect.sync(() => {
+            harness.invalidated.push(instanceId);
           }),
       } as unknown as ProviderRegistry.ProviderRegistryShape),
     ),
@@ -737,6 +802,214 @@ it.effect("goes back only after the reset and only when the bot is idle, with on
     expect(yield* hit()).toEqual({ switched: false, skipped: "cooldown" });
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect(
+  "a reset that passed while a task runs switches the task's next turn back, never the running one",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const sql = yield* SqlClient.SqlClient;
+      yield* hit();
+      yield* sql`INSERT INTO personal_tasks (
+        task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+        depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
+      ) VALUES ('busy-task', 'busy-task', ${BOT}, 't', 'o', 'running', 'user',
+        'busy-task', 0, 2, 5, ${isoAt(NOW)}, ${isoAt(NOW)}, ${isoAt(NOW)}, ${CHAT})`;
+
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 3 }])),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      yield* TestClock.setTime(RESET + FALLBACK_SWITCH_BACK_GRACE_MS + 1000);
+
+      // The chat's turn is still running: the selection does not change mid-turn.
+      yield* setBusy(true);
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeDefined();
+
+      // Between the task's turns: the next turn starts on the bot's own model,
+      // the row is gone, and the task itself is still running.
+      yield* setBusy(false);
+      expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(HOME);
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeUndefined();
+      expect(
+        (yield* bots.listBots()).find((bot) => bot.botId === BOT)?.fallbackActive,
+      ).toBeUndefined();
+      expect(
+        yield* sql<{ readonly status: string }>`
+          SELECT status FROM personal_tasks WHERE task_id = 'busy-task'
+        `,
+      ).toEqual([{ status: "running" }]);
+      expect(lines(harness)).toEqual([
+        "Codex hit its usage limit. IT is on Sonnet 5.5 · H until it resets (about 18:40).",
+        "Codex usage limit has reset. IT is back on gpt-6.1-sol · H.",
+      ]);
+
+      // A limit straight after the boundary switch back does not bounce it again.
+      expect(yield* hit()).toEqual({ switched: false, skipped: "cooldown" });
+      // Once the guard has passed, a real re-hit falls back again.
+      yield* TestClock.adjust(FALLBACK_RESWITCH_COOLDOWN_MS + 1000);
+      const reopenedAt = yield* DateTime.now;
+      const laterReset = isoAt(DateTime.toEpochMillis(reopenedAt) + 3 * 3600_000);
+      expect(yield* hit({ retryAt: laterReset })).toEqual({
+        switched: true,
+        modelLabel: "Sonnet 5.5 · H",
+      });
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeDefined();
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("the early-reset probe clears the row at the next turn boundary", () => {
+  const harness = makeHarness();
+  const recoveredAt = NOW + 60_000;
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* PersonalModelFallback.PersonalModelFallback;
+    yield* hit();
+    yield* sql`INSERT INTO personal_tasks (
+      task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+      depth, max_depth, max_children, available_at, created_at, updated_at, thread_id
+    ) VALUES ('probe-task', 'probe-task', ${BOT}, 't', 'o', 'running', 'user',
+      'probe-task', 0, 2, 5, ${isoAt(NOW)}, ${isoAt(NOW)}, ${isoAt(NOW)}, ${CHAT})`;
+
+    // The provider resets before the recorded reset time; the sweep's own
+    // re-probe (bounded to every 2 minutes) is the proof.
+    harness.onRefresh = () => {
+      harness.providers = [
+        snapshot("codex", "codex", {
+          ...usage([{ id: "primary", used: 3 }]),
+          checkedAt: isoAt(recoveredAt),
+          fullReadAt: isoAt(recoveredAt),
+        }),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+    };
+    yield* TestClock.setTime(recoveredAt);
+    yield* setBusy(true);
+    yield* service.sweep;
+    expect(harness.refreshed).toContain("codex");
+    // Mid-turn the sweep leaves the row; the next boundary ends it.
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+    yield* setBusy(false);
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(HOME);
+    expect(
+      Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+    ).toBeUndefined();
+    expect(lines(harness).at(-1)).toBe(
+      "Codex usage limit has reset. IT is back on gpt-6.1-sol · H.",
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a schedule or peak row keeps its idle-gated switch back", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const base = {
+      botId: BOT,
+      fallbackModel: FALLBACK,
+      fromInstanceId: CODEX,
+      fromProvider: "Codex",
+      startedAt: isoAt(NOW),
+      resetAt: isoAt(RESET),
+      noticeThreadId: null,
+    };
+    yield* bots.startFallback({ ...base, reason: PERSONAL_FALLBACK_REASON_SCHEDULE });
+    yield* TestClock.setTime(RESET + FALLBACK_SWITCH_BACK_GRACE_MS + 1000);
+    yield* setBusy(false);
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+    expect(Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive?.reason).toBe(
+      PERSONAL_FALLBACK_REASON_SCHEDULE,
+    );
+
+    yield* bots.switchFallback({ ...base, reason: PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK });
+    expect(yield* botModelSelectionForThread(bots, CHAT, undefined)).toEqual(FALLBACK);
+    expect(Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive?.reason).toBe(
+      PERSONAL_FALLBACK_REASON_DEEPSEEK_PEAK,
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a capacity hit keeps its whole 15-minute hold, then says the model is available again",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      // A capacity hit spends nothing: the account has room, the model does not serve.
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 40 }])),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      expect(
+        yield* hit({
+          retryAt: null,
+          capacity: true,
+          reason: "Selected model is at capacity. Please try a different model.",
+        }),
+      ).toEqual({ switched: true, modelLabel: "Sonnet 5.5 · H" });
+      const state = Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive;
+      expect(DateTime.toEpochMillis(state!.resetAt!)).toBe(NOW + FALLBACK_CAPACITY_HOLD_MS);
+      expect(lines(harness)).toHaveLength(1);
+      expect(lines(harness)[0]).toContain(
+        "Codex is at capacity. IT is on Sonnet 5.5 · H until about ",
+      );
+
+      // Healthy usage one minute in: not proof that the model serves again.
+      const at = NOW + 60_000;
+      const recovered = {
+        ...usage([{ id: "primary", used: 4 }]),
+        checkedAt: isoAt(at),
+        fullReadAt: isoAt(at),
+      };
+      harness.providers = [
+        snapshot("codex", "codex", recovered),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      yield* TestClock.setTime(at);
+      yield* service.sweep;
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeDefined();
+      expect(lines(harness)).toHaveLength(1);
+
+      // The hold itself ends the fallback, and the line says available again.
+      const ended = NOW + FALLBACK_CAPACITY_HOLD_MS + FALLBACK_SWITCH_BACK_GRACE_MS;
+      const later = { ...recovered, checkedAt: isoAt(ended), fullReadAt: isoAt(ended) };
+      harness.providers = [
+        snapshot("codex", "codex", later),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      yield* TestClock.setTime(ended);
+      yield* service.sweep;
+      expect(
+        Option.getOrThrow(yield* bots.getBotById({ botId: BOT })).fallbackActive,
+      ).toBeUndefined();
+      const notices = lines(harness);
+      expect(notices).toHaveLength(2);
+      expect(notices[0]).toContain("Codex is at capacity.");
+      expect(notices[1]).toBe("Codex is available again. IT is back on gpt-6.1-sol · H.");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
 
 it.effect(
   "a switch the cooldown holds back is logged with the bot, the reason and the seconds left",
@@ -1050,6 +1323,95 @@ it.effect("a late hit from the home provider is no longer treated as in flight",
     expect(yield* hit()).toEqual({ switched: false, skipped: "already_on_fallback" });
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect("a second chat's hit while the bot is already on its fallback runs there", () => {
+  const harness = makeHarness();
+  const other = ThreadId.make("chat-it-2");
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    expect(yield* hit()).toEqual({ switched: true, modelLabel: "Sonnet 5.5 · H" });
+    // The chat that was switched: an unnamed hit is its own fallback turn
+    // reporting the fallback's limit, so it waits.
+    expect(yield* hit({ instanceId: undefined })).toEqual({
+      switched: false,
+      skipped: "already_on_fallback",
+    });
+    // The second chat's turn started before the row existed and died on the
+    // home limit: the bot is already on the fallback, so the work runs there
+    // instead of pausing until the reset.
+    expect(yield* hit({ threadId: other, source: "task" })).toEqual({
+      switched: true,
+      modelLabel: "Sonnet 5.5 · H",
+    });
+    // The provider named no instance (the failed turn settled before its
+    // session recorded one): the row is trusted once for that.
+    expect(yield* hit({ threadId: other, source: "task", instanceId: undefined })).toEqual({
+      switched: true,
+      modelLabel: "Sonnet 5.5 · H",
+    });
+    // A second unnamed hit on the same row is not trusted again: the fallback
+    // itself may be the model that is out of room, and retrying would loop.
+    expect(yield* hit({ threadId: other, source: "task", instanceId: undefined })).toEqual({
+      switched: false,
+      skipped: "already_on_fallback",
+    });
+    // A hit from the fallback's own instance means both models are spent.
+    expect(yield* hit({ threadId: other, source: "task", instanceId: CLAUDE })).toEqual({
+      switched: false,
+      skipped: "already_on_fallback",
+    });
+    expect(yield* bots.listFallbackStates()).toHaveLength(1);
+    // One chat line for the switch, none for the hits that continued on it.
+    expect(lines(harness)).toHaveLength(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a re-stamped pre-hit reading cannot end the row; the probe drops the cache first",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      yield* hit();
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      const claude = harness.providers[1]!;
+      const at = NOW + 20_000;
+      // The driver's 5-minute cache: the answer from before the hit, stamped
+      // fresh every time it is handed back. A real re-probe says 100%.
+      const cached = snapshot("codex", "codex", {
+        ...usage([{ id: "primary", used: 10, resetsAt: isoAt(RESET + 3_600_000) }]),
+        checkedAt: isoAt(at),
+        fullReadAt: isoAt(at),
+      });
+      harness.providers = [cached, claude];
+      harness.onRefresh = () => {
+        const probed = harness.invalidated.includes("codex");
+        harness.providers = [
+          probed
+            ? snapshot("codex", "codex", {
+                ...usage([{ id: "primary", used: 100, resetsAt: isoAt(RESET) }]),
+                checkedAt: isoAt(at),
+                fullReadAt: isoAt(at),
+              })
+            : cached,
+          claude,
+        ];
+      };
+      yield* TestClock.setTime(at);
+      yield* service.sweep;
+      expect(harness.invalidated).toContain("codex");
+      expect(harness.refreshed).toContain("codex");
+      // The cached answer reads 10% and looks fresh, but the limit has not reset:
+      // the row stays.
+      expect(yield* bots.listFallbackStates()).toHaveLength(1);
+      expect(lines(harness)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
 
 it.effect("recovery isolates old provider waits and rolls back a failed wake", () => {
   const harness = makeHarness();

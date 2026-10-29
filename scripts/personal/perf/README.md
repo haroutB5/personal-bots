@@ -54,6 +54,53 @@ For each journey the bench records:
 - CDP counters: script ms, task ms, layouts, style recalcs, heap;
 - WebSocket frames and KB received before the mark.
 
+## Slow-connection bench (Theo's 3G method)
+
+`slow3g.mjs` measures the app the way Theo measured upstream T3 Code: Brave on
+a phone viewport, throttled through CDP `Network.emulateNetworkConditions` to
+400 kbps down and up with 400 ms RTT, cache disabled, a fresh profile and a new
+TCP connection every run (a byte-counting proxy sits in front of the target, so
+"wire KB" is what really crossed the socket, compressed, both ways). Point it at
+a throwaway server (never the live one); it needs a perf auth state for that
+origin (`login.mjs`).
+
+| Journey     | Start -> end                                                             |
+| ----------- | ------------------------------------------------------------------------ |
+| `cold`      | first visit straight into the biggest chat -> transcript and composer up |
+| `reconnect` | relaunch on the same profile (worker and caches warm) -> live Bots list  |
+| `open-A..C` | from the list, open each of three big chats -> transcript and composer   |
+
+Each journey records time to visible (the primary number), time to settled (2 s
+of network quiet, capped at 60 s), KB on the wire (down and up), and JSON
+parsed (HTTP JSON bodies plus WebSocket text frames, decoded). `--detail 1`
+adds every request and WebSocket bytes per RPC method.
+
+```bash
+node scripts/personal/perf/slow3g.mjs --target http://127.0.0.1:<port> --runs 3 \
+  --biggest /bots/<bot>/<thread> --chats /bots/<bot>/<a>,/bots/<bot>/<b>,/bots/<bot>/<c>
+```
+
+The budgets for these journeys live in `slow3g-budget.json` and are checked by
+`slow3g-check.mjs` (median of the report's runs against each ceiling; the
+report's 400/400/400 settings must match). Like the rest they only go down:
+`--ratchet` lowers a beaten budget to the slowest run plus headroom (10% for
+time, 5% or 20 KB for sizes). `settledMs` is not gated, because background
+polls move it by tens of seconds on 3G.
+
+```bash
+node scripts/personal/perf/slow3g-check.mjs --report ~/.personal-bots/perf/slow3g-<label>.json
+node scripts/personal/perf/slow3g-check.mjs --report <file> --ratchet   # then commit slow3g-budget.json
+```
+
+Caveat: CDP throttling charges WebSocket frames at their decoded size, not
+the permessage-deflate bytes that cross the socket. A large RPC answer (for
+example `personalBots.list`, about 100 KB of JSON since archived links went
+lazy) takes seconds under the
+throttle even though the proxy counts only a fraction of that on the wire. So
+the bench is pessimistic for WebSocket-heavy journeys such as `reconnect`;
+compare runs with each other, not with a real phone. The relay is not
+measured: there is no isolated relay route for a throwaway server.
+
 ## Commands
 
 ```powershell

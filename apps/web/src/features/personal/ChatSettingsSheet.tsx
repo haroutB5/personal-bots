@@ -280,9 +280,13 @@ export function ChatSettingsContent({
  */
 export function ChatSettingsSheet({
   returnFocusTo,
+  primingInputRef,
+  skipReturnFocus,
   ...content
 }: {
   readonly returnFocusTo: RefObject<HTMLElement | null>;
+  readonly primingInputRef: RefObject<HTMLInputElement | null>;
+  readonly skipReturnFocus: RefObject<boolean>;
 } & Omit<Parameters<typeof ChatSettingsContent>[0], "presets" | "firstRowRef">): JSX.Element {
   const firstRowRef = useRef<HTMLButtonElement | null>(null);
   return (
@@ -298,10 +302,16 @@ export function ChatSettingsSheet({
         showCloseButton={false}
         forceBackdrop
         initialFocus={firstRowRef}
-        finalFocus={returnFocusTo}
+        finalFocus={() => (skipReturnFocus.current ? false : returnFocusTo.current)}
         backdropClassName="bg-black/[0.32] backdrop-blur-none dark:bg-black/[0.55]"
         className="personal-app mx-2 mb-[max(0.5rem,env(safe-area-inset-bottom))] max-h-[90dvh] w-auto overflow-y-auto rounded-[20px] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 pt-4 pb-3 text-[var(--personal-text)] md:mx-auto md:w-full md:max-w-[430px]"
       >
+        <input
+          ref={primingInputRef}
+          aria-hidden="true"
+          tabIndex={-1}
+          style={{ position: "fixed", left: -10000, fontSize: 16 }}
+        />
         <ChatSettingsContent {...content} firstRowRef={firstRowRef} />
       </SheetPopup>
     </Sheet>

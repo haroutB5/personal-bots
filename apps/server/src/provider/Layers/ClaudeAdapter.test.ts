@@ -660,16 +660,37 @@ describe("ClaudeAdapterLive", () => {
         showThinkingSummaries: true,
         // Shell output past 12k chars goes to a file with a preview (1.66.80).
         bashOutputMaxChars: 12_000,
+        // Bundled skills a bot never calls stay typable as /name but leave the
+        // model's list (1.66.62/1.66.63, PERSONAL_BOT_HIDDEN_SKILLS).
+        skillOverrides: {
+          "code-review": "user-invocable-only",
+          "fewer-permission-prompts": "user-invocable-only",
+          init: "user-invocable-only",
+          "keybindings-help": "user-invocable-only",
+          loop: "user-invocable-only",
+          "plugin-authoring": "user-invocable-only",
+          run: "user-invocable-only",
+          schedule: "user-invocable-only",
+          "security-review": "user-invocable-only",
+          simplify: "user-invocable-only",
+          "workflow-authoring": "user-invocable-only",
+        },
         permissions: { deny: buildClaudeBotPermissionDeny(serverConfig) },
       });
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
       assert.equal(options?.env?.PATH, "/usr/bin");
       assert.equal(options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS, undefined);
-      // Built-in tools are not narrowed.
+      // Built-in tools no bot has ever called are removed from the schema
+      // (1.66.62; PERSONAL_BOT_TOOL_TRIM=off restores all of them).
       assert.equal(options?.tools, undefined);
       assert.equal(options?.allowedTools, undefined);
-      assert.equal(options?.disallowedTools, undefined);
+      assert.deepEqual(options?.disallowedTools, [
+        "Workflow",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "AskUserQuestion",
+      ]);
     }).pipe(
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -1649,7 +1670,9 @@ describe("ClaudeAdapterLive", () => {
       return Effect.gen(function* () {
         const { options: customOptions, prompt: customPrompt } = yield* runCustomFlow;
         assert.equal(customOptions.model, SYNTHETIC_CLAUDE_COLLIDING_ALIAS);
-        assert.equal(customOptions.effort, undefined);
+        // A custom entry carries no runtime profile, so its option values reach
+        // Claude Code verbatim (see scopeClaudeModelCatalog).
+        assert.equal(customOptions.effort, "max");
         assert.deepEqual(customOptions.settings, { showThinkingSummaries: true });
         assert.deepEqual(customHarness.query.setModelCalls, [
           `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`,

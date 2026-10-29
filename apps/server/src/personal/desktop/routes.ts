@@ -341,7 +341,7 @@ export const personalDesktopStreamRouteLayer = HttpRouter.add(
             encodeMessage({
               _tag: "ViewState",
               state: "unavailable",
-              detail: "The live view only works when the bots server runs on Windows.",
+              detail: "The live view is not available on this server (Windows only, until the Hyprland version lands).",
             }),
           );
           return;

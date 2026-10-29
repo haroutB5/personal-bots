@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import sharp from "sharp";
 
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
 import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
@@ -48,6 +49,7 @@ interface VariantOutputs {
   readonly macos: string;
   readonly universal: string;
   readonly appleTouch: string;
+  readonly bootLogo: string;
   readonly favicon16: string;
   readonly favicon32: string;
   readonly faviconIco: string;
@@ -211,6 +213,7 @@ const ICON_VARIANTS = [
       macos: BRAND_ASSET_PATHS.developmentDesktopIconPng,
       universal: BRAND_ASSET_PATHS.developmentUniversalIconPng,
       appleTouch: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
+      bootLogo: BRAND_ASSET_PATHS.developmentWebBootLogoWebp,
       favicon16: BRAND_ASSET_PATHS.developmentWebFavicon16Png,
       favicon32: BRAND_ASSET_PATHS.developmentWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.developmentWebFaviconIco,
@@ -225,6 +228,7 @@ const ICON_VARIANTS = [
       macos: BRAND_ASSET_PATHS.nightlyMacIconPng,
       universal: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       appleTouch: BRAND_ASSET_PATHS.nightlyWebAppleTouchIconPng,
+      bootLogo: BRAND_ASSET_PATHS.nightlyWebBootLogoWebp,
       favicon16: BRAND_ASSET_PATHS.nightlyWebFavicon16Png,
       favicon32: BRAND_ASSET_PATHS.nightlyWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.nightlyWebFaviconIco,
@@ -239,6 +243,7 @@ const ICON_VARIANTS = [
       macos: BRAND_ASSET_PATHS.productionMacIconPng,
       universal: BRAND_ASSET_PATHS.productionLinuxIconPng,
       appleTouch: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
+      bootLogo: BRAND_ASSET_PATHS.productionWebBootLogoWebp,
       favicon16: BRAND_ASSET_PATHS.productionWebFavicon16Png,
       favicon32: BRAND_ASSET_PATHS.productionWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.productionWebFaviconIco,
@@ -595,14 +600,26 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     try: () => encodePngIco(icoRenditions),
     catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
   });
+  const faviconIco = yield* Effect.try({
+    try: () => encodePngIco(icoRenditions.filter((image) => image.size === 48)),
+    catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
+  });
+
+  const appleTouch = yield* render("iOS", 180);
+  // The boot splash shows this icon at 64 CSS px; lossy WebP keeps it ~6 KB instead of ~36 KB.
+  const bootLogo = yield* Effect.tryPromise({
+    try: () => sharp(appleTouch).webp({ quality: 90, alphaQuality: 100, effort: 6 }).toBuffer(),
+    catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
+  });
 
   return new Map<string, Buffer>([
     [variant.outputs.ios, ios],
     [variant.outputs.universal, ios],
-    [variant.outputs.appleTouch, yield* render("iOS", 180)],
+    [variant.outputs.appleTouch, appleTouch],
+    [variant.outputs.bootLogo, bootLogo],
     [variant.outputs.favicon16, yield* render("iOS", 16)],
     [variant.outputs.favicon32, yield* render("iOS", 32)],
-    [variant.outputs.faviconIco, ico],
+    [variant.outputs.faviconIco, faviconIco],
     [variant.outputs.windowsIco, ico],
   ]);
 });

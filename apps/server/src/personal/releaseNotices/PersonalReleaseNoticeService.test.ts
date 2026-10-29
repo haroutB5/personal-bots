@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - writes notice files into the test server's inbox like notify-release.ps1 does.
 // @effect-diagnostics preferSchemaOverJson:off - writes the notice JSON verbatim, as the script does.
+// @effect-diagnostics globalDateInEffect:off - fixture exercises wall-clock file freshness and throttling.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -127,6 +129,86 @@ const turnStarts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
   );
 
 describe("PersonalReleaseNotices", () => {
+  it.effect("the next server consumes a live runner waiting alert exactly once", () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    return Effect.gen(function* () {
+      yield* linkCtoChat;
+      const config = yield* ServerConfig.ServerConfig;
+      const runDir = NodePath.join(config.baseDir, "run");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(runDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(runDir, "restart-9.9.9-result.json"), JSON.stringify({
+          runner: "hbots-release.mjs (linux)", mode: "run", status: "waiting_for_idle",
+          version: "9.9.9", release: "abc123def456", runnerPid: 123,
+          updatedAt: new Date().toISOString(),
+          notifyThread: CTO_CHAT,
+          waitingAlert: { minutes: 20, text: "hbots release 9.9.9 waiting on: node pid 123, 245s", at: "2026-10-26T20:00:00Z" },
+        }));
+      });
+      const service = yield* PersonalReleaseNotices;
+      expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
+      expect(yield* service.sweep).toEqual([]);
+      const turns = turnStarts(dispatched);
+      expect(turns).toHaveLength(1);
+      expect(turns[0]!.message.text).toContain("waiting on: node pid 123, 245s");
+      expect(turns[0]!.message.text).not.toContain("re-arm");
+      yield* Effect.promise(async () => {
+        const file = NodePath.join(runDir, "restart-9.9.9-result.json");
+        const result = JSON.parse(await NodeFSP.readFile(file, "utf8"));
+        result.waitingAlert = { ...result.waitingAlert, minutes: 60, at: "2026-10-26T20:40:00Z" };
+        await NodeFSP.writeFile(file, JSON.stringify(result));
+      });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+      expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
+      expect(yield* service.sweep).toEqual([]);
+      expect(turnStarts(dispatched)).toHaveLength(2);
+      clock.mockRestore();
+    }).pipe(Effect.provide(makeLayer(dispatched)));
+  });
+  it.effect("a runner that delivered its own waiting notice is not queued again", () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    return Effect.gen(function* () {
+      yield* linkCtoChat;
+      const config = yield* ServerConfig.ServerConfig;
+      const runDir = NodePath.join(config.baseDir, "run");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(runDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(runDir, "restart-9.9.9-result.json"), JSON.stringify({
+          runner: "hbots-release.mjs (linux)", mode: "run", status: "waiting_for_idle",
+          version: "9.9.9", release: "abc123def456", runnerPid: 123,
+          updatedAt: new Date().toISOString(),
+          notifyThread: CTO_CHAT,
+          waitingAlert: {
+            minutes: 20,
+            text: "hbots release 9.9.9 waiting on: node pid 123, 245s",
+            at: "2026-10-26T20:00:00Z",
+            noticeFile: "/home/harout/.personal-bots/dev/personal/release-notices/1-9.9.9-waiting-123-20.json",
+          },
+        }));
+      });
+      const service = yield* PersonalReleaseNotices;
+      expect(yield* service.sweep).toEqual([]);
+      expect(turnStarts(dispatched)).toHaveLength(0);
+    }).pipe(Effect.provide(makeLayer(dispatched)));
+  });
+  it.effect("a waiting notice posts once without saying the release failed", () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    return Effect.gen(function* () {
+      yield* linkCtoChat;
+      yield* writeNotice("waiting.json", {
+        threadId: CTO_CHAT, version: "1.66.97", release: "abc123def456",
+        outcome: "waiting", detail: "node pid 123, 40m",
+      });
+      const service = yield* PersonalReleaseNotices;
+      expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
+      expect(yield* service.sweep).toEqual([]);
+      const turns = turnStarts(dispatched);
+      expect(turns).toHaveLength(1);
+      expect(turns[0]!.message.text).toContain("still waiting for idle");
+      expect(turns[0]!.message.text).toContain("node pid 123, 40m");
+      expect(turns[0]!.message.text).not.toContain("re-arm");
+    }).pipe(Effect.provide(makeLayer(dispatched)));
+  });
   it.effect("a successful release posts exactly one turn into the requesting chat", () => {
     const dispatched: Array<OrchestrationCommand> = [];
     return Effect.gen(function* () {

@@ -341,6 +341,11 @@ export class PersonalBotRepository extends Context.Service<
       ReadonlyArray<PersonalBotThread>,
       PersonalBotRepositoryError
     >;
+    /** Archived chats with a visible shell, excluding group relays. */
+    readonly listArchivedChatCounts: () => Effect.Effect<
+      ReadonlyArray<{ readonly botId: string; readonly count: number }>,
+      PersonalBotRepositoryError
+    >;
     /**
      * Every unarchived bot chat with a provider session row, for the
      * Performance tab: a running Claude CLI carries its session id on the
@@ -2037,6 +2042,16 @@ export const make = Effect.gen(function* () {
       Effect.andThen(listThreadLinkPreviews),
     );
 
+  const listArchivedChatCounts: PersonalBotRepository["Service"]["listArchivedChatCounts"] = () =>
+    sql<{ readonly botId: string; readonly count: number }>`
+      SELECT t.bot_id AS "botId", COUNT(*) AS "count"
+      FROM personal_bot_threads t
+      JOIN projection_threads p ON p.thread_id = t.thread_id AND p.deleted_at IS NULL
+      WHERE t.archived_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id)
+      GROUP BY t.bot_id
+    `.pipe(Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listArchivedChatCounts")));
+
   const listBotProviderSessions: PersonalBotRepository["Service"]["listBotProviderSessions"] = () =>
     sql<{
       readonly threadId: string;
@@ -2189,6 +2204,7 @@ export const make = Effect.gen(function* () {
     searchMessages,
     deleteThreadLink,
     listThreadLinks,
+    listArchivedChatCounts,
     listBotProviderSessions,
     listOpenChatTitles,
     listOpenChats,

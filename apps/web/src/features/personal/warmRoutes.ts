@@ -30,12 +30,26 @@ interface WarmDeps {
   readonly whenQuiet: (work: () => void) => () => void;
 }
 
+/** Allow a frame to paint before starting the quiet/idle wait. */
+export function afterPaintWhenQuiet(work: () => void): () => void {
+  let frame = requestAnimationFrame(() => {
+    frame = requestAnimationFrame(() => {
+      stopQuiet = whenQuiet(work);
+    });
+  });
+  let stopQuiet: (() => void) | undefined;
+  return () => {
+    cancelAnimationFrame(frame);
+    stopQuiet?.();
+  };
+}
+
 const browserDeps: WarmDeps = {
   isOnline: () => navigator.onLine !== false,
   saveData: () =>
     (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData ===
     true,
-  whenQuiet,
+  whenQuiet: afterPaintWhenQuiet,
 };
 
 /**

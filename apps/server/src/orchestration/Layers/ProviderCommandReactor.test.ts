@@ -4718,12 +4718,20 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         });
 
+        // The session status and the failure activity are written by separate
+        // steps of the same reaction. Waiting on the status alone can return
+        // before the activity lands, so wait for the exact row the test asserts.
         yield* Effect.promise(() =>
           waitFor(async () => {
             const thread = (await harness.readModel()).threads.find(
               (entry) => entry.id === ThreadId.make("thread-1"),
             );
-            return thread?.session?.status === "stopped";
+            return (
+              thread?.session?.status === "stopped" &&
+              thread.activities.some(
+                (activity) => activity.kind === "provider.turn.interrupt.failed",
+              )
+            );
           }),
         );
 
@@ -5821,6 +5829,63 @@ describe("ProviderCommandReactor", () => {
           (call) => (call[1] as StartedSession).freshSession === true,
         ),
       ).toBe(false);
+      // The failure's own limit rides on the error session: the task
+      // dispatcher and the chat resume service both key off it.
+      const limited = (await readThread(harness))?.session;
+      expect(limited?.providerRetry).toMatchObject({
+        kind: "rate_limited",
+        provider: "claudeAgent",
+        reason: "Claude usage limit reached.",
+      });
+      expect(limited?.providerRetry?.retryAt).toBeUndefined();
+    });
+
+    it("a DeepSeek turn that never started keeps its limit on the error session", async () => {
+      const deepseek = {
+        instanceId: ProviderInstanceId.make("deepseek"),
+        model: "deepseek-v4.1-flash",
+      } satisfies ModelSelection;
+      const harness = await createHarness({
+        threadModelSelection: deepseek,
+        personalBotThread: true,
+        botModelSelection: deepseek,
+        sendTurnEffect: () =>
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: "deepseek",
+              method: "turn/start",
+              detail:
+                "DeepSeek rate limit reached: the DeepSeek account has insufficient balance. Top it up, or wait for this bot's fallback model.",
+            }),
+          ),
+      });
+      await sendMessage(harness, "msg-dsh-limit", "Hi.", { modelSelection: deepseek });
+      await waitFor(async () => (await readThread(harness))?.session?.status === "error");
+      await harness.drain();
+      expect((await readThread(harness))?.session?.providerRetry).toMatchObject({
+        kind: "rate_limited",
+        provider: "deepseek",
+      });
+    });
+
+    it("an ordinary start failure carries no provider wait", async () => {
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+        sendTurnEffect: () =>
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: "claudeAgent",
+              method: "turn/start",
+              detail: "The provider's socket closed.",
+            }),
+          ),
+      });
+      await sendMessage(harness, "msg-socket", "Hi.", { modelSelection: CLAUDE });
+      await waitFor(async () => (await readThread(harness))?.session?.status === "error");
+      await harness.drain();
+      expect((await readThread(harness))?.session?.providerRetry).toBeUndefined();
     });
   });
 

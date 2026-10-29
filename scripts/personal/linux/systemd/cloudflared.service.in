@@ -1,0 +1,14 @@
+[Unit]
+Description=Cloudflare tunnel (only when hbots is not managing its own tunnel)
+After=network-online.target
+ConditionPathExists=%h/.cloudflared/config.yml
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

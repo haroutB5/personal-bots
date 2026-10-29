@@ -3,9 +3,9 @@
  *
  * macOS/Linux: parses `lsof -iTCP -sTCP:LISTEN -P -n -F pcn` (-F output is a
  * stable line-prefixed field format; this is the only `lsof` flag set we rely
- * on).
+ * on). Linux without lsof (Arch's base install) parses `ss -ltnpH` next.
  *
- * Windows / lsof missing: checks a curated list of common dev ports through
+ * Windows / neither tool: checks a curated list of common dev ports through
  * the shared Net service.
  *
  * Listening ports are published only after a bounded HTTP(S) probe finds a
@@ -240,6 +240,46 @@ const parsePortFromLsofName = (name: string): number | null => {
   return port;
 };
 
+/**
+ * `ss -ltnp` listeners, the Linux fallback when `lsof` is not installed (Arch's
+ * base install has no lsof, and the shared laptop is Arch now).
+ *
+ * One line per listener:
+ * `LISTEN 0 511 127.0.0.1:5173 0.0.0.0:* users:(("node",pid=1234,fd=20))`
+ * The process column is missing when `ss` cannot read another user's sockets;
+ * such a listener is still real, it just has no pid to attribute.
+ */
+export function parseSsOutput(
+  raw: string,
+  terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
+): ReadonlyArray<DiscoveredLocalServer> {
+  const seen = new Map<number, DiscoveredLocalServer>();
+  for (const line of raw.split(/\r?\n/g)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 4 || !/^LISTEN$/i.test(fields[0] ?? "")) continue;
+    const local = fields[3] ?? "";
+    const lastColon = local.lastIndexOf(":");
+    if (lastColon < 0) continue;
+    if (!LSOF_LOCAL_HOST_TOKENS.has(local.slice(0, lastColon))) continue;
+    const port = Number.parseInt(local.slice(lastColon + 1), 10);
+    if (!Number.isFinite(port) || port <= 0 || port >= 65536) continue;
+    if (seen.has(port)) continue;
+    const processColumn = fields.slice(5).join(" ");
+    const pidMatch = /pid=(\d+)/.exec(processColumn);
+    const nameMatch = /\("([^"]+)"/.exec(processColumn);
+    const pid = pidMatch === null ? null : Number(pidMatch[1]);
+    seen.set(port, {
+      host: "localhost",
+      port,
+      url: `http://localhost:${port}`,
+      processName: nameMatch?.[1] ?? null,
+      pid: pid !== null && Number.isInteger(pid) && pid > 0 ? pid : null,
+      terminal: pid === null ? null : (terminalByProcessId.get(pid) ?? null),
+    });
+  }
+  return Array.from(seen.values()).toSorted((a, b) => a.port - b.port);
+}
+
 const parseWindowsListenerOutput = (
   raw: string,
   terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
@@ -472,7 +512,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   });
 
   const recoverProcessProbeFailure =
-    (probe: "lsof" | "windows-listeners") => (error: ProcessRunner.ProcessRunError) =>
+    (probe: "lsof" | "ss" | "windows-listeners") => (error: ProcessRunner.ProcessRunError) =>
       Effect.logDebug("preview port process probe failed; falling back to common-port probes", {
         cause: error,
         probe,
@@ -534,6 +574,30 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         }),
       );
     if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
+
+    // Arch (the shared laptop) has no `lsof` in its base install. `ss` comes
+    // with iproute2, which every Arch install has, and answers the same
+    // question with the pid and process name attached.
+    const recoverSsProbeFailure = recoverProcessProbeFailure("ss");
+    const ssResult = yield* processRunner
+      .run({
+        command: "ss",
+        args: ["-ltnpH"],
+        timeout: Duration.millis(LSOF_TIMEOUT_MS),
+        maxOutputBytes: 1024 * 1024,
+        outputMode: "truncate",
+      })
+      .pipe(
+        Effect.map((result) => parseSsOutput(result.stdout, terminalByProcessId)),
+        Effect.catchTags({
+          ProcessSpawnError: recoverSsProbeFailure,
+          ProcessStdinError: recoverSsProbeFailure,
+          ProcessOutputLimitError: recoverSsProbeFailure,
+          ProcessReadError: recoverSsProbeFailure,
+          ProcessTimeoutError: recoverSsProbeFailure,
+        }),
+      );
+    if (ssResult !== null) return yield* probeWebServers(ssResult, configuredUrls);
     return yield* probeWebServers(yield* probeCommonPorts(), configuredUrls);
   });
 

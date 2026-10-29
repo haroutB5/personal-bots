@@ -22,18 +22,29 @@ const state = vi.hoisted(() => ({
   takeControl: vi.fn(async () => ({ _tag: "Success", value: undefined })),
   returnToAgent: vi.fn(async () => ({ _tag: "Success", value: undefined })),
   close: vi.fn(async () => ({ _tag: "Success", value: undefined })),
+  stop: vi.fn(async () => ({ _tag: "Success", value: undefined })),
+  approveEgress: vi.fn(async () => ({ _tag: "Success", value: undefined })),
+  refuseEgress: vi.fn(async () => ({ _tag: "Success", value: undefined })),
 }));
 
 const commands = vi.hoisted(() => ({
   takeControl: { label: "takeControl" },
   returnToAgent: { label: "returnToAgent" },
   close: { label: "close" },
+  approveEgress: { label: "approveEgress" },
+  refuseEgress: { label: "refuseEgress" },
 }));
+
+const NO_DESKTOP_EVENTS = vi.hoisted(() => []);
+const desktopCommands = vi.hoisted(() => ({ stop: { label: "stop" } }));
 
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
     if (command === commands.takeControl) return state.takeControl;
     if (command === commands.returnToAgent) return state.returnToAgent;
+    if (command === commands.approveEgress) return state.approveEgress;
+    if (command === commands.refuseEgress) return state.refuseEgress;
+    if (command === desktopCommands.stop) return state.stop;
     return state.close;
   },
 }));
@@ -75,9 +86,14 @@ vi.mock("./PerformancePane", () => ({
     />
   ),
 }));
+vi.mock("../SystemStatsLine", () => ({
+  useSystemSummary: () => ({ cpuPct: 42, memUsedPct: 61 }),
+}));
 vi.mock("./viewportClient", () => ({ connectViewport: vi.fn() }));
 const desktopState = vi.hoisted(() => ({ available: true as boolean | null }));
 vi.mock("./desktopState", () => ({
+  desktopEnvironment: desktopCommands,
+  useDesktopActivity: () => NO_DESKTOP_EVENTS,
   useDesktopStatus: () =>
     desktopState.available === null
       ? null
@@ -98,6 +114,16 @@ vi.mock("./DesktopPane", () => ({
       onClick={props.onOpenFullScreen}
     />
   ),
+}));
+// react-test-renderer cannot render a portal: draw the sheet in place.
+vi.mock("~/components/ui/sheet", () => ({
+  Sheet: ({ children }: { children: ReactNode }) => <>{children}</>,
+  SheetPopup: ({ children, ...props }: { children: ReactNode; "data-testid"?: string }) => (
+    <div data-testid={props["data-testid"]}>{children}</div>
+  ),
+  SheetTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
+  SheetDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
+  SheetClose: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
 }));
 vi.mock("~/components/ui/menu", () => ({
   Menu: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -142,41 +168,98 @@ afterEach(async () => {
   desktopState.available = true;
 });
 
-describe("ComputerBrowserPane compact preview", () => {
-  it("opens full screen and takes control from one tap", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("document", {
-      visibilityState: "visible",
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
+const windowStub = (extra: Record<string, unknown> = {}) => ({
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+  localStorage: { getItem: () => null, setItem: vi.fn() },
+  matchMedia: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+  ...extra,
+});
+const stubBrowserGlobals = () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("document", {
+    visibilityState: "visible",
+    body: { style: { overflow: "" } },
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
+  vi.stubGlobal("window", windowStub());
+};
+const renderScreen = async (props: Partial<Parameters<typeof ComputerScreen>[0]> = {}) => {
+  await act(async () => {
+    renderer = create(<ComputerScreen onBackToChat={vi.fn()} {...props} />, {
+      createNodeMock: () => ({
+        focus: vi.fn(),
+        parentElement: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 244 }),
+      }),
     });
-    const onOpenFullScreen = vi.fn();
-    await act(async () => {
-      renderer = create(
-        <ComputerBrowserPane
-          environmentId={EnvironmentId.make("env-1")}
-          status={STATUS}
-          events={[]}
-          reachable
-          compact
-          onOpenFullScreen={onOpenFullScreen}
-        />,
-      );
-    });
+  });
+  return renderer!;
+};
+const buttonWith = (label: string) =>
+  renderer!.root
+    .findAllByType("button")
+    .find((node) => node.findAllByType("span").some((span) => span.children.includes(label)));
 
-    const takeControl = renderer!.root
+describe("ComputerScreen take control", () => {
+  it.each(["Browser", "Desktop"])("keeps one action for pending help on %s", async (source) => {
+    stubBrowserGlobals();
+    feedState.status = {
+      ...STATUS,
+      helpRequest: {
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-1"),
+        botName: "Developer",
+        reason: "Please help with the page",
+        requestedAt: "2026-09-15T10:00:00.000Z",
+      },
+    };
+    await renderScreen();
+    const tab = renderer!.root
+      .findAllByProps({ role: "tab" })
+      .find((node) => node.findAllByType("span").some((span) => span.children.includes(source)));
+    await act(async () => tab!.props.onClick());
+    const card = renderer!.root.findByProps({ "aria-label": "Developer needs you" });
+    expect(
+      card.findAllByType("p").some((node) => node.children.includes("Please help with the page")),
+    ).toBe(true);
+    expect(card.findAllByType("button").map((node) => node.children.join(""))).toEqual([
+      "Open chat",
+    ]);
+    const actions = renderer!.root
       .findAllByType("button")
-      .find((button) => button.children.includes("Take control"));
-    expect(takeControl).toBeDefined();
-    await act(async () => {
-      takeControl!.props.onClick();
-    });
+      .filter((node) =>
+        node.findAllByType("span").some((span) => span.children.includes("Take control")),
+      );
+    expect(actions).toHaveLength(1);
+    expect(actions[0]!.props.disabled).toBeFalsy();
+    await act(async () => actions[0]!.props.onClick());
+    expect(state.takeControl).toHaveBeenCalledTimes(1);
+  });
 
-    expect(onOpenFullScreen).toHaveBeenCalledTimes(1);
+  it("opens full screen and takes control from one tap", async () => {
+    stubBrowserGlobals();
+    feedState.status = STATUS;
+    await renderScreen();
+    const take = buttonWith("Take control");
+    expect(take).toBeDefined();
+    await act(async () => {
+      take!.props.onClick();
+    });
     expect(state.takeControl).toHaveBeenCalledWith({
       environmentId: EnvironmentId.make("env-1"),
       input: {},
     });
+    expect(renderer!.root.findByProps({ "aria-label": "Computer full screen" }).props.role).toBe(
+      "dialog",
+    );
   });
 });
 
@@ -235,7 +318,6 @@ describe("takeover keyboard", () => {
         <ComputerBrowserPane
           environmentId={EnvironmentId.make("env-1")}
           status={IN_CONTROL}
-          events={[]}
           reachable
           fullScreen
         />,
@@ -409,7 +491,6 @@ describe("page dialog", () => {
         <ComputerBrowserPane
           environmentId={EnvironmentId.make("env-1")}
           status={{ ...STATUS, dialog: confirmDialog }}
-          events={[]}
           reachable
         />,
       );
@@ -467,14 +548,7 @@ describe("page dialog", () => {
 });
 
 describe("ComputerScreen back to chat", () => {
-  const stubDocument = () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("document", {
-      visibilityState: "visible",
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    });
-  };
+  const stubDocument = stubBrowserGlobals;
 
   const tapBack = async (
     onBackToChat: (target: unknown) => void,
@@ -549,13 +623,16 @@ describe("ComputerScreen full screen", () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     });
-    vi.stubGlobal("window", {
-      addEventListener: vi.fn(
-        (name: string, listener: typeof listeners extends Map<string, infer V> ? V : never) =>
-          listeners.set(name, listener),
-      ),
-      removeEventListener: vi.fn((name: string) => listeners.delete(name)),
-    });
+    vi.stubGlobal(
+      "window",
+      windowStub({
+        addEventListener: vi.fn(
+          (name: string, listener: typeof listeners extends Map<string, infer V> ? V : never) =>
+            listeners.set(name, listener),
+        ),
+        removeEventListener: vi.fn((name: string) => listeners.delete(name)),
+      }),
+    );
     feedState.status = STATUS;
     const onBackToChat = vi.fn();
     await act(async () => {
@@ -592,13 +669,13 @@ describe("ComputerScreen Desktop segment", () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     });
-    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal("window", windowStub());
   };
   // The label sits in the tab's inner pill (the tab itself is the 44 px target).
-  const tabText = (tab: ReactTestInstance) => String(tab.findByType("span").props.children);
-  const tabs = () => renderer!.root.findAllByProps({ role: "tab" }).map(tabText);
+  const tabText = (tab: ReactTestInstance) => String(tab.props["aria-label"]).split(",")[0];
+  const tabs = () => renderer!.root.findAllByProps({ role: "tab" });
 
-  it("offers Browser, Desktop, Files and Performance, and shows the PC's live view on Desktop", async () => {
+  it("offers Browser and Desktop, the PC's live view on Desktop, and Performance from the chip", async () => {
     stubDocument();
     feedState.status = STATUS;
     await act(async () => {
@@ -606,32 +683,27 @@ describe("ComputerScreen Desktop segment", () => {
         createNodeMock: () => ({ focus: vi.fn(), parentElement: null }),
       });
     });
-    expect(tabs()).toEqual(["Browser", "Desktop", "Files", "Performance"]);
-    expect(renderer!.root.findAllByProps({ "aria-label": "Desktop pane" })).toHaveLength(0);
+    expect(tabs().map(tabText)).toEqual(["Browser", "Desktop"]);
 
-    // Performance is its own segment and gets the app's own busy counts.
-    const performanceTab = renderer!.root
-      .findAllByProps({ role: "tab" })
-      .find((tab) => tabText(tab) === "Performance");
-    await act(async () => performanceTab!.props.onClick());
+    // Performance is a sheet behind the CPU/RAM chip and gets the app's busy counts.
+    expect(renderer!.root.findAllByProps({ "data-testid": "performance-pane" })).toHaveLength(0);
+    const chip = renderer!.root
+      .findAllByType("button")
+      .find((node) => String(node.props["aria-label"] ?? "").startsWith("Performance"));
+    expect(chip).toBeDefined();
+    await act(async () => chip!.props.onClick());
+    // The pane is its own lazy chunk.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
     const performance = renderer!.root.findByProps({ "data-testid": "performance-pane" });
     expect(performance.props["data-bots-busy"]).toBe(0);
     expect(performance.props["data-tasks-running"]).toBe(0);
-    // Back to Browser for the rest of this test's journey.
-    const browserTab = renderer!.root
-      .findAllByProps({ role: "tab" })
-      .find((tab) => tabText(tab) === "Browser");
-    await act(async () => browserTab!.props.onClick());
+
     const desktopTab = renderer!.root
       .findAllByProps({ role: "tab" })
       .find((tab) => tabText(tab) === "Desktop");
     await act(async () => desktopTab!.props.onClick());
     const pane = renderer!.root.findByProps({ "aria-label": "Desktop pane" });
     expect(pane.props["data-full-screen"]).toBe(false);
-    // The browser's socket is gone: only one live view runs at a time.
-    expect(
-      renderer!.root.findAllByProps({ "aria-label": "Open browser full screen" }),
-    ).toHaveLength(0);
 
     // Full screen follows the browser's takeover: the same dialog.
     await act(async () => pane.props.onClick());
@@ -643,14 +715,15 @@ describe("ComputerScreen Desktop segment", () => {
     ).toBe(true);
   });
 
-  it("leaves Desktop out where the server has no desktop to show", async () => {
+  it("disables Desktop where the server has no desktop to show", async () => {
     stubDocument();
     desktopState.available = false;
     feedState.status = STATUS;
     await act(async () => {
       renderer = create(<ComputerScreen onBackToChat={vi.fn()} />);
     });
-    expect(tabs()).toEqual(["Browser", "Files", "Performance"]);
+    const desktopTab = tabs().find((tab) => tabText(tab) === "Desktop");
+    expect(desktopTab!.props.disabled).toBe(true);
   });
 });
 
@@ -661,31 +734,14 @@ describe("control held by another device (1.60.45)", () => {
   };
 
   const render = async (status: PersonalBrowserStatus) => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("document", {
-      visibilityState: "visible",
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    });
-    await act(async () => {
-      renderer = create(
-        <ComputerBrowserPane
-          environmentId={EnvironmentId.make("env-1")}
-          status={status}
-          events={[]}
-          reachable
-        />,
-      );
-    });
-    return renderer!;
+    stubBrowserGlobals();
+    feedState.status = status;
+    await renderScreen();
   };
-  const button = (label: string) =>
-    renderer!.root.findAllByType("button").find((node) => node.children.includes(label));
 
-  it("offers Return to agent in one tap, next to Take control", async () => {
+  it("offers Hand back in one tap, which returns the browser to its agent", async () => {
     await render(OTHER_DEVICE);
-    expect(button("Take control")).toBeDefined();
-    const giveBack = button("Return to agent");
+    const giveBack = buttonWith("Hand back");
     expect(giveBack).toBeDefined();
     await act(async () => {
       giveBack!.props.onClick();
@@ -697,12 +753,93 @@ describe("control held by another device (1.60.45)", () => {
     expect(state.takeControl).not.toHaveBeenCalled();
   });
 
-  it("does not show it when the agent has the browser or this device holds control", async () => {
+  it("offers Take control, not Hand back, while the agent has the browser", async () => {
     await render(STATUS);
-    expect(button("Return to agent")).toBeUndefined();
-    await act(async () => renderer?.unmount());
+    expect(buttonWith("Hand back")).toBeUndefined();
+    expect(buttonWith("Take control")).toBeDefined();
+  });
+
+  it("offers Hand back when this device holds control", async () => {
     await render(IN_CONTROL);
-    expect(button("Return to agent")).toBeUndefined();
-    expect(button("Return to bot")).toBeDefined();
+    expect(buttonWith("Take control")).toBeUndefined();
+    expect(buttonWith("Hand back")).toBeDefined();
+  });
+
+  it("leaves Take control to the stage buttons while nothing is on screen", async () => {
+    await render({ ...STATUS, state: "offline", controller: { _tag: "None" }, lastAgent: null });
+    expect(buttonWith("Take control")).toBeUndefined();
+    const stageButtons = renderer!.root
+      .findAllByType("button")
+      .map((node) => node.children.filter((child) => typeof child === "string").join(""));
+    expect(stageButtons).toEqual(expect.arrayContaining(["Open Brave", "View desktop"]));
+  });
+});
+
+const plainButton = (label: string) =>
+  renderer!.root
+    .findAllByType("button")
+    .find((node) => node.children.filter((child) => typeof child === "string").join("") === label);
+
+describe("sensitive-site pause (1.66.98)", () => {
+  const PAUSED = {
+    ...STATUS,
+    egressPause: {
+      threadId: "thread-a",
+      botId: "bot-a",
+      botName: "Assistant",
+      sources: ["Chase", "Gmail"],
+      destination: "slack.com",
+      requestedAt: new Date().toISOString(),
+    },
+  } as unknown as PersonalBrowserStatus;
+
+  it("shows the active bot's help card, never another thread's queued pause", async () => {
+    stubBrowserGlobals();
+    feedState.status = {
+      ...STATUS,
+      helpRequest: {
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-1"),
+        botName: "Developer",
+        reason: "Please help with the page",
+        requestedAt: "2026-09-15T10:00:00.000Z",
+      },
+      egressPause: {
+        threadId: "thread-b",
+        botId: "bot-b",
+        botName: "Other",
+        sources: ["Chase"],
+        destination: "slack.com",
+        requestedAt: "2026-09-15T10:00:01.000Z",
+      },
+    } as unknown as PersonalBrowserStatus;
+    await renderScreen();
+
+    expect(renderer!.root.findAllByProps({ "aria-label": "Developer needs you" })).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Allow this step?" })).toHaveLength(0);
+    expect(plainButton("Allow once")).toBeUndefined();
+  });
+
+  it("sends Allow once and Refuse to the server for the paused chat", async () => {
+    stubBrowserGlobals();
+    feedState.status = PAUSED;
+    await renderScreen();
+    const allow = plainButton("Allow once");
+    expect(allow).toBeDefined();
+    await act(async () => {
+      allow!.props.onClick();
+    });
+    expect(state.approveEgress).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("env-1"),
+      input: { threadId: "thread-a" },
+    });
+    const refuse = plainButton("Refuse");
+    await act(async () => {
+      refuse!.props.onClick();
+    });
+    expect(state.refuseEgress).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("env-1"),
+      input: { threadId: "thread-a" },
+    });
   });
 });

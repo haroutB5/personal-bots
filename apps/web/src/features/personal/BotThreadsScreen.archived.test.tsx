@@ -7,6 +7,8 @@ const state = vi.hoisted(() => ({
   archive: (() => {}) as (...args: unknown[]) => unknown,
   otherCommand: (() => {}) as (...args: unknown[]) => unknown,
   deleteChat: (() => {}) as (...args: unknown[]) => unknown,
+  slim: false,
+  archiveTarget: null as unknown,
 }));
 
 const ARCHIVE_COMMAND = vi.hoisted(() => ({ name: "personalBotArchiveThread" }));
@@ -41,6 +43,10 @@ vi.mock("~/components/ui/menu", () => ({
   MenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuPopup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("~/state/lazyThreadShells", () => ({
+  useLazyThreadShells: () => ({ pending: false }),
+  withLazyThreadShells: <A,>(atom: A) => atom,
 }));
 vi.mock("~/state/entities", () => ({
   useThreadDetail: () => null,
@@ -87,6 +93,10 @@ vi.mock("./PersonalOfflineBanner", () => ({ useLaptopOffline: () => false }));
 vi.mock("./usePersonalAutomation", () => ({ usePersonalTasks: () => ({ tasks: null }) }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./usePersonalBots", () => ({
+  usePersonalArchivedLinks: (_environmentId: unknown, target: unknown) => {
+    state.archiveTarget = target;
+    return { data: null, isPending: target !== null, isSuccess: false, error: null };
+  },
   personalBotArchiveThread: ARCHIVE_COMMAND,
   usePersonalEnvironmentId: () => "env-1",
   usePersonalBotsList: () => ({
@@ -101,6 +111,7 @@ vi.mock("./usePersonalBots", () => ({
         },
       ],
       threads: [],
+      ...(state.slim ? { archivedCounts: { "bot-a": 1 } } : {}),
     },
     isPending: false,
     error: null,
@@ -126,6 +137,8 @@ beforeEach(() => {
   state.archive = vi.fn(async () => ({ _tag: "Success", value: {} }));
   state.otherCommand = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   state.deleteChat = vi.fn(async () => ({ status: "cancelled" }));
+  state.slim = false;
+  state.archiveTarget = null;
 });
 
 afterEach(async () => {
@@ -178,6 +191,23 @@ it("an archived chat's row opens the chat and keeps its Unarchive and Delete but
   expect(state.archive).not.toHaveBeenCalled();
   expect(state.otherCommand).not.toHaveBeenCalled();
   expect(state.deleteChat).not.toHaveBeenCalled();
+});
+
+it("reserves the archive count and requests links only when the section opens", async () => {
+  state.slim = true;
+  await act(async () => {
+    renderer = create(<BotThreadsScreen botId="bot-a" />);
+  });
+  const summary = renderer!.root
+    .findAllByType("summary")
+    .find((node) => node.children.join("").includes("Archived chats (1)"));
+  expect(summary).toBeDefined();
+  expect(state.archiveTarget).toBeNull();
+  await act(async () => {
+    summary!.parent!.props.onToggle({ currentTarget: { open: true } });
+  });
+  expect(state.archiveTarget).toEqual({ botId: "bot-a" });
+  expect(renderer!.root.findAllByType("summary").includes(summary!)).toBe(true);
 });
 
 it("the archived row's buttons still unarchive and delete that chat", async () => {

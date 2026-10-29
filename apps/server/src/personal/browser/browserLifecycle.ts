@@ -1,5 +1,6 @@
 // Closing the browser, the idle sweep, downloaded files and the activity feed.
 import { PersonalBrowserError, ThreadId, type PersonalBrowserStreamItem } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -106,6 +107,7 @@ export const makeBrowserLifecycle = (core: BrowserCore, launch: BrowserLaunch, t
           runtime.closing = false;
           yield* lease.releaseAll;
           if (closedSomething) {
+            st.lastStop = DateTime.formatIso(yield* DateTime.now);
             const bot = input.byThreadId === null ? null : yield* botForThread(input.byThreadId);
             yield* recordActivity({
               kind: "control",

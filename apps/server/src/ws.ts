@@ -143,7 +143,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
-import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { isHostSpecificPath, issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -217,6 +217,13 @@ import {
   makePersonalSessionPrewarmer,
   type PersonalSessionPrewarmer,
 } from "./personal/sessionPrewarm.ts";
+import {
+  listBotThreadIds,
+  maybeSlimShellSnapshot,
+  pickThreadShells,
+} from "./personal/personalShellSlim.ts";
+import { serverPerfOptimizationOn } from "./personal/perfFlags.ts";
+import { maybeApplyThreadTextPreviews, readThreadFullText } from "./personal/threadTextPreviews.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalVoiceCallService from "./personal/voiceCalls/PersonalVoiceCallService.ts";
 import * as PersonalVoiceSampleService from "./personal/voiceCalls/PersonalVoiceSampleService.ts";
@@ -380,6 +387,8 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceProtectedFileError":
+      return { failure: "protected_file", resolvedPath: error.resolvedPath };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -2025,6 +2034,7 @@ const makeWsRpcLayer = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
+            ...(serverPerfOptimizationOn("text-previews") ? { textPreviews: true } : {}),
           };
         });
 
@@ -2257,6 +2267,10 @@ const makeWsRpcLayer = (
               );
 
               const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
+                Effect.flatMap((snapshot) =>
+                  maybeSlimShellSnapshot(snapshot, input.omitArchivedBotChats === true),
+                ),
+                Effect.provideService(SqlClient.SqlClient, sql),
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
                 ),
@@ -2517,9 +2531,9 @@ const makeWsRpcLayer = (
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
-                  snapshot: projectThreadDetailSnapshot(
-                    snapshot.value,
-                    input.reasoningMessages === true,
+                  snapshot: maybeApplyThreadTextPreviews(
+                    projectThreadDetailSnapshot(snapshot.value, input.reasoningMessages === true),
+                    input.textPreviews === true,
                   ),
                 }),
                 afterSnapshot,
@@ -3436,10 +3450,45 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
-        [WS_METHODS.personalBotsList]: (_input) =>
-          observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(), {
+        [WS_METHODS.personalBotsList]: (input) =>
+          observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalBotsThreadShells]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsThreadShells,
+            Effect.gen(function* () {
+              const ids = yield* listBotThreadIds(input);
+              if (ids.size === 0) return { threads: [] };
+              const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+              return { threads: pickThreadShells(snapshot, ids) };
+            }).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.mapError(
+                (cause) =>
+                  new PersonalBotsError({
+                    message: "Could not load the bot's chats.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalBotsThreadFullText]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsThreadFullText,
+            readThreadFullText(input).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.mapError(
+                (cause) =>
+                  new PersonalBotsError({
+                    message: "Could not load the full text.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalBotsCreate]: (input) =>
           observeRpcEffect(WS_METHODS.personalBotsCreate, personalBots.create(input), {
             "rpc.aggregate": "server",
@@ -3482,7 +3531,13 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBotsArchiveThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsArchiveThread,
-            personalBots.archiveThread(input),
+            personalBots.archiveThread(input).pipe(
+              // An archived chat cannot use the browser any more: its tabs,
+              // its help card and its place in line go with it (QA's B6).
+              Effect.tap(() =>
+                input.archived ? personalBrowser.releaseThread(input.threadId) : Effect.void,
+              ),
+            ),
             {
               "rpc.aggregate": "server",
             },
@@ -3524,7 +3579,20 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBotsArchiveThreads]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsArchiveThreads,
-            archivePersonalChats(personalBots, input.threadIds, input.archived),
+            archivePersonalChats(personalBots, input.threadIds, input.archived).pipe(
+              // Same as one chat: every archived chat gives up the browser.
+              Effect.tap((result) =>
+                input.archived
+                  ? Effect.forEach(
+                      result.done,
+                      (threadId) => personalBrowser.releaseThread(threadId),
+                      {
+                        discard: true,
+                      },
+                    )
+                  : Effect.void,
+              ),
+            ),
             {
               "rpc.aggregate": "server",
             },
@@ -4017,6 +4085,26 @@ const makeWsRpcLayer = (
             personalBrowser.activity(currentSessionId),
             { "rpc.aggregate": "personal-browser" },
           ),
+        // Owner decisions on one paused sensitive-site step. The paused thread
+        // comes from the card; the acting session is this connection's.
+        [WS_METHODS.personalBrowserApproveEgress]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBrowserApproveEgress,
+            personalBrowser.approveEgress({
+              threadId: input.threadId,
+              sessionId: currentSessionId,
+            }),
+            { "rpc.aggregate": "personal-browser" },
+          ),
+        [WS_METHODS.personalBrowserRefuseEgress]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBrowserRefuseEgress,
+            personalBrowser.refuseEgress({
+              threadId: input.threadId,
+              sessionId: currentSessionId,
+            }),
+            { "rpc.aggregate": "personal-browser" },
+          ),
         // The user's real PC: who holds it, who waits, and the app's Stop.
         [WS_METHODS.personalDesktopStatus]: (_input) =>
           observeRpcStream(
@@ -4026,6 +4114,10 @@ const makeWsRpcLayer = (
           ),
         [WS_METHODS.personalDesktopStop]: (_input) =>
           observeRpcEffect(WS_METHODS.personalDesktopStop, personalDesktop.stop("app"), {
+            "rpc.aggregate": "personal-desktop",
+          }),
+        [WS_METHODS.personalDesktopActivity]: (_input) =>
+          observeRpcStream(WS_METHODS.personalDesktopActivity, personalDesktop.activity, {
             "rpc.aggregate": "personal-desktop",
           }),
         [WS_METHODS.personalRoutinesList]: (_input) =>
@@ -4385,9 +4477,18 @@ const makeWsRpcLayer = (
                 input.resource._tag === "native-app-icon" ||
                 // GitHub media names the repository it authenticates through itself.
                 input.resource._tag === "github-media" ||
-                (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
+                (input.resource._tag === "media-file" &&
+                  (path.isAbsolute(input.resource.path) || isHostSpecificPath(input.resource.path)))
               ) {
                 return yield* issueAssetUrl({ resource: input.resource });
+              }
+              if (input.resource._tag === "host-file") {
+                // The link names its own chat folder; the file is checked
+                // against the same deny list as every host read.
+                return yield* issueAssetUrl({
+                  resource: input.resource,
+                  workspaceRoot: input.resource.cwd,
+                });
               }
               if (input.resource._tag === "draft-workspace-file") {
                 // A project draft names its workspace directly; there is no

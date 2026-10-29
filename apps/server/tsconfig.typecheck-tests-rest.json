@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": true
+  },
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "exclude": [
+    "src/*.test.ts",
+    "src/*.test.tsx",
+    "src/cli/**",
+    "src/personal/**",
+    "src/provider/**",
+    "src/orchestration/**",
+    "src/persistence/**"
+  ]
+}

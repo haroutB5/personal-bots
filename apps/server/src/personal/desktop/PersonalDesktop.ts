@@ -11,29 +11,41 @@
  * helper refusing to inject input while the user's own mouse or keyboard is
  * active.
  */
-// @effect-diagnostics nodeBuiltinImport:off - the helper's directory is a plain path join.
+// @effect-diagnostics nodeBuiltinImport:off - the helper's directory is a plain path join, and activity ids are UUIDs.
 // @effect-diagnostics globalTimers:off - queue waits bridge a promise-based driver.
 // @effect-diagnostics globalDate:off - status timestamps are plain ISO strings.
+import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
 import {
   PERSONAL_DESKTOP_STOP_HOTKEY,
+  type PersonalDesktopActivityEvent,
+  type PersonalDesktopActivityKind,
+  type PersonalDesktopFocusedWindow,
   type PersonalDesktopStatus,
   type PersonalDesktopStop,
   type PersonalDesktopStopReason,
+  type PersonalDesktopStreamItem,
+  ThreadId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import { type DesktopDriver, DesktopHelperError, WindowsDesktopDriver } from "./DesktopHelper.ts";
+import { createLinuxDesktopDriver } from "./linux/driver.ts";
 import {
   type DesktopClaimant,
   type DesktopHolderState,
@@ -80,6 +92,10 @@ export type DesktopActionErrorKind =
   | "stopped"
   | "busy"
   | "user_active"
+  /** The window under the point is one the desktop tools must not touch. */
+  | "point_blocked"
+  /** A denied window or a sensitive-site pause: the bot must ask the user. */
+  | "blocked"
   | "locked"
   | "invalid"
   | "failed";
@@ -94,11 +110,19 @@ export class PersonalDesktopActionError extends Data.TaggedError("PersonalDeskto
   }
 }
 
-export const STOPPED_REASON = `The user took back control of the PC (they pressed ${PERSONAL_DESKTOP_STOP_HOTKEY} or Stop in the app). Stop using the desktop now: do not retry. Tell the user what you had done so far and ask whether they want you to continue.`;
+export const stoppedReasonFor = (hotkey: string): string =>
+  `The user took back control of the PC (they pressed ${hotkey} or Stop in the app). Stop using the desktop now: do not retry. Tell the user what you had done so far and ask whether they want you to continue.`;
+
+/** The Windows wording, kept for the tests and any code that names it. */
+export const STOPPED_REASON = stoppedReasonFor(PERSONAL_DESKTOP_STOP_HOTKEY);
 
 /** What a bot hears when the owner takes the PC over from the app. */
 export const TAKEN_OVER_REASON =
   "The user took control of the PC remotely from the app. Stop using the desktop now: do not retry. Tell the user what you had done so far and ask whether they want you to continue.";
+
+/** What a bot hears when the user takes the PC back in the middle of a hold. */
+export const HOLD_TAKEN_OVER_REASON =
+  "Stopped: the user took over the PC, so the held key or button was let go at once. Take a fresh screenshot before the next action; if they keep using it, ask them whether you should continue.";
 
 /** The owner, as the PC's holder while they control it remotely. */
 export const REMOTE_USER: DesktopClaimant = {
@@ -173,6 +197,15 @@ export interface DesktopActionContext {
   readonly markButton: (button: string, down: boolean) => void;
   /** Records that a key hold is running (true) or finished (false). */
   readonly markKeysHeld: (held: boolean) => void;
+  /**
+   * The thread's sensitive-site taint: `record` remembers windows a screenshot
+   * carried, `guard` refuses input while that taint has no approval. Both are
+   * no-ops when no browser service is wired (tests).
+   */
+  readonly exposure: {
+    readonly record: (value: string) => Promise<void>;
+    readonly guard: () => Promise<void>;
+  };
 }
 
 export interface PersonalDesktopShape {
@@ -197,6 +230,8 @@ export interface PersonalDesktopShape {
   readonly threadTurnEnded: (threadId: string) => Effect.Effect<void>;
   readonly status: Effect.Effect<PersonalDesktopStatus>;
   readonly changes: Stream.Stream<PersonalDesktopStatus>;
+  /** The desktop's activity timeline, for the Computer tab. */
+  readonly activity: Stream.Stream<PersonalDesktopStreamItem>;
   /**
    * The owner takes the PC for remote control from the app: a bot holding it
    * is stopped (and told the user took over), bots in line keep waiting
@@ -239,6 +274,18 @@ export interface DesktopServiceOptions {
   readonly liveView?: DesktopLiveViewHub | null;
   /** One line per remote-control session (never its keystrokes). */
   readonly log?: (line: string) => void;
+  /** Why there is no driver, for the Computer tab's disabled Desktop segment. */
+  readonly unavailableReason?: string;
+  /** How many recent activity events a new subscriber gets (default 50). */
+  readonly recentActivity?: number;
+  /**
+   * The shared browser's sensitive-exposure store and pause. Absent in tests
+   * and on hosts with no browser service, which leaves the desktop untainted.
+   */
+  readonly exposure?: {
+    readonly record: (threadId: string, value: string) => Effect.Effect<void>;
+    readonly guard: (threadId: string) => Effect.Effect<void, Error>;
+  };
 }
 
 const iso = (millis: number) => new Date(millis).toISOString();
@@ -264,10 +311,13 @@ function primaryMonitor(info: Record<string, unknown>): DesktopRect {
   };
 }
 
-export const overlayText = (botName: string) =>
-  `${botName} is using your PC  ·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} to take it back`;
+export const overlayText = (botName: string, hotkey = PERSONAL_DESKTOP_STOP_HOTKEY) =>
+  `${botName} is using your PC  ·  press ${hotkey} to take it back`;
 
-export const REMOTE_OVERLAY_TEXT = `You are controlling this PC remotely  ·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} here to end it`;
+export const remoteOverlayText = (hotkey = PERSONAL_DESKTOP_STOP_HOTKEY) =>
+  `You are controlling this PC remotely  ·  press ${hotkey} here to end it`;
+
+export const REMOTE_OVERLAY_TEXT = remoteOverlayText();
 
 const isUser = (holder: DesktopClaimant | null | undefined) => holder?.kind === "user";
 
@@ -318,6 +368,13 @@ function helperFailure(error: unknown): PersonalDesktopActionError {
           kind: "user_active",
           reason: `${error.message} Nothing more was done. Wait a few seconds, take a fresh screenshot and try again; if the user keeps using the PC, ask them whether you should continue.`,
         });
+      case "point_blocked":
+        // The point guard refused because of the window under the pointer, not
+        // because the person is using the PC (QA's L5).
+        return new PersonalDesktopActionError({
+          kind: "point_blocked",
+          reason: `${error.message} Nothing was clicked or typed. Pick another point or use the other tool.`,
+        });
       case "locked":
         return new PersonalDesktopActionError({
           kind: "locked",
@@ -325,6 +382,10 @@ function helperFailure(error: unknown): PersonalDesktopActionError {
         });
       case "unavailable":
         return new PersonalDesktopActionError({ kind: "unavailable", reason: error.message });
+      case "taken_over":
+        return new PersonalDesktopActionError({ kind: "stopped", reason: HOLD_TAKEN_OVER_REASON });
+      case "blocked":
+        return new PersonalDesktopActionError({ kind: "blocked", reason: error.message });
       default:
         return new PersonalDesktopActionError({ kind: "failed", reason: error.message });
     }
@@ -343,6 +404,9 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
   Effect.gen(function* () {
     const now = options.now ?? Date.now;
     const driver = options.driver;
+    // The exposure effects close over the browser service's own context, so
+    // this only needs the runtime that `makeDesktopService` was built in.
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     const lock = new DesktopLockCore(options.idleTimeoutMs ?? DESKTOP_IDLE_TIMEOUT_MS);
 
     const queueWaitMs = options.queueWaitMs ?? DESKTOP_QUEUE_WAIT_MS;
@@ -356,8 +420,19 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     const frames = new Map<string, ScreenFrame>();
     /** Chats the user stopped, refused until their turn ends, with what they are told. */
     const stopped = new Map<string, string>();
-    const stoppedReason = (threadId: string) => stopped.get(threadId) ?? STOPPED_REASON;
+    const hotkey = driver?.stopHotkey ?? PERSONAL_DESKTOP_STOP_HOTKEY;
+    const stoppedReason = (threadId: string) => stopped.get(threadId) ?? stoppedReasonFor(hotkey);
     const log = options.log ?? (() => undefined);
+    /** The Computer tab's timeline: a small ring, then live events. */
+    const activityPubSub = yield* PubSub.unbounded<PersonalDesktopActivityEvent>();
+    const recentActivity: PersonalDesktopActivityEvent[] = [];
+    const recentLimit = options.recentActivity ?? 50;
+    interface FocusedState {
+      window: PersonalDesktopFocusedWindow | null;
+      at: number;
+      inFlight: boolean;
+    }
+    const focusedState: FocusedState = { window: null, at: 0, inFlight: false };
     interface RemoteState {
       readonly options: RemoteControlOptions;
       readonly since: number;
@@ -385,10 +460,31 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     let actionChain: Promise<unknown> = Promise.resolve();
     const pubsub = yield* PubSub.unbounded<PersonalDesktopStatus>();
 
+    const refreshFocusedWindow = (force = false): void => {
+      const probe = driver?.currentWindow;
+      if (probe === undefined || focusedState.inFlight) return;
+      if (!force && now() - focusedState.at < 2_000) return;
+      focusedState.inFlight = true;
+      probe()
+        .then((window) => {
+          focusedState.window =
+            window === null ? null : { title: window.title, windowClass: window.class };
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          focusedState.at = now();
+          focusedState.inFlight = false;
+        });
+    };
+
     const snapshot = (): PersonalDesktopStatus => {
       const holder = lock.holder;
+      refreshFocusedWindow();
       return {
         available: driver !== null,
+        ...(driver === null && options.unavailableReason !== undefined
+          ? { unavailableReason: options.unavailableReason }
+          : {}),
         holder:
           holder === null
             ? null
@@ -402,8 +498,45 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
               },
         waiting: lock.waiting.map((entry) => ({ ...entry })),
         lastStop,
-        stopHotkey: PERSONAL_DESKTOP_STOP_HOTKEY,
+        stopHotkey: hotkey,
+        focusedWindow: focusedState.window,
       };
+    };
+
+    const recordActivity = (input: {
+      readonly kind: PersonalDesktopActivityKind;
+      readonly summary: string;
+      readonly status: PersonalDesktopActivityEvent["status"];
+      readonly threadId: string | null;
+      readonly botId: string | null;
+      readonly botName: string | null;
+      readonly x?: number | undefined;
+      readonly y?: number | undefined;
+      readonly monitor?: number | undefined;
+      readonly chars?: number | undefined;
+      readonly outcome?: "paused" | "refused" | undefined;
+    }) => {
+      const event: PersonalDesktopActivityEvent = {
+        id: NodeCrypto.randomUUID(),
+        kind: input.kind,
+        summary: input.summary,
+        status: input.status,
+        at: iso(now()),
+        threadId: input.threadId as PersonalDesktopActivityEvent["threadId"],
+        botId: input.botId as PersonalDesktopActivityEvent["botId"],
+        botName: input.botName,
+        source: "desktop",
+        ...(input.x === undefined ? {} : { x: input.x }),
+        ...(input.y === undefined ? {} : { y: input.y }),
+        ...(input.monitor === undefined ? {} : { monitor: input.monitor }),
+        ...(input.chars === undefined ? {} : { chars: input.chars }),
+        ...(input.outcome === undefined ? {} : { outcome: input.outcome }),
+      };
+      recentActivity.push(event);
+      if (recentActivity.length > recentLimit) {
+        recentActivity.splice(0, recentActivity.length - recentLimit);
+      }
+      Effect.runSync(PubSub.publish(activityPubSub, event));
     };
 
     const publish = () => {
@@ -415,7 +548,11 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
       if (driver === null) return;
       const holder = lock.holder;
       const wanted =
-        holder === null ? null : isUser(holder) ? REMOTE_OVERLAY_TEXT : overlayText(holder.botName);
+        holder === null
+          ? null
+          : isUser(holder)
+            ? remoteOverlayText(hotkey)
+            : overlayText(holder.botName, hotkey);
       if (wanted === overlayShownFor) return;
       overlayShownFor = wanted;
       driver
@@ -455,6 +592,16 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         }
       }
       const seconds = ((now() - session.since) / 1000).toFixed(1);
+      if (reason === "released" || reason === "closed") {
+        recordActivity({
+          kind: "control",
+          summary: "handed back control",
+          status: "succeeded",
+          threadId: null,
+          botId: null,
+          botName: "You",
+        });
+      }
       log(`desktop remote control: ended (${reason}) after ${seconds} s, ${session.inputs} inputs`);
       if (reason !== "released" && reason !== "closed") {
         session.options.onEnded(reason, REMOTE_CONTROL_END_DETAIL[reason]);
@@ -576,20 +723,31 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     const stopAllNow = (by: PersonalDesktopStopReason) => {
       const { stopped: holder, turnedAway } = lock.stopAll();
       lineDeadlines.clear();
-      const error = new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
+      const error = new PersonalDesktopActionError({
+        kind: "stopped",
+        reason: stoppedReasonFor(hotkey),
+      });
       if (holder !== null && isUser(holder)) {
         finishRemote(by === "hotkey" ? "esc" : "stopped");
       } else if (holder !== null) {
-        stopped.set(holder.threadId, STOPPED_REASON);
+        stopped.set(holder.threadId, stoppedReasonFor(hotkey));
         frames.delete(holder.threadId);
         void releaseHeld(holder.threadId, "stopped by the user");
         lastStop = { threadId: holder.threadId, botName: holder.botName, by, at: iso(now()) };
+        recordActivity({
+          kind: "stop",
+          summary: by === "hotkey" ? "stopped from the PC" : "stopped from the app",
+          status: "succeeded",
+          threadId: holder.threadId,
+          botId: holder.botId,
+          botName: holder.botName,
+        });
         // The stop key already aborted the helper's action from inside it;
         // the app's Stop has to ask.
         if (by !== "hotkey") abortHelper();
       }
       for (const entry of turnedAway) {
-        stopped.set(entry.threadId, STOPPED_REASON);
+        stopped.set(entry.threadId, stoppedReasonFor(hotkey));
         const waiter = waiters.get(entry.threadId);
         waiters.delete(entry.threadId);
         waiter?.reject(error);
@@ -599,6 +757,16 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     };
 
     driver?.onKill(() => stopAllNow("hotkey"));
+
+    // A take-back (a workspace or focus change) is not the stop key: the bot
+    // keeps its place, the next input waits for a fresh screenshot, and
+    // anything it still holds is let go at once. The driver has released the
+    // input already; this clears the service's held-button bookkeeping.
+    driver?.onTakeBack?.(() => {
+      const holder = lock.holder;
+      if (holder === null || isUser(holder)) return;
+      void releaseHeld(holder.threadId, "the user took over");
+    });
 
     const waitForTurn = (claimant: DesktopClaimant): Promise<void> => {
       let waiter = waiters.get(claimant.threadId);
@@ -704,10 +872,26 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         if (driver === null) {
           return yield* new PersonalDesktopActionError({
             kind: "unavailable",
-            reason: "Desktop control only works when the bots server runs on Windows.",
+            reason: options.unavailableReason ?? "Desktop control is not available on this server.",
           });
         }
         yield* acquire(claimant);
+        // Resolved per action, from the caller's full server context: the
+        // desktop layer itself must not depend on the browser (the CLI tests
+        // build the server without it), and a sibling in the same layer step
+        // would not be visible at construction time.
+        const browser = yield* Effect.serviceOption(PersonalBrowser);
+        const exposure = Option.isSome(browser)
+          ? {
+              record: (threadId: string, value: string) =>
+                browser.value.recordDesktopExposure({
+                  threadId: ThreadId.make(threadId),
+                  value,
+                }),
+              guard: (threadId: string) =>
+                browser.value.guardDesktopInput({ threadId: ThreadId.make(threadId) }),
+            }
+          : options.exposure;
         let releasedHeld = false;
         const result = yield* Effect.tryPromise({
           try: () =>
@@ -740,6 +924,34 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                   heldButtons: () => held.get(claimant.threadId)?.buttons ?? new Set<string>(),
                   markButton: (button, down) => markButton(claimant.threadId, button, down),
                   markKeysHeld: (keysHeld) => markKeysHeld(claimant.threadId, keysHeld),
+                  exposure: {
+                    record: async (value) => {
+                      if (exposure === undefined) return;
+                      try {
+                        await runPromise(exposure.record(claimant.threadId, value));
+                      } catch (error) {
+                        // The screenshot already exists; the browser's own
+                        // store logs a failed record the same way.
+                        log(
+                          `desktop exposure could not be recorded: ${
+                            error instanceof Error ? error.message : String(error)
+                          }`,
+                        );
+                      }
+                    },
+                    guard: async () => {
+                      if (exposure === undefined) return;
+                      try {
+                        await runPromise(exposure.guard(claimant.threadId));
+                      } catch (error) {
+                        if (error instanceof PersonalDesktopActionError) throw error;
+                        throw new PersonalDesktopActionError({
+                          kind: "blocked",
+                          reason: error instanceof Error ? error.message : String(error),
+                        });
+                      }
+                    },
+                  },
                 });
               } catch (error) {
                 // Any failure lets go of whatever was held, so a half-done drag or hold cannot stick.
@@ -759,6 +971,31 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                     reason: stoppedReason(claimant.threadId),
                   })
                 : failure;
+            const kind = OPERATION_KIND[operation];
+            if (kind !== undefined) {
+              // A lock, a take-back, a blocked point or the stop key is the PC
+              // saying no, not a broken action: the feed says "refused"
+              // (QA's L3). The reason is a short label; the card appends the
+              // outcome once, so the word "refused" is not repeated (QA's L5).
+              const refused =
+                reported.kind === "user_active" ||
+                reported.kind === "point_blocked" ||
+                reported.kind === "blocked" ||
+                reported.kind === "stopped" ||
+                reported.kind === "locked";
+              const label = FAILURE_LABEL[reported.kind] ?? reported.kind.replace(/_/g, " ");
+              recordActivity({
+                kind,
+                summary: refused
+                  ? `${operation.replace(/_/g, " ")} (${label})`
+                  : `${operation.replace(/_/g, " ")} failed${label === "failed" ? "" : ` (${label})`}`,
+                status: "failed",
+                ...(refused ? { outcome: "refused" as const } : {}),
+                threadId: claimant.threadId,
+                botId: claimant.botId,
+                botName: claimant.botName,
+              });
+            }
             return releasedHeld
               ? new PersonalDesktopActionError({
                   kind: reported.kind,
@@ -767,12 +1004,41 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
               : reported;
           },
         }).pipe(Effect.withSpan(`PersonalDesktop.${operation}`));
+        const kind = OPERATION_KIND[operation];
+        if (kind !== undefined) {
+          const activity = (result as { readonly activity?: ActionActivity } | null)?.activity;
+          if (activity !== undefined) {
+            recordActivity({
+              kind,
+              summary: activity.summary,
+              status: "succeeded",
+              threadId: claimant.threadId,
+              botId: claimant.botId,
+              botName: claimant.botName,
+              x: activity.x,
+              y: activity.y,
+              monitor: activity.monitor,
+              chars: activity.chars,
+            });
+          }
+        }
         return result;
       });
 
     const release: PersonalDesktopShape["release"] = (threadId) =>
       Effect.sync(() => {
+        const previous = lock.holder;
         const handOver = lock.release(threadId, now());
+        if (handOver.previous !== null && previous !== null) {
+          recordActivity({
+            kind: "release",
+            summary: "released the PC",
+            status: "succeeded",
+            threadId: previous.threadId,
+            botId: previous.botId,
+            botName: previous.botName,
+          });
+        }
         applyHandOver(handOver);
         return handOver.previous !== null;
       });
@@ -803,7 +1069,8 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
           if (driver === null) {
             throw new PersonalDesktopActionError({
               kind: "unavailable",
-              reason: "Remote control only works when the bots server runs on Windows.",
+              reason:
+                options.unavailableReason ?? "Remote control is not available on this server.",
             });
           }
           const info = await driver.request("info");
@@ -836,6 +1103,14 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
             monitorAt: now(),
           };
           remote = session;
+          recordActivity({
+            kind: "control",
+            summary: previous === null ? "took control" : `took control from ${previous.botName}`,
+            status: "succeeded",
+            threadId: null,
+            botId: null,
+            botName: "You",
+          });
           log(
             `desktop remote control: started${previous === null ? "" : ` (took the PC from ${previous.botName})`}, ${lock.waiting.length} waiting`,
           );
@@ -917,6 +1192,17 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         takeControl,
         status: Effect.sync(snapshot),
         changes: Stream.fromPubSub(pubsub),
+        activity: Stream.concat(
+          Stream.fromEffect(
+            Effect.sync((): PersonalDesktopStreamItem => ({
+              _tag: "Recent",
+              events: [...recentActivity],
+            })),
+          ),
+          Stream.fromPubSub(activityPubSub).pipe(
+            Stream.map((event): PersonalDesktopStreamItem => ({ _tag: "Activity", event })),
+          ),
+        ),
         watch: (sink) =>
           Effect.acquireRelease(
             Effect.sync(() => options.liveView?.attach(sink) ?? null),
@@ -929,6 +1215,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
        */
       sweep: Effect.sync(() => {
         const at = now();
+        refreshFocusedWindow();
         for (const [threadId, deadline] of lineDeadlines) {
           if (at >= deadline) leaveLine(threadId);
         }
@@ -944,35 +1231,122 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
 
 const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 
+/** The tool operation, as the Computer tab's activity kind. */
+const OPERATION_KIND: Readonly<Record<string, PersonalDesktopActivityKind>> = {
+  screenshot: "screenshot",
+  zoom: "zoom",
+  click: "click",
+  mouse_down: "click",
+  mouse_up: "click",
+  move: "move",
+  drag: "drag",
+  scroll: "scroll",
+  type: "type",
+  key: "key",
+  hold_key: "hold",
+};
+
+/** Short words for the feed's "(...)" reason; never a second "refused". */
+const FAILURE_LABEL: Readonly<Record<string, string>> = {
+  user_active: "user active",
+  point_blocked: "window under the pointer",
+  blocked: "blocked",
+  stopped: "stopped",
+  locked: "PC locked",
+  busy: "PC busy",
+  unavailable: "unavailable",
+  invalid: "invalid input",
+  failed: "failed",
+};
+
+interface ActionActivity {
+  readonly summary: string;
+  readonly x?: number | undefined;
+  readonly y?: number | undefined;
+  readonly monitor?: number | undefined;
+  readonly chars?: number | undefined;
+}
+
 export const layer = Layer.effect(
   PersonalDesktop,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const engine = yield* OrchestrationEngine.OrchestrationEngineService;
     const platform = yield* HostProcessPlatform;
-    const driver =
-      platform === "win32"
-        ? new WindowsDesktopDriver(NodePath.join(config.stateDir, "desktop-helper"))
-        : null;
-    yield* Effect.addFinalizer(() => Effect.sync(() => driver?.dispose()));
+    const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
-    // The live view captures through its own process, never the bots' helper.
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+    const helperDir = NodePath.join(config.stateDir, "desktop-helper");
+    let unavailableReason: string | undefined;
+
+    let driver: DesktopDriver | null = null;
+    if (platform === "win32") {
+      driver = new WindowsDesktopDriver(helperDir);
+    } else if (platform === "linux") {
+      const linuxDir = NodePath.join(config.stateDir, "desktop-helper-linux");
+      const attempt = yield* Effect.exit(
+        Effect.tryPromise({
+          try: () =>
+            createLinuxDesktopDriver({
+              helperDir: linuxDir,
+              tempDir: NodePath.join(linuxDir, "tmp"),
+              stopChord: process.env.PB_DESKTOP_LINUX_STOP_CHORD?.trim() !== "off",
+              // The same sites the shared browser's sensitive-site pause uses:
+              // saved logins the user marked sensitive, origins and labels only
+              // (the full rows carry sealed passwords the guard never needs).
+              sensitiveSites: () => runPromise(logins.sensitiveSites()),
+              sharedBrowserProfileRoots: [
+                NodePath.join(config.baseDir, "personal", "browser-profiles"),
+              ],
+              log: (line) => {
+                runFork(Effect.logInfo(line));
+              },
+            }),
+          catch: (error) =>
+            new DesktopHelperError(
+              "unavailable",
+              error instanceof Error ? error.message : String(error),
+            ),
+        }),
+      );
+      if (Exit.isSuccess(attempt)) driver = attempt.value;
+      else {
+        const cause = Exit.isFailure(attempt) ? attempt.cause : null;
+        unavailableReason =
+          cause === null ? "The Linux desktop is unavailable." : Cause.pretty(cause);
+      }
+    }
+    yield* Effect.addFinalizer(() => Effect.sync(() => driver?.dispose()));
+
+    // The live view captures through its own process on Windows. On Linux the
+    // frame capture is grim, a process of its own per frame, so the driver is
+    // shared and its dispose is a no-op: the hub must not close the bot driver.
     const liveView =
       platform === "win32"
         ? new DesktopLiveViewHub({
-            createDriver: () =>
-              new WindowsDesktopDriver(
-                NodePath.join(config.stateDir, "desktop-helper"),
-                "RunCapture",
-              ),
+            createDriver: () => new WindowsDesktopDriver(helperDir, "RunCapture"),
             log: (line) => {
               runFork(Effect.logInfo(line));
             },
           })
-        : null;
+        : platform === "linux" && driver !== null
+          ? new DesktopLiveViewHub({
+              createDriver: () => ({
+                request: (cmd, params, timeoutMs) =>
+                  driver === null
+                    ? Promise.reject(new DesktopHelperError("unavailable", "Shut down."))
+                    : driver.request(cmd, params, timeoutMs),
+                dispose: () => undefined,
+              }),
+              log: (line) => {
+                runFork(Effect.logInfo(line));
+              },
+            })
+          : null;
     yield* Effect.addFinalizer(() => Effect.sync(() => liveView?.dispose()));
     const { service, sweep } = yield* makeDesktopService({
       driver,
+      ...(unavailableReason === undefined ? {} : { unavailableReason }),
       overlayCapturable: process.env.PB_DESKTOP_OVERLAY_CAPTURABLE === "1",
       liveView,
       log: (line) => {

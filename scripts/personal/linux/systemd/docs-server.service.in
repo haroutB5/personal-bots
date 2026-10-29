@@ -1,0 +1,19 @@
+[Unit]
+Description=Dev-team docs server (phone pages on port 8765)
+After=network-online.target
+ConditionPathExists=@AI@/dev-team/tools/docs-server.py
+
+[Service]
+Type=simple
+WorkingDirectory=@AI@/dev-team/tools
+ExecStart=@PYTHON@ @AI@/dev-team/tools/docs-server.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadOnlyPaths=@AI@/dev-team/published
+PrivateTmp=true
+Nice=5
+
+[Install]
+WantedBy=default.target

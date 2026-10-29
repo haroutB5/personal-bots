@@ -216,6 +216,19 @@ export function nightlyCommands(
   mode: RunMode,
   review: { readonly label: string; readonly reportFile: string } | null,
 ) {
+  if (process.platform !== "win32") {
+    const script = `node "${updatesScript(paths, "nightly.mjs")}"`;
+    const common = `--run-id ${runId} --mode ${mode === "live" ? "live" : "dry-run"}`;
+    const reviewArgs =
+      review === null
+        ? ""
+        : ` --review-label "${review.label}" --review-report "${review.reportFile}"`;
+    return {
+      preflight: `${script} preflight ${common}`,
+      ship: `${script} ship ${common}${reviewArgs}`,
+      ledger: `node "${updatesScript(paths, "ledger.ts")}" --run ${runId}`,
+    };
+  }
   const script = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${updatesScript(paths, "nightly.ps1")}"`;
   const common = `-RunId ${runId} -Mode ${mode === "live" ? "Live" : "DryRun"}`;
   const reviewArgs =
@@ -521,7 +534,16 @@ export const makeWith = (deps: PersonalClaudeCodeReviewDeps) =>
           commands: nightlyCommands(deps.paths, runId, mode, review),
           hbotsSource: deps.paths.repoDir,
         };
-        const objective = `${input.routine.prompt}\n\n## Run data\n\n\`\`\`json\n${JSON.stringify(runData, null, 2)}\n\`\`\``;
+        const platformNote =
+          process.platform === "win32"
+            ? ""
+            : [
+                "",
+                "",
+                "## Linux environment",
+                "This run is on Linux (Omarchy). The preflight and ship commands above are the Linux Node pipeline; do not call PowerShell. Use bash paths, and typecheck with node_modules/.bin/tsc --noEmit from the package folder (there is no .cmd). Never open ~/.personal-bots/dev/userdata/state.sqlite (or its -wal/-shm) from another process: that crashed Bots on 26 Oct. Use the app's APIs or a copy.",
+              ].join("\n");
+        const objective = `${input.routine.prompt}${platformNote}\n\n## Run data\n\n\`\`\`json\n${JSON.stringify(runData, null, 2)}\n\`\`\``;
         yield* Effect.logInfo("claude code nightly run prepared", {
           runId,
           mode,

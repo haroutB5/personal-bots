@@ -27,7 +27,7 @@ const dependencies = [McpInvocationContext.McpInvocationContext, DeviceService.D
  */
 const DeviceListTool = Tool.make("device_list", {
   description:
-    "List iOS Simulators and Android Emulators on this environment's device hosts, which platforms each host can run, and which devices are already open in this thread's Device panel. Call this before device_open when you do not know a device id.",
+    "List iOS Simulators and Android Emulators on the device hosts, the platforms each host can run, and which are open in this thread's Device panel. Call before device_open if you do not know a device id.",
   // An empty struct serializes as `anyOf [object, array]`, which some
   // providers reject and then drop every tool on the server with it.
   parameters: Schema.Struct({
@@ -47,7 +47,7 @@ const DeviceListTool = Tool.make("device_list", {
 
 const DeviceOpenTool = Tool.make("device_open", {
   description:
-    "Open a simulator or emulator for this thread: boots it if needed, starts its live stream, and shows it in the user's Device panel so they can watch. Returns the agent-device CLI invocation pinned to the device; drive the device with that CLI afterwards.",
+    "Open a simulator or emulator for this thread: boots it if needed and shows it in the user's Device panel. Returns the agent-device CLI invocation pinned to the device; drive it with that CLI.",
   parameters: DeviceToolOpenInput,
   success: DeviceToolOpenResult,
   failure: DeviceToolError,
@@ -60,8 +60,7 @@ const DeviceOpenTool = Tool.make("device_open", {
   .annotate(Tool.OpenWorld, true);
 
 export const DeviceScreenshotTool = Tool.make("device_screenshot", {
-  description:
-    "Capture the current screen of an open device as a PNG image. Use it to see what the user sees; for taps and text use the agent-device CLI.",
+  description: "Screenshot an open device as PNG. For taps and text use the agent-device CLI.",
   parameters: DeviceToolTargetInput,
   success: DeviceToolScreenshotResult,
   failure: DeviceToolError,
