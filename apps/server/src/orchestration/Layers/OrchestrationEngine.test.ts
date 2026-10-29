@@ -149,7 +149,8 @@ describe("OrchestrationEngine", () => {
       expect(thread.messages.map((message) => message.text)).toEqual(["Which option?\nOne", "Which option?\nTwo"]);
       expect(thread.activities.filter((activity) => activity.kind === "user-input.resolved").map((activity) => activity.payload)).toMatchObject([{ answers: { q: "One" } }, { answers: { q: "Two" } }]);
       const events = Array.from(await system.run(Stream.runCollect(system.engine.readEvents(0))));
-      expect(events.filter((event) => event.type === "thread.turn-start-requested")).toHaveLength(2);
+      const starts = events.filter((event) => event.type === "thread.turn-start-requested");
+      expect(starts.map((event) => thread.messages.find((message) => message.id === event.payload.messageId)?.text)).toEqual(["Which option?\nOne", "Which option?\nTwo"]);
     } finally {
       await system.dispose();
     }
