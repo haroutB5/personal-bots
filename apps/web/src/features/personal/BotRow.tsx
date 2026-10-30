@@ -210,22 +210,22 @@ export const BotRow = memo(function BotRow({
               {bot.name}
             </span>
             {rowModelLabel !== null ? (
+              // The model and its " · fallback" marker are one unit that gives
+              // way together, marker end first, so a narrow phone reads
+              // "Sonnet 5.5 · H · fall…" rather than "Sonnet…" beside a whole marker.
               <span
                 data-testid="bot-model-label"
                 className="ml-1.5 min-w-0 shrink-[100] truncate text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
               >
                 {modelParts.base}
+                {modelParts.marker !== null ? (
+                  <span data-testid="bot-model-marker" className="whitespace-pre">
+                    {` · ${modelParts.marker}`}
+                  </span>
+                ) : null}
               </span>
             ) : null}
           </span>
-          {modelParts.marker !== null ? (
-            <span
-              data-testid="bot-model-marker"
-              className="shrink-0 whitespace-pre text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
-            >
-              {` · ${modelParts.marker}`}
-            </span>
-          ) : null}
           {botMuteState(bot, now).muted ? <MutedBell className="ml-1.5" /> : null}
           {live ? (
             <span className="ml-2 flex shrink-0 items-center">
