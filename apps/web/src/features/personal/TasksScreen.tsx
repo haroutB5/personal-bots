@@ -418,10 +418,10 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
                 search={{ view: filter.id }}
                 replace
                 aria-current={active ? "page" : undefined}
-                className="flex h-11 min-w-0 rounded-[var(--personal-radius-button)] p-0.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-inset"
+                className="flex h-11 min-w-0 rounded-[var(--personal-radius-button)] p-0.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-inset max-[380px]:text-[12px]"
               >
                 <span
-                  className={`flex min-w-0 flex-1 items-center justify-center gap-[3px] rounded-lg ${
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-[3px] rounded-lg max-[380px]:gap-0.5 ${
                     active
                       ? "bg-[var(--personal-surface)] font-semibold text-[var(--personal-text)] shadow-[var(--personal-shadow-card)]"
                       : "text-[var(--personal-text-secondary)]"
@@ -430,7 +430,7 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
                   <span className="truncate">{filter.label}</span>
                   {/* Every list shows its count, zero included, so the row reads at a glance. */}
                   <span
-                    className={`min-w-[18px] shrink-0 rounded-full px-[5px] text-center text-[11px] leading-[18px] font-semibold tabular-nums ${
+                    className={`min-w-[18px] shrink-0 rounded-full px-[5px] text-center text-[11px] max-[380px]:min-w-4 max-[380px]:px-1 max-[380px]:text-[10px] leading-[18px] font-semibold tabular-nums ${
                       active ? "bg-[var(--personal-fill-muted)]" : "bg-[var(--personal-surface)]"
                     } ${
                       counts[filter.id] > 0 && taskListCountNeedsAttention(filter.id)

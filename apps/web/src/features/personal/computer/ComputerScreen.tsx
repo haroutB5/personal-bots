@@ -738,9 +738,9 @@ export function ComputerScreen({
           type="button"
           onClick={() => setPerfOpen(true)}
           aria-label={`Performance, CPU ${Math.round(summary.cpuPct)} percent, RAM ${Math.round(summary.memUsedPct)} percent`}
-          className="flex h-11 shrink-0 items-center gap-1.5 rounded-full bg-[var(--personal-fill-muted)] px-3 text-[13px] text-[var(--personal-text-secondary)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="flex h-11 shrink-0 items-center gap-1.5 rounded-full bg-[var(--personal-fill-muted)] px-3 text-[13px] text-[var(--personal-text-secondary)] tabular-nums outline-none max-[380px]:px-2.5 max-[380px]:text-xs focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
-          <Activity className="size-4" strokeWidth={ICON_STROKE} aria-hidden />
+          <Activity className="size-4 max-[380px]:hidden" strokeWidth={ICON_STROKE} aria-hidden />
           <span>
             CPU{" "}
             <b className="font-semibold text-[var(--personal-text)]">
