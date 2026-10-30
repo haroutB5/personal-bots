@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { COLLAPSE_TIMEOUT_MS, collapseBeforeNavigating, createOverlayBack, overlayBackSupported } from "./overlayBack";
+import {
+  COLLAPSE_TIMEOUT_MS,
+  collapseBeforeNavigating,
+  createOverlayBack,
+  overlayBackSupported,
+} from "./overlayBack";
 
 interface Entry {
   url: string;
@@ -181,7 +186,9 @@ describe("navigating while an overlay entry is on top", () => {
 
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(browser.entries.map((entry) => entry.url)).toEqual(["/chat", "/next"]);
-    expect(browser.entries.every((entry) => !("personalOverlayDepth" in (entry.state ?? {})))).toBe(true);
+    expect(browser.entries.every((entry) => !("personalOverlayDepth" in (entry.state ?? {})))).toBe(
+      true,
+    );
     expect(browser.routerSaw).toEqual([]);
   });
 
@@ -250,6 +257,8 @@ describe("where it is switched on", () => {
   it("is for touch devices that are not iOS", () => {
     expect(overlayBackSupported({ coarsePointer: true, hasNavigatorStandalone: false })).toBe(true);
     expect(overlayBackSupported({ coarsePointer: true, hasNavigatorStandalone: true })).toBe(false);
-    expect(overlayBackSupported({ coarsePointer: false, hasNavigatorStandalone: false })).toBe(false);
+    expect(overlayBackSupported({ coarsePointer: false, hasNavigatorStandalone: false })).toBe(
+      false,
+    );
   });
 });

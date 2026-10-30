@@ -38,7 +38,11 @@ interface BackHistory {
 interface BackWindow {
   readonly history: BackHistory;
   readonly location: { readonly href: string };
-  addEventListener(type: "popstate", listener: (event: BackPopEvent) => void, capture: boolean): void;
+  addEventListener(
+    type: "popstate",
+    listener: (event: BackPopEvent) => void,
+    capture: boolean,
+  ): void;
   removeEventListener(
     type: "popstate",
     listener: (event: BackPopEvent) => void,
@@ -170,7 +174,7 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
           overlay.depth = top + 1;
           options.pushState.call(
             win.history,
-            { ...(withoutFlag(win.history.state)), [FLAG]: overlay.depth },
+            { ...withoutFlag(win.history.state), [FLAG]: overlay.depth },
             "",
             win.location.href,
           );
@@ -257,10 +261,9 @@ type HistoryMethod = "push" | "replace" | "back" | "go" | "forward";
  * Makes the router's history pop a sentinel before it navigates. The history is
  * the object botsBackStack already patched; each method keeps its signature.
  */
-export function collapseBeforeNavigating<H extends Record<HistoryMethod, (...args: never[]) => void>>(
-  history: H,
-  overlayBack: OverlayBack,
-): H {
+export function collapseBeforeNavigating<
+  H extends Record<HistoryMethod, (...args: never[]) => void>,
+>(history: H, overlayBack: OverlayBack): H {
   for (const method of ["push", "replace", "back", "go", "forward"] as const) {
     const original = history[method] as (...args: unknown[]) => void;
     (history as Record<HistoryMethod, unknown>)[method] = (...args: unknown[]) => {

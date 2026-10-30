@@ -106,7 +106,10 @@ export function ConversationSubtitle({
             )}
           >
             {dropIdleWord ? null : (
-              <span aria-hidden="true" className={cn(idleWordYieldsWhenNarrow && "max-[380px]:hidden")}>
+              <span
+                aria-hidden="true"
+                className={cn(idleWordYieldsWhenNarrow && "max-[380px]:hidden")}
+              >
                 ·{" "}
               </span>
             )}

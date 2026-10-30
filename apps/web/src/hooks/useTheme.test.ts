@@ -223,7 +223,8 @@ describe("browser chrome colour", () => {
     // The body reads back whatever inline colour is on it, exactly like a browser.
     vi.stubGlobal("getComputedStyle", (element: unknown) => ({
       backgroundColor: element === body ? body.style.backgroundColor : "rgba(0, 0, 0, 0)",
-      getPropertyValue: (name: string) => (name === "--app-chrome-background" ? options.tokenColor : ""),
+      getPropertyValue: (name: string) =>
+        name === "--app-chrome-background" ? options.tokenColor : "",
     }));
     return { metas, documentElement, body };
   }
@@ -251,8 +252,7 @@ describe("browser chrome colour", () => {
       const styles = getComputed(element as Element);
       return {
         backgroundColor: styles.backgroundColor,
-        getPropertyValue: (name: string) =>
-          name === "--app-chrome-background" ? "#0a0a0a" : "",
+        getPropertyValue: (name: string) => (name === "--app-chrome-background" ? "#0a0a0a" : ""),
       };
     });
     syncBrowserChromeTheme();

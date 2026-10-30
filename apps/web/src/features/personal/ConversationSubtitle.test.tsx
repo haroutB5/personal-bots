@@ -151,7 +151,8 @@ describe("ConversationSubtitle", () => {
     const idle = render({ state: "idle", status: "Idle", modelLabel: "Sonnet 5.5 · H" });
     expect(classOf(idle, "Idle")).toContain("max-[380px]:sr-only");
     const separator = idle.root.find(
-      (node) => node.type === "span" && String(node.props.className ?? "").includes("max-[380px]:hidden"),
+      (node) =>
+        node.type === "span" && String(node.props.className ?? "").includes("max-[380px]:hidden"),
     );
     expect(separator).toBeDefined();
     const working = render({ state: "working", status: "Working", modelLabel: "Sonnet 5.5 · H" });

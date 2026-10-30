@@ -57,7 +57,12 @@ describe("the PC line under the Bots header", () => {
 
   it("calls the disk 'Disk' when the server gives a mount path instead of a drive name", () => {
     for (const mount of ["/", "/home", "C:\\Users"]) {
-      const parsed = parseSystemSummary({ cpuPct: 1, memUsedPct: 2, diskLabel: mount, diskFreeGB: 340 });
+      const parsed = parseSystemSummary({
+        cpuPct: 1,
+        memUsedPct: 2,
+        diskLabel: mount,
+        diskFreeGB: 340,
+      });
       expect(parsed?.diskLabel).toBeNull();
       expect(systemStatParts(parsed!).at(-1)?.text).toBe("Disk 340 GB free");
       expect(systemStatsAriaLabel(parsed!)).toContain("disk 340 GB free");
