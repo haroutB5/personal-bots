@@ -21,6 +21,12 @@
  *   by the next overlay, and skipped by Back (one extra silent step) when
  *   nothing reuses it.
  *
+ * - Chrome treats a history entry written without a user gesture as one Back
+ *   should skip, and a Back with nothing else to land on closes the tab. So a
+ *   sentinel is only written while the user's gesture is fresh; an overlay that
+ *   opens without one (a sheet restored by Back) gets its sentinel on the next
+ *   tap or key press.
+ *
  * Only touch devices that are not iOS get this (`overlayBackSupported`): iOS has
  * its own swipe-back and is left alone.
  */
@@ -35,6 +41,8 @@ interface BackHistory {
   back(): void;
 }
 
+type GestureEvent = "pointerup" | "keydown" | "click";
+
 interface BackWindow {
   readonly history: BackHistory;
   readonly location: { readonly href: string };
@@ -43,11 +51,13 @@ interface BackWindow {
     listener: (event: BackPopEvent) => void,
     capture: boolean,
   ): void;
+  addEventListener(type: GestureEvent, listener: () => void, capture: boolean): void;
   removeEventListener(
     type: "popstate",
     listener: (event: BackPopEvent) => void,
     capture: boolean,
   ): void;
+  removeEventListener(type: GestureEvent, listener: () => void, capture: boolean): void;
 }
 
 interface BackPopEvent {
@@ -63,6 +73,8 @@ export interface OverlayBackOptions {
   readonly replaceState: StateWriter;
   readonly setTimeout?: (run: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
+  /** True while the user's gesture is fresh enough to write a history entry Chrome will not skip. */
+  readonly gestureIsFresh?: () => boolean;
 }
 
 export interface OverlayBack {
@@ -96,13 +108,18 @@ interface OpenOverlay {
   /** The sentinel this overlay's Back pops; 0 once it has no sentinel (collapsed away). */
   depth: number;
   readonly close: () => void;
+  /** Opened without a fresh gesture: its sentinel is written on the next one. */
+  waiting: boolean;
 }
 
 export function createOverlayBack(win: BackWindow, options: OverlayBackOptions): OverlayBack {
   const schedule = options.setTimeout ?? ((run, ms) => setTimeout(run, ms));
   const cancel =
     options.clearTimeout ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  const gestureIsFresh = options.gestureIsFresh ?? (() => true);
   const overlays: OpenOverlay[] = [];
+  /** Open overlays that have no sentinel yet because they opened without a gesture. */
+  let waitingForGesture = false;
   let lastFlag = flagOf(win.history.state);
   // A silent step Back took through a sentinel nobody owned.
   let skipping = false;
@@ -161,30 +178,66 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
     win.history.back();
   };
 
+  const GESTURES: readonly GestureEvent[] = ["pointerup", "keydown", "click"];
+
+  /** Gives `overlay` its sentinel: reuses a stale one on top, or writes a new one. */
+  const placeSentinel = (overlay: OpenOverlay) => {
+    const top = flagOf(win.history.state);
+    if (top > 0 && !owns(top)) {
+      overlay.depth = top;
+    } else {
+      overlay.depth = top + 1;
+      options.pushState.call(
+        win.history,
+        { ...withoutFlag(win.history.state), [FLAG]: overlay.depth },
+        "",
+        win.location.href,
+      );
+    }
+    lastFlag = overlay.depth;
+  };
+
+  const onGesture = () => {
+    if (collapse !== null || !gestureIsFresh()) return;
+    stopWaiting();
+    for (const overlay of overlays) {
+      if (overlay.depth === 0 && overlay.waiting) {
+        overlay.waiting = false;
+        placeSentinel(overlay);
+      }
+    }
+  };
+
+  const startWaiting = () => {
+    if (waitingForGesture) return;
+    waitingForGesture = true;
+    for (const type of GESTURES) win.addEventListener(type, onGesture, true);
+  };
+
+  function stopWaiting() {
+    if (!waitingForGesture) return;
+    waitingForGesture = false;
+    for (const type of GESTURES) win.removeEventListener(type, onGesture, true);
+  }
+
   win.addEventListener("popstate", onPop, true);
 
   return {
     register(close) {
-      const overlay: OpenOverlay = { depth: 0, close };
+      const overlay: OpenOverlay = { depth: 0, close, waiting: false };
       if (collapse === null) {
-        const top = flagOf(win.history.state);
-        if (top > 0 && !owns(top)) {
-          overlay.depth = top;
+        if (gestureIsFresh()) {
+          placeSentinel(overlay);
         } else {
-          overlay.depth = top + 1;
-          options.pushState.call(
-            win.history,
-            { ...withoutFlag(win.history.state), [FLAG]: overlay.depth },
-            "",
-            win.location.href,
-          );
+          overlay.waiting = true;
+          startWaiting();
         }
-        lastFlag = overlay.depth;
       }
       overlays.push(overlay);
       return () => {
         const at = overlays.indexOf(overlay);
         if (at !== -1) overlays.splice(at, 1);
+        if (!overlays.some((open) => open.waiting)) stopWaiting();
       };
     },
     afterCollapse(run) {
@@ -198,12 +251,16 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
         run();
         return;
       }
-      for (const overlay of overlays) overlay.depth = 0;
+      for (const overlay of overlays) {
+        overlay.depth = 0;
+        overlay.waiting = false;
+      }
       collapse = { waiters: [run], timer: schedule(finishCollapse, COLLAPSE_TIMEOUT_MS) };
       win.history.go(-depth);
     },
     dispose() {
       win.removeEventListener("popstate", onPop, true);
+      stopWaiting();
       finishCollapse();
     },
   };
@@ -245,6 +302,7 @@ export function installOverlayBack(): OverlayBack | null {
   active = createOverlayBack(window as unknown as BackWindow, {
     pushState: proto.pushState as StateWriter,
     replaceState: proto.replaceState as StateWriter,
+    gestureIsFresh: () => navigator.userActivation?.isActive ?? true,
   });
   return active;
 }

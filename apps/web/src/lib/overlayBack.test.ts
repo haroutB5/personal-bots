@@ -13,6 +13,7 @@ interface Entry {
 }
 
 type PopListener = (event: { stopImmediatePropagation(): void }) => void;
+type GestureListener = () => void;
 
 /** A browser history: entries, traversal that fires popstate on a later tick, capture listeners first. */
 function createBrowser(firstState: Record<string, unknown> | null = { __TSR_index: 0 }) {
@@ -21,6 +22,7 @@ function createBrowser(firstState: Record<string, unknown> | null = { __TSR_inde
   const capture: PopListener[] = [];
   const bubble: PopListener[] = [];
   const routerSaw: number[] = [];
+  const gestureListeners = new Set<GestureListener>();
   const pending: Array<() => void> = [];
 
   const history = {
@@ -56,12 +58,17 @@ function createBrowser(firstState: Record<string, unknown> | null = { __TSR_inde
         return entries[index]!.url;
       },
     },
-    addEventListener(_type: "popstate", listener: PopListener, isCapture: boolean) {
-      (isCapture ? capture : bubble).push(listener);
+    addEventListener(type: string, listener: PopListener | GestureListener, isCapture: boolean) {
+      if (type !== "popstate") gestureListeners.add(listener as GestureListener);
+      else (isCapture ? capture : bubble).push(listener as PopListener);
     },
-    removeEventListener(_type: "popstate", listener: PopListener, isCapture: boolean) {
+    removeEventListener(type: string, listener: PopListener | GestureListener, isCapture: boolean) {
+      if (type !== "popstate") {
+        gestureListeners.delete(listener as GestureListener);
+        return;
+      }
       const list = isCapture ? capture : bubble;
-      list.splice(list.indexOf(listener), 1);
+      list.splice(list.indexOf(listener as PopListener), 1);
     },
   };
   // What the router does: push a page (never traversal), and note each popstate it receives.
@@ -73,6 +80,11 @@ function createBrowser(firstState: Record<string, unknown> | null = { __TSR_inde
     get index() {
       return index;
     },
+    /** A tap or key press: listeners run while the gesture is fresh. */
+    gesture() {
+      for (const listener of [...gestureListeners]) listener();
+    },
+    gestureListenerCount: () => gestureListeners.size,
     rawPush(state: unknown, _title: string, url: string) {
       entries.length = index + 1;
       entries.push({ url, state: state as Record<string, unknown> });
@@ -97,6 +109,7 @@ function createBrowser(firstState: Record<string, unknown> | null = { __TSR_inde
 
 function setup(firstState?: Record<string, unknown> | null) {
   const browser = createBrowser(firstState);
+  const fresh = { value: true };
   const timers: Array<{ run: () => void; ms: number }> = [];
   const overlayBack = createOverlayBack(browser.win, {
     pushState: (state, title, url) => browser.rawPush(state, title, url),
@@ -106,8 +119,9 @@ function setup(firstState?: Record<string, unknown> | null) {
       return timers.length - 1;
     },
     clearTimeout: () => undefined,
+    gestureIsFresh: () => fresh.value,
   });
-  return { browser, overlayBack, timers };
+  return { browser, overlayBack, timers, fresh };
 }
 
 afterEach(() => {
@@ -171,6 +185,49 @@ describe("Back closes the open overlay", () => {
       unregister();
     }
     expect(browser.entries).toHaveLength(2);
+  });
+});
+
+describe("an overlay that opens without a fresh gesture", () => {
+  it("writes no entry until the next tap, so Chrome does not skip it", async () => {
+    const { browser, overlayBack, fresh } = setup();
+    fresh.value = false;
+    const close = vi.fn();
+    overlayBack.register(close);
+    expect(browser.entries).toHaveLength(1);
+
+    browser.gesture(); // a gesture event whose activation is not fresh changes nothing
+    expect(browser.entries).toHaveLength(1);
+
+    fresh.value = true;
+    browser.gesture();
+    expect(browser.entries).toHaveLength(2);
+    expect(browser.gestureListenerCount()).toBe(0);
+
+    browser.win.history.back();
+    await browser.settle();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(browser.routerSaw).toEqual([]);
+  });
+
+  it("writes nothing if the overlay closed before any gesture", () => {
+    const { browser, overlayBack, fresh } = setup();
+    fresh.value = false;
+    const unregister = overlayBack.register(() => undefined);
+    unregister();
+    expect(browser.gestureListenerCount()).toBe(0);
+    fresh.value = true;
+    browser.gesture();
+    expect(browser.entries).toHaveLength(1);
+  });
+
+  it("navigates at once, with nothing to collapse", () => {
+    const { overlayBack, fresh } = setup();
+    fresh.value = false;
+    overlayBack.register(() => undefined);
+    const navigate = vi.fn();
+    overlayBack.afterCollapse(navigate);
+    expect(navigate).toHaveBeenCalledTimes(1);
   });
 });
 
