@@ -45,7 +45,7 @@ Based on 1.66.106 via personal-bots/main (be6ce43549). No migration; schema rema
 The web-tests gate runs `src/features/personal` plus the files this release touched, not the whole web suite. Five untouched web test files fail in this environment (missing `jsdom`, a test that needs `window.location`, Usage, provider settings, connectCliAuth); 1.66.106 scoped its gate to `src/features/personal` for the same reason.
 
 
-<!-- gate-evidence:begin sha=55f0579dbdb9a588acd071da78976e59f8159224 release=55f0579dbdb9 json-sha256=b2c24144b2c8d154a4fb66f1c7be46182fba47d026c8376f93f4b635418d5804 result=PASS -->
+<!-- gate-evidence:begin sha=b6357016e6d9716542d9e7996f729f41ffdac591 release=b6357016e6d9 json-sha256=c1ea7d5fbe916a4ddc0677d0fe98c86afaa57b4b726f81d607397d435f0a9b4d result=PASS -->
 - server-tests: PASS, exit 0
 - server-tsc: PASS, exit 0
 - web-tests: PASS, exit 0
