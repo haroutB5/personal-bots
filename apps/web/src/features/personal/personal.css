@@ -1078,11 +1078,13 @@
 }
 /* The composer's send button holds too: the dip says a menu is coming before
    the hold fires. A tap or a scroll never reaches the 150 ms. */
-.personal-send-hold[data-holding="true"] {
+.personal-send-hold[data-holding="true"],
+.personal-attach-hold[data-holding="true"] {
   transform: scale(0.9);
   transition: transform 350ms cubic-bezier(0.4, 0, 1, 1) 150ms;
 }
-.personal-send-hold[data-held="true"] {
+.personal-send-hold[data-held="true"],
+.personal-attach-hold[data-held="true"] {
   transform: scale(1.06);
   transition: transform 120ms ease-out;
 }
@@ -1148,7 +1150,9 @@
   .personal-hold-target[data-holding="true"],
   .personal-hold-target[data-held="true"],
   .personal-send-hold[data-holding="true"],
-  .personal-send-hold[data-held="true"] {
+  .personal-send-hold[data-held="true"],
+  .personal-attach-hold[data-holding="true"],
+  .personal-attach-hold[data-held="true"] {
     transform: none;
     transition: background-color 0ms;
   }

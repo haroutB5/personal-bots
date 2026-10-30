@@ -523,7 +523,9 @@ describe("personal composer in a group", () => {
 
   it("takes no attachments: a group would pay for one image once per member", async () => {
     await renderGroup();
-    expect(renderer.root.findAllByProps({ "aria-label": "Add photos or files" })).toHaveLength(0);
+    expect(
+      renderer.root.findAllByProps({ "aria-label": "Add photos, hold for camera or files" }),
+    ).toHaveLength(0);
   });
 
   it("offers the members when an @ is typed, and inserts the one that is picked", async () => {
@@ -1232,7 +1234,7 @@ describe("personal composer offline send queue", () => {
     const pick = () =>
       act(async () => {
         await renderer.root
-          .findByProps({ type: "file" })
+          .findAllByProps({ type: "file" })[0]!
           .props.onChange({ target: { files: [image], value: "" } });
       });
 
@@ -1254,5 +1256,122 @@ describe("personal composer offline send queue", () => {
     );
     await pick();
     expect(prepare.mock.calls[0]?.[1]).toBe(DEEPSEEK_DSH_MAX_INLINE_IMAGE_BYTES);
+  });
+});
+
+describe("personal composer attach: photos on tap, camera and files on a hold", () => {
+  const attachLabel = "Add photos, hold for camera or files";
+
+  /** The DOM bits a hold touches, with the fake clock in place (as useLongPress.test). */
+  function stubHoldEnvironment(): void {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+      setTimeout,
+      clearTimeout,
+    });
+    vi.stubGlobal("document", {
+      activeElement: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+  }
+
+  /**
+   * Enables attachment uploads; without fileAttachments the server takes
+   * images only, which is the mode where generic files must not be offered.
+   */
+  async function enableUploads(fileAttachments = true): Promise<void> {
+    state.serverConfigs = new Map([
+      [
+        props.environmentId,
+        {
+          environment: {
+            capabilities: {
+              attachmentUploads: true,
+              ...(fileAttachments ? { fileAttachments: { maxUploadBytes: 1024 } } : {}),
+            },
+          },
+        },
+      ],
+    ]);
+    await act(async () => renderer.update(<PersonalComposer {...props} />));
+  }
+
+  function attachButton() {
+    return renderer.root.findByProps({ "aria-label": attachLabel });
+  }
+
+  async function holdAttach(): Promise<void> {
+    const button = attachButton();
+    await act(async () =>
+      button.props.onPointerDown({
+        clientX: 10,
+        clientY: 10,
+        pointerType: "touch",
+        button: 0,
+        preventDefault: () => undefined,
+      }),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(LONG_PRESS_MS);
+    });
+  }
+
+  function attachItem(text: string) {
+    return renderer.root.findAllByType("button").find((node) => node.children.includes(text));
+  }
+
+  it("a tap opens an image-only photo input; camera and files keep their own types", async () => {
+    await enableUploads();
+
+    const inputs = renderer.root.findAllByProps({ type: "file" });
+    expect(
+      inputs.map((input) => [input.props.accept, input.props.capture, input.props.multiple]),
+    ).toEqual([
+      ["image/*", undefined, true],
+      ["image/*", "environment", undefined],
+      [undefined, undefined, true],
+    ]);
+  });
+
+  it("a hold on + opens Photos, Camera and Files, and the lift leaves it open", async () => {
+    await enableUploads();
+    stubHoldEnvironment();
+
+    expect(attachItem("Photos")).toBeUndefined();
+    await holdAttach();
+    await act(async () => attachButton().props.onPointerUp());
+
+    expect(attachItem("Photos")).toBeDefined();
+    expect(attachItem("Camera")).toBeDefined();
+    expect(attachItem("Files")).toBeDefined();
+  });
+
+  it("a desktop right-click opens the same menu without a hold", async () => {
+    await enableUploads();
+    await act(async () => attachButton().props.onContextMenu({ preventDefault: () => undefined }));
+
+    expect(attachItem("Photos")).toBeDefined();
+    expect(attachItem("Files")).toBeDefined();
+  });
+
+  it("offers no Files when the server takes images only", async () => {
+    await enableUploads(false);
+    stubHoldEnvironment();
+    await holdAttach();
+
+    expect(attachItem("Photos")).toBeDefined();
+    expect(attachItem("Camera")).toBeDefined();
+    expect(attachItem("Files")).toBeUndefined();
+  });
+
+  it("closes the menu once an item is picked", async () => {
+    await enableUploads();
+    stubHoldEnvironment();
+    await holdAttach();
+
+    await act(async () => attachItem("Photos")!.props.onClick());
+    expect(attachItem("Photos")).toBeUndefined();
   });
 });

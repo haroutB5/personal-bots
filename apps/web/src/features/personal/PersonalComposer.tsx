@@ -414,7 +414,12 @@ export function PersonalComposer({
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const serverConfig = useServerConfigs().get(environmentId) ?? null;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Three fixed inputs, one per picker: Android's photo picker is what
+  // accept="image/*" with no capture opens, and swapping accept on one input
+  // at call time is not reliable across browsers.
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const filesInputRef = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const offlineRef = useRef(offlineNotice !== null);
@@ -482,6 +487,7 @@ export function PersonalComposer({
       serverConfig?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
   });
   const hasContent = prompt.trim().length > 0 || attachments.length > 0;
+  const canAttach = disabledReason === null && !sending && !preparing;
   // Sending mid-turn is allowed: the server accepts the start unconditionally
   // and every provider adapter folds the message into the running turn, so it
   // reaches the bot when the current work yields. It is persisted the moment the
@@ -517,6 +523,21 @@ export function PersonalComposer({
     // The popup opens under the finger; the lift that follows must not read as a dismissal.
     sendMenuGuard.armUntilLift();
     setSendMenuOpen(true);
+  });
+
+  // ---------------------------------------------------------------------
+  // The attach button's hold menu (1.66.108): a tap opens the photo picker;
+  // a hold, a desktop right-click or the ContextMenu key offers Photos,
+  // Camera and Files. It mirrors the Send hold menu above so the two behave
+  // the same under a finger.
+  // ---------------------------------------------------------------------
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const attachMenuGuard = usePressOpenedMenuGuard();
+  const attachButtonRef = useRef<HTMLButtonElement | null>(null);
+  const attachMenuHold = useHoldCue(() => {
+    if (!canAttach) return;
+    attachMenuGuard.armUntilLift();
+    setAttachMenuOpen(true);
   });
 
   // Grows with the draft (including drafts restored from storage) up to ~5 lines,
@@ -1204,24 +1225,115 @@ export function PersonalComposer({
         {supportsUploads ? (
           <>
             <button
+              ref={attachButtonRef}
               type="button"
+              {...attachMenuHold.attributes}
+              onPointerDown={(event) => {
+                keepKeyboardUp(event);
+                attachMenuHold.handlers.onPointerDown(event);
+              }}
+              onPointerMove={attachMenuHold.handlers.onPointerMove}
+              onPointerUp={attachMenuHold.handlers.onPointerUp}
+              onPointerCancel={attachMenuHold.handlers.onPointerCancel}
+              onContextMenu={(event) => {
+                // Desktop right-click: the same menu, never the browser's own.
+                event.preventDefault();
+                if (!canAttach) return;
+                setAttachMenuOpen(true);
+              }}
+              onKeyDown={(event) => {
+                // The keyboard's way in, as on the send button and chat chips.
+                if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+                event.preventDefault();
+                if (!canAttach) return;
+                setAttachMenuOpen(true);
+              }}
               onClick={() => fileInputRef.current?.click()}
-              disabled={disabledReason !== null || sending || preparing}
-              aria-label="Add photos or files"
-              className={`${ROUND_BUTTON} border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[var(--personal-text)] disabled:opacity-40`}
+              disabled={!canAttach}
+              aria-label="Add photos, hold for camera or files"
+              className={`${ROUND_BUTTON} personal-attach-hold border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[var(--personal-text)] select-none [-webkit-touch-callout:none] disabled:opacity-40`}
             >
               <Plus aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
             </button>
+            {/* Photos: image/* and no capture, which Android Chrome opens
+                straight into the system photo picker. */}
             <input
               ref={fileInputRef}
               type="file"
               multiple
-              accept={fileLimit === null ? "image/*" : undefined}
+              accept="image/*"
               onChange={(event) => void onPickFiles(event)}
               className="hidden"
               tabIndex={-1}
               aria-hidden="true"
             />
+            {/* Camera: capture sends Android straight to the camera app. */}
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={(event) => void onPickFiles(event)}
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            {/* Files: no accept, so documents (PDF and the rest) are offered. */}
+            <input
+              ref={filesInputRef}
+              type="file"
+              multiple
+              onChange={(event) => void onPickFiles(event)}
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            {attachMenuOpen ? (
+              <Menu
+                open
+                onOpenChange={(next, details) => {
+                  if (!next && !attachMenuGuard.mayClose(details.reason)) return;
+                  setAttachMenuOpen(next);
+                }}
+              >
+                {/* Anchored on the button and opened without a trigger, so a
+                    tap stays a photo picker; the hold, the right-click or the
+                    ContextMenu key is what opens this. */}
+                <MenuPopup
+                  align="start"
+                  side="top"
+                  anchor={attachButtonRef}
+                  className="personal-app personal-menu min-w-44"
+                >
+                  <MenuItem
+                    onClick={() => {
+                      setAttachMenuOpen(false);
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    Photos
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setAttachMenuOpen(false);
+                      cameraInputRef.current?.click();
+                    }}
+                  >
+                    Camera
+                  </MenuItem>
+                  {fileLimit !== null ? (
+                    <MenuItem
+                      onClick={() => {
+                        setAttachMenuOpen(false);
+                        filesInputRef.current?.click();
+                      }}
+                    >
+                      Files
+                    </MenuItem>
+                  ) : null}
+                </MenuPopup>
+              </Menu>
+            ) : null}
           </>
         ) : null}
         <label className="flex min-h-11 min-w-0 flex-1 items-center rounded-[22px] bg-[var(--personal-fill-muted)] px-4">
