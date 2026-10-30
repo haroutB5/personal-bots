@@ -36,3 +36,13 @@ Based on 1.66.106 via personal-bots/main (be6ce43549). No migration; schema rema
 - B1 history behaviour, on a real Android device: Back with a sheet or menu open closes it and stays on the page; Back from a chat still goes to /bots; Back from a page opened out of Team returns to Team; opening a chat from a sheet row and then pressing Back lands where it did before. The logic is unit-tested against a fake browser history (`overlayBack.test.ts`); it has only had a real-browser check at emulator level.
 - Gesture strip dark in a tab and, after reinstall, in the installed app.
 - Scrollbar: none on the phone, still there on a desktop browser.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=55f0579dbdb9a588acd071da78976e59f8159224 release=55f0579dbdb9 json-sha256=b2c24144b2c8d154a4fb66f1c7be46182fba47d026c8376f93f4b635418d5804 result=PASS -->
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+<!-- gate-evidence:end -->
