@@ -12,9 +12,9 @@ Based on 1.66.106 via personal-bots/main (be6ce43549). No migration; schema rema
 | A2 scrollbar | The custom scrollbar rules apply only on `(hover: hover) and (pointer: fine)`: no classic scrollbar on touch, desktop keeps it. |
 | A3 status line | Disk label dropped when unknown, wider separators, bigger tap area for the link. |
 | A4 pinned strip | One 11px caption, simpler model label, tighter gaps at 380px and below. |
-| A5 bot row | Model and marker share one truncating span. |
-| B1 Back | Android Back closes the open sheet, menu or dialog first (new `lib/overlayBack.ts`, wired into the dialog, sheet, alert-dialog, menu and popover wrappers). Touch devices that are not iOS only. |
-| B5 chat subtitle | Subtitle fits at 360px; header gap tightened. |
+| A5 bot row | The marker (" · fallback", " · sched") stays whole; the model name truncates first. |
+| B1 Back | Android Back closes the open sheet, menu or dialog first (new `lib/overlayBack.ts`, wired into the dialog, sheet, alert-dialog, menu and popover wrappers). Touch devices that are not iOS only. An overlay closed another way (Cancel, Esc, tap outside) has its history entry popped on the next tick, so the next Back at the root is a normal Back (QA's NO-SHIP on b6357016e6d9). |
+| B5 chat subtitle | Subtitle fits at 360px; header gap tightened. With chips showing, under 380px the subtitle wraps onto its own row under the name, so "Opus 5.5 · H" is no longer cut to "Opu…" (the chips header is 90px there instead of 72px). |
 | Notifications | Android Chrome no longer tells you to add to the home screen to get push; test-notification button; checkbox accent colour. |
 | Attachment-only bubble | An attachment with no text no longer shows an empty bubble or the internal placeholder. |
 | Question card | Enter commits only where it should. |
@@ -27,6 +27,8 @@ Based on 1.66.106 via personal-bots/main (be6ce43549). No migration; schema rema
 
 - B6, B7, B15, B17, B18: left as they are (low value or not a defect on the device).
 - B13 maskable icon: needs new artwork.
+- A reload with a sheet open still leaves one extra /bots entry (one more Back afterwards). Fixing it would mean a second page load, so it was left.
+- Chrome's own autofill bar (key, card, location) on the New chat name field: `autocomplete="off"` is already set; the bar is Chrome's keyboard accessory and the page cannot remove it.
 - Select and Command overlays are not wrapped in the Back handler yet; Back leaves the screen with one of those open, as before.
 - No push badge on the app icon.
 - The bot-list preview of an attachment-only message may still show the placeholder text; only the bubble was fixed.
