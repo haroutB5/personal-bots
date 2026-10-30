@@ -37,7 +37,13 @@ Based on 1.66.106 via personal-bots/main (be6ce43549). No migration; schema rema
 - Gesture strip dark in a tab and, after reinstall, in the installed app.
 - Scrollbar: none on the phone, still there on a desktop browser.
 
+- Real-Android check (Chrome on an emulated 360x785 phone, touch, dark): Back closes a bottom sheet, closes a menu, a chat still goes back to /bots, a page opened from the Team members sheet returns to Team with the sheet open again, and a second Back from there closes only the sheet. The first Back with a sheet that autofocuses an input only hides the keyboard (Chrome's own step), the second closes the sheet.
+- Chrome skips a history entry written without a tap after the last Back. A sheet that reopens by itself after Back (Team members) therefore gets its sentinel on the next tap or key press, not at once; until then Back leaves the page as it did before 1.66.107. Writing it at once made the next Back close the tab, which is why it waits.
+
 ## Gate evidence
+
+The web-tests gate runs `src/features/personal` plus the files this release touched, not the whole web suite. Five untouched web test files fail in this environment (missing `jsdom`, a test that needs `window.location`, Usage, provider settings, connectCliAuth); 1.66.106 scoped its gate to `src/features/personal` for the same reason.
+
 
 <!-- gate-evidence:begin sha=55f0579dbdb9a588acd071da78976e59f8159224 release=55f0579dbdb9 json-sha256=b2c24144b2c8d154a4fb66f1c7be46182fba47d026c8376f93f4b635418d5804 result=PASS -->
 - server-tests: PASS, exit 0
