@@ -23,9 +23,9 @@
  *
  * - Chrome treats a history entry written without a user gesture as one Back
  *   should skip, and a Back with nothing else to land on closes the tab. So a
- *   sentinel is only written while the user's gesture is fresh; an overlay that
- *   opens without one (a sheet restored by Back) gets its sentinel on the next
- *   tap or key press.
+ *   sentinel is only written after a tap or key press that came after the last
+ *   history traversal; an overlay that opens without one (a sheet restored by
+ *   Back) gets its sentinel on the next tap or key press.
  *
  * Only touch devices that are not iOS get this (`overlayBackSupported`): iOS has
  * its own swipe-back and is left alone.
@@ -73,7 +73,7 @@ export interface OverlayBackOptions {
   readonly replaceState: StateWriter;
   readonly setTimeout?: (run: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
-  /** True while the user's gesture is fresh enough to write a history entry Chrome will not skip. */
+  /** True while the browser's own user activation is live (`navigator.userActivation.isActive`). */
   readonly gestureIsFresh?: () => boolean;
 }
 
@@ -118,8 +118,8 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
     options.clearTimeout ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const gestureIsFresh = options.gestureIsFresh ?? (() => true);
   const overlays: OpenOverlay[] = [];
-  /** Open overlays that have no sentinel yet because they opened without a gesture. */
-  let waitingForGesture = false;
+  // Chrome counts a gesture only if it came after the last history traversal.
+  let gestureSinceTraversal = false;
   let lastFlag = flagOf(win.history.state);
   // A silent step Back took through a sentinel nobody owned.
   let skipping = false;
@@ -142,6 +142,7 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
   };
 
   const onPop = (event: BackPopEvent) => {
+    gestureSinceTraversal = false;
     const leaving = lastFlag;
     const landing = flagOf(win.history.state);
     lastFlag = landing;
@@ -198,27 +199,17 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
   };
 
   const onGesture = () => {
+    gestureSinceTraversal = true;
     if (collapse !== null || !gestureIsFresh()) return;
-    stopWaiting();
     for (const overlay of overlays) {
-      if (overlay.depth === 0 && overlay.waiting) {
+      if (overlay.waiting) {
         overlay.waiting = false;
         placeSentinel(overlay);
       }
     }
   };
 
-  const startWaiting = () => {
-    if (waitingForGesture) return;
-    waitingForGesture = true;
-    for (const type of GESTURES) win.addEventListener(type, onGesture, true);
-  };
-
-  function stopWaiting() {
-    if (!waitingForGesture) return;
-    waitingForGesture = false;
-    for (const type of GESTURES) win.removeEventListener(type, onGesture, true);
-  }
+  for (const type of GESTURES) win.addEventListener(type, onGesture, true);
 
   win.addEventListener("popstate", onPop, true);
 
@@ -226,18 +217,16 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
     register(close) {
       const overlay: OpenOverlay = { depth: 0, close, waiting: false };
       if (collapse === null) {
-        if (gestureIsFresh()) {
+        if (gestureSinceTraversal && gestureIsFresh()) {
           placeSentinel(overlay);
         } else {
           overlay.waiting = true;
-          startWaiting();
         }
       }
       overlays.push(overlay);
       return () => {
         const at = overlays.indexOf(overlay);
         if (at !== -1) overlays.splice(at, 1);
-        if (!overlays.some((open) => open.waiting)) stopWaiting();
       };
     },
     afterCollapse(run) {
@@ -260,7 +249,7 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
     },
     dispose() {
       win.removeEventListener("popstate", onPop, true);
-      stopWaiting();
+      for (const type of GESTURES) win.removeEventListener(type, onGesture, true);
       finishCollapse();
     },
   };

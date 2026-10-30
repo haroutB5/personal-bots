@@ -84,7 +84,6 @@ function createBrowser(firstState: Record<string, unknown> | null = { __TSR_inde
     gesture() {
       for (const listener of [...gestureListeners]) listener();
     },
-    gestureListenerCount: () => gestureListeners.size,
     rawPush(state: unknown, _title: string, url: string) {
       entries.length = index + 1;
       entries.push({ url, state: state as Record<string, unknown> });
@@ -121,6 +120,7 @@ function setup(firstState?: Record<string, unknown> | null) {
     clearTimeout: () => undefined,
     gestureIsFresh: () => fresh.value,
   });
+  browser.gesture(); // the tap that opens the first overlay
   return { browser, overlayBack, timers, fresh };
 }
 
@@ -202,7 +202,6 @@ describe("an overlay that opens without a fresh gesture", () => {
     fresh.value = true;
     browser.gesture();
     expect(browser.entries).toHaveLength(2);
-    expect(browser.gestureListenerCount()).toBe(0);
 
     browser.win.history.back();
     await browser.settle();
@@ -210,12 +209,33 @@ describe("an overlay that opens without a fresh gesture", () => {
     expect(browser.routerSaw).toEqual([]);
   });
 
+  it("treats a gesture from before the last Back as stale", async () => {
+    const { browser, overlayBack } = setup();
+    browser.routerPush("/team");
+    browser.routerPush("/bot");
+    // Back lands on /team, which reopens a sheet by itself: no tap since the Back.
+    browser.win.history.back();
+    await browser.settle();
+    const close = vi.fn();
+    overlayBack.register(close);
+    expect(browser.entries).toHaveLength(3);
+    expect(browser.index).toBe(1);
+
+    browser.gesture();
+    expect(browser.entries).toHaveLength(3);
+    expect(browser.index).toBe(2);
+
+    browser.win.history.back();
+    await browser.settle();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(browser.index).toBe(1);
+  });
+
   it("writes nothing if the overlay closed before any gesture", () => {
     const { browser, overlayBack, fresh } = setup();
     fresh.value = false;
     const unregister = overlayBack.register(() => undefined);
     unregister();
-    expect(browser.gestureListenerCount()).toBe(0);
     fresh.value = true;
     browser.gesture();
     expect(browser.entries).toHaveLength(1);
