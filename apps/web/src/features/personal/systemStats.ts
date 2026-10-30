@@ -27,6 +27,14 @@ export interface SystemSummary {
 const numberOrNull = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
+/** A drive name like "C:" reads well; a mount path like "/" or "/home" does not, so it becomes "Disk". */
+function diskLabelOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const label = value.trim();
+  if (label.length === 0 || label.length > 16 || /[\\/]/.test(label)) return null;
+  return label;
+}
+
 export function parseSystemSummary(raw: unknown): SystemSummary | null {
   if (typeof raw !== "object" || raw === null) return null;
   const record = raw as Record<string, unknown>;
@@ -35,10 +43,7 @@ export function parseSystemSummary(raw: unknown): SystemSummary | null {
     memUsedPct: numberOrNull(record.memUsedPct),
     memUsedGB: numberOrNull(record.memUsedGB),
     memTotalGB: numberOrNull(record.memTotalGB),
-    diskLabel:
-      typeof record.diskLabel === "string" && record.diskLabel.length <= 16
-        ? record.diskLabel
-        : null,
+    diskLabel: diskLabelOrNull(record.diskLabel),
     diskFreeGB: numberOrNull(record.diskFreeGB),
     diskTotalGB: numberOrNull(record.diskTotalGB),
   };

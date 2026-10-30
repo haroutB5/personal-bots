@@ -90,17 +90,22 @@ export function SystemStatsLine(): JSX.Element {
   const parts = summary === null ? [] : systemStatParts(summary);
 
   return (
+    // The link's py-3.5 over the 16px line makes a 44px tap target; -my-3.5 gives the room back.
     <div className="-mt-1.5 mb-1 h-4">
       {summary !== null && parts.length > 0 ? (
         <Link
           to="/computer"
           onClick={() => requestComputerPerformance()}
           aria-label={systemStatsAriaLabel(summary)}
-          className="inline-flex max-w-full items-center truncate rounded text-[12px] leading-4 font-medium text-[var(--personal-text-secondary)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="-my-3.5 inline-flex max-w-full items-center truncate rounded py-3.5 text-[12px] leading-4 font-medium text-[var(--personal-text-secondary)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
           {parts.map((part, index) => (
             <Fragment key={part.key}>
-              {index > 0 ? <span aria-hidden="true">{" · "}</span> : null}
+              {index > 0 ? (
+                <span aria-hidden="true" className="px-1">
+                  ·
+                </span>
+              ) : null}
               <span
                 aria-hidden="true"
                 className={cn(part.busy && "text-[var(--personal-review-text)]")}
