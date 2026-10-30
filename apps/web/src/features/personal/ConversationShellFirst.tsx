@@ -98,7 +98,7 @@ export function ConversationShellHeader({ botId }: { readonly botId: string }): 
         // As tall as the real header will be, so the chat mounting does not drop it 8 px.
         className={cn(
           "personal-column flex shrink-0 items-center gap-3 px-2",
-          chipsShownFor(botId) ? "h-[72px]" : "h-16",
+          chipsShownFor(botId) ? "h-[72px] max-[380px]:h-[90px]" : "h-16",
         )}
       >
         <Link

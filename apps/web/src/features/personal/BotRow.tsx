@@ -210,16 +210,16 @@ export const BotRow = memo(function BotRow({
               {bot.name}
             </span>
             {rowModelLabel !== null ? (
-              // The model and its " · fallback" marker are one unit that gives
-              // way together, marker end first, so a narrow phone reads
-              // "Sonnet 5.5 · H · fall…" rather than "Sonnet…" beside a whole marker.
+              // The marker (" · fallback", " · sched") stays whole and the model
+              // name gives way first, so a narrow phone reads "Sonn… · fallback"
+              // rather than "Sonnet 5.5 · fall…".
               <span
                 data-testid="bot-model-label"
-                className="ml-1.5 min-w-0 shrink-[100] truncate text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
+                className="ml-1.5 flex min-w-0 shrink-[100] text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
               >
-                {modelParts.base}
+                <span className="min-w-0 truncate">{modelParts.base}</span>
                 {modelParts.marker !== null ? (
-                  <span data-testid="bot-model-marker" className="whitespace-pre">
+                  <span data-testid="bot-model-marker" className="shrink-0 whitespace-pre">
                     {` · ${modelParts.marker}`}
                   </span>
                 ) : null}

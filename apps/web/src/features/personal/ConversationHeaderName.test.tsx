@@ -1,7 +1,11 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ConversationHeaderName, conversationChatTitle } from "./ConversationHeaderName";
+import {
+  ConversationHeaderLine,
+  ConversationHeaderName,
+  conversationChatTitle,
+} from "./ConversationHeaderName";
 
 const LONG_TITLE = "Improve Hbots Chat, Images and the swipe gestures on the phone";
 
@@ -151,5 +155,42 @@ describe("ConversationHeaderName", () => {
     });
     expect(titleSpan(renderer)[0]!.props.title).toBe("Tennis booking");
     expect(titleSpan(renderer)).toHaveLength(1);
+  });
+});
+
+describe("ConversationHeaderLine", () => {
+  it("wraps the subtitle onto its own row under 380px so the model is not cut", () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <ConversationHeaderLine name="CTO Lead" chatTitle={null} muted={false} contextBadge="15">
+          <p>Opus 5.5 · H</p>
+        </ConversationHeaderLine>,
+      );
+    });
+    const line = renderer.root.find(
+      (node) => typeof node.type === "string" && String(node.props.className).includes("flex-1"),
+    );
+    expect(String(line.props.className)).toContain("max-[380px]:flex-wrap");
+    expect(String(line.props.className)).toContain("max-[380px]:h-[42px]");
+    const wrapper = renderer.root.find((node) => node.props["data-subtitle-slot"] !== undefined);
+    expect(String(wrapper.props.className)).toContain("max-[380px]:w-full");
+  });
+
+  it("adds no wrapper when there is no subtitle", () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <ConversationHeaderLine
+          name="CTO Lead"
+          chatTitle={null}
+          muted={false}
+          contextBadge={null}
+        />,
+      );
+    });
+    expect(
+      renderer.root.findAll((node) => node.props["data-subtitle-slot"] !== undefined),
+    ).toHaveLength(0);
   });
 });

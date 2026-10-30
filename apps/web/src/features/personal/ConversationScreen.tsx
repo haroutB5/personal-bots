@@ -1398,7 +1398,7 @@ export function ConversationScreen({
       <header
         className={cn(
           "personal-column flex shrink-0 items-center gap-3 px-2 max-[380px]:gap-2",
-          chipsShown ? "h-[72px]" : "h-16",
+          chipsShown ? "h-[72px] max-[380px]:h-[90px]" : "h-16",
         )}
       >
         {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
@@ -1443,7 +1443,7 @@ export function ConversationScreen({
                 aria-describedby={holdHintId}
                 {...holdProps(lineHold)}
                 className={cn(
-                  "personal-hold-target flex h-[31px] min-w-0 shrink-0 items-start rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                  "personal-hold-target flex h-[31px] min-w-0 shrink-0 items-start max-[380px]:h-[49px] rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
                   NO_TOUCH_SELECT,
                 )}
               >

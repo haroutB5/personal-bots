@@ -83,6 +83,11 @@ export function ConversationHeaderName({
  * (`children`, a ConversationSubtitle) on the same row. The status never
  * truncates; the model label runs out first. The h1 keeps the chat's title
  * for screen readers.
+ *
+ * Under 380px (a 360px phone has about 50px left on the row once the name and
+ * its badge are down, which cut "Opus 5.5 · H" to "Opu…") the subtitle wraps
+ * onto a row of its own below the name; the header and its Link are 18px taller
+ * there (ConversationScreen, ConversationShellFirst).
  */
 export function ConversationHeaderLine({
   name,
@@ -99,7 +104,7 @@ export function ConversationHeaderLine({
 }): JSX.Element {
   const title = conversationChatTitle(chatTitle);
   return (
-    <span className="flex h-6 min-w-0 flex-1 items-center gap-2 overflow-hidden">
+    <span className="flex h-6 min-w-0 flex-1 items-center gap-2 overflow-hidden max-[380px]:h-[42px] max-[380px]:flex-wrap max-[380px]:content-start max-[380px]:gap-y-0">
       <span data-name-group="" className="flex max-w-full min-w-0 shrink-0 items-center gap-2">
         <h1 className="min-w-0 truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
           {name}
@@ -108,7 +113,11 @@ export function ConversationHeaderLine({
         {muted ? <MutedBell size={16} className="-ml-0.5 shrink-0" /> : null}
         {contextBadge !== null ? contextBadgeElement(contextBadge) : null}
       </span>
-      {children}
+      {children ? (
+        <span data-subtitle-slot="" className="flex min-w-0 max-[380px]:w-full">
+          {children}
+        </span>
+      ) : null}
     </span>
   );
 }
