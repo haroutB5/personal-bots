@@ -17,9 +17,11 @@
  *   sentinel on top of the stack is popped first, so a sheet row that opens a
  *   chat leaves exactly the history it did before ("Back from a chat goes to
  *   /bots", "Back from a Team page returns to Team");
- * - a sentinel left behind by an overlay that was closed with a tap is reused
- *   by the next overlay, and skipped by Back (one extra silent step) when
- *   nothing reuses it.
+ * - an overlay closed some other way than Back (Cancel, Esc, a tap outside)
+ *   leaves its sentinel on top. It is popped silently on the next tick, so the
+ *   next Back does what it did before the overlay opened; an overlay that opens
+ *   in that same tick reuses the sentinel instead. If a sentinel is still left
+ *   when Back arrives, Back steps over it (one extra silent step).
  *
  * - Chrome treats a history entry written without a user gesture as one Back
  *   should skip, and a Back with nothing else to land on closes the tab. So a
@@ -34,6 +36,8 @@
 const FLAG = "personalOverlayDepth";
 /** Gives up waiting for the popstate of a collapse and runs the navigation anyway. */
 export const COLLAPSE_TIMEOUT_MS = 400;
+/** How long a sentinel left by a closed overlay waits for a new overlay to reuse it. */
+export const RELEASE_DELAY_MS = 0;
 
 interface BackHistory {
   readonly state: unknown;
@@ -123,7 +127,9 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
   let lastFlag = flagOf(win.history.state);
   // A silent step Back took through a sentinel nobody owned.
   let skipping = false;
-  let collapse: { waiters: Array<() => void>; timer: unknown } | null = null;
+  // A history pop under way: `target` is the sentinel depth it stops at.
+  let collapse: { waiters: Array<() => void>; timer: unknown; target: number } | null = null;
+  let release: unknown = null;
 
   // A reload on a sentinel entry leaves a flag with no overlay behind it.
   if (lastFlag > 0) {
@@ -141,6 +147,17 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
     for (const run of done.waiters) run();
   };
 
+  /** Pops the sentinels no open overlay owns, without telling the router. */
+  const releaseStale = () => {
+    release = null;
+    if (collapse !== null) return;
+    const keep = overlays.reduce((deepest, overlay) => Math.max(deepest, overlay.depth), 0);
+    const stale = lastFlag - keep;
+    if (stale <= 0) return;
+    collapse = { waiters: [], timer: schedule(finishCollapse, COLLAPSE_TIMEOUT_MS), target: keep };
+    win.history.go(-stale);
+  };
+
   const onPop = (event: BackPopEvent) => {
     gestureSinceTraversal = false;
     const leaving = lastFlag;
@@ -149,8 +166,8 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
 
     if (collapse !== null) {
       event.stopImmediatePropagation();
-      if (landing === 0) finishCollapse();
-      else win.history.go(-landing);
+      if (landing <= collapse.target) finishCollapse();
+      else win.history.go(-(landing - collapse.target));
       return;
     }
 
@@ -216,17 +233,18 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
   return {
     register(close) {
       const overlay: OpenOverlay = { depth: 0, close, waiting: false };
-      if (collapse === null) {
-        if (gestureSinceTraversal && gestureIsFresh()) {
-          placeSentinel(overlay);
-        } else {
-          overlay.waiting = true;
-        }
+      if (collapse === null && gestureSinceTraversal && gestureIsFresh()) {
+        placeSentinel(overlay);
+      } else {
+        // No fresh gesture, or a pop under way: the entry is written on the next tap.
+        overlay.waiting = true;
       }
       overlays.push(overlay);
       return () => {
         const at = overlays.indexOf(overlay);
-        if (at !== -1) overlays.splice(at, 1);
+        if (at === -1) return;
+        overlays.splice(at, 1);
+        if (release === null && lastFlag > 0) release = schedule(releaseStale, RELEASE_DELAY_MS);
       };
     },
     afterCollapse(run) {
@@ -244,12 +262,18 @@ export function createOverlayBack(win: BackWindow, options: OverlayBackOptions):
         overlay.depth = 0;
         overlay.waiting = false;
       }
-      collapse = { waiters: [run], timer: schedule(finishCollapse, COLLAPSE_TIMEOUT_MS) };
+      collapse = {
+        waiters: [run],
+        timer: schedule(finishCollapse, COLLAPSE_TIMEOUT_MS),
+        target: 0,
+      };
       win.history.go(-depth);
     },
     dispose() {
       win.removeEventListener("popstate", onPop, true);
       for (const type of GESTURES) win.removeEventListener(type, onGesture, true);
+      if (release !== null) cancel(release);
+      release = null;
       finishCollapse();
     },
   };

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   COLLAPSE_TIMEOUT_MS,
+  RELEASE_DELAY_MS,
   collapseBeforeNavigating,
   createOverlayBack,
+  isSentinelState,
   overlayBackSupported,
 } from "./overlayBack";
 
@@ -24,6 +26,7 @@ function createBrowser(firstState: Record<string, unknown> | null = { __TSR_inde
   const routerSaw: number[] = [];
   const gestureListeners = new Set<GestureListener>();
   const pending: Array<() => void> = [];
+  let traversals = 0;
 
   const history = {
     get state() {
@@ -34,6 +37,7 @@ function createBrowser(firstState: Record<string, unknown> | null = { __TSR_inde
         const target = Math.max(0, Math.min(entries.length - 1, index + delta));
         if (target === index) return;
         index = target;
+        traversals += 1;
         let stopped = false;
         const event = {
           stopImmediatePropagation: () => {
@@ -77,6 +81,10 @@ function createBrowser(firstState: Record<string, unknown> | null = { __TSR_inde
     entries,
     win,
     routerSaw,
+    /** How many history traversals the browser has made. */
+    get traversals() {
+      return traversals;
+    },
     get index() {
       return index;
     },
@@ -117,11 +125,21 @@ function setup(firstState?: Record<string, unknown> | null) {
       timers.push({ run, ms });
       return timers.length - 1;
     },
-    clearTimeout: () => undefined,
+    clearTimeout: (handle) => {
+      const timer = timers[handle as number];
+      if (timer !== undefined) timer.run = () => undefined;
+    },
     gestureIsFresh: () => fresh.value,
   });
   browser.gesture(); // the tap that opens the first overlay
-  return { browser, overlayBack, timers, fresh };
+  /** Runs the timers a closed overlay left for its sentinel (a later task in a real browser). */
+  const releaseDue = () => {
+    for (const timer of timers.filter((entry) => entry.ms === RELEASE_DELAY_MS)) {
+      timers.splice(timers.indexOf(timer), 1);
+      timer.run();
+    }
+  };
+  return { browser, overlayBack, timers, fresh, releaseDue };
 }
 
 afterEach(() => {
@@ -185,6 +203,149 @@ describe("Back closes the open overlay", () => {
       unregister();
     }
     expect(browser.entries).toHaveLength(2);
+  });
+});
+
+describe("an overlay closed without Back (Cancel, Esc, a tap outside)", () => {
+  it("pops its entry at once, so the next Back at the root is not used up on it", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    const unregister = overlayBack.register(() => undefined);
+    expect(browser.entries).toHaveLength(2);
+    unregister();
+    releaseDue();
+    await browser.settle();
+
+    expect(browser.index).toBe(0);
+    expect(isSentinelState(browser.win.history.state)).toBe(false);
+    expect(browser.routerSaw).toEqual([]);
+
+    // The next Back is the owner's own: nothing left to step over.
+    const before = browser.traversals;
+    browser.win.history.back();
+    await browser.settle();
+    expect(browser.traversals).toBe(before);
+  });
+
+  it("leaves a chat in one Back after its menu was closed by a tap", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    browser.routerPush("/chat/1");
+    browser.gesture();
+    const unregister = overlayBack.register(() => undefined);
+    unregister();
+    releaseDue();
+    await browser.settle();
+    expect(browser.index).toBe(1);
+    expect(isSentinelState(browser.win.history.state)).toBe(false);
+
+    const before = browser.traversals;
+    browser.win.history.back();
+    await browser.settle();
+    expect(browser.traversals).toBe(before + 1);
+    expect(browser.index).toBe(0);
+    expect(browser.routerSaw).toEqual([0]);
+  });
+
+  it("keeps the entry for an overlay that opens in the same tick", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    const unregister = overlayBack.register(() => undefined);
+    unregister();
+    const close = vi.fn();
+    overlayBack.register(close);
+    releaseDue();
+    await browser.settle();
+    expect(browser.entries).toHaveLength(2);
+    expect(browser.index).toBe(1);
+
+    browser.win.history.back();
+    await browser.settle();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(browser.routerSaw).toEqual([]);
+  });
+
+  it("pops only its own entry when another overlay stays open", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    const sheet = vi.fn();
+    overlayBack.register(sheet);
+    const unregisterDialog = overlayBack.register(() => undefined);
+    expect(browser.index).toBe(2);
+    unregisterDialog();
+    releaseDue();
+    await browser.settle();
+    expect(browser.index).toBe(1);
+
+    browser.win.history.back();
+    await browser.settle();
+    expect(sheet).toHaveBeenCalledTimes(1);
+    expect(browser.index).toBe(0);
+    expect(browser.routerSaw).toEqual([]);
+  });
+
+  it("pops every entry once the last overlay closes, whichever closed first", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    const unregisterSheet = overlayBack.register(() => undefined);
+    const unregisterDialog = overlayBack.register(() => undefined);
+    unregisterSheet();
+    releaseDue();
+    await browser.settle();
+    expect(browser.index).toBe(2); // the dialog still owns the top entry
+    unregisterDialog();
+    releaseDue();
+    await browser.settle();
+    expect(browser.index).toBe(0);
+    expect(browser.routerSaw).toEqual([]);
+  });
+
+  it("does nothing more when Back itself closed the overlay", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    let unregister = () => {};
+    unregister = overlayBack.register(() => unregister());
+    browser.win.history.back();
+    await browser.settle();
+    releaseDue();
+    await browser.settle();
+    expect(browser.traversals).toBe(1);
+    expect(browser.index).toBe(0);
+  });
+
+  it("does not pop twice when a navigation is already collapsing the entry", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    const unregister = overlayBack.register(() => undefined);
+    const navigate = vi.fn(() => browser.routerPush("/next"));
+    overlayBack.afterCollapse(navigate);
+    unregister();
+    releaseDue();
+    await browser.settle();
+    expect(browser.traversals).toBe(1);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(browser.entries.map((entry) => entry.url)).toEqual(["/chat", "/next"]);
+  });
+
+  it("gives an overlay that opens during the pop its entry on the next tap", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    const unregister = overlayBack.register(() => undefined);
+    unregister();
+    releaseDue(); // the pop is under way
+    const close = vi.fn();
+    overlayBack.register(close);
+    await browser.settle();
+    expect(browser.entries).toHaveLength(2); // the stale entry is still there, forward
+    expect(browser.index).toBe(0);
+
+    browser.gesture();
+    expect(browser.index).toBe(1);
+    browser.win.history.back();
+    await browser.settle();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(browser.routerSaw).toEqual([]);
+  });
+
+  it("cancels the pending pop when the controller is disposed", async () => {
+    const { browser, overlayBack, releaseDue } = setup();
+    overlayBack.register(() => undefined)();
+    overlayBack.dispose();
+    releaseDue();
+    await browser.settle();
+    expect(browser.traversals).toBe(0);
   });
 });
 
