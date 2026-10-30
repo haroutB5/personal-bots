@@ -1,5 +1,6 @@
 "use client";
 
+import { withBackClose } from "~/components/ui/back-closing-root";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import type * as React from "react";
@@ -7,7 +8,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
 
-const Menu = MenuPrimitive.Root;
+const Menu = withBackClose(MenuPrimitive.Root);
 
 function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
   return (

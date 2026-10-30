@@ -22,6 +22,7 @@ import {
 } from "./features/personal/serviceWorker";
 import { checkStaleReleaseAtBoot } from "./features/personal/staleRelease";
 import { keepBotsBehindChats } from "./features/personal/botsBackStack";
+import { collapseBeforeNavigating, installOverlayBack } from "./lib/overlayBack";
 import {
   browserLocalStorage,
   resumeLastChatAtBoot,
@@ -41,6 +42,9 @@ const resumedChat = isElectron
     });
 // Personal: going back from any bot chat lands on /bots, whatever opened it.
 const history = keepBotsBehindChats(baseHistory);
+// Personal, Android: Back closes an open sheet or menu before it leaves the screen.
+const overlayBack = isElectron ? null : installOverlayBack();
+if (overlayBack !== null) collapseBeforeNavigating(history, overlayBack);
 if (!isElectron) {
   trackLastChat(history, { storage: browserLocalStorage(), now: Date.now, document, window });
 }

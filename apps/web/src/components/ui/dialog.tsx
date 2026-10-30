@@ -1,5 +1,6 @@
 "use client";
 
+import { withBackClose } from "~/components/ui/back-closing-root";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
@@ -13,7 +14,7 @@ import {
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
 
-const Dialog = DialogPrimitive.Root;
+const Dialog = withBackClose(DialogPrimitive.Root);
 
 const DialogPortal = DialogPrimitive.Portal;
 

@@ -1,12 +1,13 @@
 "use client";
 
+import { withBackClose } from "~/components/ui/back-closing-root";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
 
-const Popover = PopoverPrimitive.Root;
+const Popover = withBackClose(PopoverPrimitive.Root);
 
 function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trigger.Props) {
   return (

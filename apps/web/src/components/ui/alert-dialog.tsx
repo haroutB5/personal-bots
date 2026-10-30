@@ -1,5 +1,6 @@
 "use client";
 
+import { withBackClose } from "~/components/ui/back-closing-root";
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
 import { cn } from "~/lib/utils";
@@ -9,7 +10,7 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 
-const AlertDialog = AlertDialogPrimitive.Root;
+const AlertDialog = withBackClose(AlertDialogPrimitive.Root);
 
 const AlertDialogPortal = AlertDialogPrimitive.Portal;
 
