@@ -218,7 +218,7 @@ self.addEventListener("fetch", (event) => {
  * API, a failed fetch, a slow draw or an icon the platform refuses all end in
  * the app icon and a notification that still appears.
  */
-const NOTIFICATION_FALLBACK_ICON = "/apple-touch-icon.png";
+const NOTIFICATION_FALLBACK_ICON = "/icons/bots-192.png";
 const AVATAR_GEOMETRY_URL = "/bot-avatar-shapes.json";
 /** Notification large-icon size; Android asks for up to 192 CSS px. */
 const AVATAR_ICON_PX = 192;

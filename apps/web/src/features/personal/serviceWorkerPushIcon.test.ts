@@ -8,7 +8,7 @@ import { botAvatarGeometryJson } from "./botAvatarShapes";
 
 const source = NodeFS.readFileSync(new URL("../../../public/sw.js", import.meta.url), "utf8");
 
-const FALLBACK_ICON = "/apple-touch-icon.png";
+const FALLBACK_ICON = "/icons/bots-192.png";
 const BLOB_URL = "blob:https://bots.example/avatar-1";
 
 interface WorkerOptions {
