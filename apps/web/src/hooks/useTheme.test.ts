@@ -204,3 +204,60 @@ describe("theme failure handling", () => {
     }
   });
 });
+
+describe("browser chrome colour", () => {
+  function stubChromePage(options: { tokenColor: string; bodyInlineColor: string }) {
+    const metas = [{ content: "#ffffff", setAttribute: vi.fn() }];
+    metas[0]!.setAttribute.mockImplementation((_name: string, value: string) => {
+      metas[0]!.content = value;
+    });
+    const documentElement = { dataset: {}, style: { backgroundColor: "#ffffff" } };
+    const body = { style: { backgroundColor: options.bodyInlineColor } };
+    vi.stubGlobal("document", {
+      documentElement,
+      body,
+      head: { append: () => undefined },
+      querySelector: () => null,
+      querySelectorAll: () => metas,
+    });
+    // The body reads back whatever inline colour is on it, exactly like a browser.
+    vi.stubGlobal("getComputedStyle", (element: unknown) => ({
+      backgroundColor: element === body ? body.style.backgroundColor : "rgba(0, 0, 0, 0)",
+      getPropertyValue: (name: string) => (name === "--app-chrome-background" ? options.tokenColor : ""),
+    }));
+    return { metas, documentElement, body };
+  }
+
+  it("takes the theme token on a page with no sidebar, not the inline colour it wrote earlier", async () => {
+    // Import first: the module applies the theme on load when it sees a document.
+    const { syncBrowserChromeTheme } = await import("./useTheme");
+    const page = stubChromePage({ tokenColor: "#0a0a0a", bodyInlineColor: "#ffffff" });
+
+    syncBrowserChromeTheme();
+
+    expect(page.metas[0]!.content).toBe("#0a0a0a");
+    expect(page.documentElement.style.backgroundColor).toBe("#0a0a0a");
+    expect(page.body.style.backgroundColor).toBe("#0a0a0a");
+  });
+
+  it("follows the token when the appearance changes, instead of freezing the first colour", async () => {
+    const { syncBrowserChromeTheme } = await import("./useTheme");
+    const page = stubChromePage({ tokenColor: "#ffffff", bodyInlineColor: "" });
+    syncBrowserChromeTheme();
+    expect(page.body.style.backgroundColor).toBe("#ffffff");
+
+    const getComputed = globalThis.getComputedStyle;
+    vi.stubGlobal("getComputedStyle", (element: unknown) => {
+      const styles = getComputed(element as Element);
+      return {
+        backgroundColor: styles.backgroundColor,
+        getPropertyValue: (name: string) =>
+          name === "--app-chrome-background" ? "#0a0a0a" : "",
+      };
+    });
+    syncBrowserChromeTheme();
+
+    expect(page.metas[0]!.content).toBe("#0a0a0a");
+    expect(page.body.style.backgroundColor).toBe("#0a0a0a");
+  });
+});

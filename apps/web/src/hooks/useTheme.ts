@@ -291,17 +291,36 @@ function resolveBrowserChromeSurface(): HTMLElement {
   );
 }
 
+/** Last resort when the token is missing: the stylesheet's body colour, with our inline writes lifted. */
+function readBodyColorWithoutInlineWrites(): string | null {
+  const { body, documentElement } = document;
+  const previous = [documentElement.style.backgroundColor, body.style.backgroundColor] as const;
+  documentElement.style.backgroundColor = "";
+  body.style.backgroundColor = "";
+  const color = normalizeThemeColor(getComputedStyle(body).backgroundColor);
+  documentElement.style.backgroundColor = previous[0];
+  body.style.backgroundColor = previous[1];
+  return color;
+}
+
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
   const rootStyles = getComputedStyle(document.documentElement);
-  const themeChromeColor = document.documentElement.dataset.themeId
-    ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
-    : null;
-  const surfaceColor = normalizeThemeColor(
-    getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
-  );
-  const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
-  const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
+  // The theme token, never the body's own computed colour: once this function
+  // has written an inline colour to <html> and <body>, reading `body` back
+  // returns that same inline colour, so a single early white (the boot CSS
+  // before `.dark` is on) would be copied forever, into the status bar and the
+  // gesture strip too. Pages with a sidebar inset read the inset card, which
+  // nothing here writes to.
+  const tokenColor = normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"));
+  const themeChromeColor = document.documentElement.dataset.themeId ? tokenColor : null;
+  const surface = resolveBrowserChromeSurface();
+  const surfaceColor =
+    surface === document.body
+      ? null
+      : normalizeThemeColor(getComputedStyle(surface).backgroundColor);
+  const backgroundColor =
+    themeChromeColor ?? surfaceColor ?? tokenColor ?? readBodyColorWithoutInlineWrites();
   if (!backgroundColor) return;
 
   document.documentElement.style.backgroundColor = backgroundColor;

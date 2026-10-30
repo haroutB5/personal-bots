@@ -1,12 +1,13 @@
 {
   "id": "/",
   "name": "Bots",
+  "description": "Your bots, chats and tasks, running on your own computer.",
   "short_name": "Bots",
   "start_url": "/bots",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#FAFAF8",
-  "theme_color": "#FAFAF8",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
   "icons": [
     {
       "src": "/icons/bots-192.png",
