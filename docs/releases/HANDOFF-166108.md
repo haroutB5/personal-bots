@@ -28,10 +28,23 @@ On Harout's Oppo Find X9 Pro, tapping + in a chat composer opened Android's gene
 ## Verification
 
 - Unit: `NODE_ENV=test vp test run --project unit src/features/personal/PersonalComposer.test.tsx` (65 passing), including new tests for the three accept/capture values and the hold / right-click menu, menu closing, and image-only mode hiding Files.
-- Android: Chrome on the `FindX9Pro` emulator (360 x 785 CSS, DPR 3, dark): a tap on + opens the system photo picker; the hold menu lists Photos, Camera and Files; a photo and a PDF attach and send; screenshots under `/home/harout/.personal-bots/qa/hbots-16708/`.
+- Android: Chrome on the `FindX9Pro` emulator (1080 x 2354 override = 360 x 785 CSS, DPR 3, dark): a tap on + opened the Android system photo picker (Photos / Albums) straight away; two photos attached and sent in one message. A hold on + showed Photos, Camera and Files; Camera opened the camera app. Files activates the no-`accept` input (checked by instrumenting the three inputs); Chrome's any-type chooser on this emulator image is the system resolver, which lists only Camera / Camcorder / Photos (no DocumentsUI target), so the same PDF was set on that real input and sent as a file bubble. Screenshots under `/home/harout/.personal-bots/qa/hbots-16708/`.
+- Group chat shares `PersonalComposer` but, as before 1.66.108, has no + because groups take no attachments; checked on the emulator.
 - Gate: server and web typechecks, server and web fork tests, and the Linux five-journey e2e (Gate evidence section below, written by gate-evidence.mjs).
 
 ## Not done, on purpose
 
 - Group chats still have no attachments (see above).
 - No new dependency, no styling tokens added.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=208982a2d9c5b4d6fe2cb62ce936e08f8c41a0e6 release=208982a2d9c5 json-sha256=ad3a189768a603f02210a4652f89ade5433a38c0f8278cd70d39e4abba06b0e5 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
