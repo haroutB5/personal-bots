@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildPlanImplementationPrompt } from "../../proposedPlan";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  ownerVisibleText,
   buildComposerPromptHistoryEntries,
   recallableComposerPrompt,
   stepComposerPromptHistory,
@@ -188,5 +189,14 @@ describe("stepComposerPromptHistory", () => {
       currentPrompt: "A",
     });
     expect(step?.prompt).toBe("first");
+  });
+});
+
+describe("ownerVisibleText", () => {
+  it("hides the placeholder sent for an attachment-only message, and nothing else", () => {
+    expect(ownerVisibleText(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe("");
+    expect(ownerVisibleText(`  ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}\n`)).toBe("");
+    expect(ownerVisibleText("   ")).toBe("");
+    expect(ownerVisibleText("Look at this")).toBe("Look at this");
   });
 });

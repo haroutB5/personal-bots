@@ -16,6 +16,7 @@ import { ArrowDown, ChevronRight, FileText, Phone } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { ownerVisibleText } from "~/components/chat/composerPromptHistory";
 import { shouldPreserveAssistantLineBreaks } from "~/components/chat/MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
 import { selectMessageImageResources } from "~/session-logic";
@@ -338,6 +339,8 @@ const UserMessage = memo(function UserMessage({
     [message.attachments],
   );
   const urls = useAssetUrls(environmentId, resources);
+  // An attachment sent with no text carries the app's own placeholder prompt for the bot; the owner sees just the file.
+  const bubbleText = ownerVisibleText(message.text);
   const [preview, setPreview] = useState<AttachmentPreviewData | null>(null);
   const imageIds = new Set(resources.map((resource) => resource.attachmentId));
   const files = (message.attachments ?? []).filter(
@@ -431,15 +434,15 @@ const UserMessage = memo(function UserMessage({
           onClose={() => setPreview(null)}
         />
       )}
-      {message.text.trim().length > 0 ? (
+      {bubbleText.length > 0 ? (
         onReply === undefined ? (
           // Nothing can be sent here (an archived chat), so no menu, but the time still shows.
           sentAt === null ? (
-            <UserBubble text={message.text} quote={quote} onJump={onJump} />
+            <UserBubble text={bubbleText} quote={quote} onJump={onJump} />
           ) : (
             <SwipeTimeRow sentAt={sentAt} align="end" className="max-w-[78%]">
               <UserBubble
-                text={message.text}
+                text={bubbleText}
                 quote={quote}
                 onJump={onJump}
                 widthClass="max-w-full min-w-0"
@@ -450,14 +453,14 @@ const UserMessage = memo(function UserMessage({
           <ReplyableMessage
             messageId={String(message.id)}
             quote={replyQuoteForMessage({ message, botName: "" })}
-            copyText={message.text}
+            copyText={bubbleText}
             onReply={onReply}
             align="end"
             sentAt={sentAt}
             className="max-w-[78%]"
           >
             <UserBubble
-              text={message.text}
+              text={bubbleText}
               quote={quote}
               onJump={onJump}
               widthClass="max-w-full min-w-0"
