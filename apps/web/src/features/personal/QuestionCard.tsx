@@ -21,6 +21,16 @@ const CARD_CLASS =
 const SETTLED_CARD_CLASS =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5";
 
+/** Enter in the custom-answer field sends (or moves on), unless an IME is mid-word or there is nothing to send yet. */
+export function commitsOnEnter(input: {
+  readonly key: string;
+  readonly composing: boolean;
+  readonly canAdvance: boolean;
+  readonly responding: boolean;
+}): boolean {
+  return input.key === "Enter" && !input.composing && input.canAdvance && !input.responding;
+}
+
 /**
  * A question the bot asked, answered here in the chat instead of in the
  * developer view. One option per row, full width, tall enough to tap, and
@@ -219,7 +229,22 @@ function PendingQuestionCard({
             type="text"
             value={progress.customAnswer}
             disabled={responding}
-            enterKeyHint="send"
+            enterKeyHint={progress.isLastQuestion ? "send" : "next"}
+            onKeyDown={(event) => {
+              // The keyboard's Send / Next key is Enter: it does what the button below does.
+              if (
+                !commitsOnEnter({
+                  key: event.key,
+                  composing: event.nativeEvent.isComposing,
+                  canAdvance: progress.canAdvance,
+                  responding,
+                })
+              ) {
+                return;
+              }
+              event.preventDefault();
+              commit(drafts, progress.questionIndex);
+            }}
             onChange={(event) => {
               setDrafts((current) => ({
                 ...current,
