@@ -146,4 +146,18 @@ describe("ConversationSubtitle", () => {
       renderer.root.findAll((node) => node.props["data-testid"] === "chat-model-label"),
     ).toHaveLength(0);
   });
+
+  it("lets an idle bot give the word 'Idle' up on a 360 px phone, never a busy status", () => {
+    const idle = render({ state: "idle", status: "Idle", modelLabel: "Sonnet 5.5 · H" });
+    expect(classOf(idle, "Idle")).toContain("max-[380px]:sr-only");
+    const separator = idle.root.find(
+      (node) => node.type === "span" && String(node.props.className ?? "").includes("max-[380px]:hidden"),
+    );
+    expect(separator).toBeDefined();
+    const working = render({ state: "working", status: "Working", modelLabel: "Sonnet 5.5 · H" });
+    expect(classOf(working, "Working")).not.toContain("max-[380px]:sr-only");
+    // Without a model there is nothing for the room to go to, so the word stays.
+    const alone = render({ state: "idle", status: "Idle", modelLabel: null });
+    expect(classOf(alone, "Idle")).not.toContain("max-[380px]:sr-only");
+  });
 });

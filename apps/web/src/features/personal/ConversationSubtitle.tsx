@@ -33,6 +33,12 @@ const STATE_DOT: Record<ConversationState, string> = {
  * still spoken out loud; the dropped word stays in the line for screen readers.
  * With a marker the model name is what gives way, so "peak" or "sched" is the
  * last thing cut; the bot's name never shrinks for either.
+ *
+ * Under 380px (a 360px phone has about 170px for this line beside the back
+ * button, the avatar and the chips) the line is 12px and an idle bot drops the
+ * word "Idle" for good, keeping the dot and the whole model label: at 360 it
+ * used to shrink to "Idle ·" with the model gone. A busy or broken status is
+ * still written out.
  */
 export function ConversationSubtitle({
   state,
@@ -55,6 +61,12 @@ export function ConversationSubtitle({
     state === "idle" &&
     showsMarker &&
     (status === CONVERSATION_STATE_LABEL.idle || status.trim() === "");
+  // Idle with a model to show: on a narrow phone the dot says it and the room goes to the model.
+  const idleWordYieldsWhenNarrow =
+    !dropIdleWord &&
+    state === "idle" &&
+    modelLabel !== null &&
+    (status === CONVERSATION_STATE_LABEL.idle || status.trim() === "");
   return (
     <p
       className={cn(
@@ -62,7 +74,7 @@ export function ConversationSubtitle({
         // The dropped word's room goes to the marker: the dot sits a little
         // closer and the label a point smaller, so more of "Sonnet 5.5 · H ·
         // peak" fits at 390 px beside the name and two chat chips.
-        dropIdleWord ? "-ml-0.5 gap-1 text-[12px]" : "gap-1.5 text-[13px]",
+        dropIdleWord ? "-ml-0.5 gap-1 text-[12px]" : "gap-1.5 text-[13px] max-[380px]:text-[12px]",
       )}
     >
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
@@ -75,7 +87,14 @@ export function ConversationSubtitle({
             <span className="sr-only">{status}</span>
           )
         ) : (
-          <span className="max-w-full shrink-0 truncate whitespace-nowrap">{status}</span>
+          <span
+            className={cn(
+              "max-w-full shrink-0 truncate whitespace-nowrap",
+              idleWordYieldsWhenNarrow && "max-[380px]:sr-only",
+            )}
+          >
+            {status}
+          </span>
         )}
         {modelLabel !== null ? (
           <span
@@ -86,7 +105,11 @@ export function ConversationSubtitle({
               split.marker !== null && "flex",
             )}
           >
-            {dropIdleWord ? null : <span aria-hidden="true">· </span>}
+            {dropIdleWord ? null : (
+              <span aria-hidden="true" className={cn(idleWordYieldsWhenNarrow && "max-[380px]:hidden")}>
+                ·{" "}
+              </span>
+            )}
             {split.marker !== null ? (
               <>
                 <span className="min-w-0 truncate">{split.base}</span>

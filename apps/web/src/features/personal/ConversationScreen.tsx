@@ -1397,7 +1397,7 @@ export function ConversationScreen({
       </div>
       <header
         className={cn(
-          "personal-column flex shrink-0 items-center gap-3 px-2",
+          "personal-column flex shrink-0 items-center gap-3 px-2 max-[380px]:gap-2",
           chipsShown ? "h-[72px]" : "h-16",
         )}
       >
