@@ -128,6 +128,7 @@ export function NewGroupScreen(): JSX.Element {
                 if (event.target.value.trim().length > 0) setNameError(null);
               }}
               placeholder="e.g. Launch crew"
+              autoComplete="off"
               aria-invalid={nameError !== null || undefined}
               aria-describedby={nameError !== null ? "new-group-name-error" : undefined}
               className={cn(
