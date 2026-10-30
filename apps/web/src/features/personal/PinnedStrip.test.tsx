@@ -326,6 +326,10 @@ describe("PinnedStrip", () => {
 
     const labels = renderer!.root.findAllByProps({ "data-testid": "pinned-model-label" });
     expect(labels.map((label) => label.props.children)).toEqual(["Opus 5.5 · M"]);
+    // One fixed size for every tile (no per-label shrinking), cut with an ellipsis.
+    expect(labels[0]!.props.className).toContain("text-[11px]");
+    expect(labels[0]!.props.className).toContain("truncate");
+    expect(labels[0]!.props.style).toBeUndefined();
     expect(renderer!.root.findByProps({ "aria-label": "CTO, Opus 5.5 medium" })).toBeDefined();
   });
 

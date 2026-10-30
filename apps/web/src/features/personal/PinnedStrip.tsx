@@ -1,5 +1,5 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -58,7 +58,9 @@ export const PINNED_AVATAR_SIZE = 56;
  * Tile width. On a 390pt phone the screen's `px-5` leaves 350px, so
  * `4 x 72 + 3 x 12 = 324` puts four faces on screen with 26px of the fifth
  * showing — enough peek that the strip is visibly scrollable without a
- * scrollbar or a chevron. Uncapped pin counts (1 to ~10) just scroll.
+ * scrollbar or a chevron. Uncapped pin counts (1 to ~10) just scroll. Under
+ * 380px the gap drops to 10px, so four faces (318px) fit the 320px a 360px
+ * phone leaves and the strip does not scroll sideways for nothing.
  */
 const TILE_WIDTH_PX = 72;
 
@@ -88,54 +90,19 @@ const TILE_NAME_CLASS =
 
 /**
  * The model line under a pinned bot's name ("Opus 5.5 · M"), the short form of
- * the list row's label. One line inside the fixed 72px tile. Every tile
- * reserves the line (blank when there is no label: a group, the cold-start
- * snapshot), so the live list landing or a model change never changes the
- * strip's height.
+ * the list row's label. One size for every tile, so neighbours line up, cut
+ * with an ellipsis when it still does not fit. It may reach 4px past the tile
+ * on each side (into the gap, which is wider than that), which is what lets
+ * "GPT-6 Astra · M" read whole at 11px. Every tile reserves the line (blank
+ * when there is no label: a group, the cold-start snapshot), so the live list
+ * landing or a model change never changes the strip's height.
  */
 const TILE_MODEL_CLASS =
-  "-mt-1 w-full truncate text-[11px] leading-[14px] text-[var(--personal-text-tertiary)]";
+  "-mt-1 w-[calc(100%+8px)] max-w-none truncate text-[11px] leading-[14px] text-[var(--personal-text-tertiary)]";
 
-/**
- * Font sizes the model line tries, largest first; the last also tightens the
- * letter spacing. A label that still overflows at the last is cut with an
- * ellipsis. The line height is fixed, so a smaller size never moves the strip.
- */
-const MODEL_FONT_TIERS = [
-  { sizePx: 11, letterSpacing: "" },
-  { sizePx: 10, letterSpacing: "" },
-  { sizePx: 9, letterSpacing: "-0.02em" },
-] as const;
-
-/**
- * The model line, at the largest of {@link MODEL_FONT_TIERS} that fits the
- * tile. Measured on the device, in its own font, so "GPT-6 Astra · M" can take
- * 10px where "Opus 5.5 · M" keeps 11.
- */
 function TileModelLabel({ label }: { readonly label: string }): JSX.Element {
-  const ref = useRef<HTMLSpanElement | null>(null);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (element === null) return;
-    const fit = () => {
-      for (const tier of MODEL_FONT_TIERS) {
-        element.style.fontSize = `${tier.sizePx}px`;
-        element.style.letterSpacing = tier.letterSpacing;
-        if (element.scrollWidth <= element.clientWidth) return;
-      }
-    };
-    fit();
-    // The first paint can use a fallback font; measure again once the real one is in.
-    let cancelled = false;
-    void document.fonts?.ready.then(() => {
-      if (!cancelled) fit();
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [label]);
   return (
-    <span ref={ref} data-testid="pinned-model-label" className={TILE_MODEL_CLASS}>
+    <span data-testid="pinned-model-label" className={TILE_MODEL_CLASS}>
       {label}
     </span>
   );
@@ -206,7 +173,7 @@ export function PinnedStrip({ children }: { readonly children: ReactNode }): JSX
     <section aria-label="Pinned" className="mt-0">
       <ul
         className={cn(
-          "-mx-5 flex snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain px-5 pt-4 pb-1",
+          "-mx-5 flex snap-x snap-proximity gap-3 max-[380px]:gap-2.5 overflow-x-auto overscroll-x-contain px-5 pt-4 pb-1",
           // md+: the list pads 14px on the right (its scrollbar lane is the rest).
           "md:-mr-3.5 md:pr-3.5",
           "[justify-content:safe_center]",
