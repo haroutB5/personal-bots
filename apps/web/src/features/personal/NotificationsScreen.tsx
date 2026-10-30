@@ -10,7 +10,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
 import { formatRelativeTime } from "./relativeTime";
-import { applicationServerKeyFrom, isStandaloneDisplay, readyServiceWorker } from "./serviceWorker";
+import {
+  applicationServerKeyFrom,
+  isStandaloneDisplay,
+  pushNeedsHomeScreenInstall,
+  readyServiceWorker,
+} from "./serviceWorker";
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from "./TaskDetailScreen";
 import {
   personalPushSetPreferences,
@@ -68,7 +73,9 @@ export function NotificationsScreen(): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      if (!isStandaloneDisplay()) {
+      // iPhone Safari allows push for Home Screen apps only; an Android Chrome
+      // tab can subscribe like the installed app.
+      if (pushNeedsHomeScreenInstall(navigator, isStandaloneDisplay())) {
         if (!cancelled) setSupport("not-installed");
         return;
       }
@@ -203,7 +210,7 @@ export function NotificationsScreen(): JSX.Element {
         ) : support === "not-installed" ? (
           <p className="mt-1 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
             Add Bots to your Home Screen first. In Safari, tap Share, then Add to Home Screen, and
-            open Bots from the new icon. Phones only allow notifications for installed apps.
+            open Bots from the new icon. iPhones only allow notifications for installed apps.
           </p>
         ) : support === "no-worker" ? (
           <p className="mt-1 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
@@ -240,7 +247,9 @@ export function NotificationsScreen(): JSX.Element {
             <div className="mt-3 flex gap-2.5">
               <button
                 type="button"
-                className={PRIMARY_BUTTON}
+                // Content width on a 360px phone, so the label stays on one line;
+                // Turn off takes what is left.
+                className={`${PRIMARY_BUTTON} flex-auto! whitespace-nowrap max-[380px]:px-3`}
                 disabled={busy}
                 onClick={() => void test()}
               >

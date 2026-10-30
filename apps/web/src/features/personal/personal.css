@@ -1420,3 +1420,10 @@
     transition: none;
   }
 }
+
+/* Checkboxes follow the app's accent instead of the browser's own grey (Android
+ * Chrome draws the default one as a plain grey square). Only the ones that did
+ * not set it themselves. */
+.personal-app input[type="checkbox"] {
+  accent-color: var(--personal-primary);
+}

@@ -262,6 +262,15 @@ export function registerPersonalServiceWorker(
   else window.addEventListener("load", register, { once: true });
 }
 
+/**
+ * Push only needs the app installed on iOS, where Safari allows it for Home
+ * Screen apps alone. `navigator.standalone` exists on iOS Safari (false in a
+ * tab), so it tells that case from an Android Chrome tab, which can subscribe.
+ */
+export function pushNeedsHomeScreenInstall(nav: object, standalone: boolean): boolean {
+  return !standalone && "standalone" in nav;
+}
+
 /** True when running as an installed PWA (Home Screen / standalone window). */
 export function isStandaloneDisplay(): boolean {
   const iosStandalone = (navigator as Navigator & { standalone?: boolean }).standalone === true;

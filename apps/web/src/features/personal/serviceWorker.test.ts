@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { takePendingNavigation, workerMessageDiag } from "./serviceWorker";
+import {
+  pushNeedsHomeScreenInstall,
+  takePendingNavigation,
+  workerMessageDiag,
+} from "./serviceWorker";
 
 const NOW = 1_800_000_000_000;
 
@@ -62,5 +66,15 @@ describe("workerMessageDiag", () => {
     expect(workerMessageDiag({ type: "bots:navigate-ack", id: "t1" }, "broadcast")).toBeNull();
     expect(workerMessageDiag("hello", "message")).toBeNull();
     expect(workerMessageDiag(null, "message")).toBeNull();
+  });
+});
+
+describe("who has to install the app before push", () => {
+  it("is iPhone Safari in a tab, not an Android Chrome tab or an installed app", () => {
+    // iOS Safari has navigator.standalone (false in a tab); Android Chrome has none.
+    expect(pushNeedsHomeScreenInstall({ standalone: false }, false)).toBe(true);
+    expect(pushNeedsHomeScreenInstall({}, false)).toBe(false);
+    expect(pushNeedsHomeScreenInstall({ standalone: true }, true)).toBe(false);
+    expect(pushNeedsHomeScreenInstall({}, true)).toBe(false);
   });
 });
