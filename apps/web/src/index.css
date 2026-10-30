@@ -1693,22 +1693,26 @@ code {
   -webkit-app-region: no-drag;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: var(--app-scrollbar-width);
-}
+/* Scrollbar styling. Mouse-and-pointer devices only: Android Chrome swaps its
+ * thin overlay scrollbar for a permanent classic bar the moment any
+ * ::-webkit-scrollbar rule matches, so touch keeps the platform's own. */
+@media (hover: hover) and (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: var(--app-scrollbar-width);
+  }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
 
-::-webkit-scrollbar-thumb {
-  background: var(--app-scrollbar-thumb);
-  border-radius: 3px;
-}
+  ::-webkit-scrollbar-thumb {
+    background: var(--app-scrollbar-thumb);
+    border-radius: 3px;
+  }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--app-scrollbar-thumb-hover);
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--app-scrollbar-thumb-hover);
+  }
 }
 
 /* Chat markdown rendering */

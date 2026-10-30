@@ -701,8 +701,9 @@
 /* Quiet scroller for the desktop columns (the bot list, the chat's side panel).
  * The app-wide 6px thumb stays, but it only shows while the pointer is over
  * the column or focus is inside it, so an idle list reads as one surface
- * instead of a list, a grey stripe and then the border. Mouse-only: touch
- * keeps the platform's own overlay scrollbar. */
+ * instead of a list, a grey stripe and then the border. Mouse-only: the
+ * app-wide scrollbar rules are scoped to (hover: hover) and (pointer: fine) in
+ * index.css, so touch keeps the platform's own overlay scrollbar. */
 @media (min-width: 768px) {
   /* Reserve the lane either way, so the content's right edge never jumps when
    * the list grows past the column; the list pads 6px less on that side. */
