@@ -86,6 +86,75 @@ describe("antigravityUsageToLimits", () => {
     ]);
   });
 
+  it("splits per-model Gemini session and Gemini 4 Argon weekly quotas and keeps 5h+2s clock skew on session (31 Oct 2026 live shape)", () => {
+    const proCheckedAt = "2026-10-31T11:38:15.246Z";
+    const proModels = {
+      models: {
+        // 5 hours + 2 seconds past checkedAt (server clock stamped after HTTP round-trip)
+        "gemini-3.8-flash-medium": {
+          quotaInfo: { remainingFraction: 1, resetTime: "2026-10-31T16:38:17Z" },
+        },
+        "gemini-4-argon-medium": {
+          quotaInfo: { remainingFraction: 0.61065227, resetTime: "2026-11-07T10:54:16Z" },
+        },
+        "gemini-4-argon-high": {
+          quotaInfo: { remainingFraction: 0.61065227, resetTime: "2026-11-07T10:54:16Z" },
+        },
+      },
+    };
+    const proSummary = {
+      groups: [
+        {
+          displayName: "Gemini Models",
+          buckets: [
+            {
+              bucketId: "gemini-weekly",
+              window: "weekly",
+              remainingFraction: 1,
+              resetTime: "2026-11-07T11:38:17Z",
+            },
+            {
+              bucketId: "gemini-5h",
+              window: "5h",
+              remainingFraction: 1,
+              resetTime: "2026-10-31T16:38:17Z",
+            },
+          ],
+        },
+        {
+          displayName: "Gemini 4 Argon",
+          buckets: [
+            {
+              bucketId: "gemini-argon-wtu-weekly",
+              displayName: "Gemini 4 Argon Weekly Limit",
+              window: "weekly",
+              remainingFraction: 0.61065227,
+              resetTime: "2026-11-07T10:54:16Z",
+            },
+          ],
+        },
+      ],
+    };
+
+    const limits = antigravityUsageToLimits(proModels, proSummary, proCheckedAt);
+    expect(limits.windows).toEqual([
+      {
+        id: "gemini-session",
+        kind: "session",
+        label: "Gemini · 5-hour session",
+        usedPercent: 0,
+        resetsAt: "2026-10-31T16:38:17Z",
+      },
+      {
+        id: "gemini-weekly",
+        kind: "weekly",
+        label: "Gemini · Weekly",
+        usedPercent: 39,
+        resetsAt: "2026-11-07T10:54:16Z",
+      },
+    ]);
+  });
+
   it("falls back to the summary when the per-model list has no Gemini data", () => {
     const limits = antigravityUsageToLimits(null, untouchedSummary, checkedAt);
     expect(limits.windows.map((w) => w.id)).toEqual(["gemini-session", "gemini-weekly"]);
@@ -156,6 +225,62 @@ describe("antigravityQuotaSummaryToLimits", () => {
         label: "Gemini · Weekly",
         usedPercent: 58,
         resetsAt: "2026-10-27T20:00:00Z",
+      },
+    ]);
+  });
+
+  it("picks the tightest weekly bucket across Gemini Models and Gemini 4 Argon groups", () => {
+    const limits = antigravityQuotaSummaryToLimits(
+      {
+        groups: [
+          {
+            displayName: "Gemini Models",
+            buckets: [
+              {
+                bucketId: "gemini-5h",
+                window: "5h",
+                remainingFraction: 1,
+                resetTime: "2026-10-31T16:43:43Z",
+              },
+              {
+                bucketId: "gemini-weekly",
+                window: "weekly",
+                remainingFraction: 1,
+                resetTime: "2026-11-07T11:43:43Z",
+              },
+            ],
+          },
+          {
+            displayName: "Gemini 4 Argon",
+            buckets: [
+              {
+                bucketId: "gemini-argon-wtu-weekly",
+                displayName: "Gemini 4 Argon Weekly Limit",
+                window: "weekly",
+                remainingFraction: 0.61,
+                resetTime: "2026-11-07T10:54:16Z",
+              },
+            ],
+          },
+        ],
+      },
+      CHECKED_AT,
+    );
+
+    expect(limits.windows).toEqual([
+      {
+        id: "gemini-session",
+        kind: "session",
+        label: "Gemini · 5-hour session",
+        usedPercent: 0,
+        resetsAt: "2026-10-31T16:43:43Z",
+      },
+      {
+        id: "gemini-weekly",
+        kind: "weekly",
+        label: "Gemini · Weekly",
+        usedPercent: 39,
+        resetsAt: "2026-11-07T10:54:16Z",
       },
     ]);
   });

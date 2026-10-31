@@ -1,15 +1,7 @@
-/**
- * Reads usage limits for the Google Antigravity provider.
- *
- * Discovers the user's project and tier via loadCodeAssist, then retrieves
- * the quota summary (session and weekly buckets for Gemini and Claude/GPT).
- *
- * @module provider/Layers/antigravityUsageLimits
- */
-import type {
-  AntigravityAuthMethod,
-  ServerProviderUsageLimits,
-  ServerProviderUsageWindow,
+import {
+  type AntigravityAuthMethod,
+  type ServerProviderUsageLimits,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -82,6 +74,23 @@ export const AvailableModelsResponse = Schema.Struct({
 });
 
 const FIVE_HOURS_MS = 5 * 60 * 60_000;
+/**
+ * A small clock-skew margin so a 5-hour rolling reset (which Google stamps at
+ * the server's `now + 5h` when `checkedAt` was recorded just before the HTTP
+ * round-trip) stays on the 5-hour session window instead of crossing 5 hours
+ * by a second and misclassifying as Weekly.
+ */
+const SESSION_WINDOW_MAX_MS = FIVE_HOURS_MS + 10 * 60_000;
+
+/**
+ * The structured aidev `User-Agent` the Antigravity ACP runtime sends on CCPA
+ * calls (`useragent.py` in `agy_acp_server.par`). Without `(aidev_client; ...)`,
+ * CCPA does not attribute the request to `ClientType_ANTIGRAVITY` and omits
+ * `gemini-4-argon-*` from `fetchAvailableModels` as well as the `Gemini Models`
+ * and `Gemini 4 Argon` groups from `retrieveUserQuotaSummary`.
+ */
+export const ANTIGRAVITY_CCPA_USER_AGENT =
+  "antigravity/acp/1.4.0 (aidev_client; os_type=linux; arch=amd64; host_path=unknown/unknown; proxy_client=antigravity/sdk)";
 
 export const DAILY_AVAILABLE_MODELS_ENDPOINT =
   "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
@@ -92,56 +101,91 @@ export const PROD_AVAILABLE_MODELS_ENDPOINT =
  * Gemini usage as the runtime actually counts it. On 21 Oct 2026 the quota
  * summary read 100% left for Gemini (its reset rolling forward on every read)
  * while the per-model list on the daily host read 81% left with a fixed reset,
- * after hours of bot use. So the session window comes from the tightest Gemini
- * model in the per-model list; the summary only adds the weekly window, and
- * only once it shows some use. With no per-model Gemini data, the summary alone
- * is used as before.
+ * after hours of bot use. And on Google AI Pro (seen 31 Oct 2026), Gemini 4
+ * Argon has its own weekly bucket (~7 days out) while Gemini Flash/Pro report
+ * a 5-hour session reset (~5 hours out). So per-model Gemini entries are split
+ * into session (reset within 5h + margin) and weekly (reset further out),
+ * taking the tightest model in each bucket and merging with any tighter figure
+ * from the quota summary.
  */
 export function antigravityUsageToLimits(
   models: typeof AvailableModelsResponse.Type | null,
   summary: typeof QuotaSummaryResponse.Type | null,
   checkedAt: string,
 ): ServerProviderUsageLimits {
+  const checkedMs = Date.parse(checkedAt);
   // Google's JSON leaves a zero out: a model with quota info and a reset but no
   // remainingFraction is spent (seen live on 21 Oct 2026, weekly quota gone).
-  const gemini = Object.entries(models?.models ?? {})
-    .flatMap(([id, entry]) => {
-      const info = entry.quotaInfo;
-      if (!id.startsWith("gemini") || info === undefined) return [];
-      const remainingFraction =
-        info.remainingFraction ?? (info.resetTime !== undefined ? 0 : undefined);
-      return remainingFraction !== undefined && Number.isFinite(remainingFraction)
-        ? [{ remainingFraction, resetTime: info.resetTime }]
-        : [];
-    })
-    .sort((a, b) => a.remainingFraction - b.remainingFraction)[0];
-  if (!gemini) {
-    return summary
-      ? antigravityQuotaSummaryToLimits(summary, checkedAt)
+  const geminiModels = Object.entries(models?.models ?? {}).flatMap(([id, entry]) => {
+    const info = entry.quotaInfo;
+    if (!id.startsWith("gemini") || info === undefined) return [];
+    const remainingFraction =
+      info.remainingFraction ?? (info.resetTime !== undefined ? 0 : undefined);
+    if (remainingFraction === undefined || !Number.isFinite(remainingFraction)) return [];
+    const resetMs = info.resetTime ? Date.parse(info.resetTime) : Number.NaN;
+    const isWeekly =
+      Number.isFinite(checkedMs) &&
+      Number.isFinite(resetMs) &&
+      resetMs - checkedMs > SESSION_WINDOW_MAX_MS;
+    return [{ remainingFraction, resetTime: info.resetTime, isWeekly }];
+  });
+
+  const summaryWindows = summary ? antigravityQuotaSummaryToLimits(summary, checkedAt).windows : [];
+  if (geminiModels.length === 0) {
+    return summaryWindows.length > 0
+      ? makeUsageLimits({ checkedAt, windows: summaryWindows })
       : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   }
-  // The per-model count follows whichever limit binds: a reset more than five
-  // hours out means the weekly limit is the one being counted.
-  const checkedMs = Date.parse(checkedAt);
-  const resetMs = gemini.resetTime ? Date.parse(gemini.resetTime) : Number.NaN;
-  const bindingWeekly =
-    Number.isFinite(checkedMs) && Number.isFinite(resetMs) && resetMs - checkedMs > FIVE_HOURS_MS;
-  const windows: ServerProviderUsageWindow[] = [
-    {
-      id: bindingWeekly ? "gemini-weekly" : "gemini-session",
-      kind: bindingWeekly ? "weekly" : "session",
-      label: bindingWeekly ? "Gemini · Weekly" : "Gemini · 5-hour session",
-      usedPercent: clampPercent(Math.round((1 - gemini.remainingFraction) * 100)),
-      ...(gemini.resetTime ? { resetsAt: gemini.resetTime } : {}),
-    },
-  ];
-  if (bindingWeekly) return makeUsageLimits({ checkedAt, windows });
-  const weekly = summary
-    ? antigravityQuotaSummaryToLimits(summary, checkedAt).windows.find(
-        (window) => window.id === "gemini-weekly" && window.usedPercent > 0,
-      )
-    : undefined;
-  if (weekly) windows.push(weekly);
+
+  const tightestSession = geminiModels
+    .filter((m) => !m.isWeekly)
+    .sort((a, b) => a.remainingFraction - b.remainingFraction)[0];
+  const tightestWeekly = geminiModels
+    .filter((m) => m.isWeekly)
+    .sort((a, b) => a.remainingFraction - b.remainingFraction)[0];
+
+  const summarySession = summaryWindows.find((w) => w.id === "gemini-session");
+  const summaryWeekly = summaryWindows.find((w) => w.id === "gemini-weekly");
+
+  const windows: ServerProviderUsageWindow[] = [];
+
+  if (tightestSession) {
+    const modelUsed = clampPercent(Math.round((1 - tightestSession.remainingFraction) * 100));
+    if (summarySession && summarySession.usedPercent > modelUsed) {
+      windows.push(summarySession);
+    } else {
+      windows.push({
+        id: "gemini-session",
+        kind: "session",
+        label: "Gemini · 5-hour session",
+        usedPercent: modelUsed,
+        ...(tightestSession.resetTime ? { resetsAt: tightestSession.resetTime } : {}),
+      });
+    }
+  } else if (summarySession && summarySession.usedPercent > 0) {
+    windows.push(summarySession);
+  }
+
+  if (tightestWeekly) {
+    const modelUsed = clampPercent(Math.round((1 - tightestWeekly.remainingFraction) * 100));
+    if (summaryWeekly && summaryWeekly.usedPercent > modelUsed) {
+      windows.push(summaryWeekly);
+    } else {
+      windows.push({
+        id: "gemini-weekly",
+        kind: "weekly",
+        label: "Gemini · Weekly",
+        usedPercent: modelUsed,
+        ...(tightestWeekly.resetTime ? { resetsAt: tightestWeekly.resetTime } : {}),
+      });
+    }
+  } else if (summaryWeekly && (summaryWeekly.usedPercent > 0 || windows.length === 0)) {
+    windows.push(summaryWeekly);
+  }
+
+  if (windows.length === 0) {
+    return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+  }
   return makeUsageLimits({ checkedAt, windows });
 }
 
@@ -162,19 +206,22 @@ export function antigravityQuotaSummaryToLimits(
   const groups = response.groups ?? [];
   const windows: ServerProviderUsageWindow[] = [];
 
-  const geminiGroup = groups.find((g) => g.displayName?.toLowerCase().includes("gemini"));
+  const geminiBuckets = groups
+    .filter((g) => g.displayName?.toLowerCase().includes("gemini"))
+    .flatMap((g) => g.buckets ?? []);
 
-  if (geminiGroup?.buckets) {
-    const sessionBucket = geminiGroup.buckets.find(
-      (b) =>
-        b.window === "5h" ||
-        b.bucketId === "gemini-5h" ||
-        b.displayName?.toLowerCase().includes("five hour"),
-    );
-    if (
-      sessionBucket?.remainingFraction !== undefined &&
-      Number.isFinite(sessionBucket.remainingFraction)
-    ) {
+  if (geminiBuckets.length > 0) {
+    const sessionBucket = geminiBuckets
+      .filter(
+        (b) =>
+          (b.window === "5h" ||
+            b.bucketId === "gemini-5h" ||
+            b.displayName?.toLowerCase().includes("five hour")) &&
+          b.remainingFraction !== undefined &&
+          Number.isFinite(b.remainingFraction),
+      )
+      .sort((a, b) => a.remainingFraction! - b.remainingFraction!)[0];
+    if (sessionBucket?.remainingFraction !== undefined) {
       windows.push({
         id: "gemini-session",
         kind: "session",
@@ -184,16 +231,18 @@ export function antigravityQuotaSummaryToLimits(
       });
     }
 
-    const weeklyBucket = geminiGroup.buckets.find(
-      (b) =>
-        b.window === "weekly" ||
-        b.bucketId === "gemini-weekly" ||
-        b.displayName?.toLowerCase().includes("weekly"),
-    );
-    if (
-      weeklyBucket?.remainingFraction !== undefined &&
-      Number.isFinite(weeklyBucket.remainingFraction)
-    ) {
+    const weeklyBucket = geminiBuckets
+      .filter(
+        (b) =>
+          (b.window === "weekly" ||
+            b.bucketId === "gemini-weekly" ||
+            b.bucketId?.includes("weekly") ||
+            b.displayName?.toLowerCase().includes("weekly")) &&
+          b.remainingFraction !== undefined &&
+          Number.isFinite(b.remainingFraction),
+      )
+      .sort((a, b) => a.remainingFraction! - b.remainingFraction!)[0];
+    if (weeklyBucket?.remainingFraction !== undefined) {
       windows.push({
         id: "gemini-weekly",
         kind: "weekly",
@@ -235,7 +284,7 @@ export function withAntigravityQuotaHit(
   if (!Number.isFinite(resetMs) || resetMs <= nowMs) return limits;
   const expiresMs = hit.expiresAt === undefined ? resetMs : Date.parse(hit.expiresAt);
   if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) return limits;
-  const weekly = resetMs - nowMs > FIVE_HOURS_MS;
+  const weekly = resetMs - nowMs > SESSION_WINDOW_MAX_MS;
   const id = `gemini-${weekly ? "weekly" : "session"}`;
   const windows = limits.unavailable ? [] : [...limits.windows];
   const index = windows.findIndex((window) => window.id === id);
@@ -347,9 +396,9 @@ export const readAntigravityUsageLimits = Effect.fn("readAntigravityUsageLimits"
           .execute(
             HttpClientRequest.post(endpoint).pipe(
               HttpClientRequest.bearerToken(accessToken),
-              HttpClientRequest.setHeader("User-Agent", "antigravity/1.4.0"),
+              HttpClientRequest.setHeader("User-Agent", ANTIGRAVITY_CCPA_USER_AGENT),
               HttpClientRequest.setHeader("Content-Type", "application/json"),
-              HttpClientRequest.bodyJsonUnsafe({}),
+              HttpClientRequest.bodyJsonUnsafe({ metadata: { ideType: "ANTIGRAVITY" } }),
             ),
           )
           .pipe(
@@ -375,7 +424,7 @@ export const readAntigravityUsageLimits = Effect.fn("readAntigravityUsageLimits"
         .execute(
           HttpClientRequest.post(endpoint).pipe(
             HttpClientRequest.bearerToken(accessToken),
-            HttpClientRequest.setHeader("User-Agent", "antigravity/1.4.0"),
+            HttpClientRequest.setHeader("User-Agent", ANTIGRAVITY_CCPA_USER_AGENT),
             HttpClientRequest.setHeader("Content-Type", "application/json"),
             HttpClientRequest.bodyJsonUnsafe({ project: effectiveProject }),
           ),
@@ -390,7 +439,7 @@ export const readAntigravityUsageLimits = Effect.fn("readAntigravityUsageLimits"
         .execute(
           HttpClientRequest.post(endpoint).pipe(
             HttpClientRequest.bearerToken(accessToken),
-            HttpClientRequest.setHeader("User-Agent", "antigravity/1.4.0"),
+            HttpClientRequest.setHeader("User-Agent", ANTIGRAVITY_CCPA_USER_AGENT),
             HttpClientRequest.setHeader("Content-Type", "application/json"),
             HttpClientRequest.bodyJsonUnsafe({ project: effectiveProject }),
           ),
