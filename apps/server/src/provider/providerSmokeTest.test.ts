@@ -45,6 +45,7 @@ describe("Claude smoke test options", () => {
       PATH: "x",
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+      CLAUDE_CODE_DISABLE_ULTRATHINK: "1",
     });
   });
 });

@@ -1689,6 +1689,10 @@ export const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
   ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+  // 2.1.316+: a bot instruction or owner message that says "ultrathink" would
+  // otherwise raise that turn to xhigh effort. Bots must not opt into it, and
+  // the owner's own chats keep the keyword. Inert until the CLI ships 2.1.316.
+  CLAUDE_CODE_DISABLE_ULTRATHINK: "1",
 } as const;
 /**
  * Defaults for normal (non-bot) threads; the user's own environment wins.

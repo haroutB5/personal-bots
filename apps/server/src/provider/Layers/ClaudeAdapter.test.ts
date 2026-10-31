@@ -679,6 +679,8 @@ describe("ClaudeAdapterLive", () => {
       });
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+      // 2.1.316+: no bot turn may be raised to xhigh by the "ultrathink" keyword.
+      assert.equal(options?.env?.CLAUDE_CODE_DISABLE_ULTRATHINK, "1");
       assert.equal(options?.env?.PATH, "/usr/bin");
       assert.equal(options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS, undefined);
       // Built-in tools no bot has ever called are removed from the schema
@@ -1197,6 +1199,8 @@ describe("ClaudeAdapterLive", () => {
       }
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, undefined);
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, undefined);
+      // The owner keeps the "ultrathink" keyword in their own chats.
+      assert.equal(options?.env?.CLAUDE_CODE_DISABLE_ULTRATHINK, undefined);
       // Newer models get the todo tools back so the plan panel fills.
       assert.equal(options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS, "1");
     }).pipe(
