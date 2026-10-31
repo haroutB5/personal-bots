@@ -26,3 +26,15 @@ Harout reported: "Fix the anti-gravity session usage not showing. Im using Gemin
 
 - Live probe against Google's CCPA endpoints with the active Antigravity profile returned both windows: `gemini-session` (`Gemini · 5-hour session`, `0% used`, `resetsAt: 2026-10-31T16:53:46Z`) and `gemini-weekly` (`Gemini · Weekly`, `52% used`, `resetsAt: 2026-11-07T10:54:16Z`).
 - Unit tests in `apps/server/src/provider/Layers/antigravityUsageLimits.test.ts` (16 passing) and `AntigravityDriver.test.ts` (13 passing).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=f32ce61e056a4075418fece88d7cc074213dd04b release=f32ce61e056a json-sha256=755e8b47ece3695cf125a06d3de7f8f344e8099691daeb5a616b680213aae99b result=PASS -->
+
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- server-tests: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
