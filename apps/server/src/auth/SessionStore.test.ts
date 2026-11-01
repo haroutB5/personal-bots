@@ -883,3 +883,34 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
   );
 });
+
+it("keeps proof-bound machine sessions at one hour and lets only direct pairing slide", () => {
+  const hours = (input: Parameters<typeof SessionStore.sessionPolicyForGrant>[0]) => {
+    const policy = SessionStore.sessionPolicyForGrant(input);
+    return { hours: Duration.toHours(policy.ttl), renewal: policy.renewal };
+  };
+  expect(hours({ grant: "one-time-token", method: "dpop-access-token" })).toEqual({
+    hours: 720,
+    renewal: "sliding",
+  });
+  expect(hours({ grant: "one-time-token", method: "bearer-access-token" })).toEqual({
+    hours: 720,
+    renewal: "sliding",
+  });
+  expect(hours({ grant: "desktop-bootstrap", method: "dpop-access-token" })).toEqual({
+    hours: 1,
+    renewal: "fixed",
+  });
+  expect(hours({ grant: "desktop-bootstrap", method: "bearer-access-token" })).toEqual({
+    hours: 720,
+    renewal: "fixed",
+  });
+  expect(hours({ grant: "dev-token", method: "dpop-access-token" })).toEqual({
+    hours: 1,
+    renewal: "fixed",
+  });
+  expect(hours({ grant: "cloud-connect", method: "dpop-access-token" })).toEqual({
+    hours: 1,
+    renewal: "fixed",
+  });
+});

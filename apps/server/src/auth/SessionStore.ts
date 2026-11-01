@@ -466,8 +466,14 @@ export const sessionPolicyForGrant = (input: {
     case "cloud-connect":
       return { ttl: Duration.hours(1), renewal: "fixed" };
     case "desktop-bootstrap":
-    case "cli":
     case "dev-token":
+      // A proof-bound machine session kept its 1 hour life before sliding
+      // sessions existed; only direct pairing earned the longer DPoP life.
+      return {
+        ttl: input.method === "dpop-access-token" ? Duration.hours(1) : DEFAULT_SESSION_TTL,
+        renewal: "fixed",
+      };
+    case "cli":
       return { ttl: DEFAULT_SESSION_TTL, renewal: "fixed" };
   }
 };
