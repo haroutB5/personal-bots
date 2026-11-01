@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpServerError, HttpServerRequest } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
@@ -19,6 +20,7 @@ const SESSION_ID = AuthSessionId.make("session-1");
 
 const makeFixture = () => {
   const closes: Array<Socket.CloseEvent> = [];
+  let destroyed = 0;
   const socket = {
     writer: Effect.succeed({
       write: (event: unknown) =>
@@ -31,6 +33,7 @@ const makeFixture = () => {
   const request = {
     upgrade: Effect.succeed(socket),
     modify: () => request,
+    source: { socket: { destroy: () => void destroyed++ } },
   } as unknown as HttpServerRequest.HttpServerRequest;
   const revoked = Deferred.makeUnsafe<void>();
   const sessions = {
@@ -56,7 +59,7 @@ const makeFixture = () => {
     }
     return closes[0];
   });
-  return { closes, revoked, serve, closed };
+  return { closes, revoked, serve, closed, destroyed: () => destroyed };
 };
 
 it.effect("closes the upgraded socket with 4401 when the session is revoked", () =>
@@ -70,6 +73,57 @@ it.effect("closes the upgraded socket with 4401 when the session is revoked", ()
     expect(close?.code).toBe(SESSION_REVOKED_CLOSE_CODE);
     expect(close?.reason).toBe("session_revoked");
     yield* Fiber.interrupt(fiber);
+  }),
+);
+
+it.effect("stops serving the moment the session is revoked", () =>
+  Effect.gen(function* () {
+    const fixture = makeFixture();
+    let serving = true;
+    const fiber = yield* Effect.forkChild(
+      fixture.serve((request) =>
+        request.upgrade.pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Effect.sync(() => void (serving = false))),
+        ),
+      ),
+    );
+    yield* Effect.yieldNow;
+    expect(serving).toBe(true);
+    yield* Deferred.succeed(fixture.revoked, undefined);
+    yield* fixture.closed;
+    expect(serving).toBe(false);
+    yield* Fiber.interrupt(fiber);
+  }),
+);
+
+it.effect("destroys the socket of a client that never answers the close frame", () =>
+  Effect.gen(function* () {
+    const fixture = makeFixture();
+    const fiber = yield* Effect.forkChild(
+      fixture.serve((request) => Effect.andThen(request.upgrade, Effect.never)),
+    );
+    yield* Deferred.succeed(fixture.revoked, undefined);
+    yield* fixture.closed;
+    yield* TestClock.adjust("100 millis");
+    expect(fixture.destroyed()).toBe(0);
+    yield* TestClock.adjust("1 second");
+    expect(fixture.destroyed()).toBe(1);
+    yield* Fiber.interrupt(fiber);
+  }),
+);
+
+it.effect("leaves the socket to the close handshake when the client answers within the grace", () =>
+  Effect.gen(function* () {
+    const fixture = makeFixture();
+    const fiber = yield* Effect.forkChild(
+      fixture.serve((request) => Effect.andThen(request.upgrade, Effect.never)),
+    );
+    yield* Deferred.succeed(fixture.revoked, undefined);
+    yield* fixture.closed;
+    yield* Fiber.interrupt(fiber);
+    yield* TestClock.adjust("2 seconds");
+    expect(fixture.destroyed()).toBe(0);
   }),
 );
 

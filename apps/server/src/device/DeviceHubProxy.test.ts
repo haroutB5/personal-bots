@@ -29,8 +29,10 @@ const fixture = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   fail = false,
   authError?: ServerAuthCredentialError | ServerAuthInternalError,
+  upstream: () => Response = () => new Response("frame"),
 ) => {
   let finalized = 0;
+  let revokeWatches = 0;
   const requests: string[] = [];
   const client = HttpClient.make((request, _url, signal) =>
     Effect.gen(function* () {
@@ -39,7 +41,7 @@ const fixture = (
         finalized++;
       });
       if (fail) return yield* Effect.die(new Error("upstream failed"));
-      return HttpClientResponse.fromWeb(request, new Response("frame"));
+      return HttpClientResponse.fromWeb(request, upstream());
     }),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(
@@ -59,7 +61,10 @@ const fixture = (
       ),
       Layer.provideMerge(
         Layer.succeed(SessionStore, {
-          awaitRevoked: () => Effect.never,
+          awaitRevoked: () => {
+            revokeWatches++;
+            return Effect.never;
+          },
         } as unknown as SessionStore["Service"]),
       ),
       Layer.provideMerge(
@@ -73,7 +78,7 @@ const fixture = (
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, finalized: () => finalized };
+  return { handler, requests, finalized: () => finalized, revokeWatches: () => revokeWatches };
 };
 
 describe("device hub proxy", () => {
@@ -86,6 +91,34 @@ describe("device hub proxy", () => {
     expect(await response.text()).toBe("frame");
     expect(requests).toEqual(["http://hub.test/api/devices"]);
     expect(finalized()).toBe(1);
+  });
+
+  it("forwards a fixed-length body intact without watching the session for revoke", async () => {
+    const body = "x".repeat(4096);
+    const { handler, revokeWatches } = fixture(
+      [AuthOrchestrationReadScope],
+      false,
+      undefined,
+      () => new Response(body, { headers: { "content-length": String(body.length) } }),
+    );
+    const response = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/api/screenshot"),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(body);
+    expect(revokeWatches()).toBe(0);
+  });
+
+  it.each([
+    "/vendor/serve-sim/api/event-log/events",
+    "/vendor/serve-sim/helper/abc/stream.mjpeg",
+    "/vendor/serve-sim/helper/abc/stream.avcc",
+  ])("watches the session for revoke while streaming %s", async (path) => {
+    const { handler, revokeWatches } = fixture([AuthOrchestrationReadScope]);
+    const response = await handler(new Request(`http://t3.test/api/device-hub${path}`));
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("frame");
+    expect(revokeWatches()).toBe(1);
   });
 
   it("releases resources when upstream acquisition fails", async () => {
