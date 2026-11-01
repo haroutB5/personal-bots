@@ -14140,7 +14140,10 @@ for (const { name, open } of hostileScenarios) {
           assert.equal(held.reachedAfterClose, 0);
           assert.isNotNull(held.tcpClosedMs);
           assert.isTrue((held.tcpClosedMs ?? Infinity) <= 1500);
-        }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(NodeHttpServer.layerTest.pipe(Layer.provideMerge(NodeServices.layer))),
+        ),
       15000,
     );
   }
