@@ -29,7 +29,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -211,21 +210,22 @@ const refreshSessionCookie = Effect.fn("environment.auth.refreshSessionCookie")(
   if (credential?.source !== "cookie" && credential?.source !== "legacy-cookie") {
     return session.expiresAt;
   }
-  const renewed = yield* sessions
+  const outcome = yield* sessions
     .renew(credential.token)
     .pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Failed to renew browser session.").pipe(
           Effect.annotateLogs({ cause }),
-          Effect.as(Option.none<SessionStore.RenewedSession>()),
+          Effect.as<SessionStore.RenewOutcome>({ _tag: "NotRenewable" }),
         ),
       ),
     );
-  const cookie = Option.isSome(renewed)
-    ? renewed.value
-    : credential.source === "legacy-cookie"
-      ? { token: credential.token, expiresAt: session.expiresAt }
-      : undefined;
+  const cookie =
+    outcome._tag === "Renewed"
+      ? outcome
+      : credential.source === "legacy-cookie"
+        ? { token: credential.token, expiresAt: session.expiresAt }
+        : undefined;
   if (cookie === undefined) {
     return session.expiresAt;
   }
