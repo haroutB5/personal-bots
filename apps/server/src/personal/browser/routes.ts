@@ -31,6 +31,7 @@ import {
   failEnvironmentInternal,
   failEnvironmentScopeRequired,
 } from "../../auth/http.ts";
+import { serveUntilSessionRevoked } from "../../auth/sessionRevocationClose.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
 import { InputLine } from "./inputLine.ts";
 import { runViewerFrames } from "./viewerFlow.ts";
@@ -111,16 +112,11 @@ export const personalRouteAuthResponses = {
  * Viewers need read scope; input additionally needs operate scope and human
  * control (checked per message). Frames flow only while a viewer is attached.
  */
-export const personalBrowserStreamRouteLayer = HttpRouter.add(
-  "GET",
-  PERSONAL_BROWSER_STREAM_PATH,
+const serveBrowserStream = (
+  session: Effect.Success<ReturnType<typeof authenticatePersonalRoute>>,
+) =>
   Effect.gen(function* () {
-    // Authenticate before anything else so an anonymous probe learns nothing.
-    const session = yield* authenticatePersonalRoute(AuthOrchestrationReadScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
-    if (request.headers.upgrade?.toLowerCase() !== "websocket") {
-      return HttpServerResponse.text("Upgrade Required", { status: 426 });
-    }
     const browser = yield* PersonalBrowser;
     const socket = yield* request.upgrade;
     yield* Effect.scoped(
@@ -186,6 +182,22 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
       }),
     ).pipe(Effect.ignoreCause);
     return HttpServerResponse.empty();
+  });
+
+export const personalBrowserStreamRouteLayer = HttpRouter.add(
+  "GET",
+  PERSONAL_BROWSER_STREAM_PATH,
+  Effect.gen(function* () {
+    // Authenticate before anything else so an anonymous probe learns nothing.
+    const session = yield* authenticatePersonalRoute(AuthOrchestrationReadScope);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (request.headers.upgrade?.toLowerCase() !== "websocket") {
+      return HttpServerResponse.text("Upgrade Required", { status: 426 });
+    }
+    return yield* serveUntilSessionRevoked({
+      sessionId: session.sessionId,
+      serve: serveBrowserStream(session),
+    });
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),
 );
 

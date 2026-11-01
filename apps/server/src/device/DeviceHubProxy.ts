@@ -34,6 +34,7 @@ import {
   failEnvironmentInternal,
   failEnvironmentScopeRequired,
 } from "../auth/http.ts";
+import { serveUntilSessionRevoked } from "../auth/sessionRevocationClose.ts";
 import * as DeviceService from "./DeviceService.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
@@ -107,6 +108,7 @@ const authenticate = (requiredScope: AuthEnvironmentScope) =>
     if (!session.scopes.includes(requiredScope)) {
       return yield* failEnvironmentScopeRequired(requiredScope);
     }
+    return session;
   });
 
 const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: string) => {
@@ -124,10 +126,8 @@ const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: st
  * Pipe a client WebSocket to the hub's with no framing changes. Frames are
  * opaque: H.264 access units one way, input packets the other.
  */
-const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
-  request: HttpServerRequest.HttpServerRequest,
-  upstreamUrl: string,
-) {
+const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (upstreamUrl: string) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
   const client = yield* request.upgrade;
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
     openTimeout: "10 seconds",
@@ -206,7 +206,9 @@ const handler = Effect.gen(function* () {
   const controlsDevice =
     (upgrade && hubPath !== "/api/devices/ws") ||
     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
-  yield* authenticate(controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope);
+  const session = yield* authenticate(
+    controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
+  );
   const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
   if (!ready) {
@@ -222,10 +224,10 @@ const handler = Effect.gen(function* () {
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
   const upstreamPath = `${hubPath}${search}`;
   if (upgrade) {
-    return yield* proxyWebSocket(
-      request,
-      `${ready.hub.origin.replace(/^http/, "ws")}${upstreamPath}`,
-    );
+    return yield* serveUntilSessionRevoked({
+      sessionId: session.sessionId,
+      serve: proxyWebSocket(`${ready.hub.origin.replace(/^http/, "ws")}${upstreamPath}`),
+    });
   }
   return yield* proxyHttp(request, `${ready.hub.origin}${upstreamPath}`, ready.hub.origin);
 });

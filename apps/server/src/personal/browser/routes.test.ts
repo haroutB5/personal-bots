@@ -12,6 +12,7 @@ import { HttpRouter } from "effect/unstable/http";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { EnvironmentAuth, ServerAuthMissingCredentialError } from "../../auth/EnvironmentAuth.ts";
+import { SessionStore } from "../../auth/SessionStore.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
 import { personalBrowserFilesRouteLayer, personalBrowserStreamRouteLayer } from "./routes.ts";
 
@@ -36,6 +37,11 @@ const fixture = (auth: "missing" | ReadonlyArray<AuthEnvironmentScope>) => {
                   scopes: auth,
                 }),
         } as unknown as EnvironmentAuth["Service"]),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(SessionStore, {
+          awaitRevoked: () => Effect.never,
+        } as unknown as SessionStore["Service"]),
       ),
       Layer.provideMerge(
         Layer.succeed(PersonalBrowser, {

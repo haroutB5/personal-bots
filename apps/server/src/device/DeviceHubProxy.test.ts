@@ -16,6 +16,7 @@ import {
   type ServerAuthCredentialError,
   type ServerAuthInternalError,
 } from "../auth/EnvironmentAuth.ts";
+import { SessionStore } from "../auth/SessionStore.ts";
 import { DeviceService } from "./DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./DeviceHubProxy.ts";
 
@@ -55,6 +56,11 @@ const fixture = (
                   scopes,
                 }),
         } as unknown as EnvironmentAuth["Service"]),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(SessionStore, {
+          awaitRevoked: () => Effect.never,
+        } as unknown as SessionStore["Service"]),
       ),
       Layer.provideMerge(
         Layer.succeed(DeviceService, {

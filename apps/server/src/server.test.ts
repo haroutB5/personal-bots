@@ -5777,14 +5777,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         appendSessionCookieToWsUrl(baseUrl, tabletCookie),
       );
       yield* eventually("tablet stream attached", () => watchers === 2);
-      phoneSocket.socket.send(JSON.stringify({ _tag: "Control", on: true }));
+      phoneSocket.socket.send(jsonRequestBody({ _tag: "Control", on: true }));
       yield* eventually("phone holds the PC", () => control.taken);
 
       const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
       const inputBlast = yield* Effect.forkChild(
         sendWhileOpen(
           phoneSocket,
-          JSON.stringify({
+          jsonRequestBody({
             _tag: "Pointer",
             action: "click",
             x: 10,
@@ -5803,7 +5803,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.include(log, "1:detach");
       assert.notInclude(log, "2:detach");
       assert.equal(tabletSocket.socket.readyState, tabletSocket.socket.OPEN);
-      tabletSocket.socket.send(JSON.stringify({ _tag: "Viewport", width: 800, height: 600 }));
+      tabletSocket.socket.send(jsonRequestBody({ _tag: "Viewport", width: 800, height: 600 }));
       yield* eventually("tablet still reaches its viewer", () =>
         log.includes("2:viewport 800x600"),
       );

@@ -1,0 +1,85 @@
+// @effect-diagnostics globalTimers:off - the polling helper waits on plain timers
+import { expect, it } from "@effect/vitest";
+import { AuthSessionId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { HttpServerError, HttpServerRequest } from "effect/unstable/http";
+import * as Socket from "effect/unstable/socket/Socket";
+
+import { SESSION_REVOKED_CLOSE_CODE, serveUntilSessionRevoked } from "./sessionRevocationClose.ts";
+import { SessionStore } from "./SessionStore.ts";
+
+const SESSION_ID = AuthSessionId.make("session-1");
+
+const makeFixture = () => {
+  const closes: Array<Socket.CloseEvent> = [];
+  const socket = {
+    writer: Effect.succeed({
+      write: (event: unknown) =>
+        Effect.sync(() => {
+          if (Socket.isCloseEvent(event)) closes.push(event);
+        }),
+    }),
+  } as unknown as Socket.Socket;
+  // Mirrors ServerRequestImpl: `modify` builds a fresh request from the original upgrade effect.
+  const request = {
+    upgrade: Effect.succeed(socket),
+    modify: () => request,
+  } as unknown as HttpServerRequest.HttpServerRequest;
+  const revoked = Deferred.makeUnsafe<void>();
+  const sessions = {
+    awaitRevoked: () => Deferred.await(revoked),
+  } as unknown as SessionStore["Service"];
+  const serve = (
+    body: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<unknown, HttpServerError.HttpServerError>,
+  ) =>
+    serveUntilSessionRevoked({
+      sessionId: SESSION_ID,
+      serve: Effect.flatMap(HttpServerRequest.HttpServerRequest, body),
+    }).pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+      Effect.provideService(SessionStore, sessions),
+      Effect.scoped,
+    );
+  const closed = Effect.promise(async () => {
+    const until = performance.now() + 2000;
+    while (closes.length === 0 && performance.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    return closes[0];
+  });
+  return { closes, revoked, serve, closed };
+};
+
+it.effect("closes the upgraded socket with 4401 when the session is revoked", () =>
+  Effect.gen(function* () {
+    const fixture = makeFixture();
+    const fiber = yield* Effect.forkChild(
+      fixture.serve((request) => Effect.andThen(request.upgrade, Effect.never)),
+    );
+    yield* Deferred.succeed(fixture.revoked, undefined);
+    const close = yield* fixture.closed;
+    expect(close?.code).toBe(SESSION_REVOKED_CLOSE_CODE);
+    expect(close?.reason).toBe("session_revoked");
+    yield* Fiber.interrupt(fiber);
+  }),
+);
+
+it.effect("still closes the socket when serve calls request.modify before upgrading", () =>
+  Effect.gen(function* () {
+    const fixture = makeFixture();
+    const fiber = yield* Effect.forkChild(
+      fixture.serve((request) =>
+        Effect.andThen(request.modify({ url: "/rewritten" }).upgrade, Effect.never),
+      ),
+    );
+    yield* Deferred.succeed(fixture.revoked, undefined);
+    const close = yield* fixture.closed;
+    expect(close?.code).toBe(SESSION_REVOKED_CLOSE_CODE);
+    expect(close?.reason).toBe("session_revoked");
+    yield* Fiber.interrupt(fiber);
+  }),
+);

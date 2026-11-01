@@ -25,6 +25,7 @@ import * as Queue from "effect/Queue";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 
 import { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
+import { SessionStore } from "../../auth/SessionStore.ts";
 import { PersonalBrowser, type ViewerHandle } from "./PersonalBrowser.ts";
 import { personalBrowserStreamRouteLayer } from "./routes.ts";
 import { untilAnyFlowTookFrame, ViewerFlow, type ViewerFlowOptions } from "./viewerFlow.ts";
@@ -131,6 +132,9 @@ const serveViewerRoute = (viewer: ViewerHandle, handle: (raw: string) => Effect.
           scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
         }),
     } as unknown as EnvironmentAuth["Service"]);
+    const sessionsLayer = Layer.succeed(SessionStore, {
+      awaitRevoked: () => Effect.never,
+    } as unknown as SessionStore["Service"]);
     const browserLayer = Layer.succeed(PersonalBrowser, {
       attachViewer: () => Effect.succeed(viewer),
       handleViewerMessage: (_viewer: ViewerHandle, raw: string) => handle(raw),
@@ -138,11 +142,12 @@ const serveViewerRoute = (viewer: ViewerHandle, handle: (raw: string) => Effect.
     yield* HttpRouter.serve(
       personalBrowserStreamRouteLayer.pipe(
         Layer.provideMerge(authLayer),
+        Layer.provideMerge(sessionsLayer),
         Layer.provideMerge(browserLayer),
         Layer.provideMerge(Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer)),
       ),
       { disableListenLog: true, disableLogger: true },
-    ).pipe(Layer.build, Effect.provide(Layer.mergeAll(authLayer, browserLayer)));
+    ).pipe(Layer.build, Effect.provide(Layer.mergeAll(authLayer, sessionsLayer, browserLayer)));
     const server = yield* HttpServer.HttpServer;
     const address = server.address;
     if (address._tag === "UnixPathAddress") throw new Error("expected a TCP server");

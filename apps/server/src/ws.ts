@@ -5279,9 +5279,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           sessions.markConnected(session.sessionId),
           () =>
             serveUntilSessionRevoked({
-              sessions,
               sessionId: session.sessionId,
-              request,
               serve: rpcWebSocketHttpEffect,
             }),
           () =>

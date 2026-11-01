@@ -5,27 +5,43 @@ import * as Socket from "effect/unstable/socket/Socket";
 import { HttpServerRequest } from "effect/unstable/http";
 import type { AuthSessionId } from "@t3tools/contracts";
 
-import type * as SessionStore from "./SessionStore.ts";
+import * as SessionStore from "./SessionStore.ts";
 
 export const SESSION_REVOKED_CLOSE_CODE = 4401;
 export const SESSION_REVOKED_CLOSE_REASON = "session_revoked";
 
+const trackUpgrade = (
+  request: HttpServerRequest.HttpServerRequest,
+  upgraded: Deferred.Deferred<Socket.Socket>,
+): HttpServerRequest.HttpServerRequest =>
+  Object.create(request, {
+    upgrade: {
+      value: request.upgrade.pipe(Effect.tap((socket) => Deferred.succeed(upgraded, socket))),
+    },
+    modify: {
+      value: (options: Parameters<HttpServerRequest.HttpServerRequest["modify"]>[0]) =>
+        trackUpgrade(request.modify(options), upgraded),
+    },
+  });
+
+/**
+ * Runs `serve` against a request whose WebSocket upgrade is watched, and closes
+ * that socket with 4401 as soon as `sessionId` is revoked. Every socket route that
+ * authenticates a session once at upgrade goes through this.
+ */
 export const serveUntilSessionRevoked = <A, E, R>(input: {
-  readonly sessions: SessionStore.SessionStore["Service"];
   readonly sessionId: AuthSessionId;
-  readonly request: HttpServerRequest.HttpServerRequest;
   readonly serve: Effect.Effect<A, E, R>;
-}): Effect.Effect<A, E, Exclude<R, HttpServerRequest.HttpServerRequest> | Scope.Scope> =>
+}): Effect.Effect<
+  A,
+  E,
+  R | SessionStore.SessionStore | HttpServerRequest.HttpServerRequest | Scope.Scope
+> =>
   Effect.gen(function* () {
+    const sessions = yield* SessionStore.SessionStore;
+    const request = yield* HttpServerRequest.HttpServerRequest;
     const upgraded = yield* Deferred.make<Socket.Socket>();
-    const trackedRequest = Object.create(input.request, {
-      upgrade: {
-        value: input.request.upgrade.pipe(
-          Effect.tap((socket) => Deferred.succeed(upgraded, socket)),
-        ),
-      },
-    }) as HttpServerRequest.HttpServerRequest;
-    const closeOnRevoke = input.sessions.awaitRevoked(input.sessionId).pipe(
+    const closeOnRevoke = sessions.awaitRevoked(input.sessionId).pipe(
       Effect.andThen(Deferred.await(upgraded)),
       Effect.flatMap((socket) =>
         Effect.scoped(
@@ -46,7 +62,9 @@ export const serveUntilSessionRevoked = <A, E, R>(input: {
       Effect.andThen(Effect.never),
     );
     return yield* Effect.raceFirst(
-      input.serve.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, trackedRequest)),
+      input.serve.pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, trackUpgrade(request, upgraded)),
+      ),
       closeOnRevoke,
     );
   });
