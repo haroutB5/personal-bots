@@ -512,6 +512,11 @@ export const make = Effect.gen(function* () {
   const baseDir = config._tag === "Some" ? config.value.baseDir : undefined;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Bound once here: the service methods expose no filesystem requirement.
+  const readAppVersion = readLiveHbotsVersion(staticDir).pipe(
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
+  );
 
   // A nightly run and a "Preview now" never overlap.
   const lock = yield* Semaphore.make(1);
@@ -894,7 +899,7 @@ export const make = Effect.gen(function* () {
         VALUES (${runId}, ${nowIso}, 'running', ${dryRun ? 1 : 0}, ${nightly ? 1 : 0}, ${judge.model})
       `;
       const outcome = yield* Effect.gen(function* () {
-        const appVersion = yield* readLiveHbotsVersion(staticDir);
+        const appVersion = yield* readAppVersion;
         const entries = yield* readEntries;
         const versions = new Map(entries.map((entry) => [entry.memoryId, entry.version]));
         const byMemoryId = new Map(entries.map((entry) => [entry.memoryId, entry]));
@@ -2181,7 +2186,7 @@ export const make = Effect.gen(function* () {
               ),
             ),
             Effect.andThen(
-              readLiveHbotsVersion(staticDir).pipe(
+              readAppVersion.pipe(
                 Effect.flatMap((appVersion) =>
                   importInbox({ appVersion, shipped: SHIPPED_MEMORY_PROPOSALS }),
                 ),
