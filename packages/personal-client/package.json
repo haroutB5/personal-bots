@@ -1,0 +1,64 @@
+{
+  "name": "@hbots/personal-client",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./src/client.ts"
+    },
+    "./ports/cancel": {
+      "types": "./src/ports/cancel.ts",
+      "import": "./src/ports/cancel.ts"
+    },
+    "./ports/keyValueStore": {
+      "types": "./src/ports/keyValueStore.ts",
+      "import": "./src/ports/keyValueStore.ts"
+    },
+    "./ports/blobStore": {
+      "types": "./src/ports/blobStore.ts",
+      "import": "./src/ports/blobStore.ts"
+    },
+    "./ports/clock": {
+      "types": "./src/ports/clock.ts",
+      "import": "./src/ports/clock.ts"
+    },
+    "./ports/lifecycle": {
+      "types": "./src/ports/lifecycle.ts",
+      "import": "./src/ports/lifecycle.ts"
+    },
+    "./ports/confirm": {
+      "types": "./src/ports/confirm.ts",
+      "import": "./src/ports/confirm.ts"
+    },
+    "./ports/ids": {
+      "types": "./src/ports/ids.ts",
+      "import": "./src/ports/ids.ts"
+    },
+    "./testing/fakes": {
+      "types": "./src/testing/fakes.ts",
+      "import": "./src/testing/fakes.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@effect/atom-react": "catalog:",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/react": "~19.2.14",
+    "@types/react-dom": "~19.2.3",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "^19.2.3"
+  }
+}
