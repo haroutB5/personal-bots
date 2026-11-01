@@ -351,6 +351,23 @@ export const authHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "revokeSession",
+        Effect.fn("environment.auth.revokeSession")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* EnvironmentAuthenticatedPrincipal;
+            if (session.method === "browser-session-cookie") {
+              return yield* failEnvironmentOperationForbidden("session_not_revocable");
+            }
+            const revoked = yield* serverAuth.revokeSession(session.sessionId);
+            return { revoked };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("client_session_revoke_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "browserSession",
         Effect.fn("environment.auth.browserSession")(
           function* (args) {

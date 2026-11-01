@@ -467,3 +467,222 @@ it.effect("renews direct sessions over HTTP and refuses fixed, cookie or revoked
     );
   }).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
 );
+
+it.effect("revokes only the calling session and every token renewed from it", () =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const clock = yield* Clock.Clock;
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(Clock.Clock, clock),
+    );
+    yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routesLayer, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const call = (request: Request) =>
+            Effect.tryPromise(() => environment.handler(request, requestContext));
+          const readJson = <T>(response: Response) =>
+            Effect.tryPromise(() => response.json() as Promise<T>);
+          const nowSeconds = () =>
+            Clock.currentTimeMillis.pipe(Effect.map((millis) => Math.floor(millis / 1_000)));
+
+          const owner = yield* call(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+          );
+          const ownerCookie =
+            owner.headers
+              .getSetCookie()
+              .find((cookie) => cookie.startsWith("t3_dev_session_"))
+              ?.split(";", 1)[0] ?? "";
+          expect(ownerCookie).toMatch(/^t3_dev_session_/);
+
+          const exchange = (label: string, dpop?: string) =>
+            Effect.gen(function* () {
+              const pairing = yield* call(
+                postJson("/api/auth/pairing-token", { label }, { cookie: ownerCookie }),
+              );
+              const { credential } = yield* readJson<{ credential: string }>(pairing);
+              const response = yield* call(
+                postForm(
+                  "/oauth/token",
+                  {
+                    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+                    subject_token: credential,
+                    subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+                    requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                    client_label: label,
+                  },
+                  dpop ? { dpop } : undefined,
+                ),
+              );
+              expect(response.status).toBe(200);
+              return (yield* readJson<{ access_token: string }>(response)).access_token;
+            });
+
+          const post = (path: string, authorization?: string, dpop?: string, body?: unknown) =>
+            call(
+              new Request(`http://127.0.0.1${path}`, {
+                method: "POST",
+                headers: {
+                  ...(authorization ? { authorization } : {}),
+                  ...(dpop ? { dpop } : {}),
+                  ...(body === undefined ? {} : { "content-type": "application/json" }),
+                },
+                ...(body === undefined ? {} : { body: encodeJson(body) }),
+              }),
+            );
+          const dpopProof = (
+            path: string,
+            accessToken: string,
+            jti: string,
+            key: { privateKey: NodeCrypto.KeyObject; publicJwk: DpopPublicJwk },
+          ) =>
+            Effect.gen(function* () {
+              const iat = yield* nowSeconds();
+              return makeDpopProof({
+                method: "POST",
+                url: `http://localhost${path}`,
+                iat,
+                jti,
+                accessToken,
+                ...key,
+              }).proof;
+            });
+          const dpopPost = (
+            path: string,
+            accessToken: string,
+            jti: string,
+            key: { privateKey: NodeCrypto.KeyObject; publicJwk: DpopPublicJwk },
+          ) =>
+            Effect.gen(function* () {
+              const proof = yield* dpopProof(path, accessToken, jti, key);
+              return yield* post(path, `DPoP ${accessToken}`, proof);
+            });
+          const expectAuthInvalid = (response: Response) =>
+            Effect.gen(function* () {
+              expect(response.status).toBe(401);
+              expect(yield* readJson<{ code: string }>(response)).toMatchObject({
+                code: "auth_invalid",
+              });
+            });
+          const clientLabels = Effect.gen(function* () {
+            const response = yield* call(
+              new Request("http://127.0.0.1/api/auth/clients", {
+                headers: { cookie: ownerCookie },
+              }),
+            );
+            const clients =
+              yield* readJson<ReadonlyArray<{ sessionId: string; client: { label?: string } }>>(
+                response,
+              );
+            return clients;
+          });
+
+          const first = yield* exchange("phone-first");
+          const second = yield* exchange("phone-second");
+          const dpopKey = makeDpopProof({
+            method: "POST",
+            url: "http://localhost/oauth/token",
+            iat: yield* nowSeconds(),
+            jti: "exchange-dpop-revoke",
+          });
+          const dpopToken = yield* exchange("phone-dpop", dpopKey.proof);
+          const expiring = yield* exchange("phone-expiring");
+
+          const secondSessionId = (yield* clientLabels).find(
+            (client) => client.client.label === "phone-second",
+          )?.sessionId;
+          expect(secondSessionId).toBeDefined();
+
+          const cookieRevoke = yield* call(
+            new Request("http://127.0.0.1/api/auth/session/revoke", {
+              method: "POST",
+              headers: { cookie: ownerCookie },
+            }),
+          );
+          expect(cookieRevoke.status).toBe(403);
+          expect(yield* readJson<{ code: string; reason: string }>(cookieRevoke)).toMatchObject({
+            code: "operation_forbidden",
+            reason: "session_not_revocable",
+          });
+          expect((yield* clientLabels).map((client) => client.client.label)).toContain(
+            "phone-first",
+          );
+
+          yield* expectAuthInvalid(yield* post("/api/auth/session/revoke"));
+          yield* expectAuthInvalid(
+            yield* post("/api/auth/session/revoke", "Bearer not-a-real-token"),
+          );
+
+          yield* TestClock.adjust(Duration.hours(25));
+          const renewedFirst = yield* post("/api/auth/session/renew", `Bearer ${first}`);
+          expect(renewedFirst.status).toBe(200);
+          const firstRenewedToken = (yield* readJson<{ access_token: string }>(renewedFirst))
+            .access_token;
+          expect(firstRenewedToken).not.toBe(first);
+          const renewedDpop = yield* dpopPost(
+            "/api/auth/session/renew",
+            dpopToken,
+            "dpop-renew-before-revoke",
+            dpopKey,
+          );
+          expect(renewedDpop.status).toBe(200);
+          const dpopRenewedToken = (yield* readJson<{ access_token: string }>(renewedDpop))
+            .access_token;
+          expect(dpopRenewedToken).not.toBe(dpopToken);
+
+          const revokeFirst = yield* post(
+            "/api/auth/session/revoke",
+            `Bearer ${firstRenewedToken}`,
+            undefined,
+            { sessionId: secondSessionId },
+          );
+          expect(revokeFirst.status).toBe(200);
+          expect(yield* readJson<{ revoked: boolean }>(revokeFirst)).toEqual({ revoked: true });
+
+          yield* expectAuthInvalid(yield* post("/api/auth/session/renew", `Bearer ${first}`));
+          yield* expectAuthInvalid(
+            yield* post("/api/auth/session/renew", `Bearer ${firstRenewedToken}`),
+          );
+          yield* expectAuthInvalid(
+            yield* post("/api/auth/websocket-ticket", `Bearer ${firstRenewedToken}`),
+          );
+          yield* expectAuthInvalid(
+            yield* post("/api/auth/session/revoke", `Bearer ${firstRenewedToken}`),
+          );
+
+          const labelsAfterFirst = (yield* clientLabels).map((client) => client.client.label);
+          expect(labelsAfterFirst).not.toContain("phone-first");
+          expect(labelsAfterFirst).toContain("phone-second");
+          expect(labelsAfterFirst).toContain("phone-dpop");
+          const secondStillWorks = yield* post("/api/auth/session/renew", `Bearer ${second}`);
+          expect(secondStillWorks.status).toBe(200);
+
+          const revokeDpop = yield* dpopPost(
+            "/api/auth/session/revoke",
+            dpopRenewedToken,
+            "dpop-revoke",
+            dpopKey,
+          );
+          expect(revokeDpop.status).toBe(200);
+          expect(yield* readJson<{ revoked: boolean }>(revokeDpop)).toEqual({ revoked: true });
+          yield* expectAuthInvalid(
+            yield* dpopPost("/api/auth/session/renew", dpopToken, "dpop-old-after", dpopKey),
+          );
+          yield* expectAuthInvalid(
+            yield* dpopPost(
+              "/api/auth/session/renew",
+              dpopRenewedToken,
+              "dpop-renewed-after",
+              dpopKey,
+            ),
+          );
+
+          yield* TestClock.adjust(Duration.days(31));
+          yield* expectAuthInvalid(yield* post("/api/auth/session/revoke", `Bearer ${expiring}`));
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
+);
