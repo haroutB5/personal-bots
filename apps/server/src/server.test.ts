@@ -7,6 +7,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 
 import {
   type DeviceServiceState,
+  LOCAL_DEVICE_HOST_ID,
   AuthAccessTokenType,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
@@ -194,6 +195,8 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 // personal browser
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
+import type { LiveViewer } from "./personal/desktop/DesktopLiveView.ts";
+import { ViewerFlow } from "./personal/browser/viewerFlow.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -603,6 +606,9 @@ const buildAppUnderTest = (options?: {
     desktopTelemetryReceiver?: Partial<
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
+    personalBrowser?: Partial<PersonalBrowser.PersonalBrowser["Service"]>;
+    personalDesktop?: Partial<PersonalDesktop.PersonalDesktop["Service"]>;
+    deviceService?: Partial<DeviceService.DeviceService["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -973,6 +979,7 @@ const buildAppUnderTest = (options?: {
             state: Effect.succeed(EMPTY_DEVICE_STATE),
             currentReadiness: () => Effect.succeed(null),
             sessionsForThread: () => Effect.succeed([]),
+            ...options?.layers?.deviceService,
           }),
         ),
       ),
@@ -1098,11 +1105,13 @@ const buildAppUnderTest = (options?: {
           // personal browser: never launches Chrome in server tests
           Layer.mock(PersonalBrowser.PersonalBrowser)({
             handleAutomationRequest: () => Effect.die("PersonalBrowser not stubbed in this test"),
+            ...options?.layers?.personalBrowser,
           }),
           // personal desktop: never touches the real PC in server tests
           Layer.mock(PersonalDesktop.PersonalDesktop)({
             available: false,
             act: () => Effect.die("PersonalDesktop not stubbed in this test"),
+            ...options?.layers?.personalDesktop,
           }),
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
@@ -1491,6 +1500,55 @@ const pairClientSessionCookie = (ownerCookie: string, label: string) =>
     });
     const pairingBody = (yield* pairingResponse.json) as { readonly credential: string };
     return yield* getAuthenticatedSessionCookieHeader(pairingBody.credential);
+  });
+
+const revokeClientByLabel = (ownerCookie: string, label: string) =>
+  Effect.gen(function* () {
+    const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+      headers: { cookie: ownerCookie },
+    });
+    const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+      readonly sessionId: string;
+      readonly client: { readonly label?: string };
+    }>;
+    const sessionId = clients.find((entry) => entry.client.label === label)?.sessionId;
+    assert.isDefined(sessionId);
+    const revokedAt = performance.now();
+    const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
+      headers: { cookie: ownerCookie, "content-type": "application/json" },
+      body: HttpBody.text(jsonRequestBody({ sessionId }), "application/json"),
+    });
+    assert.equal(revokeResponse.status, 200);
+    return revokedAt;
+  });
+
+const assertClosedAsRevoked = (client: RawWsClient, revokedAt: number) =>
+  Effect.gen(function* () {
+    const closed = yield* awaitRawWsClose(client, 1000);
+    assert.isNotNull(closed);
+    assert.equal(closed?.code, 4401);
+    assert.equal(closed?.reason, "session_revoked");
+    assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
+  });
+
+const eventually = (describeWait: string, ready: () => boolean) =>
+  Effect.promise(async () => {
+    const until = performance.now() + 2000;
+    while (!ready() && performance.now() < until) await NodeTimersPromises.setTimeout(10);
+    return ready();
+  }).pipe(Effect.tap((ok) => Effect.sync(() => assert.isTrue(ok, describeWait))));
+
+const sendWhileOpen = (client: RawWsClient, message: string, forMs: number) =>
+  Effect.promise(async () => {
+    const until = performance.now() + forMs;
+    while (performance.now() < until) {
+      try {
+        client.socket.send(message);
+      } catch {
+        return;
+      }
+      await NodeTimersPromises.setTimeout(5);
+    }
   });
 
 const makeWsRpcClient = RpcClient.make(WsRpcGroup);
@@ -5651,6 +5709,226 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
       }
       assert.equal(yield* probeRawWsClient(ownerSocket, "2"), "Success");
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("closes the desktop stream of a revoked session and stops its remote control", () =>
+    Effect.gen(function* () {
+      const log: string[] = [];
+      const control = { taken: false, ended: false, inputs: 0, inputsAfterEnd: 0 };
+      let watchers = 0;
+      yield* buildAppUnderTest({
+        config: { host: "0.0.0.0" },
+        layers: {
+          personalDesktop: {
+            watch: () =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  const id = ++watchers;
+                  return {
+                    ack: () => undefined,
+                    setViewport: (width: number, height: number) =>
+                      void log.push(`${id}:viewport ${width}x${height}`),
+                    setControl: () => undefined,
+                    nudge: () => undefined,
+                    detach: () => void log.push(`${id}:detach`),
+                    stats: () => ({
+                      frames: 0,
+                      bytes: 0,
+                      captures: 0,
+                      unchanged: 0,
+                      locked: 0,
+                      captureMsTotal: 0,
+                      startedAt: 0,
+                    }),
+                  } satisfies LiveViewer;
+                }),
+                (viewer) => Effect.sync(() => viewer.detach()),
+              ),
+            takeControl: () =>
+              Effect.sync(() => {
+                control.taken = true;
+                return {
+                  input: () => {
+                    control.inputs++;
+                    if (control.ended) control.inputsAfterEnd++;
+                    return Promise.resolve();
+                  },
+                  end: () => {
+                    control.ended = true;
+                  },
+                  active: () => !control.ended,
+                  pending: () => 0,
+                };
+              }),
+          },
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
+      const baseUrl = yield* getWsServerUrl("/api/personal/desktop/stream", {
+        authenticated: false,
+      });
+      const phoneSocket = yield* openRawWsClient(appendSessionCookieToWsUrl(baseUrl, phoneCookie));
+      yield* eventually("phone stream attached", () => watchers === 1);
+      const tabletSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseUrl, tabletCookie),
+      );
+      yield* eventually("tablet stream attached", () => watchers === 2);
+      phoneSocket.socket.send(JSON.stringify({ _tag: "Control", on: true }));
+      yield* eventually("phone holds the PC", () => control.taken);
+
+      const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
+      const inputBlast = yield* Effect.forkChild(
+        sendWhileOpen(
+          phoneSocket,
+          JSON.stringify({
+            _tag: "Pointer",
+            action: "click",
+            x: 10,
+            y: 10,
+            frameWidth: 1170,
+            frameHeight: 731,
+          }),
+          1200,
+        ),
+      );
+      yield* assertClosedAsRevoked(phoneSocket, revokedAt);
+      yield* Fiber.join(inputBlast);
+
+      assert.isTrue(control.ended);
+      assert.equal(control.inputsAfterEnd, 0);
+      assert.include(log, "1:detach");
+      assert.notInclude(log, "2:detach");
+      assert.equal(tabletSocket.socket.readyState, tabletSocket.socket.OPEN);
+      tabletSocket.socket.send(JSON.stringify({ _tag: "Viewport", width: 800, height: 600 }));
+      yield* eventually("tablet still reaches its viewer", () =>
+        log.includes("2:viewport 800x600"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("closes the browser stream of a revoked session and keeps other viewers", () =>
+    Effect.gen(function* () {
+      const log: string[] = [];
+      let attached = 0;
+      yield* buildAppUnderTest({
+        config: { host: "0.0.0.0" },
+        layers: {
+          personalBrowser: {
+            attachViewer: ({ sessionId }) =>
+              Effect.acquireRelease(
+                Effect.gen(function* () {
+                  const id = ++attached;
+                  return {
+                    id,
+                    sessionId,
+                    canOperate: true,
+                    outbox: yield* Queue.unbounded<string>(),
+                    flow: new ViewerFlow(),
+                    telemetry: null,
+                  };
+                }),
+                (viewer) => Effect.sync(() => void log.push(`${viewer.id}:detach`)),
+              ),
+            handleViewerMessage: (viewer, raw) =>
+              Effect.sync(() => void log.push(`${viewer.id}:${raw}`)),
+          },
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
+      const baseUrl = yield* getWsServerUrl("/api/personal/browser/stream", {
+        authenticated: false,
+      });
+      const phoneSocket = yield* openRawWsClient(appendSessionCookieToWsUrl(baseUrl, phoneCookie));
+      yield* eventually("phone viewer attached", () => attached === 1);
+      const tabletSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseUrl, tabletCookie),
+      );
+      yield* eventually("tablet viewer attached", () => attached === 2);
+
+      const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
+      const inputBlast = yield* Effect.forkChild(sendWhileOpen(phoneSocket, "phone-input", 1200));
+      yield* assertClosedAsRevoked(phoneSocket, revokedAt);
+      yield* Fiber.join(inputBlast);
+
+      yield* eventually("phone viewer detached", () => log.includes("1:detach"));
+      const phoneInputsAtClose = log.filter((entry) => entry === "1:phone-input").length;
+      yield* Effect.promise(() => NodeTimersPromises.setTimeout(100));
+      assert.equal(log.filter((entry) => entry === "1:phone-input").length, phoneInputsAtClose);
+      assert.notInclude(log, "2:detach");
+      assert.equal(tabletSocket.socket.readyState, tabletSocket.socket.OPEN);
+      tabletSocket.socket.send("tablet-input");
+      yield* eventually("tablet still reaches its viewer", () => log.includes("2:tablet-input"));
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("closes the device hub socket of a revoked session and its upstream link", () =>
+    Effect.gen(function* () {
+      const hubLog: string[] = [];
+      let upstreams = 0;
+      const hub = yield* Effect.acquireRelease(
+        Effect.callback<NodeSocket.NodeWS.WebSocketServer, Error>((resume) => {
+          const server = new NodeSocket.NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
+          server.on("connection", (upstream) => {
+            const id = ++upstreams;
+            upstream.on("message", (data) => {
+              hubLog.push(`${id}:${data.toString()}`);
+              upstream.send(`echo:${id}:${data.toString()}`);
+            });
+            upstream.on("close", () => hubLog.push(`${id}:closed`));
+          });
+          server.on("listening", () => resume(Effect.succeed(server)));
+          server.on("error", (error) => resume(Effect.fail(error)));
+        }),
+        (server) => Effect.sync(() => server.close()),
+      );
+      const hubPort = (hub.address() as { port: number }).port;
+      yield* buildAppUnderTest({
+        config: { host: "0.0.0.0" },
+        layers: {
+          deviceService: {
+            currentReadiness: () =>
+              Effect.succeed({
+                hostId: LOCAL_DEVICE_HOST_ID,
+                hub: { origin: `http://127.0.0.1:${hubPort}` },
+              } as unknown as DeviceService.DeviceReadiness),
+          },
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
+      const baseUrl = yield* getWsServerUrl(
+        `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/vendor/serve-emu/ws`,
+        { authenticated: false },
+      );
+      const phoneSocket = yield* openRawWsClient(appendSessionCookieToWsUrl(baseUrl, phoneCookie));
+      yield* eventually("phone linked to the hub", () => upstreams === 1);
+      const tabletSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseUrl, tabletCookie),
+      );
+      yield* eventually("tablet linked to the hub", () => upstreams === 2);
+
+      const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
+      const inputBlast = yield* Effect.forkChild(sendWhileOpen(phoneSocket, "phone-input", 1200));
+      yield* assertClosedAsRevoked(phoneSocket, revokedAt);
+      yield* Fiber.join(inputBlast);
+
+      yield* eventually("phone hub link closed", () => hubLog.includes("1:closed"));
+      const phoneInputsAtClose = hubLog.filter((entry) => entry === "1:phone-input").length;
+      yield* Effect.promise(() => NodeTimersPromises.setTimeout(100));
+      assert.equal(hubLog.filter((entry) => entry === "1:phone-input").length, phoneInputsAtClose);
+      assert.notInclude(hubLog, "2:closed");
+      assert.equal(tabletSocket.socket.readyState, tabletSocket.socket.OPEN);
+      tabletSocket.socket.send("tablet-input");
+      yield* eventually("tablet still reaches the hub", () => hubLog.includes("2:tablet-input"));
     }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
   );
 
