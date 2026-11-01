@@ -55,7 +55,12 @@ export const FORBIDDEN_RULES: ReadonlyArray<ForbiddenRule> = [
   {
     id: "clerk-sign-in",
     pattern: /@clerk|CLERK/i,
-    why: "V1 connects directly to the hbots server. Clerk sign-in comes with the relay.",
+    why: "The relay link is a one-time pairing token. No Clerk sign-in.",
+  },
+  {
+    id: "tailscale",
+    pattern: /tailscale|tailnet/i,
+    why: "The phone reaches hbots through the relay. No Tailscale wording or action.",
   },
 ];
 

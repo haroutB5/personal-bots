@@ -19,6 +19,7 @@ const PLANTED: ReadonlyArray<readonly [ruleId: string, line: string]> = [
   ["eas-project", 'owner: "pingdotgg"'],
   ["upstream-host", "https://t3.codes/terms"],
   ["clerk-sign-in", 'import { ClerkProvider } from "@clerk/expo"'],
+  ["tailscale", "Can't reach your laptop. Is Tailscale on?"],
 ];
 
 describe("fork hygiene rules", () => {

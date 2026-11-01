@@ -35,6 +35,23 @@ describe("app.config", () => {
     ]);
   });
 
+  it("ships the adaptive and monochrome launcher icon", () => {
+    const icon = config.android?.adaptiveIcon;
+    expect(icon).toEqual({
+      foregroundImage: "./assets/icon/foreground.png",
+      backgroundImage: "./assets/icon/background.png",
+      monochromeImage: "./assets/icon/monochrome.png",
+    });
+    for (const image of Object.values(icon ?? {})) {
+      expect(NodeFS.existsSync(NodePath.resolve(__dirname, "..", image))).toBe(true);
+    }
+  });
+
+  it("paints the system UI the app's dark background", () => {
+    expect(config.backgroundColor).toBe("#0f0f0e");
+    expect(config.plugins).toContain("expo-system-ui");
+  });
+
   it("takes its version from the hbots release file", () => {
     const releaseVersion = NodeFS.readFileSync(
       NodePath.join(REPO_ROOT, "scripts/personal/app-version.txt"),

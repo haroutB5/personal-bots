@@ -17,6 +17,7 @@ const config: ExpoConfig = {
   orientation: "portrait",
   scheme: "hbots",
   userInterfaceStyle: "dark",
+  backgroundColor: "#0f0f0e",
   platforms: ["android"],
   updates: { enabled: false },
   android: {
@@ -25,9 +26,15 @@ const config: ExpoConfig = {
     userInterfaceStyle: "dark",
     predictiveBackGestureEnabled: true,
     allowBackup: false,
+    adaptiveIcon: {
+      foregroundImage: "./assets/icon/foreground.png",
+      backgroundImage: "./assets/icon/background.png",
+      monochromeImage: "./assets/icon/monochrome.png",
+    },
   },
   plugins: [
     "expo-secure-store",
+    "expo-system-ui",
     [
       "expo-build-properties",
       {
