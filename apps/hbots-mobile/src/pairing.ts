@@ -12,7 +12,8 @@ import type { StoredSession } from "./session";
 
 const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
 const decodeToken = Schema.decodeUnknownSync(AuthAccessTokenResult);
-const decodeTicket = Schema.decodeUnknownSync(AuthWebSocketTicketResult);
+const WebSocketTicketWire = Schema.Struct({ ticket: AuthWebSocketTicketResult.fields.ticket });
+export const decodeTicket = Schema.decodeUnknownSync(WebSocketTicketWire);
 
 export interface Connection {
   readonly session: StoredSession;
