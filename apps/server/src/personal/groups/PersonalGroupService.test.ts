@@ -2653,11 +2653,13 @@ const resendCounting = (harness: Harness) =>
   Effect.gen(function* () {
     const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
     const stored = yield* repository.listMessagesAfter({ groupId: GROUP, afterSeq: 0 });
+    // The bot's reserved reply is a row too; this counts what the owner sent.
+    const sent = stored.filter((message) => message.speakerKind === "user");
     const appended = harness.dispatched.filter(
       (command) => command.type === "thread.message.user.append",
     );
     const transcript = groupTranscript(harness).filter((message) => message.role === "user");
-    return { stored: stored.length, appended: appended.length, transcript: transcript.length };
+    return { stored: sent.length, appended: appended.length, transcript: transcript.length };
   });
 
 it.effect("resending one client id in sequence stores one message and one round", () => {
