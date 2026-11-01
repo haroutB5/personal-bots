@@ -183,7 +183,11 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
-  const body = yield* endStreamWhenSessionRevoked({ sessionId, stream: response.stream });
+  // A body with a Content-Length is bounded, so only unbounded streams (mjpeg, avcc, events) pay for the revoke watch.
+  const body =
+    response.headers["content-length"] === undefined
+      ? yield* endStreamWhenSessionRevoked({ sessionId, stream: response.stream })
+      : response.stream;
   return HttpServerResponse.stream(body, {
     status: response.status,
     headers,
