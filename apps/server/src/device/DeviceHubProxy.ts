@@ -15,6 +15,7 @@ import {
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
+  type AuthSessionId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -34,7 +35,10 @@ import {
   failEnvironmentInternal,
   failEnvironmentScopeRequired,
 } from "../auth/http.ts";
-import { serveUntilSessionRevoked } from "../auth/sessionRevocationClose.ts";
+import {
+  endStreamWhenSessionRevoked,
+  serveUntilSessionRevoked,
+} from "../auth/sessionRevocationClose.ts";
 import * as DeviceService from "./DeviceService.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
@@ -156,6 +160,7 @@ const pumpFrames = (source: Socket.Socket, sink: Socket.Writer) =>
   });
 
 const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
+  sessionId: AuthSessionId,
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
   hubOrigin: string,
@@ -178,7 +183,8 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
-  return HttpServerResponse.stream(response.stream, {
+  const body = yield* endStreamWhenSessionRevoked({ sessionId, stream: response.stream });
+  return HttpServerResponse.stream(body, {
     status: response.status,
     headers,
     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
@@ -229,7 +235,12 @@ const handler = Effect.gen(function* () {
       serve: proxyWebSocket(`${ready.hub.origin.replace(/^http/, "ws")}${upstreamPath}`),
     });
   }
-  return yield* proxyHttp(request, `${ready.hub.origin}${upstreamPath}`, ready.hub.origin);
+  return yield* proxyHttp(
+    session.sessionId,
+    request,
+    `${ready.hub.origin}${upstreamPath}`,
+    ready.hub.origin,
+  );
 });
 
 export const deviceHubProxyRouteLayer = HttpRouter.add(

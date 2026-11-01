@@ -4,10 +4,15 @@ import { AuthSessionId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 import { HttpServerError, HttpServerRequest } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
-import { SESSION_REVOKED_CLOSE_CODE, serveUntilSessionRevoked } from "./sessionRevocationClose.ts";
+import {
+  SESSION_REVOKED_CLOSE_CODE,
+  endStreamWhenSessionRevoked,
+  serveUntilSessionRevoked,
+} from "./sessionRevocationClose.ts";
 import { SessionStore } from "./SessionStore.ts";
 
 const SESSION_ID = AuthSessionId.make("session-1");
@@ -81,5 +86,26 @@ it.effect("still closes the socket when serve calls request.modify before upgrad
     expect(close?.code).toBe(SESSION_REVOKED_CLOSE_CODE);
     expect(close?.reason).toBe("session_revoked");
     yield* Fiber.interrupt(fiber);
+  }),
+);
+
+it.effect("ends a stream with the frames it delivered once its session is revoked", () =>
+  Effect.gen(function* () {
+    const revoked = Deferred.makeUnsafe<void>();
+    const sessions = {
+      awaitRevoked: () => Deferred.await(revoked),
+    } as unknown as SessionStore["Service"];
+    const received: Array<number> = [];
+    const body = yield* endStreamWhenSessionRevoked({
+      sessionId: SESSION_ID,
+      stream: Stream.make(1, 2).pipe(Stream.concat(Stream.never)),
+    }).pipe(Effect.provideService(SessionStore, sessions));
+    const fiber = yield* Effect.forkChild(
+      body.pipe(Stream.runForEach((frame) => Effect.sync(() => received.push(frame)))),
+    );
+    yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(received).toEqual([1, 2]);
+    yield* Deferred.succeed(revoked, undefined);
+    yield* Fiber.join(fiber);
   }),
 );

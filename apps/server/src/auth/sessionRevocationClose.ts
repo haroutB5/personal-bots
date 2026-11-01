@@ -1,6 +1,7 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as Socket from "effect/unstable/socket/Socket";
 import { HttpServerRequest } from "effect/unstable/http";
 import type { AuthSessionId } from "@t3tools/contracts";
@@ -67,4 +68,19 @@ export const serveUntilSessionRevoked = <A, E, R>(input: {
       ),
       closeOnRevoke,
     );
+  });
+
+/**
+ * Ends `stream` as soon as `sessionId` is revoked. The HTTP counterpart of
+ * `serveUntilSessionRevoked`: a response body that was authenticated once when
+ * it opened stops flowing, and finishing the body releases whatever the stream
+ * holds open, such as an upstream connection.
+ */
+export const endStreamWhenSessionRevoked = <A, E, R>(input: {
+  readonly sessionId: AuthSessionId;
+  readonly stream: Stream.Stream<A, E, R>;
+}): Effect.Effect<Stream.Stream<A, E, R>, never, SessionStore.SessionStore> =>
+  Effect.gen(function* () {
+    const sessions = yield* SessionStore.SessionStore;
+    return input.stream.pipe(Stream.interruptWhen(sessions.awaitRevoked(input.sessionId)));
   });
