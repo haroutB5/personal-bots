@@ -29,3 +29,15 @@ Binary only. The previous release is `5a67a39f2a1e` (1.66.110). A token with the
 - Auth work: red then green proofs in `/home/harout/Claude/AI/dev-team/qa/hbots-android-p05-auth/RESULTS.md`.
 - Independent review and live throwaway (renew, DPoP, revoke, rollback, client-compat edge cases): PASS in `/home/harout/Claude/AI/dev-team/qa/hbots-android-p05-verify/RESULTS.md`, including the delta to `7f57d64a11`.
 - Release gates for this exact commit are recorded below.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=b314d80ae1297ffc6867d2e08b321a007fbfbc7d release=b314d80ae129 json-sha256=be98a9c3aec3c2f5b3bad31501afd2c3c67f647c4efcd463598aefd3023cf9b0 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
