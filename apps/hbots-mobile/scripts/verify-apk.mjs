@@ -26,9 +26,15 @@ const manifest = analyze("manifest", "print");
 const applicationTag = manifest.match(/<application\b[^>]*>/su)?.[0] ?? "";
 const attribute = (name) => applicationTag.match(new RegExp(`android:${name}="([^"]*)"`, "u"))?.[1];
 
+// The prebuilt manifest labels the app @string/app_name, which the APK stores as a resource id.
+const resolveLabel = (label) =>
+  label?.startsWith("@ref/")
+    ? analyze("resources", "value", "--config", "default", "--name", "app_name", "--type", "string")
+    : label;
+
 const actual = {
   applicationId: analyze("manifest", "application-id"),
-  label: attribute("label"),
+  label: resolveLabel(attribute("label")),
   debuggable: analyze("manifest", "debuggable"),
   allowBackup: attribute("allowBackup"),
   usesCleartextTraffic: attribute("usesCleartextTraffic"),
