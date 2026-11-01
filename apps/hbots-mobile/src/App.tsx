@@ -1,7 +1,10 @@
 import type { PersonalBot, PersonalBotThread } from "@t3tools/contracts";
+import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  AppState,
   FlatList,
   Pressable,
   StyleSheet,
@@ -11,21 +14,46 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import { pair, resume, type Connection } from "./pairing";
+import {
+  backoffMs,
+  describePairFailure,
+  openOnline,
+  refreshBots,
+  REFRESH_INTERVAL_MS,
+} from "./connection";
+import { classifyFailure } from "./failure";
+import { pair } from "./pairing";
 import { describePairingLinkError, parsePairingLink } from "./pairingLink";
-import { connectPersonalRpc, type PersonalRpc } from "./rpc";
+import { renewSession } from "./renew";
+import { startRenewScheduler, type ForegroundSource } from "./renewScheduler";
+import type { PersonalRpc } from "./rpc";
 import { clearSession, loadSession, saveSession, type StoredSession } from "./session";
+import { describeSignOut, revokeRemoteSession } from "./signOut";
 
-type AppState =
+type Screen =
   | { readonly kind: "booting" }
-  | { readonly kind: "pairing"; readonly error: string | null }
+  | { readonly kind: "unpaired"; readonly error: string | null; readonly notice: string | null }
   | { readonly kind: "connecting"; readonly step: string }
   | {
-      readonly kind: "ready";
+      readonly kind: "online";
       readonly session: StoredSession;
+      readonly serverVersion: string | null;
       readonly bots: ReadonlyArray<PersonalBot>;
       readonly threads: ReadonlyArray<PersonalBotThread>;
-    };
+    }
+  | { readonly kind: "laptopOffline"; readonly session: StoredSession; readonly attempt: number }
+  | { readonly kind: "signedOut" };
+
+const appForeground: ForegroundSource = {
+  subscribe: (onForeground) => {
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next === "active") {
+        onForeground();
+      }
+    });
+    return () => subscription.remove();
+  },
+};
 
 const COLORS = {
   bg: "#0f0f0e",
@@ -58,10 +86,6 @@ function chatCount(threads: ReadonlyArray<PersonalBotThread>, botId: string): nu
   return threads.filter((thread) => thread.botId === botId && thread.archivedAt === null).length;
 }
 
-function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
 function BotRow({ bot, chats }: { readonly bot: PersonalBot; readonly chats: number }) {
   return (
     <View style={styles.row}>
@@ -86,9 +110,11 @@ function BotRow({ bot, chats }: { readonly bot: PersonalBot; readonly chats: num
 }
 
 function App() {
-  const [state, setState] = useState<AppState>({ kind: "booting" });
+  const [screen, setScreen] = useState<Screen>({ kind: "booting" });
   const [link, setLink] = useState("");
   const rpcRef = useRef<PersonalRpc | null>(null);
+  const sessionRef = useRef<StoredSession | null>(null);
+  const stopRenewRef = useRef<(() => void) | null>(null);
 
   const disposeRpc = useCallback(() => {
     const rpc = rpcRef.current;
@@ -98,91 +124,200 @@ function App() {
     }
   }, []);
 
-  const showBots = useCallback(async (connection: Connection) => {
-    setState({ kind: "connecting", step: "Loading bots" });
-    const rpc = await connectPersonalRpc(connection.socketUrl);
-    rpcRef.current = rpc;
-    const { result } = await rpc.listBots();
-    setState({
-      kind: "ready",
-      session: connection.session,
-      bots: result.bots,
-      threads: result.threads,
-    });
+  const stopRenew = useCallback(() => {
+    stopRenewRef.current?.();
+    stopRenewRef.current = null;
   }, []);
+
+  const endSession = useCallback(
+    async (next: Screen) => {
+      stopRenew();
+      disposeRpc();
+      sessionRef.current = null;
+      await clearSession();
+      setScreen(next);
+    },
+    [disposeRpc, stopRenew],
+  );
+
+  const handleFailure = useCallback(
+    async (cause: unknown, session: StoredSession, attempt: number) => {
+      disposeRpc();
+      if (classifyFailure(cause).kind === "authDead") {
+        await endSession({ kind: "signedOut" });
+        return;
+      }
+      setScreen({ kind: "laptopOffline", session, attempt });
+    },
+    [disposeRpc, endSession],
+  );
+
+  const goOnline = useCallback(
+    async (session: StoredSession, attempt: number) => {
+      disposeRpc();
+      setScreen({ kind: "connecting", step: "Connecting" });
+      try {
+        const online = await openOnline(session);
+        rpcRef.current = online.rpc;
+        setScreen({
+          kind: "online",
+          session,
+          serverVersion: online.serverVersion,
+          bots: online.bots,
+          threads: online.threads,
+        });
+      } catch (cause) {
+        await handleFailure(cause, session, attempt);
+      }
+    },
+    [disposeRpc, handleFailure],
+  );
+
+  const startRenew = useCallback(() => {
+    stopRenew();
+    stopRenewRef.current = startRenewScheduler({
+      foreground: appForeground,
+      run: async () => {
+        const current = sessionRef.current;
+        if (current === null) {
+          return;
+        }
+        const renewed = await renewSession(current);
+        sessionRef.current = renewed;
+        await saveSession(renewed);
+      },
+      onError: (cause) => {
+        if (classifyFailure(cause).kind === "authDead") {
+          void endSession({ kind: "signedOut" });
+        }
+      },
+    });
+  }, [endSession, stopRenew]);
 
   useEffect(() => {
     let live = true;
     void (async () => {
-      try {
-        const session = await loadSession();
-        if (session === null) {
-          setState({ kind: "pairing", error: null });
-          return;
-        }
-        setState({ kind: "connecting", step: "Connecting" });
-        const connection = await resume(session);
-        if (live) {
-          await showBots(connection);
-        }
-      } catch (cause) {
-        if (live) {
-          setState({ kind: "pairing", error: messageOf(cause) });
-        }
+      const session = await loadSession();
+      if (!live) {
+        return;
       }
+      if (session === null) {
+        setScreen({ kind: "unpaired", error: null, notice: null });
+        return;
+      }
+      sessionRef.current = session;
+      startRenew();
+      await goOnline(session, 0);
     })();
     return () => {
       live = false;
+      stopRenew();
       disposeRpc();
     };
-  }, [disposeRpc, showBots]);
+  }, [disposeRpc, goOnline, startRenew, stopRenew]);
+
+  useEffect(() => {
+    if (screen.kind !== "laptopOffline") {
+      return;
+    }
+    const { session, attempt } = screen;
+    const timer = setTimeout(() => void goOnline(session, attempt + 1), backoffMs(attempt));
+    return () => clearTimeout(timer);
+  }, [goOnline, screen]);
+
+  useEffect(() => {
+    if (screen.kind !== "online") {
+      return;
+    }
+    const { session, serverVersion } = screen;
+    const timer = setInterval(() => {
+      const rpc = rpcRef.current;
+      if (rpc === null) {
+        return;
+      }
+      refreshBots(rpc).then(
+        (snapshot) => setScreen({ kind: "online", session, serverVersion, ...snapshot }),
+        (cause: unknown) => void handleFailure(cause, session, 0),
+      );
+    }, REFRESH_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [handleFailure, screen]);
 
   const submitLink = useCallback(async () => {
     const parsed = parsePairingLink(link);
     if (!parsed.ok) {
-      setState({ kind: "pairing", error: describePairingLinkError(parsed.error) });
+      setScreen({ kind: "unpaired", error: describePairingLinkError(parsed.error), notice: null });
       return;
     }
+    setScreen({ kind: "connecting", step: "Pairing" });
     try {
-      setState({ kind: "connecting", step: "Pairing" });
-      const connection = await pair(parsed.target);
-      await saveSession(connection.session);
-      await showBots(connection);
+      const session = await pair(parsed.target);
+      await saveSession(session);
+      sessionRef.current = session;
+      setLink("");
+      startRenew();
+      await goOnline(session, 0);
     } catch (cause) {
-      disposeRpc();
-      setState({ kind: "pairing", error: messageOf(cause) });
+      setScreen({ kind: "unpaired", error: describePairFailure(cause), notice: null });
     }
-  }, [disposeRpc, link, showBots]);
+  }, [goOnline, link, startRenew]);
 
-  const unpair = useCallback(async () => {
-    disposeRpc();
-    await clearSession();
-    setLink("");
-    setState({ kind: "pairing", error: null });
-  }, [disposeRpc]);
+  const pasteLink = useCallback(async () => {
+    setLink(await Clipboard.getStringAsync());
+  }, []);
+
+  const signOut = useCallback(
+    async (session: StoredSession) => {
+      stopRenew();
+      disposeRpc();
+      setScreen({ kind: "connecting", step: "Signing out" });
+      const outcome = await revokeRemoteSession(session);
+      await endSession({ kind: "unpaired", error: null, notice: describeSignOut(outcome) });
+    },
+    [disposeRpc, endSession, stopRenew],
+  );
+
+  const confirmSignOut = useCallback(
+    (session: StoredSession) => {
+      Alert.alert(
+        "Sign out this phone?",
+        "This removes the sign-in from this phone. Your bots keep running.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Sign out", style: "destructive", onPress: () => void signOut(session) },
+        ],
+      );
+    },
+    [signOut],
+  );
+
+  const pairAgain = useCallback(() => {
+    setScreen({ kind: "unpaired", error: null, notice: null });
+  }, []);
 
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
-        {state.kind === "ready" ? (
+        {screen.kind === "online" ? (
           <View style={styles.flex}>
             <View style={styles.header}>
               <View style={styles.flex}>
                 <Text style={styles.headerTitle}>Bots</Text>
                 <Text style={styles.headerSub} numberOfLines={1}>
-                  {state.bots.length} bots · {state.session.label} · v{state.session.serverVersion}
+                  {screen.bots.length} bots · {screen.session.label}
+                  {screen.serverVersion === null ? "" : ` · v${screen.serverVersion}`}
                 </Text>
               </View>
               <Pressable
-                onPress={() => void unpair()}
+                onPress={() => confirmSignOut(screen.session)}
                 accessibilityRole="button"
                 style={styles.pillButton}
               >
-                <Text style={styles.pillText}>Unpair</Text>
+                <Text style={styles.pillText}>Sign out</Text>
               </Pressable>
             </View>
             <FlatList
-              data={state.bots}
+              data={screen.bots}
               keyExtractor={(bot) => bot.botId}
               getItemLayout={(_, index) => ({
                 length: ROW_HEIGHT,
@@ -190,7 +325,7 @@ function App() {
                 index,
               })}
               renderItem={({ item }) => (
-                <BotRow bot={item} chats={chatCount(state.threads, item.botId)} />
+                <BotRow bot={item} chats={chatCount(screen.threads, item.botId)} />
               )}
               initialNumToRender={20}
               windowSize={9}
@@ -199,15 +334,58 @@ function App() {
         ) : (
           <View style={styles.pairScreen}>
             <Text style={styles.brand}>hbots</Text>
-            {state.kind === "booting" || state.kind === "connecting" ? (
+            {screen.kind === "booting" || screen.kind === "connecting" ? (
               <View style={styles.status}>
                 <ActivityIndicator color={COLORS.accent} />
                 <Text style={styles.statusText}>
-                  {state.kind === "connecting" ? state.step : "Starting"}
+                  {screen.kind === "connecting" ? screen.step : "Starting"}
                 </Text>
               </View>
+            ) : screen.kind === "laptopOffline" ? (
+              <>
+                <Text style={styles.headline}>Can't reach your laptop</Text>
+                <Text style={styles.help}>
+                  It may be off or restarting. You are still paired with {screen.session.label}.
+                  hbots keeps trying.
+                </Text>
+                <Pressable
+                  onPress={() => void goOnline(screen.session, 0)}
+                  accessibilityRole="button"
+                  style={styles.primaryButton}
+                >
+                  <Text style={styles.primaryText}>Retry</Text>
+                </Pressable>
+                <Pressable
+                  onPress={pairAgain}
+                  accessibilityRole="button"
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryText}>Pair again</Text>
+                </Pressable>
+              </>
+            ) : screen.kind === "signedOut" ? (
+              <>
+                <Text style={styles.headline}>You were signed out</Text>
+                <Text style={styles.help}>
+                  {
+                    "This phone's sign-in ended. Make a new pairing link in hbots Settings > Connections."
+                  }
+                </Text>
+                <Pressable
+                  onPress={pairAgain}
+                  accessibilityRole="button"
+                  style={styles.primaryButton}
+                >
+                  <Text style={styles.primaryText}>Pair again</Text>
+                </Pressable>
+              </>
             ) : (
               <>
+                {screen.notice !== null ? (
+                  <View style={styles.noticeBox}>
+                    <Text style={styles.notice}>{screen.notice}</Text>
+                  </View>
+                ) : null}
                 <Text style={styles.label}>Pairing link</Text>
                 <TextInput
                   value={link}
@@ -216,9 +394,18 @@ function App() {
                   placeholderTextColor={COLORS.muted}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  autoComplete="off"
+                  importantForAutofill="no"
                   multiline
                   style={styles.input}
                 />
+                <Pressable
+                  onPress={() => void pasteLink()}
+                  accessibilityRole="button"
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryText}>Paste</Text>
+                </Pressable>
                 <Pressable
                   onPress={() => void submitLink()}
                   accessibilityRole="button"
@@ -226,9 +413,9 @@ function App() {
                 >
                   <Text style={styles.primaryText}>Pair</Text>
                 </Pressable>
-                {state.error !== null ? (
+                {screen.error !== null ? (
                   <View style={styles.errorBox}>
-                    <Text style={styles.error}>{state.error}</Text>
+                    <Text style={styles.error}>{screen.error}</Text>
                   </View>
                 ) : null}
               </>
@@ -319,6 +506,25 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   primaryText: { color: "#171509", fontSize: 16, fontWeight: "700" },
+  headline: { color: COLORS.text, fontSize: 22, fontWeight: "700", letterSpacing: -0.4 },
+  help: { color: COLORS.muted, fontSize: 14, lineHeight: 20 },
+  secondaryButton: {
+    backgroundColor: COLORS.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  secondaryText: { color: COLORS.text, fontSize: 15, fontWeight: "600" },
+  noticeBox: {
+    backgroundColor: COLORS.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    padding: 12,
+  },
+  notice: { color: COLORS.text, fontSize: 13, lineHeight: 18 },
   errorBox: {
     backgroundColor: "#2a1714",
     borderWidth: StyleSheet.hairlineWidth,

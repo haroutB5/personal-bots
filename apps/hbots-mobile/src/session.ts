@@ -3,7 +3,6 @@ import * as SecureStore from "expo-secure-store";
 export interface StoredSession {
   readonly environmentId: string;
   readonly label: string;
-  readonly serverVersion: string;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
   readonly accessToken: string;

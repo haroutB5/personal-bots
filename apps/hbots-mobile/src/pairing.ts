@@ -7,6 +7,8 @@ import {
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./appVersion";
+import { assertSameEnvironment } from "./failure";
+import { requestJson } from "./http";
 import type { PairingTarget } from "./pairingLink";
 import type { StoredSession } from "./session";
 
@@ -15,27 +17,21 @@ const decodeToken = Schema.decodeUnknownSync(AuthAccessTokenResult);
 const WebSocketTicketWire = Schema.Struct({ ticket: AuthWebSocketTicketResult.fields.ticket });
 export const decodeTicket = Schema.decodeUnknownSync(WebSocketTicketWire);
 
-export interface Connection {
-  readonly session: StoredSession;
-  readonly socketUrl: string;
+async function fetchDescriptor(httpBaseUrl: string) {
+  return decodeDescriptor(
+    await requestJson("descriptor", new URL("/.well-known/t3/environment", httpBaseUrl)),
+  );
 }
 
-async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(
-      `HTTP ${String(response.status)} ${response.statusText}: ${text.slice(0, 240)}`,
-    );
-  }
-  return JSON.parse(text) as unknown;
-}
-
-async function openSocketUrl(session: StoredSession): Promise<string> {
-  const response = await fetch(new URL("/api/auth/websocket-ticket", session.httpBaseUrl), {
-    method: "POST",
-    headers: { authorization: `Bearer ${session.accessToken}` },
-  });
-  const ticket = decodeTicket(await readJson(response));
+export async function openSocketUrl(session: StoredSession): Promise<string> {
+  const descriptor = await fetchDescriptor(session.httpBaseUrl);
+  assertSameEnvironment(session.environmentId, descriptor.environmentId);
+  const ticket = decodeTicket(
+    await requestJson("ticket", new URL("/api/auth/websocket-ticket", session.httpBaseUrl), {
+      method: "POST",
+      headers: { authorization: `Bearer ${session.accessToken}` },
+    }),
+  );
   const socketUrl = new URL("/ws", session.wsBaseUrl);
   socketUrl.searchParams.set("wsTicket", ticket.ticket);
   socketUrl.searchParams.set("clientSurface", "mobile");
@@ -45,34 +41,31 @@ async function openSocketUrl(session: StoredSession): Promise<string> {
   return socketUrl.toString();
 }
 
-export async function pair(target: PairingTarget): Promise<Connection> {
-  const descriptorResponse = await fetch(
-    new URL("/.well-known/t3/environment", target.httpBaseUrl),
+export async function pair(target: PairingTarget): Promise<StoredSession> {
+  const descriptor = await fetchDescriptor(target.httpBaseUrl);
+  const token = decodeToken(
+    await requestJson("pair", new URL("/oauth/token", target.httpBaseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        subject_token: target.credential,
+        subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+        requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+        scope: AuthStandardClientScopes.join(" "),
+        client_label: "hbots android",
+        client_device_type: "mobile",
+        client_os: "android",
+      }).toString(),
+    }),
   );
-  const descriptor = decodeDescriptor(await readJson(descriptorResponse));
-  const tokenResponse = await fetch(new URL("/oauth/token", target.httpBaseUrl), {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-      subject_token: target.credential,
-      subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
-      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-      scope: AuthStandardClientScopes.join(" "),
-      client_label: "hbots android",
-      client_device_type: "mobile",
-      client_os: "android",
-    }).toString(),
-  });
-  const token = decodeToken(await readJson(tokenResponse));
   if (token.token_type !== "Bearer") {
     throw new Error("The server issued a session this app cannot use.");
   }
   const now = Date.now();
-  const session: StoredSession = {
+  return {
     environmentId: descriptor.environmentId,
     label: descriptor.label,
-    serverVersion: descriptor.serverVersion,
     httpBaseUrl: target.httpBaseUrl,
     wsBaseUrl: target.wsBaseUrl,
     accessToken: token.access_token,
@@ -80,9 +73,4 @@ export async function pair(target: PairingTarget): Promise<Connection> {
     expiresAt: now + token.expires_in * 1000,
     pairedAt: now,
   };
-  return { session, socketUrl: await openSocketUrl(session) };
-}
-
-export async function resume(session: StoredSession): Promise<Connection> {
-  return { session, socketUrl: await openSocketUrl(session) };
 }
