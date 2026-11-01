@@ -29,3 +29,15 @@ Harout: "Check why p-stack team isn't working well with Claude. Keeps stopping a
   - `an approval answer with no unfinished task still adopts its turn as a root` (keeps the old path)
 - Lead-bot service tests stay green: `src/mcp/toolkits/bots/leadBots.test.ts` and `handlers.test.ts`, 97/97.
 - Server typecheck (`node scripts/personal/node/typecheck-lean.mjs`) exits 0.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=5a67a39f2a1e6d731766bdb28031fdd4dca1bf98 release=5a67a39f2a1e json-sha256=9d41190d59186017c71a3bbab080c28ded6550c1efbcbe1777397bfdb4ae10ba result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
