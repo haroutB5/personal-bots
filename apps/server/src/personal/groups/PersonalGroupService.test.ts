@@ -2643,3 +2643,57 @@ it.live(
     }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
+
+// ---------------------------------------------------------------------------
+// 27. a resent message with the same client id is stored once
+// ---------------------------------------------------------------------------
+
+/** The resend contract: one client minted id, one message row, one round. */
+const resendCounting = (harness: Harness) =>
+  Effect.gen(function* () {
+    const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
+    const stored = yield* repository.listMessagesAfter({ groupId: GROUP, afterSeq: 0 });
+    const appended = harness.dispatched.filter(
+      (command) => command.type === "thread.message.user.append",
+    );
+    const transcript = groupTranscript(harness).filter((message) => message.role === "user");
+    return { stored: stored.length, appended: appended.length, transcript: transcript.length };
+  });
+
+it.effect("resending one client id in sequence stores one message and one round", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"]);
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const messageId = MessageId.make("msg-resend");
+    const resend = () =>
+      service.sendMessage({ groupId: GROUP, messageId, text: "Ship it on Monday?" });
+
+    const first = yield* resend();
+    yield* service.drain;
+    const second = yield* resend();
+    yield* service.drain;
+
+    expect(second.roundId).toBe(first.roundId);
+    expect(yield* resendCounting(harness)).toEqual({ stored: 1, appended: 1, transcript: 1 });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("two concurrent sends of one client id store one message and make one round", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"]);
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const messageId = MessageId.make("msg-concurrent");
+    const resend = () =>
+      service.sendMessage({ groupId: GROUP, messageId, text: "Which day works?" });
+
+    const [first, second] = yield* Effect.all([resend(), resend()], { concurrency: "unbounded" });
+    yield* service.drain;
+
+    expect(second.roundId).toBe(first.roundId);
+    expect(yield* resendCounting(harness)).toEqual({ stored: 1, appended: 1, transcript: 1 });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
