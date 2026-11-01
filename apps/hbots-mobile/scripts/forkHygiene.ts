@@ -76,6 +76,8 @@ const SKIPPED_DIRECTORIES: ReadonlySet<string> = new Set([
 const RULE_DEFINITION_FILES: ReadonlySet<string> = new Set([
   "scripts/forkHygiene.ts",
   "scripts/fork-hygiene.test.ts",
+  "scripts/bundleScan.ts",
+  "scripts/bundle-scan.test.ts",
 ]);
 
 export function scanText(
