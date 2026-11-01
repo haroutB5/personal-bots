@@ -1,3 +1,7 @@
+import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
+
+export const SESSION_REVOKED_CLOSE_CODE = 4401;
+
 export type RequestRoute =
   | "descriptor"
   | "compat"
@@ -32,7 +36,11 @@ export class RequestFailure extends Error {
 export type Failure =
   | {
       readonly kind: "authDead";
-      readonly reason: "unauthorized" | "session-ended" | "environment-mismatch";
+      readonly reason:
+        | "unauthorized"
+        | "session-ended"
+        | "session-revoked"
+        | "environment-mismatch";
     }
   | { readonly kind: "unreachable" };
 
@@ -53,7 +61,18 @@ function describeDetail(detail: FailureDetail): string {
   }
 }
 
+function isSessionRevokedClose(error: unknown): boolean {
+  return (
+    error instanceof RpcClientError &&
+    error.reason._tag === "SocketCloseError" &&
+    error.reason.code === SESSION_REVOKED_CLOSE_CODE
+  );
+}
+
 export function classifyFailure(error: unknown): Failure {
+  if (isSessionRevokedClose(error)) {
+    return { kind: "authDead", reason: "session-revoked" };
+  }
   if (!(error instanceof RequestFailure)) {
     return { kind: "unreachable" };
   }
