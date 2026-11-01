@@ -62,7 +62,7 @@ function requestResult<A>(request: IDBRequest<A>): Promise<A> {
   });
 }
 
-const indexedDbBackend: OutboxBlobBackend = {
+export const indexedDbBackend: OutboxBlobBackend = {
   async put(key, blob) {
     const transaction = (await openDatabase()).transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(blob, key);

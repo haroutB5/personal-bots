@@ -35,6 +35,10 @@
       "types": "./src/ports/ids.ts",
       "import": "./src/ports/ids.ts"
     },
+    "./ports/personalPorts": {
+      "types": "./src/ports/personalPorts.ts",
+      "import": "./src/ports/personalPorts.ts"
+    },
     "./testing/fakes": {
       "types": "./src/testing/fakes.ts",
       "import": "./src/testing/fakes.ts"
@@ -52,6 +56,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
     "@types/react": "~19.2.14",
     "@types/react-dom": "~19.2.3",
     "react": "19.2.6",
