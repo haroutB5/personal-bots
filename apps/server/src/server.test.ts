@@ -1424,6 +1424,79 @@ const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void
   );
 };
 
+interface RawWsClient {
+  readonly socket: NodeSocket.NodeWS.WebSocket;
+  readonly closed: Promise<{ readonly code: number; readonly reason: string; readonly at: number }>;
+}
+
+const openRawWsClient = (url: string) => {
+  const { cookie, url: plainUrl } = parseSessionCookieFromWsUrl(url);
+  return Effect.acquireRelease(
+    Effect.callback<RawWsClient, Error>((resume) => {
+      const socket = new NodeSocket.NodeWS.WebSocket(
+        plainUrl,
+        cookie ? { headers: { cookie } } : undefined,
+      );
+      const closed = new Promise<{ code: number; reason: string; at: number }>((resolve) => {
+        socket.on("close", (code, reason) =>
+          resolve({ code, reason: reason.toString(), at: Date.now() }),
+        );
+      });
+      socket.on("open", () => resume(Effect.succeed({ socket, closed })));
+      socket.on("error", (error) => resume(Effect.fail(error)));
+    }),
+    (client) => Effect.sync(() => client.socket.close()),
+  );
+};
+
+const probeRawWsClient = (client: RawWsClient, id: string) =>
+  Effect.promise(
+    () =>
+      new Promise<string>((resolve) => {
+        const timer = setTimeout(() => resolve("no response"), 2000);
+        const onMessage = (data: NodeSocket.NodeWS.RawData) => {
+          const message = JSON.parse(data.toString()) as {
+            readonly _tag?: string;
+            readonly requestId?: string;
+            readonly exit?: { readonly _tag: string };
+          };
+          if (message._tag === "Exit" && message.requestId === id) {
+            clearTimeout(timer);
+            client.socket.off("message", onMessage);
+            resolve(message.exit?._tag ?? "no exit");
+          }
+        };
+        client.socket.on("message", onMessage);
+        client.socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id,
+            tag: WS_METHODS.serverProbe,
+            payload: {},
+            headers: [],
+          }),
+        );
+      }),
+  );
+
+const awaitRawWsClose = (client: RawWsClient, withinMs: number) =>
+  Effect.promise(() =>
+    Promise.race([
+      client.closed,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), withinMs)),
+    ]),
+  );
+
+const pairClientSessionCookie = (ownerCookie: string, label: string) =>
+  Effect.gen(function* () {
+    const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+      headers: { cookie: ownerCookie },
+      body: yield* HttpBody.json({ label }),
+    });
+    const pairingBody = (yield* pairingResponse.json) as { readonly credential: string };
+    return yield* getAuthenticatedSessionCookieHeader(pairingBody.credential);
+  });
+
 const makeWsRpcClient = RpcClient.make(WsRpcGroup);
 type WsRpcClient =
   typeof makeWsRpcClient extends Effect.Effect<infer Client, any, any> ? Client : never;
@@ -5463,6 +5536,126 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(revokeResponse.status, 200);
       assert.equal(pairedClientPairingResponse.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("closes the socket of a session that revokes itself and keeps other sockets", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const bearerToken = yield* getAuthenticatedBearerSessionToken();
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${bearerToken}` },
+      });
+      const ticketBody = (yield* ticketResponse.json) as { readonly ticket: string };
+      const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+      const bearerSocket = yield* openRawWsClient(
+        `${baseWsUrl}?wsTicket=${encodeURIComponent(ticketBody.ticket)}`,
+      );
+      const ownerSocket = yield* openRawWsClient(yield* getWsServerUrl("/ws"));
+      assert.equal(yield* probeRawWsClient(bearerSocket, "1"), "Success");
+      assert.equal(yield* probeRawWsClient(ownerSocket, "1"), "Success");
+
+      const revokedAt = Date.now();
+      const revokeResponse = yield* HttpClient.post("/api/auth/session/revoke", {
+        headers: { authorization: `Bearer ${bearerToken}` },
+      });
+      assert.equal(revokeResponse.status, 200);
+
+      const closed = yield* awaitRawWsClose(bearerSocket, 1000);
+      assert.isNotNull(closed);
+      assert.equal(closed?.code, 4401);
+      assert.equal(closed?.reason, "session_revoked");
+      assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
+      assert.equal(ownerSocket.socket.readyState, ownerSocket.socket.OPEN);
+      assert.equal(yield* probeRawWsClient(ownerSocket, "2"), "Success");
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("closes only the sockets of the client revoked in settings", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: { host: "0.0.0.0" } });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
+      const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+      const phoneSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseWsUrl, phoneCookie),
+      );
+      const phoneSecondSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseWsUrl, phoneCookie),
+      );
+      const tabletSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseWsUrl, tabletCookie),
+      );
+      const ownerSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseWsUrl, ownerCookie),
+      );
+      assert.equal(yield* probeRawWsClient(phoneSocket, "1"), "Success");
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: { cookie: ownerCookie },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly client: { readonly label?: string };
+      }>;
+      const phoneSessionId = clients.find((entry) => entry.client.label === "Phone")?.sessionId;
+      assert.isDefined(phoneSessionId);
+
+      const revokedAt = Date.now();
+      const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
+        headers: { cookie: ownerCookie, "content-type": "application/json" },
+        body: HttpBody.text(jsonRequestBody({ sessionId: phoneSessionId }), "application/json"),
+      });
+      assert.equal(revokeResponse.status, 200);
+
+      for (const revoked of [phoneSocket, phoneSecondSocket]) {
+        const closed = yield* awaitRawWsClose(revoked, 1000);
+        assert.isNotNull(closed);
+        assert.equal(closed?.code, 4401);
+        assert.equal(closed?.reason, "session_revoked");
+        assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
+      }
+      assert.equal(yield* probeRawWsClient(tabletSocket, "2"), "Success");
+      assert.equal(yield* probeRawWsClient(ownerSocket, "2"), "Success");
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("closes the sockets of every other session when the others are revoked", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: { host: "0.0.0.0" } });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+      const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
+      const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+      const phoneSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseWsUrl, phoneCookie),
+      );
+      const tabletSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseWsUrl, tabletCookie),
+      );
+      const ownerSocket = yield* openRawWsClient(
+        appendSessionCookieToWsUrl(baseWsUrl, ownerCookie),
+      );
+      assert.equal(yield* probeRawWsClient(tabletSocket, "1"), "Success");
+
+      const revokedAt = Date.now();
+      const revokeOthersResponse = yield* HttpClient.post("/api/auth/clients/revoke-others", {
+        headers: { cookie: ownerCookie },
+      });
+      assert.equal(revokeOthersResponse.status, 200);
+
+      for (const revoked of [phoneSocket, tabletSocket]) {
+        const closed = yield* awaitRawWsClose(revoked, 1000);
+        assert.isNotNull(closed);
+        assert.equal(closed?.code, 4401);
+        assert.equal(closed?.reason, "session_revoked");
+        assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
+      }
+      assert.equal(yield* probeRawWsClient(ownerSocket, "2"), "Success");
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("allows reusing the desktop bootstrap credential", () =>
