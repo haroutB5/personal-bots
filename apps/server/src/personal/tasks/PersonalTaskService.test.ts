@@ -11,6 +11,7 @@ import {
   EventId,
   MessageId,
   OrchestrationMessageContext,
+  PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalBotId,
@@ -5305,4 +5306,162 @@ it.effect("schedulers on: the same queued task starts as before", () => {
     expect(turnStarts(harness).length).toBe(1);
     expect((yield* reload(task.taskId)).status).toBe("running");
   }).pipe(Effect.provide(makeLayer(harness)), withSchedulersEnv("on"));
+});
+
+// Poteto on Claude (11:06-11:48, 1 Nov): a lead's normal line "I'll pick it up
+// when either one reports back." held its own attempt open for the 8 h cap,
+// so the finished children's results could not start the continuation.
+
+it.effect(
+  "a Claude lead's stated wait ends when its delegated children can report, and their result continues it",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("claude-lead-children");
+      const rootThread = threadOf(root);
+      const rootTurn = yield* beginClaudeTurn(harness, rootThread);
+      const child = yield* service.delegate({
+        parentTaskId: root.taskId,
+        targetBotId: botId("developer"),
+        brief: brief("Build it"),
+      });
+      yield* service.drain;
+      expect((yield* reload(child.taskId)).status).toBe("running");
+
+      yield* endClaudeTurn(
+        harness,
+        rootThread,
+        rootTurn,
+        "I'll pick it up when either one reports back.",
+      );
+
+      // The app delivers the child's result itself, so the words must not hold
+      // the attempt: it ends and the task waits on the child.
+      const waiting = yield* service.get({ taskId: root.taskId });
+      expect(waiting.task.status).toBe("waiting_for_agent");
+      expect(waiting.attempts.every((attempt) => attempt.endedAt !== null)).toBe(true);
+
+      yield* runTurn(harness, threadOf(yield* reload(child.taskId)), "Built.");
+      const continued = yield* reload(root.taskId);
+      expect(continued.status).toBe("running");
+      const continuation = turnStarts(harness).at(-1)!;
+      expect(continuation.threadId).toBe(rootThread);
+      expect(continuation.message.text).toContain("[Task continuation]");
+      expect(continuation.message.text).toContain("Built.");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+// af335eaa (1 Nov): the owner's approval answer ran as a plain user turn while
+// the lead's task had no active attempt, so MCP's caller resolution created a
+// new root and the delegation made in that turn was parented to it.
+
+const teamAnswerContext = {
+  version: 1,
+  records: [
+    {
+      version: 1,
+      contextId: "chat-notice-team-answer",
+      label: "Chat notice",
+      kind: PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
+      payload: { notice: "team-bot-answer", provider: "Team" },
+    },
+  ],
+} as unknown as OrchestrationMessageContext;
+
+it.effect(
+  "an approval answer joins the thread's unfinished task instead of starting a root",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("team-answer");
+      const rootThread = threadOf(root);
+      const firstTurn = yield* beginTurn(harness, rootThread);
+      yield* service.delegate({
+        parentTaskId: root.taskId,
+        targetBotId: botId("developer"),
+        brief: brief("Ship it"),
+      });
+      yield* endTurn(harness, rootThread, firstTurn, "Delegated.");
+      expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+
+      // The answer starts a turn of its own; no attempt owns the thread, so this
+      // is exactly the moment the live bug created a second root.
+      const answerTurn = yield* beginTurn(harness, rootThread);
+      const now = DateTime.formatIso(yield* DateTime.now);
+      harness.messages.set(rootThread, [
+        ...(harness.messages.get(rootThread) ?? []),
+        {
+          messageId: MessageId.make("personal-lead-answer-test"),
+          threadId: rootThread,
+          turnId: answerTurn,
+          role: "user",
+          text: "[Team change answered] Harout approved your request.",
+          context: teamAnswerContext,
+          isStreaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+
+      const caller = yield* service.resolveCallerTask({
+        threadId: rootThread,
+        botId: botId("assistant"),
+        turnId: answerTurn,
+      });
+      expect(caller.taskId).toBe(root.taskId);
+
+      // The delegation made in the answer turn is a child of the running task.
+      const handed = yield* service.delegate({
+        parentTaskId: caller.taskId,
+        targetBotId: botId("researcher"),
+        brief: brief("Follow up"),
+      });
+      expect(handed.parentTaskId).toBe(root.taskId);
+      expect(handed.rootTaskId).toBe(root.taskId);
+
+      // No new root was filed for the answer turn.
+      const all = yield* service.list({});
+      expect(
+        all.tasks.filter((task) => task.parentTaskId === null).map((task) => task.taskId),
+      ).toEqual([root.taskId]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("an approval answer with no unfinished task still adopts its turn as a root", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const threadId = ThreadId.make("team-answer-empty-thread");
+    const turnId = TurnId.make("team-answer-empty-turn");
+    const now = DateTime.formatIso(yield* DateTime.now);
+    harness.messages.set(threadId, [
+      {
+        messageId: MessageId.make("personal-lead-answer-empty"),
+        threadId,
+        turnId,
+        role: "user",
+        text: "[Team change answered] Harout approved your request.",
+        context: teamAnswerContext,
+        isStreaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    const caller = yield* service.resolveCallerTask({
+      threadId,
+      botId: botId("assistant"),
+      turnId,
+    });
+    expect(caller.source).toBe("user");
+    expect(caller.threadId).toBe(threadId);
+    expect(caller.parentTaskId).toBeNull();
+  }).pipe(Effect.provide(makeLayer(harness)));
 });

@@ -285,6 +285,13 @@ export class PersonalTaskRepository extends Context.Service<
     readonly latestTaskForThread: (
       threadId: ThreadId,
     ) => Effect.Effect<Option.Option<PersonalTask>, PersonalTaskRepositoryError>;
+    /**
+     * The most recently created task that ran on `threadId` and has not
+     * finished: a turn in that chat belongs to it rather than to a new root.
+     */
+    readonly latestUnfinishedTaskForThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<PersonalTask>, PersonalTaskRepositoryError>;
     readonly insertResumeNote: (
       note: PersonalTaskResumeNote,
     ) => Effect.Effect<void, PersonalTaskRepositoryError>;
@@ -781,6 +788,22 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.flatMap((rows) => firstTask("latestTaskForThread", rows)));
 
+  const latestUnfinishedTaskForThread: PersonalTaskRepository["Service"]["latestUnfinishedTaskForThread"] =
+    (threadId) =>
+      query(
+        "latestUnfinishedTaskForThread",
+        sql`
+          SELECT ${sql.literal(TASK_COLUMNS)}
+          FROM personal_tasks
+          WHERE thread_id = ${threadId}
+            AND status NOT IN (${sql.literal(
+              PERSONAL_TASK_TERMINAL_STATUSES.map((status) => `'${status}'`).join(", "),
+            )})
+          ORDER BY created_at DESC, rowid DESC
+          LIMIT 1
+        `,
+      ).pipe(Effect.flatMap((rows) => firstTask("latestUnfinishedTaskForThread", rows)));
+
   const insertResumeNote: PersonalTaskRepository["Service"]["insertResumeNote"] = (note) =>
     query(
       "insertResumeNote",
@@ -905,6 +928,7 @@ export const make = Effect.gen(function* () {
     getHandoffByChild,
     listHandoffsByParent,
     latestTaskForThread,
+    latestUnfinishedTaskForThread,
     insertResumeNote,
     listUndeliveredNotes,
     markNotesDelivered,

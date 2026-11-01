@@ -4,7 +4,13 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { PersonalTaskId, type PersonalTask, type PersonalTaskAttempt } from "@t3tools/contracts";
+import {
+  PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
+  PersonalTaskId,
+  type OrchestrationMessageContext,
+  type PersonalTask,
+  type PersonalTaskAttempt,
+} from "@t3tools/contracts";
 import {
   LEASE_MINUTES,
   PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
@@ -38,6 +44,20 @@ export const makeTaskCallers = (
   } = core;
   const { worker } = glue;
 
+  /**
+   * The server's turn message telling a team lead how the owner answered its
+   * request. It is not a new request: it belongs to whatever the lead's chat
+   * is already working on, so its delegations must join that task's tree
+   * instead of a fresh root (af335eaa, 1 Nov).
+   */
+  const isTeamAnswer = (context: OrchestrationMessageContext | undefined): boolean =>
+    context?.records.some((record) => {
+      if (record.kind !== PERSONAL_CHAT_NOTICE_CONTEXT_KIND) return false;
+      if (!("payload" in record)) return false;
+      const payload = record.payload as { readonly notice?: unknown } | null;
+      return payload?.notice === "team-bot-answer";
+    }) ?? false;
+
   const resolveCallerTask: PersonalTaskService["Service"]["resolveCallerTask"] = (input) =>
     lock
       .withPermit(
@@ -63,8 +83,17 @@ export const makeTaskCallers = (
             .pipe(
               Effect.mapError((cause) => fail("Personal tasks could not read the thread.", cause)),
             );
-          const lastUserText =
-            threadMessages.findLast((message) => message.role === "user")?.text.trim() ?? "";
+          const lastUser = threadMessages.findLast((message) => message.role === "user");
+          // The owner's answer to a lead's request arrives while the lead's
+          // task waits for its continuation, so no attempt owns the thread.
+          // Reusing that task keeps the answer's delegations in its tree.
+          if (lastUser !== undefined && isTeamAnswer(lastUser.context)) {
+            const unfinished = yield* repository.latestUnfinishedTaskForThread(input.threadId);
+            if (Option.isSome(unfinished) && unfinished.value.botId === input.botId) {
+              return unfinished.value;
+            }
+          }
+          const lastUserText = lastUser?.text.trim() ?? "";
           const objective =
             lastUserText.length > 0
               ? lastUserText.slice(0, 4_000)

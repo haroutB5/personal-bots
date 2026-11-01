@@ -275,6 +275,15 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
           .getThreadLiveTaskIds(attempt.providerThreadId)
           .filter((taskId) => !backgroundFor(attempt).baseline.has(taskId))
       : [];
+    // The app delivers a delegated child's result itself and starts the task's
+    // continuation, so the lead's own words must not hold the attempt open: a
+    // normal "I'll pick it up when either one reports back." kept Poteto's
+    // attempt open for the 8 h cap while finished results waited (1 Nov).
+    const openChildren =
+      claude &&
+      (yield* repository.listHandoffsByParent(attempt.taskId)).some(
+        (handoff) => handoff.status === "pending" || handoff.status === "returned",
+      );
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const step = stepBackgroundWait(backgroundFor(attempt), {
       pending,
@@ -282,6 +291,7 @@ export const makeTaskSettling = (core: TaskCore, dispatch: TaskDispatch) => {
       nowMs,
       last: last === undefined ? undefined : { messageId: last.messageId, text: last.text },
       statedWait: claude && last !== undefined && saysItIsWaiting(last.text),
+      openChildren,
     });
     backgroundByThread.set(attempt.providerThreadId, step.state);
     if (step.kind === "wait") {

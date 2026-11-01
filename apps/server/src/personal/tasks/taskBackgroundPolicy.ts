@@ -157,6 +157,15 @@ export interface BackgroundStepInput {
   readonly last: BackgroundReply | undefined;
   /** The newest reply says the bot is still waiting (Claude only; see {@link saysItIsWaiting}). */
   readonly statedWait: boolean;
+  /**
+   * The attempt's task has delegated children whose results the app delivers
+   * itself: still running, or finished and waiting to be handed over. The
+   * continuation comes from the app, so the bot's words must not hold the
+   * attempt open (a lead's normal "I'll pick it up when either one reports
+   * back." held it for the 8 h cap while finished results waited; Poteto,
+   * 1 Nov). Claude only, like {@link statedWait}.
+   */
+  readonly openChildren: boolean;
 }
 
 export type BackgroundStep = {
@@ -233,15 +242,22 @@ export const stepBackgroundWait = (
     !replies.some((held) => held.messageId === input.last!.messageId)
       ? input.last
       : undefined;
-  const statedNow = input.statedWait && input.last !== undefined;
+  const statedNow = input.statedWait && input.last !== undefined && !input.openChildren;
+  // A task with delegated children gets its results from the app, so the bot's
+  // words are not the only route to the continuation: drop a stated wait,
+  // including one already in force from an earlier reply.
+  if (input.openChildren) {
+    statedWaitMessageId = null;
+    statedWaitSinceMs = null;
+  }
   // A wait once stated stays in force while the newest reply is still the one
   // that said it (a sweep with nothing new ends nothing); a newer reply that
   // says something else clears it.
   const stated =
     statedNow ||
-    (current.statedWaitMessageId !== null &&
-      (input.last === undefined || input.last.messageId === current.statedWaitMessageId));
-  const newStatement = statedNow && input.last!.messageId !== current.statedWaitMessageId;
+    (statedWaitMessageId !== null &&
+      (input.last === undefined || input.last.messageId === statedWaitMessageId));
+  const newStatement = statedNow && input.last!.messageId !== statedWaitMessageId;
   if (newStatement) {
     statedWaitMessageId = input.last!.messageId;
     statedWaitSinceMs ??= nowMs;

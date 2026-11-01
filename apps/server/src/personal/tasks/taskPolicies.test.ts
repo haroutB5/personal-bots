@@ -464,14 +464,14 @@ describe("turn policy", () => {
       "Update from CTO: narrow the scope",
     );
     expect(steerText("CTO", "CTO: check the logs")).toBe("Update from CTO: check the logs");
-    expect(steerText("CTO", "CTO here. Check the logs")).toBe(
-      "Update from CTO: Check the logs",
-    );
+    expect(steerText("CTO", "CTO here. Check the logs")).toBe("Update from CTO: Check the logs");
     expect(steerText("CTO", "Update from CTO. Check the logs")).toBe(
       "Update from CTO: Check the logs",
     );
     // A name in the middle of a sentence, or another bot's attribution, is not touched.
-    expect(steerText("CTO", "The CTO asked for this")).toBe("Update from CTO: The CTO asked for this");
+    expect(steerText("CTO", "The CTO asked for this")).toBe(
+      "Update from CTO: The CTO asked for this",
+    );
     expect(steerText("CTO", "Frontend: check this")).toBe("Update from CTO: Frontend: check this");
     // Nothing is left: keep the words rather than send an empty steer.
     expect(steerText("CTO", "From CTO.")).toBe("Update from CTO: From CTO.");
@@ -494,9 +494,7 @@ describe("turn policy", () => {
     expect(steerText("Assistant", "From Assistants notes")).toBe(
       "Update from Assistant: From Assistants notes",
     );
-    expect(steerText("Dev", "From Developer notes")).toBe(
-      "Update from Dev: From Developer notes",
-    );
+    expect(steerText("Dev", "From Developer notes")).toBe("Update from Dev: From Developer notes");
   });
 
   it("drops a delegator's own attribution from the brief it labels", () => {
@@ -524,9 +522,9 @@ describe("turn policy", () => {
       "Expected output:\nDone",
     ]);
     // A user's task keeps its words exactly.
-    expect(
-      taskSections({ ...delegation, objective: "From CTO. Do it" }, null),
-    ).toContain("Objective:\nFrom CTO. Do it");
+    expect(taskSections({ ...delegation, objective: "From CTO. Do it" }, null)).toContain(
+      "Objective:\nFrom CTO. Do it",
+    );
   });
 });
 
@@ -538,6 +536,7 @@ describe("background policy", () => {
     nowMs: NOW,
     last: { messageId: "m1", text: "Started the build." },
     statedWait: false,
+    openChildren: false,
     ...overrides,
   });
 
@@ -644,6 +643,7 @@ describe("stated wait: the bot's own words", () => {
     nowMs: NOW,
     last: { messageId: "m1", text: "Started the build." },
     statedWait: false,
+    openChildren: false,
     ...overrides,
   });
   const waiting = (text: string, messageId = "m1") => ({
@@ -705,6 +705,59 @@ describe("stated wait: the bot's own words", () => {
         text: "The build is queued behind the heavy lock. I'll pick it up when it finishes.",
       },
     ]);
+  });
+
+  it("does not let the words hold an attempt whose delegated children the app delivers", () => {
+    // A lead's normal line while its children work: "I'll pick it up when either
+    // one reports back." The app starts the continuation itself when a child
+    // reports, so this reply must not keep the attempt open for hours.
+    const step = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({
+        pending: [],
+        last: waiting("I'll pick it up when either one reports back."),
+        statedWait: true,
+        openChildren: true,
+      }),
+    );
+    expect(step).toMatchObject({ kind: "finish", capped: false, capSource: null });
+    expect(step.state.statedWaitMessageId).toBeNull();
+    expect(isWaitingOnBackground(step.state, key)).toBe(false);
+  });
+
+  it("ends a held stated wait once a delegated child has a result to deliver", () => {
+    const held = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({
+        pending: [],
+        last: waiting("I'll pick it up when either one reports back."),
+        statedWait: true,
+      }),
+    );
+    expect(held).toMatchObject({ kind: "wait", stated: true });
+    const childReported = stepBackgroundWait(
+      held.state,
+      input({
+        nowMs: NOW + 30_000,
+        last: waiting("I'll pick it up when either one reports back."),
+        statedWait: true,
+        openChildren: true,
+      }),
+    );
+    expect(childReported).toMatchObject({ kind: "finish", capped: false, capSource: null });
+  });
+
+  it("keeps a background command's wait even while children are open", () => {
+    const step = stepBackgroundWait(
+      newBackgroundWait(key),
+      input({
+        pending: ["bg-1"],
+        last: waiting("I'll pick it up when either one reports back."),
+        statedWait: true,
+        openChildren: true,
+      }),
+    );
+    expect(step).toMatchObject({ kind: "wait", stated: false });
   });
 
   it("holds a follow-up turn that itself says it is still waiting", () => {
