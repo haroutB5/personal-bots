@@ -33,6 +33,7 @@ import { ServerConfig } from "../../config.ts";
 import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { isExpensiveSeedModel } from "../seedModel.ts";
+import { readLiveHbotsVersion } from "../releaseVersion.ts";
 import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
 import { memoryAutoApplyEnabled } from "./memoryAutoApply.ts";
 import { appsToJson, normaliseApps, parseAppsJson, unknownApps } from "./memoryApps.ts";
@@ -512,14 +513,6 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  /** The live app version, from the served client's version.txt (null in tests). */
-  const readAppVersion =
-    staticDir === undefined
-      ? Effect.succeed(null)
-      : fileSystem.readFileString(path.join(staticDir, "version.txt")).pipe(
-          Effect.map((text) => /^version=(.+)$/m.exec(text)?.[1]?.trim() || null),
-          Effect.orElseSucceed(() => null),
-        );
   // A nightly run and a "Preview now" never overlap.
   const lock = yield* Semaphore.make(1);
 
@@ -901,7 +894,7 @@ export const make = Effect.gen(function* () {
         VALUES (${runId}, ${nowIso}, 'running', ${dryRun ? 1 : 0}, ${nightly ? 1 : 0}, ${judge.model})
       `;
       const outcome = yield* Effect.gen(function* () {
-        const appVersion = yield* readAppVersion;
+        const appVersion = yield* readLiveHbotsVersion(staticDir);
         const entries = yield* readEntries;
         const versions = new Map(entries.map((entry) => [entry.memoryId, entry.version]));
         const byMemoryId = new Map(entries.map((entry) => [entry.memoryId, entry]));
@@ -2188,7 +2181,7 @@ export const make = Effect.gen(function* () {
               ),
             ),
             Effect.andThen(
-              readAppVersion.pipe(
+              readLiveHbotsVersion(staticDir).pipe(
                 Effect.flatMap((appVersion) =>
                   importInbox({ appVersion, shipped: SHIPPED_MEMORY_PROPOSALS }),
                 ),

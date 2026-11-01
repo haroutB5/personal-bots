@@ -10,8 +10,6 @@
  */
 import { AuthOrchestrationReadScope, type PerformanceStatics } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
@@ -23,6 +21,7 @@ import {
   PersonalBotRepository,
   type PersonalBotProviderSession,
 } from "../PersonalBotRepository.ts";
+import { readLiveHbotsVersion } from "../releaseVersion.ts";
 import { attributeBotProcesses } from "./botAttribution.ts";
 import type { BotOwner } from "./processGroups.ts";
 import type { PerformanceSampler } from "./performanceSampler.ts";
@@ -30,16 +29,6 @@ import { buildPerformanceSampler, processStartedAt, type BuildSamplerDeps } from
 import type { PerformanceStreamEvent } from "@t3tools/contracts";
 
 export const PERSONAL_PERFORMANCE_STREAM_PATH = "/api/personal/performance/stream";
-
-/** The version this server runs, from the served client stamp. */
-const readVersion = (staticDir: string | undefined) =>
-  Effect.gen(function* () {
-    if (staticDir === undefined) return null;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const text = yield* fileSystem.readFileString(path.join(staticDir, "version.txt"));
-    return /^version=(.+)$/m.exec(text)?.[1]?.trim() || null;
-  }).pipe(Effect.orElseSucceed(() => null));
 
 export interface PerformanceRouteOptions {
   /** Test seam: build the sampler with fake machine deps. */
@@ -68,7 +57,7 @@ export const makePersonalPerformanceStreamRouteLayer = (options: PerformanceRout
       const context = yield* Effect.context<PersonalBotRepository>();
 
       if (sampler === null) {
-        const version = yield* readVersion(staticDir);
+        const version = yield* readLiveHbotsVersion(staticDir);
         const startedAtMs = processStartedAt();
         const statics = (): PerformanceStatics => ({
           pcModel: null,
