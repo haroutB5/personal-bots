@@ -7,6 +7,18 @@
       "types": "./src/client.ts",
       "import": "./src/client.ts"
     },
+    "./perf/perfFlags": {
+      "types": "./src/perf/perfFlags.ts",
+      "import": "./src/perf/perfFlags.ts"
+    },
+    "./bots/personalMode": {
+      "types": "./src/bots/personalMode.ts",
+      "import": "./src/bots/personalMode.ts"
+    },
+    "./bots/chatsSnapshot": {
+      "types": "./src/bots/chatsSnapshot.ts",
+      "import": "./src/bots/chatsSnapshot.ts"
+    },
     "./ports/cancel": {
       "types": "./src/ports/cancel.ts",
       "import": "./src/ports/cancel.ts"

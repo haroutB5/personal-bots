@@ -2,42 +2,15 @@ import type { BlobStore } from "@hbots/personal-client/ports/blobStore";
 import type { Clock } from "@hbots/personal-client/ports/clock";
 import type { Confirm } from "@hbots/personal-client/ports/confirm";
 import type { Ids } from "@hbots/personal-client/ports/ids";
-import type { KeyValueStore } from "@hbots/personal-client/ports/keyValueStore";
 import type { Lifecycle, LifecycleState } from "@hbots/personal-client/ports/lifecycle";
 import type { PersonalPorts } from "@hbots/personal-client/ports/personalPorts";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { randomUUID } from "~/lib/utils";
 import { indexedDbBackend } from "../outboxBlobs";
-import { whenIdle } from "../perfFlags";
+import { webKeyValueStore, whenIdle } from "./webStorage";
 
-function storageOrNull(): Storage | null {
-  try {
-    return typeof window === "undefined" ? null : window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-export const webKeyValueStore: KeyValueStore = {
-  getItem: (key) => {
-    try {
-      return storageOrNull()?.getItem(key) ?? null;
-    } catch {
-      return null;
-    }
-  },
-  setItem: (key, value) => storageOrNull()?.setItem(key, value),
-  removeItem: (key) => storageOrNull()?.removeItem(key),
-  subscribe: (listener) => {
-    if (typeof window === "undefined") return () => undefined;
-    const onStorage = (event: StorageEvent) => {
-      if (event.storageArea === null || event.storageArea === storageOrNull()) listener(event.key);
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  },
-};
+export { webKeyValueStore };
 
 export const webBlobStore: BlobStore<Blob> = {
   ...indexedDbBackend,

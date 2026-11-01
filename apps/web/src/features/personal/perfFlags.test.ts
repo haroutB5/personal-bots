@@ -11,19 +11,22 @@ const storage = (value: string | null) => ({
   getItem: (key: string) => (key === PERF_OFF_STORAGE_KEY ? value : null),
 });
 
+const stubLocalStorage = (localStorage: { getItem: (key: string) => string | null }) =>
+  vi.stubGlobal("window", { localStorage });
+
 describe("perfOptimizationOn", () => {
   it("is on by default and off when listed", () => {
-    vi.stubGlobal("localStorage", storage(null));
+    stubLocalStorage(storage(null));
     expect(perfOptimizationOn("preload-chat")).toBe(true);
-    vi.stubGlobal("localStorage", storage(" rum , preload-chat"));
+    stubLocalStorage(storage(" rum , preload-chat"));
     expect(perfOptimizationOn("preload-chat")).toBe(false);
     expect(perfOptimizationOn("rum")).toBe(false);
-    vi.stubGlobal("localStorage", storage("rum"));
+    stubLocalStorage(storage("rum"));
     expect(perfOptimizationOn("preload-chat")).toBe(true);
   });
 
   it("stays on when storage throws", () => {
-    vi.stubGlobal("localStorage", {
+    stubLocalStorage({
       getItem: () => {
         throw new Error("SecurityError");
       },
