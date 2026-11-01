@@ -34,6 +34,7 @@ function fakeStorage(initial: Record<string, string> = {}) {
 function stubWindow(localStorage: ReturnType<typeof fakeStorage>) {
   const target = Object.assign(new EventTarget(), { localStorage });
   vi.stubGlobal("window", target);
+  vi.stubGlobal("localStorage", localStorage);
   return target;
 }
 

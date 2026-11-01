@@ -3,7 +3,7 @@ import type { KeyValueStore } from "@hbots/personal-client/ports/keyValueStore";
 function browserKeyValueStore(area: () => Storage | null): KeyValueStore {
   const areaOrNull = (): Storage | null => {
     try {
-      return typeof window === "undefined" ? null : area();
+      return area() ?? null;
     } catch {
       return null;
     }
@@ -29,10 +29,10 @@ function browserKeyValueStore(area: () => Storage | null): KeyValueStore {
   };
 }
 
-export const webKeyValueStore: KeyValueStore = browserKeyValueStore(() => window.localStorage);
+export const webKeyValueStore: KeyValueStore = browserKeyValueStore(() => globalThis.localStorage);
 
 export const webSessionKeyValueStore: KeyValueStore = browserKeyValueStore(
-  () => window.sessionStorage,
+  () => globalThis.sessionStorage,
 );
 
 /**
