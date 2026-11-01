@@ -241,6 +241,7 @@ import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import { serveUntilSessionRevoked } from "./auth/sessionRevocationClose.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -5276,7 +5277,13 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () =>
+            serveUntilSessionRevoked({
+              sessions,
+              sessionId: session.sessionId,
+              request,
+              serve: rpcWebSocketHttpEffect,
+            }),
           () =>
             sessions
               .markDisconnected(session.sessionId)

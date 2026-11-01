@@ -422,6 +422,7 @@ export class SessionStore extends Context.Service<
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    readonly awaitRevoked: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly recordClientConnection: (
@@ -544,6 +545,7 @@ export const make = Effect.gen(function* () {
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
+  const revokedPubSub = yield* PubSub.unbounded<AuthSessionId>();
   const cookieInput = {
     mode: serverConfig.mode,
     port: serverConfig.port,
@@ -591,6 +593,34 @@ export const make = Effect.gen(function* () {
       type: "clientRemoved",
       sessionId,
     }).pipe(Effect.asVoid);
+
+  const emitRevoked = (sessionId: AuthSessionId) =>
+    PubSub.publish(revokedPubSub, sessionId).pipe(Effect.asVoid);
+
+  const awaitRevoked: SessionStore["Service"]["awaitRevoked"] = (sessionId) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const revocations = yield* PubSub.subscribe(revokedPubSub);
+        const alreadyRevoked = yield* authSessions.getById({ sessionId }).pipe(
+          Effect.map((row) => Option.isSome(row) && row.value.revokedAt !== null),
+          Effect.catchCause((cause) =>
+            Effect.logError("Failed to read a session before watching it for revocation.").pipe(
+              Effect.annotateLogs({ sessionId, cause }),
+              Effect.as(false),
+            ),
+          ),
+        );
+        if (alreadyRevoked) {
+          return;
+        }
+        const takeUntilThisSession: Effect.Effect<void> = PubSub.take(revocations).pipe(
+          Effect.flatMap((revokedId) =>
+            revokedId === sessionId ? Effect.void : takeUntilThisSession,
+          ),
+        );
+        yield* takeUntilThisSession;
+      }),
+    ).pipe(Effect.withSpan("SessionStore.awaitRevoked"));
 
   const loadActiveSession = (sessionId: AuthSessionId) =>
     Effect.gen(function* () {
@@ -1129,6 +1159,7 @@ export const make = Effect.gen(function* () {
           return next;
         });
         yield* emitRemoved(sessionId);
+        yield* emitRevoked(sessionId);
       }
       return revoked;
     },
@@ -1158,7 +1189,8 @@ export const make = Effect.gen(function* () {
       });
       yield* Effect.forEach(
         revokedSessionIds,
-        (revokedSessionId) => emitRemoved(revokedSessionId),
+        (revokedSessionId) =>
+          emitRemoved(revokedSessionId).pipe(Effect.andThen(emitRevoked(revokedSessionId))),
         {
           concurrency: "unbounded",
           discard: true,
@@ -1182,6 +1214,7 @@ export const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
+    awaitRevoked,
     markConnected,
     markDisconnected,
     recordClientConnection,

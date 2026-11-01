@@ -2,6 +2,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import * as NodeTimersPromises from "node:timers/promises";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
@@ -1439,7 +1440,7 @@ const openRawWsClient = (url: string) => {
       );
       const closed = new Promise<{ code: number; reason: string; at: number }>((resolve) => {
         socket.on("close", (code, reason) =>
-          resolve({ code, reason: reason.toString(), at: Date.now() }),
+          resolve({ code, reason: reason.toString(), at: performance.now() }),
         );
       });
       socket.on("open", () => resume(Effect.succeed({ socket, closed })));
@@ -1450,41 +1451,36 @@ const openRawWsClient = (url: string) => {
 };
 
 const probeRawWsClient = (client: RawWsClient, id: string) =>
-  Effect.promise(
-    () =>
-      new Promise<string>((resolve) => {
-        const timer = setTimeout(() => resolve("no response"), 2000);
-        const onMessage = (data: NodeSocket.NodeWS.RawData) => {
-          const message = JSON.parse(data.toString()) as {
-            readonly _tag?: string;
-            readonly requestId?: string;
-            readonly exit?: { readonly _tag: string };
-          };
-          if (message._tag === "Exit" && message.requestId === id) {
-            clearTimeout(timer);
-            client.socket.off("message", onMessage);
-            resolve(message.exit?._tag ?? "no exit");
-          }
+  Effect.promise(() => {
+    const answered = new Promise<string>((resolve) => {
+      const onMessage = (data: NodeSocket.NodeWS.RawData) => {
+        const message = JSON.parse(data.toString()) as {
+          readonly _tag?: string;
+          readonly requestId?: string;
+          readonly exit?: { readonly _tag: string };
         };
-        client.socket.on("message", onMessage);
-        client.socket.send(
-          JSON.stringify({
-            _tag: "Request",
-            id,
-            tag: WS_METHODS.serverProbe,
-            payload: {},
-            headers: [],
-          }),
-        );
-      }),
-  );
+        if (message._tag === "Exit" && message.requestId === id) {
+          client.socket.off("message", onMessage);
+          resolve(message.exit?._tag ?? "no exit");
+        }
+      };
+      client.socket.on("message", onMessage);
+      client.socket.send(
+        JSON.stringify({
+          _tag: "Request",
+          id,
+          tag: WS_METHODS.serverProbe,
+          payload: {},
+          headers: [],
+        }),
+      );
+    });
+    return Promise.race([answered, NodeTimersPromises.setTimeout(2000, "no response")]);
+  });
 
 const awaitRawWsClose = (client: RawWsClient, withinMs: number) =>
   Effect.promise(() =>
-    Promise.race([
-      client.closed,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), withinMs)),
-    ]),
+    Promise.race([client.closed, NodeTimersPromises.setTimeout(withinMs, null)]),
   );
 
 const pairClientSessionCookie = (ownerCookie: string, label: string) =>
@@ -5555,7 +5551,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(yield* probeRawWsClient(bearerSocket, "1"), "Success");
       assert.equal(yield* probeRawWsClient(ownerSocket, "1"), "Success");
 
-      const revokedAt = Date.now();
+      const revokedAt = performance.now();
       const revokeResponse = yield* HttpClient.post("/api/auth/session/revoke", {
         headers: { authorization: `Bearer ${bearerToken}` },
       });
@@ -5603,7 +5599,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const phoneSessionId = clients.find((entry) => entry.client.label === "Phone")?.sessionId;
       assert.isDefined(phoneSessionId);
 
-      const revokedAt = Date.now();
+      const revokedAt = performance.now();
       const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
         headers: { cookie: ownerCookie, "content-type": "application/json" },
         body: HttpBody.text(jsonRequestBody({ sessionId: phoneSessionId }), "application/json"),
@@ -5641,7 +5637,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(yield* probeRawWsClient(tabletSocket, "1"), "Success");
 
-      const revokedAt = Date.now();
+      const revokedAt = performance.now();
       const revokeOthersResponse = yield* HttpClient.post("/api/auth/clients/revoke-others", {
         headers: { cookie: ownerCookie },
       });

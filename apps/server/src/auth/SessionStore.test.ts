@@ -3,6 +3,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -849,6 +850,45 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         Effect.scoped,
         Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer())),
       ),
+  );
+
+  for (const operation of ["revoke", "revokeAllExcept"] as const) {
+    it.effect(`wakes awaitRevoked for the revoked session only, through ${operation}`, () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const administrative = yield* sessions.issue({ subject: "desktop-bootstrap" });
+        const client = yield* sessions.issue(relaySessionInput);
+        const bystander = yield* sessions.issue({ ...relaySessionInput, subject: "bystander" });
+        const watcher = yield* sessions
+          .awaitRevoked(client.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        const bystanderWatcher = yield* sessions
+          .awaitRevoked(bystander.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow);
+        expect(watcher.pollUnsafe()).toBeUndefined();
+
+        if (operation === "revoke") {
+          expect(yield* sessions.revoke(client.sessionId)).toBe(true);
+          yield* Fiber.join(watcher);
+          expect(bystanderWatcher.pollUnsafe()).toBeUndefined();
+        } else {
+          expect(yield* sessions.revokeAllExcept(administrative.sessionId)).toBe(2);
+          yield* Fiber.join(watcher);
+          yield* Fiber.join(bystanderWatcher);
+        }
+      }).pipe(Effect.scoped, Effect.provide(makeSessionStoreLayer())),
+    );
+  }
+
+  it.effect("resolves awaitRevoked at once for a session revoked before the watch began", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      yield* sessions.revoke(client.sessionId);
+
+      yield* sessions.awaitRevoked(client.sessionId);
+    }).pipe(Effect.scoped, Effect.provide(makeSessionStoreLayer())),
   );
 
   it.effect("records client connection metadata without clearing prior values", () =>
