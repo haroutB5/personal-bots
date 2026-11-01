@@ -134,6 +134,7 @@ import * as DeepSeekBalanceWatcher from "./personal/deepseek/DeepSeekBalanceWatc
 import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
 import { personalPushSentRouteLayer } from "./personal/push/sentPushesRoute.ts";
 import { personalUpdateStatusRouteLayer } from "./personal/updateStatus/updateStatusRoute.ts";
+import { personalClientCompatRouteLayer } from "./personal/clientCompat/clientCompatRoute.ts";
 import { personalPerformanceStreamRouteLayer } from "./personal/performance/routes.ts";
 import { personalSystemSummaryRouteLayer } from "./personal/performance/systemSummaryRoute.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
@@ -913,6 +914,8 @@ export const makeRoutesLayer = Layer.mergeAll(
     personalPushSentRouteLayer,
     // Signed-in only: where a release is, for the Bots page's status line (see updateStatusRoute.ts).
     personalUpdateStatusRouteLayer,
+    // Open: the Android version handshake, before a client holds a credential.
+    personalClientCompatRouteLayer,
     // Signed-in only: the Performance tab's SSE feed; samples only while watched
     // (see personal/performance/routes.ts).
     personalPerformanceStreamRouteLayer,

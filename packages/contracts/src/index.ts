@@ -40,6 +40,7 @@ export * from "./personalChatNotices.ts";
 export * from "./personalVoiceCallSettings.ts";
 export * from "./personalVoiceCalls.ts";
 export * from "./personalPerformance.ts";
+export * from "./personalClientCompat.ts";
 export * from "./personalGroups.ts";
 export * from "./personalReply.ts";
 export * from "./personalFollowUp.ts";
