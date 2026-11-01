@@ -1531,6 +1531,44 @@ const assertClosedAsRevoked = (client: RawWsClient, revokedAt: number) =>
     assert.isTrue((closed?.at ?? Infinity) - revokedAt <= 1000);
   });
 
+const openChunkStream = (url: string, sessionCookieHeader: string) =>
+  Effect.acquireRelease(
+    Effect.promise(async () => {
+      const controller = new AbortController();
+      const response = await fetch(url, {
+        headers: { cookie: sessionCookieHeader },
+        signal: controller.signal,
+      });
+      assert.equal(response.status, 200);
+      let received = 0;
+      let endedAt: number | null = null;
+      const finished = (async () => {
+        const reader = response.body!.getReader();
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            received += next.value.byteLength;
+          }
+        } catch {
+          // an aborted or reset body also counts as ended
+        }
+        endedAt = performance.now();
+      })();
+      return {
+        controller,
+        bytes: () => received,
+        isEnded: () => endedAt !== null,
+        ended: (withinMs: number) =>
+          Promise.race([
+            finished.then(() => endedAt),
+            NodeTimersPromises.setTimeout(withinMs, null),
+          ]),
+      };
+    }),
+    (stream) => Effect.sync(() => stream.controller.abort()),
+  );
+
 const eventually = (describeWait: string, ready: () => boolean) =>
   Effect.promise(async () => {
     const until = performance.now() + 2000;
@@ -5931,6 +5969,74 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* eventually("tablet still reaches the hub", () => hubLog.includes("2:tablet-input"));
     }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const streamName of ["stream.mjpeg", "stream.avcc"] as const) {
+    it.effect(`ends the device hub ${streamName} body of a revoked session`, () =>
+      Effect.gen(function* () {
+        const hubLog: string[] = [];
+        const hub = yield* Effect.acquireRelease(
+          Effect.promise(async () => {
+            const NodeHttp = await import("node:http");
+            const server = NodeHttp.createServer((request, response) => {
+              const id = `${hubLog.filter((entry) => entry.endsWith(":open")).length + 1}`;
+              hubLog.push(`${id}:open`);
+              response.writeHead(200, { "content-type": "application/octet-stream" });
+              const timer = setInterval(() => response.write("frame"), 10);
+              response.on("close", () => {
+                clearInterval(timer);
+                hubLog.push(`${id}:closed`);
+              });
+            });
+            await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+            return server;
+          }),
+          (server) =>
+            Effect.sync(() => {
+              server.closeAllConnections();
+              server.close();
+            }),
+        );
+        const hubPort = (hub.address() as { port: number }).port;
+        yield* buildAppUnderTest({
+          config: { host: "0.0.0.0" },
+          layers: {
+            deviceService: {
+              currentReadiness: () =>
+                Effect.succeed({
+                  hostId: LOCAL_DEVICE_HOST_ID,
+                  hub: { origin: `http://127.0.0.1:${hubPort}` },
+                } as unknown as DeviceService.DeviceReadiness),
+            },
+          },
+        });
+
+        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+        const tabletCookie = yield* pairClientSessionCookie(ownerCookie, "Tablet");
+        const server = yield* HttpServer.HttpServer;
+        const port = (server.address as NetAddress.InetAddress).port;
+        const url = `http://127.0.0.1:${port}${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/vendor/serve-sim/helper/abc/${streamName}`;
+        const phoneStream = yield* openChunkStream(url, phoneCookie);
+        const tabletStream = yield* openChunkStream(url, tabletCookie);
+        yield* eventually(
+          "phone and tablet receive frames",
+          () => phoneStream.bytes() > 0 && tabletStream.bytes() > 0,
+        );
+
+        const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
+        const endedAt = yield* Effect.promise(() => phoneStream.ended(1000));
+        assert.isNotNull(endedAt);
+        assert.isTrue((endedAt ?? Infinity) - revokedAt <= 1000);
+
+        yield* eventually("phone hub link closed", () => hubLog.includes("1:closed"));
+        const tabletBytesAtRevoke = tabletStream.bytes();
+        yield* Effect.promise(() => NodeTimersPromises.setTimeout(150));
+        assert.notInclude(hubLog, "2:closed");
+        assert.isTrue(tabletStream.bytes() > tabletBytesAtRevoke);
+        assert.isFalse(tabletStream.isEnded());
+      }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
 
   it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
