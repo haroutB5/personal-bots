@@ -1534,29 +1534,28 @@ const assertClosedAsRevoked = (client: RawWsClient, revokedAt: number) =>
 const openChunkStream = (url: string, sessionCookieHeader: string) =>
   Effect.acquireRelease(
     Effect.promise(async () => {
-      const controller = new AbortController();
-      const response = await fetch(url, {
-        headers: { cookie: sessionCookieHeader },
-        signal: controller.signal,
-      });
-      assert.equal(response.status, 200);
+      const NodeHttp = await import("node:http");
       let received = 0;
       let endedAt: number | null = null;
-      const finished = (async () => {
-        const reader = response.body!.getReader();
-        try {
-          while (true) {
-            const next = await reader.read();
-            if (next.done) break;
-            received += next.value.byteLength;
-          }
-        } catch {
-          // an aborted or reset body also counts as ended
-        }
-        endedAt = performance.now();
-      })();
+      const request = NodeHttp.get(url, { headers: { cookie: sessionCookieHeader } });
+      const finished = new Promise<void>((resolve) => {
+        const end = () => {
+          endedAt ??= performance.now();
+          resolve();
+        };
+        request.on("error", end);
+        request.on("response", (response) => {
+          assert.equal(response.statusCode, 200);
+          response.on("data", (chunk: Buffer) => {
+            received += chunk.byteLength;
+          });
+          response.on("end", end);
+          response.on("close", end);
+          response.on("error", end);
+        });
+      });
       return {
-        controller,
+        request,
         bytes: () => received,
         isEnded: () => endedAt !== null,
         ended: (withinMs: number) =>
@@ -1566,7 +1565,7 @@ const openChunkStream = (url: string, sessionCookieHeader: string) =>
           ]),
       };
     }),
-    (stream) => Effect.sync(() => stream.controller.abort()),
+    (stream) => Effect.sync(() => stream.request.destroy()),
   );
 
 const eventually = (describeWait: string, ready: () => boolean) =>
@@ -5981,11 +5980,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               const id = `${hubLog.filter((entry) => entry.endsWith(":open")).length + 1}`;
               hubLog.push(`${id}:open`);
               response.writeHead(200, { "content-type": "application/octet-stream" });
-              const timer = setInterval(() => response.write("frame"), 10);
+              let open = true;
               response.on("close", () => {
-                clearInterval(timer);
+                open = false;
                 hubLog.push(`${id}:closed`);
               });
+              void (async () => {
+                while (open) {
+                  response.write("frame");
+                  await NodeTimersPromises.setTimeout(10);
+                }
+              })();
             });
             await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
             return server;
