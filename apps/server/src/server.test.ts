@@ -6173,239 +6173,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     );
   }
 
-  const hostileScenarios = [
-    {
-      name: "/ws",
-      open: () =>
-        Effect.gen(function* () {
-          const reached: Array<number> = [];
-          yield* buildAppUnderTest({
-            layers: {
-              terminalManager: {
-                write: () => Effect.sync(() => void reached.push(performance.now())),
-              },
-            },
-          });
-          const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-          const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
-          const server = yield* HttpServer.HttpServer;
-          let id = 0;
-          const input = () =>
-            JSON.stringify({
-              _tag: "Request",
-              id: `${++id}`,
-              tag: WS_METHODS.terminalWrite,
-              payload: { threadId: "thread-1", terminalId: "default", data: "echo hi\n" },
-              headers: [],
-            });
-          const scenario = {
-            path: "/ws",
-            get input() {
-              return input();
-            },
-            reached,
-            start: (client: HostileWsClient) => Effect.sync(() => void client.send(input())),
-          } satisfies HostileScenario;
-          return {
-            port: (server.address as NetAddress.InetAddress).port,
-            ownerCookie,
-            phoneCookie,
-            scenario,
-          };
-        }),
-    },
-    {
-      name: "desktop stream",
-      open: () =>
-        Effect.gen(function* () {
-          const reached: Array<number> = [];
-          let controlTaken = false;
-          yield* buildAppUnderTest({
-            config: { host: "0.0.0.0" },
-            layers: {
-              personalDesktop: {
-                watch: () =>
-                  Effect.sync(
-                    () =>
-                      ({
-                        ack: () => undefined,
-                        setViewport: () => undefined,
-                        setControl: () => undefined,
-                        nudge: () => undefined,
-                        detach: () => undefined,
-                        stats: () => ({
-                          frames: 0,
-                          bytes: 0,
-                          captures: 0,
-                          unchanged: 0,
-                          locked: 0,
-                          captureMsTotal: 0,
-                          startedAt: 0,
-                        }),
-                      }) satisfies LiveViewer,
-                  ),
-                takeControl: () =>
-                  Effect.sync(() => {
-                    controlTaken = true;
-                    return {
-                      input: () => {
-                        reached.push(performance.now());
-                        return Promise.resolve();
-                      },
-                      end: () => undefined,
-                      active: () => true,
-                      pending: () => 0,
-                    };
-                  }),
-              },
-            },
-          });
-          const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-          const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
-          const server = yield* HttpServer.HttpServer;
-          const input = jsonRequestBody({
-            _tag: "Pointer",
-            action: "click",
-            x: 10,
-            y: 10,
-            frameWidth: 1170,
-            frameHeight: 731,
-          });
-          const scenario = {
-            path: "/api/personal/desktop/stream",
-            input,
-            reached,
-            start: (client: HostileWsClient) =>
-              Effect.gen(function* () {
-                client.send(jsonRequestBody({ _tag: "Control", on: true }));
-                yield* eventually("phone holds the PC", () => controlTaken);
-                client.send(input);
-              }),
-          } satisfies HostileScenario;
-          return {
-            port: (server.address as NetAddress.InetAddress).port,
-            ownerCookie,
-            phoneCookie,
-            scenario,
-          };
-        }),
-    },
-    {
-      name: "browser stream",
-      open: () =>
-        Effect.gen(function* () {
-          const reached: Array<number> = [];
-          yield* buildAppUnderTest({
-            config: { host: "0.0.0.0" },
-            layers: {
-              personalBrowser: {
-                attachViewer: ({ sessionId }: { readonly sessionId: string }) =>
-                  Effect.gen(function* () {
-                    return {
-                      id: 1,
-                      sessionId,
-                      canOperate: true,
-                      outbox: yield* Queue.unbounded<string>(),
-                      flow: new ViewerFlow(),
-                      telemetry: null,
-                    };
-                  }),
-                handleViewerMessage: (_viewer: unknown, raw: string) =>
-                  Effect.sync(() => {
-                    if (raw === "phone-input") reached.push(performance.now());
-                  }),
-              } as any,
-            },
-          });
-          const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-          const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
-          const server = yield* HttpServer.HttpServer;
-          const scenario = {
-            path: "/api/personal/browser/stream",
-            input: "phone-input",
-            reached,
-            start: (client: HostileWsClient) => Effect.sync(() => void client.send("phone-input")),
-          } satisfies HostileScenario;
-          return {
-            port: (server.address as NetAddress.InetAddress).port,
-            ownerCookie,
-            phoneCookie,
-            scenario,
-          };
-        }),
-    },
-    {
-      name: "device hub socket",
-      open: () =>
-        Effect.gen(function* () {
-          const reached: Array<number> = [];
-          const hub = yield* Effect.acquireRelease(
-            Effect.callback<NodeSocket.NodeWS.WebSocketServer, Error>((resume) => {
-              const wss = new NodeSocket.NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
-              wss.on("connection", (upstream) => {
-                upstream.on("message", () => void reached.push(performance.now()));
-              });
-              wss.on("listening", () => resume(Effect.succeed(wss)));
-              wss.on("error", (error) => resume(Effect.fail(error)));
-            }),
-            (wss) => Effect.sync(() => wss.close()),
-          );
-          const hubPort = (hub.address() as { port: number }).port;
-          yield* buildAppUnderTest({
-            config: { host: "0.0.0.0" },
-            layers: {
-              deviceService: {
-                currentReadiness: () =>
-                  Effect.succeed({
-                    hostId: LOCAL_DEVICE_HOST_ID,
-                    hub: { origin: `http://127.0.0.1:${hubPort}` },
-                  } as unknown as DeviceService.DeviceReadiness),
-              },
-            },
-          });
-          const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-          const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
-          const server = yield* HttpServer.HttpServer;
-          const scenario = {
-            path: `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/vendor/serve-emu/ws`,
-            input: "phone-input",
-            reached,
-            start: (client: HostileWsClient) => Effect.sync(() => void client.send("phone-input")),
-          } satisfies HostileScenario;
-          return {
-            port: (server.address as NetAddress.InetAddress).port,
-            ownerCookie,
-            phoneCookie,
-            scenario,
-          };
-        }),
-    },
-  ] as const;
-
-  for (const { name, open } of hostileScenarios) {
-    for (const behaviour of ["sends input", "pings only"] as const) {
-      it.effect(
-        `cuts the ${name} link of a revoked client that ${behaviour} and never closes`,
-        () =>
-          Effect.gen(function* () {
-            const { port, ownerCookie, phoneCookie, scenario } = yield* open();
-            const client = yield* openHostileWs(port, scenario.path, phoneCookie);
-            assert.match(client.state.status, /101/);
-            yield* scenario.start(client);
-            yield* eventually("input reaches before revoke", () => scenario.reached.length >= 1);
-            const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
-            const held = yield* holdAgainstRevoke({ client, scenario, revokedAt, behaviour });
-            assert.equal(held.closeCode, 4401);
-            assert.equal(held.closeReason, "session_revoked");
-            assert.equal(held.reachedAfterClose, 0);
-            assert.isNotNull(held.tcpClosedMs);
-            assert.isTrue((held.tcpClosedMs ?? Infinity) <= 1500);
-          }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
-        15000,
-      );
-    }
-  }
-
   it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
       // The desktop-bootstrap grant is delivered over trusted IPC at
@@ -14145,6 +13912,239 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 });
+
+const hostileScenarios = [
+  {
+    name: "/ws",
+    open: () =>
+      Effect.gen(function* () {
+        const reached: Array<number> = [];
+        yield* buildAppUnderTest({
+          layers: {
+            terminalManager: {
+              write: () => Effect.sync(() => void reached.push(performance.now())),
+            },
+          },
+        });
+        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+        const server = yield* HttpServer.HttpServer;
+        let id = 0;
+        const input = () =>
+          JSON.stringify({
+            _tag: "Request",
+            id: `${++id}`,
+            tag: WS_METHODS.terminalWrite,
+            payload: { threadId: "thread-1", terminalId: "default", data: "echo hi\n" },
+            headers: [],
+          });
+        const scenario = {
+          path: "/ws",
+          get input() {
+            return input();
+          },
+          reached,
+          start: (client: HostileWsClient) => Effect.sync(() => void client.send(input())),
+        } satisfies HostileScenario;
+        return {
+          port: (server.address as NetAddress.InetAddress).port,
+          ownerCookie,
+          phoneCookie,
+          scenario,
+        };
+      }),
+  },
+  {
+    name: "desktop stream",
+    open: () =>
+      Effect.gen(function* () {
+        const reached: Array<number> = [];
+        let controlTaken = false;
+        yield* buildAppUnderTest({
+          config: { host: "0.0.0.0" },
+          layers: {
+            personalDesktop: {
+              watch: () =>
+                Effect.sync(
+                  () =>
+                    ({
+                      ack: () => undefined,
+                      setViewport: () => undefined,
+                      setControl: () => undefined,
+                      nudge: () => undefined,
+                      detach: () => undefined,
+                      stats: () => ({
+                        frames: 0,
+                        bytes: 0,
+                        captures: 0,
+                        unchanged: 0,
+                        locked: 0,
+                        captureMsTotal: 0,
+                        startedAt: 0,
+                      }),
+                    }) satisfies LiveViewer,
+                ),
+              takeControl: () =>
+                Effect.sync(() => {
+                  controlTaken = true;
+                  return {
+                    input: () => {
+                      reached.push(performance.now());
+                      return Promise.resolve();
+                    },
+                    end: () => undefined,
+                    active: () => true,
+                    pending: () => 0,
+                  };
+                }),
+            },
+          },
+        });
+        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+        const server = yield* HttpServer.HttpServer;
+        const input = jsonRequestBody({
+          _tag: "Pointer",
+          action: "click",
+          x: 10,
+          y: 10,
+          frameWidth: 1170,
+          frameHeight: 731,
+        });
+        const scenario = {
+          path: "/api/personal/desktop/stream",
+          input,
+          reached,
+          start: (client: HostileWsClient) =>
+            Effect.gen(function* () {
+              client.send(jsonRequestBody({ _tag: "Control", on: true }));
+              yield* eventually("phone holds the PC", () => controlTaken);
+              client.send(input);
+            }),
+        } satisfies HostileScenario;
+        return {
+          port: (server.address as NetAddress.InetAddress).port,
+          ownerCookie,
+          phoneCookie,
+          scenario,
+        };
+      }),
+  },
+  {
+    name: "browser stream",
+    open: () =>
+      Effect.gen(function* () {
+        const reached: Array<number> = [];
+        yield* buildAppUnderTest({
+          config: { host: "0.0.0.0" },
+          layers: {
+            personalBrowser: {
+              attachViewer: ({ sessionId }: { readonly sessionId: string }) =>
+                Effect.gen(function* () {
+                  return {
+                    id: 1,
+                    sessionId,
+                    canOperate: true,
+                    outbox: yield* Queue.unbounded<string>(),
+                    flow: new ViewerFlow(),
+                    telemetry: null,
+                  };
+                }),
+              handleViewerMessage: (_viewer: unknown, raw: string) =>
+                Effect.sync(() => {
+                  if (raw === "phone-input") reached.push(performance.now());
+                }),
+            } as any,
+          },
+        });
+        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+        const server = yield* HttpServer.HttpServer;
+        const scenario = {
+          path: "/api/personal/browser/stream",
+          input: "phone-input",
+          reached,
+          start: (client: HostileWsClient) => Effect.sync(() => void client.send("phone-input")),
+        } satisfies HostileScenario;
+        return {
+          port: (server.address as NetAddress.InetAddress).port,
+          ownerCookie,
+          phoneCookie,
+          scenario,
+        };
+      }),
+  },
+  {
+    name: "device hub socket",
+    open: () =>
+      Effect.gen(function* () {
+        const reached: Array<number> = [];
+        const hub = yield* Effect.acquireRelease(
+          Effect.callback<NodeSocket.NodeWS.WebSocketServer, Error>((resume) => {
+            const wss = new NodeSocket.NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
+            wss.on("connection", (upstream) => {
+              upstream.on("message", () => void reached.push(performance.now()));
+            });
+            wss.on("listening", () => resume(Effect.succeed(wss)));
+            wss.on("error", (error) => resume(Effect.fail(error)));
+          }),
+          (wss) => Effect.sync(() => wss.close()),
+        );
+        const hubPort = (hub.address() as { port: number }).port;
+        yield* buildAppUnderTest({
+          config: { host: "0.0.0.0" },
+          layers: {
+            deviceService: {
+              currentReadiness: () =>
+                Effect.succeed({
+                  hostId: LOCAL_DEVICE_HOST_ID,
+                  hub: { origin: `http://127.0.0.1:${hubPort}` },
+                } as unknown as DeviceService.DeviceReadiness),
+            },
+          },
+        });
+        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+        const phoneCookie = yield* pairClientSessionCookie(ownerCookie, "Phone");
+        const server = yield* HttpServer.HttpServer;
+        const scenario = {
+          path: `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/vendor/serve-emu/ws`,
+          input: "phone-input",
+          reached,
+          start: (client: HostileWsClient) => Effect.sync(() => void client.send("phone-input")),
+        } satisfies HostileScenario;
+        return {
+          port: (server.address as NetAddress.InetAddress).port,
+          ownerCookie,
+          phoneCookie,
+          scenario,
+        };
+      }),
+  },
+] as const;
+
+for (const { name, open } of hostileScenarios) {
+  for (const behaviour of ["sends input", "pings only"] as const) {
+    it.live(
+      `cuts the ${name} link of a revoked client that ${behaviour} and never closes`,
+      () =>
+        Effect.gen(function* () {
+          const { port, ownerCookie, phoneCookie, scenario } = yield* open();
+          const client = yield* openHostileWs(port, scenario.path, phoneCookie);
+          assert.match(client.state.status, /101/);
+          yield* scenario.start(client);
+          yield* eventually("input reaches before revoke", () => scenario.reached.length >= 1);
+          const revokedAt = yield* revokeClientByLabel(ownerCookie, "Phone");
+          const held = yield* holdAgainstRevoke({ client, scenario, revokedAt, behaviour });
+          assert.equal(held.closeCode, 4401);
+          assert.equal(held.closeReason, "session_revoked");
+          assert.equal(held.reachedAfterClose, 0);
+          assert.isNotNull(held.tcpClosedMs);
+          assert.isTrue((held.tcpClosedMs ?? Infinity) <= 1500);
+        }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+      15000,
+    );
+  }
+}
 
 it.live(
   "reports thread HTTP and WebSocket transfer budgets",
