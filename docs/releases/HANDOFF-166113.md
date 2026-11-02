@@ -32,3 +32,15 @@ Binary only. The previous release is `5976c25dadcc` (1.66.112). No migration ran
 - Gate evidence for this exact commit is recorded below.
 - Independent re-verify at `9449d9c9bb`, round 2 PASS, all four criteria: `/home/harout/Claude/AI/dev-team/qa/hbots-selfupdate-server-verify/RESULT.md`.
 - Round 1 failed criterion 2 only, symlinks were followed. The fix is in `9449d9c9bb`. Round 2 shows every link, folder, loop, FIFO, device and size case refused with 404.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=1906a0d1afb6889861ae7c98fbe41eacec312a1c release=1906a0d1afb6 json-sha256=73a4fd052cdfa0c603dd4dbd729917a038c05e56a6f8d066d17e0b8d66e4dbd0 result=PASS -->
+
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- server-tests: PASS, exit 0
+
+<!-- gate-evidence:end -->
