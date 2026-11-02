@@ -10,16 +10,17 @@
 import { AuthOrchestrationReadScope, HbotsVersion } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
+import { openMediaFile, streamMediaFile } from "../../assets/MediaFile.ts";
 import * as ServerConfig from "../../config.ts";
 import { authenticateBearerPersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
 import {
   ANDROID_APK_CONTENT_TYPE,
-  ANDROID_UPDATES_DIR,
   readLatestAndroidRelease,
+  refuseAndroidUpdateFile,
+  resolveAndroidUpdateFile,
 } from "./latestRelease.ts";
 
 export const PERSONAL_ANDROID_APK_ROUTE_PREFIX = "/api/personal/android/apk";
@@ -50,14 +51,31 @@ export const personalAndroidApkRouteLayer = HttpRouter.add(
     const latest = yield* readLatestAndroidRelease(config.baseDir);
     if (latest === null || latest.version !== version.value) return notFound();
 
-    const path = yield* Path.Path;
-    const apkPath = path.join(config.baseDir, ANDROID_UPDATES_DIR, `hbots-${version.value}.apk`);
-    return yield* HttpServerResponse.file(apkPath, {
+    const fileName = `hbots-${version.value}.apk`;
+    const apkPath = yield* resolveAndroidUpdateFile(config.baseDir, fileName);
+    if (apkPath === null) return notFound();
+
+    const file = yield* openMediaFile(apkPath).pipe(Effect.orElseSucceed(() => null));
+    if (file === null) {
+      yield* refuseAndroidUpdateFile(fileName, "it changed while being opened");
+      return notFound();
+    }
+    if (file.info.size !== BigInt(latest.size)) {
+      yield* refuseAndroidUpdateFile(fileName, "its size does not match the manifest");
+      return notFound();
+    }
+    const body = streamMediaFile(file, 0n, file.info.size);
+    if (body === null) {
+      yield* refuseAndroidUpdateFile(fileName, "it is too large to stream");
+      return notFound();
+    }
+    return HttpServerResponse.stream(body, {
+      contentLength: Number(file.info.size),
       headers: {
         "Content-Type": ANDROID_APK_CONTENT_TYPE,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },
-    }).pipe(Effect.orElseSucceed(notFound));
+    });
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),
 );
