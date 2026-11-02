@@ -102,6 +102,39 @@ export const authenticatePersonalRoute = (requiredScope: AuthEnvironmentScope) =
     return session;
   });
 
+/**
+ * Bearer only: a native updater outside a browser must never be authenticated
+ * by a cookie or a `wsTicket`. The Bearer token is verified by the same
+ * session store as every other route.
+ */
+export const authenticateBearerPersonalRoute = (requiredScope: AuthEnvironmentScope) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const authorization = request.headers.authorization;
+    if (typeof authorization !== "string" || !authorization.startsWith("Bearer ")) {
+      return yield* failEnvironmentAuthInvalid("missing_credential");
+    }
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+        failEnvironmentAuthInvalid(
+          EnvironmentAuth.serverAuthCredentialReason(error),
+          EnvironmentAuth.serverAuthDpopFailureReason(error),
+        ),
+      ),
+      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ),
+    );
+    if (session.method !== "bearer-access-token") {
+      return yield* failEnvironmentAuthInvalid("invalid_credential");
+    }
+    if (!session.scopes.includes(requiredScope)) {
+      return yield* failEnvironmentScopeRequired(requiredScope);
+    }
+    return session;
+  });
+
 export const personalRouteAuthResponses = {
   EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
   EnvironmentInternalError: HttpServerRespondable.toResponse,
