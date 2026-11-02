@@ -60,13 +60,15 @@ describe("the release manifest the server reads", () => {
     const release = await Effect.runPromise(
       readLatestAndroidRelease(home).pipe(
         Effect.provide(
-          Logger.layer([
-            Logger.make((options) => {
-              logs.push(`${String(options.message)} ${JSON.stringify(options.message)}`);
-            }),
-          ]),
+          Layer.mergeAll(
+            NodeServices.layer,
+            Logger.layer([
+              Logger.make((options) => {
+                logs.push(`${String(options.message)} ${JSON.stringify(options.message)}`);
+              }),
+            ]),
+          ),
         ),
-        Effect.provide(NodeServices.layer),
       ),
     );
 
