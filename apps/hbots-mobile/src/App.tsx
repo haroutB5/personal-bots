@@ -28,6 +28,7 @@ import { renewSession } from "./renew";
 import { startRenewScheduler, type ForegroundSource } from "./renewScheduler";
 import type { PersonalRpc } from "./rpc";
 import { clearSession, loadSession, saveSession, type StoredSession } from "./session";
+import { createSessionLifetime } from "./sessionLifetime";
 import { describeSignOut, revokeRemoteSession } from "./signOut";
 
 type Screen =
@@ -54,6 +55,11 @@ const appForeground: ForegroundSource = {
     return () => subscription.remove();
   },
 };
+
+const sessionLifetime = createSessionLifetime({
+  renew: renewSession,
+  storage: { save: saveSession, clear: clearSession },
+});
 
 const COLORS = {
   bg: "#0f0f0e",
@@ -113,7 +119,6 @@ function App() {
   const [screen, setScreen] = useState<Screen>({ kind: "booting" });
   const [link, setLink] = useState("");
   const rpcRef = useRef<PersonalRpc | null>(null);
-  const sessionRef = useRef<StoredSession | null>(null);
   const stopRenewRef = useRef<(() => void) | null>(null);
 
   const disposeRpc = useCallback(() => {
@@ -133,8 +138,7 @@ function App() {
     async (next: Screen) => {
       stopRenew();
       disposeRpc();
-      sessionRef.current = null;
-      await clearSession();
+      await sessionLifetime.end();
       setScreen(next);
     },
     [disposeRpc, stopRenew],
@@ -156,8 +160,13 @@ function App() {
     async (session: StoredSession, attempt: number) => {
       disposeRpc();
       setScreen({ kind: "connecting", step: "Connecting" });
+      const epoch = sessionLifetime.epoch();
       try {
         const online = await openOnline(session);
+        if (sessionLifetime.epoch() !== epoch) {
+          await online.rpc.dispose();
+          return;
+        }
         rpcRef.current = online.rpc;
         setScreen({
           kind: "online",
@@ -167,6 +176,9 @@ function App() {
           threads: online.threads,
         });
       } catch (cause) {
+        if (sessionLifetime.epoch() !== epoch) {
+          return;
+        }
         await handleFailure(cause, session, attempt);
       }
     },
@@ -178,13 +190,14 @@ function App() {
     stopRenewRef.current = startRenewScheduler({
       foreground: appForeground,
       run: async () => {
-        const current = sessionRef.current;
-        if (current === null) {
-          return;
+        const epoch = sessionLifetime.epoch();
+        try {
+          await sessionLifetime.renew();
+        } catch (cause) {
+          if (sessionLifetime.epoch() === epoch) {
+            throw cause;
+          }
         }
-        const renewed = await renewSession(current);
-        sessionRef.current = renewed;
-        await saveSession(renewed);
       },
       onError: (cause) => {
         if (classifyFailure(cause).kind === "authDead") {
@@ -205,7 +218,7 @@ function App() {
         setScreen({ kind: "unpaired", error: null, notice: null });
         return;
       }
-      sessionRef.current = session;
+      sessionLifetime.restore(session);
       startRenew();
       await goOnline(session, 0);
     })();
@@ -252,8 +265,7 @@ function App() {
     setScreen({ kind: "connecting", step: "Pairing" });
     try {
       const session = await pair(parsed.target);
-      await saveSession(session);
-      sessionRef.current = session;
+      await sessionLifetime.adopt(session);
       setLink("");
       startRenew();
       await goOnline(session, 0);
@@ -271,10 +283,11 @@ function App() {
       stopRenew();
       disposeRpc();
       setScreen({ kind: "connecting", step: "Signing out" });
+      await sessionLifetime.end();
       const outcome = await revokeRemoteSession(session);
-      await endSession({ kind: "unpaired", error: null, notice: describeSignOut(outcome) });
+      setScreen({ kind: "unpaired", error: null, notice: describeSignOut(outcome) });
     },
-    [disposeRpc, endSession, stopRenew],
+    [disposeRpc, stopRenew],
   );
 
   const confirmSignOut = useCallback(
