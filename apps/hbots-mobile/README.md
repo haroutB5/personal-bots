@@ -50,6 +50,14 @@ env -u NODE_ENV pnpm --filter @hbots/mobile typecheck
 env -u NODE_ENV pnpm --filter @hbots/mobile test
 ```
 
+## Version
+
+`versionName` is `scripts/personal/app-version.txt`, the same version hbots ships. The app carries no
+version of its own. `versionCode` is `major * 1_000_000 + minor * 1_000 + patch`, so every release
+bump raises it and Android accepts the install. Each part must stay below 1000; the config throws when
+one does not. `scripts/verify-apk.mjs` fails when the APK's version name or code does not match the
+file.
+
 ## Build a release APK locally
 
 Never on a cloud builder.

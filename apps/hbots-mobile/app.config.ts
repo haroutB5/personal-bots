@@ -8,7 +8,18 @@ const version = NodeFS.readFileSync(
   "utf8",
 ).trim();
 
-const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
+/** Each release part owns three decimal digits, so any bump raises the code. */
+export function versionCodeFor(versionName: string): number {
+  const parts = versionName.split(".").map(Number);
+  if (
+    parts.length !== 3 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 999)
+  ) {
+    throw new Error(`app-version.txt must be x.y.z with each part 0-999, got ${versionName}`);
+  }
+  const [major = 0, minor = 0, patch = 0] = parts;
+  return major * 1_000_000 + minor * 1_000 + patch;
+}
 
 const config: ExpoConfig = {
   name: "hbots",
@@ -22,8 +33,13 @@ const config: ExpoConfig = {
   updates: { enabled: false },
   android: {
     package: "com.haroutb5.hbots",
-    versionCode: major * 1_000_000 + minor * 1_000 + patch,
+    versionCode: versionCodeFor(version),
     userInterfaceStyle: "dark",
+    blockedPermissions: [
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+    ],
     predictiveBackGestureEnabled: true,
     allowBackup: false,
     adaptiveIcon: {

@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import config from "../app.config";
+import config, { versionCodeFor } from "../app.config";
 import { version as packageVersion } from "../package.json";
 
 const REPO_ROOT = NodePath.resolve(__dirname, "../../..");
@@ -59,6 +59,26 @@ describe("app.config", () => {
     ).trim();
     expect(config.version).toBe(releaseVersion);
     expect(packageVersion).toBe(releaseVersion);
-    expect(config.android?.versionCode).toBe(1_066_110);
+    expect(config.android?.versionCode).toBe(versionCodeFor(releaseVersion));
+  });
+
+  it("raises versionCode on every release bump", () => {
+    expect(versionCodeFor("1.66.111")).toBe(1_066_111);
+    expect(versionCodeFor("1.66.111")).toBeGreaterThan(versionCodeFor("1.66.110"));
+    expect(versionCodeFor("1.67.0")).toBeGreaterThan(versionCodeFor("1.66.999"));
+    expect(versionCodeFor("2.0.0")).toBeGreaterThan(versionCodeFor("1.999.999"));
+  });
+
+  it("refuses a version part that would collide with the next one", () => {
+    expect(() => versionCodeFor("1.66.1000")).toThrow(/each part 0-999/u);
+    expect(() => versionCodeFor("1.66")).toThrow(/each part 0-999/u);
+  });
+
+  it("asks Android to drop the template permissions the app never uses", () => {
+    expect(config.android?.blockedPermissions).toEqual([
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+    ]);
   });
 });

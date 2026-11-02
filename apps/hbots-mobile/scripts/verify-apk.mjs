@@ -1,6 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - Local release check, runs on the build machine.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+
+const REPO_ROOT = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  "../../..",
+);
 
 const EXPECTED = {
   applicationId: "com.haroutb5.hbots",
@@ -9,6 +16,13 @@ const EXPECTED = {
   allowBackup: "false",
   usesCleartextTraffic: "false",
 };
+
+// The template adds these for a dev client. The app never uses them.
+const FORBIDDEN_PERMISSIONS = [
+  "android.permission.SYSTEM_ALERT_WINDOW",
+  "android.permission.READ_EXTERNAL_STORAGE",
+  "android.permission.WRITE_EXTERNAL_STORAGE",
+];
 
 const apk = process.argv[2];
 if (apk === undefined) {
@@ -22,9 +36,18 @@ const apkanalyzer = NodePath.join(
 const analyze = (...args) =>
   NodeChildProcess.execFileSync(apkanalyzer, [...args, apk], { encoding: "utf8" }).trim();
 
+const releaseVersion = NodeFS.readFileSync(
+  NodePath.join(REPO_ROOT, "scripts/personal/app-version.txt"),
+  "utf8",
+).trim();
+const [major = 0, minor = 0, patch = 0] = releaseVersion.split(".").map(Number);
+const releaseVersionCode = major * 1_000_000 + minor * 1_000 + patch;
+
 const manifest = analyze("manifest", "print");
 const applicationTag = manifest.match(/<application\b[^>]*>/su)?.[0] ?? "";
 const attribute = (name) => applicationTag.match(new RegExp(`android:${name}="([^"]*)"`, "u"))?.[1];
+const manifestAttribute = (name) =>
+  manifest.match(new RegExp(`android:${name}="([^"]*)"`, "u"))?.[1];
 
 // The prebuilt manifest labels the app @string/app_name, which the APK stores as a resource id.
 const resolveLabel = (label) =>
@@ -38,6 +61,8 @@ const actual = {
   debuggable: analyze("manifest", "debuggable"),
   allowBackup: attribute("allowBackup"),
   usesCleartextTraffic: attribute("usesCleartextTraffic"),
+  versionName: manifestAttribute("versionName"),
+  versionCode: manifestAttribute("versionCode"),
 };
 
 let failed = false;
@@ -46,6 +71,20 @@ for (const [key, expected] of Object.entries(EXPECTED)) {
   failed ||= !ok;
   console.log(`${ok ? "ok  " : "FAIL"} ${key}=${String(actual[key])} (expected ${expected})`);
 }
+
+const versionOk =
+  actual.versionName === releaseVersion && actual.versionCode === String(releaseVersionCode);
+failed ||= !versionOk;
+console.log(
+  `${versionOk ? "ok  " : "FAIL"} versionName=${String(actual.versionName)} versionCode=${String(actual.versionCode)} (expected ${releaseVersion} / ${String(releaseVersionCode)})`,
+);
+
+for (const permission of FORBIDDEN_PERMISSIONS) {
+  const present = manifest.includes(permission);
+  failed ||= present;
+  console.log(`${present ? "FAIL" : "ok  "} ${permission} absent`);
+}
+
 console.log(`dataExtractionRules=${String(attribute("dataExtractionRules"))}`);
 console.log(`fullBackupContent=${String(attribute("fullBackupContent"))}`);
 console.log(`apk-bytes=${analyze("apk", "file-size")}`);
