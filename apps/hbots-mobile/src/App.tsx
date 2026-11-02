@@ -1,4 +1,3 @@
-import type { PersonalBot, PersonalBotThread } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -14,6 +13,23 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
+import {
+  buildBotsCache,
+  clearBotsCache,
+  readBotsCache,
+  writeBotsCache,
+  type BotRow,
+} from "./botsCache";
+import { secureBotsCacheStorage } from "./botsCacheStorage";
+import {
+  connectionStripText,
+  connectingBotsView,
+  offlineBotsView,
+  savedBotsView,
+  serverBotsView,
+  STRIP_DELAY_MS,
+  type BotsView,
+} from "./botsView";
 import {
   backoffMs,
   describePairFailure,
@@ -35,13 +51,7 @@ type Screen =
   | { readonly kind: "booting" }
   | { readonly kind: "unpaired"; readonly error: string | null; readonly notice: string | null }
   | { readonly kind: "connecting"; readonly step: string }
-  | {
-      readonly kind: "online";
-      readonly session: StoredSession;
-      readonly serverVersion: string | null;
-      readonly bots: ReadonlyArray<PersonalBot>;
-      readonly threads: ReadonlyArray<PersonalBotThread>;
-    }
+  | { readonly kind: "bots"; readonly session: StoredSession; readonly view: BotsView }
   | { readonly kind: "laptopOffline"; readonly session: StoredSession; readonly attempt: number }
   | { readonly kind: "signedOut" };
 
@@ -64,6 +74,7 @@ const sessionLifetime = createSessionLifetime({
 const COLORS = {
   bg: "#0f0f0e",
   card: "#191918",
+  raised: "#202020",
   border: "#2a2a27",
   text: "#f2f0ec",
   muted: "#928d85",
@@ -83,34 +94,67 @@ function initials(name: string): string {
     .join("");
 }
 
-function modelLine(bot: PersonalBot): string {
-  const route = `${String(bot.modelSelection.instanceId)}/${bot.modelSelection.model}`;
-  return bot.title.length > 0 ? `${bot.title} · ${route}` : route;
-}
-
-function chatCount(threads: ReadonlyArray<PersonalBotThread>, botId: string): number {
-  return threads.filter((thread) => thread.botId === botId && thread.archivedAt === null).length;
-}
-
-function BotRow({ bot, chats }: { readonly bot: PersonalBot; readonly chats: number }) {
+function BotListRow({ row }: { readonly row: BotRow }) {
   return (
     <View style={styles.row}>
       <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{initials(bot.name)}</Text>
+        <Text style={styles.avatarText}>{initials(row.name)}</Text>
       </View>
       <View style={styles.rowBody}>
         <Text style={styles.botName} numberOfLines={1}>
-          {bot.name}
-          {bot.lead === true ? "  ·  lead" : ""}
+          {row.name}
+          {row.lead ? "  ·  lead" : ""}
         </Text>
         <Text style={styles.botMeta} numberOfLines={1}>
-          {modelLine(bot)}
+          {row.title.length > 0 ? `${row.title} · ${row.model}` : row.model}
         </Text>
       </View>
       <View style={styles.rowRight}>
-        <Text style={styles.chatCount}>{chats}</Text>
+        <Text style={styles.chatCount}>{row.chats}</Text>
         <Text style={styles.chatLabel}>chats</Text>
       </View>
+    </View>
+  );
+}
+
+function ConnectionStrip({
+  view,
+  onRetry,
+}: {
+  readonly view: BotsView;
+  readonly onRetry: () => void;
+}) {
+  const connectingSince = view.connection.kind === "connecting" ? view.connection.since : null;
+  const [shownSince, setShownSince] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (connectingSince === null) {
+      return;
+    }
+    const timer = setTimeout(() => setShownSince(connectingSince), STRIP_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [connectingSince]);
+
+  const visible =
+    view.connection.kind === "offline" ||
+    (connectingSince !== null && shownSince === connectingSince);
+  const text = connectionStripText(view);
+  if (!visible || text === null) {
+    return null;
+  }
+  return (
+    <View style={styles.strip}>
+      <Text style={styles.stripText}>{text}</Text>
+      {view.connection.kind === "offline" ? (
+        <Pressable
+          onPress={onRetry}
+          accessibilityRole="button"
+          hitSlop={8}
+          style={styles.stripButton}
+        >
+          <Text style={styles.stripButtonText}>Retry</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -139,16 +183,25 @@ function App() {
       stopRenew();
       disposeRpc();
       await sessionLifetime.end();
+      await clearBotsCache(secureBotsCacheStorage);
       setScreen(next);
     },
     [disposeRpc, stopRenew],
   );
 
   const handleFailure = useCallback(
-    async (cause: unknown, session: StoredSession, attempt: number) => {
+    async (cause: unknown, session: StoredSession, attempt: number, keepList: boolean) => {
       disposeRpc();
       if (classifyFailure(cause).kind === "authDead") {
         await endSession({ kind: "signedOut" });
+        return;
+      }
+      if (keepList) {
+        setScreen((previous) =>
+          previous.kind === "bots"
+            ? { ...previous, view: offlineBotsView(previous.view, Date.now(), attempt) }
+            : { kind: "laptopOffline", session, attempt },
+        );
         return;
       }
       setScreen({ kind: "laptopOffline", session, attempt });
@@ -157,9 +210,17 @@ function App() {
   );
 
   const goOnline = useCallback(
-    async (session: StoredSession, attempt: number) => {
+    async (session: StoredSession, attempt: number, keepList: boolean) => {
       disposeRpc();
-      setScreen({ kind: "connecting", step: "Connecting" });
+      if (keepList) {
+        setScreen((previous) =>
+          previous.kind === "bots"
+            ? { ...previous, view: connectingBotsView(previous.view, Date.now()) }
+            : previous,
+        );
+      } else {
+        setScreen({ kind: "connecting", step: "Connecting" });
+      }
       const epoch = sessionLifetime.epoch();
       try {
         const online = await openOnline(session);
@@ -168,18 +229,23 @@ function App() {
           return;
         }
         rpcRef.current = online.rpc;
-        setScreen({
-          kind: "online",
-          session,
+        const cache = buildBotsCache({
+          environmentId: session.environmentId,
           serverVersion: online.serverVersion,
+          savedAtMs: Date.now(),
           bots: online.bots,
           threads: online.threads,
         });
+        await writeBotsCache(secureBotsCacheStorage, cache);
+        if (sessionLifetime.epoch() !== epoch) {
+          return;
+        }
+        setScreen({ kind: "bots", session, view: serverBotsView(cache) });
       } catch (cause) {
         if (sessionLifetime.epoch() !== epoch) {
           return;
         }
-        await handleFailure(cause, session, attempt);
+        await handleFailure(cause, session, attempt, keepList);
       }
     },
     [disposeRpc, handleFailure],
@@ -220,7 +286,14 @@ function App() {
       }
       sessionLifetime.restore(session);
       startRenew();
-      await goOnline(session, 0);
+      const cached = await readBotsCache(secureBotsCacheStorage, session.environmentId);
+      if (!live) {
+        return;
+      }
+      if (cached !== null) {
+        setScreen({ kind: "bots", session, view: savedBotsView(cached, Date.now()) });
+      }
+      await goOnline(session, 0, cached !== null);
     })();
     return () => {
       live = false;
@@ -230,27 +303,54 @@ function App() {
   }, [disposeRpc, goOnline, startRenew, stopRenew]);
 
   useEffect(() => {
-    if (screen.kind !== "laptopOffline") {
-      return;
+    if (screen.kind === "laptopOffline") {
+      const { session, attempt } = screen;
+      const timer = setTimeout(
+        () => void goOnline(session, attempt + 1, false),
+        backoffMs(attempt),
+      );
+      return () => clearTimeout(timer);
     }
-    const { session, attempt } = screen;
-    const timer = setTimeout(() => void goOnline(session, attempt + 1), backoffMs(attempt));
-    return () => clearTimeout(timer);
+    if (screen.kind === "bots" && screen.view.connection.kind === "offline") {
+      const { session } = screen;
+      const { attempt } = screen.view.connection;
+      const timer = setTimeout(() => void goOnline(session, attempt + 1, true), backoffMs(attempt));
+      return () => clearTimeout(timer);
+    }
   }, [goOnline, screen]);
 
   useEffect(() => {
-    if (screen.kind !== "online") {
+    if (screen.kind !== "bots" || screen.view.connection.kind !== "online") {
       return;
     }
-    const { session, serverVersion } = screen;
+    const { session, view } = screen;
     const timer = setInterval(() => {
       const rpc = rpcRef.current;
       if (rpc === null) {
         return;
       }
+      const epoch = sessionLifetime.epoch();
       refreshBots(rpc).then(
-        (snapshot) => setScreen({ kind: "online", session, serverVersion, ...snapshot }),
-        (cause: unknown) => void handleFailure(cause, session, 0),
+        (snapshot) => {
+          if (sessionLifetime.epoch() !== epoch) {
+            return;
+          }
+          const cache = buildBotsCache({
+            environmentId: session.environmentId,
+            serverVersion: view.serverVersion,
+            savedAtMs: Date.now(),
+            bots: snapshot.bots,
+            threads: snapshot.threads,
+          });
+          void writeBotsCache(secureBotsCacheStorage, cache);
+          setScreen({ kind: "bots", session, view: serverBotsView(cache) });
+        },
+        (cause: unknown) => {
+          if (sessionLifetime.epoch() !== epoch) {
+            return;
+          }
+          void handleFailure(cause, session, 0, true);
+        },
       );
     }, REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
@@ -268,7 +368,7 @@ function App() {
       await sessionLifetime.adopt(session);
       setLink("");
       startRenew();
-      await goOnline(session, 0);
+      await goOnline(session, 0, false);
     } catch (cause) {
       setScreen({ kind: "unpaired", error: describePairFailure(cause), notice: null });
     }
@@ -284,6 +384,7 @@ function App() {
       disposeRpc();
       setScreen({ kind: "connecting", step: "Signing out" });
       await sessionLifetime.end();
+      await clearBotsCache(secureBotsCacheStorage);
       const outcome = await revokeRemoteSession(session);
       setScreen({ kind: "unpaired", error: null, notice: describeSignOut(outcome) });
     },
@@ -311,14 +412,14 @@ function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
-        {screen.kind === "online" ? (
+        {screen.kind === "bots" ? (
           <View style={styles.flex}>
             <View style={styles.header}>
               <View style={styles.flex}>
                 <Text style={styles.headerTitle}>Bots</Text>
                 <Text style={styles.headerSub} numberOfLines={1}>
-                  {screen.bots.length} bots · {screen.session.label}
-                  {screen.serverVersion === null ? "" : ` · v${screen.serverVersion}`}
+                  {screen.view.rows.length} bots · {screen.session.label}
+                  {screen.view.serverVersion === null ? "" : ` · v${screen.view.serverVersion}`}
                 </Text>
               </View>
               <Pressable
@@ -329,17 +430,19 @@ function App() {
                 <Text style={styles.pillText}>Sign out</Text>
               </Pressable>
             </View>
+            <ConnectionStrip
+              view={screen.view}
+              onRetry={() => void goOnline(screen.session, 0, true)}
+            />
             <FlatList
-              data={screen.bots}
-              keyExtractor={(bot) => bot.botId}
+              data={screen.view.rows}
+              keyExtractor={(row) => row.botId}
               getItemLayout={(_, index) => ({
                 length: ROW_HEIGHT,
                 offset: ROW_HEIGHT * index,
                 index,
               })}
-              renderItem={({ item }) => (
-                <BotRow bot={item} chats={chatCount(screen.threads, item.botId)} />
-              )}
+              renderItem={({ item }) => <BotListRow row={item} />}
               initialNumToRender={20}
               windowSize={9}
             />
@@ -362,7 +465,7 @@ function App() {
                   hbots keeps trying.
                 </Text>
                 <Pressable
-                  onPress={() => void goOnline(screen.session, 0)}
+                  onPress={() => void goOnline(screen.session, 0, false)}
                   accessibilityRole="button"
                   style={styles.primaryButton}
                 >
@@ -464,6 +567,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   pillText: { color: COLORS.text, fontSize: 13, fontWeight: "600" },
+  strip: {
+    minHeight: 32,
+    paddingLeft: 16,
+    paddingRight: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: COLORS.raised,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  stripText: { color: COLORS.muted, fontSize: 12 },
+  stripButton: { minHeight: 32, paddingHorizontal: 12, justifyContent: "center" },
+  stripButtonText: { color: COLORS.text, fontSize: 12, fontWeight: "600" },
   row: {
     height: ROW_HEIGHT,
     flexDirection: "row",
