@@ -8,15 +8,37 @@
  */
 import * as Schema from "effect/Schema";
 
-export const HbotsVersion = Schema.String.check(
-  Schema.isPattern(/^\d+\.\d+\.\d+$/),
-).pipe(Schema.brand("HbotsVersion"));
+export const HbotsVersion = Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+$/)).pipe(
+  Schema.brand("HbotsVersion"),
+);
 export type HbotsVersion = typeof HbotsVersion.Type;
+
+export const Sha256Hex = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)).pipe(
+  Schema.brand("Sha256Hex"),
+);
+export type Sha256Hex = typeof Sha256Hex.Type;
+
+/**
+ * The APK the server currently publishes for its own release. `version` is
+ * also the route segment the phone downloads from, so a manifest cannot point
+ * it at another file.
+ */
+export const PersonalAndroidRelease = Schema.Struct({
+  version: HbotsVersion,
+  sha256: Sha256Hex,
+  size: Schema.Int.check(Schema.isBetween({ minimum: 1_000_000, maximum: 300_000_000 })),
+  notes: Schema.String.check(Schema.isMaxLength(500)),
+});
+export type PersonalAndroidRelease = typeof PersonalAndroidRelease.Type;
 
 export const PersonalClientCompat = Schema.Struct({
   /** Null when the server has no readable release stamp (a dev root). */
   serverVersion: Schema.NullOr(HbotsVersion),
-  android: Schema.Struct({ minimumNativeVersion: HbotsVersion }),
+  android: Schema.Struct({
+    minimumNativeVersion: HbotsVersion,
+    /** Null when there is no readable, valid published APK manifest. */
+    latest: Schema.NullOr(PersonalAndroidRelease),
+  }),
 });
 export type PersonalClientCompat = typeof PersonalClientCompat.Type;
 

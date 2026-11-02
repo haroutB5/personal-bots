@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../../config.ts";
+import { readLatestAndroidRelease } from "../androidUpdates/latestRelease.ts";
 import { readLiveHbotsVersion } from "../releaseVersion.ts";
 
 export const PERSONAL_CLIENT_COMPAT_PATH = "/api/personal/client-compat";
@@ -35,12 +36,17 @@ export const personalClientCompatRouteLayer = HttpRouter.add(
   Effect.gen(function* () {
     const config = yield* Effect.serviceOption(ServerConfig);
     const staticDir = config._tag === "Some" ? config.value.staticDir : undefined;
+    const baseDir = config._tag === "Some" ? config.value.baseDir : undefined;
     const live = yield* readLiveHbotsVersion(staticDir);
     // A stamp the schema refuses is "unknown", not a reason to fail: an old
     // or hand-edited version.txt must never take the handshake down.
+    const latest = baseDir === undefined ? null : yield* readLatestAndroidRelease(baseDir);
     const compat: PersonalClientCompat = {
       serverVersion: live === null ? null : Option.getOrNull(decodeVersion(live)),
-      android: { minimumNativeVersion: PERSONAL_ANDROID_MINIMUM_NATIVE_VERSION },
+      android: {
+        minimumNativeVersion: PERSONAL_ANDROID_MINIMUM_NATIVE_VERSION,
+        latest,
+      },
     };
     return yield* HttpServerResponse.json(compat, { headers: HEADERS });
   }).pipe(
