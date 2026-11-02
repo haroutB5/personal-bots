@@ -4,4 +4,8 @@ ios/
 .expo/
 .tmp/
 *.apk
+!modules/hbots-updater/android/
+!modules/hbots-updater/android/**
+!modules/hbots-updater/android/src/test/resources/apks/*.apk
+modules/hbots-updater/android/build/
 *.aab
