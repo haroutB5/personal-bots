@@ -30,3 +30,15 @@ Binary only. The previous release is `b314d80ae129` (1.66.111). No migration ran
 - Builder red and green proofs: `/home/harout/Claude/AI/dev-team/qa/hbots-revoke-streams/RESULTS.md`.
 - Independent review, round 2 PASS at `2ea5f14ea4`: `/home/harout/Claude/AI/dev-team/qa/hbots-revoke-streams-verify/RESULTS.md`.
 - Release gates for this exact commit are recorded below.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=5976c25dadcc9935fef440f7aa5375d62d34840f release=5976c25dadcc json-sha256=d47c1325d72573e71e481b12bbc3d5289b925d0c68ce979f4fb4e2e31303f083 result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+
+<!-- gate-evidence:end -->
