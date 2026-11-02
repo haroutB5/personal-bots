@@ -32,7 +32,7 @@ afterEach(async () => {
 });
 
 const CURRENT = "1.66.120";
-const APK_BYTES = Uint8Array.from({ length: 1024 }, (_, index) => (index * 37) % 256);
+const APK_BYTES = Uint8Array.from({ length: 1_200_000 }, (_, index) => (index * 37) % 256);
 const APK_SHA256 = NodeCrypto.createHash("sha256").update(APK_BYTES).digest("hex");
 
 const manifestFor = (version: string) =>
@@ -40,7 +40,7 @@ const manifestFor = (version: string) =>
     schema: 1,
     version,
     sha256: APK_SHA256,
-    size: 46_076_721,
+    size: APK_BYTES.byteLength,
     notes: "Update screen and zoom fixes",
   });
 
@@ -103,7 +103,7 @@ const fixture = async (options: FixtureOptions) => {
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler };
+  return { handler, home, updatesDir };
 };
 
 const TOKEN = { authorization: "Bearer test-token" };
@@ -123,10 +123,10 @@ describe("the APK the phone downloads for a self-update", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/vnd.android.package-archive");
-    expect(response.headers.get("content-length")).toBe("1024");
+    expect(response.headers.get("content-length")).toBe(String(APK_BYTES.byteLength));
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual(Array.from(APK_BYTES));
+    expect(Buffer.from(await response.arrayBuffer()).equals(Buffer.from(APK_BYTES))).toBe(true);
   });
 
   it("refuses a request with no Bearer header before it looks at the token", async () => {
@@ -170,6 +170,56 @@ describe("the APK the phone downloads for a self-update", () => {
       currentApk: false,
     });
     expect((await handler(get(apk(CURRENT), TOKEN))).status).toBe(404);
+  });
+
+  it("answers 404 when the APK path is a symlink to a file outside the updates directory", async () => {
+    const { handler, home, updatesDir } = await fixture({
+      auth: [AuthOrchestrationReadScope],
+      currentApk: false,
+    });
+    const outside = NodePath.join(home, "outside.bin");
+    await NodeFSP.writeFile(outside, APK_BYTES);
+    await NodeFSP.symlink(outside, NodePath.join(updatesDir, `hbots-${CURRENT}.apk`));
+
+    expect((await handler(get(apk(CURRENT), TOKEN))).status).toBe(404);
+  });
+
+  it("answers 404 when the android-updates folder is a symlink to another folder", async () => {
+    const { handler, home, updatesDir } = await fixture({
+      auth: [AuthOrchestrationReadScope],
+      manifest: null,
+      currentApk: false,
+    });
+    const linkedDir = NodePath.join(home, "linked-updates");
+    await NodeFSP.mkdir(linkedDir);
+    await NodeFSP.writeFile(NodePath.join(linkedDir, "latest.json"), manifestFor(CURRENT));
+    await NodeFSP.writeFile(NodePath.join(linkedDir, `hbots-${CURRENT}.apk`), APK_BYTES);
+    await NodeFSP.rm(updatesDir, { recursive: true });
+    await NodeFSP.symlink(linkedDir, updatesDir);
+
+    expect((await handler(get(apk(CURRENT), TOKEN))).status).toBe(404);
+  });
+
+  it("answers 404 when the APK is not the size the manifest published", async () => {
+    const { handler, updatesDir } = await fixture({ auth: [AuthOrchestrationReadScope] });
+    await NodeFSP.writeFile(
+      NodePath.join(updatesDir, `hbots-${CURRENT}.apk`),
+      APK_BYTES.subarray(0, APK_BYTES.byteLength - 1),
+    );
+
+    expect((await handler(get(apk(CURRENT), TOKEN))).status).toBe(404);
+  });
+
+  it("answers 404 when the APK path is a directory", async () => {
+    const { handler, updatesDir } = await fixture({
+      auth: [AuthOrchestrationReadScope],
+      currentApk: false,
+    });
+    await NodeFSP.mkdir(NodePath.join(updatesDir, `hbots-${CURRENT}.apk`));
+
+    const response = await handler(get(apk(CURRENT), TOKEN));
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Not Found");
   });
 
   it.each(["", "1.66", "1.66.120.1", "v1.66.120", "1.66.120%00", "1.66.120/extra"])(
