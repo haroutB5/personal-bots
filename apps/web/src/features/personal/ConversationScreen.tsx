@@ -165,7 +165,11 @@ import {
   personalSecretFulfill,
   usePendingSecretRequests,
 } from "./useSecretRequests";
-import { setPersonalPreference, usePersonalPreference } from "./personalPreferences";
+import {
+  setPersonalPreference,
+  usePersonalSharedPreference,
+  useSetPersonalSharedPreference,
+} from "./personalPreferences";
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
@@ -441,8 +445,9 @@ export function ConversationScreen({
     threadId: ThreadId;
     projection: TimelineEntriesProjection;
   } | null>(null);
-  const showToolSteps = usePersonalPreference("showToolSteps");
-  const showRoutinesStrip = usePersonalPreference("showRoutinesStrip");
+  const showToolSteps = usePersonalSharedPreference("showToolSteps");
+  const showRoutinesStrip = usePersonalSharedPreference("showRoutinesStrip");
+  const setSharedPreference = useSetPersonalSharedPreference();
   // Wide desktop: the Computer and the routines sit in a panel beside the chat
   // instead of the link and strip under it. Below the width the chat is laid
   // out exactly as it always was.
@@ -1786,7 +1791,7 @@ export function ConversationScreen({
             <ConversationRoutinesPanel
               environmentId={environmentId}
               botId={botId}
-              onHide={() => setPersonalPreference("showRoutinesStrip", false)}
+              onHide={() => void setSharedPreference("showRoutinesStrip", false)}
             />
           ) : null}
           {archiveUnresolved ? (
@@ -1906,7 +1911,7 @@ export function ConversationScreen({
           botId={botId}
           threadId={threadId}
           showRoutines={showRoutinesStrip}
-          onHideRoutines={() => setPersonalPreference("showRoutinesStrip", false)}
+          onHideRoutines={() => void setSharedPreference("showRoutinesStrip", false)}
         />
       ) : null}
     </div>

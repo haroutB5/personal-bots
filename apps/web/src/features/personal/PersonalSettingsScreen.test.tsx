@@ -220,7 +220,7 @@ describe("Settings chat preferences", () => {
       (node) => node.type === "button" && node.props["aria-pressed"] !== undefined,
     );
 
-  it("starts with tool steps off and routines on, and persists both", async () => {
+  it("reads the defaults when the server has no value, and saves a change there", async () => {
     const store = new Map<string, string>();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     stubWindow({ localStorage: storageStub(store) });
@@ -242,9 +242,23 @@ describe("Settings chat preferences", () => {
     await act(async () => toggles()[0]!.props.onClick());
     await act(async () => toggles()[1]!.props.onClick());
 
-    // "Off" for a default-on flag has to be written, not just left absent.
-    expect(store.get("personal-show-tool-steps")).toBe("1");
-    expect(store.get("personal-show-routines-strip")).toBe("0");
+    expect(state.calls).toEqual([{ showToolSteps: true }, { showRoutinesStrip: false }]);
+    // The two chat rows are shared across browsers now, never written here.
+    expect([...store.keys()]).toEqual([]);
+  });
+
+  it("shows the value another browser saved", async () => {
+    state.profile = {
+      displayName: "Harout",
+      showToolSteps: true,
+      showRoutinesStrip: false,
+    };
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    stubWindow({ localStorage: storageStub(new Map<string, string>()) });
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+
     expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([
       true,
       false,
@@ -252,6 +266,9 @@ describe("Settings chat preferences", () => {
       false,
       false,
     ]);
+
+    await act(async () => toggles()[0]!.props.onClick());
+    expect(state.calls).toEqual([{ showToolSteps: false }]);
   });
 });
 

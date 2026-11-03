@@ -359,6 +359,8 @@ vi.mock("./useSecretRequests", () => ({
 vi.mock("./personalPreferences", () => ({
   setPersonalPreference: () => {},
   usePersonalPreference: () => true,
+  usePersonalSharedPreference: () => true,
+  useSetPersonalSharedPreference: () => async () => true,
 }));
 vi.mock("./DiagnosticsOverlay", () => ({
   diagnosticsEnabled: () => false,

@@ -930,6 +930,19 @@ export const PersonalProfile = Schema.Struct({
    * Optional so an older server's profile still decodes (read as none).
    */
   hiddenUsageProviders: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * Settings > Chat. Shared by web and phone through the profile, unlike the
+   * desktop column widths. Stored in `personal_meta` under "showToolSteps".
+   * Absent means the owner has never chosen: the clients use their default,
+   * and the web app imports its old browser value once. An older server's
+   * profile leaves it absent.
+   */
+  showToolSteps: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The routines strip under a chat, shared the same way and stored under
+   * "showRoutinesStrip". Absent means unset, as above.
+   */
+  showRoutinesStrip: Schema.optionalKey(Schema.Boolean),
 });
 export type PersonalProfile = typeof PersonalProfile.Type;
 
@@ -957,6 +970,10 @@ export const PersonalProfileSetInput = Schema.Struct({
       visible: Schema.Boolean,
     }),
   ),
+  /** Settings > Chat, shared across devices. Absent keeps the current value. */
+  showToolSteps: Schema.optional(Schema.Boolean),
+  /** The routines strip under a chat, shared across devices. */
+  showRoutinesStrip: Schema.optional(Schema.Boolean),
 });
 export type PersonalProfileSetInput = typeof PersonalProfileSetInput.Type;
 
