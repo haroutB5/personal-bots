@@ -227,8 +227,8 @@ function App() {
     async (next: Screen) => {
       stopRenew();
       disposeRpc();
-      await resetUpdater();
       await sessionLifetime.end();
+      await resetUpdater(sessionLifetime.epoch());
       await clearBotsCache(secureBotsCacheStorage);
       setScreen(next);
     },
@@ -256,8 +256,9 @@ function App() {
   );
 
   const readCompat = useCallback(async (session: StoredSession, manual: boolean) => {
+    const epoch = sessionLifetime.epoch();
     const compat = await fetchCompat(session.httpBaseUrl);
-    if (compat === null) {
+    if (compat === null || sessionLifetime.epoch() !== epoch) {
       return null;
     }
     setLatest(compat.latest);
@@ -269,7 +270,7 @@ function App() {
             apkUrl: apkUrlFor(session.httpBaseUrl, compat.latest),
             bearer: session.accessToken,
           };
-    await offerUpdate(compat.latest, auth, manual);
+    await offerUpdate(compat.latest, auth, manual, epoch);
     return compat;
   }, []);
 
@@ -398,7 +399,7 @@ function App() {
           if (compat !== null) {
             setLatest(compat.latest);
             setMinimumVersion(compat.minimumNativeVersion);
-            await offerUpdate(compat.latest, null, false);
+            await offerUpdate(compat.latest, null, false, sessionLifetime.epoch());
             const installed = snapshot?.installedVersion ?? "";
             if (
               compat.minimumNativeVersion !== null &&
@@ -558,8 +559,8 @@ function App() {
       disposeRpc();
       setSettingsOpen(false);
       setScreen({ kind: "connecting", step: "Signing out" });
-      await resetUpdater();
       await sessionLifetime.end();
+      await resetUpdater(sessionLifetime.epoch());
       await clearBotsCache(secureBotsCacheStorage);
       const outcome = await revokeRemoteSession(session);
       await saveServer(session.httpBaseUrl);
@@ -567,7 +568,7 @@ function App() {
       if (compat !== null) {
         setLatest(compat.latest);
         setMinimumVersion(compat.minimumNativeVersion);
-        await offerUpdate(compat.latest, null, false);
+        await offerUpdate(compat.latest, null, false, sessionLifetime.epoch());
       }
       const installed = updateRef.current?.installedVersion ?? "";
       const required = compat?.minimumNativeVersion ?? null;

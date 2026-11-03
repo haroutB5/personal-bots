@@ -23,7 +23,8 @@ object UpdateReducer {
     UpdateEvent.InstallNotPermitted -> installNotPermitted(record)
     UpdateEvent.WentBackground -> wentBackground(record)
     UpdateEvent.WentForeground -> record to listOf(UpdateEffect.CancelIdleInstall)
-    UpdateEvent.SignedOut -> signedOut(record)
+    is UpdateEvent.SignedOut -> signedOut(record, event)
+    UpdateEvent.SessionInvalid -> sessionInvalid(record)
     is UpdateEvent.PermissionChanged -> permissionChanged(record, event, installedCode, now)
   }
 
@@ -65,7 +66,12 @@ object UpdateReducer {
         if (event.canInstall) {
           val (next, effects) = offered(
             record.copy(state = UpdateState.Idle()),
-            UpdateEvent.Offered(record.lastOffer, authenticated = true, canInstall = true),
+            UpdateEvent.Offered(
+              record.lastOffer,
+              authenticated = true,
+              canInstall = true,
+              generation = record.sessionGeneration,
+            ),
             installedCode,
             now,
             setLastCheckAt = false,
@@ -86,7 +92,13 @@ object UpdateReducer {
     now: Long,
     setLastCheckAt: Boolean,
   ): Pair<UpdateRecord, List<UpdateEffect>> {
-    val base = if (event.manual) record.copy(state = record.state.withoutRejected()) else record
+    if (event.generation < record.sessionGeneration) return record to emptyList()
+    val current = if (event.generation > record.sessionGeneration) {
+      record.copy(sessionGeneration = event.generation)
+    } else {
+      record
+    }
+    val base = if (event.manual) current.copy(state = current.state.withoutRejected()) else current
     val checked = if (setLastCheckAt) base.copy(lastCheckAt = now) else base
     val state = checked.state
     val release = event.release
@@ -132,7 +144,19 @@ object UpdateReducer {
     event: UpdateEvent.Downloaded,
   ): Pair<UpdateRecord, List<UpdateEffect>> {
     val state = record.state
-    if (state !is UpdateState.Downloading) return record to emptyList()
+    if (state !is UpdateState.Downloading) {
+      val owned = when (state) {
+        is UpdateState.Ready -> state.apk
+        is UpdateState.Installing -> state.apk
+        is UpdateState.NeedsTap -> state.apk
+        else -> null
+      }
+      return if (event.apk == owned) {
+        record to emptyList()
+      } else {
+        record to listOf(UpdateEffect.DeleteLateFile(event.apk))
+      }
+    }
     val effects = if (event.inBackground) listOf(UpdateEffect.ScheduleIdleInstall) else emptyList()
     return record.copy(state = UpdateState.Ready(state.target, event.apk)) to effects
   }
@@ -211,19 +235,36 @@ object UpdateReducer {
       listOf(UpdateEffect.DeleteFile)
   }
 
-  private fun signedOut(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
+  private fun signedOut(
+    record: UpdateRecord,
+    event: UpdateEvent.SignedOut,
+  ): Pair<UpdateRecord, List<UpdateEffect>> {
     val rejected = (record.state as? UpdateState.Idle)?.rejected
     return UpdateRecord(
       state = UpdateState.Idle(rejected),
       lastCheckAt = null,
       lastOffer = null,
       notifiedCode = record.notifiedCode,
+      sessionGeneration = maxOf(record.sessionGeneration, event.generation),
     ) to listOf(
       UpdateEffect.CancelIdleInstall,
       UpdateEffect.DeleteAllFiles,
       UpdateEffect.ClearNotification,
     )
   }
+
+  private fun sessionInvalid(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
+    UpdateRecord(
+      state = UpdateState.Idle(),
+      lastCheckAt = record.lastCheckAt,
+      lastOffer = null,
+      notifiedCode = record.notifiedCode,
+      sessionGeneration = record.sessionGeneration + 1,
+    ) to listOf(
+      UpdateEffect.CancelIdleInstall,
+      UpdateEffect.DeleteAllFiles,
+      UpdateEffect.ClearNotification,
+    )
 
   private fun wentBackground(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
     if (record.state is UpdateState.Ready) {
@@ -243,7 +284,12 @@ object UpdateReducer {
     }
     return offered(
       record.copy(state = UpdateState.Idle()),
-      UpdateEvent.Offered(record.lastOffer, authenticated = true, canInstall = true),
+      UpdateEvent.Offered(
+        record.lastOffer,
+        authenticated = true,
+        canInstall = true,
+        generation = record.sessionGeneration,
+      ),
       installedCode,
       now,
       setLastCheckAt = false,

@@ -30,7 +30,8 @@ class HbotsUpdaterModule : Module() {
       val parsed = parseRelease(release)
       if (parsed != null) UpdateNotifier.requestPermission(appContext.currentActivity)
       val manual = options?.get("manual") as? Boolean ?: false
-      UpdateEngine.offer(parsed, DownloadAuth.parse(auth), manual)
+      val generation = (options?.get("generation") as? Number)?.toLong() ?: 0L
+      UpdateEngine.offer(parsed, DownloadAuth.parse(auth), manual, generation)
     }
 
     AsyncFunction("snapshot") {
@@ -43,9 +44,9 @@ class HbotsUpdaterModule : Module() {
       UpdateEngine.confirmInstall()
     }
 
-    AsyncFunction("reset") {
+    AsyncFunction("reset") { generation: Long? ->
       attach()
-      UpdateEngine.signedOut()
+      UpdateEngine.signedOut(generation ?: 0L)
     }
 
     AsyncFunction("openInstallPermission") {

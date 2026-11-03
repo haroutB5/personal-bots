@@ -4,6 +4,7 @@ import expo.modules.hbotsupdater.UpdateEffect.CancelIdleInstall
 import expo.modules.hbotsupdater.UpdateEffect.ClearNotification
 import expo.modules.hbotsupdater.UpdateEffect.CommitInstall
 import expo.modules.hbotsupdater.UpdateEffect.DeleteAllFiles
+import expo.modules.hbotsupdater.UpdateEffect.DeleteLateFile
 import expo.modules.hbotsupdater.UpdateEffect.DeleteFile
 import expo.modules.hbotsupdater.UpdateEffect.PostUpdated
 import expo.modules.hbotsupdater.UpdateEffect.PostUpdateReady
@@ -223,7 +224,7 @@ class UpdateReducerTest {
   fun `signing out keeps a rejected sha`() {
     reduced(
       record(Idle(rejected = next), lastOffer = next),
-      UpdateEvent.SignedOut,
+      UpdateEvent.SignedOut(),
       record(Idle(rejected = next), lastCheckAt = null, lastOffer = null),
       listOf(CancelIdleInstall, DeleteAllFiles, ClearNotification),
     )
@@ -233,7 +234,7 @@ class UpdateReducerTest {
   fun `signing out resets the record and deletes every file`() {
     reduced(
       record(Ready(next, apk), lastCheckAt = 123, lastOffer = next),
-      UpdateEvent.SignedOut,
+      UpdateEvent.SignedOut(),
       record(Idle(), lastCheckAt = null, lastOffer = null),
       listOf(CancelIdleInstall, DeleteAllFiles, ClearNotification),
     )
@@ -476,7 +477,7 @@ class UpdateReducerTest {
       record(Ready(next, apk), lastOffer = next),
       UpdateEvent.Downloaded("/other.apk"),
       record(Ready(next, apk), lastOffer = next),
-      emptyList(),
+      listOf(DeleteLateFile("/other.apk")),
     )
   }
 

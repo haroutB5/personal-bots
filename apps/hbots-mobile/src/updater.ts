@@ -35,11 +35,11 @@ interface NativeUpdater {
   offer(
     release: AndroidRelease | null,
     auth: UpdateAuth | null,
-    options: { readonly manual: boolean },
+    options: { readonly manual: boolean; readonly generation: number },
   ): Promise<void>;
   snapshot(): Promise<UpdateSnapshot>;
   confirmInstall(): Promise<void>;
-  reset(): Promise<void>;
+  reset(generation: number): Promise<void>;
   openInstallPermission(): Promise<void>;
   addListener(
     event: "state",
@@ -68,12 +68,13 @@ export async function offerUpdate(
   release: AndroidRelease | null,
   auth: UpdateAuth | null,
   manual: boolean,
+  generation: number,
 ): Promise<void> {
   if (native === null) {
     return;
   }
   try {
-    await native.offer(release, auth, { manual });
+    await native.offer(release, auth, { manual, generation });
   } catch {
     // A failed offer leaves the last state alone. The next compat read retries.
   }
@@ -86,12 +87,12 @@ export async function confirmUpdateInstall(): Promise<void> {
   await native.confirmInstall();
 }
 
-export async function resetUpdater(): Promise<void> {
+export async function resetUpdater(generation: number): Promise<void> {
   if (native === null) {
     return;
   }
   try {
-    await native.reset();
+    await native.reset(generation);
   } catch {
     // A failed reset leaves the last state alone. The next sign out retries.
   }

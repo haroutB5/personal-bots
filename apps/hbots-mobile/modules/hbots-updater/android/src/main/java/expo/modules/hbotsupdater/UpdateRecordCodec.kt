@@ -6,6 +6,7 @@ import org.json.JSONObject
 object UpdateRecordCodec {
   private const val SCHEMA = 1
 
+  // The session generation stays process-local: a stale offer cannot outlive the process.
   fun encode(record: UpdateRecord): String = JSONObject()
     .put("schema", SCHEMA)
     .put("state", encodeState(record.state))

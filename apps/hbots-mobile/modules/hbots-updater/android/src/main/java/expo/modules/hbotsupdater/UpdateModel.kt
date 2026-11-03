@@ -26,6 +26,7 @@ data class UpdateRecord(
   val lastCheckAt: Long? = null,
   val lastOffer: Release? = null,
   val notifiedCode: Long = 0L,
+  val sessionGeneration: Long = 0L,
 )
 
 sealed interface UpdateEvent {
@@ -35,6 +36,7 @@ sealed interface UpdateEvent {
     val authenticated: Boolean,
     val manual: Boolean = false,
     val canInstall: Boolean = true,
+    val generation: Long = 0L,
   ) : UpdateEvent
   data class Downloaded(val apk: String, val inBackground: Boolean = false) : UpdateEvent
   data class Rejected(val reason: String) : UpdateEvent
@@ -48,7 +50,8 @@ sealed interface UpdateEvent {
   data object InstallNotPermitted : UpdateEvent
   data object WentBackground : UpdateEvent
   data object WentForeground : UpdateEvent
-  data object SignedOut : UpdateEvent
+  data class SignedOut(val generation: Long = 0L) : UpdateEvent
+  data object SessionInvalid : UpdateEvent
   data class PermissionChanged(val canInstall: Boolean) : UpdateEvent
 }
 
@@ -58,6 +61,7 @@ sealed interface UpdateEffect {
   data object ScheduleIdleInstall : UpdateEffect
   data object CancelIdleInstall : UpdateEffect
   data object DeleteFile : UpdateEffect
+  data class DeleteLateFile(val apk: String) : UpdateEffect
   data object DeleteAllFiles : UpdateEffect
   data object PostUpdated : UpdateEffect
   data object PostUpdateReady : UpdateEffect

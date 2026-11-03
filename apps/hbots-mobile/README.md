@@ -81,20 +81,42 @@ another key. A debug build on an x86_64 emulator passes
 `-PreactNativeArchitectures=x86_64` to Gradle, because the app's own ABI list is
 arm64 only.
 
+## Update security
+
+The native updater keeps one session generation and checks the session twice per install attempt.
+
+- Every compat read carries the JS session epoch with its offer. Sign out and `endSession` clear the
+  session first, then advance the native generation, so an offer that was already in flight is dropped.
+  The reducer rechecks the generation at commit.
+- Before any commit, `UpdateEngine` reads the Bearer from `expo-secure-store` (`SessionSource.kt`) and
+  calls `GET /api/auth/session` with it. A 401, a 403, or a 200 with `authenticated: false` resets to Idle
+  and deletes the APK. A network failure, a timeout, a 5xx or an unreadable answer defers and stays Ready,
+  so an offline phone never installs. A missing stored session also defers.
+- The token is not copied into the updater prefs, WorkManager or a log.
+- Accepted residual window: Android kills the app when a resume lands within about 1 s of a committed
+  install. A committed `PackageInstaller` session cannot be aborted, so that window belongs to the
+  platform. Every resume before commit defers.
+
 ## Publish an update
 
 ```sh
 node scripts/publish-android-update.mjs <signed.apk> \
-  --out <server data root> --notes "What changed"
+  --out <server data root> --notes "What changed" --minimum-native-version x.y.z
 ```
 
 The script writes `<data root>/android-updates/hbots-<version>.apk` first, then
 `latest.json` through a temp file and rename, then prunes to the newest three
-APKs. It refuses an APK with another package, a versionName that differs from
-`scripts/personal/app-version.txt`, a versionCode that does not match the name,
-a signer other than `release-cert.sha256`, a versionCode that does not rise
-above the published one, or a `minimumNativeVersion` above the published
-version. Publish after the server release is live.
+APKs. `--out` must be a non-empty absolute path. It refuses an APK with another
+package, a versionName that differs from `scripts/personal/app-version.txt`, a
+versionCode that does not match the name, a signer other than
+`release-cert.sha256`, a versionCode that does not rise above the published one,
+or a `minimumNativeVersion` above the published version. Publish after the
+server release is live.
+
+`--minimum-native-version` is required until `packages/contracts/src/personalClientCompat.ts`
+is on this branch. Without the flag the script reads that contract; when it is
+missing the script refuses to publish instead of skipping the lockout guard.
+The same guard is enforced in `releaseProblems`, so no caller can bypass it.
 
 `--readback https://host` checks the result through `client-compat` and
 downloads the APK from its Bearer route, comparing the sha256. It needs a

@@ -55,7 +55,7 @@ class SessionGenerationTest {
       UpdateReducer.reduce(ready, UpdateEvent.SignedOut(generation = 2), installed, now)
 
     assertEquals(
-      UpdateRecord(Idle(), lastCheckAt = now, lastOffer = null, notifiedCode = installed, sessionGeneration = 2),
+      UpdateRecord(Idle(), lastCheckAt = null, lastOffer = null, notifiedCode = installed, sessionGeneration = 2),
       next,
     )
     assertEquals(

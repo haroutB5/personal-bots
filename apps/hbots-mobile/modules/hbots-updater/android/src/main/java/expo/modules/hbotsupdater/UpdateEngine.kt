@@ -60,7 +60,7 @@ object UpdateEngine {
     emit = null
   }
 
-  fun offer(release: Release?, auth: DownloadAuth?, manual: Boolean) = work.execute {
+  fun offer(release: Release?, auth: DownloadAuth?, manual: Boolean, generation: Long) = work.execute {
     val app = context ?: return@execute
     dispatch(
       UpdateEvent.Offered(
@@ -68,6 +68,7 @@ object UpdateEngine {
         authenticated = auth != null,
         manual = manual,
         canInstall = UpdateInstaller.canInstall(app),
+        generation = generation,
       ),
       auth,
     )
@@ -94,9 +95,9 @@ object UpdateEngine {
     }
   }
 
-  fun signedOut() = work.execute {
+  fun signedOut(generation: Long) = work.execute {
     val app = context ?: return@execute
-    dispatch(UpdateEvent.SignedOut)
+    dispatch(UpdateEvent.SignedOut(generation))
     UpdateInstaller.abandonSessions(app)
   }
 
@@ -134,6 +135,7 @@ object UpdateEngine {
       "target" to targetOf(state)?.let(::releaseMap),
       "rejected" to (state as? UpdateState.Idle)?.rejected?.version,
       "lastCheckAt" to record.lastCheckAt,
+      "sessionGeneration" to record.sessionGeneration,
       "testPin" to BuildConfig.UPDATE_TEST_PIN,
     )
   }
@@ -159,7 +161,7 @@ object UpdateEngine {
     if (next != before) emitSnapshot()
     val allowForeground = event is UpdateEvent.UserConfirmed
     for (effect in effects) {
-      runEffect(effect, before, next, installed, auth, allowForeground)
+      runEffect(effect, before, next, installed, auth, allowForeground, next.sessionGeneration)
     }
   }
 
@@ -170,6 +172,7 @@ object UpdateEngine {
     installed: InstalledApp,
     auth: DownloadAuth?,
     allowForeground: Boolean,
+    generation: Long,
   ) {
     val app = context ?: return
     when (effect) {
@@ -200,11 +203,12 @@ object UpdateEngine {
           dispatch(UpdateEvent.InstallDeferred)
           return
         }
-        commitInstall(app, state, installed, allowForeground)
+        commitInstall(app, state, installed, allowForeground, generation)
       }
       UpdateEffect.ScheduleIdleInstall -> UpdateScheduler.schedule(app)
       UpdateEffect.CancelIdleInstall -> UpdateScheduler.cancel(app)
       UpdateEffect.DeleteFile -> deleteFiles(before.state)
+      is UpdateEffect.DeleteLateFile -> runCatching { File(effect.apk).delete() }
       UpdateEffect.DeleteAllFiles -> deleteAllUpdates(app)
       UpdateEffect.PostUpdated ->
         UpdateNotifier.postUpdated(app, targetOf(before.state)?.version ?: installedVersionName())
@@ -218,6 +222,7 @@ object UpdateEngine {
     state: UpdateState.Installing,
     installed: InstalledApp,
     allowForeground: Boolean,
+    generation: Long,
   ) {
     Log.i(TAG, "commit install code=${state.target.code} foreground=${isForeground()}")
     val apk = File(state.apk)
@@ -241,6 +246,34 @@ object UpdateEngine {
     }
     if (isForeground() && !allowForeground) {
       Log.i(TAG, "install deferred after verify")
+      dispatch(UpdateEvent.InstallDeferred)
+      return
+    }
+    if (record.sessionGeneration != generation) {
+      Log.i(TAG, "install deferred after a session change")
+      dispatch(UpdateEvent.InstallDeferred)
+      return
+    }
+    when (UpdateSession.verify(app)) {
+      SessionVerdict.Invalid -> {
+        Log.i(TAG, "install cleared by an invalid session")
+        dispatch(UpdateEvent.SessionInvalid)
+        return
+      }
+      SessionVerdict.Unknown -> {
+        Log.i(TAG, "install deferred while the session is unchecked")
+        dispatch(UpdateEvent.InstallDeferred)
+        return
+      }
+      SessionVerdict.Valid -> Unit
+    }
+    if (isForeground() && !allowForeground) {
+      Log.i(TAG, "install deferred after the session check")
+      dispatch(UpdateEvent.InstallDeferred)
+      return
+    }
+    if (record.sessionGeneration != generation) {
+      Log.i(TAG, "install deferred after a session change")
       dispatch(UpdateEvent.InstallDeferred)
       return
     }

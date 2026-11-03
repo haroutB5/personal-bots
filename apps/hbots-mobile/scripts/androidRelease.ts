@@ -174,6 +174,9 @@ export function releaseProblems(check: ReleaseCheck): ReadonlyArray<string> {
       `minimumNativeVersion ${check.minimumNativeVersion.name} is above published ${artifact.version.name}`,
     );
   }
+  if (check.minimumNativeVersion === null) {
+    problems.push("minimumNativeVersion is unavailable; pass --minimum-native-version");
+  }
   return problems;
 }
 
@@ -231,6 +234,13 @@ export function readMinimumNativeVersion(repoRoot: string): ReleaseVersion | nul
   const version = match[1];
   if (version === undefined) throw new Error(`no value for the minimum version in ${contracts}`);
   return requireReleaseVersion(version, contracts);
+}
+
+export function outputDirProblem(value: string | undefined): string | null {
+  if (value === undefined) return "--out is required";
+  if (value.trim().length === 0) return "--out must not be empty";
+  if (!NodePath.isAbsolute(value)) return "--out must be an absolute path";
+  return null;
 }
 
 /** Writes to a sibling temp file and renames, so a crash never leaves half a file. */

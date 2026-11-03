@@ -6,6 +6,7 @@ import * as NodeURL from "node:url";
 import {
   ANDROID_UPDATES_DIR,
   LATEST_SCHEMA,
+  outputDirProblem,
   publishRelease,
   readArtifact,
   readBack,
@@ -49,6 +50,13 @@ if (apk === undefined || options.out === undefined || options.notes === undefine
   process.exit(2);
 }
 
+const outProblem = outputDirProblem(options.out);
+if (outProblem !== null) {
+  console.error(`publish-android-update: ${outProblem}`);
+  console.error(USAGE);
+  process.exit(2);
+}
+
 const repoRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../../..",
@@ -67,13 +75,24 @@ if (!/^[0-9a-f]{64}$/u.test(pinnedSha256)) {
   fail("release-cert.sha256 is not a lowercase sha256");
 }
 
+let minimumNativeVersion;
+try {
+  minimumNativeVersion =
+    options.minimum === undefined
+      ? readMinimumNativeVersion(repoRoot)
+      : requireReleaseVersion(options.minimum, "--minimum-native-version");
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
+if (minimumNativeVersion === null) {
+  fail(
+    "--minimum-native-version is required: packages/contracts/src/personalClientCompat.ts is not on this branch",
+  );
+}
+
 const updatesDir = NodePath.join(options.out, ANDROID_UPDATES_DIR);
 const artifact = readArtifact(apk);
 const published = readPublishedRelease(updatesDir);
-const minimumNativeVersion =
-  options.minimum === undefined
-    ? readMinimumNativeVersion(repoRoot)
-    : requireReleaseVersion(options.minimum, "--minimum-native-version");
 const notes = options.notes.trim();
 
 const problems = releaseProblems({
@@ -110,9 +129,7 @@ console.log(`apk-sha256=${record.sha256}`);
 console.log(`signer-sha256=${artifact.signers[0] ?? ""}`);
 console.log(`manifest=${written.manifestPath}`);
 console.log(`pruned=${written.pruned.join(",") || "none"}`);
-console.log(
-  `minimum-native-version=${minimumNativeVersion?.name ?? "unreadable (contracts not on this branch)"}`,
-);
+console.log(`minimum-native-version=${minimumNativeVersion.name}`);
 
 if (options.readback !== undefined) {
   const token = process.env.HBOTS_READBACK_TOKEN;
