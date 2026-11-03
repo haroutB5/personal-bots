@@ -1,6 +1,8 @@
 {
   "name": "@hbots/personal-client",
+  "version": "1.66.113",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./client": {
