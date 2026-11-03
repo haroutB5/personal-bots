@@ -141,6 +141,10 @@ function App() {
   const endSession = useCallback(
     async (next: Screen) => {
       stopRenew();
+      const native = nativeRef.current;
+      if (native !== null) {
+        native.client.ports.kv.removeItem(CHATS_SNAPSHOT_KEY);
+      }
       disposeNative();
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
