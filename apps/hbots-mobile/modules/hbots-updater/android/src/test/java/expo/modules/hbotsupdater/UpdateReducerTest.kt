@@ -220,6 +220,16 @@ class UpdateReducerTest {
   }
 
   @Test
+  fun `signing out keeps a rejected sha`() {
+    reduced(
+      record(Idle(rejected = next), lastOffer = next),
+      UpdateEvent.SignedOut,
+      record(Idle(rejected = next), lastCheckAt = null, lastOffer = null),
+      listOf(CancelIdleInstall, DeleteAllFiles, ClearNotification),
+    )
+  }
+
+  @Test
   fun `signing out resets the record and deletes every file`() {
     reduced(
       record(Ready(next, apk), lastCheckAt = 123, lastOffer = next),
