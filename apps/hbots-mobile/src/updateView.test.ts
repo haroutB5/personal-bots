@@ -18,6 +18,7 @@ const snapshot = (overrides: Partial<UpdateSnapshot> = {}): UpdateSnapshot => ({
   target: null,
   rejected: null,
   lastCheckAt: null,
+  sessionGeneration: 0,
   testPin: true,
   ...overrides,
 });

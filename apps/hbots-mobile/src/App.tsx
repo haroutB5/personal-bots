@@ -192,6 +192,7 @@ function App() {
   const setSnapshot = useCallback((snapshot: UpdateSnapshot | null) => {
     updateRef.current = snapshot;
     setUpdate(snapshot);
+    sessionLifetime.raise(snapshot?.sessionGeneration ?? 0);
   }, []);
 
   const installedVersion = update?.installedVersion ?? "";

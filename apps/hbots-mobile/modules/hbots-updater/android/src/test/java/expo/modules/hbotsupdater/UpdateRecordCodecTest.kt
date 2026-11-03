@@ -133,7 +133,7 @@ class UpdateRecordCodecTest {
 
   @Test
   fun `the deferral count survives a restart`() {
-    val record = UpdateRecord(Ready(release, apk), 100L, release, 1_066_110L, 3)
+    val record = UpdateRecord(Ready(release, apk), 100L, release, 1_066_110L, deferrals = 3)
 
     assertEquals(record, UpdateRecordCodec.decode(UpdateRecordCodec.encode(record)))
   }
@@ -144,7 +144,7 @@ class UpdateRecordCodecTest {
       """{"schema":1,"state":{"kind":"ready","target":$releaseJson,"apk":"$apk"},"lastCheckAt":$now,"lastOffer":$releaseJson,"notifiedCode":1066110}"""
 
     assertEquals(
-      UpdateRecord(Ready(release, apk), now, release, 1_066_110L, 0),
+      UpdateRecord(Ready(release, apk), now, release, 1_066_110L, deferrals = 0),
       UpdateRecordCodec.decode(raw),
     )
   }

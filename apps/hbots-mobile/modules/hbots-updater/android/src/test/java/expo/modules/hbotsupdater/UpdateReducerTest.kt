@@ -32,7 +32,13 @@ class UpdateReducerTest {
     lastOffer: Release? = null,
     notifiedCode: Long = 1_066_110L,
     deferrals: Int = 0,
-  ) = UpdateRecord(state, lastCheckAt, lastOffer, notifiedCode, deferrals)
+  ) = UpdateRecord(
+    state = state,
+    lastCheckAt = lastCheckAt,
+    lastOffer = lastOffer,
+    notifiedCode = notifiedCode,
+    deferrals = deferrals,
+  )
 
   private fun reduced(
     before: UpdateRecord,
@@ -328,7 +334,7 @@ class UpdateReducerTest {
       record(Downloading(next), lastOffer = next),
       UpdateEvent.Downloaded(apk, inBackground = true),
       record(Ready(next, apk), lastOffer = next),
-      listOf(ScheduleIdleInstall),
+      listOf(ScheduleIdleInstall()),
     )
   }
 
@@ -498,7 +504,7 @@ class UpdateReducerTest {
       record(Ready(next, apk), lastOffer = next),
       UpdateEvent.WentBackground,
       record(Ready(next, apk), lastOffer = next),
-      listOf(ScheduleIdleInstall),
+      listOf(ScheduleIdleInstall()),
     )
   }
 

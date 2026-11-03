@@ -205,7 +205,7 @@ object UpdateEngine {
         }
         commitInstall(app, state, installed, allowForeground, generation)
       }
-      UpdateEffect.ScheduleIdleInstall -> UpdateScheduler.schedule(app)
+      is UpdateEffect.ScheduleIdleInstall -> UpdateScheduler.schedule(app, effect.attempt)
       UpdateEffect.CancelIdleInstall -> UpdateScheduler.cancel(app)
       UpdateEffect.DeleteFile -> deleteFiles(before.state)
       is UpdateEffect.DeleteLateFile -> runCatching { File(effect.apk).delete() }

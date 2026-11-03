@@ -23,6 +23,7 @@ export interface UpdateSnapshot {
   readonly target: UpdateTarget | null;
   readonly rejected: string | null;
   readonly lastCheckAt: number | null;
+  readonly sessionGeneration: number;
   readonly testPin: boolean;
 }
 

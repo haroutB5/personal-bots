@@ -13,6 +13,7 @@ object UpdateRecordCodec {
     .put("lastCheckAt", record.lastCheckAt ?: JSONObject.NULL)
     .put("lastOffer", record.lastOffer?.let(::encodeRelease) ?: JSONObject.NULL)
     .put("notifiedCode", record.notifiedCode)
+    .put("deferrals", record.deferrals)
     .toString()
 
   fun decode(raw: String?): UpdateRecord? {
@@ -28,11 +29,14 @@ object UpdateRecordCodec {
 
   private fun decodeRecord(json: JSONObject): UpdateRecord {
     if (json.requiredLong("schema") != SCHEMA.toLong()) throw JSONException("schema")
+    val deferrals = json.nullableLong("deferrals") ?: 0L
+    if (deferrals < 0 || deferrals > Int.MAX_VALUE) throw JSONException("deferrals")
     return UpdateRecord(
       state = decodeState(json.getJSONObject("state")),
       lastCheckAt = json.nullableLong("lastCheckAt")?.also { if (it < 0) throw JSONException("lastCheckAt") },
       lastOffer = json.nullableRelease("lastOffer"),
       notifiedCode = json.requiredLong("notifiedCode").also { if (it < 0) throw JSONException("notifiedCode") },
+      deferrals = deferrals.toInt(),
     )
   }
 

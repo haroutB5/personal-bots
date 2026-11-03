@@ -27,6 +27,7 @@ data class UpdateRecord(
   val lastOffer: Release? = null,
   val notifiedCode: Long = 0L,
   val sessionGeneration: Long = 0L,
+  val deferrals: Int = 0,
 )
 
 sealed interface UpdateEvent {
@@ -58,7 +59,7 @@ sealed interface UpdateEvent {
 sealed interface UpdateEffect {
   data object StartDownload : UpdateEffect
   data object CommitInstall : UpdateEffect
-  data object ScheduleIdleInstall : UpdateEffect
+  data class ScheduleIdleInstall(val attempt: Int = 0) : UpdateEffect
   data object CancelIdleInstall : UpdateEffect
   data object DeleteFile : UpdateEffect
   data class DeleteLateFile(val apk: String) : UpdateEffect

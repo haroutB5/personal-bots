@@ -136,7 +136,11 @@ object UpdateReducer {
     } else {
       delete
     }
-    return checked.copy(state = next, lastOffer = release) to effects
+    return checked.copy(
+      state = next,
+      lastOffer = release,
+      deferrals = if (next is UpdateState.Downloading) 0 else checked.deferrals,
+    ) to effects
   }
 
   private fun downloaded(
@@ -157,8 +161,8 @@ object UpdateReducer {
         record to listOf(UpdateEffect.DeleteLateFile(event.apk))
       }
     }
-    val effects = if (event.inBackground) listOf(UpdateEffect.ScheduleIdleInstall) else emptyList()
-    return record.copy(state = UpdateState.Ready(state.target, event.apk)) to effects
+    val effects = if (event.inBackground) listOf(UpdateEffect.ScheduleIdleInstall()) else emptyList()
+    return record.copy(state = UpdateState.Ready(state.target, event.apk), deferrals = 0) to effects
   }
 
   private fun rejected(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
@@ -205,6 +209,7 @@ object UpdateReducer {
       state = UpdateState.Idle(),
       lastOffer = null,
       notifiedCode = if (postUpdated) code else record.notifiedCode,
+      deferrals = 0,
     ) to effects
   }
 
@@ -218,20 +223,22 @@ object UpdateReducer {
   private fun installFailed(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
     val state = record.state
     if (state !is UpdateState.Installing) return record to emptyList()
-    return record.copy(state = UpdateState.Idle(rejected = state.target)) to
+    return record.copy(state = UpdateState.Idle(rejected = state.target), deferrals = 0) to
       listOf(UpdateEffect.DeleteFile, UpdateEffect.ClearNotification)
   }
 
   private fun installDeferred(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
     val state = record.state
     if (state !is UpdateState.Installing) return record to emptyList()
-    return record.copy(state = UpdateState.Ready(state.target, state.apk)) to emptyList()
+    val attempt = record.deferrals + 1
+    return record.copy(state = UpdateState.Ready(state.target, state.apk), deferrals = attempt) to
+      listOf(UpdateEffect.ScheduleIdleInstall(attempt))
   }
 
   private fun installNotPermitted(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
     val state = record.state
     if (state !is UpdateState.Installing) return record to emptyList()
-    return record.copy(state = UpdateState.NeedsPermission(state.target)) to
+    return record.copy(state = UpdateState.NeedsPermission(state.target), deferrals = 0) to
       listOf(UpdateEffect.DeleteFile)
   }
 
@@ -268,7 +275,7 @@ object UpdateReducer {
 
   private fun wentBackground(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
     if (record.state is UpdateState.Ready) {
-      record to listOf(UpdateEffect.ScheduleIdleInstall)
+      record to listOf(UpdateEffect.ScheduleIdleInstall())
     } else {
       record to emptyList()
     }

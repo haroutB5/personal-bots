@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 internal const val UPDATE_IDLE_ACTION = "expo.modules.hbotsupdater.IDLE_INSTALL"
 
@@ -13,9 +14,10 @@ internal const val UPDATE_IDLE_ACTION = "expo.modules.hbotsupdater.IDLE_INSTALL"
  * inexact alarm survives process death and adds no exported component.
  */
 object UpdateScheduler {
+  private const val TAG = "HbotsUpdate"
   private const val REQUEST_CODE = 7204
 
-  fun schedule(context: Context) {
+  fun schedule(context: Context, attempt: Int = 0) {
     val alarm = context.getSystemService(AlarmManager::class.java) ?: return
     val pending = PendingIntent.getBroadcast(
       context,
@@ -23,7 +25,9 @@ object UpdateScheduler {
       Intent(context, UpdateAlarmReceiver::class.java).setAction(UPDATE_IDLE_ACTION),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    val at = System.currentTimeMillis() + BuildConfig.UPDATE_IDLE_MINUTES * 60_000L
+    val delayMs = UpdateBackoff.delayMs(attempt, BuildConfig.UPDATE_IDLE_MINUTES * 60_000L)
+    val at = System.currentTimeMillis() + delayMs
+    Log.i(TAG, "idle alarm scheduled in ${delayMs}ms attempt=$attempt")
     runCatching { alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending) }
   }
 

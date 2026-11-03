@@ -8,6 +8,7 @@ export interface SessionStorage {
 export interface SessionLifetime {
   readonly current: () => StoredSession | null;
   readonly epoch: () => number;
+  readonly raise: (generation: number) => void;
   readonly restore: (session: StoredSession) => void;
   readonly adopt: (session: StoredSession) => Promise<void>;
   readonly renew: () => Promise<void>;
@@ -36,6 +37,13 @@ export function createSessionLifetime(options: {
   return {
     current: () => current,
     epoch: () => epoch,
+    raise: (generation) => {
+      // Native increments its own counter when an install finds the session
+      // dead. Ignoring it would reject every later offer.
+      if (generation > epoch) {
+        epoch = generation;
+      }
+    },
     restore: (session) => {
       epoch += 1;
       current = session;
