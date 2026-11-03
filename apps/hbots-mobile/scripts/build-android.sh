@@ -15,10 +15,16 @@ fail() {
   exit 1
 }
 
+private_file() {
+  local mode
+  mode=$(stat -Lc %a "$1")
+  (( (8#$mode & 8#077) == 0 )) && (( (8#$mode & 8#400) != 0 ))
+}
+
 [[ -f $keystore ]] || fail "keystore missing at $keystore"
 [[ -f $properties ]] || fail "signing properties missing at $properties"
-[[ $(stat -Lc %a "$keystore") == 600 ]] || fail "keystore must be mode 0600"
-[[ $(stat -Lc %a "$properties") == 600 ]] || fail "signing properties must be mode 0600"
+private_file "$keystore" || fail "keystore must be owner-only and readable"
+private_file "$properties" || fail "signing properties must be owner-only and readable"
 
 store_password=$(sed -n 's/^storePassword=//p' "$properties" | head -n 1 | tr -d '\r')
 key_password=$(sed -n 's/^keyPassword=//p' "$properties" | head -n 1 | tr -d '\r')
