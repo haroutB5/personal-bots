@@ -38,7 +38,12 @@ object UpdateInstaller {
     }
   }
 
-  fun install(context: Context, apk: File, target: Release): UpdateInstallResult {
+  fun install(
+    context: Context,
+    apk: File,
+    target: Release,
+    allowForeground: Boolean,
+  ): UpdateInstallResult {
     if (!canInstall(context)) return UpdateInstallResult.NOT_PERMITTED
     if (!apk.isFile) return UpdateInstallResult.INVALID
     val installer = context.packageManager.packageInstaller
@@ -50,7 +55,7 @@ object UpdateInstaller {
           apk.inputStream().use { input -> input.copyTo(output, 128 * 1024) }
           session.fsync(output)
         }
-        if (UpdateEngine.isForeground()) {
+        if (UpdateEngine.isForeground() && !allowForeground) {
           runCatching { installer.abandonSession(sessionId) }
           return UpdateInstallResult.DEFERRED
         }
@@ -67,7 +72,7 @@ object UpdateInstaller {
       UpdateInstallResult.STARTED
     } catch (error: SecurityException) {
       if (sessionId >= 0) runCatching { installer.abandonSession(sessionId) }
-      retryWithoutSilentPermission(context, installer, apk, target)
+      retryWithoutSilentPermission(context, installer, apk, target, allowForeground)
     } catch (error: Throwable) {
       if (sessionId >= 0) runCatching { installer.abandonSession(sessionId) }
       Log.w(TAG, "install error ${error.javaClass.simpleName}")
@@ -80,6 +85,7 @@ object UpdateInstaller {
     installer: PackageInstaller,
     apk: File,
     target: Release,
+    allowForeground: Boolean,
   ): UpdateInstallResult {
     var sessionId = -1
     return try {
@@ -89,7 +95,7 @@ object UpdateInstaller {
           apk.inputStream().use { input -> input.copyTo(output, 128 * 1024) }
           session.fsync(output)
         }
-        if (UpdateEngine.isForeground()) {
+        if (UpdateEngine.isForeground() && !allowForeground) {
           runCatching { installer.abandonSession(sessionId) }
           return UpdateInstallResult.DEFERRED
         }

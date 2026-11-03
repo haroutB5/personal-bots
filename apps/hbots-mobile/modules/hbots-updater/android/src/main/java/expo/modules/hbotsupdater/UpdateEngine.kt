@@ -61,6 +61,7 @@ object UpdateEngine {
   }
 
   fun confirmInstall() = work.execute {
+    Log.i(TAG, "confirm install requested")
     dispatch(UpdateEvent.UserConfirmed)
   }
 
@@ -176,7 +177,7 @@ object UpdateEngine {
           dispatch(UpdateEvent.InstallDeferred)
           return
         }
-        commitInstall(app, state, installed)
+        commitInstall(app, state, installed, allowForeground)
       }
       UpdateEffect.ScheduleIdleInstall -> UpdateScheduler.schedule(app)
       UpdateEffect.CancelIdleInstall -> UpdateScheduler.cancel(app)
@@ -188,7 +189,13 @@ object UpdateEngine {
     }
   }
 
-  private fun commitInstall(app: Context, state: UpdateState.Installing, installed: InstalledApp) {
+  private fun commitInstall(
+    app: Context,
+    state: UpdateState.Installing,
+    installed: InstalledApp,
+    allowForeground: Boolean,
+  ) {
+    Log.i(TAG, "commit install code=${state.target.code} foreground=$foreground")
     val apk = File(state.apk)
     if (!apk.isFile) {
       dispatch(UpdateEvent.InstallFailed)
@@ -208,7 +215,7 @@ object UpdateEngine {
       dispatch(UpdateEvent.InstallFailed)
       return
     }
-    when (UpdateInstaller.install(app, apk, state.target)) {
+    when (UpdateInstaller.install(app, apk, state.target, allowForeground)) {
       UpdateInstallResult.STARTED -> Unit
       UpdateInstallResult.DEFERRED -> dispatch(UpdateEvent.InstallDeferred)
       UpdateInstallResult.NOT_PERMITTED -> dispatch(UpdateEvent.InstallNotPermitted)
