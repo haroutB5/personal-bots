@@ -546,6 +546,39 @@ it.effect("profile display name defaults to empty, trims on set, and rejects lon
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 
+it.effect("chat display preferences stay unset until chosen, then persist", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    const fresh = yield* service.getProfile();
+    // Absent, not the default: the web app imports the browser value once
+    // only while the server has never been given one.
+    expect(fresh.showToolSteps).toBeUndefined();
+    expect(fresh.showRoutinesStrip).toBeUndefined();
+
+    const toolStepsOff = yield* service.setProfile({ showToolSteps: true });
+    expect(toolStepsOff.showToolSteps).toBe(true);
+    expect(toolStepsOff.showRoutinesStrip).toBeUndefined();
+
+    const both = yield* service.setProfile({ showRoutinesStrip: false });
+    expect(both.showToolSteps).toBe(true);
+    expect(both.showRoutinesStrip).toBe(false);
+
+    // Another profile edit leaves them alone, and the values survive a read.
+    yield* service.setProfile({ displayName: "Harout" });
+    expect(yield* service.getProfile()).toMatchObject({
+      displayName: "Harout",
+      showToolSteps: true,
+      showRoutinesStrip: false,
+    });
+
+    // Choosing the defaults explicitly is a stored choice, not "unset".
+    yield* service.setProfile({ showToolSteps: false, showRoutinesStrip: true });
+    expect((yield* service.getProfile()).showToolSteps).toBe(false);
+    expect((yield* service.getProfile()).showRoutinesStrip).toBe(true);
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
 it.effect("usage visibility hides and shows one provider at a time", () => {
   const context = makeContext();
   return Effect.gen(function* () {
