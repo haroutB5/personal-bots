@@ -38,8 +38,7 @@ class UpdateRecordCodecTest {
   }
 
   @Test
-  fun `the stored installing record decodes`() {
-    val raw =
+  fun `the stored installing record decodes`() {    val raw =
       """{"schema":1,"state":{"kind":"installing","target":$releaseJson,"apk":"$apk","since":$now},"lastCheckAt":$now,"lastOffer":$releaseJson,"notifiedCode":1066110}"""
 
     assertEquals(
@@ -130,5 +129,23 @@ class UpdateRecordCodecTest {
 
     assertEquals(NeedsTap(release, apk), next.state)
     assertEquals(listOf(UpdateEffect.PostUpdateReady), effects)
+  }
+
+  @Test
+  fun `the deferral count survives a restart`() {
+    val record = UpdateRecord(Ready(release, apk), 100L, release, 1_066_110L, 3)
+
+    assertEquals(record, UpdateRecordCodec.decode(UpdateRecordCodec.encode(record)))
+  }
+
+  @Test
+  fun `a record written before the backoff decodes with no deferrals`() {
+    val raw =
+      """{"schema":1,"state":{"kind":"ready","target":$releaseJson,"apk":"$apk"},"lastCheckAt":$now,"lastOffer":$releaseJson,"notifiedCode":1066110}"""
+
+    assertEquals(
+      UpdateRecord(Ready(release, apk), now, release, 1_066_110L, 0),
+      UpdateRecordCodec.decode(raw),
+    )
   }
 }

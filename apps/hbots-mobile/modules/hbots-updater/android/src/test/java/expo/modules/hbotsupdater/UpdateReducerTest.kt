@@ -31,7 +31,8 @@ class UpdateReducerTest {
     lastCheckAt: Long? = null,
     lastOffer: Release? = null,
     notifiedCode: Long = 1_066_110L,
-  ) = UpdateRecord(state, lastCheckAt, lastOffer, notifiedCode)
+    deferrals: Int = 0,
+  ) = UpdateRecord(state, lastCheckAt, lastOffer, notifiedCode, deferrals)
 
   private fun reduced(
     before: UpdateRecord,
@@ -522,12 +523,34 @@ class UpdateReducerTest {
   }
 
   @Test
-  fun `an install deferred by a foreground return goes back to ready`() {
+  fun `an install deferred by a foreground return goes back to ready and retries`() {
     reduced(
       record(Installing(next, apk, now), lastOffer = next),
       UpdateEvent.InstallDeferred,
-      record(Ready(next, apk), lastOffer = next),
-      emptyList(),
+      record(Ready(next, apk), lastOffer = next, deferrals = 1),
+      listOf(ScheduleIdleInstall(1)),
+    )
+  }
+
+  @Test
+  fun `each deferral pushes the retry further out`() {
+    val waiting = record(Ready(next, apk), lastOffer = next, deferrals = 1)
+
+    reduced(
+      UpdateReducer.reduce(waiting, UpdateEvent.IdleReached, installed, now).first,
+      UpdateEvent.InstallDeferred,
+      record(Ready(next, apk), lastOffer = next, deferrals = 2),
+      listOf(ScheduleIdleInstall(2)),
+    )
+  }
+
+  @Test
+  fun `a fresh download resets the backoff`() {
+    reduced(
+      record(Idle(), lastOffer = next, deferrals = 4),
+      UpdateEvent.Offered(next, authenticated = true),
+      record(Downloading(next), lastCheckAt = now, lastOffer = next, deferrals = 0),
+      listOf(StartDownload),
     )
   }
 

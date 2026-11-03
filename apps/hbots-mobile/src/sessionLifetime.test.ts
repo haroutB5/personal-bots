@@ -96,4 +96,39 @@ describe("session lifetime", () => {
     expect(memory.read()).toBe(NEW_SESSION);
     expect(lifetime.current()).toBe(NEW_SESSION);
   });
+
+  it("adopts the generation the updater reports and never moves back", () => {
+    const memory = memoryStorage();
+    const lifetime = createSessionLifetime({
+      renew: async () => RENEWED,
+      storage: memory.storage,
+    });
+
+    lifetime.raise(3);
+    expect(lifetime.epoch()).toBe(3);
+
+    lifetime.raise(2);
+    expect(lifetime.epoch()).toBe(3);
+
+    lifetime.restore(SESSION);
+    expect(lifetime.epoch()).toBe(4);
+  });
+
+  it("drops a renew that lands after the updater judged the session dead", async () => {
+    const memory = memoryStorage();
+    const renew = deferredRenew();
+    const lifetime = createSessionLifetime({
+      renew: () => renew.promise,
+      storage: memory.storage,
+    });
+    lifetime.restore(SESSION);
+
+    const pending = lifetime.renew();
+    lifetime.raise(5);
+    renew.finish(RENEWED);
+    await pending;
+
+    expect(lifetime.current()).toBe(SESSION);
+    expect(memory.read()).toBeNull();
+  });
 });
