@@ -4,6 +4,8 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { requireReleaseVersion } from "./versionCode.ts";
+
 const REPO_ROOT = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../../..",
@@ -36,12 +38,12 @@ const apkanalyzer = NodePath.join(
 const analyze = (...args) =>
   NodeChildProcess.execFileSync(apkanalyzer, [...args, apk], { encoding: "utf8" }).trim();
 
-const releaseVersion = NodeFS.readFileSync(
-  NodePath.join(REPO_ROOT, "scripts/personal/app-version.txt"),
-  "utf8",
-).trim();
-const [major = 0, minor = 0, patch = 0] = releaseVersion.split(".").map(Number);
-const releaseVersionCode = major * 1_000_000 + minor * 1_000 + patch;
+const release = requireReleaseVersion(
+  NodeFS.readFileSync(NodePath.join(REPO_ROOT, "scripts/personal/app-version.txt"), "utf8").trim(),
+  "app-version.txt",
+);
+const releaseVersion = release.name;
+const releaseVersionCode = release.code;
 
 const manifest = analyze("manifest", "print");
 const applicationTag = manifest.match(/<application\b[^>]*>/su)?.[0] ?? "";

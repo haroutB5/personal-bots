@@ -3,22 +3,18 @@ import * as NodePath from "node:path";
 
 import type { ExpoConfig } from "expo/config";
 
-const version = NodeFS.readFileSync(
-  NodePath.resolve(__dirname, "../../scripts/personal/app-version.txt"),
-  "utf8",
-).trim();
+import { requireReleaseVersion } from "./scripts/versionCode.ts";
 
-/** Each release part owns three decimal digits, so any bump raises the code. */
+const version = requireReleaseVersion(
+  NodeFS.readFileSync(
+    NodePath.resolve(__dirname, "../../scripts/personal/app-version.txt"),
+    "utf8",
+  ).trim(),
+  "app-version.txt",
+).name;
+
 export function versionCodeFor(versionName: string): number {
-  const parts = versionName.split(".").map(Number);
-  if (
-    parts.length !== 3 ||
-    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 999)
-  ) {
-    throw new Error(`app-version.txt must be x.y.z with each part 0-999, got ${versionName}`);
-  }
-  const [major = 0, minor = 0, patch = 0] = parts;
-  return major * 1_000_000 + minor * 1_000 + patch;
+  return requireReleaseVersion(versionName, "app-version.txt").code;
 }
 
 const config: ExpoConfig = {

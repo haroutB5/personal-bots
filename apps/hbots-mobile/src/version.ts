@@ -1,14 +1,8 @@
+import { parseReleaseVersion } from "../scripts/versionCode.ts";
+
 /** Each release part owns three decimal digits, the same rule as app.config.ts. */
 export function versionCodeOf(version: string): number | null {
-  const parts = version.split(".").map(Number);
-  if (parts.length !== 3) {
-    return null;
-  }
-  if (parts.some((part) => !Number.isInteger(part) || part < 0 || part > 999)) {
-    return null;
-  }
-  const [major = 0, minor = 0, patch = 0] = parts;
-  return major * 1_000_000 + minor * 1_000 + patch;
+  return parseReleaseVersion(version)?.code ?? null;
 }
 
 export function isTooOld(installedVersion: string, requiredVersion: string): boolean {
