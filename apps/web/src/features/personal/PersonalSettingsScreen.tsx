@@ -40,9 +40,9 @@ import {
 } from "./usePersonalBots";
 import { diagnosticsEnabled, setDiagnosticsEnabled } from "./DiagnosticsOverlay";
 import {
-  type PersonalPreference,
-  setPersonalPreference,
-  usePersonalPreference,
+  type PersonalSharedPreference,
+  sharedPreferenceInput,
+  usePersonalSharedPreference,
 } from "./personalPreferences";
 import {
   PERSONAL_THEME_MODE_LABELS,
@@ -136,39 +136,65 @@ function DisplayNameForm({
   );
 }
 
-/** A device-local on/off row, styled like the Diagnostics toggle below it. */
+/** A shared on/off row, styled like the Diagnostics toggle below it. */
 function PreferenceRow({
   preference,
   label,
   hint,
 }: {
-  preference: PersonalPreference;
+  preference: PersonalSharedPreference;
   label: string;
   hint: string;
 }): JSX.Element {
-  const enabled = usePersonalPreference(preference);
+  const environmentId = usePersonalEnvironmentId();
+  const enabled = usePersonalSharedPreference(preference);
+  const setProfile = useAtomCommand(personalProfileSet);
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const shown = pending ?? enabled;
+
+  const toggle = async () => {
+    if (pending !== null || environmentId === null) return;
+    const next = !enabled;
+    setPending(next);
+    const result = await setProfile({
+      environmentId,
+      input: sharedPreferenceInput(preference, next),
+    });
+    setPending(null);
+    setError(commandFailureMessage(result, "Couldn't save the setting. Try again."));
+  };
+
   return (
-    <button
-      type="button"
-      onClick={() => setPersonalPreference(preference, !enabled)}
-      aria-pressed={enabled}
-      className={`${SETTINGS_ROW} w-full text-left`}
-    >
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-[15px] font-semibold text-[var(--personal-text)]">{label}</span>
-        <span className="text-[13px] text-[var(--personal-text-secondary)]">{hint}</span>
-      </span>
-      <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
-        {enabled ? "On" : "Off"}
-      </span>
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        aria-pressed={shown}
+        aria-busy={pending !== null}
+        className={`${SETTINGS_ROW} w-full text-left`}
+      >
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-[15px] font-semibold text-[var(--personal-text)]">{label}</span>
+          <span className="text-[13px] text-[var(--personal-text-secondary)]">{hint}</span>
+        </span>
+        <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+          {shown ? "On" : "Off"}
+        </span>
+      </button>
+      {error !== null ? (
+        <p role="alert" className="px-1 pb-2 text-sm text-[var(--personal-error)]">
+          {error}
+        </p>
+      ) : null}
+    </>
   );
 }
 
 /**
- * "Auto-archive finished task and routine chats". Unlike `PreferenceRow` this setting
- * lives on the laptop (the server runs the sweep), so it is the same on every
- * device and saves through the profile.
+ * "Auto-archive finished task and routine chats". The server runs the sweep,
+ * so it is the same on every device and saves through the profile, like the
+ * Chat rows above.
  *
  * The wait under it (5m to 720h) is one value for both the finished-task idle
  * clock and the unread routine report. It has no Save button: blur or Enter

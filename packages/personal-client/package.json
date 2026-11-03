@@ -77,6 +77,10 @@
       "types": "./src/ports/personalPorts.ts",
       "import": "./src/ports/personalPorts.ts"
     },
+    "./settings/profilePreferences": {
+      "types": "./src/settings/profilePreferences.ts",
+      "import": "./src/settings/profilePreferences.ts"
+    },
     "./testing/fakes": {
       "types": "./src/testing/fakes.ts",
       "import": "./src/testing/fakes.ts"
