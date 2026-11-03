@@ -24,8 +24,8 @@ import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../../config.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
+import { compareHbotsVersions, readLiveHbotsVersion } from "../releaseVersion.ts";
 import {
-  compareVersions,
   personalRunDir,
   readRestartResult,
   restartResultVersion,
@@ -58,16 +58,6 @@ const answerJson = (view: UpdateStatusView | null) =>
   ).pipe(
     Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
   );
-
-/** The version this server itself is running, from its served client stamp. */
-const readLiveVersion = (staticDir: string | undefined, path: Path.Path) => {
-  if (staticDir === undefined) return Effect.succeed(null as string | null);
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const text = yield* fileSystem.readFileString(path.join(staticDir, "version.txt"));
-    return /^version=(.+)$/m.exec(text)?.[1]?.trim() || null;
-  }).pipe(Effect.orElseSucceed(() => null));
-};
 
 /**
  * The newest restart result file in the run folder, within
@@ -119,7 +109,7 @@ const readUpdateStatus = Effect.fn("readUpdateStatus")(function* (input: {
       // mtime is a Date, so two files written inside one millisecond report
       // the same time; the higher version is the newer run. Without this the
       // newest file would depend on the directory's listing order.
-      (entry.mtimeMs === newest.mtimeMs && compareVersions(entry.version, newest.version) > 0)
+      (entry.mtimeMs === newest.mtimeMs && compareHbotsVersions(entry.version, newest.version) > 0)
     ) {
       newest = {
         name: entry.name,
@@ -138,7 +128,7 @@ const readUpdateStatus = Effect.fn("readUpdateStatus")(function* (input: {
   const result = readRestartResult(text);
   if (result === null) return null;
 
-  const liveVersion = yield* readLiveVersion(input.staticDir, path);
+  const liveVersion = yield* readLiveHbotsVersion(input.staticDir);
   return updateStatusView({
     status: result.status,
     version: result.version ?? restartResultVersion(newest.name),

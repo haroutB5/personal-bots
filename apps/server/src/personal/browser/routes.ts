@@ -31,6 +31,7 @@ import {
   failEnvironmentInternal,
   failEnvironmentScopeRequired,
 } from "../../auth/http.ts";
+import { serveUntilSessionRevoked } from "../../auth/sessionRevocationClose.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
 import { InputLine } from "./inputLine.ts";
 import { runViewerFrames } from "./viewerFlow.ts";
@@ -101,6 +102,39 @@ export const authenticatePersonalRoute = (requiredScope: AuthEnvironmentScope) =
     return session;
   });
 
+/**
+ * Bearer only: a native updater outside a browser must never be authenticated
+ * by a cookie or a `wsTicket`. The Bearer token is verified by the same
+ * session store as every other route.
+ */
+export const authenticateBearerPersonalRoute = (requiredScope: AuthEnvironmentScope) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const authorization = request.headers.authorization;
+    if (typeof authorization !== "string" || !authorization.startsWith("Bearer ")) {
+      return yield* failEnvironmentAuthInvalid("missing_credential");
+    }
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+        failEnvironmentAuthInvalid(
+          EnvironmentAuth.serverAuthCredentialReason(error),
+          EnvironmentAuth.serverAuthDpopFailureReason(error),
+        ),
+      ),
+      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ),
+    );
+    if (session.method !== "bearer-access-token") {
+      return yield* failEnvironmentAuthInvalid("invalid_credential");
+    }
+    if (!session.scopes.includes(requiredScope)) {
+      return yield* failEnvironmentScopeRequired(requiredScope);
+    }
+    return session;
+  });
+
 export const personalRouteAuthResponses = {
   EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
   EnvironmentInternalError: HttpServerRespondable.toResponse,
@@ -111,16 +145,11 @@ export const personalRouteAuthResponses = {
  * Viewers need read scope; input additionally needs operate scope and human
  * control (checked per message). Frames flow only while a viewer is attached.
  */
-export const personalBrowserStreamRouteLayer = HttpRouter.add(
-  "GET",
-  PERSONAL_BROWSER_STREAM_PATH,
+const serveBrowserStream = (
+  session: Effect.Success<ReturnType<typeof authenticatePersonalRoute>>,
+) =>
   Effect.gen(function* () {
-    // Authenticate before anything else so an anonymous probe learns nothing.
-    const session = yield* authenticatePersonalRoute(AuthOrchestrationReadScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
-    if (request.headers.upgrade?.toLowerCase() !== "websocket") {
-      return HttpServerResponse.text("Upgrade Required", { status: 426 });
-    }
     const browser = yield* PersonalBrowser;
     const socket = yield* request.upgrade;
     yield* Effect.scoped(
@@ -186,6 +215,22 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
       }),
     ).pipe(Effect.ignoreCause);
     return HttpServerResponse.empty();
+  });
+
+export const personalBrowserStreamRouteLayer = HttpRouter.add(
+  "GET",
+  PERSONAL_BROWSER_STREAM_PATH,
+  Effect.gen(function* () {
+    // Authenticate before anything else so an anonymous probe learns nothing.
+    const session = yield* authenticatePersonalRoute(AuthOrchestrationReadScope);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (request.headers.upgrade?.toLowerCase() !== "websocket") {
+      return HttpServerResponse.text("Upgrade Required", { status: 426 });
+    }
+    return yield* serveUntilSessionRevoked({
+      sessionId: session.sessionId,
+      serve: serveBrowserStream(session),
+    });
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),
 );
 

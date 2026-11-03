@@ -3,11 +3,13 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -350,24 +352,30 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const sessions = yield* SessionStore.SessionStore;
       const issued = yield* sessions.issue({ subject: "phone" });
 
-      expect(yield* sessions.renew(issued.token)).toEqual(Option.none());
+      const beforeDue = yield* sessions.renew(issued.token);
+      expect(beforeDue._tag).toBe("NotDue");
+      if (beforeDue._tag !== "NotDue") return;
+      expect(beforeDue.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
 
       yield* TestClock.adjust(Duration.days(29));
       const renewed = yield* sessions.renew(issued.token);
-      expect(Option.isSome(renewed)).toBe(true);
-      if (Option.isNone(renewed)) return;
-      expect(renewed.value.expiresAt.epochMilliseconds).toBe(
+      expect(renewed._tag).toBe("Renewed");
+      if (renewed._tag !== "Renewed") return;
+      expect(renewed.expiresAt.epochMilliseconds).toBe(
         issued.expiresAt.epochMilliseconds + Duration.toMillis(Duration.days(29)),
       );
       // Renewal is at most once a day per token.
-      expect(yield* sessions.renew(renewed.value.token)).toEqual(Option.none());
+      const renewedAgain = yield* sessions.renew(renewed.token);
+      expect(renewedAgain._tag).toBe("NotDue");
+      if (renewedAgain._tag !== "NotDue") return;
+      expect(renewedAgain.expiresAt.epochMilliseconds).toBe(renewed.expiresAt.epochMilliseconds);
 
       // Past the original 30 days, only the renewed credential still works.
       yield* TestClock.adjust(Duration.days(2));
       expect(yield* Effect.flip(sessions.verify(issued.token))).toMatchObject({
         _tag: "SessionTokenExpiredError",
       });
-      const verified = yield* sessions.verify(renewed.value.token);
+      const verified = yield* sessions.verify(renewed.token);
       expect(verified.sessionId).toBe(issued.sessionId);
       expect(verified.subject).toBe("phone");
       const websocket = yield* sessions.issueWebSocketToken(issued.sessionId);
@@ -378,7 +386,101 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 
-  it.effect("does not renew bearer, revoked or expired sessions", () =>
+  it.effect("renews a sliding bearer session after the daily interval and moves the row", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "phone",
+        renewal: "sliding",
+      });
+
+      yield* TestClock.adjust(Duration.hours(23));
+      const beforeDue = yield* sessions.renew(issued.token);
+      expect(beforeDue._tag).toBe("NotDue");
+      if (beforeDue._tag !== "NotDue") return;
+      expect(beforeDue.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+
+      yield* TestClock.adjust(Duration.hours(2));
+      const renewed = yield* sessions.renew(issued.token);
+      expect(renewed._tag).toBe("Renewed");
+      if (renewed._tag !== "Renewed") return;
+      expect(renewed.expiresAt.epochMilliseconds).toBe(
+        issued.expiresAt.epochMilliseconds + Duration.toMillis(Duration.hours(25)),
+      );
+      const verified = yield* sessions.verify(renewed.token);
+      expect(verified.sessionId).toBe(issued.sessionId);
+      expect(verified.method).toBe("bearer-access-token");
+      const row = (yield* sessions.listActive()).find(
+        (session) => session.sessionId === issued.sessionId,
+      );
+      expect(row?.expiresAt.epochMilliseconds).toBe(renewed.expiresAt.epochMilliseconds);
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("keeps the pre-change behaviour for tokens without a renewal claim", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const legacyCookie = yield* sessions.issue({ subject: "legacy-phone" });
+      const legacyBearer = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "legacy-cli",
+      });
+
+      yield* TestClock.adjust(Duration.days(2));
+
+      expect((yield* sessions.renew(legacyCookie.token))._tag).toBe("Renewed");
+      expect((yield* sessions.renew(legacyBearer.token))._tag).toBe("NotRenewable");
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("a token carrying the renewal claim still decodes under the pre-change schema", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "phone",
+        renewal: "sliding",
+      });
+      const [encodedPayload] = issued.token.split(".");
+      if (!encodedPayload) return Effect.die("issued token has no payload");
+      const payload = Buffer.from(encodedPayload, "base64url").toString("utf8");
+      const LegacyClaims = Schema.Struct({
+        v: Schema.Literal(1),
+        kind: Schema.Literal("session"),
+        sid: Schema.String,
+        sub: Schema.String,
+        scopes: Schema.Array(Schema.String),
+        method: Schema.String,
+        jkt: Schema.optionalKey(Schema.String),
+        iat: Schema.Number,
+        exp: Schema.Number,
+      });
+      const ClaimsWithRenewal = Schema.Struct({
+        v: Schema.Literal(1),
+        kind: Schema.Literal("session"),
+        sid: Schema.String,
+        sub: Schema.String,
+        scopes: Schema.Array(Schema.String),
+        method: Schema.String,
+        jkt: Schema.optionalKey(Schema.String),
+        renewal: Schema.Literal("sliding"),
+        iat: Schema.Number,
+        exp: Schema.Number,
+      });
+      const decodedWithRenewal = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(ClaimsWithRenewal),
+      )(payload);
+      expect(decodedWithRenewal.renewal).toBe("sliding");
+      const decodedLegacy = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(LegacyClaims))(
+        payload,
+      );
+      expect(decodedLegacy.sid).toBe(issued.sessionId);
+      expect(decodedLegacy.method).toBe("bearer-access-token");
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("does not renew fixed, revoked, expired or malformed sessions", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const bearer = yield* sessions.issue({ method: "bearer-access-token", subject: "cli" });
@@ -388,10 +490,10 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       yield* TestClock.adjust(Duration.days(3));
 
-      expect(yield* sessions.renew(bearer.token)).toEqual(Option.none());
-      expect(yield* sessions.renew(revoked.token)).toEqual(Option.none());
-      expect(yield* sessions.renew(expired.token)).toEqual(Option.none());
-      expect(yield* sessions.renew("not-a-session-token")).toEqual(Option.none());
+      expect((yield* sessions.renew(bearer.token))._tag).toBe("NotRenewable");
+      expect((yield* sessions.renew(revoked.token))._tag).toBe("NotRenewable");
+      expect((yield* sessions.renew(expired.token))._tag).toBe("NotRenewable");
+      expect((yield* sessions.renew("not-a-session-token"))._tag).toBe("NotRenewable");
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 
@@ -750,6 +852,45 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       ),
   );
 
+  for (const operation of ["revoke", "revokeAllExcept"] as const) {
+    it.effect(`wakes awaitRevoked for the revoked session only, through ${operation}`, () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const administrative = yield* sessions.issue({ subject: "desktop-bootstrap" });
+        const client = yield* sessions.issue(relaySessionInput);
+        const bystander = yield* sessions.issue({ ...relaySessionInput, subject: "bystander" });
+        const watcher = yield* sessions
+          .awaitRevoked(client.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        const bystanderWatcher = yield* sessions
+          .awaitRevoked(bystander.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow);
+        expect(watcher.pollUnsafe()).toBeUndefined();
+
+        if (operation === "revoke") {
+          expect(yield* sessions.revoke(client.sessionId)).toBe(true);
+          yield* Fiber.join(watcher);
+          expect(bystanderWatcher.pollUnsafe()).toBeUndefined();
+        } else {
+          expect(yield* sessions.revokeAllExcept(administrative.sessionId)).toBe(2);
+          yield* Fiber.join(watcher);
+          yield* Fiber.join(bystanderWatcher);
+        }
+      }).pipe(Effect.scoped, Effect.provide(makeSessionStoreLayer())),
+    );
+  }
+
+  it.effect("resolves awaitRevoked at once for a session revoked before the watch began", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      yield* sessions.revoke(client.sessionId);
+
+      yield* sessions.awaitRevoked(client.sessionId);
+    }).pipe(Effect.scoped, Effect.provide(makeSessionStoreLayer())),
+  );
+
   it.effect("records client connection metadata without clearing prior values", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -781,4 +922,35 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
     }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
   );
+});
+
+it("keeps proof-bound machine sessions at one hour and lets only direct pairing slide", () => {
+  const hours = (input: Parameters<typeof SessionStore.sessionPolicyForGrant>[0]) => {
+    const policy = SessionStore.sessionPolicyForGrant(input);
+    return { hours: Duration.toHours(policy.ttl), renewal: policy.renewal };
+  };
+  expect(hours({ grant: "one-time-token", method: "dpop-access-token" })).toEqual({
+    hours: 720,
+    renewal: "sliding",
+  });
+  expect(hours({ grant: "one-time-token", method: "bearer-access-token" })).toEqual({
+    hours: 720,
+    renewal: "sliding",
+  });
+  expect(hours({ grant: "desktop-bootstrap", method: "dpop-access-token" })).toEqual({
+    hours: 1,
+    renewal: "fixed",
+  });
+  expect(hours({ grant: "desktop-bootstrap", method: "bearer-access-token" })).toEqual({
+    hours: 720,
+    renewal: "fixed",
+  });
+  expect(hours({ grant: "dev-token", method: "dpop-access-token" })).toEqual({
+    hours: 1,
+    renewal: "fixed",
+  });
+  expect(hours({ grant: "cloud-connect", method: "dpop-access-token" })).toEqual({
+    hours: 1,
+    renewal: "fixed",
+  });
 });

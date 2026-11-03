@@ -810,16 +810,29 @@ export const make = Effect.gen(function* () {
             if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            const method = input?.proofKeyThumbprint
+              ? ("dpop-access-token" as const)
+              : ("bearer-access-token" as const);
+            const policy = SessionStore.sessionPolicyForGrant({
+              grant:
+                grant.subject === "cloud-connect"
+                  ? "cloud-connect"
+                  : grant.method === "desktop-bootstrap"
+                    ? "desktop-bootstrap"
+                    : grant.method === "reusable-dev-token"
+                      ? "dev-token"
+                      : "one-time-token",
+              method,
+            });
             return yield* sessions
               .issue({
-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+                method,
                 subject: grant.subject,
                 scopes: grantedScopes,
+                ttl: policy.ttl,
+                renewal: policy.renewal,
                 ...(input?.proofKeyThumbprint
-                  ? {
-                      proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
-                    }
+                  ? { proofKeyThumbprint: input.proofKeyThumbprint }
                   : {}),
                 // Desktop restarts forget the previous bearer token. Replace
                 // its session, including stale entries left by older versions.
