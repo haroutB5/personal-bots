@@ -23,6 +23,7 @@ object UpdateReducer {
     UpdateEvent.InstallNotPermitted -> installNotPermitted(record)
     UpdateEvent.WentBackground -> wentBackground(record)
     UpdateEvent.WentForeground -> record to listOf(UpdateEffect.CancelIdleInstall)
+    UpdateEvent.SignedOut -> record to emptyList()
     is UpdateEvent.PermissionChanged -> permissionChanged(record, event, installedCode, now)
   }
 

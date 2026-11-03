@@ -14,7 +14,7 @@ object UpdateEngine {
   private val work = Executors.newSingleThreadExecutor { runnable ->
     Thread(runnable, "hbots-updater").apply { isDaemon = true }
   }
-  private val main = Handler(Looper.getMainLooper())
+  private val main by lazy { Handler(Looper.getMainLooper()) }
 
   @Volatile private var context: Context? = null
   @Volatile private var store: UpdateStore? = null
@@ -25,6 +25,8 @@ object UpdateEngine {
   @Volatile private var started = false
 
   fun isForeground(): Boolean = foreground
+
+  internal fun runSerialForTest(task: () -> Unit) = work.execute(task)
 
   fun attach(context: Context, listener: (Map<String, Any?>) -> Unit) {
     val app = context.applicationContext
@@ -182,6 +184,7 @@ object UpdateEngine {
       UpdateEffect.ScheduleIdleInstall -> UpdateScheduler.schedule(app)
       UpdateEffect.CancelIdleInstall -> UpdateScheduler.cancel(app)
       UpdateEffect.DeleteFile -> deleteFiles(before.state)
+      UpdateEffect.DeleteAllFiles -> Unit
       UpdateEffect.PostUpdated ->
         UpdateNotifier.postUpdated(app, targetOf(before.state)?.version ?: installedVersionName())
       UpdateEffect.PostUpdateReady -> UpdateNotifier.postConfirmation(app, pendingTapIntent)

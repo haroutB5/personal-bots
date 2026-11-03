@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { AndroidRelease } from "./compat";
 import type { UpdateSnapshot } from "./updater";
-import { describeLastCheck, describeUpdate } from "./updateView";
+import { describeLastCheck, describeSignedOutUpdate, describeUpdate } from "./updateView";
 
 const latest: AndroidRelease = {
   version: "1.66.111",
@@ -59,6 +59,22 @@ describe("describeUpdate", () => {
       detail: "hbots rejected the last download. Check now to fetch it again.",
       action: "check",
     });
+  });
+});
+
+describe("describeSignedOutUpdate", () => {
+  it("names a newer release that was not rejected", () => {
+    expect(describeSignedOutUpdate(latest, "1.66.110", null)).toBe(
+      "hbots 1.66.111 is waiting. Pair this phone to install it.",
+    );
+  });
+
+  it("never names a rejected release", () => {
+    expect(describeSignedOutUpdate(latest, "1.66.110", "1.66.111")).toBeNull();
+  });
+
+  it("stays quiet when the installed version is current", () => {
+    expect(describeSignedOutUpdate(latest, "1.66.111", null)).toBeNull();
   });
 });
 

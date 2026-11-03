@@ -3,6 +3,7 @@ package expo.modules.hbotsupdater
 import expo.modules.hbotsupdater.UpdateEffect.CancelIdleInstall
 import expo.modules.hbotsupdater.UpdateEffect.ClearNotification
 import expo.modules.hbotsupdater.UpdateEffect.CommitInstall
+import expo.modules.hbotsupdater.UpdateEffect.DeleteAllFiles
 import expo.modules.hbotsupdater.UpdateEffect.DeleteFile
 import expo.modules.hbotsupdater.UpdateEffect.PostUpdated
 import expo.modules.hbotsupdater.UpdateEffect.PostUpdateReady
@@ -112,8 +113,18 @@ class UpdateReducerTest {
   fun `started during a fresh install leaves the install alone`() {
     reduced(
       record(Installing(next, apk, since = now - 60_000L), lastOffer = next),
-      UpdateEvent.Started(true),
+      UpdateEvent.Started(true, pendingInstall = true),
       record(Installing(next, apk, since = now - 60_000L), lastOffer = next),
+      listOf(CancelIdleInstall),
+    )
+  }
+
+  @Test
+  fun `started during a fresh install with no session returns to ready`() {
+    reduced(
+      record(Installing(next, apk, since = now - 60_000L), lastOffer = next),
+      UpdateEvent.Started(true),
+      record(Ready(next, apk), lastOffer = next),
       listOf(CancelIdleInstall),
     )
   }
@@ -185,6 +196,36 @@ class UpdateReducerTest {
       UpdateEvent.Offered(next, authenticated = true, canInstall = false),
       record(NeedsPermission(next), lastCheckAt = now, lastOffer = next),
       emptyList(),
+    )
+  }
+
+  @Test
+  fun `a signed out offer drops a ready apk`() {
+    reduced(
+      record(Ready(next, apk), lastOffer = next),
+      UpdateEvent.Offered(next, authenticated = false),
+      record(Idle(), lastCheckAt = now, lastOffer = next),
+      listOf(DeleteFile),
+    )
+  }
+
+  @Test
+  fun `a signed out offer drops a needs tap apk`() {
+    reduced(
+      record(NeedsTap(next, apk), lastOffer = next),
+      UpdateEvent.Offered(next, authenticated = false),
+      record(Idle(), lastCheckAt = now, lastOffer = next),
+      listOf(DeleteFile),
+    )
+  }
+
+  @Test
+  fun `signing out resets the record and deletes every file`() {
+    reduced(
+      record(Ready(next, apk), lastCheckAt = 123, lastOffer = next),
+      UpdateEvent.SignedOut,
+      record(Idle(), lastCheckAt = null, lastOffer = null),
+      listOf(CancelIdleInstall, DeleteAllFiles, ClearNotification),
     )
   }
 

@@ -29,6 +29,8 @@ sealed interface DownloadOutcome {
   data object Failed : DownloadOutcome
 }
 
+internal fun downloadRejection(total: Long, expected: Long): String? = null
+
 object UpdateDownloader {
   private const val TAG = "HbotsUpdate"
 

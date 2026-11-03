@@ -29,7 +29,7 @@ data class UpdateRecord(
 )
 
 sealed interface UpdateEvent {
-  data class Started(val canInstall: Boolean) : UpdateEvent
+  data class Started(val canInstall: Boolean, val pendingInstall: Boolean = false) : UpdateEvent
   data class Offered(
     val release: Release?,
     val authenticated: Boolean,
@@ -48,6 +48,7 @@ sealed interface UpdateEvent {
   data object InstallNotPermitted : UpdateEvent
   data object WentBackground : UpdateEvent
   data object WentForeground : UpdateEvent
+  data object SignedOut : UpdateEvent
   data class PermissionChanged(val canInstall: Boolean) : UpdateEvent
 }
 
@@ -57,6 +58,7 @@ sealed interface UpdateEffect {
   data object ScheduleIdleInstall : UpdateEffect
   data object CancelIdleInstall : UpdateEffect
   data object DeleteFile : UpdateEffect
+  data object DeleteAllFiles : UpdateEffect
   data object PostUpdated : UpdateEffect
   data object PostUpdateReady : UpdateEffect
   data object ClearNotification : UpdateEffect

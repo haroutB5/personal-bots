@@ -82,6 +82,14 @@ export function describeUpdate(
   }
 }
 
+export function describeSignedOutUpdate(
+  latest: AndroidRelease | null,
+  installedVersion: string,
+  rejectedVersion: string | null,
+): string | null {
+  return null;
+}
+
 export function describeLastCheck(lastCheckAt: number | null, now: number): string {
   if (lastCheckAt === null) {
     return "Not checked yet";
