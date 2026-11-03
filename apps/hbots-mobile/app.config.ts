@@ -60,7 +60,7 @@ const config: ExpoConfig = {
           targetSdkVersion: 36,
           minSdkVersion: 26,
           usesCleartextTraffic: false,
-          buildArchs: ["arm64-v8a"],
+          buildArchs: process.env.HBOTS_QA_X86 === "1" ? ["arm64-v8a", "x86_64"] : ["arm64-v8a"],
         },
       },
     ],
