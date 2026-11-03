@@ -3,7 +3,16 @@
   "compilerOptions": {
     "lib": ["ES2023"],
     "types": ["node"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // Chat timestamps are rendered with Date, as the web app already does.
+        "diagnosticSeverity": {
+          "globalDate": "off"
+        }
+      }
+    ]
   },
   "include": ["src"]
 }

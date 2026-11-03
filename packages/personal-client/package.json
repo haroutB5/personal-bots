@@ -54,6 +54,66 @@
     "./testing/fakes": {
       "types": "./src/testing/fakes.ts",
       "import": "./src/testing/fakes.ts"
+    },
+    "./conversation/conversationModel": {
+      "types": "./src/conversation/conversationModel.ts",
+      "import": "./src/conversation/conversationModel.ts"
+    },
+    "./conversation/delegationModel": {
+      "types": "./src/conversation/delegationModel.ts",
+      "import": "./src/conversation/delegationModel.ts"
+    },
+    "./conversation/chatNotices": {
+      "types": "./src/conversation/chatNotices.ts",
+      "import": "./src/conversation/chatNotices.ts"
+    },
+    "./conversation/groupModel": {
+      "types": "./src/conversation/groupModel.ts",
+      "import": "./src/conversation/groupModel.ts"
+    },
+    "./conversation/greeting": {
+      "types": "./src/conversation/greeting.ts",
+      "import": "./src/conversation/greeting.ts"
+    },
+    "./conversation/questionCards": {
+      "types": "./src/conversation/questionCards.ts",
+      "import": "./src/conversation/questionCards.ts"
+    },
+    "./conversation/secretRequestCards": {
+      "types": "./src/conversation/secretRequestCards.ts",
+      "import": "./src/conversation/secretRequestCards.ts"
+    },
+    "./conversation/connectionApprovalCards": {
+      "types": "./src/conversation/connectionApprovalCards.ts",
+      "import": "./src/conversation/connectionApprovalCards.ts"
+    },
+    "./conversation/leadBotChangeCards": {
+      "types": "./src/conversation/leadBotChangeCards.ts",
+      "import": "./src/conversation/leadBotChangeCards.ts"
+    },
+    "./conversation/memoryCards": {
+      "types": "./src/conversation/memoryCards.ts",
+      "import": "./src/conversation/memoryCards.ts"
+    },
+    "./conversation/taskPresentation": {
+      "types": "./src/conversation/taskPresentation.ts",
+      "import": "./src/conversation/taskPresentation.ts"
+    },
+    "./conversation/previewPrivacy": {
+      "types": "./src/conversation/previewPrivacy.ts",
+      "import": "./src/conversation/previewPrivacy.ts"
+    },
+    "./conversation/voice/callState": {
+      "types": "./src/conversation/voice/callState.ts",
+      "import": "./src/conversation/voice/callState.ts"
+    },
+    "./conversation/voice/voiceCallApi": {
+      "types": "./src/conversation/voice/voiceCallApi.ts",
+      "import": "./src/conversation/voice/voiceCallApi.ts"
+    },
+    "./conversation/types": {
+      "types": "./src/conversation/types.ts",
+      "import": "./src/conversation/types.ts"
     }
   },
   "scripts": {
@@ -64,6 +124,7 @@
     "@effect/atom-react": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
