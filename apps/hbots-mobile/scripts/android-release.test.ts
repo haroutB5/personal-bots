@@ -8,6 +8,7 @@ import {
   atomicWriteFile,
   publishRelease,
   pruneReleases,
+  readMinimumNativeVersion,
   readPublishedRelease,
   readbackOriginProblem,
   releaseProblems,
@@ -142,6 +143,22 @@ describe("readPublishedRelease", () => {
       JSON.stringify({ ...recordFor("1.66.110", "a".repeat(64)), schema: 2 }),
     );
     expect(() => readPublishedRelease(dir)).toThrow(/schema is not 1/u);
+  });
+});
+
+describe("readMinimumNativeVersion", () => {
+  it("reads the contract value the server reports", () => {
+    const root = tempRoot();
+    NodeFS.mkdirSync(NodePath.join(root, "packages/contracts/src"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(root, "packages/contracts/src/personalClientCompat.ts"),
+      'export const PERSONAL_ANDROID_MINIMUM_NATIVE_VERSION = HbotsVersion.make("1.66.110");\n',
+    );
+    expect(readMinimumNativeVersion(root)?.name).toBe("1.66.110");
+  });
+
+  it("has no minimum on a tree that does not carry the contract yet", () => {
+    expect(readMinimumNativeVersion(tempRoot())).toBeNull();
   });
 });
 
