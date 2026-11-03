@@ -19,6 +19,10 @@ object UpdateReducer {
     UpdateEvent.InstallSucceeded -> installSucceeded(record)
     is UpdateEvent.InstallNeedsTap -> installNeedsTap(record)
     UpdateEvent.InstallFailed -> installFailed(record)
+    UpdateEvent.InstallDeferred -> installDeferred(record)
+    UpdateEvent.InstallNotPermitted -> installNotPermitted(record)
+    UpdateEvent.WentBackground -> wentBackground(record)
+    UpdateEvent.WentForeground -> record to listOf(UpdateEffect.CancelIdleInstall)
     is UpdateEvent.PermissionChanged -> permissionChanged(record, event, installedCode, now)
   }
 
@@ -187,6 +191,26 @@ object UpdateReducer {
     return record.copy(state = UpdateState.Idle(rejected = state.target)) to
       listOf(UpdateEffect.DeleteFile, UpdateEffect.ClearNotification)
   }
+
+  private fun installDeferred(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
+    val state = record.state
+    if (state !is UpdateState.Installing) return record to emptyList()
+    return record.copy(state = UpdateState.Ready(state.target, state.apk)) to emptyList()
+  }
+
+  private fun installNotPermitted(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
+    val state = record.state
+    if (state !is UpdateState.Installing) return record to emptyList()
+    return record.copy(state = UpdateState.NeedsPermission(state.target)) to
+      listOf(UpdateEffect.DeleteFile)
+  }
+
+  private fun wentBackground(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
+    if (record.state is UpdateState.Ready) {
+      record to listOf(UpdateEffect.ScheduleIdleInstall)
+    } else {
+      record to emptyList()
+    }
 
   private fun permissionChanged(
     record: UpdateRecord,

@@ -438,4 +438,54 @@ class UpdateReducerTest {
       emptyList(),
     )
   }
+
+  @Test
+  fun `going to the background schedules a ready install`() {
+    reduced(
+      record(Ready(next, apk), lastOffer = next),
+      UpdateEvent.WentBackground,
+      record(Ready(next, apk), lastOffer = next),
+      listOf(ScheduleIdleInstall),
+    )
+  }
+
+  @Test
+  fun `going to the background with a download in flight schedules nothing`() {
+    reduced(
+      record(Downloading(next), lastOffer = next),
+      UpdateEvent.WentBackground,
+      record(Downloading(next), lastOffer = next),
+      emptyList(),
+    )
+  }
+
+  @Test
+  fun `coming back to the foreground cancels the idle install`() {
+    reduced(
+      record(Ready(next, apk), lastOffer = next),
+      UpdateEvent.WentForeground,
+      record(Ready(next, apk), lastOffer = next),
+      listOf(CancelIdleInstall),
+    )
+  }
+
+  @Test
+  fun `an install deferred by a foreground return goes back to ready`() {
+    reduced(
+      record(Installing(next, apk, now), lastOffer = next),
+      UpdateEvent.InstallDeferred,
+      record(Ready(next, apk), lastOffer = next),
+      emptyList(),
+    )
+  }
+
+  @Test
+  fun `a lost install permission waits without remembering a rejection`() {
+    reduced(
+      record(Installing(next, apk, now), lastOffer = next),
+      UpdateEvent.InstallNotPermitted,
+      record(NeedsPermission(next), lastOffer = next),
+      listOf(DeleteFile),
+    )
+  }
 }

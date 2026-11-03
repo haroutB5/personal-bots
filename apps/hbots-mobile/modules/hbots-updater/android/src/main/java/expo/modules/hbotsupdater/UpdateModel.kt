@@ -44,6 +44,10 @@ sealed interface UpdateEvent {
   data object InstallSucceeded : UpdateEvent
   data class InstallNeedsTap(val intent: String) : UpdateEvent
   data object InstallFailed : UpdateEvent
+  data object InstallDeferred : UpdateEvent
+  data object InstallNotPermitted : UpdateEvent
+  data object WentBackground : UpdateEvent
+  data object WentForeground : UpdateEvent
   data class PermissionChanged(val canInstall: Boolean) : UpdateEvent
 }
 
