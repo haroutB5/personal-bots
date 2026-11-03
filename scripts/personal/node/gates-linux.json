@@ -38,5 +38,38 @@
     "title": "Phone e2e smoke on Linux (five journeys)",
     "cwd": ".",
     "commands": ["node scripts/personal/node/e2e-smoke.mjs --suite-timeout 600 --json"]
+  },
+  {
+    "id": "personal-client",
+    "kind": "vitest",
+    "title": "Personal client package tests",
+    "cwd": "packages/personal-client",
+    "commands": ["NODE_ENV=test vp test run", "npx tsc --noEmit"]
+  },
+  {
+    "id": "hbots-mobile",
+    "kind": "vitest",
+    "title": "hbots Android app lint, typecheck and JS tests",
+    "cwd": "apps/hbots-mobile",
+    "commands": ["vp lint .", "npx tsc --noEmit", "NODE_ENV=test vp test run"]
+  },
+  {
+    "id": "hbots-mobile-kotlin",
+    "kind": "check",
+    "title": "hbots Android Kotlin unit tests",
+    "cwd": "apps/hbots-mobile",
+    "commands": [
+      "EXPO_NO_GIT_STATUS=1 npx expo prebuild --platform android --no-install",
+      "cd android && ./gradlew testDebugUnitTest --no-daemon --console=plain"
+    ]
+  },
+  {
+    "id": "parity",
+    "kind": "check",
+    "title": "Web to Android parity",
+    "cwd": ".",
+    "commands": [
+      "node scripts/personal/parity/parity-matrix.mjs . --ref HEAD --android-ref HEAD --check --out scripts/personal/parity/parity.json && git diff --exit-code scripts/personal/parity/parity.json"
+    ]
   }
 ]
