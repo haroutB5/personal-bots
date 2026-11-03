@@ -80,3 +80,24 @@ Set `HBOTS_KEYSTORE_PATH`, `HBOTS_SIGNING_PROPERTIES` or `HBOTS_KEY_ALIAS` to us
 another key. A debug build on an x86_64 emulator passes
 `-PreactNativeArchitectures=x86_64` to Gradle, because the app's own ABI list is
 arm64 only.
+
+## Publish an update
+
+```sh
+node scripts/publish-android-update.mjs <signed.apk> \
+  --out <server data root> --notes "What changed"
+```
+
+The script writes `<data root>/android-updates/hbots-<version>.apk` first, then
+`latest.json` through a temp file and rename, then prunes to the newest three
+APKs. It refuses an APK with another package, a versionName that differs from
+`scripts/personal/app-version.txt`, a versionCode that does not match the name,
+a signer other than `release-cert.sha256`, a versionCode that does not rise
+above the published one, or a `minimumNativeVersion` above the published
+version. Publish after the server release is live.
+
+`--readback https://host` checks the result through `client-compat` and
+downloads the APK from its Bearer route, comparing the sha256. It needs a
+session token in `HBOTS_READBACK_TOKEN` and refuses plain `http` except on
+loopback. `--minimum-native-version` overrides the contract value, which the
+script reads from `packages/contracts/src/personalClientCompat.ts` when present.
