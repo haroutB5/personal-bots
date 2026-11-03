@@ -60,7 +60,7 @@
     "cwd": "apps/hbots-mobile",
     "commands": [
       "EXPO_NO_GIT_STATUS=1 npx expo prebuild --platform android --no-install",
-      "cd android && ./gradlew testDebugUnitTest --no-daemon --console=plain"
+      "cd android && ./gradlew :hbots-updater:testDebugUnitTest --no-daemon --console=plain"
     ]
   },
   {
