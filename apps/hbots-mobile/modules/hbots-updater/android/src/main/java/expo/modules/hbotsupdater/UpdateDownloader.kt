@@ -29,7 +29,11 @@ sealed interface DownloadOutcome {
   data object Failed : DownloadOutcome
 }
 
-internal fun downloadRejection(total: Long, expected: Long): String? = null
+internal fun downloadRejection(total: Long, expected: Long): String? = when {
+  total > expected -> "download rejected oversize expected=$expected read=$total"
+  total != expected -> "download rejected short expected=$expected read=$total"
+  else -> null
+}
 
 object UpdateDownloader {
   private const val TAG = "HbotsUpdate"
@@ -53,9 +57,15 @@ object UpdateDownloader {
     pinSha256: String,
   ): DownloadOutcome {
     val dir = File(context.cacheDir, "updates")
-    if (!dir.isDirectory && !dir.mkdirs()) return DownloadOutcome.Failed
+    if (!dir.isDirectory && !dir.mkdirs()) {
+      Log.w(TAG, "download failed no cache dir")
+      return DownloadOutcome.Failed
+    }
     val available = runCatching { StatFs(dir.absolutePath).availableBytes }.getOrDefault(0L)
-    if (available < target.size * 2) return DownloadOutcome.Failed
+    if (available < target.size * 2) {
+      Log.w(TAG, "download failed space available=$available need=${target.size * 2}")
+      return DownloadOutcome.Failed
+    }
 
     val apk = File(dir, "${target.code}.apk")
     val part = File(dir, "${target.code}.apk.part")
@@ -67,8 +77,15 @@ object UpdateDownloader {
         .header("Authorization", "Bearer ${auth.bearer}")
         .build()
       http.newCall(request).execute().use { response ->
-        if (!response.isSuccessful) return DownloadOutcome.Failed
-        val body = response.body ?: return DownloadOutcome.Failed
+        if (!response.isSuccessful) {
+          Log.w(TAG, "download failed http=${response.code}")
+          return DownloadOutcome.Failed
+        }
+        val body = response.body
+        if (body == null) {
+          Log.w(TAG, "download failed no body")
+          return DownloadOutcome.Failed
+        }
         var total = 0L
         body.byteStream().use { input ->
           part.outputStream().use { output ->
@@ -77,18 +94,28 @@ object UpdateDownloader {
               val read = input.read(buffer)
               if (read <= 0) break
               total += read
-              if (total > target.size) return DownloadOutcome.Failed
+              if (total > target.size) {
+                Log.w(TAG, downloadRejection(total, target.size).orEmpty())
+                return DownloadOutcome.Failed
+              }
               output.write(buffer, 0, read)
             }
           }
         }
-        if (total != target.size) return DownloadOutcome.Failed
+        if (total != target.size) {
+          Log.w(TAG, downloadRejection(total, target.size).orEmpty())
+          return DownloadOutcome.Failed
+        }
       }
       apk.delete()
-      if (!part.renameTo(apk)) return DownloadOutcome.Failed
+      if (!part.renameTo(apk)) {
+        Log.w(TAG, "download failed rename")
+        return DownloadOutcome.Failed
+      }
       complete = true
       val facts = runCatching { ApkFileReader().read(apk) }.getOrNull()
       if (facts == null) {
+        Log.w(TAG, "apk rejected unreadable")
         apk.delete()
         return DownloadOutcome.Rejected("unreadable")
       }

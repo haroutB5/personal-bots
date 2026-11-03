@@ -55,6 +55,7 @@ android {
 }
 
 dependencies {
+  implementation 'androidx.lifecycle:lifecycle-process:2.9.0'
   implementation 'com.android.tools.build:apksig:8.7.3'
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 

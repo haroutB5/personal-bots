@@ -87,7 +87,13 @@ export function describeSignedOutUpdate(
   installedVersion: string,
   rejectedVersion: string | null,
 ): string | null {
-  return null;
+  if (latest === null || !isNewerVersion(latest.version, installedVersion)) {
+    return null;
+  }
+  if (rejectedVersion === latest.version) {
+    return null;
+  }
+  return `hbots ${latest.version} is waiting. Pair this phone to install it.`;
 }
 
 export function describeLastCheck(lastCheckAt: number | null, now: number): string {

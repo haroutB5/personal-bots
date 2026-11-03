@@ -22,6 +22,17 @@ object UpdateInstaller {
   fun canInstall(context: Context): Boolean =
     runCatching { context.packageManager.canRequestPackageInstalls() }.getOrDefault(false)
 
+  fun hasActiveInstall(context: Context): Boolean = runCatching {
+    context.packageManager.packageInstaller.mySessions.any { it.isActive }
+  }.getOrDefault(false)
+
+  fun abandonSessions(context: Context) {
+    runCatching {
+      val installer = context.packageManager.packageInstaller
+      installer.mySessions.forEach { runCatching { installer.abandonSession(it.sessionId) } }
+    }
+  }
+
   fun openInstallPermission(context: Context) {
     val uri = Uri.parse("package:${context.packageName}")
     val opened = runCatching {

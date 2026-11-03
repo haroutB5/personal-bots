@@ -43,6 +43,11 @@ class HbotsUpdaterModule : Module() {
       UpdateEngine.confirmInstall()
     }
 
+    AsyncFunction("reset") {
+      attach()
+      UpdateEngine.signedOut()
+    }
+
     AsyncFunction("openInstallPermission") {
       app()?.let(UpdateInstaller::openInstallPermission)
     }

@@ -5,8 +5,12 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 object UpdateEngine {
   private const val TAG = "HbotsUpdate"
@@ -20,17 +24,19 @@ object UpdateEngine {
   @Volatile private var store: UpdateStore? = null
   @Volatile private var record = UpdateRecord()
   @Volatile private var emit: ((Map<String, Any?>) -> Unit)? = null
-  @Volatile private var foreground = false
+  private val foreground = AtomicBoolean(false)
+  private val processObserved = AtomicBoolean(false)
   @Volatile private var pendingTapIntent: Intent? = null
   @Volatile private var started = false
 
-  fun isForeground(): Boolean = foreground
+  fun isForeground(): Boolean = foreground.get()
 
   internal fun runSerialForTest(task: () -> Unit) = work.execute(task)
 
   fun attach(context: Context, listener: (Map<String, Any?>) -> Unit) {
     val app = context.applicationContext
     ensure(app)
+    observeProcess()
     emit = listener
     if (started) {
       emitSnapshot()
@@ -39,7 +45,12 @@ object UpdateEngine {
     started = true
     work.execute {
       cleanupParts(app)
-      dispatch(UpdateEvent.Started(UpdateInstaller.canInstall(app)))
+      dispatch(
+        UpdateEvent.Started(
+          canInstall = UpdateInstaller.canInstall(app),
+          pendingInstall = UpdateInstaller.hasActiveInstall(app),
+        ),
+      )
       cleanupOrphans(app)
       emitSnapshot()
     }
@@ -67,21 +78,31 @@ object UpdateEngine {
     dispatch(UpdateEvent.UserConfirmed)
   }
 
-  fun onForeground() = work.execute {
-    val app = context ?: return@execute
-    foreground = true
-    dispatch(UpdateEvent.WentForeground)
-    dispatch(UpdateEvent.PermissionChanged(UpdateInstaller.canInstall(app)))
+  fun onForeground() {
+    foreground.set(true)
+    work.execute {
+      val app = context ?: return@execute
+      dispatch(UpdateEvent.WentForeground)
+      dispatch(UpdateEvent.PermissionChanged(UpdateInstaller.canInstall(app)))
+    }
   }
 
-  fun onBackground() = work.execute {
-    foreground = false
-    dispatch(UpdateEvent.WentBackground)
+  fun onBackground() {
+    foreground.set(false)
+    work.execute {
+      dispatch(UpdateEvent.WentBackground)
+    }
+  }
+
+  fun signedOut() = work.execute {
+    val app = context ?: return@execute
+    dispatch(UpdateEvent.SignedOut)
+    UpdateInstaller.abandonSessions(app)
   }
 
   fun idleReached(context: Context) = work.execute {
     ensure(context.applicationContext)
-    if (foreground) return@execute
+    if (foreground.get()) return@execute
     dispatch(UpdateEvent.IdleReached)
   }
 
@@ -168,14 +189,14 @@ object UpdateEngine {
           )
         ) {
           is DownloadOutcome.Ready ->
-            dispatch(UpdateEvent.Downloaded(outcome.apk, inBackground = !foreground))
+            dispatch(UpdateEvent.Downloaded(outcome.apk, inBackground = !isForeground()))
           is DownloadOutcome.Rejected -> dispatch(UpdateEvent.Rejected(outcome.reason))
           DownloadOutcome.Failed -> dispatch(UpdateEvent.DownloadFailed)
         }
       }
       UpdateEffect.CommitInstall -> {
         val state = after.state as? UpdateState.Installing ?: return
-        if (foreground && !allowForeground) {
+        if (isForeground() && !allowForeground) {
           dispatch(UpdateEvent.InstallDeferred)
           return
         }
@@ -184,7 +205,7 @@ object UpdateEngine {
       UpdateEffect.ScheduleIdleInstall -> UpdateScheduler.schedule(app)
       UpdateEffect.CancelIdleInstall -> UpdateScheduler.cancel(app)
       UpdateEffect.DeleteFile -> deleteFiles(before.state)
-      UpdateEffect.DeleteAllFiles -> Unit
+      UpdateEffect.DeleteAllFiles -> deleteAllUpdates(app)
       UpdateEffect.PostUpdated ->
         UpdateNotifier.postUpdated(app, targetOf(before.state)?.version ?: installedVersionName())
       UpdateEffect.PostUpdateReady -> UpdateNotifier.postConfirmation(app, pendingTapIntent)
@@ -198,7 +219,7 @@ object UpdateEngine {
     installed: InstalledApp,
     allowForeground: Boolean,
   ) {
-    Log.i(TAG, "commit install code=${state.target.code} foreground=$foreground")
+    Log.i(TAG, "commit install code=${state.target.code} foreground=${isForeground()}")
     val apk = File(state.apk)
     if (!apk.isFile) {
       dispatch(UpdateEvent.InstallFailed)
@@ -218,6 +239,11 @@ object UpdateEngine {
       dispatch(UpdateEvent.InstallFailed)
       return
     }
+    if (isForeground() && !allowForeground) {
+      Log.i(TAG, "install deferred after verify")
+      dispatch(UpdateEvent.InstallDeferred)
+      return
+    }
     when (UpdateInstaller.install(app, apk, state.target, allowForeground)) {
       UpdateInstallResult.STARTED -> Unit
       UpdateInstallResult.DEFERRED -> dispatch(UpdateEvent.InstallDeferred)
@@ -231,6 +257,29 @@ object UpdateEngine {
     apkOf(state)?.let { runCatching { File(it).delete() } }
     targetOf(state)?.let {
       runCatching { File(app.cacheDir, "updates/${it.code}.apk.part").delete() }
+    }
+  }
+
+  private fun deleteAllUpdates(app: Context) {
+    File(app.cacheDir, "updates").listFiles()?.forEach { file ->
+      runCatching { file.delete() }
+    }
+  }
+
+  private fun observeProcess() {
+    if (!processObserved.compareAndSet(false, true)) return
+    main.post {
+      ProcessLifecycleOwner.get().lifecycle.addObserver(
+        object : DefaultLifecycleObserver {
+          override fun onStart(owner: LifecycleOwner) {
+            foreground.set(true)
+          }
+
+          override fun onStop(owner: LifecycleOwner) {
+            foreground.set(false)
+          }
+        },
+      )
     }
   }
 

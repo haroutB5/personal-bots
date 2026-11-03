@@ -39,6 +39,7 @@ interface NativeUpdater {
   ): Promise<void>;
   snapshot(): Promise<UpdateSnapshot>;
   confirmInstall(): Promise<void>;
+  reset(): Promise<void>;
   openInstallPermission(): Promise<void>;
   addListener(
     event: "state",
@@ -83,6 +84,17 @@ export async function confirmUpdateInstall(): Promise<void> {
     return;
   }
   await native.confirmInstall();
+}
+
+export async function resetUpdater(): Promise<void> {
+  if (native === null) {
+    return;
+  }
+  try {
+    await native.reset();
+  } catch {
+    // A failed reset leaves the last state alone. The next sign out retries.
+  }
 }
 
 export async function openInstallPermission(): Promise<void> {

@@ -23,7 +23,7 @@ object UpdateReducer {
     UpdateEvent.InstallNotPermitted -> installNotPermitted(record)
     UpdateEvent.WentBackground -> wentBackground(record)
     UpdateEvent.WentForeground -> record to listOf(UpdateEffect.CancelIdleInstall)
-    UpdateEvent.SignedOut -> record to emptyList()
+    UpdateEvent.SignedOut -> signedOut(record)
     is UpdateEvent.PermissionChanged -> permissionChanged(record, event, installedCode, now)
   }
 
@@ -54,7 +54,7 @@ object UpdateReducer {
         record.copy(state = UpdateState.Idle()) to
           listOf(UpdateEffect.CancelIdleInstall, UpdateEffect.DeleteFile)
       is UpdateState.Installing -> {
-        val next = if (now - state.since > INSTALL_COOLDOWN_MS) {
+        val next = if (!event.pendingInstall || now - state.since > INSTALL_COOLDOWN_MS) {
           UpdateState.Ready(state.target, state.apk)
         } else {
           state
@@ -101,6 +101,12 @@ object UpdateReducer {
       return checked.copy(state = UpdateState.Idle(rejected), lastOffer = null) to effects
     }
 
+    if (!event.authenticated) {
+      val effects = if (state.ownsFile()) listOf(UpdateEffect.DeleteFile) else emptyList()
+      val rejected = (state as? UpdateState.Idle)?.rejected
+      return checked.copy(state = UpdateState.Idle(rejected), lastOffer = release) to effects
+    }
+
     val currentCode = state.targetOrNull()?.code
     if (currentCode != null && release.code <= currentCode) {
       return checked.copy(lastOffer = release) to emptyList()
@@ -108,7 +114,6 @@ object UpdateReducer {
 
     val rejected = (state as? UpdateState.Idle)?.rejected
     val next = when {
-      !event.authenticated -> UpdateState.Idle(rejected)
       !event.canInstall -> UpdateState.NeedsPermission(release)
       release.sha256 == rejected?.sha256 -> UpdateState.Idle(rejected)
       else -> UpdateState.Downloading(release)
@@ -205,6 +210,18 @@ object UpdateReducer {
     return record.copy(state = UpdateState.NeedsPermission(state.target)) to
       listOf(UpdateEffect.DeleteFile)
   }
+
+  private fun signedOut(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
+    UpdateRecord(
+      state = UpdateState.Idle(),
+      lastCheckAt = null,
+      lastOffer = null,
+      notifiedCode = record.notifiedCode,
+    ) to listOf(
+      UpdateEffect.CancelIdleInstall,
+      UpdateEffect.DeleteAllFiles,
+      UpdateEffect.ClearNotification,
+    )
 
   private fun wentBackground(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
     if (record.state is UpdateState.Ready) {

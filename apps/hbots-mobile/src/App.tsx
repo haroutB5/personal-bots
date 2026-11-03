@@ -54,12 +54,13 @@ import {
   offerUpdate,
   openInstallPermission,
   readUpdateSnapshot,
+  resetUpdater,
   subscribeUpdate,
   type UpdateSnapshot,
 } from "./updater";
 import { UpdateSettings } from "./UpdateSettings";
-import { describeUpdate } from "./updateView";
-import { isNewerVersion, isTooOld } from "./version";
+import { describeSignedOutUpdate, describeUpdate } from "./updateView";
+import { isTooOld } from "./version";
 
 type Screen =
   | { readonly kind: "booting" }
@@ -194,6 +195,11 @@ function App() {
   }, []);
 
   const installedVersion = update?.installedVersion ?? "";
+  const signedOutUpdate = describeSignedOutUpdate(
+    latest,
+    installedVersion,
+    update?.rejected ?? null,
+  );
 
   const activeSession =
     screen.kind === "bots" || screen.kind === "laptopOffline" || screen.kind === "tooOld"
@@ -221,6 +227,7 @@ function App() {
     async (next: Screen) => {
       stopRenew();
       disposeRpc();
+      await resetUpdater();
       await sessionLifetime.end();
       await clearBotsCache(secureBotsCacheStorage);
       setScreen(next);
@@ -551,6 +558,7 @@ function App() {
       disposeRpc();
       setSettingsOpen(false);
       setScreen({ kind: "connecting", step: "Signing out" });
+      await resetUpdater();
       await sessionLifetime.end();
       await clearBotsCache(secureBotsCacheStorage);
       const outcome = await revokeRemoteSession(session);
@@ -751,11 +759,9 @@ function App() {
                       newer. Pair this phone to install the update.
                     </Text>
                   </View>
-                ) : latest !== null && isNewerVersion(latest.version, installedVersion) ? (
+                ) : signedOutUpdate !== null ? (
                   <View style={styles.noticeBox}>
-                    <Text style={styles.notice}>
-                      hbots {latest.version} is waiting. Pair this phone to install it.
-                    </Text>
+                    <Text style={styles.notice}>{signedOutUpdate}</Text>
                   </View>
                 ) : null}
                 {screen.notice !== null ? (
