@@ -206,11 +206,14 @@ describe("the query atom", () => {
     // retention, so it asked the server (which starts a scan) ten minutes after
     // the card was gone. Only the mounted card may refresh.
     const source = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "usePersonalBots.ts"),
+      NodePath.join(
+        import.meta.dirname,
+        "../../../../../packages/personal-client/src/bots/personalBots.ts",
+      ),
       "utf8",
     );
     const block = source.slice(
-      source.indexOf("export const personalBotsTokenUsage"),
+      source.indexOf("const personalBotsTokenUsage"),
       source.indexOf("const refreshBotsList"),
     );
     expect(block).toContain("tag: WS_METHODS.personalBotsTokenUsage");

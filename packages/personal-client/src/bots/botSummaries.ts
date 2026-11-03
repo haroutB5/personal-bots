@@ -1,0 +1,657 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  botTeam,
+  isBotPinned,
+  isProviderAvailable,
+  isTeamLead,
+  PERSONAL_BOT_TEAM_ORDER,
+  type PersonalBot,
+  type PersonalRoutine,
+  type PersonalBotThread,
+  type PersonalBotThreadNewestMessage,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+
+import {
+  type ConversationState,
+  conversationStateLabel,
+  isTurnThinking,
+  providerWaitState,
+  THINKING_LABEL,
+} from "../conversation/conversationModel.ts";
+import { botActiveModelLabel, botActiveModelShortLabel } from "./botModelLabel.ts";
+import { chatActivityMs, chatActivityMsUncached } from "./chatActivity.ts";
+import { isChatSnoozed } from "./chatState.ts";
+import type { PerfOptimization } from "../perf/perfFlags.ts";
+import { routineNextRunLabel } from "../conversation/taskPresentation.ts";
+
+export interface BotProviderStatus {
+  readonly label: string;
+  /** False when the bot's instance is missing, disabled or unavailable. */
+  readonly available: boolean;
+  /** The test message after an update failed on the version installed now. */
+  readonly broken: boolean;
+}
+
+export interface BotSummary {
+  readonly bot: PersonalBot;
+  readonly provider: BotProviderStatus;
+  /** "Opus 5.5 medium": the bot's model and effort, for the row beside its name. */
+  readonly modelLabel: string | null;
+  /** {@link botActiveModelShortLabel}: the pinned tile's form of the label. */
+  readonly modelShortLabel: string | null;
+  /** Most recently updated, non-archived thread linked to the bot. */
+  readonly newestThread: EnvironmentThreadShell | null;
+  /** That thread's newest user/assistant message, from `personalBots.list`. */
+  readonly newestMessage: PersonalBotThreadNewestMessage | null;
+  readonly threadTitles: ReadonlyArray<string>;
+  /** A linked thread has a turn or session running right now (not stuck on a rate limit). */
+  readonly live: boolean;
+  /** The freshest such thread, the one a working bot's progress note comes from. */
+  readonly liveThread?: EnvironmentThreadShell | null;
+  /**
+   * The latest progress note of `liveThread` (thinking summary or tool step
+   * title), set by the list from `personalBots.workingProgress`. Never written
+   * to the cold-start snapshot.
+   */
+  readonly progressNote?: string | null;
+  /**
+   * Live, and every live thread is still in its opening stretch with no reply
+   * yet (`isTurnThinking`). One thread producing output makes the bot working.
+   */
+  readonly thinking: boolean;
+  /** A linked thread is stuck on a provider rate limit. */
+  readonly rateLimited: boolean;
+  readonly rateLimitedThread: EnvironmentThreadShell | null;
+  /**
+   * The newest linked chat, when its last turn failed and is not being retried
+   * (`isThreadErrored`). Optional: the cold-start snapshot predates it.
+   */
+  readonly erroredThread?: EnvironmentThreadShell | null;
+  /**
+   * How many of its chats the bot replied in since the owner last opened them
+   * (`unreadChatsByBot`), set by the list for bots that show it (team leads).
+   * Absent means none; never written to the cold-start snapshot.
+   */
+  readonly unreadChats?: number;
+  /** Linked threads waiting on the user (approval or requested input). */
+  readonly attentionThreads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly hasPendingApprovals: boolean;
+  readonly hasPendingUserInput: boolean;
+  readonly needsBrowserHelp: boolean;
+  /** A linked chat has a secret request the bot is parked on. */
+  readonly needsSecret: boolean;
+  /** "Waiting on Developer": a linked thread's task is unfinished with no live turn. */
+  readonly waitingFor: string | null;
+  /** A linked chat holds the user's real PC right now. */
+  readonly usingPc?: boolean;
+  /** A linked chat is in line for the PC while another bot has it. */
+  readonly waitingForPc?: boolean;
+  readonly nextRoutine: PersonalRoutine | null;
+  readonly lastActivityMs: number | null;
+}
+
+function humanizeInstanceId(instanceId: string): string {
+  return instanceId
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export function resolveBotProvider(
+  instanceId: string,
+  providers: ReadonlyArray<ServerProvider>,
+): BotProviderStatus {
+  const snapshot = providers.find((candidate) => candidate.instanceId === instanceId);
+  if (snapshot === undefined) {
+    return { label: humanizeInstanceId(instanceId), available: false, broken: false };
+  }
+  const label = resolveProviderInstanceDisplayName(snapshot);
+  return {
+    // The bots UI names Anthropic's runtime by its product name.
+    label: label === "Claude" ? "Claude Code" : label,
+    available: snapshot.enabled && isProviderAvailable(snapshot),
+    broken: isProviderBroken(snapshot),
+  };
+}
+
+/**
+ * The line under a bot's name on a task card: the short model label ("Opus 5.5
+ * · H", "Sonnet 5.5 · H", the same one the Bots list and pinned tiles show).
+ * The provider's name ("Claude Code") stays only as the fallback when the bot
+ * has no model to name; null when the bot itself is gone.
+ */
+export function taskCardBotLine(
+  bot: Pick<PersonalBot, "modelSelection" | "fallbackActive"> | null,
+  providers: ReadonlyArray<ServerProvider>,
+): string | null {
+  if (bot === null) return null;
+  return (
+    botActiveModelShortLabel(bot, providers) ??
+    resolveBotProvider(bot.modelSelection.instanceId, providers).label
+  );
+}
+
+/** The bots' test message failed on the installed version; a verdict for another version says nothing. */
+export function isProviderBroken(
+  snapshot: Pick<ServerProvider, "version" | "smokeCheck">,
+): boolean {
+  return (
+    snapshot.smokeCheck?.status === "failed" && snapshot.smokeCheck.version === snapshot.version
+  );
+}
+
+/**
+ * The chat header's status: what the bot is doing right now. The provider name
+ * is gone from the header (the model label beside it names the runtime); it
+ * only appears when a post-update test failed, where naming it is the point.
+ */
+export function conversationHeaderStatus(
+  state: ConversationState,
+  stateLabel: string,
+  provider: BotProviderStatus | null,
+): string {
+  // A failed post-update test replaces the state label unless the bot is
+  // waiting on the user.
+  if (provider?.broken === true && state !== "needs_help" && state !== "waiting") {
+    return `Update broke ${provider.label}`;
+  }
+  return stateLabel;
+}
+
+/** "Claude Code", or "Claude Code · unavailable" when the bot cannot run. */
+export function providerLine(status: BotProviderStatus): string {
+  return status.available ? status.label : `${status.label} · unavailable`;
+}
+
+export function isThreadRateLimited(shell: EnvironmentThreadShell): boolean {
+  return providerWaitState(shell.session) === "rate_limited";
+}
+
+/** The names a chat's session goes by for its provider (instance id, driver, the retry's own). */
+function sessionProviderNames(shell: EnvironmentThreadShell): ReadonlySet<string> {
+  const session = shell.session;
+  const names = [
+    session?.providerInstanceId,
+    session?.providerName,
+    session?.providerRetry?.provider,
+  ].filter((name): name is string => typeof name === "string" && name.length > 0);
+  return new Set(names);
+}
+
+/** The names the bot's current provider goes by: its instance id and that instance's driver. */
+export function botProviderNames(
+  bot: Pick<PersonalBot, "modelSelection">,
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlySet<string> {
+  const instanceId = bot.modelSelection.instanceId;
+  const driver = providers.find((candidate) => candidate.instanceId === instanceId)?.driver;
+  return new Set([instanceId, ...(typeof driver === "string" ? [driver] : [])]);
+}
+
+function sameProvider(left: EnvironmentThreadShell, right: EnvironmentThreadShell): boolean {
+  const leftNames = sessionProviderNames(left);
+  const rightNames = sessionProviderNames(right);
+  // A chat that never named its provider says nothing against it.
+  if (leftNames.size === 0 || rightNames.size === 0) return true;
+  return [...leftNames].some((name) => rightNames.has(name));
+}
+
+/**
+ * A rate limit that has clearly passed, so the chat that recorded it must not
+ * speak for the bot. The server keeps a failed chat's session in `error` with
+ * its limit until that chat gets another turn, which a chat of an ended task
+ * never does, and the bot has often replied since in other chats.
+ *
+ * Only a chat whose turn already failed (`error`) can be stale: one still
+ * running is waiting on the provider's clock and keeps its limit. Stale when
+ *  - the chat's task has ended (`endedTaskThreadIds`, every task of the chat
+ *    failed, was cancelled or interrupted, or completed), or
+ *  - the bot no longer runs on the provider the chat was limited on
+ *    (`botProviderNames`, from {@link botProviderNames}): a limit is the old
+ *    provider's account, so it says nothing about the one the bot switched to, or
+ *  - a chat of the same bot on the same provider completed a turn after the
+ *    limit was seen (`observedAt`, else the session's `updatedAt`).
+ * `botShells` is every linked chat, archived ones too: a 48-hour auto-archive
+ * must not bring the old limit back.
+ */
+export function isRateLimitStale(
+  shell: EnvironmentThreadShell,
+  botShells: ReadonlyArray<EnvironmentThreadShell>,
+  endedTaskThreadIds?: ReadonlySet<string>,
+  botProviderNames?: ReadonlySet<string>,
+): boolean {
+  if (shell.session?.status !== "error") return false;
+  if (endedTaskThreadIds?.has(shell.id) === true) return true;
+  if (botProviderNames !== undefined && botProviderNames.size > 0) {
+    const limitedOn = sessionProviderNames(shell);
+    // A chat that never named its provider says nothing against it.
+    if (limitedOn.size > 0 && ![...limitedOn].some((name) => botProviderNames.has(name))) {
+      return true;
+    }
+  }
+  const limitAt = Date.parse(shell.session.providerRetry?.observedAt ?? shell.session.updatedAt);
+  if (!Number.isFinite(limitAt)) return false;
+  return botShells.some((other) => {
+    const turn = other.latestTurn;
+    if (turn?.state !== "completed" || turn.completedAt === null) return false;
+    return Date.parse(turn.completedAt) > limitAt && sameProvider(shell, other);
+  });
+}
+
+/**
+ * The chat's last turn failed and nothing is retrying it: the header's
+ * "Error". The server keeps the session in `error` until the next good turn.
+ */
+export function isThreadErrored(shell: EnvironmentThreadShell): boolean {
+  if (providerWaitState(shell.session) !== null || isThreadLive(shell)) return false;
+  return shell.session?.status === "error" || shell.latestTurn?.state === "error";
+}
+
+/** The Bots list's words for a bot whose chat failed to reply. */
+export const BOT_ERROR_LABEL = "Couldn't reply";
+
+/** Running right now. A turn parked on a rate limit is not live, however long it "runs". */
+export function isThreadLive(shell: EnvironmentThreadShell): boolean {
+  if (isThreadRateLimited(shell)) return false;
+  return (
+    shell.latestTurn?.state === "running" ||
+    shell.session?.status === "running" ||
+    shell.session?.status === "starting"
+  );
+}
+
+/** Every live linked thread is still thinking (see {@link BotSummary.thinking}). */
+export function isBotThinking(shells: ReadonlyArray<EnvironmentThreadShell>): boolean {
+  const live = shells.filter(isThreadLive);
+  return live.length > 0 && live.every((shell) => isTurnThinking(shell));
+}
+
+export function threadNeedsAttention(shell: EnvironmentThreadShell): boolean {
+  return shell.hasPendingApprovals || shell.hasPendingUserInput;
+}
+
+/** `waiting`: no live turn, but a task of the bot is unfinished. Drawn with a hollow ring, never the live dot. */
+export type BotStatusTone = "review" | "normal" | "waiting";
+
+export function botStatus(
+  summary: BotSummary,
+  now: number,
+): {
+  readonly label: string;
+  readonly tone: BotStatusTone;
+} {
+  if (summary.needsBrowserHelp) return { label: "Needs your help", tone: "review" };
+  // Above approvals and questions: a secret request parks the bot's task in
+  // waiting_for_user until it is answered or declined, and nothing else frees it.
+  if (summary.needsSecret) return { label: "Needs a secret", tone: "review" };
+  if (summary.hasPendingApprovals) return { label: "Needs approval", tone: "review" };
+  if (summary.hasPendingUserInput) return { label: "Needs your reply", tone: "review" };
+  // Below the needs-you states, above everything else: the bot's next turn will fail.
+  if (summary.provider.broken) {
+    return { label: `Update broke ${summary.provider.label}`, tone: "review" };
+  }
+  // Above Working: a bot in line for the PC is live but not getting anywhere.
+  if (summary.waitingForPc === true) return { label: "Waiting for the computer", tone: "normal" };
+  if (summary.usingPc === true) return { label: "Using your PC", tone: "normal" };
+  // Thinking: live, and nothing out of the turn yet. In the Bots list the
+  // flag is tool-aware (a tool step clears it, `currentTurnHasToolStep`), so
+  // the text, the pose and the chat header agree.
+  if (summary.live) {
+    return { label: summary.thinking ? THINKING_LABEL : "Working", tone: "normal" };
+  }
+  if (summary.rateLimitedThread !== null) {
+    return {
+      label: conversationStateLabel(
+        "rate_limited",
+        summary.rateLimitedThread.session,
+        new Date(now),
+      ),
+      tone: "review",
+    };
+  }
+  // Below working, a rate limit and every needs-you state: the reply failed
+  // and the owner has to send it again.
+  if (summary.erroredThread != null) return { label: BOT_ERROR_LABEL, tone: "review" };
+  if (summary.waitingFor !== null) return { label: summary.waitingFor, tone: "waiting" };
+  if (summary.nextRoutine !== null) {
+    return {
+      label: routineNextRunLabel(summary.nextRoutine).replace(/^Next: /, "Next run "),
+      tone: "normal",
+    };
+  }
+  if (!summary.provider.available) {
+    return { label: "Unavailable · tap to fix", tone: "review" };
+  }
+  return { label: "Ready", tone: "normal" };
+}
+
+export function botStatusLine(summary: BotSummary, now: number): string {
+  return botStatus(summary, now).label;
+}
+
+/**
+ * The shells, newest conversation first. Each shell's activity is read once
+ * (a decorated sort), not twice per comparison; the order is the same stable
+ * order `toSorted((l, r) => activity(r) - activity(l))` gave.
+ */
+function newestFirst(
+  shells: ReadonlyArray<EnvironmentThreadShell>,
+  activityMs: (shell: EnvironmentThreadShell) => number,
+  decorated: boolean,
+): EnvironmentThreadShell[] {
+  if (!decorated) {
+    return shells.toSorted((left, right) => activityMs(right) - activityMs(left));
+  }
+  if (shells.length < 2) return [...shells];
+  return shells
+    .map((shell) => ({ shell, at: activityMs(shell) }))
+    .toSorted((left, right) => right.at - left.at)
+    .map((entry) => entry.shell);
+}
+
+/** Newest activity first, the chat-list convention; a bot with no chat goes last. */
+function compareActivity(left: BotSummary, right: BotSummary): number {
+  if (left.lastActivityMs === right.lastActivityMs) return 0;
+  if (left.lastActivityMs === null) return 1;
+  if (right.lastActivityMs === null) return -1;
+  return right.lastActivityMs - left.lastActivityMs;
+}
+
+/**
+ * Join bots with their linked thread shells. Only real state feeds the row:
+ * activity, attention and timestamps all come from the thread shells. Rows are
+ * ordered working bots first (newest activity first among them), then the rest
+ * by latest activity (chat-list convention), then the bots' own order.
+ */
+export function buildBotSummaries(input: {
+  readonly bots: ReadonlyArray<PersonalBot>;
+  readonly links: ReadonlyArray<PersonalBotThread>;
+  readonly shells: ReadonlyArray<EnvironmentThreadShell>;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  /** From `waitingLabelsByThread`: thread id to "Waiting on Developer". */
+  readonly waitingByThread?: ReadonlyMap<string, string>;
+  /** From `threadIdsWithEndedTasks`: chats whose every task is over (see `isRateLimitStale`). */
+  readonly endedTaskThreadIds?: ReadonlySet<string>;
+  readonly browserHelpThreadId?: string | null;
+  /** From `threadIdsAwaitingSecret`: chats with a pending secret request. */
+  readonly secretRequestThreadIds?: ReadonlySet<string>;
+  readonly routines?: ReadonlyArray<PersonalRoutine>;
+  /**
+   * The time a snooze is judged against (the screen's wake clock). A snoozed
+   * chat is not the bot's newest chat and gives the row no preview or order;
+   * what it is doing still counts (busy shells). Defaults to the real time.
+   */
+  readonly nowMs?: number;
+  /** From `personalDesktop.status`: who holds the PC and who waits for it. */
+  readonly desktop?: {
+    readonly holderThreadId: string | null;
+    readonly waitingThreadIds: ReadonlySet<string>;
+  } | null;
+  /**
+   * The device's kill-switch reader. The web passes its localStorage-backed
+   * `perfOptimizationOn`; absent means every optimization is on.
+   */
+  readonly readPerfOptimization?: (name: PerfOptimization) => boolean;
+}): BotSummary[] {
+  const shellsById = new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
+  const linksByThread = new Map(
+    input.links.map((link) => [link.threadId as string, link] as const),
+  );
+  // Real conversation activity, never `updatedAt` (see chatActivity.ts).
+  // `activity-memo` is read once per rebuild, not once per chat: a localStorage
+  // read per shell was itself 2% of the phone's main thread while bots streamed.
+  const memoOn = (input.readPerfOptimization ?? (() => true))("activity-memo");
+  const activityMs = (shell: EnvironmentThreadShell) =>
+    memoOn
+      ? chatActivityMs(shell, linksByThread.get(shell.id))
+      : chatActivityMsUncached(shell, linksByThread.get(shell.id));
+  const nowMs = input.nowMs ?? Date.now();
+  const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
+  // Every linked chat, archived or not: what the bot is doing counts wherever
+  // it happens. A task reopened in a chat auto-archive had put away ran for an
+  // hour while the row said Ready. The row's chat, preview and order stay on
+  // the visible chats.
+  const busyShellsByBot = new Map<string, EnvironmentThreadShell[]>();
+  const push = (
+    byBot: Map<string, EnvironmentThreadShell[]>,
+    botId: string,
+    shell: EnvironmentThreadShell,
+  ) => {
+    const list = byBot.get(botId);
+    if (list === undefined) byBot.set(botId, [shell]);
+    else list.push(shell);
+  };
+  const newestMessageByThread = new Map<string, PersonalBotThreadNewestMessage>();
+  // Each bot's open (not archived) links, grouped once: the four per-bot flags
+  // below scanned every link of every bot (about 30 000 comparisons a rebuild).
+  const openLinksByBot = new Map<string, PersonalBotThread[]>();
+  for (const link of input.links) {
+    if (link.archivedAt === null) {
+      const open = openLinksByBot.get(link.botId);
+      if (open === undefined) openLinksByBot.set(link.botId, [link]);
+      else open.push(link);
+    }
+    if (link.newestMessage != null) newestMessageByThread.set(link.threadId, link.newestMessage);
+    const shell = shellsById.get(link.threadId);
+    if (shell === undefined) continue;
+    push(busyShellsByBot, link.botId, shell);
+    if (link.archivedAt !== null || shell.archivedAt !== null) continue;
+    if (isChatSnoozed(link, nowMs)) continue;
+    push(shellsByBot, link.botId, shell);
+  }
+
+  const summaries = input.bots.map((bot): BotSummary => {
+    const openLinks = memoOn
+      ? (openLinksByBot.get(bot.botId) ?? [])
+      : input.links.filter((link) => link.botId === bot.botId && link.archivedAt === null);
+    const shells = newestFirst(shellsByBot.get(bot.botId) ?? [], activityMs, memoOn);
+    const busyShells = newestFirst(busyShellsByBot.get(bot.botId) ?? [], activityMs, memoOn);
+    const newestThread = shells[0] ?? null;
+    // A limit that has passed (a later reply, a task that ended on it, or a
+    // bot moved to another provider) must not pin the row: the chat itself
+    // keeps saying what happened to it.
+    const providerNames = botProviderNames(bot, input.providers);
+    const rateLimitedThread =
+      shells.find(
+        (shell) =>
+          isThreadRateLimited(shell) &&
+          !isRateLimitStale(shell, busyShells, input.endedTaskThreadIds, providerNames),
+      ) ?? null;
+    // Only the newest chat: an old chat whose last reply failed must not pin
+    // the bot at "Couldn't reply" after the owner moved on.
+    const erroredThread =
+      newestThread !== null && isThreadErrored(newestThread) ? newestThread : null;
+    const nextRoutine =
+      (input.routines ?? [])
+        .filter(
+          (routine) =>
+            routine.botId === bot.botId &&
+            routine.trigger === "schedule" &&
+            routine.enabled &&
+            routine.nextDueAt !== null,
+        )
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(left.nextDueAt!) - DateTime.toEpochMillis(right.nextDueAt!),
+        )[0] ?? null;
+    return {
+      bot,
+      provider: resolveBotProvider(bot.modelSelection.instanceId, input.providers),
+      modelLabel: botActiveModelLabel(bot, input.providers),
+      modelShortLabel: botActiveModelShortLabel(bot, input.providers),
+      newestThread,
+      newestMessage:
+        newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),
+      threadTitles: shells.map((shell) => shell.title),
+      live: busyShells.some(isThreadLive),
+      liveThread: busyShells.find(isThreadLive) ?? null,
+      thinking: isBotThinking(busyShells),
+      rateLimited: rateLimitedThread !== null,
+      rateLimitedThread,
+      erroredThread,
+      attentionThreads: shells.filter(threadNeedsAttention),
+      hasPendingApprovals: shells.some((shell) => shell.hasPendingApprovals),
+      hasPendingUserInput: shells.some((shell) => shell.hasPendingUserInput),
+      needsBrowserHelp: openLinks.some((link) => link.threadId === input.browserHelpThreadId),
+      // Off the links, not the shells: a secret request keeps its chat's
+      // hasPendingUserInput false, so only the request row knows about it.
+      needsSecret: openLinks.some(
+        (link) => input.secretRequestThreadIds?.has(link.threadId) ?? false,
+      ),
+      waitingFor:
+        busyShells
+          .map((shell) => input.waitingByThread?.get(shell.id) ?? null)
+          .find((label) => label !== null) ?? null,
+      usingPc: openLinks.some((link) => link.threadId === input.desktop?.holderThreadId),
+      waitingForPc: openLinks.some(
+        (link) => input.desktop?.waitingThreadIds.has(link.threadId) ?? false,
+      ),
+      nextRoutine,
+      lastActivityMs: newestThread === null ? null : activityMs(newestThread),
+    };
+  });
+
+  return summaries.toSorted((left, right) => {
+    // Harout's rule (17 Oct): a bot working right now is always above an idle
+    // one. `live` is the same flag the row's green dot and its "Working" label
+    // read (BotRow, `botStatus`), so the order cannot disagree with the row.
+    if (left.live !== right.live) return left.live ? -1 : 1;
+    const byActivity = compareActivity(left, right);
+    if (byActivity !== 0) return byActivity;
+    if (left.bot.sortOrder !== right.bot.sortOrder) {
+      return left.bot.sortOrder - right.bot.sortOrder;
+    }
+    return left.bot.name.localeCompare(right.bot.name);
+  });
+}
+
+/** Client-side search over bot names and their thread titles. */
+/**
+ * What the Chats previews depend on, per bot: which thread is newest, and the
+ * message boundaries of that thread. Deliberately NOT the shell's
+ * `updatedAt`: the server bumps it on every streamed `message-sent` delta, so
+ * keying the `personalBots.list` refetch on it refetched the whole list once
+ * per chunk while any bot replied. This key moves when the owner sends a
+ * message (`latestUserMessageAt`), a turn starts (`turnId`), the bot starts a
+ * new message (`assistantMessageId`: commentary between tool calls is one
+ * message each) and when the turn settles (`state`, `completedAt`).
+ */
+export function previewRefreshKey(summaries: ReadonlyArray<BotSummary>): string {
+  return summaries
+    .map((summary) => {
+      const thread = summary.newestThread;
+      if (thread === null) return `${summary.bot.botId}=`;
+      const turn = thread.latestTurn;
+      return `${summary.bot.botId}=${[
+        thread.id,
+        thread.latestUserMessageAt ?? "",
+        turn?.turnId ?? "",
+        turn?.state ?? "",
+        turn?.assistantMessageId ?? "",
+        turn?.completedAt ?? "",
+      ].join(",")}`;
+    })
+    .join("|");
+}
+
+function parsePreviewKey(key: string): Map<string, ReadonlyArray<string>> {
+  const byBot = new Map<string, ReadonlyArray<string>>();
+  for (const segment of key.split("|")) {
+    const separator = segment.indexOf("=");
+    if (separator <= 0) continue;
+    const fields = segment.slice(separator + 1);
+    byBot.set(segment.slice(0, separator), fields.length === 0 ? [] : fields.split(","));
+  }
+  return byBot;
+}
+
+/** Newest message boundary a key segment records (ISO strings compare in order). */
+function newestBoundary(fields: ReadonlyArray<string>): string {
+  const userAt = fields[1] ?? "";
+  const completedAt = fields[5] ?? "";
+  return userAt > completedAt ? userAt : completedAt;
+}
+
+/**
+ * Whether the move from `previous` to `next` (two `previewRefreshKey`s) is a
+ * message boundary worth refetching `personalBots.list` for. A boundary moved
+ * on a bot's newest thread counts. A bot's newest thread changing to another
+ * thread counts only when that thread has a newer message: on an app open the
+ * newest thread also changes while group relays, tasks and thread shells are
+ * still landing, and that cost a second and third list request per open.
+ * Bots appearing or leaving come from the list itself, so they never count.
+ */
+export function previewKeyAdvanced(previous: string, next: string): boolean {
+  if (previous === next) return false;
+  const before = parsePreviewKey(previous);
+  for (const [botId, fields] of parsePreviewKey(next)) {
+    const old = before.get(botId);
+    if (old === undefined || fields.length === 0) continue;
+    if (old.length > 0 && old[0] === fields[0]) {
+      if (old.join(",") !== fields.join(",")) return true;
+      continue;
+    }
+    const boundary = newestBoundary(fields);
+    if (boundary !== "" && boundary > newestBoundary(old)) return true;
+  }
+  return false;
+}
+
+export function filterBotSummaries(
+  summaries: ReadonlyArray<BotSummary>,
+  query: string,
+): ReadonlyArray<BotSummary> {
+  const needle = query.trim().toLocaleLowerCase();
+  if (needle.length === 0) return summaries;
+  return summaries.filter(
+    (summary) =>
+      summary.bot.name.toLocaleLowerCase().includes(needle) ||
+      summary.threadTitles.some((title) => title.toLocaleLowerCase().includes(needle)),
+  );
+}
+
+/**
+ * Splits the chats list into the pinned box and the list under it. A working
+ * pin comes first, newest activity first among working pins, so the avatar
+ * strip at the top of the home follows the same rule as the rows under it
+ * (Harout, 17 Oct). The rest keep the box's own order: the dev lead, then the
+ * assistant's, then any other pinned bot in the order it already had. Every
+ * bot lands in exactly one of the two, so a pinned bot is never listed twice.
+ */
+export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): {
+  readonly pinned: ReadonlyArray<BotSummary>;
+  readonly rest: ReadonlyArray<BotSummary>;
+} {
+  const rank = (summary: BotSummary) => {
+    if (!isTeamLead(summary.bot)) return PERSONAL_BOT_TEAM_ORDER.length + 1;
+    const index = PERSONAL_BOT_TEAM_ORDER.indexOf(botTeam(summary.bot));
+    return index < 0 ? PERSONAL_BOT_TEAM_ORDER.length : index;
+  };
+  return {
+    // toSorted is stable, so equal ranks keep the incoming order.
+    pinned: summaries
+      .filter((summary) => isBotPinned(summary.bot))
+      .toSorted((left, right) => {
+        if (left.live !== right.live) return left.live ? -1 : 1;
+        if (left.live) {
+          const byActivity = compareActivity(left, right);
+          if (byActivity !== 0) return byActivity;
+        }
+        return rank(left) - rank(right);
+      }),
+    rest: summaries.filter((summary) => !isBotPinned(summary.bot)),
+  };
+}
+
+/** Threads waiting on the user across all bots, most recent first. */
+export function collectAttentionThreads(
+  summaries: ReadonlyArray<BotSummary>,
+): EnvironmentThreadShell[] {
+  return summaries
+    .flatMap((summary) => summary.attentionThreads)
+    .toSorted((left, right) => chatActivityMs(right) - chatActivityMs(left));
+}

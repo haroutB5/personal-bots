@@ -14,5 +14,10 @@ type WebPersonalClient =
 export const personalClient: WebPersonalClient = createPersonalClient(
   connectionAtomRuntime,
   webPorts,
-  { useActiveEnvironmentId, usePrimaryEnvironmentId },
+  {
+    // Read through the module bindings at call time: tests and the router can
+    // replace `~/state/entities` after this module loads.
+    useActiveEnvironmentId: () => useActiveEnvironmentId(),
+    usePrimaryEnvironmentId: () => usePrimaryEnvironmentId(),
+  },
 );

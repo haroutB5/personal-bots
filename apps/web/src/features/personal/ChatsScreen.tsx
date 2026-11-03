@@ -465,6 +465,7 @@ export function ChatsScreen({
             routines: routinesQuery.data?.routines ?? [],
             desktop: desktopSummary,
             nowMs: wakeClock,
+            readPerfOptimization: perfOptimizationOn,
           }),
     [
       wakeClock,

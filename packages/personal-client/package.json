@@ -19,6 +19,30 @@
       "types": "./src/bots/chatsSnapshot.ts",
       "import": "./src/bots/chatsSnapshot.ts"
     },
+    "./bots/chatActivity": {
+      "types": "./src/bots/chatActivity.ts",
+      "import": "./src/bots/chatActivity.ts"
+    },
+    "./bots/chatState": {
+      "types": "./src/bots/chatState.ts",
+      "import": "./src/bots/chatState.ts"
+    },
+    "./bots/botModelLabel": {
+      "types": "./src/bots/botModelLabel.ts",
+      "import": "./src/bots/botModelLabel.ts"
+    },
+    "./bots/botSummaries": {
+      "types": "./src/bots/botSummaries.ts",
+      "import": "./src/bots/botSummaries.ts"
+    },
+    "./bots/personalBots": {
+      "types": "./src/bots/personalBots.ts",
+      "import": "./src/bots/personalBots.ts"
+    },
+    "./bots/providerModelCapabilities": {
+      "types": "./src/bots/providerModelCapabilities.ts",
+      "import": "./src/bots/providerModelCapabilities.ts"
+    },
     "./ports/cancel": {
       "types": "./src/ports/cancel.ts",
       "import": "./src/ports/cancel.ts"
@@ -54,6 +78,14 @@
     "./testing/fakes": {
       "types": "./src/testing/fakes.ts",
       "import": "./src/testing/fakes.ts"
+    },
+    "./react/query": {
+      "types": "./src/react/query.ts",
+      "import": "./src/react/query.ts"
+    },
+    "./react/command": {
+      "types": "./src/react/command.ts",
+      "import": "./src/react/command.ts"
     },
     "./conversation/conversationModel": {
       "types": "./src/conversation/conversationModel.ts",
