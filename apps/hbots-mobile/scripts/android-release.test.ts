@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   atomicWriteFile,
+  outputDirProblem,
   publishRelease,
   pruneReleases,
   readMinimumNativeVersion,
@@ -48,7 +49,7 @@ const checkFor = (overrides: Partial<ReleaseCheck> = {}): ReleaseCheck => ({
   expectedVersion: "1.66.110",
   pinnedSha256: "b".repeat(64),
   published: null,
-  minimumNativeVersion: null,
+  minimumNativeVersion: requireReleaseVersion("1.66.109", "test"),
   notes: "Update screen fixes",
   ...overrides,
 });
@@ -112,6 +113,12 @@ describe("releaseProblems", () => {
         checkFor({ minimumNativeVersion: requireReleaseVersion("1.66.110", "test") }),
       ),
     ).toEqual([]);
+  });
+
+  it("refuses a publish whose minimum native version is unavailable", () => {
+    expect(releaseProblems(checkFor({ minimumNativeVersion: null }))).toEqual([
+      "minimumNativeVersion is unavailable; pass --minimum-native-version",
+    ]);
   });
 
   it("refuses empty or oversized notes", () => {
@@ -242,6 +249,16 @@ describe("pruneReleases", () => {
       "hbots-1.66.111.apk",
       "latest.json",
     ]);
+  });
+});
+
+describe("outputDirProblem", () => {
+  it("refuses an empty, relative or missing --out", () => {
+    expect(outputDirProblem(undefined)).toBe("--out is required");
+    expect(outputDirProblem("")).toBe("--out must not be empty");
+    expect(outputDirProblem("  ")).toBe("--out must not be empty");
+    expect(outputDirProblem("android-updates")).toBe("--out must be an absolute path");
+    expect(outputDirProblem("/home/harout/.personal-bots/dev")).toBeNull();
   });
 });
 
