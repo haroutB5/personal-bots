@@ -1,0 +1,67 @@
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
+import type { ExpoConfig } from "expo/config";
+
+import { requireReleaseVersion } from "./scripts/versionCode.ts";
+
+const version = requireReleaseVersion(
+  NodeFS.readFileSync(
+    NodePath.resolve(__dirname, "../../scripts/personal/app-version.txt"),
+    "utf8",
+  ).trim(),
+  "app-version.txt",
+).name;
+
+export function versionCodeFor(versionName: string): number {
+  return requireReleaseVersion(versionName, "app-version.txt").code;
+}
+
+const config: ExpoConfig = {
+  name: "hbots",
+  slug: "hbots",
+  version,
+  orientation: "portrait",
+  scheme: "hbots",
+  userInterfaceStyle: "dark",
+  backgroundColor: "#0f0f0e",
+  platforms: ["android"],
+  updates: { enabled: false },
+  android: {
+    package: "com.haroutb5.hbots",
+    versionCode: versionCodeFor(version),
+    userInterfaceStyle: "dark",
+    blockedPermissions: [
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+    ],
+    predictiveBackGestureEnabled: true,
+    allowBackup: false,
+    adaptiveIcon: {
+      foregroundImage: "./assets/icon/foreground.png",
+      backgroundImage: "./assets/icon/background.png",
+      monochromeImage: "./assets/icon/monochrome.png",
+    },
+  },
+  plugins: [
+    "expo-secure-store",
+    "expo-system-ui",
+    [
+      "expo-build-properties",
+      {
+        android: {
+          compileSdkVersion: 36,
+          targetSdkVersion: 36,
+          minSdkVersion: 26,
+          usesCleartextTraffic: false,
+          buildArchs: ["arm64-v8a"],
+        },
+      },
+    ],
+    "./plugins/withAndroidPredictiveBackCompat.cjs",
+    "./plugins/withAndroidReleaseSigning.cjs",
+  ],
+};
+
+export default config;

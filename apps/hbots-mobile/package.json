@@ -1,0 +1,39 @@
+{
+  "name": "@hbots/mobile",
+  "version": "1.66.110",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "prebuild": "EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform android",
+    "release": "cd android && ./gradlew assembleRelease",
+    "lint": "vp lint --report-unused-disable-directives .",
+    "test": "vp test run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:",
+    "expo": "~57.0.18",
+    "expo-build-properties": "~57.0.15",
+    "expo-clipboard": "~57.0.1",
+    "expo-secure-store": "~57.0.2",
+    "expo-system-ui": "~57.0.4",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "~19.2.0",
+    "babel-preset-expo": "~57.0.9",
+    "typescript": "catalog:"
+  },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
+  }
+}
