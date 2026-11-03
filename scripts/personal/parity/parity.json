@@ -8811,7 +8811,6 @@
       ],
       "pr": "A2",
       "status": "done",
-      "android": "apps/hbots-mobile/src/rpc.ts:43",
       "check": "Android calls personalBots.list from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {

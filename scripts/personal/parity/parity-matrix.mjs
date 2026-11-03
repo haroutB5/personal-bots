@@ -13,7 +13,7 @@
 // --require-done adds PR ids to that set by hand. "done" comes from apps/hbots-mobile/src/parity.ts at the Android ref once that file
 // exists (program PR G0), and from the measured DONE_TODAY table before then.
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -651,7 +651,6 @@ for (const it of items) {
   it.pr = owner.pr;
   const done = parityFile ? androidDone.has(it.id) : DONE_TODAY[it.id];
   it.status = done ? "done" : "planned";
-  if (done && !parityFile) it.android = DONE_TODAY[it.id];
   if (PARTIAL_TODAY[it.id]) it.androidToday = PARTIAL_TODAY[it.id];
 }
 
@@ -704,7 +703,9 @@ const out = {
   serverOnlyMethods,
   items: items.map(({ file, ...rest }) => rest),
 };
-writeFileSync(OUT, `${JSON.stringify(out, null, "\t")}\n`);
+writeFileSync(OUT, `${JSON.stringify(out, null, 2)}\n`);
+const formatter = join(repo, "node_modules/.bin/vp");
+if (existsSync(formatter)) execFileSync(formatter, ["fmt", OUT], { stdio: "ignore" });
 
 if (LIST)
   for (const it of items.filter((i) => i.kind === LIST || i.status === LIST || i.pr === LIST))
