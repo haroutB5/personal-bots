@@ -19,8 +19,8 @@
       "rpc": 127
     },
     "byStatus": {
-      "done": 1,
-      "planned": 375,
+      "done": 4,
+      "planned": 372,
       "n/a": 35,
       "unassigned": 0
     },
@@ -481,7 +481,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "androidToday": "Shell states only: booting, connecting, \"Can't reach your laptop\", signed out, too old (apps/hbots-mobile/src/App.tsx:718). No tabs or back stack.",
       "check": "Open / on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
@@ -3210,7 +3210,7 @@
         ]
       },
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"edge swipe back\" on Android where PersonalShell.tsx:85 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3378,7 +3378,7 @@
         ]
       },
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"edge swipe back\" on Android where useChatSwipeBack.tsx:89 offers it. The same result appears on the web app after a refresh."
     },
     {
