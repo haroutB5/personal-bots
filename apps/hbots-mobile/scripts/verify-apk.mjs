@@ -85,6 +85,51 @@ for (const permission of FORBIDDEN_PERMISSIONS) {
   console.log(`${present ? "FAIL" : "ok  "} ${permission} absent`);
 }
 
+const REQUIRED_PERMISSIONS = [
+  "android.permission.REQUEST_INSTALL_PACKAGES",
+  "android.permission.POST_NOTIFICATIONS",
+  "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION",
+];
+for (const permission of REQUIRED_PERMISSIONS) {
+  const present = manifest.includes(permission);
+  failed ||= !present;
+  console.log(`${present ? "ok  " : "FAIL"} ${permission} present`);
+}
+
+const components = [
+  ...manifest.matchAll(/<(activity|activity-alias|receiver|service|provider)\b[^>]*>/gu),
+]
+  .map(([tag = ""]) => ({
+    name: tag.match(/android:name="([^"]*)"/u)?.[1] ?? "",
+    exported: tag.match(/android:exported="([^"]*)"/u)?.[1] ?? "false",
+    kind: tag.match(/^<([a-z-]+)/u)?.[1] ?? "",
+  }))
+  .filter((component) => component.name.length > 0);
+const exported = components
+  .filter((component) => component.exported === "true")
+  .map((component) => component.name);
+// ProfileInstallReceiver comes from the baseline-profile dependency the scaffold already shipped.
+const expectedExported = [
+  "com.haroutb5.hbots.MainActivity",
+  "androidx.profileinstaller.ProfileInstallReceiver",
+];
+const exportedOk =
+  exported.length === expectedExported.length &&
+  expectedExported.every((name) => exported.includes(name));
+failed ||= !exportedOk;
+console.log(
+  `${exportedOk ? "ok  " : "FAIL"} exported=${exported.join(",")} (expected ${expectedExported.join(",")})`,
+);
+
+const receiver = components.find(
+  (component) => component.name === "expo.modules.hbotsupdater.UpdateInstallReceiver",
+);
+const receiverOk = receiver?.kind === "receiver" && receiver.exported === "false";
+failed ||= !receiverOk;
+console.log(
+  `${receiverOk ? "ok  " : "FAIL"} UpdateInstallReceiver exported=${receiver?.exported ?? "missing"} (expected false)`,
+);
+
 console.log(`dataExtractionRules=${String(attribute("dataExtractionRules"))}`);
 console.log(`fullBackupContent=${String(attribute("fullBackupContent"))}`);
 console.log(`apk-bytes=${analyze("apk", "file-size")}`);
