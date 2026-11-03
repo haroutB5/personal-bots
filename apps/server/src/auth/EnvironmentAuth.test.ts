@@ -1,11 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthAdministrativeScopes } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -78,6 +80,58 @@ const requestMetadata = {
 };
 
 it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
+  it.effect("renews direct bearer and DPoP pairing sessions but keeps relay and CLI fixed", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+
+      const bearerLink = yield* serverAuth.createPairingLink({ label: "phone-bearer" });
+      const bearer = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        bearerLink.credential,
+        undefined,
+        requestMetadata,
+      );
+      const dpopLink = yield* serverAuth.createPairingLink({ label: "phone-dpop" });
+      const dpop = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        dpopLink.credential,
+        undefined,
+        requestMetadata,
+        { proofKeyThumbprint: "phone-proof-key" },
+      );
+      const relayLink = yield* serverAuth.createPairingLink({
+        subject: "cloud-connect",
+        label: "relay",
+        proofKeyThumbprint: "relay-proof-key",
+      });
+      const relay = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        relayLink.credential,
+        undefined,
+        requestMetadata,
+        { proofKeyThumbprint: "relay-proof-key" },
+      );
+      const cli = yield* serverAuth.issueSession({ label: "cli" });
+
+      expect(bearer.token_type).toBe("Bearer");
+      expect(bearer.expires_in).toBe(2_592_000);
+      expect(dpop.token_type).toBe("DPoP");
+      expect(dpop.expires_in).toBe(2_592_000);
+      expect(relay.expires_in).toBe(3_600);
+
+      expect((yield* sessions.renew(relay.access_token))._tag).toBe("NotRenewable");
+      expect((yield* sessions.renew(cli.token))._tag).toBe("NotRenewable");
+
+      yield* TestClock.adjust(Duration.days(2));
+
+      expect((yield* sessions.renew(bearer.access_token))._tag).toBe("Renewed");
+      const dpopRenewed = yield* sessions.renew(dpop.access_token);
+      expect(dpopRenewed._tag).toBe("Renewed");
+      if (dpopRenewed._tag !== "Renewed") return;
+      const verified = yield* sessions.verify(dpopRenewed.token);
+      expect(verified.method).toBe("dpop-access-token");
+      expect(verified.proofKeyThumbprint).toBe("phone-proof-key");
+    }).pipe(Effect.provide(Layer.merge(makeEnvironmentAuthLayer(), TestClock.layer()))),
+  );
+
   it.effect("uses the reusable dev cookie without overriding a normal scoped cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

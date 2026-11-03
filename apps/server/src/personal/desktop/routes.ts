@@ -28,6 +28,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
+import { serveUntilSessionRevoked } from "../../auth/sessionRevocationClose.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
 import type { LiveViewer } from "./DesktopLiveView.ts";
 import {
@@ -306,17 +307,9 @@ export function makeDesktopSocketHandler(
   };
 }
 
-export const personalDesktopStreamRouteLayer = HttpRouter.add(
-  "GET",
-  PERSONAL_DESKTOP_STREAM_PATH,
+const serveDesktopStream = (desktop: PersonalDesktop["Service"]) =>
   Effect.gen(function* () {
-    // Authenticate before anything else so an anonymous probe learns nothing.
-    yield* authenticatePersonalRoute(AuthOrchestrationOperateScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
-    if (request.headers.upgrade?.toLowerCase() !== "websocket") {
-      return HttpServerResponse.text("Upgrade Required", { status: 426 });
-    }
-    const desktop = yield* PersonalDesktop;
     const socket = yield* request.upgrade;
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -341,7 +334,8 @@ export const personalDesktopStreamRouteLayer = HttpRouter.add(
             encodeMessage({
               _tag: "ViewState",
               state: "unavailable",
-              detail: "The live view is not available on this server (Windows only, until the Hyprland version lands).",
+              detail:
+                "The live view is not available on this server (Windows only, until the Hyprland version lands).",
             }),
           );
           return;
@@ -364,5 +358,22 @@ export const personalDesktopStreamRouteLayer = HttpRouter.add(
       }),
     ).pipe(Effect.ignoreCause);
     return HttpServerResponse.empty();
+  });
+
+export const personalDesktopStreamRouteLayer = HttpRouter.add(
+  "GET",
+  PERSONAL_DESKTOP_STREAM_PATH,
+  Effect.gen(function* () {
+    // Authenticate before anything else so an anonymous probe learns nothing.
+    const session = yield* authenticatePersonalRoute(AuthOrchestrationOperateScope);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (request.headers.upgrade?.toLowerCase() !== "websocket") {
+      return HttpServerResponse.text("Upgrade Required", { status: 426 });
+    }
+    const desktop = yield* PersonalDesktop;
+    return yield* serveUntilSessionRevoked({
+      sessionId: session.sessionId,
+      serve: serveDesktopStream(desktop),
+    });
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),
 );

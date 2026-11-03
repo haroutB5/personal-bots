@@ -33,6 +33,7 @@ import { ServerConfig } from "../../config.ts";
 import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { isExpensiveSeedModel } from "../seedModel.ts";
+import { readLiveHbotsVersion } from "../releaseVersion.ts";
 import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
 import { memoryAutoApplyEnabled } from "./memoryAutoApply.ts";
 import { appsToJson, normaliseApps, parseAppsJson, unknownApps } from "./memoryApps.ts";
@@ -511,15 +512,12 @@ export const make = Effect.gen(function* () {
   const baseDir = config._tag === "Some" ? config.value.baseDir : undefined;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Bound once here: the service methods expose no filesystem requirement.
+  const readAppVersion = readLiveHbotsVersion(staticDir).pipe(
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
+  );
 
-  /** The live app version, from the served client's version.txt (null in tests). */
-  const readAppVersion =
-    staticDir === undefined
-      ? Effect.succeed(null)
-      : fileSystem.readFileString(path.join(staticDir, "version.txt")).pipe(
-          Effect.map((text) => /^version=(.+)$/m.exec(text)?.[1]?.trim() || null),
-          Effect.orElseSucceed(() => null),
-        );
   // A nightly run and a "Preview now" never overlap.
   const lock = yield* Semaphore.make(1);
 
