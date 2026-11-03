@@ -12,8 +12,6 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import { clearBotsCache } from "./botsCache";
-import { secureBotsCacheStorage } from "./botsCacheStorage";
 import {
   installJavascriptCrashHandler,
   markBackgrounded,
@@ -148,7 +146,6 @@ function App() {
       disposeNative();
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
-      await clearBotsCache(secureBotsCacheStorage);
       setScreen(next);
     },
     [disposeNative, stopRenew],
@@ -383,7 +380,6 @@ function App() {
       setScreen({ kind: "connecting", step: "Signing out" });
       await sessionLifetime.end();
       await resetUpdater(sessionLifetime.epoch());
-      await clearBotsCache(secureBotsCacheStorage);
       if (native !== null) {
         native.client.ports.kv.removeItem(CHATS_SNAPSHOT_KEY);
       }
