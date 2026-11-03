@@ -151,18 +151,20 @@ function SnapshotRow({
   name,
   subtitle,
   preview,
+  avatarColor,
   time,
   pinned,
 }: {
   readonly name: string;
   readonly subtitle: string;
   readonly preview: string;
+  readonly avatarColor: string;
   readonly time: number | null;
   readonly pinned: boolean;
 }) {
   return (
     <View style={styles.row}>
-      <View style={[styles.avatar, styles.snapshotAvatar]}>
+      <View style={[styles.avatar, styles.snapshotAvatar, { backgroundColor: avatarColor }]}>
         <Text style={styles.avatarText} maxFontSizeMultiplier={1.3}>
           {initials(name)}
         </Text>
@@ -177,7 +179,7 @@ function SnapshotRow({
             Ready
           </Text>
           <Text style={styles.rowPreview} numberOfLines={1} maxFontSizeMultiplier={1.6}>
-            {subtitle.length > 0 ? subtitle : preview}
+            {preview.length > 0 ? preview : subtitle}
           </Text>
         </View>
       </View>
@@ -227,11 +229,20 @@ export function BotsScreen({
   );
   const [now, setNow] = useState(() => Date.now());
   const persistedKey = useRef<string | null>(null);
+  const previousPhase = useRef(connection.phase);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
+
+  const refreshList = list.refresh;
+  useEffect(() => {
+    if (previousPhase.current !== "connected" && connection.phase === "connected") {
+      refreshList();
+    }
+    previousPhase.current = connection.phase;
+  }, [connection.phase, refreshList]);
 
   const shells = useMemo<ReadonlyArray<EnvironmentThreadShell>>(
     () => native.shellsOf(shellState.snapshot._tag === "Some" ? shellState.snapshot.value : null),
@@ -339,7 +350,7 @@ export function BotsScreen({
           </Pressable>
         </View>
       ) : null}
-      {list.error !== null && list.data === null ? (
+      {list.error !== null && list.data === null && snapshot === null ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{list.error}</Text>
           <Pressable onPress={() => list.refresh()} accessibilityRole="button" style={styles.retry}>
@@ -382,6 +393,7 @@ export function BotsScreen({
               name={item.name}
               subtitle={item.subtitle}
               preview={item.preview}
+              avatarColor={item.avatarColor}
               time={item.previewAtMs}
               pinned={item.pinned}
             />
