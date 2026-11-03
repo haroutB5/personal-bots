@@ -9,17 +9,23 @@ version = '0.0.1'
 def testPin = System.getenv('HBOTS_UPDATE_TEST_PIN')?.trim() ?: ''
 def pinFile = project.file('../../../release-cert.sha256')
 def releasePin = pinFile.isFile() ? pinFile.text.trim() : ''
-if (!testPin.isEmpty() && !releasePin.isEmpty()) {
-  throw new GradleException('HBOTS_UPDATE_TEST_PIN cannot be set when release-cert.sha256 exists')
+def releaseBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+if (releaseBuild && !testPin.isEmpty()) {
+  throw new GradleException('HBOTS_UPDATE_TEST_PIN cannot be set for a release build')
 }
 def effectivePin = testPin.isEmpty() ? releasePin : testPin
-def releaseBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
 if (releaseBuild && effectivePin.isEmpty()) {
-  throw new GradleException('A release build needs release-cert.sha256 or HBOTS_UPDATE_TEST_PIN')
+  throw new GradleException('A release build needs release-cert.sha256')
 }
 def idleMinutes = (System.getenv('HBOTS_UPDATE_IDLE_MINUTES') ?: '10').toInteger()
 if (idleMinutes < 1 || idleMinutes > 60) {
   throw new GradleException('HBOTS_UPDATE_IDLE_MINUTES must be 1 to 60')
+}
+def pinTestFile = project.findProperty('hbotsPinFile') ?: pinFile.absolutePath
+
+// A changed pin must regenerate BuildConfig, or an incremental release keeps the old one.
+tasks.matching { it.name.startsWith('generate') && it.name.endsWith('BuildConfig') }.configureEach {
+  inputs.file(pinFile).optional()
 }
 
 android {
@@ -43,6 +49,7 @@ android {
     unitTests.all {
       systemProperty 'fixtures.dir', file('src/test/resources/apks').absolutePath
       systemProperty 'fixtures.work', file("$buildDir/fixtures-work").absolutePath
+      systemProperty 'release.pin.file', pinTestFile
     }
   }
 }
