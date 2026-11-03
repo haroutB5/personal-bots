@@ -60,14 +60,23 @@ file.
 
 ## Build a release APK locally
 
-Never on a cloud builder.
+Never on a cloud builder. The release keystore is `~/.config/hbots-android/hbots-release.jks`
+(alias `hbots-release`, PKCS12). Its password lives in `signing.properties` in the
+same 0700 directory. Both files stay outside every repo.
 
 ```sh
 cd apps/hbots-mobile
-EXPO_NO_GIT_STATUS=1 npx expo prebuild --clean --platform android
-cd android && ./gradlew assembleRelease
-node ../scripts/verify-apk.mjs app/build/outputs/apk/release/app-release.apk
+bash /home/harout/Claude/AI/dev-team/tools/heavy-job.sh \
+  --label "builder hbots-mobile release" --work-dir "$PWD" \
+  -- bash scripts/build-android.sh
 ```
 
-The generated project signs the release variant with the template debug key. That
-is for local checks only. The release keystore belongs to the shipping step.
+The script reads the password into the environment, runs `expo prebuild --clean`,
+builds `assembleRelease`, then checks the signer against `release-cert.sha256`,
+runs `scripts/verify-apk.mjs` and refuses any ABI other than `arm64-v8a`. It
+prints the APK path, size, SHA-256 and signer digest.
+
+Set `HBOTS_KEYSTORE_PATH`, `HBOTS_SIGNING_PROPERTIES` or `HBOTS_KEY_ALIAS` to use
+another key. A debug build on an x86_64 emulator passes
+`-PreactNativeArchitectures=x86_64` to Gradle, because the app's own ABI list is
+arm64 only.

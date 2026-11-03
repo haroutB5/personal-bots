@@ -35,6 +35,17 @@ describe("app.config", () => {
     ]);
   });
 
+  it("builds only the phone's arm64 ABI", () => {
+    const buildProperties = config.plugins?.find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === "expo-build-properties",
+    );
+    expect(buildProperties).toEqual([
+      "expo-build-properties",
+      expect.objectContaining({ android: expect.objectContaining({ buildArchs: ["arm64-v8a"] }) }),
+    ]);
+    expect(config.plugins).toContain("./plugins/withAndroidReleaseSigning.cjs");
+  });
+
   it("ships the adaptive and monochrome launcher icon", () => {
     const icon = config.android?.adaptiveIcon;
     expect(icon).toEqual({

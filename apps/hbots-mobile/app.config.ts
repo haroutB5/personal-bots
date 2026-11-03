@@ -55,10 +55,12 @@ const config: ExpoConfig = {
           targetSdkVersion: 36,
           minSdkVersion: 26,
           usesCleartextTraffic: false,
+          buildArchs: ["arm64-v8a"],
         },
       },
     ],
     "./plugins/withAndroidPredictiveBackCompat.cjs",
+    "./plugins/withAndroidReleaseSigning.cjs",
   ],
 };
 
