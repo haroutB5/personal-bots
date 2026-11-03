@@ -9,6 +9,7 @@ import { describeLastCheck, describeUpdate } from "./updateView";
 import type { UpdateSnapshot } from "./updater";
 
 interface Props {
+  readonly title?: string;
   readonly installedVersion: string;
   readonly snapshot: UpdateSnapshot | null;
   readonly latest: AndroidRelease | null;
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function UpdateSettings({
+  title = "Settings",
   installedVersion,
   snapshot,
   latest,
@@ -53,7 +55,7 @@ export function UpdateSettings({
         <Pressable onPress={onBack} accessibilityRole="button" hitSlop={8} style={styles.back}>
           <Text style={styles.backText}>Back</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Text style={styles.headerTitle}>{title}</Text>
       </View>
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={styles.section}>App updates</Text>

@@ -26,6 +26,11 @@ const config: ExpoConfig = {
   userInterfaceStyle: "dark",
   backgroundColor: "#0f0f0e",
   platforms: ["android"],
+  androidStatusBar: {
+    backgroundColor: "#00000000",
+    barStyle: "light-content",
+    translucent: true,
+  },
   updates: { enabled: false },
   android: {
     package: "com.haroutb5.hbots",
