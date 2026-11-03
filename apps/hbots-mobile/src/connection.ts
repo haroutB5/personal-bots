@@ -1,6 +1,5 @@
 import type { PersonalBot, PersonalBotThread } from "@t3tools/contracts";
 
-import { fetchServerVersion } from "./compat";
 import { classifyFailure, RequestFailure } from "./failure";
 import { openSocketUrl } from "./pairing";
 import { connectPersonalRpc, type PersonalRpc } from "./rpc";
@@ -18,7 +17,6 @@ export interface BotsSnapshot {
 
 export interface OnlineConnection extends BotsSnapshot {
   readonly rpc: PersonalRpc;
-  readonly serverVersion: string | null;
 }
 
 export function backoffMs(attempt: number): number {
@@ -46,14 +44,14 @@ export async function refreshBots(rpc: PersonalRpc): Promise<BotsSnapshot> {
   return { bots: result.bots, threads: result.threads };
 }
 
-export async function openOnline(session: StoredSession): Promise<OnlineConnection> {
-  const [socketUrl, serverVersion] = await Promise.all([
-    openSocketUrl(session),
-    fetchServerVersion(session.httpBaseUrl),
-  ]);
+export async function openOnline(
+  session: StoredSession,
+  clientAppVersion: string,
+): Promise<OnlineConnection> {
+  const socketUrl = await openSocketUrl(session, clientAppVersion);
   const rpc = await connectPersonalRpc(socketUrl);
   try {
-    return { rpc, serverVersion, ...(await refreshBots(rpc)) };
+    return { rpc, ...(await refreshBots(rpc)) };
   } catch (cause) {
     await rpc.dispose();
     throw cause;

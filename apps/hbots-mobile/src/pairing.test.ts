@@ -106,8 +106,8 @@ describe("openSocketUrl", () => {
       "/.well-known/t3/environment": () => json(200, DESCRIPTOR),
       "/api/auth/websocket-ticket": () => json(200, TICKET),
     });
-    const url = new URL(await openSocketUrl(STORED));
-    await openSocketUrl(STORED);
+    const url = new URL(await openSocketUrl(STORED, "1.66.113"));
+    await openSocketUrl(STORED, "1.66.113");
     expect(url.origin).toBe("wss://relay.example.test");
     expect(url.pathname).toBe("/ws");
     expect(url.searchParams.get("wsTicket")).toBe("tkt-1");
@@ -121,7 +121,7 @@ describe("openSocketUrl", () => {
     routeFetch({
       "/.well-known/t3/environment": () => json(200, { ...DESCRIPTOR, environmentId: "env-2" }),
     });
-    const failure = await openSocketUrl(STORED).catch(classifyFailure);
+    const failure = await openSocketUrl(STORED, "1.66.113").catch(classifyFailure);
     expect(failure).toEqual({ kind: "authDead", reason: "environment-mismatch" });
   });
 
@@ -129,7 +129,7 @@ describe("openSocketUrl", () => {
     routeFetch({
       "/.well-known/t3/environment": () => new Response("<html>1033</html>", { status: 530 }),
     });
-    const failure = await openSocketUrl(STORED).catch(classifyFailure);
+    const failure = await openSocketUrl(STORED, "1.66.113").catch(classifyFailure);
     expect(failure).toEqual({ kind: "unreachable" });
   });
 });

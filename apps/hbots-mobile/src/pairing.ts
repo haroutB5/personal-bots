@@ -6,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { APP_VERSION } from "./appVersion";
 import { assertSameEnvironment } from "./failure";
 import { requestJson } from "./http";
 import type { PairingTarget } from "./pairingLink";
@@ -23,7 +22,10 @@ async function fetchDescriptor(httpBaseUrl: string) {
   );
 }
 
-export async function openSocketUrl(session: StoredSession): Promise<string> {
+export async function openSocketUrl(
+  session: StoredSession,
+  clientAppVersion: string,
+): Promise<string> {
   const descriptor = await fetchDescriptor(session.httpBaseUrl);
   assertSameEnvironment(session.environmentId, descriptor.environmentId);
   const ticket = decodeTicket(
@@ -37,7 +39,7 @@ export async function openSocketUrl(session: StoredSession): Promise<string> {
   socketUrl.searchParams.set("clientSurface", "mobile");
   socketUrl.searchParams.set("clientDeviceType", "phone");
   socketUrl.searchParams.set("clientOs", "android");
-  socketUrl.searchParams.set("clientAppVersion", APP_VERSION);
+  socketUrl.searchParams.set("clientAppVersion", clientAppVersion);
   return socketUrl.toString();
 }
 

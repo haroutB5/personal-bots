@@ -37,23 +37,51 @@ import {
   refreshBots,
   REFRESH_INTERVAL_MS,
 } from "./connection";
+import { apkUrlFor, fetchCompat, type AndroidRelease } from "./compat";
 import { classifyFailure } from "./failure";
 import { pair } from "./pairing";
 import { describePairingLinkError, parsePairingLink } from "./pairingLink";
 import { renewSession } from "./renew";
 import { startRenewScheduler, type ForegroundSource } from "./renewScheduler";
 import type { PersonalRpc } from "./rpc";
+import { loadServer, saveServer } from "./serverMemory";
 import { clearSession, loadSession, saveSession, type StoredSession } from "./session";
 import { createSessionLifetime } from "./sessionLifetime";
 import { describeSignOut, revokeRemoteSession } from "./signOut";
+import { COLORS } from "./theme";
+import {
+  confirmUpdateInstall,
+  offerUpdate,
+  openInstallPermission,
+  readUpdateSnapshot,
+  subscribeUpdate,
+  type UpdateSnapshot,
+} from "./updater";
+import { UpdateSettings } from "./UpdateSettings";
+import { describeUpdate } from "./updateView";
+import { isNewerVersion, isTooOld } from "./version";
 
 type Screen =
   | { readonly kind: "booting" }
-  | { readonly kind: "unpaired"; readonly error: string | null; readonly notice: string | null }
+  | {
+      readonly kind: "unpaired";
+      readonly error: string | null;
+      readonly notice: string | null;
+      readonly requiredVersion: string | null;
+    }
   | { readonly kind: "connecting"; readonly step: string }
   | { readonly kind: "bots"; readonly session: StoredSession; readonly view: BotsView }
   | { readonly kind: "laptopOffline"; readonly session: StoredSession; readonly attempt: number }
-  | { readonly kind: "signedOut" };
+  | { readonly kind: "signedOut" }
+  | {
+      readonly kind: "tooOld";
+      readonly session: StoredSession;
+      readonly required: string;
+      readonly latest: AndroidRelease | null;
+    };
+
+const CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const RECHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 const appForeground: ForegroundSource = {
   subscribe: (onForeground) => {
@@ -70,17 +98,6 @@ const sessionLifetime = createSessionLifetime({
   renew: renewSession,
   storage: { save: saveSession, clear: clearSession },
 });
-
-const COLORS = {
-  bg: "#0f0f0e",
-  card: "#191918",
-  raised: "#202020",
-  border: "#2a2a27",
-  text: "#f2f0ec",
-  muted: "#928d85",
-  accent: "#e3c477",
-  danger: "#f08a7a",
-};
 
 const ROW_HEIGHT = 76;
 
@@ -162,8 +179,30 @@ function ConnectionStrip({
 function App() {
   const [screen, setScreen] = useState<Screen>({ kind: "booting" });
   const [link, setLink] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [update, setUpdate] = useState<UpdateSnapshot | null>(null);
+  const [latest, setLatest] = useState<AndroidRelease | null>(null);
+  const [minimumVersion, setMinimumVersion] = useState<string | null>(null);
   const rpcRef = useRef<PersonalRpc | null>(null);
   const stopRenewRef = useRef<(() => void) | null>(null);
+  const updateRef = useRef<UpdateSnapshot | null>(null);
+  const activeSessionRef = useRef<StoredSession | null>(null);
+
+  const setSnapshot = useCallback((snapshot: UpdateSnapshot | null) => {
+    updateRef.current = snapshot;
+    setUpdate(snapshot);
+  }, []);
+
+  const installedVersion = update?.installedVersion ?? "";
+
+  const activeSession =
+    screen.kind === "bots" || screen.kind === "laptopOffline" || screen.kind === "tooOld"
+      ? screen.session
+      : null;
+
+  useEffect(() => {
+    activeSessionRef.current = activeSession;
+  }, [activeSession]);
 
   const disposeRpc = useCallback(() => {
     const rpc = rpcRef.current;
@@ -209,6 +248,44 @@ function App() {
     [disposeRpc, endSession],
   );
 
+  const readCompat = useCallback(async (session: StoredSession, manual: boolean) => {
+    const compat = await fetchCompat(session.httpBaseUrl);
+    if (compat === null) {
+      return null;
+    }
+    setLatest(compat.latest);
+    setMinimumVersion(compat.minimumNativeVersion);
+    const auth =
+      compat.latest === null
+        ? null
+        : {
+            apkUrl: apkUrlFor(session.httpBaseUrl, compat.latest),
+            bearer: session.accessToken,
+          };
+    await offerUpdate(compat.latest, auth, manual);
+    return compat;
+  }, []);
+
+  const requiresUpdate = useCallback((compat: { minimumNativeVersion: string | null }): boolean => {
+    const installed = updateRef.current?.installedVersion ?? "";
+    return compat.minimumNativeVersion !== null && isTooOld(installed, compat.minimumNativeVersion);
+  }, []);
+
+  const checkForUpdate = useCallback(
+    async (session: StoredSession, manual: boolean) => {
+      const compat = await readCompat(session, manual);
+      if (compat !== null && requiresUpdate(compat)) {
+        setScreen({
+          kind: "tooOld",
+          session,
+          required: compat.minimumNativeVersion ?? "",
+          latest: compat.latest,
+        });
+      }
+    },
+    [readCompat, requiresUpdate],
+  );
+
   const goOnline = useCallback(
     async (session: StoredSession, attempt: number, keepList: boolean) => {
       disposeRpc();
@@ -222,8 +299,22 @@ function App() {
         setScreen({ kind: "connecting", step: "Connecting" });
       }
       const epoch = sessionLifetime.epoch();
+      const clientVersion = updateRef.current?.installedVersion ?? "";
       try {
-        const online = await openOnline(session);
+        const compat = await readCompat(session, false);
+        if (sessionLifetime.epoch() !== epoch) {
+          return;
+        }
+        if (compat !== null && requiresUpdate(compat)) {
+          setScreen({
+            kind: "tooOld",
+            session,
+            required: compat.minimumNativeVersion ?? "",
+            latest: compat.latest,
+          });
+          return;
+        }
+        const online = await openOnline(session, clientVersion);
         if (sessionLifetime.epoch() !== epoch) {
           await online.rpc.dispose();
           return;
@@ -231,7 +322,7 @@ function App() {
         rpcRef.current = online.rpc;
         const cache = buildBotsCache({
           environmentId: session.environmentId,
-          serverVersion: online.serverVersion,
+          serverVersion: compat?.serverVersion ?? null,
           savedAtMs: Date.now(),
           bots: online.bots,
           threads: online.threads,
@@ -248,7 +339,7 @@ function App() {
         await handleFailure(cause, session, attempt, keepList);
       }
     },
-    [disposeRpc, handleFailure],
+    [disposeRpc, handleFailure, readCompat, requiresUpdate],
   );
 
   const startRenew = useCallback(() => {
@@ -273,18 +364,54 @@ function App() {
     });
   }, [endSession, stopRenew]);
 
+  useEffect(() => subscribeUpdate(setSnapshot), [setSnapshot]);
+
   useEffect(() => {
     let live = true;
     void (async () => {
+      const snapshot = await readUpdateSnapshot();
+      if (!live) {
+        return;
+      }
+      setSnapshot(snapshot);
       const session = await loadSession();
       if (!live) {
         return;
       }
       if (session === null) {
-        setScreen({ kind: "unpaired", error: null, notice: null });
+        const server = await loadServer();
+        if (!live) {
+          return;
+        }
+        if (server !== null) {
+          const compat = await fetchCompat(server);
+          if (!live) {
+            return;
+          }
+          if (compat !== null) {
+            setLatest(compat.latest);
+            setMinimumVersion(compat.minimumNativeVersion);
+            await offerUpdate(compat.latest, null, false);
+            const installed = snapshot?.installedVersion ?? "";
+            if (
+              compat.minimumNativeVersion !== null &&
+              isTooOld(installed, compat.minimumNativeVersion)
+            ) {
+              setScreen({
+                kind: "unpaired",
+                error: null,
+                notice: null,
+                requiredVersion: compat.minimumNativeVersion,
+              });
+              return;
+            }
+          }
+        }
+        setScreen({ kind: "unpaired", error: null, notice: null, requiredVersion: null });
         return;
       }
       sessionLifetime.restore(session);
+      void saveServer(session.httpBaseUrl);
       startRenew();
       const cached = await readBotsCache(secureBotsCacheStorage, session.environmentId);
       if (!live) {
@@ -300,7 +427,36 @@ function App() {
       stopRenew();
       disposeRpc();
     };
-  }, [disposeRpc, goOnline, startRenew, stopRenew]);
+  }, [disposeRpc, goOnline, setSnapshot, startRenew, stopRenew]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next !== "active") {
+        return;
+      }
+      const session = activeSessionRef.current;
+      if (session === null) {
+        return;
+      }
+      const snapshot = updateRef.current;
+      const lastCheck = snapshot?.lastCheckAt ?? null;
+      const stale = lastCheck === null || Date.now() - lastCheck > CHECK_INTERVAL_MS;
+      if (snapshot?.state === "needsPermission" || stale) {
+        void checkForUpdate(session, false);
+      }
+    });
+    return () => subscription.remove();
+  }, [checkForUpdate]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const session = activeSessionRef.current;
+      if (session !== null) {
+        void checkForUpdate(session, false);
+      }
+    }, RECHECK_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [checkForUpdate]);
 
   useEffect(() => {
     if (screen.kind === "laptopOffline") {
@@ -359,20 +515,31 @@ function App() {
   const submitLink = useCallback(async () => {
     const parsed = parsePairingLink(link);
     if (!parsed.ok) {
-      setScreen({ kind: "unpaired", error: describePairingLinkError(parsed.error), notice: null });
+      setScreen({
+        kind: "unpaired",
+        error: describePairingLinkError(parsed.error),
+        notice: null,
+        requiredVersion: minimumVersion,
+      });
       return;
     }
     setScreen({ kind: "connecting", step: "Pairing" });
     try {
       const session = await pair(parsed.target);
       await sessionLifetime.adopt(session);
+      await saveServer(session.httpBaseUrl);
       setLink("");
       startRenew();
       await goOnline(session, 0, false);
     } catch (cause) {
-      setScreen({ kind: "unpaired", error: describePairFailure(cause), notice: null });
+      setScreen({
+        kind: "unpaired",
+        error: describePairFailure(cause),
+        notice: null,
+        requiredVersion: minimumVersion,
+      });
     }
-  }, [goOnline, link, startRenew]);
+  }, [goOnline, link, minimumVersion, startRenew]);
 
   const pasteLink = useCallback(async () => {
     setLink(await Clipboard.getStringAsync());
@@ -382,11 +549,26 @@ function App() {
     async (session: StoredSession) => {
       stopRenew();
       disposeRpc();
+      setSettingsOpen(false);
       setScreen({ kind: "connecting", step: "Signing out" });
       await sessionLifetime.end();
       await clearBotsCache(secureBotsCacheStorage);
       const outcome = await revokeRemoteSession(session);
-      setScreen({ kind: "unpaired", error: null, notice: describeSignOut(outcome) });
+      await saveServer(session.httpBaseUrl);
+      const compat = await fetchCompat(session.httpBaseUrl);
+      if (compat !== null) {
+        setLatest(compat.latest);
+        setMinimumVersion(compat.minimumNativeVersion);
+        await offerUpdate(compat.latest, null, false);
+      }
+      const installed = updateRef.current?.installedVersion ?? "";
+      const required = compat?.minimumNativeVersion ?? null;
+      setScreen({
+        kind: "unpaired",
+        error: null,
+        notice: describeSignOut(outcome),
+        requiredVersion: required !== null && isTooOld(installed, required) ? required : null,
+      });
     },
     [disposeRpc, stopRenew],
   );
@@ -406,47 +588,68 @@ function App() {
   );
 
   const pairAgain = useCallback(() => {
-    setScreen({ kind: "unpaired", error: null, notice: null });
-  }, []);
+    setScreen({
+      kind: "unpaired",
+      error: null,
+      notice: null,
+      requiredVersion:
+        minimumVersion !== null && isTooOld(installedVersion, minimumVersion)
+          ? minimumVersion
+          : null,
+    });
+  }, [installedVersion, minimumVersion]);
 
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
         {screen.kind === "bots" ? (
-          <View style={styles.flex}>
-            <View style={styles.header}>
-              <View style={styles.flex}>
-                <Text style={styles.headerTitle}>Bots</Text>
-                <Text style={styles.headerSub} numberOfLines={1}>
-                  {screen.view.rows.length} bots · {screen.session.label}
-                  {screen.view.serverVersion === null ? "" : ` · v${screen.view.serverVersion}`}
-                </Text>
+          settingsOpen ? (
+            <UpdateSettings
+              installedVersion={installedVersion}
+              snapshot={update}
+              latest={latest}
+              onBack={() => setSettingsOpen(false)}
+              onCheckNow={() => void checkForUpdate(screen.session, true)}
+              onInstall={() => void confirmUpdateInstall()}
+              onOpenPermission={() => void openInstallPermission()}
+              onSignOut={() => confirmSignOut(screen.session)}
+            />
+          ) : (
+            <View style={styles.flex}>
+              <View style={styles.header}>
+                <View style={styles.flex}>
+                  <Text style={styles.headerTitle}>Bots</Text>
+                  <Text style={styles.headerSub} numberOfLines={1}>
+                    {screen.view.rows.length} bots · {screen.session.label}
+                    {screen.view.serverVersion === null ? "" : ` · v${screen.view.serverVersion}`}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => setSettingsOpen(true)}
+                  accessibilityRole="button"
+                  style={styles.pillButton}
+                >
+                  <Text style={styles.pillText}>Settings</Text>
+                </Pressable>
               </View>
-              <Pressable
-                onPress={() => confirmSignOut(screen.session)}
-                accessibilityRole="button"
-                style={styles.pillButton}
-              >
-                <Text style={styles.pillText}>Sign out</Text>
-              </Pressable>
+              <ConnectionStrip
+                view={screen.view}
+                onRetry={() => void goOnline(screen.session, 0, true)}
+              />
+              <FlatList
+                data={screen.view.rows}
+                keyExtractor={(row) => row.botId}
+                getItemLayout={(_, index) => ({
+                  length: ROW_HEIGHT,
+                  offset: ROW_HEIGHT * index,
+                  index,
+                })}
+                renderItem={({ item }) => <BotListRow row={item} />}
+                initialNumToRender={20}
+                windowSize={9}
+              />
             </View>
-            <ConnectionStrip
-              view={screen.view}
-              onRetry={() => void goOnline(screen.session, 0, true)}
-            />
-            <FlatList
-              data={screen.view.rows}
-              keyExtractor={(row) => row.botId}
-              getItemLayout={(_, index) => ({
-                length: ROW_HEIGHT,
-                offset: ROW_HEIGHT * index,
-                index,
-              })}
-              renderItem={({ item }) => <BotListRow row={item} />}
-              initialNumToRender={20}
-              windowSize={9}
-            />
-          </View>
+          )
         ) : (
           <View style={styles.pairScreen}>
             <Text style={styles.brand}>hbots</Text>
@@ -457,6 +660,50 @@ function App() {
                   {screen.kind === "connecting" ? screen.step : "Starting"}
                 </Text>
               </View>
+            ) : screen.kind === "tooOld" ? (
+              <>
+                <Text style={styles.headline}>Update hbots to continue</Text>
+                <Text style={styles.help}>
+                  Your laptop needs hbots {screen.required} or newer. This phone has{" "}
+                  {installedVersion.length > 0 ? installedVersion : "an older version"}.
+                </Text>
+                <View style={styles.noticeBox}>
+                  <Text style={styles.notice}>{describeUpdate(update, screen.latest).title}</Text>
+                  <Text style={styles.notice}>{describeUpdate(update, screen.latest).detail}</Text>
+                </View>
+                {update?.state === "needsPermission" ? (
+                  <Pressable
+                    onPress={() => void openInstallPermission()}
+                    accessibilityRole="button"
+                    style={styles.primaryButton}
+                  >
+                    <Text style={styles.primaryText}>Allow app installs</Text>
+                  </Pressable>
+                ) : update?.state === "ready" || update?.state === "needsTap" ? (
+                  <Pressable
+                    onPress={() => void confirmUpdateInstall()}
+                    accessibilityRole="button"
+                    style={styles.primaryButton}
+                  >
+                    <Text style={styles.primaryText}>Update now</Text>
+                  </Pressable>
+                ) : update?.state === "downloading" || update?.state === "installing" ? (
+                  <View style={styles.status}>
+                    <ActivityIndicator color={COLORS.accent} />
+                    <Text style={styles.statusText}>
+                      {update.state === "downloading" ? "Downloading" : "Installing"}
+                    </Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={() => void checkForUpdate(screen.session, true)}
+                    accessibilityRole="button"
+                    style={styles.primaryButton}
+                  >
+                    <Text style={styles.primaryText}>Check again</Text>
+                  </Pressable>
+                )}
+              </>
             ) : screen.kind === "laptopOffline" ? (
               <>
                 <Text style={styles.headline}>Can't reach your laptop</Text>
@@ -497,6 +744,20 @@ function App() {
               </>
             ) : (
               <>
+                {screen.requiredVersion !== null ? (
+                  <View style={styles.errorBox}>
+                    <Text style={styles.error}>
+                      This hbots version is too old. Your laptop needs {screen.requiredVersion} or
+                      newer. Pair this phone to install the update.
+                    </Text>
+                  </View>
+                ) : latest !== null && isNewerVersion(latest.version, installedVersion) ? (
+                  <View style={styles.noticeBox}>
+                    <Text style={styles.notice}>
+                      hbots {latest.version} is waiting. Pair this phone to install it.
+                    </Text>
+                  </View>
+                ) : null}
                 {screen.notice !== null ? (
                   <View style={styles.noticeBox}>
                     <Text style={styles.notice}>{screen.notice}</Text>
