@@ -67,8 +67,8 @@ describe("releaseProblems", () => {
 
   it("refuses an APK for another package", () => {
     expect(
-      releaseProblems(checkFor({ artifact: artifactFor({ packageName: "com.t3tools" }) })),
-    ).toEqual(["package is com.t3tools, expected com.haroutb5.hbots"]);
+      releaseProblems(checkFor({ artifact: artifactFor({ packageName: "com.example.other" }) })),
+    ).toEqual(["package is com.example.other, expected com.haroutb5.hbots"]);
   });
 
   it("refuses a versionName that differs from the release file", () => {
