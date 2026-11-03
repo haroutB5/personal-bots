@@ -211,9 +211,10 @@ object UpdateReducer {
       listOf(UpdateEffect.DeleteFile)
   }
 
-  private fun signedOut(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
-    UpdateRecord(
-      state = UpdateState.Idle(),
+  private fun signedOut(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> {
+    val rejected = (record.state as? UpdateState.Idle)?.rejected
+    return UpdateRecord(
+      state = UpdateState.Idle(rejected),
       lastCheckAt = null,
       lastOffer = null,
       notifiedCode = record.notifiedCode,
@@ -222,6 +223,7 @@ object UpdateReducer {
       UpdateEffect.DeleteAllFiles,
       UpdateEffect.ClearNotification,
     )
+  }
 
   private fun wentBackground(record: UpdateRecord): Pair<UpdateRecord, List<UpdateEffect>> =
     if (record.state is UpdateState.Ready) {
