@@ -40,11 +40,7 @@ object SessionSource {
     val item = JSONObject(raw)
     if (item.optString("scheme") != "aes") return null
     val keychain = item.optString("keystoreAlias", "key_v1")
-    val alias = if (item.optBoolean("usesKeystoreSuffix", false)) {
-      "AES:$keychain:keystoreUnauthenticated"
-    } else {
-      "AES:$keychain"
-    }
+    val alias = keystoreAlias(keychain, item.optBoolean("usesKeystoreSuffix", false))
     val entry = KeyStore.getInstance(KEYSTORE).apply { load(null) }
       .getEntry(alias, null) as? KeyStore.SecretKeyEntry ?: return null
     val tagLength = item.getInt("tlen")
@@ -57,4 +53,8 @@ object SessionSource {
   }.onFailure {
     Log.w(TAG, "session read failed ${it.javaClass.simpleName}")
   }.getOrNull()
+
+  /** Mirrors expo-secure-store 57 AESEncryptor: `AES/<mode>/<padding>:<keychain>:<suffix>`. */
+  internal fun keystoreAlias(keychain: String, usesSuffix: Boolean): String =
+    if (usesSuffix) "$AES:$keychain:keystoreUnauthenticated" else "$AES:$keychain"
 }

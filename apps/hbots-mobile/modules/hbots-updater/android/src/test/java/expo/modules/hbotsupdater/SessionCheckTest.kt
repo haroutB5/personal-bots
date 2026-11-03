@@ -34,6 +34,15 @@ class SessionCheckTest {
   }
 
   @Test
+  fun `the keystore alias matches expo-secure-store`() {
+    assertEquals(
+      "AES/GCM/NoPadding:key_v1:keystoreUnauthenticated",
+      SessionSource.keystoreAlias("key_v1", usesSuffix = true),
+    )
+    assertEquals("AES/GCM/NoPadding:key_v1", SessionSource.keystoreAlias("key_v1", usesSuffix = false))
+  }
+
+  @Test
   fun `a stored session parses only when it is https and carries a token`() {
     assertEquals(
       NativeSession("https://relay.example.test", "tok"),
