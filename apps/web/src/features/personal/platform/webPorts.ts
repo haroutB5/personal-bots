@@ -1,5 +1,3 @@
-import { configureOutbox } from "@hbots/personal-client/composer/outbox";
-import { configureOutboxBlobs } from "@hbots/personal-client/composer/outboxBlobs";
 import type { Clock } from "@hbots/personal-client/ports/clock";
 import type { Confirm } from "@hbots/personal-client/ports/confirm";
 import type { Ids } from "@hbots/personal-client/ports/ids";
@@ -64,9 +62,6 @@ export const webConfirm: Confirm = {
 };
 
 export const webIds: Ids = { randomUUID };
-
-configureOutbox({ store: webKeyValueStore, ids: webIds });
-configureOutboxBlobs(webBlobStore);
 
 export const webPorts: PersonalPorts<Blob> = {
   kv: webKeyValueStore,

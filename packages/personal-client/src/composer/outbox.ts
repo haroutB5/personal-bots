@@ -175,6 +175,11 @@ export function configureOutbox(next: OutboxPlatform): void {
   cancelPlatformSubscription = null;
   platform = next;
   platformStorage = toStorage(next.store);
+  // A screen may have read the queue before the app bound its store (the
+  // cold-launch reconnect screen does). Re-read it now instead of keeping the
+  // empty snapshot that read cached.
+  snapshot = null;
+  for (const listener of listeners) listener();
   listenToPlatform();
 }
 

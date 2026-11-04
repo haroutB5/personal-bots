@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  configureOutbox,
   enqueueOutboxEntry,
   getOutboxSnapshot,
   hasOutboxForThread,
@@ -17,6 +18,7 @@ import {
   setOutboxSending,
   unwrittenOutboxRemovals,
 } from "./outbox.ts";
+import { createMemoryKeyValueStore, createSequentialIds } from "../testing/fakes.ts";
 
 function memoryStorage(initial?: string): OutboxStorage & { raw: () => string | null } {
   let value: string | null = initial ?? null;
@@ -98,6 +100,16 @@ describe("send queue store", () => {
     // The next message continues the order instead of restarting it.
     const next = enqueueOutboxEntry(entry("c"));
     expect(next?.seq).toBeGreaterThan(after[1]!.seq);
+  });
+
+  it("reads the device queue when the platform is bound after the first read", () => {
+    resetOutboxForTesting(undefined);
+    const saved = { ...entry("a"), commandId: "outbox:a", seq: 1, queuedAt: 1 };
+    const store = createMemoryKeyValueStore({ [OUTBOX_STORAGE_KEY]: JSON.stringify([saved]) });
+    // The cold-launch reconnect screen can read before the app binds its store.
+    expect(getOutboxSnapshot().entries).toEqual([]);
+    configureOutbox({ store, ids: createSequentialIds() });
+    expect(getOutboxSnapshot().entries.map((item) => item.id)).toEqual(["a"]);
   });
 
   it("keeps the steer/queue choice of a message across a reload", () => {
