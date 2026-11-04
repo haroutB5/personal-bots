@@ -838,8 +838,8 @@ export const make = Effect.gen(function* () {
                 // its session, including stale entries left by older versions.
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
-                  ...requestMetadata,
                   ...(grant.label ? { label: grant.label } : {}),
+                  ...requestMetadata,
                 },
               })
               .pipe(
