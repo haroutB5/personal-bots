@@ -8,9 +8,8 @@ import {
 import { resolveBotProvider } from "@hbots/personal-client/bots/botSummaries";
 import { useEffect, useMemo, useState } from "react";
 import {
-  KeyboardAvoidingView,
+  Keyboard,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -114,6 +113,17 @@ export function NewItemsSheet({
   const [memberIds, setMemberIds] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const shown = Keyboard.addListener("keyboardDidShow", (event) =>
+      setKeyboardHeight(event.endCoordinates.height),
+    );
+    const hidden = Keyboard.addListener("keyboardDidHide", () => setKeyboardHeight(0));
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
   const createBot = native.client.useAtomCommand(native.bots.personalBotCreate, {
     reportFailure: false,
   });
@@ -262,113 +272,108 @@ export function NewItemsSheet({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={closeOrBack}>
-      <View style={styles.scrim}>
+      <View style={[styles.scrim, { paddingBottom: keyboardHeight }]}>
         <Pressable
           style={StyleSheet.absoluteFill}
           accessibilityRole="button"
           accessibilityLabel="Close"
           onPress={onClose}
         />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={styles.avoider}
-        >
-          <View style={styles.sheet}>
-            <View style={styles.header}>
-              {mode === "menu" ? null : (
-                <Pressable
-                  onPress={closeOrBack}
-                  accessibilityRole="button"
-                  accessibilityLabel="Back"
-                  style={styles.back}
-                >
-                  <Text style={styles.backText}>Back</Text>
-                </Pressable>
-              )}
-              <Text style={styles.title}>{title}</Text>
+        <View style={styles.sheet}>
+          <View style={styles.header}>
+            {mode === "menu" ? null : (
               <Pressable
-                onPress={onClose}
+                onPress={closeOrBack}
                 accessibilityRole="button"
-                accessibilityLabel="Close"
-                style={styles.close}
+                accessibilityLabel="Back"
+                style={styles.back}
               >
-                <Text style={styles.closeText}>Close</Text>
+                <Text style={styles.backText}>Back</Text>
+              </Pressable>
+            )}
+            <Text style={styles.title}>{title}</Text>
+            <Pressable
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={styles.close}
+            >
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+
+          {mode === "menu" ? (
+            <View style={styles.menu}>
+              <Pressable
+                onPress={() => setMode("bot")}
+                accessibilityRole="button"
+                style={styles.menuRow}
+              >
+                <Text style={styles.menuText}>New bot</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setMode("group")}
+                accessibilityRole="button"
+                style={styles.menuRow}
+              >
+                <Text style={styles.menuText}>New group</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setMode("team")}
+                accessibilityRole="button"
+                style={styles.menuRow}
+              >
+                <Text style={styles.menuText}>New team</Text>
               </Pressable>
             </View>
-
-            {mode === "menu" ? (
-              <View style={styles.menu}>
-                <Pressable
-                  onPress={() => setMode("bot")}
-                  accessibilityRole="button"
-                  style={styles.menuRow}
-                >
-                  <Text style={styles.menuText}>New bot</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setMode("group")}
-                  accessibilityRole="button"
-                  style={styles.menuRow}
-                >
-                  <Text style={styles.menuText}>New group</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setMode("team")}
-                  accessibilityRole="button"
-                  style={styles.menuRow}
-                >
-                  <Text style={styles.menuText}>New team</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <ScrollView
-                contentContainerStyle={styles.form}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
+          ) : (
+            <ScrollView
+              contentContainerStyle={styles.form}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <Field
+                value={name}
+                onChange={setName}
+                placeholder={
+                  mode === "bot" ? "Bot name" : mode === "group" ? "Group name" : "Team name"
+                }
+                autoFocus
+                maxLength={60}
+              />
+              {mode === "group" || mode === "team" ? (
+                <>
+                  <Text style={styles.label}>
+                    {mode === "group" ? "Members" : "First members (optional)"}
+                  </Text>
+                  <BotPicker bots={bots} selected={memberIds} onToggle={toggle} />
+                </>
+              ) : null}
+              {error !== null ? (
+                <Text style={styles.error} accessibilityLiveRegion="polite">
+                  {error}
+                </Text>
+              ) : null}
+              <Pressable
+                onPress={() => void create()}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityState={{ busy, disabled: busy }}
+                style={[styles.primary, busy ? styles.disabled : null]}
               >
-                <Field
-                  value={name}
-                  onChange={setName}
-                  placeholder={
-                    mode === "bot" ? "Bot name" : mode === "group" ? "Group name" : "Team name"
-                  }
-                  autoFocus
-                  maxLength={60}
-                />
-                {mode === "group" || mode === "team" ? (
-                  <>
-                    <Text style={styles.label}>
-                      {mode === "group" ? "Members" : "First members (optional)"}
-                    </Text>
-                    <BotPicker bots={bots} selected={memberIds} onToggle={toggle} />
-                  </>
-                ) : null}
-                {error !== null ? (
-                  <Text style={styles.error} accessibilityLiveRegion="polite">
-                    {error}
-                  </Text>
-                ) : null}
-                <Pressable
-                  onPress={() => void create()}
-                  disabled={busy}
-                  accessibilityRole="button"
-                  accessibilityState={{ busy, disabled: busy }}
-                  style={[styles.primary, busy ? styles.disabled : null]}
-                >
-                  <Text style={styles.primaryText}>
-                    {busy
-                      ? "Creating…"
-                      : mode === "bot"
-                        ? "Create bot"
-                        : mode === "group"
-                          ? "Create group"
-                          : "Create team"}
-                  </Text>
-                </Pressable>
-              </ScrollView>
-            )}
-          </View>
-        </KeyboardAvoidingView>
+                <Text style={styles.primaryText}>
+                  {busy
+                    ? "Creating…"
+                    : mode === "bot"
+                      ? "Create bot"
+                      : mode === "group"
+                        ? "Create group"
+                        : "Create team"}
+                </Text>
+              </Pressable>
+            </ScrollView>
+          )}
+        </View>
       </View>
     </Modal>
   );
@@ -376,7 +381,6 @@ export function NewItemsSheet({
 
 const styles = StyleSheet.create({
   scrim: { flex: 1, justifyContent: "flex-end", backgroundColor: tokens.scrim },
-  avoider: { width: "100%", justifyContent: "flex-end" },
   sheet: {
     maxHeight: "88%",
     borderTopLeftRadius: 12,
