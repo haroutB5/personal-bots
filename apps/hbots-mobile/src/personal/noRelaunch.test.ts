@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
-const source = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
+const source = (relative: string) =>
+  NodeFS.readFileSync(new URL(relative, import.meta.url), "utf8");
 
 describe("connection recovery", () => {
   it("has no app relaunch or process restart path", () => {
