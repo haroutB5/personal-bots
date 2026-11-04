@@ -1,5 +1,10 @@
 package expo.modules.hbotsnetwork
 
+import android.content.Context
+import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Process
 import com.facebook.react.modules.network.OkHttpClientProvider
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -8,9 +13,13 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * The React Native fetch and WebSocket modules share one OkHttp client for the
  * whole process. After an airplane-mode flap its pool can hold sockets bound to
  * the old network, so every new request waits on a dead connection until its
- * timeout. Evicting the pool makes the next attempt open a fresh one.
+ * timeout. Evicting the pool helps; when it does not, the app relaunches itself
+ * once the phone reports working internet, which rebuilds the client while the
+ * saved session and outbox survive the restart.
  */
 class HbotsNetworkModule : Module() {
+  private fun app(): Context? = appContext.reactContext?.applicationContext
+
   override fun definition() = ModuleDefinition {
     Name("HbotsNetwork")
 
@@ -18,6 +27,26 @@ class HbotsNetworkModule : Module() {
       val client = OkHttpClientProvider.getOkHttpClient()
       client.dispatcher.cancelAll()
       client.connectionPool.evictAll()
+      true
+    }
+
+    Function("isOnline") {
+      val context = app() ?: return@Function false
+      val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        ?: return@Function false
+      val network = manager.activeNetwork ?: return@Function false
+      val capabilities = manager.getNetworkCapabilities(network) ?: return@Function false
+      capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    AsyncFunction("relaunch") {
+      val context = app() ?: return@AsyncFunction false
+      val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        ?: return@AsyncFunction false
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+      context.startActivity(intent)
+      Process.killProcess(Process.myPid())
       true
     }
   }

@@ -42,7 +42,7 @@ import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
 import { createNativeEnvironmentCache } from "./nativeCache";
 import { connectWithDeadline } from "./connectDeadline";
-import { resetNetworkClient } from "./networkReset";
+import { phoneHasInternet, relaunchApp, resetNetworkClient } from "./networkReset";
 import { shouldResetNetworkClient } from "./reconnectPolicy";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
@@ -298,6 +298,27 @@ export function createNativePersonal(
     return { promise, wake };
   };
   let retrySignal = newRetrySignal();
+  let unstable = 0;
+  const relaunchKey = `hbots.network-relaunch.v1:${stored.environmentId}`;
+  const RELAUNCH_COOLDOWN_MS = 5 * 60_000;
+  let outageTimer: ReturnType<typeof setInterval> | null = null;
+  let relaunching = false;
+  const stopOutageWatch = () => {
+    if (outageTimer === null) return;
+    clearInterval(outageTimer);
+    outageTimer = null;
+  };
+  const startOutageWatch = () => {
+    if (outageTimer !== null || disposed) return;
+    outageTimer = setInterval(() => {
+      if (disposed || relaunching || unstable < 3 || !phoneHasInternet()) return;
+      const last = Number(ports.kv.getItem(relaunchKey) ?? "0");
+      if (Number.isFinite(last) && Date.now() - last < RELAUNCH_COOLDOWN_MS) return;
+      relaunching = true;
+      ports.kv.setItem(relaunchKey, String(Date.now()));
+      void relaunchApp();
+    }, 2_000);
+  };
 
   const generation = { value: 0 };
   const setState = (next: SupervisorConnectionState) => {
@@ -310,7 +331,6 @@ export function createNativePersonal(
 
   const loop = async () => {
     let attempt = 0;
-    let unstable = 0;
     for (;;) {
       if (disposed) return;
       generation.value += 1;
@@ -387,9 +407,16 @@ export function createNativePersonal(
         ]);
         stopWatchdog();
         // A session that drops within ten seconds is part of the same outage.
-        unstable = Date.now() - connectedAt >= 10_000 ? 0 : unstable + 1;
+        if (Date.now() - connectedAt >= 10_000) {
+          unstable = 0;
+          stopOutageWatch();
+        } else {
+          unstable += 1;
+          startOutageWatch();
+        }
       } catch (cause) {
         unstable += 1;
+        startOutageWatch();
         if (
           !disposed &&
           options.onAuthDead !== undefined &&
@@ -469,6 +496,7 @@ export function createNativePersonal(
     },
     dispose: async () => {
       disposed = true;
+      stopOutageWatch();
       wakeDisposed?.();
       const session = current;
       current = null;
