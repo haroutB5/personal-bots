@@ -246,20 +246,7 @@ function Block({
 }) {
   const base = tone === "user" ? styles.userText : styles.assistantText;
   if (block.files !== undefined) {
-    const chips = <FileChips files={block.files} onOpenFile={onOpenFile} />;
-    if (block.kind === "bullet" || block.kind === "number") {
-      const marker =
-        block.kind === "bullet"
-          ? (["•", "◦", "▪"][block.depth ?? 0] ?? "•")
-          : `${block.marker ?? "1"}.`;
-      return (
-        <View style={[styles.listRow, { paddingLeft: (block.depth ?? 0) * 16 }]}>
-          <Text style={[base, styles.marker]}>{marker}</Text>
-          <View style={styles.flex}>{chips}</View>
-        </View>
-      );
-    }
-    return chips;
+    return <FileChips files={block.files} onOpenFile={onOpenFile} />;
   }
   switch (block.kind) {
     case "heading":
