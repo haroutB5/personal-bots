@@ -1,15 +1,9 @@
 import type { JSX, ReactNode } from "react";
 
 import { MutedBell } from "./BotMute";
+import { conversationChatTitle } from "./chatNames";
 
-/** The title a bot's chat carries until its first message names it (server side). */
-const UNTITLED_CHAT_TITLE = "New chat";
-
-/** The chat's title for the header, or null while it has none worth showing. */
-export function conversationChatTitle(title: string | null | undefined): string | null {
-  const trimmed = title?.trim() ?? "";
-  return trimmed === "" || trimmed === UNTITLED_CHAT_TITLE ? null : trimmed;
-}
+export { conversationChatTitle };
 
 /**
  * The chat's context size, at every size. A quiet outlined chip, so it reads

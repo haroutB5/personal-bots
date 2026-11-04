@@ -212,6 +212,38 @@
     "./composer/outboxFlush": {
       "types": "./src/composer/outboxFlush.ts",
       "import": "./src/composer/outboxFlush.ts"
+    },
+    "./feed/types": {
+      "types": "./src/feed/types.ts",
+      "import": "./src/feed/types.ts"
+    },
+    "./feed/pendingOutgoing": {
+      "types": "./src/feed/pendingOutgoing.ts",
+      "import": "./src/feed/pendingOutgoing.ts"
+    },
+    "./feed/chatNames": {
+      "types": "./src/feed/chatNames.ts",
+      "import": "./src/feed/chatNames.ts"
+    },
+    "./feed/botThreadRows": {
+      "types": "./src/feed/botThreadRows.ts",
+      "import": "./src/feed/botThreadRows.ts"
+    },
+    "./feed/messageTime": {
+      "types": "./src/feed/messageTime.ts",
+      "import": "./src/feed/messageTime.ts"
+    },
+    "./feed/messageReadStatus": {
+      "types": "./src/feed/messageReadStatus.ts",
+      "import": "./src/feed/messageReadStatus.ts"
+    },
+    "./feed/contextUsed": {
+      "types": "./src/feed/contextUsed.ts",
+      "import": "./src/feed/contextUsed.ts"
+    },
+    "./usage/tokenUsagePresentation": {
+      "types": "./src/usage/tokenUsagePresentation.ts",
+      "import": "./src/usage/tokenUsagePresentation.ts"
     }
   },
   "scripts": {

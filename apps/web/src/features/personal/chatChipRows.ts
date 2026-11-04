@@ -5,7 +5,7 @@ import type { PersonalBotThread, PersonalTask } from "@t3tools/contracts";
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
 import { botThreadRows, type BotThreadRow } from "./botThreadRows";
 import { isChatPinned } from "./chatState";
-import { conversationChatTitle } from "./ConversationHeaderName";
+import { conversationChatTitle } from "./chatNames";
 import { isTurnThinking } from "./conversationModel";
 import { isOwnerChat, taskChatThreadIds } from "./ownerChats";
 import { isChatUnread, type ChatSeenState } from "./unreadChats";

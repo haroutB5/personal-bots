@@ -3,9 +3,8 @@ import { chatNameTakenMessage, type EnvironmentId, type ThreadId } from "@t3tool
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { isChatNameTakenFailure } from "./chatNames";
+import { conversationChatTitle, isChatNameTakenFailure } from "./chatNames";
 import { commandFailureMessage } from "./commandFeedback";
-import { conversationChatTitle } from "./ConversationHeaderName";
 
 /**
  * Longest title the rename field takes. The contract has no cap of its own;
