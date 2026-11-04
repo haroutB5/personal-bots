@@ -3,7 +3,7 @@ export interface DisposableSession {
 }
 
 /** Longer than a healthy connect, short enough to retry inside the 15 s budget. */
-export const CONNECT_DEADLINE_MS = 8_000;
+export const CONNECT_DEADLINE_MS = 5_000;
 
 export class ConnectDeadlineError extends Error {
   constructor(deadlineMs: number) {

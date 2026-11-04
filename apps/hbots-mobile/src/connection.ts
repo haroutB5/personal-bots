@@ -1,7 +1,7 @@
 import { classifyFailure, RequestFailure } from "./failure";
 
 const BACKOFF_FIRST_MS = 1_000;
-const BACKOFF_MAX_MS = 10_000;
+const BACKOFF_MAX_MS = 4_000;
 
 export function backoffMs(attempt: number): number {
   return Math.min(BACKOFF_FIRST_MS * 2 ** Math.max(attempt, 0), BACKOFF_MAX_MS);
