@@ -1,19 +1,47 @@
+import { PERSONAL_TABS } from "@hbots/personal-client/bots/personalMode";
 import {
   IconCircleCheck,
-  IconFile,
+  IconCircleCheckFilled,
   IconDeviceLaptop,
+  IconFile,
+  IconFileFilled,
   IconMessageCircle,
+  IconMessageCircleFilled,
 } from "@tabler/icons-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { TabName } from "../nav/routes";
 import { tokens } from "./tokens";
 
+const LABELS = new Map(
+  PERSONAL_TABS.map((entry) => [entry.tab === "chats" ? "bots" : entry.tab, entry.label]),
+);
+
 const TABS = [
-  { tab: "bots", label: "Bots", Icon: IconMessageCircle },
-  { tab: "tasks", label: "Tasks", Icon: IconCircleCheck },
-  { tab: "computer", label: "Computer", Icon: IconDeviceLaptop },
-  { tab: "files", label: "Files", Icon: IconFile },
+  {
+    tab: "bots",
+    label: LABELS.get("bots") ?? "Chats",
+    Icon: IconMessageCircle,
+    ActiveIcon: IconMessageCircleFilled,
+  },
+  {
+    tab: "tasks",
+    label: LABELS.get("tasks") ?? "Tasks",
+    Icon: IconCircleCheck,
+    ActiveIcon: IconCircleCheckFilled,
+  },
+  {
+    tab: "computer",
+    label: LABELS.get("computer") ?? "Computer",
+    Icon: IconDeviceLaptop,
+    ActiveIcon: IconDeviceLaptop,
+  },
+  {
+    tab: "files",
+    label: LABELS.get("files") ?? "Files",
+    Icon: IconFile,
+    ActiveIcon: IconFileFilled,
+  },
 ] as const;
 
 export function BottomBar({
@@ -27,8 +55,9 @@ export function BottomBar({
 }) {
   return (
     <View style={[styles.bar, { paddingBottom: bottomInset }]}>
-      {TABS.map(({ tab, label, Icon }) => {
+      {TABS.map(({ tab, label, Icon, ActiveIcon }) => {
         const selected = tab === active;
+        const Glyph = selected ? ActiveIcon : Icon;
         return (
           <Pressable
             key={tab}
@@ -38,10 +67,10 @@ export function BottomBar({
             accessibilityLabel={label}
             style={styles.tab}
           >
-            <Icon
+            <Glyph
               size={24}
               color={selected ? tokens.text : tokens.textSecondary}
-              strokeWidth={selected ? 2.2 : 1.8}
+              strokeWidth={1.75}
             />
             <Text
               style={[styles.label, selected ? styles.labelActive : null]}
@@ -59,7 +88,7 @@ export function BottomBar({
 const styles = StyleSheet.create({
   bar: {
     flexDirection: "row",
-    backgroundColor: tokens.bg,
+    backgroundColor: tokens.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: tokens.border,
   },
@@ -68,10 +97,8 @@ const styles = StyleSheet.create({
     minHeight: 56,
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 6,
-    paddingBottom: 4,
     gap: 2,
   },
-  label: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "500" },
+  label: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "400" },
   labelActive: { color: tokens.text, fontWeight: "600" },
 });

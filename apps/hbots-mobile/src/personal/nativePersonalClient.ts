@@ -18,6 +18,12 @@ import {
 import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell";
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
 import { createPersonalBotsClient } from "@hbots/personal-client/bots/personalBots";
+import {
+  parseSystemSummary,
+  SYSTEM_SUMMARY_TIMEOUT_MS,
+  SYSTEM_SUMMARY_URL,
+  type SystemSummary,
+} from "@hbots/personal-client/computer/systemStats";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -119,6 +125,7 @@ export interface NativePersonal {
     snapshot: OrchestrationShellSnapshot | null,
   ) => ReadonlyArray<EnvironmentThreadShell>;
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
+  readonly readSystemSummary: () => Promise<SystemSummary | null>;
   readonly useConnectionState: () => SupervisorConnectionState;
   readonly retry: () => void;
   readonly dispose: () => Promise<void>;
@@ -258,7 +265,9 @@ export function createNativePersonal(
       generation.value += 1;
       setState(connectingState(generation.value, attempt));
       try {
-        const next = await connectNativeSession(stored, appVersion);
+        const next = await connectNativeSession(stored, appVersion, (providers) => {
+          Effect.runSync(SubscriptionRef.set(providersRef, providers));
+        });
         if (disposed) {
           await next.dispose();
           return;
@@ -319,6 +328,24 @@ export function createNativePersonal(
     shellsOf: (snapshot) =>
       snapshot === null ? [] : snapshot.threads.map((thread) => ({ ...thread, environmentId })),
     useProviders: () => useRefValue(providersRef),
+    readSystemSummary: async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), SYSTEM_SUMMARY_TIMEOUT_MS);
+      try {
+        const response = await fetch(new URL(SYSTEM_SUMMARY_URL, stored.httpBaseUrl), {
+          method: "GET",
+          headers: { Authorization: `Bearer ${stored.accessToken}` },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) return null;
+        return parseSystemSummary(await response.json());
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     useConnectionState: () => {
       const [state, setReactState] = useState<SupervisorConnectionState>(() =>
         Effect.runSync(SubscriptionRef.get(stateRef)),

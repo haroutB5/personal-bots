@@ -211,7 +211,13 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         }}
       >
         <Stack.Screen name="Tabs">
-          {(screenProps) => <TabsWithBots {...screenProps} native={props.native} />}
+          {(screenProps) => (
+            <TabsWithBots
+              {...screenProps}
+              native={props.native}
+              installedVersion={props.installedVersion}
+            />
+          )}
         </Stack.Screen>
         <Stack.Screen name="Chat">
           {({ navigation }) => (
@@ -264,7 +270,11 @@ function Shell({ props }: { readonly props: AppShellProps }) {
   );
 }
 
-function TabsWithBots({ native, ...screenProps }: TabsProps & { readonly native: NativePersonal }) {
+function TabsWithBots({
+  native,
+  installedVersion,
+  ...screenProps
+}: TabsProps & { readonly native: NativePersonal; readonly installedVersion: string }) {
   const insets = useSafeAreaInsets();
   const tab = screenProps.route.params?.tab ?? "bots";
   const { navigation } = screenProps;
@@ -286,6 +296,7 @@ function TabsWithBots({ native, ...screenProps }: TabsProps & { readonly native:
         {tab === "bots" ? (
           <BotsScreen
             native={native}
+            installedVersion={installedVersion}
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
             onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
             onOpenTeam={() => navigation.navigate("Team")}

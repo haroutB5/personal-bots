@@ -1,7 +1,22 @@
-export const MERGED_PRS: readonly string[] = ["A1"];
+export const MERGED_PRS: readonly string[] = ["A1", "A2"];
 export const DONE_ITEMS: readonly string[] = [
   "rpc:personalBotsList",
   "screen:routes/_personal.tsx#personal",
   "action:PersonalShell.tsx#edge-swipe-back",
   "action:useChatSwipeBack.tsx#edge-swipe-back",
+  "screen:routes/_personal.bots.tsx#bots",
+  "sheet:PersonalResetCredits.tsx#redeem-a-banked-x-reset",
+  "sheet:PersonalUsageStrip.tsx#sheet-in-personalusagestrip",
+  "action:ChatsScreen.tsx#new-bot",
+  "action:ChatsScreen.tsx#new-group",
+  "action:ChatsScreen.tsx#new-team",
+  "action:PersonalUsageStrip.tsx#drag-a-sheet-down-to-close",
+  "card:PersonalOfflineBanner.tsx#personalofflinebanner",
+  "card:PersonalUsageStrip.tsx#personalusagestrip",
+  "rpc:personalPushAckInApp",
+  "rpc:personalPushInApp",
+  "rpc:personalBotsGetProfile",
+  "rpc:personalBotsTokenUsage",
+  "rpc:personalBotsWorkingProgress",
+  "rpc:personalBotsThreadShells",
 ];

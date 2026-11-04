@@ -8,6 +8,10 @@ export * from "@hbots/personal-client/bots/personalBots";
 export const {
   personalBotsListInput,
   personalBotsList,
+  personalPushInAppFeed,
+  personalPushAckInApp,
+  personalPushReportViewing,
+  personalPushReportForeground,
   personalProfile,
   personalFilesList,
   personalBotsTokenUsage,

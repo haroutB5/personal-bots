@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
+import type { ServerProvider } from "@t3tools/contracts";
 import {
   makeWsRpcProtocolClient,
   type RpcSession,
@@ -8,6 +9,7 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { make as makeManagedRuntime } from "effect/ManagedRuntime";
 import * as Schedule from "effect/Schedule";
@@ -35,6 +37,7 @@ export interface NativeSession {
 export async function connectNativeSession(
   stored: StoredSession,
   appVersion: string,
+  onProviders?: (providers: ReadonlyArray<ServerProvider>) => void,
 ): Promise<NativeSession> {
   const socketUrl = await openSocketUrl(stored, appVersion);
   const disconnected = await Effect.runPromise(Deferred.make<never, ConnectionTransientError>());
@@ -68,6 +71,24 @@ export async function connectNativeSession(
   const runtime = makeManagedRuntime(protocolLayer);
   const client: WsRpcProtocolClient = await runtime.runPromise(makeWsRpcProtocolClient);
 
+  const configFiber =
+    onProviders === undefined
+      ? null
+      : runtime.runFork(
+          client[WS_METHODS.subscribeServerConfig]({
+            usageLimitsCommand: true,
+            usageLimitSources: true,
+          }).pipe(
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                if (event.type === "snapshot") onProviders(event.config.providers);
+                else if (event.type === "providerStatuses") onProviders(event.payload.providers);
+              }),
+            ),
+            Effect.catchEager(() => Effect.void),
+          ),
+        );
+
   const session: RpcSession = {
     client,
     initialConfig: client[WS_METHODS.serverGetConfig]({}).pipe(
@@ -76,7 +97,7 @@ export async function connectNativeSession(
           new ConnectionTransientError({ reason: "remote-unavailable", detail: String(cause) }),
       ),
     ),
-    subscribeServerConfig: () => Stream.empty,
+    subscribeServerConfig: (input) => client[WS_METHODS.subscribeServerConfig](input),
     ready: Effect.void,
     probe: client[WS_METHODS.serverGetConfig]({}).pipe(
       Effect.mapError(
@@ -92,6 +113,7 @@ export async function connectNativeSession(
     session,
     closed: Deferred.await(disconnected),
     dispose: async () => {
+      if (configFiber !== null) await Effect.runPromise(Fiber.interrupt(configFiber));
       await runtime.dispose();
       await Effect.runPromise(Scope.close(scope, Exit.void));
     },

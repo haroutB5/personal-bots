@@ -4,14 +4,17 @@ import type {
   PersonalBotTokenUsageResult,
   PersonalFilesListResult,
   PersonalProfile,
+  PersonalPushInAppNotification,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import type { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import type { Atom } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useRef } from "react";
 
@@ -40,6 +43,73 @@ export function createPersonalBotsClient<R, ER, P>(
     tag: WS_METHODS.personalBotsList,
     staleTimeMs: 10_000,
     idleTtlMs: 5 * 60_000,
+  });
+
+  /** How many recent in-app notifications the feed keeps; the banner shows the newest. */
+  const IN_APP_FEED_KEEP = 5;
+
+  /**
+   * In-app notifications for this connection, newest last. The empty list goes
+   * first so a connection with no notification yet still produces a value.
+   */
+  const personalPushInAppFeed = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "personal-push:in-app",
+    tag: WS_METHODS.personalPushInApp,
+    transform: (stream) =>
+      stream.pipe(
+        Stream.scan([] as ReadonlyArray<PersonalPushInAppNotification>, (recent, notification) =>
+          [...recent, notification].slice(-IN_APP_FEED_KEEP),
+        ),
+        Stream.prepend([[] as ReadonlyArray<PersonalPushInAppNotification>]),
+      ),
+  });
+
+  const personalPushAckInApp = createEnvironmentRpcCommand(runtime, {
+    label: "personal-push:ack-in-app",
+    tag: WS_METHODS.personalPushAckInApp,
+  });
+
+  const personalPushReportViewing = createEnvironmentRpcCommand(runtime, {
+    label: "personal-push:report-viewing",
+    tag: WS_METHODS.personalPushReportViewing,
+  });
+
+  /** Presence only: "the app is on screen". */
+  const personalPushReportForeground = createEnvironmentRpcCommand(runtime, {
+    label: "personal-push:report-foreground",
+    tag: WS_METHODS.personalPushReportForeground,
+  });
+
+  /** Spends one banked reset credit on a provider, after the confirm sheet. */
+  const providerConsumeResetCredit = createEnvironmentRpcCommand(runtime, {
+    label: "usage:consume-reset-credit",
+    tag: WS_METHODS.providerConsumeResetCredit,
+  });
+
+  const personalGroupsCreate = createEnvironmentRpcCommand(runtime, {
+    label: "personal-groups:create",
+    tag: WS_METHODS.personalGroupsCreate,
+  });
+
+  const serverRefreshProviders = createEnvironmentRpcCommand(runtime, {
+    label: "server:refresh-providers",
+    tag: WS_METHODS.serverRefreshProviders,
+  });
+
+  /** The slim shell leaves out archived bot chats; a screen asks for them here. */
+  const personalBotsThreadShells = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-bots:thread-shells",
+    tag: WS_METHODS.personalBotsThreadShells,
+    staleTimeMs: 30_000,
+    idleTtlMs: 5 * 60_000,
+  });
+
+  /** Latest progress note of each working chat, off the projection. */
+  const personalBotsWorkingProgress = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-bots:working-progress",
+    tag: WS_METHODS.personalBotsWorkingProgress,
+    staleTimeMs: 0,
+    idleTtlMs: 60_000,
   });
 
   /** Greeting display name (empty string = unset). */
@@ -201,6 +271,16 @@ export function createPersonalBotsClient<R, ER, P>(
     return client.useEnvironmentQuery(atom);
   }
 
+  function usePersonalPushInApp(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<ReadonlyArray<PersonalPushInAppNotification>> {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalPushInAppFeed({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
   /** Fetch only one bot's archived links, or an archived deep link, when needed. */
   function usePersonalArchivedLinks(
     environmentId: EnvironmentId | null,
@@ -301,6 +381,15 @@ export function createPersonalBotsClient<R, ER, P>(
   return {
     personalBotsListInput,
     personalBotsList,
+    personalPushInAppFeed,
+    personalPushAckInApp,
+    personalPushReportViewing,
+    personalPushReportForeground,
+    providerConsumeResetCredit,
+    personalGroupsCreate,
+    serverRefreshProviders,
+    personalBotsThreadShells,
+    personalBotsWorkingProgress,
     personalProfile,
     personalFilesList,
     personalBotsTokenUsage,
@@ -319,6 +408,7 @@ export function createPersonalBotsClient<R, ER, P>(
     personalProfileSet,
     usePersonalEnvironmentId,
     usePersonalBotsList,
+    usePersonalPushInApp,
     usePersonalArchivedLinks,
     usePersonalFiles,
     usePersonalProfile,
