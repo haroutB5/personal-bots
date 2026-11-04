@@ -1,5 +1,6 @@
-export const MERGED_PRS: readonly string[] = ["A3", "A4", "A5"];
+export const MERGED_PRS: readonly string[] = ["A3", "A4", "A5", "A17"];
 export const DONE_ITEMS: readonly string[] = [
+  "screen:routes/pair.tsx#pair",
   "rpc:personalBotsList",
   "sheet:NewChatDialog.tsx#new-chat-with",
   "sheet:RenameChatDialog.tsx#rename-chat",

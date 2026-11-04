@@ -1,11 +1,17 @@
 import * as SecureStore from "expo-secure-store";
 
+import type { SessionAuthMethod } from "./sessionAuth";
+
+export type { SessionAuthMethod } from "./sessionAuth";
+
 export interface StoredSession {
   readonly environmentId: string;
   readonly label: string;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
   readonly accessToken: string;
+  /** Missing on sessions paired before the phone key existed, which are Bearer. */
+  readonly authMethod?: SessionAuthMethod;
   readonly scope: string;
   readonly expiresAt: number;
   readonly pairedAt: number;
