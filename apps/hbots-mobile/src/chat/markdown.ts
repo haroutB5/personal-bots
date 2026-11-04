@@ -12,6 +12,11 @@ export type InlineSpan =
   | { readonly kind: "code"; readonly text: string }
   | { readonly kind: "link"; readonly text: string; readonly href: string };
 
+export interface FileLink {
+  readonly path: string;
+  readonly label: string;
+}
+
 export interface MarkdownBlock {
   readonly kind: "paragraph" | "heading" | "bullet" | "number" | "code" | "quote";
   readonly spans: ReadonlyArray<InlineSpan>;
@@ -20,6 +25,8 @@ export interface MarkdownBlock {
   readonly language?: string;
   /** 0 for a top-level list item, 1 for a nested one, and so on. */
   readonly depth?: number;
+  /** Set when the block is nothing but file links, so it renders as chips. */
+  readonly files?: ReadonlyArray<FileLink>;
 }
 
 const FENCE = /^```([\w-]*)\s*$/u;
@@ -59,6 +66,27 @@ function inline(text: string): ReadonlyArray<InlineSpan> {
   return spans.length === 0 ? [{ kind: "text", text }] : spans;
 }
 
+/**
+ * A block is a file list when every non-blank span is a link to a file. Those
+ * render as chips, as the web does, instead of a run of underlined labels.
+ */
+function fileFields(spans: ReadonlyArray<InlineSpan>): {
+  readonly files?: ReadonlyArray<FileLink>;
+} {
+  const files: FileLink[] = [];
+  for (const span of spans) {
+    if (span.kind === "text") {
+      if (span.text.trim().length > 0) return {};
+      continue;
+    }
+    if (span.kind !== "link") return {};
+    const target = linkTarget(span.href);
+    if (target.kind !== "file") return {};
+    files.push({ path: target.path, label: span.text });
+  }
+  return files.length > 0 ? { files } : {};
+}
+
 export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
   const lines = source.replaceAll("\r\n", "\n").split("\n");
   const blocks: MarkdownBlock[] = [];
@@ -69,7 +97,10 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
     if (paragraph.length === 0) return;
     const text = paragraph.join("\n").trim();
     paragraph = [];
-    if (text.length > 0) blocks.push({ kind: "paragraph", spans: inline(text), text });
+    if (text.length > 0) {
+      const spans = inline(text);
+      blocks.push({ kind: "paragraph", spans, text, ...fileFields(spans) });
+    }
   };
 
   for (const line of lines) {
@@ -102,26 +133,30 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
     if (heading !== null) {
       flushParagraph();
       const text = heading[2] ?? "";
-      blocks.push({ kind: "heading", spans: inline(text), text });
+      const spans = inline(text);
+      blocks.push({ kind: "heading", spans, text, ...fileFields(spans) });
       continue;
     }
     const quote = QUOTE.exec(line);
     if (quote !== null) {
       flushParagraph();
       const text = quote[1] ?? "";
-      blocks.push({ kind: "quote", spans: inline(text), text });
+      const spans = inline(text);
+      blocks.push({ kind: "quote", spans, text, ...fileFields(spans) });
       continue;
     }
     const bullet = BULLET.exec(line);
     if (bullet !== null) {
       flushParagraph();
       const text = bullet[2] ?? "";
+      const spans = inline(text);
       blocks.push({
         kind: "bullet",
-        spans: inline(text),
+        spans,
         text,
         marker: "•",
         depth: listDepth(bullet[1] ?? ""),
+        ...fileFields(spans),
       });
       continue;
     }
@@ -129,12 +164,14 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
     if (number !== null) {
       flushParagraph();
       const text = number[3] ?? "";
+      const spans = inline(text);
       blocks.push({
         kind: "number",
-        spans: inline(text),
+        spans,
         text,
         marker: number[2] ?? "1",
         depth: listDepth(number[1] ?? ""),
+        ...fileFields(spans),
       });
       continue;
     }
@@ -160,24 +197,33 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
  */
 export function markdownNeedsWidth(source: string): boolean {
   return markdownBlocks(source).some(
-    (block) => block.kind === "bullet" || block.kind === "number" || block.kind === "code",
+    (block) =>
+      block.kind === "bullet" ||
+      block.kind === "number" ||
+      block.kind === "code" ||
+      block.files !== undefined,
   );
 }
 
 /**
- * Where a markdown link goes: an absolute address opens outside the app, and
- * anything else is a chat file, as on the web. A `#fragment` and a `?query`
- * stay with the path because the file sheet resolves the path only.
+ * Where a markdown link goes. A file path opens in the file sheet. Only http
+ * and https leave the app: other schemes such as tel: or javascript: are shown
+ * as plain text, because a bot's reply must not hand them to the system.
  */
 export function linkTarget(
   href: string,
 ):
   | { readonly kind: "external"; readonly url: string }
-  | { readonly kind: "file"; readonly path: string } {
+  | { readonly kind: "file"; readonly path: string }
+  | { readonly kind: "blocked" } {
   const trimmed = href.trim();
   if (/^[A-Za-z]:[\\/]/u.test(trimmed)) return { kind: "file", path: trimmed };
-  if (/^[a-z][a-z0-9+.-]*:/iu.test(trimmed) || trimmed.startsWith("//")) {
-    return { kind: "external", url: trimmed };
+  if (/^https?:\/\//iu.test(trimmed)) return { kind: "external", url: trimmed };
+  if (trimmed.startsWith("//")) return { kind: "external", url: `https:${trimmed}` };
+  if (/^file:\/\//iu.test(trimmed)) {
+    const withoutScheme = decodeURIComponent(trimmed.replace(/^file:\/\//iu, ""));
+    return { kind: "file", path: withoutScheme.replace(/^\/(?=[A-Za-z]:[\\/])/u, "") };
   }
+  if (/^[a-z][a-z0-9+.-]*:/iu.test(trimmed)) return { kind: "blocked" };
   return { kind: "file", path: trimmed };
 }

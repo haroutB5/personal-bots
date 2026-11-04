@@ -15,8 +15,15 @@ import { turnStartByAssistantItem } from "@hbots/personal-client/feed/contextUse
 import type { LatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import type { OutboxRow } from "@hbots/personal-client/composer/outbox";
-import { IconPaperclip } from "@tabler/icons-react-native";
-import { useMemo, useRef, useState } from "react";
+import {
+  IconFile,
+  IconFileCode,
+  IconFileText,
+  IconFileTypePdf,
+  IconPhoto,
+  IconPaperclip,
+} from "@tabler/icons-react-native";
+import { useMemo, useRef, useState, createElement } from "react";
 import { Animated, FlatList, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -27,6 +34,7 @@ import {
   linkTarget,
   markdownBlocks,
   markdownNeedsWidth,
+  type FileLink,
   type InlineSpan,
   type MarkdownBlock,
 } from "./markdown";
@@ -82,15 +90,27 @@ function SpanText({
         }
         if (span.kind === "link") {
           const target = linkTarget(span.href);
-          const path = target.kind === "file" ? target.path : null;
+          if (target.kind === "blocked") {
+            return <Text key={index}>{span.text}</Text>;
+          }
+          if (target.kind === "file") {
+            return (
+              <Text
+                key={index}
+                style={styles.fileChip}
+                accessibilityRole="link"
+                onPress={() => onOpenFile?.(target.path)}
+              >
+                {span.text}
+              </Text>
+            );
+          }
           return (
             <Text
               key={index}
-              style={path !== null ? styles.fileChip : styles.link}
+              style={styles.link}
               accessibilityRole="link"
-              onPress={() => {
-                if (onOpenLink !== undefined) onOpenLink(span.href);
-              }}
+              onPress={() => onOpenLink?.(target.url)}
             >
               {span.text}
             </Text>
@@ -118,6 +138,71 @@ function SpanText({
         return <Text key={index}>{span.text}</Text>;
       })}
     </Text>
+  );
+}
+
+function fileBasename(path: string): string {
+  return (
+    path
+      .split(/[\\/]/u)
+      .filter((part) => part.length > 0)
+      .at(-1) ?? path
+  );
+}
+
+function fileIcon(name: string) {
+  if (/\.(?:png|jpe?g|gif|webp|bmp)$/iu.test(name)) return IconPhoto;
+  if (/\.pdf$/iu.test(name)) return IconFileTypePdf;
+  if (
+    /\.(?:ts|tsx|js|jsx|json|css|html|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|sql|sh|bash|zsh|yml|yaml|toml|xml)$/iu.test(
+      name,
+    )
+  )
+    return IconFileCode;
+  if (/\.(?:md|markdown|txt|log)$/iu.test(name)) return IconFileText;
+  return IconFile;
+}
+
+function FileChip({
+  file,
+  onOpenFile,
+}: {
+  readonly file: FileLink;
+  readonly onOpenFile?: ((path: string) => void) | undefined;
+}) {
+  const name = fileBasename(file.path) || file.label;
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${name}`}
+      onPress={() => onOpenFile?.(file.path)}
+      style={({ pressed }) => [styles.fileChipButton, pressed ? styles.fileChipPressed : null]}
+    >
+      {createElement(fileIcon(name), {
+        size: 16,
+        color: tokens.textSecondary,
+        strokeWidth: 1.75,
+      })}
+      <Text style={styles.fileChipName} numberOfLines={1}>
+        {name}
+      </Text>
+    </Pressable>
+  );
+}
+
+function FileChips({
+  files,
+  onOpenFile,
+}: {
+  readonly files: ReadonlyArray<FileLink>;
+  readonly onOpenFile?: ((path: string) => void) | undefined;
+}) {
+  return (
+    <View style={styles.fileList}>
+      {files.map((file) => (
+        <FileChip key={`${file.path}:${file.label}`} file={file} onOpenFile={onOpenFile} />
+      ))}
+    </View>
   );
 }
 
@@ -160,6 +245,22 @@ function Block({
   readonly tone: "assistant" | "user";
 }) {
   const base = tone === "user" ? styles.userText : styles.assistantText;
+  if (block.files !== undefined) {
+    const chips = <FileChips files={block.files} onOpenFile={onOpenFile} />;
+    if (block.kind === "bullet" || block.kind === "number") {
+      const marker =
+        block.kind === "bullet"
+          ? (["•", "◦", "▪"][block.depth ?? 0] ?? "•")
+          : `${block.marker ?? "1"}.`;
+      return (
+        <View style={[styles.listRow, { paddingLeft: (block.depth ?? 0) * 16 }]}>
+          <Text style={[base, styles.marker]}>{marker}</Text>
+          <View style={styles.flex}>{chips}</View>
+        </View>
+      );
+    }
+    return chips;
+  }
   switch (block.kind) {
     case "heading":
       return (
@@ -290,7 +391,10 @@ function SwipeMessageRow({
           <SentAt at={sentAt} align={align} />
         </View>
       ) : null}
-      <Animated.View style={{ transform: [{ translateX }] }} {...responder.panHandlers}>
+      <Animated.View
+        style={[styles.swipeContent, { transform: [{ translateX }] }]}
+        {...responder.panHandlers}
+      >
         {children}
       </Animated.View>
     </View>
@@ -304,8 +408,6 @@ function UserBubble({
   quote,
   attachments,
   onLongPress,
-  onOpenFile,
-  onOpenLink,
 }: {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -313,8 +415,6 @@ function UserBubble({
   readonly quote: PersonalReplyQuote | null;
   readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
   readonly onLongPress: () => void;
-  readonly onOpenFile?: ((path: string) => void) | undefined;
-  readonly onOpenLink?: ((href: string) => void) | undefined;
 }) {
   return (
     <Pressable onLongPress={onLongPress} delayLongPress={350} style={styles.userBubble}>
@@ -328,7 +428,7 @@ function UserBubble({
           </Text>
         </View>
       ) : null}
-      <MarkdownBody text={text} tone="user" onOpenFile={onOpenFile} onOpenLink={onOpenLink} />
+      <Text style={styles.userText}>{text}</Text>
       {attachments?.map((attachment) =>
         isImageAttachment(attachment) ? (
           <AttachmentImage
@@ -543,20 +643,13 @@ export function MessageList({
                 sentAt={sentAt}
                 onReply={() => onReply(replyQuoteForMessage({ message, botName: currentUserId }))}
               >
-                <View
-                  style={[
-                    styles.userColumn,
-                    markdownNeedsWidth(text) ? styles.userColumnWide : null,
-                  ]}
-                >
+                <View style={styles.userColumn}>
                   <UserBubble
                     native={native}
                     chat={chat}
                     text={text}
                     quote={quote}
                     attachments={message.attachments}
-                    onOpenFile={onOpenFile}
-                    onOpenLink={onOpenLink}
                     onLongPress={() =>
                       onMessageMenu({
                         messageId: String(message.id),
@@ -641,11 +734,11 @@ const styles = StyleSheet.create({
   alignEnd: { alignItems: "flex-end" },
   alignStart: { alignItems: "flex-start" },
   swipeRow: { width: "100%" },
+  swipeContent: { width: "100%" },
   swipeTime: { position: "absolute", top: "35%", zIndex: 1 },
   swipeTimeStart: { left: 4 },
   swipeTimeEnd: { right: 4 },
-  userColumn: { alignItems: "flex-end", gap: 4, maxWidth: "78%" },
-  userColumnWide: { width: "78%" },
+  userColumn: { alignSelf: "flex-end", alignItems: "flex-end", gap: 4, maxWidth: "78%" },
   userBubble: {
     alignSelf: "flex-end",
     borderRadius: 20,
@@ -655,7 +748,7 @@ const styles = StyleSheet.create({
   },
   pendingBubble: { opacity: 0.82 },
   userText: { color: tokens.text, fontSize: 15, lineHeight: 21 },
-  assistantPress: { maxWidth: "90%", gap: 6 },
+  assistantPress: { alignSelf: "flex-start", maxWidth: "90%", gap: 6 },
   assistantWide: { width: "90%" },
   assistantText: { color: tokens.text, fontSize: 15, lineHeight: 22 },
   markdown: { gap: 6, maxWidth: "100%" },
@@ -678,6 +771,21 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.fillMuted,
     fontSize: 14,
   },
+  fileList: { gap: 6, alignItems: "flex-start" },
+  fileChipButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    maxWidth: "100%",
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.borderStrong,
+    backgroundColor: tokens.fillMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  fileChipPressed: { opacity: 0.7 },
+  fileChipName: { color: tokens.text, fontSize: 14, lineHeight: 19, flexShrink: 1 },
   heading: { fontSize: 16, lineHeight: 22, fontWeight: "700" },
   codeBlock: {
     backgroundColor: tokens.surface,

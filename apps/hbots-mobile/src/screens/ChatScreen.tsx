@@ -35,6 +35,7 @@ import {
   removeOutboxEntry,
   retryOutboxEntry,
 } from "@hbots/personal-client/composer/outbox";
+import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
 import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
 import { deriveLatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
 import { sharedPreferencesFromProfile } from "@hbots/personal-client/settings/profilePreferences";
@@ -45,7 +46,6 @@ import { resolveChatCwd } from "@hbots/personal-client/feed/chatCwd";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
-import { linkTarget } from "../chat/markdown";
 import { Composer } from "../chat/Composer";
 import { buildChatChips, chatHeaderModel, findChatBot } from "../chat/chatModel";
 import { MessageList } from "../chat/MessageList";
@@ -202,6 +202,13 @@ export function ChatScreen({
     return null;
   }, [thread]);
   const providerWait = providerWaitState(thread?.session ?? null) !== null;
+  const cachedBot = useMemo(
+    () =>
+      readChatsSnapshot(native.client.ports.kv, environmentId)?.rows.find(
+        (row) => row.botId === botId,
+      ) ?? null,
+    [botId, environmentId, native.client.ports.kv],
+  );
   const header = chatHeaderModel({
     bot: record?.bot ?? null,
     shell,
@@ -212,6 +219,7 @@ export function ChatScreen({
     providers,
     usedTokens,
     nowMs: now,
+    fallbackBotName: cachedBot?.name ?? null,
   });
   const chips = useMemo(
     () =>
@@ -415,18 +423,18 @@ export function ChatScreen({
           >
             <IconChevronLeft size={24} color={tokens.text} strokeWidth={1.75} />
           </Pressable>
-          {record?.bot != null ? (
+          {record?.bot != null || cachedBot !== null ? (
             <Pressable
               onPress={() => onOpenBot(botId)}
               accessibilityRole="button"
-              accessibilityLabel={`Edit ${record.bot.name}`}
+              accessibilityLabel={`Edit ${header.botName}`}
               style={styles.headerIdentity}
             >
               <BotAvatar
-                shape={record.bot.avatarShape}
-                color={record.bot.avatarColor}
+                shape={record?.bot?.avatarShape ?? cachedBot?.avatarShape ?? "blob"}
+                color={record?.bot?.avatarColor ?? cachedBot?.avatarColor ?? tokens.primary}
                 size={48}
-                label={record.bot.name}
+                label={header.botName}
               />
               <View style={styles.headerText}>
                 <View style={styles.headerTitleRow}>
@@ -594,15 +602,8 @@ export function ChatScreen({
             onReply={(quote) => setReplyTo(quote)}
             onMessageMenu={setMessageMenu}
             onOpenFile={(path) => setFilePath(path)}
-            onOpenLink={(href) => {
-              const target = linkTarget(href);
-              if (target.kind === "external") {
-                void Linking.openURL(target.url).catch(() =>
-                  setActionError("Couldn't open that link."),
-                );
-                return;
-              }
-              setFilePath(target.path);
+            onOpenLink={(url) => {
+              void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
             }}
             onCancelQueued={(id) => removeOutboxEntry(id)}
             onRetryQueued={(id) => retryOutboxEntry(id)}
