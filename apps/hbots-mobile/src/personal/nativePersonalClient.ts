@@ -367,9 +367,9 @@ export function createNativePersonal(
     let attempt = 0;
     for (;;) {
       if (disposed) return;
-      generation.value += 1;
-      setState(connectingState(generation.value, attempt));
       try {
+        generation.value += 1;
+        setState(connectingState(generation.value, attempt));
         const next = await connectWithDeadline((signal) =>
           connectNativeSession(
             stored,
@@ -443,7 +443,11 @@ export function createNativePersonal(
         // A session that drops within ten seconds is part of the same outage.
         if (Date.now() - connectedAt >= 10_000) {
           unstable = 0;
-          stopOutageWatch();
+          // A healthy session clears the outage confirmation, but the watcher
+          // stays armed: it is the only thing that can bring the app back when
+          // the loop itself stops, which is the state that leaves it offline
+          // for good.
+          networkBackAt = null;
         } else {
           unstable += 1;
           startOutageWatch();
@@ -459,20 +463,28 @@ export function createNativePersonal(
           options.onAuthDead(cause);
         }
       }
-      if (shouldResetNetworkClient(unstable)) await resetNetworkClient();
-      if (disposed) return;
-      const ended = current;
-      current = null;
-      if (ended !== null) {
-        Effect.runSync(SubscriptionRef.set(sessionRef, Option.none()));
-        await Promise.race([ended.dispose(), sleep(3_000)]);
+      try {
+        if (shouldResetNetworkClient(unstable)) await resetNetworkClient();
+        if (disposed) return;
+        const ended = current;
+        current = null;
+        if (ended !== null) {
+          Effect.runSync(SubscriptionRef.set(sessionRef, Option.none()));
+          await Promise.race([ended.dispose(), sleep(3_000)]);
+        }
+        retrySignal = newRetrySignal();
+        attempt += 1;
+        setState(offlineState(generation.value, attempt));
+        const waitMs = retryImmediately ? 0 : backoffMs(attempt - 1);
+        retryImmediately = false;
+        await Promise.race([sleep(waitMs), disposedPromise, retrySignal.promise]);
+      } catch (cause) {
+        // The loop's whole job is to keep trying, so one failed iteration is
+        // followed by another. Tearing down a dead socket can throw, and that
+        // must not leave the app offline with nothing left to reconnect it.
+        console.error("[hbots] reconnect iteration failed", cause);
+        await Promise.race([sleep(1_000), disposedPromise]);
       }
-      retrySignal = newRetrySignal();
-      attempt += 1;
-      setState(offlineState(generation.value, attempt));
-      const waitMs = retryImmediately ? 0 : backoffMs(attempt - 1);
-      retryImmediately = false;
-      await Promise.race([sleep(waitMs), disposedPromise, retrySignal.promise]);
     }
   };
 
