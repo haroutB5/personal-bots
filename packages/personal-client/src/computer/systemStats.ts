@@ -1,3 +1,6 @@
+// @effect-diagnostics globalTimers:off -- The abort timer wraps a plain fetch so
+// web and phone callers keep a Promise API. React Native's AbortSignal polyfill
+// has no static timeout.
 /**
  * The PC's CPU, RAM and disk for the line under the Bots page header
  * (SystemStatsLine.tsx). The numbers come from

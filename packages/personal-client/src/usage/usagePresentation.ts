@@ -166,7 +166,7 @@ export function usageSheetDescription(cards: readonly UsageCard[]): string {
 export function selectOpenCodeSpendLine(
   result: PersonalBotTokenUsageResult | null | undefined,
 ): string | null {
-  const week = result?.windows.find((window) => window.id === "week");
+  const week = result?.windows.find((usageWindow) => usageWindow.id === "week");
   const row = week?.providers.find((provider) => provider.provider === "opencode");
   if (!row || row.costUsd <= 0) return null;
   const amount = formatUsd(row.costUsd);
@@ -210,25 +210,25 @@ export function formatResetTime(resetsAt: string | undefined, now: number): stri
   return `Resets ${formatted}`;
 }
 
-function toRow(window: ServerProviderUsageWindow, now: number): UsageWindowRow {
+function toRow(usageWindow: ServerProviderUsageWindow, now: number): UsageWindowRow {
   // Past its reset the window starts over: show it empty now rather than the
   // spent reading until the next read comes back.
-  if (windowHasReset(window, now)) {
-    const time = formatResetTime(window.resetsAt, now);
+  if (windowHasReset(usageWindow, now)) {
+    const time = formatResetTime(usageWindow.resetsAt, now);
     return {
-      id: window.id,
-      label: window.label,
+      id: usageWindow.id,
+      label: usageWindow.label,
       usedPercent: 0,
       resetLabel: null,
       resetTimeLabel: time === null ? null : time.replace(/^Resets /, "Reset at "),
     };
   }
   return {
-    id: window.id,
-    label: window.label,
-    usedPercent: clampPercent(window.usedPercent),
-    resetLabel: formatResetCountdown(window.resetsAt, now),
-    resetTimeLabel: formatResetTime(window.resetsAt, now),
+    id: usageWindow.id,
+    label: usageWindow.label,
+    usedPercent: clampPercent(usageWindow.usedPercent),
+    resetLabel: formatResetCountdown(usageWindow.resetsAt, now),
+    resetTimeLabel: formatResetTime(usageWindow.resetsAt, now),
   };
 }
 
@@ -240,8 +240,10 @@ function pickSession(
   windows: ReadonlyArray<ServerProviderUsageWindow>,
   now: number,
 ): UsageWindowRow | null {
-  const direct = windows.find((window) => window.kind === "session");
-  const fallback = windows.find((window) => window.id.toLowerCase().includes("five_hour"));
+  const direct = windows.find((usageWindow) => usageWindow.kind === "session");
+  const fallback = windows.find((usageWindow) =>
+    usageWindow.id.toLowerCase().includes("five_hour"),
+  );
   const match = direct ?? fallback;
   return match ? toRow(match, now) : null;
 }
@@ -255,20 +257,20 @@ function pickWeeklies(
   windows: ReadonlyArray<ServerProviderUsageWindow>,
   now: number,
 ): readonly UsageWindowRow[] {
-  const direct = windows.filter((window) => window.kind === "weekly");
+  const direct = windows.filter((usageWindow) => usageWindow.kind === "weekly");
   const source =
     direct.length > 0
       ? direct
-      : windows.filter((window) => {
-          const id = window.id.toLowerCase();
+      : windows.filter((usageWindow) => {
+          const id = usageWindow.id.toLowerCase();
           return id.includes("seven_day") || id.includes("week");
         });
   const seen = new Set<string>();
   const rows: UsageWindowRow[] = [];
-  for (const window of source) {
-    if (seen.has(window.id)) continue;
-    seen.add(window.id);
-    rows.push(toRow(window, now));
+  for (const usageWindow of source) {
+    if (seen.has(usageWindow.id)) continue;
+    seen.add(usageWindow.id);
+    rows.push(toRow(usageWindow, now));
   }
   return rows;
 }

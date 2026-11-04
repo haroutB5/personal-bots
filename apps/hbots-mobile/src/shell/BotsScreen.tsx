@@ -307,7 +307,7 @@ export function BotsScreen({
     () =>
       baseSummaries
         .flatMap((summary) =>
-          summary.live && summary.liveThread !== null
+          summary.live && summary.liveThread != null
             ? [`${summary.liveThread.id}@${summary.liveThread.updatedAt}`]
             : [],
         )

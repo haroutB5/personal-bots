@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { planInAppNotifications } from "@hbots/personal-client/bots/inAppNotifications";
 import { offlineBannerHint, offlineBannerText } from "@hbots/personal-client/bots/offlineBanner";
@@ -68,11 +68,23 @@ describe("Bots home view model", () => {
       ack: [],
       show: null,
     });
+    // A hidden page handled the ids without acknowledging them, as the web page
+    // does so the server falls back to push.
     expect(planInAppNotifications(seen, feed, { visible: true, currentPath: "/bots" })).toEqual({
+      ack: [],
+      show: null,
+    });
+
+    const visibleSeen = new Set<string>();
+    expect(
+      planInAppNotifications(visibleSeen, feed, { visible: true, currentPath: "/bots" }),
+    ).toEqual({
       ack: ["n1", "n2"],
       show: feed[1],
     });
-    expect(planInAppNotifications(seen, feed, { visible: true, currentPath: "/bots" })).toEqual({
+    expect(
+      planInAppNotifications(visibleSeen, feed, { visible: true, currentPath: "/bots" }),
+    ).toEqual({
       ack: [],
       show: null,
     });
