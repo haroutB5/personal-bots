@@ -24,4 +24,34 @@ describe("markdownBlocks", () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.text).toBe("first line\nsecond line");
   });
+
+  it("turns markdown links into link spans, keeping the label and target", () => {
+    const blocks = markdownBlocks(
+      "Read [the plan](docs/plan.md) and [the site](https://example.com).",
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.spans).toEqual([
+      { kind: "text", text: "Read " },
+      { kind: "link", text: "the plan", href: "docs/plan.md" },
+      { kind: "text", text: " and " },
+      { kind: "link", text: "the site", href: "https://example.com" },
+      { kind: "text", text: "." },
+    ]);
+  });
+
+  it("nests indented bullets by their indent", () => {
+    const blocks = markdownBlocks("- one\n  - nested\n    - deep\n- two");
+    expect(blocks.map((block) => [block.kind, block.text, block.depth])).toEqual([
+      ["bullet", "one", 0],
+      ["bullet", "nested", 1],
+      ["bullet", "deep", 2],
+      ["bullet", "two", 0],
+    ]);
+  });
+
+  it("keeps a fenced code block literal, including link-like text", () => {
+    const blocks = markdownBlocks("```\n[a](b)\n- not a bullet\n```");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: "code", text: "[a](b)\n- not a bullet" });
+  });
 });
