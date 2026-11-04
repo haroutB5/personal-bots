@@ -50,7 +50,7 @@ function asciiBytes(value: string): Uint8Array {
 async function sha256(data: Uint8Array): Promise<Uint8Array> {
   const copy = new Uint8Array(data.length);
   copy.set(data);
-  const digest = await ExpoCrypto.digest(ExpoCrypto.CryptoDigestAlgorithm.SHA256, copy.buffer);
+  const digest = await ExpoCrypto.digest(ExpoCrypto.CryptoDigestAlgorithm.SHA256, copy);
   return new Uint8Array(digest);
 }
 
