@@ -615,7 +615,7 @@ const PARTIAL_TODAY = {
 const parityFile = show(ANDROID_REF, `${MOBILE}/src/parity.ts`);
 // PRs already merged on the Android side. A web item routed to one of them must be done.
 const mergedPrs = [
-  ...(parityFile?.match(/MERGED_PRS\s*=\s*\[([^\]]*)\]/)?.[1] ?? "").matchAll(
+  ...(parityFile?.match(/MERGED_PRS[^=]*=\s*\[([^\]]*)\]/)?.[1] ?? "").matchAll(
     /["']([A-Z]\d*[a-z]?\d*)["']/g,
   ),
 ].map((m) => m[1]);
