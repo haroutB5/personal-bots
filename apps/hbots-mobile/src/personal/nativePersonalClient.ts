@@ -303,7 +303,9 @@ export function createNativePersonal(
   const RELAUNCH_COOLDOWN_MS = 5 * 60_000;
   let outageTimer: ReturnType<typeof setInterval> | null = null;
   let relaunching = false;
+  let networkBackAt: number | null = null;
   const stopOutageWatch = () => {
+    networkBackAt = null;
     if (outageTimer === null) return;
     clearInterval(outageTimer);
     outageTimer = null;
@@ -312,18 +314,27 @@ export function createNativePersonal(
     if (outageTimer !== null || disposed) return;
     let checking = false;
     outageTimer = setInterval(() => {
-      if (disposed || relaunching || checking || unstable < 3) return;
+      if (disposed || relaunching || checking || current !== null) return;
       checking = true;
       void phoneHasInternet().then((online) => {
         checking = false;
-        if (!online || disposed || relaunching || unstable < 3) return;
+        if (disposed || relaunching || current !== null) return;
+        if (!online) {
+          networkBackAt = null;
+          return;
+        }
+        if (networkBackAt === null) {
+          networkBackAt = Date.now();
+          return;
+        }
+        if (Date.now() - networkBackAt < 8_000) return;
         const last = Number(ports.kv.getItem(relaunchKey) ?? "0");
         if (Number.isFinite(last) && Date.now() - last < RELAUNCH_COOLDOWN_MS) return;
         relaunching = true;
         ports.kv.setItem(relaunchKey, String(Date.now()));
         void relaunchApp();
       });
-    }, 2_000);
+    }, 1_000);
   };
 
   const generation = { value: 0 };
@@ -446,6 +457,7 @@ export function createNativePersonal(
     }
   };
 
+  startOutageWatch();
   void loop();
 
   return {
