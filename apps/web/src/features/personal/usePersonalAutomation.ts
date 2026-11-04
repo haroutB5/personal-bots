@@ -1,7 +1,6 @@
 import type {
   EnvironmentId,
   PersonalMemoryKind,
-  PersonalPushInAppNotification,
   PersonalTask,
   PersonalTaskId,
   ThreadId,
@@ -386,35 +385,7 @@ export const personalPushReportForeground = createEnvironmentRpcCommand(connecti
   tag: WS_METHODS.personalPushReportForeground,
 });
 
-export const personalPushAckInApp = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "personal-push:ack-in-app",
-  tag: WS_METHODS.personalPushAckInApp,
-});
-
-/** How many recent in-app notifications the feed keeps; the banner shows the newest. */
-export const IN_APP_FEED_KEEP = 5;
-
-/**
- * In-app notifications for this connection, newest last. A short list rather
- * than only the latest, so two arriving in one render are both seen (and
- * acknowledged) by id. The empty list goes first: a connection that has had no
- * notification yet still produces a first value.
- */
-export const personalPushInAppFeed = createEnvironmentRpcSubscriptionAtomFamily(
-  connectionAtomRuntime,
-  {
-    label: "personal-push:in-app",
-    tag: WS_METHODS.personalPushInApp,
-    transform: (stream) =>
-      feedStartsWith([] as ReadonlyArray<PersonalPushInAppNotification>)(
-        stream.pipe(
-          Stream.scan([] as ReadonlyArray<PersonalPushInAppNotification>, (recent, notification) =>
-            [...recent, notification].slice(-IN_APP_FEED_KEEP),
-          ),
-        ),
-      ),
-  },
-);
+export { personalPushAckInApp, personalPushInAppFeed } from "./usePersonalBots";
 
 export function usePersonalTasks(environmentId: EnvironmentId | null) {
   const atom = useMemo(

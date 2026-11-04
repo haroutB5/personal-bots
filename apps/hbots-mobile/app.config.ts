@@ -26,6 +26,11 @@ const config: ExpoConfig = {
   userInterfaceStyle: "dark",
   backgroundColor: "#0f0f0e",
   platforms: ["android"],
+  androidStatusBar: {
+    backgroundColor: "#00000000",
+    barStyle: "light-content",
+    translucent: true,
+  },
   updates: { enabled: false },
   android: {
     package: "com.haroutb5.hbots",
@@ -55,7 +60,7 @@ const config: ExpoConfig = {
           targetSdkVersion: 36,
           minSdkVersion: 26,
           usesCleartextTraffic: false,
-          buildArchs: ["arm64-v8a"],
+          buildArchs: process.env.HBOTS_QA_X86 === "1" ? ["x86_64"] : ["arm64-v8a"],
         },
       },
     ],

@@ -41,6 +41,38 @@
       "types": "./src/bots/personalBots.ts",
       "import": "./src/bots/personalBots.ts"
     },
+    "./bots/relativeTime": {
+      "types": "./src/bots/relativeTime.ts",
+      "import": "./src/bots/relativeTime.ts"
+    },
+    "./bots/offlineBanner": {
+      "types": "./src/bots/offlineBanner.ts",
+      "import": "./src/bots/offlineBanner.ts"
+    },
+    "./bots/ownerChats": {
+      "types": "./src/bots/ownerChats.ts",
+      "import": "./src/bots/ownerChats.ts"
+    },
+    "./bots/unreadChats": {
+      "types": "./src/bots/unreadChats.ts",
+      "import": "./src/bots/unreadChats.ts"
+    },
+    "./bots/inAppNotifications": {
+      "types": "./src/bots/inAppNotifications.ts",
+      "import": "./src/bots/inAppNotifications.ts"
+    },
+    "./usage/usagePresentation": {
+      "types": "./src/usage/usagePresentation.ts",
+      "import": "./src/usage/usagePresentation.ts"
+    },
+    "./usage/usageStrip": {
+      "types": "./src/usage/usageStrip.ts",
+      "import": "./src/usage/usageStrip.ts"
+    },
+    "./usage/formatUsd": {
+      "types": "./src/usage/formatUsd.ts",
+      "import": "./src/usage/formatUsd.ts"
+    },
     "./bots/providerModelCapabilities": {
       "types": "./src/bots/providerModelCapabilities.ts",
       "import": "./src/bots/providerModelCapabilities.ts"
@@ -148,6 +180,22 @@
     "./conversation/types": {
       "types": "./src/conversation/types.ts",
       "import": "./src/conversation/types.ts"
+    },
+    "./bots/botAvatarShapes": {
+      "types": "./src/bots/botAvatarShapes.ts",
+      "import": "./src/bots/botAvatarShapes.ts"
+    },
+    "./bots/botRowModel": {
+      "types": "./src/bots/botRowModel.ts",
+      "import": "./src/bots/botRowModel.ts"
+    },
+    "./bots/workingProgress": {
+      "types": "./src/bots/workingProgress.ts",
+      "import": "./src/bots/workingProgress.ts"
+    },
+    "./computer/systemStats": {
+      "types": "./src/computer/systemStats.ts",
+      "import": "./src/computer/systemStats.ts"
     }
   },
   "scripts": {

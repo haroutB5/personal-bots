@@ -12,12 +12,18 @@ import { MutedBell } from "./BotMute";
 import { botMuteState } from "./botMuteModel";
 import { splitModelMarker } from "./botModelLabel";
 import { botStatus, type BotSummary } from "./botSummaries";
-import { chatNoticeLabel, readChatNotice } from "./chatNotices";
-import { readServerTurn, type ServerTurn } from "./delegationModel";
-import { HIDDEN_PREVIEW_LABEL, HIDDEN_WORKING_LABEL, hidesBotPreviews } from "./previewPrivacy";
+import type { ServerTurn } from "./delegationModel";
 import { formatRelativeTime } from "./relativeTime";
 import { useNewChatPrompt } from "./useNewChatPrompt";
 import { UnreadChatsBadge } from "./UnreadChatsBadge";
+
+import {
+  plainPreviewLine,
+  previewOf,
+  snapshotPreviewLabel,
+} from "@hbots/personal-client/bots/botRowModel";
+
+export { plainPreviewLine, previewOf, snapshotPreviewLabel };
 
 /**
  * md+ (the desktop bot list) pads the row by 12px, and the list pulls itself
@@ -59,96 +65,6 @@ export function selectedChatProps(
   selected: boolean,
 ): { "aria-current": "page"; "data-sidebar-selected": "" } | Record<string, never> {
   return selected ? { "aria-current": "page", "data-sidebar-selected": "" } : {};
-}
-
-/**
- * While the bot works, its latest progress note. Else the first non-empty line
- * of the newest user/assistant message, else the thread title. A turn the task service wrote previews as its system-row text. The
- * message comes with `personalBots.list`, so the list opens no thread
- * subscription per row; the list refreshes when a thread's shell updates.
- */
-export function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) => string): string {
-  // The owner hid this bot's previews: no message words, progress note, notice
-  // or turn label (they carry task titles). The server already sent no text.
-  if (hidesBotPreviews(summary.bot) || summary.newestMessage?.hidden === true) {
-    if (summary.live) return HIDDEN_WORKING_LABEL;
-    return summary.newestThread === null ? "No chats yet" : HIDDEN_PREVIEW_LABEL;
-  }
-  // A working bot shows what it is doing now, not the last thing it said.
-  if (summary.live && summary.progressNote != null && summary.progressNote.length > 0) {
-    return summary.progressNote;
-  }
-  const thread = summary.newestThread;
-  if (thread === null) return "No chats yet";
-  const message = summary.newestMessage;
-  if (message !== null) {
-    const notice = readChatNotice(message);
-    if (notice !== null) return chatNoticeLabel(notice, message.text, Date.now());
-    const turn = readServerTurn(message);
-    if (turn !== null) return describeTurn(turn);
-    const line = message.text
-      .split("\n")
-      .map((part) => plainPreviewLine(part))
-      .find((part) => part.length > 0);
-    if (line) return line;
-  }
-  return thread.title;
-}
-
-/**
- * One line of a reply as a row preview: the words, not the markdown around
- * them. Replies are markdown, and the first line read "## VERDICT", "**Cause**"
- * or a backticked path with the marks in, where the chat itself shows a
- * heading, bold or a code chip. Heading, quote and list markers, emphasis,
- * code ticks and link targets go; the text stays. A line that is only a rule
- * or a code fence is empty, so the next line is used.
- */
-export function plainPreviewLine(line: string): string {
-  const known = previewLineCache.get(line);
-  if (known !== undefined) return known;
-  const plain = computePlainPreviewLine(line);
-  // A rebuild asks again for every row's line: keep the answers, bounded.
-  if (previewLineCache.size >= PREVIEW_LINE_CACHE_MAX) previewLineCache.clear();
-  previewLineCache.set(line, plain);
-  return plain;
-}
-
-const PREVIEW_LINE_CACHE_MAX = 500;
-const previewLineCache = new Map<string, string>();
-
-function computePlainPreviewLine(line: string): string {
-  const trimmed = line.trim();
-  if (/^(`{3,}|~{3,}|[-*_]{3,}\s*$)/.test(trimmed)) return "";
-  return trimmed
-    .replace(/^#{1,6}(\s+|$)/, "")
-    .replace(/^>\s?/, "")
-    .replace(/^(?:[-*+]|\d+[.)])\s+/, "")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/(\*\*|__)(.+?)\1/g, "$2")
-    .replace(/(^|[^\w*])[*_]([^*_\s][^*_]*?)[*_](?=[^\w*]|$)/g, "$1$2")
-    .replace(/`([^`]+)`/g, "$1")
-    .trim();
-}
-
-/**
- * The part of {@link previewOf} that may be written to disk: a turn label when
- * the newest message is a task-service turn, else null so the cold-start
- * snapshot falls back to the thread title. The raw message line is never
- * returned — see the invariant in `chatsSnapshot.ts`.
- */
-export function snapshotPreviewLabel(
-  summary: BotSummary,
-  describeTurn: (turn: ServerTurn) => string,
-): string | null {
-  if (summary.newestThread === null) return null;
-  if (hidesBotPreviews(summary.bot) || summary.newestMessage?.hidden === true) {
-    return HIDDEN_PREVIEW_LABEL;
-  }
-  if (summary.newestMessage === null) return null;
-  const notice = readChatNotice(summary.newestMessage);
-  if (notice !== null) return chatNoticeLabel(notice, summary.newestMessage.text, Date.now());
-  const turn = readServerTurn(summary.newestMessage);
-  return turn === null ? null : describeTurn(turn);
 }
 
 /**

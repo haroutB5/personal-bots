@@ -1,10 +1,25 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
+import {
+  currentProgressNote,
+  currentTurnHasToolStep,
+  PROGRESS_REFRESH_MS,
+  progressRefreshDelayMs,
+  type WorkingProgressEntry,
+} from "@hbots/personal-client/bots/workingProgress";
 import { useEffect, useMemo, useRef } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
+
+export {
+  currentProgressNote,
+  currentTurnHasToolStep,
+  PROGRESS_REFRESH_MS,
+  progressRefreshDelayMs,
+  type WorkingProgressEntry,
+};
 
 /**
  * The latest progress note of each working chat, for the Bots list rows. The
@@ -20,55 +35,6 @@ export const personalBotsWorkingProgress = createEnvironmentRpcQueryAtomFamily(
     idleTtlMs: 60_000,
   },
 );
-
-/** At most one read this often while a working chat keeps changing. */
-export const PROGRESS_REFRESH_MS = 2_500;
-
-/** A note and the turn the server read it from. */
-export interface WorkingProgressEntry {
-  readonly note: string;
-  readonly turnId: string | null;
-  /** The turn has started a tool step (the server's `toolStep`). */
-  readonly toolStep?: boolean | undefined;
-}
-
-const NO_NOTES: ReadonlyMap<string, WorkingProgressEntry> = new Map();
-
-/**
- * The note to show for a working chat, or undefined. Only a note read from the
- * turn the chat's shell reports as its latest. The read is cached for a minute
- * after its last row leaves (`idleTtlMs`), so when the same chat starts its
- * next turn the previous turn's last note is still what the query holds until
- * the new read lands: that stale line flashed on the row for about a second.
- * A note from another turn is not this turn's, whatever its text.
- */
-export function currentProgressNote(
-  entry: WorkingProgressEntry | undefined,
-  shell: { readonly latestTurn?: { readonly turnId: string } | null },
-): string | undefined {
-  if (entry === undefined) return undefined;
-  return entry.turnId === (shell.latestTurn?.turnId ?? null) ? entry.note : undefined;
-}
-
-/**
- * The chat's current turn has started a tool step, so it is working, not
- * thinking, even before its first line of text. The list's shells only know
- * the reply text (`isTurnThinking`), so without this a turn that went straight
- * to tools kept the thinking pose, and no comet, until it said something.
- * Same turn check as {@link currentProgressNote}.
- */
-export function currentTurnHasToolStep(
-  entry: WorkingProgressEntry | undefined,
-  shell: { readonly latestTurn?: { readonly turnId: string } | null },
-): boolean {
-  if (entry === undefined || entry.toolStep !== true) return false;
-  return entry.turnId === (shell.latestTurn?.turnId ?? null);
-}
-
-/** How long to hold a read that is due, so reads stay at least {@link PROGRESS_REFRESH_MS} apart. */
-export function progressRefreshDelayMs(lastRefreshMs: number, nowMs: number): number {
-  return Math.max(0, lastRefreshMs + PROGRESS_REFRESH_MS - nowMs);
-}
 
 export interface WorkingProgressTarget {
   readonly threadId: string;
