@@ -229,7 +229,7 @@ export function BotsScreen({
   );
   const [now, setNow] = useState(() => Date.now());
   const persistedKey = useRef<string | null>(null);
-  const previousPhase = useRef(connection.phase);
+  const refreshedGeneration = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -238,11 +238,15 @@ export function BotsScreen({
 
   const refreshList = list.refresh;
   useEffect(() => {
-    if (previousPhase.current !== "connected" && connection.phase === "connected") {
+    if (
+      connection.phase === "connected" &&
+      shellState.status === "live" &&
+      refreshedGeneration.current !== connection.generation
+    ) {
+      refreshedGeneration.current = connection.generation;
       refreshList();
     }
-    previousPhase.current = connection.phase;
-  }, [connection.phase, refreshList]);
+  }, [connection.generation, connection.phase, refreshList, shellState.status]);
 
   const shells = useMemo<ReadonlyArray<EnvironmentThreadShell>>(
     () => native.shellsOf(shellState.snapshot._tag === "Some" ? shellState.snapshot.value : null),
