@@ -3,6 +3,7 @@ import {
   MessageId,
   ThreadId,
   botEffectiveModelSelection,
+  botTakesVoiceCalls,
   personalReplyContext,
   withPersonalFollowUp,
   type ChatAttachment,
@@ -28,10 +29,11 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@hbots/personal-client/feed/co
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import {
   IconArrowUp,
-  IconPaperclip,
+  IconFile,
+  IconPhone,
+  IconPlus,
   IconSquare,
   IconX,
-  IconFile,
 } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
@@ -314,7 +316,8 @@ export function Composer({
       clearDraft();
       onSent();
       return true;
-    } catch {
+    } catch (cause) {
+      console.warn("outbox queue failed", cause);
       setError("Couldn't queue that message. Your draft is still here.");
       return false;
     }
@@ -338,9 +341,12 @@ export function Composer({
       }
     }
     if (offline || hasOutboxForThread(threadId)) {
-      const queued = await queue(messageId, textValue, createdAt, followUp ?? null);
-      setSending(false);
-      if (queued) setText("");
+      try {
+        const queued = await queue(messageId, textValue, createdAt, followUp ?? null);
+        if (queued) setText("");
+      } finally {
+        setSending(false);
+      }
       return;
     }
     let uploaded: ReadonlyArray<ChatAttachment> = [];
@@ -496,12 +502,12 @@ export function Composer({
       <View style={styles.row}>
         <Pressable
           onPress={() => setAttachOpen(true)}
-          disabled={picking || (!canSend && !working)}
+          disabled={picking || sending || preparing}
           accessibilityRole="button"
           accessibilityLabel="Add photos, camera or files"
           style={styles.roundButton}
         >
-          <IconPaperclip size={20} color={tokens.text} strokeWidth={1.75} />
+          <IconPlus size={22} color={tokens.text} strokeWidth={1.75} />
         </Pressable>
         <View style={styles.fieldBox}>
           <TextInput
@@ -514,6 +520,16 @@ export function Composer({
             maxFontSizeMultiplier={1.6}
             style={styles.field}
           />
+          {bot !== null && botTakesVoiceCalls(bot) ? (
+            <Pressable
+              onPress={() => onSendError("Voice calls arrive with the voice update.")}
+              accessibilityRole="button"
+              accessibilityLabel={`Call ${botName}`}
+              style={styles.callButton}
+            >
+              <IconPhone size={19} color={tokens.textSecondary} strokeWidth={1.75} />
+            </Pressable>
+          ) : null}
         </View>
         {showStop ? (
           <Pressable
@@ -625,10 +641,13 @@ const styles = StyleSheet.create({
     maxHeight: 132,
     borderRadius: 22,
     backgroundColor: tokens.fillMuted,
-    justifyContent: "center",
-    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 14,
+    paddingRight: 4,
   },
-  field: { color: tokens.text, fontSize: 16, lineHeight: 22, paddingVertical: 10 },
+  field: { flex: 1, color: tokens.text, fontSize: 16, lineHeight: 22, paddingVertical: 10 },
+  callButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   sendButton: {
     width: 44,
     height: 44,

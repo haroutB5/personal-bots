@@ -17,9 +17,13 @@ const WebSocketTicketWire = Schema.Struct({ ticket: AuthWebSocketTicketResult.fi
 export const decodeTicket = Schema.decodeUnknownSync(WebSocketTicketWire);
 
 async function fetchDescriptor(httpBaseUrl: string) {
-  return decodeDescriptor(
-    await requestJson("descriptor", new URL("/.well-known/t3/environment", httpBaseUrl)),
+  const descriptor = await requestJson(
+    "descriptor",
+    new URL("/.well-known/t3/environment", httpBaseUrl),
+    {},
+    5000,
   );
+  return decodeDescriptor(descriptor);
 }
 
 export async function openSocketUrl(
@@ -28,14 +32,18 @@ export async function openSocketUrl(
 ): Promise<string> {
   const descriptor = await fetchDescriptor(session.httpBaseUrl);
   assertSameEnvironment(session.environmentId, descriptor.environmentId);
-  const ticket = decodeTicket(
-    await requestJson("ticket", new URL("/api/auth/websocket-ticket", session.httpBaseUrl), {
+  const ticket = await requestJson(
+    "ticket",
+    new URL("/api/auth/websocket-ticket", session.httpBaseUrl),
+    {
       method: "POST",
       headers: { authorization: `Bearer ${session.accessToken}` },
-    }),
+    },
+    5000,
   );
+  const decodedTicket = decodeTicket(ticket);
   const socketUrl = new URL("/ws", session.wsBaseUrl);
-  socketUrl.searchParams.set("wsTicket", ticket.ticket);
+  socketUrl.searchParams.set("wsTicket", decodedTicket.ticket);
   socketUrl.searchParams.set("clientSurface", "mobile");
   socketUrl.searchParams.set("clientDeviceType", "phone");
   socketUrl.searchParams.set("clientOs", "android");

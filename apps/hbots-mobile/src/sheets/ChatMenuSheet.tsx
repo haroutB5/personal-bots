@@ -13,6 +13,7 @@ export function ChatMenuSheet({
   onStop,
   onSwitchModel,
   onChatSettings,
+  onSearch,
   onCall,
   onNewChat,
   onAllChats,
@@ -27,6 +28,7 @@ export function ChatMenuSheet({
   readonly onStop: () => void;
   readonly onSwitchModel: () => void;
   readonly onChatSettings: () => void;
+  readonly onSearch: () => void;
   readonly onCall: () => void;
   readonly onNewChat: () => void;
   readonly onAllChats: () => void;
@@ -38,6 +40,7 @@ export function ChatMenuSheet({
       {running ? <SheetAction label="Stop" onPress={onStop} /> : null}
       {providerWait ? <SheetAction label="Switch model…" onPress={onSwitchModel} /> : null}
       <SheetAction label="Chat settings…" onPress={onChatSettings} />
+      <SheetAction label="Search messages" onPress={onSearch} />
       {bot?.allowVoiceCalls === true ? (
         <SheetAction label={`Call ${bot.name}`} onPress={onCall} />
       ) : null}

@@ -81,7 +81,7 @@ export function RenameChatSheet({
   };
 
   return (
-    <SheetShell visible={visible} title="Rename chat" onClose={onClose}>
+    <SheetShell inline visible={visible} title="Rename chat" onClose={onClose}>
       <View style={styles.body}>
         <TextInput
           value={draft}
@@ -90,6 +90,7 @@ export function RenameChatSheet({
             setError(null);
           }}
           maxLength={RENAME_CHAT_MAX_CHARS}
+          autoFocus
           placeholder="Chat title"
           placeholderTextColor={tokens.textSecondary}
           accessibilityLabel="Chat title"

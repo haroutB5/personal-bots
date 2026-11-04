@@ -340,7 +340,40 @@ export function createNativePersonal(
           () => undefined,
         );
         setState(connectedState(generation.value));
-        await Promise.race([Effect.runPromise(next.closed), disposedPromise, retrySignal.promise]);
+        let stopWatchdog: () => void = () => undefined;
+        const liveness = new Promise<void>((resolve) => {
+          let stopped = false;
+          let timer: ReturnType<typeof setTimeout>;
+          const tick = async () => {
+            if (stopped || disposed) return;
+            try {
+              await Promise.race([
+                Effect.runPromise(next.session.probe),
+                sleep(4_000).then(() => {
+                  throw new Error("probe timeout");
+                }),
+              ]);
+            } catch {
+              resolve();
+              return;
+            }
+            if (!stopped) {
+              timer = setTimeout(tick, 5_000);
+            }
+          };
+          timer = setTimeout(tick, 4_000);
+          stopWatchdog = () => {
+            stopped = true;
+            clearTimeout(timer);
+          };
+        });
+        await Promise.race([
+          Effect.runPromise(next.closed),
+          disposedPromise,
+          retrySignal.promise,
+          liveness,
+        ]);
+        stopWatchdog();
       } catch (cause) {
         if (
           !disposed &&
@@ -355,7 +388,7 @@ export function createNativePersonal(
       current = null;
       if (ended !== null) {
         Effect.runSync(SubscriptionRef.set(sessionRef, Option.none()));
-        await ended.dispose();
+        await Promise.race([ended.dispose(), sleep(3_000)]);
       }
       retrySignal = newRetrySignal();
       attempt += 1;

@@ -78,7 +78,7 @@ export function NewChatSheet({
   };
 
   return (
-    <SheetShell visible={visible} title={`New chat with ${botName}`} onClose={onClose}>
+    <SheetShell inline visible={visible} title={`New chat with ${botName}`} onClose={onClose}>
       <View style={styles.body}>
         <TextInput
           value={draft}
@@ -87,6 +87,7 @@ export function NewChatSheet({
             setError(null);
           }}
           maxLength={RENAME_CHAT_MAX_CHARS}
+          autoFocus
           placeholder="Name (optional)"
           placeholderTextColor={tokens.textSecondary}
           accessibilityLabel="Chat name (optional)"

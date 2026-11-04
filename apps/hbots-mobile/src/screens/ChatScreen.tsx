@@ -6,7 +6,14 @@ import {
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { requestOlderThreadTurns } from "@t3tools/client-runtime/state/threads";
-import { IconArrowLeft, IconDots, IconSearch, IconX } from "@tabler/icons-react-native";
+import {
+  IconBellOff,
+  IconChevronLeft,
+  IconDeviceLaptop,
+  IconDots,
+  IconSearch,
+  IconX,
+} from "@tabler/icons-react-native";
 import * as Option from "effect/Option";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -397,7 +404,7 @@ export function ChatScreen({
             accessibilityLabel="Back"
             style={styles.iconButton}
           >
-            <IconArrowLeft size={23} color={tokens.text} strokeWidth={1.75} />
+            <IconChevronLeft size={24} color={tokens.text} strokeWidth={1.75} />
           </Pressable>
           {record?.bot != null ? (
             <Pressable
@@ -409,7 +416,7 @@ export function ChatScreen({
               <BotAvatar
                 shape={record.bot.avatarShape}
                 color={record.bot.avatarColor}
-                size={38}
+                size={48}
                 label={record.bot.name}
               />
               <View style={styles.headerText}>
@@ -417,6 +424,9 @@ export function ChatScreen({
                   <Text style={styles.headerTitle} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                     {header.botName}
                   </Text>
+                  {header.muted ? (
+                    <IconBellOff size={15} color={tokens.textSecondary} strokeWidth={2} />
+                  ) : null}
                   {header.contextBadge !== null ? (
                     <Text style={styles.contextBadge}>{header.contextBadge}</Text>
                   ) : null}
@@ -424,12 +434,14 @@ export function ChatScreen({
                 {thread !== null ? (
                   <View style={styles.subtitleRow}>
                     <View style={[styles.stateDot, stateDotStyle(header.state)]} />
-                    <Text style={styles.subtitle} numberOfLines={1}>
-                      {header.stateLabel}
-                    </Text>
+                    {header.state === "idle" && header.modelLabel !== null ? null : (
+                      <Text style={styles.subtitle} numberOfLines={1}>
+                        {header.stateLabel}
+                      </Text>
+                    )}
                     {header.modelLabel !== null ? (
                       <Text style={styles.modelLabel} numberOfLines={1}>
-                        {` · ${header.modelLabel}`}
+                        {header.state === "idle" ? header.modelLabel : ` · ${header.modelLabel}`}
                       </Text>
                     ) : null}
                   </View>
@@ -441,14 +453,7 @@ export function ChatScreen({
               <Text style={styles.headerTitle}>{thread?.title ?? "Chat"}</Text>
             </View>
           )}
-          <Pressable
-            onPress={() => setSearchOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Search messages"
-            style={styles.iconButton}
-          >
-            <IconSearch size={21} color={tokens.textSecondary} strokeWidth={1.75} />
-          </Pressable>
+
           <Pressable
             onPress={() => setMenuOpen(true)}
             accessibilityRole="button"
@@ -464,6 +469,7 @@ export function ChatScreen({
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          contentOffset={{ x: 134, y: 0 }}
           contentContainerStyle={styles.chips}
           style={styles.chipScroll}
         >
@@ -479,7 +485,9 @@ export function ChatScreen({
               accessibilityState={{ selected: chip.current }}
               style={[styles.chip, chip.current ? styles.chipCurrent : null]}
             >
-              {chip.pinned ? <Text style={styles.chipPin}>•</Text> : null}
+              {chip.unread && !chip.current ? (
+                <View style={[styles.chipDot, styles.chipUnreadDot]} />
+              ) : null}
               {chip.state !== "idle" && !chip.current ? (
                 <View style={[styles.chipDot, stateDotStyle(chip.state)]} />
               ) : null}
@@ -492,14 +500,6 @@ export function ChatScreen({
               </Text>
             </Pressable>
           ))}
-          <Pressable
-            onPress={() => setNewChatOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel={`New chat with ${header.botName}`}
-            style={styles.newChip}
-          >
-            <Text style={styles.newChipText}>+ New</Text>
-          </Pressable>
         </ScrollView>
       ) : null}
 
@@ -591,6 +591,17 @@ export function ChatScreen({
             </View>
           ) : (
             <View style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
+              <Pressable
+                onPress={() =>
+                  setActionError("The live computer view arrives with the Computer tab.")
+                }
+                accessibilityRole="button"
+                accessibilityLabel="Computer"
+                style={styles.computerDock}
+              >
+                <IconDeviceLaptop size={16} color={tokens.textSecondary} strokeWidth={1.75} />
+                <Text style={styles.computerDockText}>Computer</Text>
+              </Pressable>
               <Composer
                 native={native}
                 chat={chat}
@@ -632,6 +643,10 @@ export function ChatScreen({
         onChatSettings={() => {
           setMenuOpen(false);
           setSettingsOpen(true);
+        }}
+        onSearch={() => {
+          setMenuOpen(false);
+          setSearchOpen(true);
         }}
         onCall={() => {
           setMenuOpen(false);
@@ -787,7 +802,7 @@ function ChatHeader({
         accessibilityLabel="Back"
         style={styles.iconButton}
       >
-        <IconArrowLeft size={23} color={tokens.text} strokeWidth={1.75} />
+        <IconChevronLeft size={23} color={tokens.text} strokeWidth={1.75} />
       </Pressable>
       <View style={styles.headerText}>
         <Text style={styles.headerTitle} numberOfLines={1}>
@@ -826,13 +841,14 @@ function ChatHeader({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: tokens.bg },
   header: {
-    minHeight: 56,
+    minHeight: 52,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 6,
+    paddingLeft: 16,
+    paddingRight: 6,
     gap: 2,
   },
-  headerIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 },
+  headerIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
   headerText: { flex: 1, minWidth: 0, gap: 1 },
   headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   headerTitle: {
@@ -856,7 +872,7 @@ const styles = StyleSheet.create({
   subtitle: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17 },
   modelLabel: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, flexShrink: 1 },
   iconButton: { width: 42, height: 44, alignItems: "center", justifyContent: "center" },
-  chipScroll: { flexGrow: 0, marginBottom: 6 },
+  chipScroll: { height: 48, flexGrow: 0 },
   chips: { paddingHorizontal: 12, gap: 6, alignItems: "center" },
   chip: {
     minHeight: 32,
@@ -873,6 +889,7 @@ const styles = StyleSheet.create({
   chipTextCurrent: { color: tokens.primaryText, fontWeight: "600" },
   chipPin: { color: tokens.textSecondary, fontSize: 11 },
   chipDot: { width: 6, height: 6, borderRadius: 999 },
+  chipUnreadDot: { backgroundColor: tokens.primary },
   newChip: {
     minHeight: 32,
     paddingHorizontal: 12,
@@ -921,6 +938,16 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   composerPlaceholderText: { color: tokens.textSecondary, fontSize: 15, paddingVertical: 10 },
+  computerDock: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: tokens.border,
+  },
+  computerDockText: { color: tokens.textSecondary, fontSize: 13, fontWeight: "500" },
   searchHeader: { paddingHorizontal: 8, paddingVertical: 6 },
   searchBox: {
     flexDirection: "row",

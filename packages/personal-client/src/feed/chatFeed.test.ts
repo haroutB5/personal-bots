@@ -41,11 +41,15 @@ describe("buildChatFeed", () => {
         createdAt: "2026-11-04T09:00:02.000Z",
       },
     ];
-    const hidden = buildChatFeed({ messages: [], proposedPlans: [], activities });
+    const hidden = buildChatFeed({
+      messages: [],
+      proposedPlans: [],
+      activities: activities as never,
+    });
     const shown = buildChatFeed({
       messages: [],
       proposedPlans: [],
-      activities,
+      activities: activities as never,
       showToolSteps: true,
     });
     expect(hidden.some((item) => item.kind === "work")).toBe(false);
@@ -81,7 +85,7 @@ describe("buildChatFeed", () => {
         turnId: TurnId.make("turn-1"),
         createdAt: "2026-11-04T09:00:02.000Z",
       },
-    ]);
+    ] as never);
     expect(entries.map((entry) => entry.label)).toEqual(["Ran the tests"]);
   });
 });

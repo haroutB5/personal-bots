@@ -20,10 +20,13 @@ export function SheetShell({
   title,
   onClose,
   children,
+  inline = false,
 }: PropsWithChildren<{
   readonly visible: boolean;
   readonly title: string;
   readonly onClose: () => void;
+  /** Render inside the screen instead of a Modal: text fields keep their taps above the IME. */
+  readonly inline?: boolean;
 }>) {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
@@ -58,15 +61,8 @@ export function SheetShell({
       },
     }),
   ).current;
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      statusBarTranslucent
-      navigationBarTranslucent
-      onRequestClose={onClose}
-    >
+  const content = (
+    <>
       <View style={styles.root}>
         <Pressable
           accessibilityRole="button"
@@ -103,6 +99,22 @@ export function SheetShell({
           <View style={styles.body}>{children}</View>
         </Animated.View>
       </View>
+    </>
+  );
+  if (inline) {
+    if (!visible) return null;
+    return <View style={styles.inlineRoot}>{content}</View>;
+  }
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
+      {content}
     </Modal>
   );
 }
@@ -169,6 +181,16 @@ export function SheetCancel({ onPress }: { readonly onPress: () => void }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: "flex-end" },
+  inlineRoot: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "flex-end",
+    zIndex: 20,
+    elevation: 20,
+  },
   backdrop: {
     position: "absolute",
     top: 0,
@@ -178,6 +200,8 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.scrim,
   },
   sheet: {
+    zIndex: 10,
+    elevation: 10,
     backgroundColor: tokens.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,

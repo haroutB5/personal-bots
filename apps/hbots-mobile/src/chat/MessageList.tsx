@@ -10,6 +10,7 @@ import {
 } from "@hbots/personal-client/conversation/conversationModel";
 import { replyQuoteForMessage } from "@hbots/personal-client/feed/messageReply";
 import { ownerVisibleText } from "@hbots/personal-client/feed/composerText";
+import { turnStartByAssistantItem } from "@hbots/personal-client/feed/contextUsed";
 import type { LatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
 import type { PendingOutgoingMessage } from "@hbots/personal-client/feed/types";
 import type { OutboxRow } from "@hbots/personal-client/composer/outbox";
@@ -226,10 +227,12 @@ function SwipeMessageRow({
 function UserBubble({
   text,
   quote,
+  attachments,
   onLongPress,
 }: {
   readonly text: string;
   readonly quote: PersonalReplyQuote | null;
+  readonly attachments: ReadonlyArray<{ readonly id: string; readonly name: string }> | undefined;
   readonly onLongPress: () => void;
 }) {
   return (
@@ -247,6 +250,14 @@ function UserBubble({
       <Text style={styles.userText} selectable>
         {text}
       </Text>
+      {attachments?.map((attachment) => (
+        <View key={attachment.id} style={styles.attachment}>
+          <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+          <Text style={styles.attachmentText} numberOfLines={1}>
+            {attachment.name}
+          </Text>
+        </View>
+      ))}
     </Pressable>
   );
 }
@@ -304,6 +315,7 @@ export function MessageList({
     ],
     [items, pending, queued],
   );
+  const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
 
   return (
     <FlatList
@@ -440,6 +452,7 @@ export function MessageList({
                   <UserBubble
                     text={text}
                     quote={quote}
+                    attachments={message.attachments}
                     onLongPress={() =>
                       onMessageMenu({
                         messageId: String(message.id),
@@ -487,6 +500,9 @@ export function MessageList({
                     </Text>
                   </View>
                 ))}
+                {contextTurns.has(String(message.id)) ? (
+                  <Text style={styles.contextUsed}>{"Context used ⌄"}</Text>
+                ) : null}
               </Pressable>
             </SwipeMessageRow>
           </View>
@@ -587,6 +603,7 @@ const styles = StyleSheet.create({
   quoteName: { color: tokens.text, fontSize: 12, fontWeight: "600" },
   quoteExcerpt: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16 },
   readStatus: { color: tokens.textTertiary, fontSize: 11, lineHeight: 15 },
+  contextUsed: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2 },
   sentAt: { color: tokens.textTertiary, fontSize: 12 },
   sentAtEnd: { textAlign: "right" },
   attachment: {
