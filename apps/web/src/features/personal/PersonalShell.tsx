@@ -28,7 +28,11 @@ import {
   desktopPaneLayout,
   sidebarSelectionKey,
 } from "./personalMode";
-import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
+import {
+  setPersonalNumberPreference,
+  useImportPersonalSharedPreferences,
+  usePersonalNumberPreference,
+} from "./personalPreferences";
 import { PersonalTabBar } from "./PersonalTabBar";
 import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
 import { warmPersonalRoutes } from "./warmRoutes";
@@ -75,6 +79,8 @@ export function PersonalShell(): JSX.Element {
   const router = useRouter();
   // A voice call's own commands go to this laptop.
   const environmentId = usePersonalEnvironmentId();
+  // The Chat rows the phone shares: move this browser's old values over once.
+  useImportPersonalSharedPreferences(environmentId);
   useEffect(() => warmPersonalRoutes(router), [router]);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidth = usePersonalNumberPreference("sidebarWidth");

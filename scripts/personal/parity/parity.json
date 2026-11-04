@@ -30,7 +30,7 @@
       "A4": 13,
       "A9": 37,
       "A10": 30,
-      "A14": 43,
+      "A14": 45,
       "A15": 55,
       "A11": 17,
       "A16": 22,
@@ -44,7 +44,6 @@
       "A3": 15,
       "A6": 10,
       "A7": 22,
-      "L3b": 2,
       "N1": 7
     },
     "rpcServerOnly": 7,
@@ -1479,10 +1478,10 @@
       "id": "action:ConversationScreen.tsx#stop",
       "kind": "action",
       "title": "Stop",
-      "web": "ConversationScreen.tsx:1592",
+      "web": "ConversationScreen.tsx:1597",
       "via": "menu",
       "logic": {
-        "files": 123,
+        "files": 124,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1568,16 +1567,16 @@
       },
       "pr": "A4",
       "status": "planned",
-      "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1592 does, checked on the web app."
+      "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1597 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#switch-model",
       "kind": "action",
       "title": "Switch model...",
-      "web": "ConversationScreen.tsx:1595",
+      "web": "ConversationScreen.tsx:1600",
       "via": "menu",
       "logic": {
-        "files": 123,
+        "files": 124,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1663,16 +1662,16 @@
       },
       "pr": "A4",
       "status": "planned",
-      "check": "Tap \"Switch model...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1595 does, checked on the web app."
+      "check": "Tap \"Switch model...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1600 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#chat-settings",
       "kind": "action",
       "title": "Chat settings...",
-      "web": "ConversationScreen.tsx:1606",
+      "web": "ConversationScreen.tsx:1611",
       "via": "menu",
       "logic": {
-        "files": 123,
+        "files": 124,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1758,16 +1757,16 @@
       },
       "pr": "A4",
       "status": "planned",
-      "check": "Tap \"Chat settings...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1606 does, checked on the web app."
+      "check": "Tap \"Chat settings...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1611 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#call",
       "kind": "action",
       "title": "Call",
-      "web": "ConversationScreen.tsx:1618",
+      "web": "ConversationScreen.tsx:1623",
       "via": "menu",
       "logic": {
-        "files": 123,
+        "files": 124,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1853,16 +1852,16 @@
       },
       "pr": "A4",
       "status": "planned",
-      "check": "Tap \"Call\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1618 does, checked on the web app."
+      "check": "Tap \"Call\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1623 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#new-chat",
       "kind": "action",
       "title": "New chat",
-      "web": "ConversationScreen.tsx:1627",
+      "web": "ConversationScreen.tsx:1632",
       "via": "menu",
       "logic": {
-        "files": 123,
+        "files": 124,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1948,16 +1947,16 @@
       },
       "pr": "A4",
       "status": "planned",
-      "check": "Tap \"New chat\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1627 does, checked on the web app."
+      "check": "Tap \"New chat\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1632 does, checked on the web app."
     },
     {
       "id": "action:ConversationScreen.tsx#all-chats",
       "kind": "action",
       "title": "All chats",
-      "web": "ConversationScreen.tsx:1641",
+      "web": "ConversationScreen.tsx:1646",
       "via": "menu",
       "logic": {
-        "files": 123,
+        "files": 124,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2043,7 +2042,7 @@
       },
       "pr": "A4",
       "status": "planned",
-      "check": "Tap \"All chats\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1641 does, checked on the web app."
+      "check": "Tap \"All chats\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1646 does, checked on the web app."
     },
     {
       "id": "action:DelegationCard.tsx#open-chat",
@@ -3049,8 +3048,8 @@
       "web": "ConversationSidePanel.tsx:67",
       "via": "gesture",
       "logic": {
-        "files": 2,
-        "inPackage": [],
+        "files": 22,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["desktopColumns.ts", "personalPreferences.ts"]
       },
       "status": "n/a",
@@ -3192,10 +3191,10 @@
       "id": "action:PersonalShell.tsx#edge-swipe-back",
       "kind": "action",
       "title": "edge swipe back",
-      "web": "PersonalShell.tsx:85",
+      "web": "PersonalShell.tsx:91",
       "via": "gesture",
       "logic": {
-        "files": 28,
+        "files": 29,
         "inPackage": ["usePersonalBots.ts", "perfFlags.ts", "personalMode.ts"],
         "direct": [
           "desktopColumns.ts",
@@ -3211,16 +3210,16 @@
       },
       "pr": "A1",
       "status": "planned",
-      "check": "Perform \"edge swipe back\" on Android where PersonalShell.tsx:85 offers it. The same result appears on the web app after a refresh."
+      "check": "Perform \"edge swipe back\" on Android where PersonalShell.tsx:91 offers it. The same result appears on the web app after a refresh."
     },
     {
       "id": "action:PersonalShell.tsx#drag-to-resize-the-desktop-column",
       "kind": "action",
       "title": "drag to resize the desktop column",
-      "web": "PersonalShell.tsx:179",
+      "web": "PersonalShell.tsx:185",
       "via": "gesture",
       "logic": {
-        "files": 28,
+        "files": 29,
         "inPackage": ["usePersonalBots.ts", "perfFlags.ts", "personalMode.ts"],
         "direct": [
           "desktopColumns.ts",
@@ -3434,8 +3433,8 @@
       "title": "ConversationSidePanel",
       "web": "ConversationSidePanel.tsx:1",
       "logic": {
-        "files": 2,
-        "inPackage": [],
+        "files": 22,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["desktopColumns.ts", "personalPreferences.ts"]
       },
       "status": "n/a",
@@ -3760,10 +3759,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#your-name-section",
       "kind": "setting",
       "title": "Your name (section)",
-      "web": "PersonalSettingsScreen.tsx:424",
+      "web": "PersonalSettingsScreen.tsx:450",
       "section": "Your name",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3785,10 +3784,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#your-name-displaynameform",
       "kind": "setting",
       "title": "Your name / DisplayNameForm",
-      "web": "PersonalSettingsScreen.tsx:429",
+      "web": "PersonalSettingsScreen.tsx:455",
       "section": "Your name",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3810,10 +3809,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-section",
       "kind": "setting",
       "title": "Bots (section)",
-      "web": "PersonalSettingsScreen.tsx:442",
+      "web": "PersonalSettingsScreen.tsx:468",
       "section": "Bots",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3835,10 +3834,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-team",
       "kind": "setting",
       "title": "Bots / Team",
-      "web": "PersonalSettingsScreen.tsx:455",
+      "web": "PersonalSettingsScreen.tsx:481",
       "section": "Bots",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3860,10 +3859,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-new-bot",
       "kind": "setting",
       "title": "Bots / New bot",
-      "web": "PersonalSettingsScreen.tsx:481",
+      "web": "PersonalSettingsScreen.tsx:507",
       "section": "Bots",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3885,10 +3884,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-removed-bots",
       "kind": "setting",
       "title": "Bots / Removed bots",
-      "web": "PersonalSettingsScreen.tsx:502",
+      "web": "PersonalSettingsScreen.tsx:528",
       "section": "Bots",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3910,10 +3909,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#appearance-section",
       "kind": "setting",
       "title": "Appearance (section)",
-      "web": "PersonalSettingsScreen.tsx:530",
+      "web": "PersonalSettingsScreen.tsx:556",
       "section": "Appearance",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3934,10 +3933,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#appearance-appearancecontrol",
       "kind": "setting",
       "title": "Appearance / AppearanceControl",
-      "web": "PersonalSettingsScreen.tsx:535",
+      "web": "PersonalSettingsScreen.tsx:561",
       "section": "Appearance",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3958,10 +3957,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-section",
       "kind": "setting",
       "title": "Chat (section)",
-      "web": "PersonalSettingsScreen.tsx:542",
+      "web": "PersonalSettingsScreen.tsx:568",
       "section": "Chat",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3983,10 +3982,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-show-tool-steps",
       "kind": "setting",
       "title": "Chat / Show tool steps",
-      "web": "PersonalSettingsScreen.tsx:550",
+      "web": "PersonalSettingsScreen.tsx:576",
       "section": "Chat",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4008,10 +4007,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-show-routines-in-chats",
       "kind": "setting",
       "title": "Chat / Show routines in chats",
-      "web": "PersonalSettingsScreen.tsx:557",
+      "web": "PersonalSettingsScreen.tsx:583",
       "section": "Chat",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4033,10 +4032,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-autoarchivetaskchatsrow",
       "kind": "setting",
       "title": "Chat / AutoArchiveTaskChatsRow",
-      "web": "PersonalSettingsScreen.tsx:563",
+      "web": "PersonalSettingsScreen.tsx:589",
       "section": "Chat",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4058,10 +4057,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#voice-calls-section",
       "kind": "setting",
       "title": "Voice calls (section)",
-      "web": "PersonalSettingsScreen.tsx:576",
+      "web": "PersonalSettingsScreen.tsx:602",
       "section": "Voice calls",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4083,10 +4082,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#voice-calls-voicesettingssection",
       "kind": "setting",
       "title": "Voice calls / VoiceSettingsSection",
-      "web": "PersonalSettingsScreen.tsx:580",
+      "web": "PersonalSettingsScreen.tsx:606",
       "section": "Voice calls",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4108,10 +4107,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-section",
       "kind": "setting",
       "title": "Plugins (section)",
-      "web": "PersonalSettingsScreen.tsx:583",
+      "web": "PersonalSettingsScreen.tsx:609",
       "section": "Plugins",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4133,10 +4132,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-connections",
       "kind": "setting",
       "title": "Plugins / Connections",
-      "web": "PersonalSettingsScreen.tsx:596",
+      "web": "PersonalSettingsScreen.tsx:622",
       "section": "Plugins",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4158,10 +4157,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-passwords",
       "kind": "setting",
       "title": "Plugins / Passwords",
-      "web": "PersonalSettingsScreen.tsx:618",
+      "web": "PersonalSettingsScreen.tsx:644",
       "section": "Plugins",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4183,10 +4182,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-api-keys",
       "kind": "setting",
       "title": "Plugins / API keys",
-      "web": "PersonalSettingsScreen.tsx:640",
+      "web": "PersonalSettingsScreen.tsx:666",
       "section": "Plugins",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4208,10 +4207,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-section",
       "kind": "setting",
       "title": "Routines, memory and notifications (section)",
-      "web": "PersonalSettingsScreen.tsx:657",
+      "web": "PersonalSettingsScreen.tsx:683",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4233,10 +4232,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-routines",
       "kind": "setting",
       "title": "Routines, memory and notifications / Routines",
-      "web": "PersonalSettingsScreen.tsx:667",
+      "web": "PersonalSettingsScreen.tsx:693",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4258,10 +4257,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-memory",
       "kind": "setting",
       "title": "Routines, memory and notifications / Memory",
-      "web": "PersonalSettingsScreen.tsx:675",
+      "web": "PersonalSettingsScreen.tsx:701",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4283,10 +4282,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-notifications",
       "kind": "setting",
       "title": "Routines, memory and notifications / Notifications",
-      "web": "PersonalSettingsScreen.tsx:683",
+      "web": "PersonalSettingsScreen.tsx:709",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4308,10 +4307,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#about-section",
       "kind": "setting",
       "title": "About (section)",
-      "web": "PersonalSettingsScreen.tsx:728",
+      "web": "PersonalSettingsScreen.tsx:754",
       "section": "About",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4333,10 +4332,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#about-about",
       "kind": "setting",
       "title": "About / About",
-      "web": "PersonalSettingsScreen.tsx:745",
+      "web": "PersonalSettingsScreen.tsx:771",
       "section": "About",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4358,10 +4357,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-section",
       "kind": "setting",
       "title": "Advanced (section)",
-      "web": "PersonalSettingsScreen.tsx:771",
+      "web": "PersonalSettingsScreen.tsx:797",
       "section": "Advanced",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4382,10 +4381,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-developer-view",
       "kind": "setting",
       "title": "Advanced / Developer view",
-      "web": "PersonalSettingsScreen.tsx:786",
+      "web": "PersonalSettingsScreen.tsx:812",
       "section": "Advanced",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -4406,10 +4405,10 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-diagnostics-overlay",
       "kind": "setting",
       "title": "Advanced / Diagnostics overlay",
-      "web": "PersonalSettingsScreen.tsx:813",
+      "web": "PersonalSettingsScreen.tsx:839",
       "section": "Advanced",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["greeting.ts", "usePersonalBots.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -6077,30 +6076,10 @@
       "check": "Change \"Server address\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
-      "id": "pref:personalPreferences.ts#showtoolsteps",
-      "kind": "pref",
-      "title": "showToolSteps",
-      "web": "personalPreferences.ts:23",
-      "storage": "browser",
-      "pr": "L3b",
-      "status": "planned",
-      "check": "\"showToolSteps\" moves to the server and is shared by web and Android."
-    },
-    {
-      "id": "pref:personalPreferences.ts#showroutinesstrip",
-      "kind": "pref",
-      "title": "showRoutinesStrip",
-      "web": "personalPreferences.ts:23",
-      "storage": "browser",
-      "pr": "L3b",
-      "status": "planned",
-      "check": "\"showRoutinesStrip\" moves to the server and is shared by web and Android."
-    },
-    {
       "id": "pref:personalPreferences.ts#showchatsidepanel",
       "kind": "pref",
       "title": "showChatSidePanel",
-      "web": "personalPreferences.ts:24",
+      "web": "personalPreferences.ts:35",
       "storage": "browser",
       "status": "n/a",
       "reason": "Per-device layout or hint state. Stays per device on purpose (plan section 0)."
@@ -6159,7 +6138,7 @@
       "id": "pref:profile#displayName",
       "kind": "pref",
       "title": "displayName",
-      "web": "packages/contracts/src/personalBots.ts:937",
+      "web": "packages/contracts/src/personalBots.ts:950",
       "storage": "server",
       "pr": "A14",
       "status": "planned",
@@ -6169,7 +6148,7 @@
       "id": "pref:profile#teamChange",
       "kind": "pref",
       "title": "teamChange",
-      "web": "packages/contracts/src/personalBots.ts:938",
+      "web": "packages/contracts/src/personalBots.ts:951",
       "storage": "server",
       "pr": "A14",
       "status": "planned",
@@ -6179,7 +6158,7 @@
       "id": "pref:profile#autoArchiveTaskChats",
       "kind": "pref",
       "title": "autoArchiveTaskChats",
-      "web": "packages/contracts/src/personalBots.ts:942",
+      "web": "packages/contracts/src/personalBots.ts:955",
       "storage": "server",
       "pr": "A14",
       "status": "planned",
@@ -6189,7 +6168,7 @@
       "id": "pref:profile#voiceCalls",
       "kind": "pref",
       "title": "voiceCalls",
-      "web": "packages/contracts/src/personalBots.ts:946",
+      "web": "packages/contracts/src/personalBots.ts:959",
       "storage": "server",
       "pr": "A14",
       "status": "planned",
@@ -6199,7 +6178,7 @@
       "id": "pref:profile#autoArchiveTaskChatsAfterMinutes",
       "kind": "pref",
       "title": "autoArchiveTaskChatsAfterMinutes",
-      "web": "packages/contracts/src/personalBots.ts:950",
+      "web": "packages/contracts/src/personalBots.ts:963",
       "storage": "server",
       "pr": "A14",
       "status": "planned",
@@ -6209,11 +6188,31 @@
       "id": "pref:profile#usageVisibility",
       "kind": "pref",
       "title": "usageVisibility",
-      "web": "packages/contracts/src/personalBots.ts:953",
+      "web": "packages/contracts/src/personalBots.ts:966",
       "storage": "server",
       "pr": "A14",
       "status": "planned",
       "check": "\"usageVisibility\" set on one client reads the same on the other. Stored on the server."
+    },
+    {
+      "id": "pref:profile#showToolSteps",
+      "kind": "pref",
+      "title": "showToolSteps",
+      "web": "packages/contracts/src/personalBots.ts:973",
+      "storage": "server",
+      "pr": "A14",
+      "status": "planned",
+      "check": "\"showToolSteps\" set on one client reads the same on the other. Stored on the server."
+    },
+    {
+      "id": "pref:profile#showRoutinesStrip",
+      "kind": "pref",
+      "title": "showRoutinesStrip",
+      "web": "packages/contracts/src/personalBots.ts:975",
+      "storage": "server",
+      "pr": "A14",
+      "status": "planned",
+      "check": "\"showRoutinesStrip\" set on one client reads the same on the other. Stored on the server."
     },
     {
       "id": "rpc:personalBrowserActivity",
@@ -8769,8 +8768,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -8828,8 +8829,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -8887,8 +8890,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -8946,8 +8951,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9005,8 +9012,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9065,8 +9074,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9125,8 +9136,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9185,8 +9198,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9245,8 +9260,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9305,8 +9322,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9365,8 +9384,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9425,8 +9446,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9485,8 +9508,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9545,8 +9570,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9605,8 +9632,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9665,8 +9694,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",
@@ -9725,8 +9756,10 @@
         "BotMute.tsx",
         "BotThreadsScreen.tsx",
         "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
         "ConversationScreen.tsx",
         "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
         "FilesScreen.tsx",
         "GroupConversationScreen.tsx",
         "InAppNotifications.tsx",

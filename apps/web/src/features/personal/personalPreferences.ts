@@ -1,16 +1,28 @@
-import { useCallback, useSyncExternalStore } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  SHARED_PREFERENCE_DEFAULTS,
+  planSharedPreferenceImport,
+  sharedPreferencesFromProfile,
+  type SharedPreference,
+  type StoredSharedPreferences,
+} from "@hbots/personal-client/settings/profilePreferences";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+
+import { useAtomCommand } from "~/state/use-atom-command";
+
+import {
+  personalProfileSet,
+  usePersonalEnvironmentId,
+  usePersonalProfile,
+} from "./usePersonalBots";
 
 /**
- * Device-local view preferences for the bots app, stored the same way the
- * Diagnostics flag is (`window.localStorage`, one key per flag, absent storage
- * simply means the default). Unlike that flag these are read while a chat is
- * mounted, so writes notify subscribers and every reader re-renders at once.
+ * The device-local view preferences. The two Chat rows the owner shares
+ * across web and phone live in the server profile instead, below; only the
+ * desktop side panel, whose meaning depends on this screen's width, stays
+ * here.
  */
 const PREFERENCE_KEYS = {
-  /** Collapsed tool/work group rows in a chat ("> 2 steps"). Off by default. */
-  showToolSteps: "personal-show-tool-steps",
-  /** The "Routines / See all" strip under a chat. On by default. */
-  showRoutinesStrip: "personal-show-routines-strip",
   /**
    * The Computer + Routines panel pinned beside a chat on a wide desktop
    * (1440px+). On by default; the chat header toggles it.
@@ -21,8 +33,6 @@ const PREFERENCE_KEYS = {
 export type PersonalPreference = keyof typeof PREFERENCE_KEYS;
 
 export const PERSONAL_PREFERENCE_DEFAULTS: Record<PersonalPreference, boolean> = {
-  showToolSteps: false,
-  showRoutinesStrip: true,
   showChatSidePanel: true,
 };
 
@@ -57,7 +67,7 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-/** Live value: a Settings toggle or an in-chat dismiss updates every reader. */
+/** Live value: an in-chat toggle updates every reader. */
 export function usePersonalPreference(preference: PersonalPreference): boolean {
   const snapshot = useCallback(() => readPersonalPreference(preference), [preference]);
   const serverSnapshot = useCallback(() => PERSONAL_PREFERENCE_DEFAULTS[preference], [preference]);
@@ -116,4 +126,102 @@ export function usePersonalNumberPreference(preference: PersonalNumberPreference
     [preference],
   );
   return useSyncExternalStore(subscribe, snapshot, serverSnapshot);
+}
+
+export type PersonalSharedPreference = SharedPreference;
+export const PERSONAL_SHARED_PREFERENCE_DEFAULTS = SHARED_PREFERENCE_DEFAULTS;
+
+/** One shared toggle as a profile input, typed instead of a computed key. */
+export function sharedPreferenceInput(
+  preference: SharedPreference,
+  enabled: boolean,
+): StoredSharedPreferences {
+  return preference === "showToolSteps"
+    ? { showToolSteps: enabled }
+    : { showRoutinesStrip: enabled };
+}
+
+/**
+ * A Chat row the whole account shares: the server value when it has one, the
+ * default otherwise. A phone and every browser read through the same profile,
+ * so a change on one shows on the next load of the other.
+ */
+export function usePersonalSharedPreference(preference: SharedPreference): boolean {
+  const environmentId = usePersonalEnvironmentId();
+  const profile = usePersonalProfile(environmentId);
+  return sharedPreferencesFromProfile(profile.data)[preference];
+}
+
+/**
+ * Saves one shared toggle. Resolves true once the server has the new value;
+ * the profile refresh then redraws every reader. The ConversationScreen's
+ * dismiss actions do not await it.
+ */
+export function useSetPersonalSharedPreference(): (
+  preference: SharedPreference,
+  enabled: boolean,
+) => Promise<boolean> {
+  const environmentId = usePersonalEnvironmentId();
+  const setProfile = useAtomCommand(personalProfileSet);
+  return useCallback(
+    async (preference: SharedPreference, enabled: boolean) => {
+      if (environmentId === null) return false;
+      const result = await setProfile({
+        environmentId,
+        input: sharedPreferenceInput(preference, enabled),
+      });
+      return result._tag === "Success";
+    },
+    [environmentId, setProfile],
+  );
+}
+
+function readBrowserPreference(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function clearBrowserPreference(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Storage unavailable: there was nothing to import and nothing to clear.
+  }
+}
+
+/**
+ * Moves the pre-profile browser values onto the server, once per environment.
+ *
+ * It runs when a profile first arrives and never overwrites a value the server
+ * already has. A browser value is removed only after the server confirms it
+ * kept the new value, so an older server (which ignores the fields) leaves the
+ * only copy in place and the next load retries.
+ */
+export function useImportPersonalSharedPreferences(environmentId: EnvironmentId | null): void {
+  const profile = usePersonalProfile(environmentId);
+  const setProfile = useAtomCommand(personalProfileSet, { reportFailure: false });
+  const attempted = useRef(new Set<EnvironmentId>());
+
+  useEffect(() => {
+    if (environmentId === null || profile.data === null) return;
+    if (attempted.current.has(environmentId)) return;
+    const plan = planSharedPreferenceImport(profile.data, readBrowserPreference);
+    const importing = Object.keys(plan.values).length > 0;
+    if (!importing && plan.clearLegacyKeys.length === 0) return;
+    attempted.current.add(environmentId);
+    void (async () => {
+      if (importing) {
+        const result = await setProfile({ environmentId, input: plan.values });
+        if (result._tag !== "Success") return;
+        const kept = Object.entries(plan.values).every(
+          ([preference, value]) => result.value[preference as SharedPreference] === value,
+        );
+        if (!kept) return;
+      }
+      for (const key of plan.clearLegacyKeys) clearBrowserPreference(key);
+    })();
+  }, [environmentId, profile.data, setProfile]);
 }

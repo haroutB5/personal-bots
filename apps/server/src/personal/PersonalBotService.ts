@@ -101,6 +101,9 @@ const PERSONAL_META_DISPLAY_NAME = "displayName";
 const PERSONAL_META_VOICE_CALLS = "voiceCalls";
 /** JSON array of provider instance ids whose usage the owner hid. */
 const PERSONAL_META_USAGE_HIDDEN = "usageHiddenProviders";
+/** Settings > Chat: the two flags web and phone share, stored "on"/"off". */
+const PERSONAL_META_SHOW_TOOL_STEPS = "showToolSteps";
+const PERSONAL_META_SHOW_ROUTINES_STRIP = "showRoutinesStrip";
 
 const HiddenUsageProvidersJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const encodeHiddenUsageProviders = Schema.encodeEffect(HiddenUsageProvidersJson);
@@ -117,6 +120,23 @@ const decodeVoiceCallSettings = Schema.decodeUnknownEffect(
   Schema.fromJsonString(VoiceCallSettings),
 );
 const encodeVoiceCallSettings = Schema.encodeEffect(Schema.fromJsonString(VoiceCallSettings));
+
+/** A stored "on"/"off" flag; any other row reads as never chosen. */
+function storedFlag(value: string): boolean | undefined {
+  if (value === "on") return true;
+  if (value === "off") return false;
+  return undefined;
+}
+
+/** The profile field for one stored flag, or nothing when it was never chosen. */
+function storedProfileFlag<K extends "showToolSteps" | "showRoutinesStrip">(
+  key: K,
+  stored: Option.Option<string>,
+): Partial<Record<K, boolean>> {
+  if (Option.isNone(stored)) return {};
+  const value = storedFlag(stored.value);
+  return value === undefined ? {} : ({ [key]: value } as Record<K, boolean>);
+}
 const decodeCustomTeams = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Array(PersonalBotTeam)),
 );
@@ -1135,6 +1155,10 @@ export const make = Effect.gen(function* () {
       const hiddenUsage = yield* parseHiddenUsageProviders(
         Option.getOrNull(yield* repository.getMeta({ key: PERSONAL_META_USAGE_HIDDEN })),
       );
+      const toolSteps = yield* repository.getMeta({ key: PERSONAL_META_SHOW_TOOL_STEPS });
+      const routinesStrip = yield* repository.getMeta({
+        key: PERSONAL_META_SHOW_ROUTINES_STRIP,
+      });
       return {
         displayName: Option.getOrElse(stored, () => ""),
         ...(customTeams.length > 0 ? { customTeams } : {}),
@@ -1144,6 +1168,8 @@ export const make = Effect.gen(function* () {
           Option.getOrNull(autoArchiveAfter),
         ),
         hiddenUsageProviders: hiddenUsage,
+        ...storedProfileFlag("showToolSteps", toolSteps),
+        ...storedProfileFlag("showRoutinesStrip", routinesStrip),
       };
     }).pipe(Effect.mapError(repositoryError("profile lookup")));
 
@@ -1256,6 +1282,16 @@ export const make = Effect.gen(function* () {
         );
         yield* repository
           .setMeta({ key: PERSONAL_META_USAGE_HIDDEN, value })
+          .pipe(Effect.mapError(repositoryError("profile update")));
+      }
+      const chatFlags = [
+        [PERSONAL_META_SHOW_TOOL_STEPS, input.showToolSteps],
+        [PERSONAL_META_SHOW_ROUTINES_STRIP, input.showRoutinesStrip],
+      ] as const;
+      for (const [key, value] of chatFlags) {
+        if (value === undefined) continue;
+        yield* repository
+          .setMeta({ key, value: value ? "on" : "off" })
           .pipe(Effect.mapError(repositoryError("profile update")));
       }
       yield* repository
