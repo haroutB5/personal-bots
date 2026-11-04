@@ -310,13 +310,19 @@ export function createNativePersonal(
   };
   const startOutageWatch = () => {
     if (outageTimer !== null || disposed) return;
+    let checking = false;
     outageTimer = setInterval(() => {
-      if (disposed || relaunching || unstable < 3 || !phoneHasInternet()) return;
-      const last = Number(ports.kv.getItem(relaunchKey) ?? "0");
-      if (Number.isFinite(last) && Date.now() - last < RELAUNCH_COOLDOWN_MS) return;
-      relaunching = true;
-      ports.kv.setItem(relaunchKey, String(Date.now()));
-      void relaunchApp();
+      if (disposed || relaunching || checking || unstable < 3) return;
+      checking = true;
+      void phoneHasInternet().then((online) => {
+        checking = false;
+        if (!online || disposed || relaunching || unstable < 3) return;
+        const last = Number(ports.kv.getItem(relaunchKey) ?? "0");
+        if (Number.isFinite(last) && Date.now() - last < RELAUNCH_COOLDOWN_MS) return;
+        relaunching = true;
+        ports.kv.setItem(relaunchKey, String(Date.now()));
+        void relaunchApp();
+      });
     }, 2_000);
   };
 

@@ -3,6 +3,7 @@ import { requireOptionalNativeModule } from "expo";
 interface NetworkResetModule {
   readonly reset: () => Promise<boolean>;
   readonly isOnline: () => boolean;
+  readonly canReachNetwork: () => Promise<boolean>;
   readonly relaunch: () => Promise<boolean>;
 }
 
@@ -21,11 +22,16 @@ export async function resetNetworkClient(): Promise<void> {
   }
 }
 
-/** The phone itself has working internet, whatever this app's sockets do. */
-export function phoneHasInternet(): boolean {
+/**
+ * The phone itself has working internet, whatever this app's sockets do. A
+ * fresh OkHttp client proves it without depending on Android's capability
+ * flags, which can stay stale after a flap.
+ */
+export async function phoneHasInternet(): Promise<boolean> {
   if (native === null) return false;
   try {
-    return native.isOnline();
+    if (native.isOnline()) return true;
+    return await native.canReachNetwork();
   } catch {
     return false;
   }

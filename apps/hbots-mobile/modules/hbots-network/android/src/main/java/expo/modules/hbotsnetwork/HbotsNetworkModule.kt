@@ -6,6 +6,9 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Process
 import com.facebook.react.modules.network.OkHttpClientProvider
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -29,6 +32,19 @@ class HbotsNetworkModule : Module() {
       client.dispatcher.cancelAll()
       client.connectionPool.evictAll()
       true
+    }
+
+    AsyncFunction("canReachNetwork") {
+      try {
+        val client = OkHttpClient.Builder()
+          .connectTimeout(3, TimeUnit.SECONDS)
+          .readTimeout(3, TimeUnit.SECONDS)
+          .build()
+        val request = Request.Builder().url("https://www.cloudflare.com/cdn-cgi/trace").build()
+        client.newCall(request).execute().use { it.isSuccessful }
+      } catch (_: Exception) {
+        false
+      }
     }
 
     Function("isOnline") {
