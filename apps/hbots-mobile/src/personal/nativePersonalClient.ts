@@ -295,6 +295,12 @@ export function createNativePersonal(
         }
       }
       if (disposed) return;
+      const ended = current;
+      current = null;
+      if (ended !== null) {
+        Effect.runSync(SubscriptionRef.set(sessionRef, Option.none()));
+        await ended.dispose();
+      }
       retrySignal = newRetrySignal();
       attempt += 1;
       setState(offlineState(generation.value, attempt));
