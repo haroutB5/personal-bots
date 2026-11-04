@@ -179,11 +179,11 @@ function SnapshotRow({
             <Text style={styles.rowTime}>{formatRelativeTime(row.previewAtMs, now)}</Text>
           ) : null}
         </View>
-        <Text style={styles.rowStatus} numberOfLines={1}>
+        <Text style={[styles.rowStatus, { color: tokens.textSecondary }]} numberOfLines={1}>
           {row.subtitle}
         </Text>
         <Text style={styles.rowPreview} numberOfLines={1}>
-          {row.preview.length > 0 ? row.preview : row.subtitle}
+          {row.preview.length > 0 ? row.preview : "No chats yet"}
         </Text>
       </View>
     </View>
