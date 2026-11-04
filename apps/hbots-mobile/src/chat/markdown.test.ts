@@ -64,23 +64,64 @@ describe("markdownNeedsWidth", () => {
     expect(markdownNeedsWidth("```\nconst a = 1;\n```")).toBe(true);
   });
 
+  it("asks for a definite width for a paragraph of file links", () => {
+    expect(markdownNeedsWidth("[a](docs/a.md)\n[b](docs/b.json)")).toBe(true);
+  });
+
   it("leaves a paragraph able to hug its text", () => {
     expect(markdownNeedsWidth("plain **bold** and `code` text")).toBe(false);
   });
 });
 
+describe("file links", () => {
+  it("marks a paragraph made only of file links, using each basename", () => {
+    const blocks = markdownBlocks(
+      "[home-relative](.personal-bots/qa/run/RESULT.md)\n[ssh](~/.ssh/id_rsa)",
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.files).toEqual([
+      { path: ".personal-bots/qa/run/RESULT.md", label: "home-relative" },
+      { path: "~/.ssh/id_rsa", label: "ssh" },
+    ]);
+  });
+
+  it("marks a bullet list of file links", () => {
+    const blocks = markdownBlocks(
+      "- [home-relative](.personal-bots/qa/run/RESULT.md)\n- [png](docs/shot.png)",
+    );
+    expect(blocks.map((block) => block.files?.map((file) => file.path))).toEqual([
+      [".personal-bots/qa/run/RESULT.md"],
+      ["docs/shot.png"],
+    ]);
+  });
+
+  it("keeps a file link inside prose as an ordinary span", () => {
+    const blocks = markdownBlocks("Read [the plan](docs/plan.md) before you start.");
+    expect(blocks[0]?.files).toBeUndefined();
+  });
+});
+
 describe("linkTarget", () => {
-  it("sends web and mail links outside the app", () => {
+  it("sends only http and https links outside the app", () => {
     expect(linkTarget("https://example.com/a")).toEqual({
       kind: "external",
       url: "https://example.com/a",
     });
-    expect(linkTarget("mailto:a@b.c")).toEqual({ kind: "external", url: "mailto:a@b.c" });
+    expect(linkTarget("http://example.com/a")).toEqual({
+      kind: "external",
+      url: "http://example.com/a",
+    });
+    expect(linkTarget("mailto:a@b.c")).toEqual({ kind: "blocked" });
+    expect(linkTarget("tel:5551234")).toEqual({ kind: "blocked" });
+    expect(linkTarget("sms:5551234")).toEqual({ kind: "blocked" });
+    expect(linkTarget("javascript:alert(1)")).toEqual({ kind: "blocked" });
+    expect(linkTarget("intent://scan/#Intent;scheme=zxing;end")).toEqual({ kind: "blocked" });
   });
 
   it("opens workspace and absolute file paths in the file sheet", () => {
     expect(linkTarget("docs/a.md")).toEqual({ kind: "file", path: "docs/a.md" });
     expect(linkTarget("C:/work/a.ts")).toEqual({ kind: "file", path: "C:/work/a.ts" });
     expect(linkTarget("~/notes/a.md")).toEqual({ kind: "file", path: "~/notes/a.md" });
+    expect(linkTarget("~/.ssh/id_rsa")).toEqual({ kind: "file", path: "~/.ssh/id_rsa" });
   });
 });
