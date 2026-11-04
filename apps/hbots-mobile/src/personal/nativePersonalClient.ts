@@ -1,6 +1,10 @@
-import type { OrchestrationShellSnapshot, ServerProvider } from "@t3tools/contracts";
-import { EnvironmentId } from "@t3tools/contracts";
+import type { OrchestrationShellSnapshot, ServerProvider, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, OrchestrationThreadDetailSnapshot } from "@t3tools/contracts";
 import { EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
+import { ThreadSnapshotLoader } from "@t3tools/client-runtime/state/threads";
+import * as ExpoCrypto from "expo-crypto";
+import * as EffectCrypto from "effect/Crypto";
+import * as Schema from "effect/Schema";
 import {
   type ConnectionCatalogEntry,
   type PreparedConnection,
@@ -36,6 +40,7 @@ import { useEffect, useState } from "react";
 import { backoffMs } from "../connection";
 import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
+import { createNativeEnvironmentCache } from "./nativeCache";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
 
@@ -78,24 +83,61 @@ const offlineState = (generation: number, attempt: number): SupervisorConnection
 /**
  * The shell snapshot is large and changes with every streamed message, so it
  * is not written to SecureStore. A1's cold paint comes from the capped chats
- * snapshot; activity lands with the socket a moment later.
+ * snapshot; activity lands with the socket a moment later. Threads settle into
+ * `nativeCache.ts`, which is what makes a chat reopen paint at once.
  */
 function makeShellCache() {
-  return EnvironmentCacheStore.of({
-    loadShell: () => Effect.succeed(Option.none()),
-    saveShell: () => Effect.void,
-    loadThread: () => Effect.succeed(Option.none()),
-    saveThread: () => Effect.void,
-    removeThread: () => Effect.void,
-    loadServerConfig: () => Effect.succeed(Option.none()),
-    saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeed(Option.none()),
-    saveVcsRefs: () => Effect.void,
-    removeVcsRefs: () => Effect.void,
-    clearVcsRefs: () => Effect.void,
-    clear: () => Effect.void,
-  });
+  return createNativeEnvironmentCache();
 }
+
+const decodeThreadSnapshot = Schema.decodeUnknownSync(OrchestrationThreadDetailSnapshot);
+
+const threadSnapshotLoader = (stored: StoredSession): ThreadSnapshotLoader["Service"] =>
+  ThreadSnapshotLoader.of({
+    load: (_prepared, threadId: ThreadId) =>
+      Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(
+            new URL(
+              `/api/orchestration/threads/${encodeURIComponent(threadId)}`,
+              stored.httpBaseUrl,
+            ),
+            {
+              headers: { Authorization: `Bearer ${stored.accessToken}` },
+              cache: "no-store",
+            },
+          );
+          if (!response.ok) return Option.none<OrchestrationThreadDetailSnapshot>();
+          return Option.some(decodeThreadSnapshot((await response.json()) as unknown));
+        },
+        catch: () => null,
+      }).pipe(Effect.catch(() => Effect.succeed(Option.none<OrchestrationThreadDetailSnapshot>()))),
+  });
+
+function toExpoDigestAlgorithm(
+  algorithm: EffectCrypto.DigestAlgorithm,
+): ExpoCrypto.CryptoDigestAlgorithm {
+  switch (algorithm) {
+    case "SHA-1":
+      return ExpoCrypto.CryptoDigestAlgorithm.SHA1;
+    case "SHA-256":
+      return ExpoCrypto.CryptoDigestAlgorithm.SHA256;
+    case "SHA-384":
+      return ExpoCrypto.CryptoDigestAlgorithm.SHA384;
+    case "SHA-512":
+      return ExpoCrypto.CryptoDigestAlgorithm.SHA512;
+  }
+}
+
+const cryptoLayer = EffectCrypto.make({
+  randomBytes: ExpoCrypto.getRandomBytes,
+  digest: (algorithm, data) =>
+    Effect.promise(async () => {
+      const input = new Uint8Array(data.length);
+      input.set(data);
+      return new Uint8Array(await ExpoCrypto.digest(toExpoDigestAlgorithm(algorithm), input));
+    }),
+});
 
 function useRefValue<A>(ref: SubscriptionRef.SubscriptionRef<A>): A {
   const [value, setValue] = useState<A>(() => Effect.runSync(SubscriptionRef.get(ref)));
@@ -113,10 +155,13 @@ function useRefValue<A>(ref: SubscriptionRef.SubscriptionRef<A>): A {
 export type NativePersonalRuntime =
   | EnvironmentRegistry
   | EnvironmentCacheStore
-  | ShellSnapshotLoader;
+  | ShellSnapshotLoader
+  | ThreadSnapshotLoader
+  | EffectCrypto.Crypto;
 
 export interface NativePersonal {
   readonly environmentId: EnvironmentId;
+  readonly httpBaseUrl: string;
   readonly runtime: Atom.AtomRuntime<NativePersonalRuntime, never>;
   readonly client: PersonalClient<NativePersonalRuntime, never, NativeBlob>;
   readonly bots: ReturnType<typeof createPersonalBotsClient>;
@@ -214,15 +259,17 @@ export function createNativePersonal(
   });
 
   const cache = makeShellCache();
-  const loader = ShellSnapshotLoader.of({
-    load: () => Effect.succeed(Option.none()),
-  });
+  const loader = threadSnapshotLoader(stored);
 
   const runtime = Atom.runtime(
     Layer.mergeAll(
       Layer.succeed(EnvironmentRegistry, registry),
       Layer.succeed(EnvironmentCacheStore, cache),
-      Layer.succeed(ShellSnapshotLoader, loader),
+      Layer.succeed(ShellSnapshotLoader, {
+        load: () => Effect.succeed(Option.none()),
+      }),
+      Layer.succeed(ThreadSnapshotLoader, loader),
+      Layer.succeed(EffectCrypto.Crypto, cryptoLayer),
     ),
   );
 
@@ -321,6 +368,7 @@ export function createNativePersonal(
 
   return {
     environmentId,
+    httpBaseUrl: stored.httpBaseUrl,
     runtime,
     client,
     bots,

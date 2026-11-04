@@ -239,6 +239,26 @@ export function createPersonalBotsClient<R, ER, P>(
     onSuccess: refreshBotsList,
   });
 
+  /** One-shot message search for the chat header's search field. */
+  const personalBotsSearchMessages = createEnvironmentRpcCommand(runtime, {
+    label: "personal-bots:search-messages",
+    tag: WS_METHODS.personalBotsSearchMessages,
+  });
+
+  /** Warms a provider session before the first message, as the web does. */
+  const personalBotsPrewarmThread = createEnvironmentRpcCommand(runtime, {
+    label: "personal-bots:prewarm-thread",
+    tag: WS_METHODS.personalBotsPrewarmThread,
+  });
+
+  /** Whole text behind a long-message preview, asked only when a row opens. */
+  const personalBotsThreadFullText = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-bots:thread-full-text",
+    tag: WS_METHODS.personalBotsThreadFullText,
+    staleTimeMs: Number.POSITIVE_INFINITY,
+    idleTtlMs: 5 * 60_000,
+  });
+
   const personalFileDelete = createEnvironmentRpcCommand(runtime, {
     label: "personal-files:delete",
     tag: WS_METHODS.personalFilesDelete,
@@ -422,6 +442,9 @@ export function createPersonalBotsClient<R, ER, P>(
     personalBotArchiveThreads,
     personalBotDeleteThreads,
     personalBotUpdateThreads,
+    personalBotsSearchMessages,
+    personalBotsPrewarmThread,
+    personalBotsThreadFullText,
     personalFileDelete,
     personalFilesDeleteMany,
     personalProfileSet,

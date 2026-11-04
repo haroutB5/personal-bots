@@ -21,12 +21,24 @@ import {
   currentProgressNote,
   currentTurnHasToolStep,
 } from "@hbots/personal-client/bots/workingProgress";
-import { isBotPinned, type ThreadId } from "@t3tools/contracts";
+import {
+  isBotPinned,
+  ThreadId,
+  type PersonalBot,
+  type PersonalBotNotificationMute,
+} from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "@tabler/icons-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { SwipeToDeleteRow } from "../components/SwipeToDeleteRow";
+import { BotActionsSheet } from "../sheets/BotActionsSheet";
+import { NewChatSheet } from "../sheets/NewChatSheet";
+import { RenameChatSheet } from "../sheets/RenameChatSheet";
+import { SnoozeSheet } from "../sheets/SnoozeSheet";
+import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
@@ -46,10 +58,12 @@ function PinnedTile({
   summary,
   now,
   onPress,
+  onLongPress,
 }: {
   readonly summary: BotSummary;
   readonly now: number;
   readonly onPress: () => void;
+  readonly onLongPress: () => void;
 }) {
   const status = botStatus(summary, now);
   const badge = status.tone === "review" ? "attention" : summary.live ? "working" : null;
@@ -57,6 +71,8 @@ function PinnedTile({
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={350}
       accessibilityRole="button"
       accessibilityLabel={`${summary.bot.name}${badge === null ? "" : `, ${status.label}`}${unread > 0 ? `, ${unread} unread chats` : ""}`}
       style={styles.tile}
@@ -93,17 +109,21 @@ function BotRow({
   now,
   last,
   onPress,
+  onLongPress,
 }: {
   readonly summary: BotSummary;
   readonly now: number;
   readonly last: boolean;
   readonly onPress: () => void;
+  readonly onLongPress: () => void;
 }) {
   const status = botStatus(summary, now);
   const unread = summary.unreadChats ?? 0;
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={350}
       accessibilityRole="button"
       accessibilityLabel={`${summary.bot.name}${summary.modelShortLabel === null ? "" : `, ${summary.modelShortLabel}`}, ${status.label}, ${previewOf(summary, () => "Task update")}${unread > 0 ? `, ${unread} unread chats` : ""}`}
       accessibilityHint="Opens the chat"
@@ -209,16 +229,20 @@ function Skeleton() {
 
 export function BotsScreen({
   native,
+  chat,
   installedVersion,
   onOpenChat,
   onOpenBot,
+  onOpenChats,
   onOpenTeam,
   onOpenSettings,
 }: {
   readonly native: NativePersonal;
+  readonly chat: ChatEnvironment;
   readonly installedVersion: string;
   readonly onOpenChat: (botId: string, threadId: string) => void;
   readonly onOpenBot: (botId: string) => void;
+  readonly onOpenChats: (botId: string) => void;
   readonly onOpenTeam: () => void;
   readonly onOpenSettings: () => void;
 }) {
@@ -234,6 +258,26 @@ export function BotsScreen({
   const [now, setNow] = useState(() => Date.now());
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  const [actionBot, setActionBot] = useState<BotSummary | null>(null);
+  const [newChatBot, setNewChatBot] = useState<BotSummary | null>(null);
+  const [renameTarget, setRenameTarget] = useState<BotSummary | null>(null);
+  const [snoozeTarget, setSnoozeTarget] = useState<BotSummary | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const archiveThread = native.client.useAtomCommand(native.bots.personalBotArchiveThread, {
+    reportFailure: false,
+  });
+  const deleteThread = native.client.useAtomCommand(native.bots.personalBotDeleteThread, {
+    reportFailure: false,
+  });
+  const updateThreads = native.client.useAtomCommand(native.bots.personalBotUpdateThreads, {
+    reportFailure: false,
+  });
+  const updateBot = native.client.useAtomCommand(native.bots.personalBotUpdate, {
+    reportFailure: false,
+  });
+  const deleteBot = native.client.useAtomCommand(native.bots.personalBotDelete, {
+    reportFailure: false,
+  });
   const persistedKey = useRef<string | null>(null);
   const refreshedGeneration = useRef<number | null>(null);
 
@@ -424,6 +468,86 @@ export function BotsScreen({
     onOpenChat(summary.bot.botId, thread.id);
   };
 
+  const newestThreadOf = (summary: BotSummary) => {
+    const thread = summary.newestThread;
+    if (thread === null) return null;
+    const shell = shells.find((candidate) => candidate.id === thread.id) ?? null;
+    return shell === null ? null : { shell, threadId: thread.id as string };
+  };
+
+  const failureText = (result: { readonly _tag: string }, fallback: string): string | null => {
+    if (result._tag === "Success") return null;
+    const cause = squashAtomCommandFailure(result as never);
+    return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
+  };
+
+  const togglePin = async (summary: BotSummary) => {
+    const target = newestThreadOf(summary);
+    if (target === null) return;
+    setActionBot(null);
+    const result = await updateThreads({
+      environmentId,
+      input: {
+        threadIds: [ThreadId.make(target.threadId)],
+        pinned: !target.shell.pinnedAt,
+      },
+    });
+    setActionError(failureText(result, "Couldn't update that chat."));
+  };
+
+  const archiveNewest = async (summary: BotSummary) => {
+    const target = newestThreadOf(summary);
+    if (target === null) return;
+    setActionBot(null);
+    const result = await archiveThread({
+      environmentId,
+      input: { threadId: ThreadId.make(target.threadId), archived: true },
+    });
+    setActionError(failureText(result, "Couldn't archive that chat."));
+  };
+
+  const deleteNewest = async (summary: BotSummary) => {
+    const target = newestThreadOf(summary);
+    if (target === null) return;
+    setActionBot(null);
+    const ok = await native.client.ports.confirm.confirm({
+      title: "Delete this chat?",
+      body: "The chat and its messages are removed for good.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    const result = await deleteThread({
+      environmentId,
+      input: { threadId: ThreadId.make(target.threadId) },
+    });
+    setActionError(failureText(result, "Couldn't delete that chat."));
+  };
+
+  const setMute = async (summary: BotSummary, mute: PersonalBotNotificationMute) => {
+    setActionBot(null);
+    const result = await updateBot({
+      environmentId,
+      input: { botId: summary.bot.botId, notificationsMute: mute },
+    });
+    setActionError(failureText(result, "Couldn't change notifications for that bot."));
+  };
+
+  const removeBot = async (summary: BotSummary) => {
+    const ok = await native.client.ports.confirm.confirm({
+      title: `Delete ${summary.bot.name}?`,
+      body: "This deletes the bot and every chat you had with it.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    const result = await deleteBot({
+      environmentId,
+      input: { botId: summary.bot.botId },
+    });
+    setActionError(failureText(result, "Couldn't delete that bot."));
+  };
+
   const snapshotSplit = snapshot === null ? null : partitionPinnedSnapshotRows(snapshot.rows);
   const showingSnapshot = list.data === null && snapshot !== null;
   const loaded = list.data !== null;
@@ -483,6 +607,16 @@ export function BotsScreen({
         showsVerticalScrollIndicator={false}
       >
         <PersonalUsageStrip native={native} now={now} />
+
+        {actionError !== null ? (
+          <Pressable
+            onPress={() => setActionError(null)}
+            accessibilityRole="alert"
+            style={styles.errorBox}
+          >
+            <Text style={styles.errorText}>{actionError}</Text>
+          </Pressable>
+        ) : null}
 
         {list.error !== null ? (
           <View style={styles.errorBox}>
@@ -593,6 +727,7 @@ export function BotsScreen({
                     summary={summary}
                     now={now}
                     onPress={() => openSummary(summary)}
+                    onLongPress={() => setActionBot(summary)}
                   />
                 ))}
               </ScrollView>
@@ -600,13 +735,19 @@ export function BotsScreen({
             {split.rest.length > 0 ? (
               <View style={styles.list}>
                 {split.rest.map((summary, index) => (
-                  <BotRow
+                  <SwipeToDeleteRow
                     key={summary.bot.botId}
-                    summary={summary}
-                    now={now}
-                    last={index === split.rest.length - 1}
-                    onPress={() => openSummary(summary)}
-                  />
+                    label={`Delete ${summary.bot.name}`}
+                    onDelete={() => void removeBot(summary)}
+                  >
+                    <BotRow
+                      summary={summary}
+                      now={now}
+                      last={index === split.rest.length - 1}
+                      onPress={() => openSummary(summary)}
+                      onLongPress={() => setActionBot(summary)}
+                    />
+                  </SwipeToDeleteRow>
                 ))}
               </View>
             ) : null}
@@ -631,6 +772,94 @@ export function BotsScreen({
         visible={creating}
         bots={list.data?.bots ?? []}
         onClose={() => setCreating(false)}
+      />
+      <BotActionsSheet
+        visible={actionBot !== null}
+        bot={actionBot?.bot ?? null}
+        threadTitle={actionBot?.newestThread?.title ?? null}
+        hasThread={actionBot?.newestThread !== null && actionBot?.newestThread !== undefined}
+        pinned={
+          actionBot?.newestThread?.pinnedAt !== null &&
+          actionBot?.newestThread?.pinnedAt !== undefined
+        }
+        nowMs={now}
+        onClose={() => setActionBot(null)}
+        onNewChat={() => {
+          const target = actionBot;
+          setActionBot(null);
+          if (target !== null) setNewChatBot(target);
+        }}
+        onAllChats={() => {
+          const target = actionBot;
+          setActionBot(null);
+          if (target !== null) onOpenChats(target.bot.botId);
+        }}
+        onRename={() => {
+          const target = actionBot;
+          setActionBot(null);
+          if (target !== null) setRenameTarget(target);
+        }}
+        onSnooze={() => {
+          const target = actionBot;
+          setActionBot(null);
+          if (target !== null) setSnoozeTarget(target);
+        }}
+        onTogglePin={() => {
+          if (actionBot !== null) void togglePin(actionBot);
+        }}
+        onArchive={() => {
+          if (actionBot !== null) void archiveNewest(actionBot);
+        }}
+        onDeleteChat={() => {
+          if (actionBot !== null) void deleteNewest(actionBot);
+        }}
+        onMute={(mute) => {
+          if (actionBot !== null) void setMute(actionBot, mute);
+        }}
+      />
+      {newChatBot !== null ? (
+        <NewChatSheet
+          native={native}
+          visible
+          botId={newChatBot.bot.botId}
+          botName={newChatBot.bot.name}
+          openChatTitles={
+            list.data?.threads
+              .filter((link) => link.botId === newChatBot.bot.botId && link.archivedAt === null)
+              .map((link) => shells.find((shell) => shell.id === link.threadId)?.title ?? "") ?? []
+          }
+          onClose={() => setNewChatBot(null)}
+          onCreated={(threadId) => onOpenChat(newChatBot.bot.botId, threadId)}
+        />
+      ) : null}
+      {renameTarget !== null ? (
+        <RenameChatSheet
+          native={native}
+          chat={chat}
+          visible
+          threadId={renameTarget.newestThread?.id ?? ""}
+          initialTitle={renameTarget.newestThread?.title ?? ""}
+          takenTitles={
+            list.data?.threads
+              .filter(
+                (link) =>
+                  link.botId === renameTarget.bot.botId &&
+                  link.archivedAt === null &&
+                  link.threadId !== renameTarget.newestThread?.id,
+              )
+              .map((link) => shells.find((shell) => shell.id === link.threadId)?.title ?? "") ?? []
+          }
+          onClose={() => setRenameTarget(null)}
+          onSaved={() => setActionError(null)}
+        />
+      ) : null}
+      <SnoozeSheet
+        native={native}
+        visible={snoozeTarget !== null}
+        threadIds={snoozeTarget?.newestThread == null ? [] : [snoozeTarget.newestThread.id]}
+        onClose={() => setSnoozeTarget(null)}
+        onSnoozed={() => setActionError(null)}
+        onError={setActionError}
       />
     </View>
   );

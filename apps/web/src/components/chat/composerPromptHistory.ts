@@ -1,4 +1,8 @@
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  ownerVisibleText,
+} from "@hbots/personal-client/feed/composerText";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
 
 /**
@@ -16,15 +20,7 @@ const TRAILING_LEGACY_CONTEXT =
   /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
 
 /** Text sent in place of an empty prompt when a message is attachments only. */
-export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
-  "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
-
-/** What the owner's own bubble shows: the placeholder sent for an attachment-only message is not their text. */
-export function ownerVisibleText(text: string): string {
-  const trimmed = text.trim();
-  return trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT || trimmed.length === 0 ? "" : text;
-}
-
+export { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, ownerVisibleText };
 export interface ComposerPromptHistoryMessage {
   readonly id: string;
   readonly role: string;

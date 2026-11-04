@@ -9,11 +9,13 @@ import {
   type NativeStackScreenProps,
 } from "@react-navigation/native-stack";
 import { IconChevronRight, IconSettings } from "@tabler/icons-react-native";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { AndroidRelease } from "../compat";
+import { createChatEnvironment } from "../chat/chatEnvironment";
+import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
@@ -22,6 +24,8 @@ import { BotsScreen } from "./BotsScreen";
 import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
+import { ChatScreen } from "../screens/ChatScreen";
+import { ChatsListScreen } from "../screens/ChatsListScreen";
 
 export interface AppShellProps {
   readonly native: NativePersonal;
@@ -37,6 +41,7 @@ export interface AppShellProps {
 export type RootStackParamList = {
   Tabs: { readonly tab?: TabName } | undefined;
   Chat: { readonly botId: string; readonly threadId: string; readonly requestId?: string };
+  Chats: { readonly botId: string };
   Bot: { readonly botId: string };
   Task: { readonly taskId: string };
   Routine: { readonly routineId: string };
@@ -171,6 +176,12 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
 
 function Shell({ props }: { readonly props: AppShellProps }) {
   const pendingLink = useRef<string | null>(null);
+  const chat = useMemo(() => createChatEnvironment(props.native), [props.native]);
+
+  useEffect(() => {
+    configureNativeOutbox(props.native);
+  }, [props.native]);
+  useNativeOutboxFlusher(props.native, chat);
 
   const openLink = useCallback((raw: string) => {
     const state = parseDeepLink(raw);
@@ -215,15 +226,36 @@ function Shell({ props }: { readonly props: AppShellProps }) {
             <TabsWithBots
               {...screenProps}
               native={props.native}
+              chat={chat}
               installedVersion={props.installedVersion}
             />
           )}
         </Stack.Screen>
         <Stack.Screen name="Chat">
-          {({ navigation }) => (
-            <HeaderScreen title="Chat" onBack={() => navigation.goBack()}>
-              <Placeholder title="Chat" body="Messages will show here." />
-            </HeaderScreen>
+          {({ navigation, route }) => (
+            <ChatScreen
+              native={props.native}
+              chat={chat}
+              botId={route.params.botId}
+              threadId={route.params.threadId}
+              onBack={() => navigation.goBack()}
+              onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+              onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Chats">
+          {({ navigation, route }) => (
+            <ChatsListScreen
+              native={props.native}
+              chat={chat}
+              botId={route.params.botId}
+              onBack={() => navigation.goBack()}
+              onOpenChat={(threadId) =>
+                navigation.replace("Chat", { botId: route.params.botId, threadId })
+              }
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Bot">
@@ -272,9 +304,14 @@ function Shell({ props }: { readonly props: AppShellProps }) {
 
 function TabsWithBots({
   native,
+  chat,
   installedVersion,
   ...screenProps
-}: TabsProps & { readonly native: NativePersonal; readonly installedVersion: string }) {
+}: TabsProps & {
+  readonly native: NativePersonal;
+  readonly chat: ReturnType<typeof createChatEnvironment>;
+  readonly installedVersion: string;
+}) {
   const insets = useSafeAreaInsets();
   const tab = screenProps.route.params?.tab ?? "bots";
   const { navigation } = screenProps;
@@ -296,9 +333,11 @@ function TabsWithBots({
         {tab === "bots" ? (
           <BotsScreen
             native={native}
+            chat={chat}
             installedVersion={installedVersion}
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
             onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
+            onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
             onOpenTeam={() => navigation.navigate("Team")}
             onOpenSettings={() => navigation.navigate("Settings")}
           />
