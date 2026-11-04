@@ -39,6 +39,7 @@ import {
   type DesktopServerExposureState,
   type DesktopWslState,
   type EnvironmentId,
+  environmentShortId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
@@ -583,6 +584,7 @@ type PairingLinkListRowProps = {
   endpointUrl: string | null | undefined;
   endpoints: ReadonlyArray<AdvertisedEndpoint>;
   defaultEndpointKey: string | null;
+  shortId: string | null;
   presentation?: AccessSectionPresentation;
   revokingPairingLinkId: string | null;
   onRevoke: (id: string) => void;
@@ -594,6 +596,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   endpointUrl,
   endpoints,
   defaultEndpointKey,
+  shortId,
   presentation = "current",
   revokingPairingLinkId,
   onRevoke,
@@ -770,6 +773,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             <span aria-hidden> · </span>
             <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
           </p>
+          {shortId !== null ? (
+            <p className="text-2xs text-muted-foreground/70">
+              Server code{" "}
+              <span className="font-mono font-semibold tracking-wider text-foreground">
+                {shortId}
+              </span>{" "}
+              appears on the phone before it pairs.
+            </p>
+          ) : null}
           {!credential ? (
             <p className="text-2xs text-muted-foreground/70">
               Create a new link to share from this client.
@@ -846,6 +858,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                       title="Pairing link — scan to open on another device"
                     />
                   </div>
+                ) : null}
+                {shortId !== null ? (
+                  <p className="text-xs text-muted-foreground">
+                    Server code{" "}
+                    <span className="font-mono font-semibold tracking-wider text-foreground">
+                      {shortId}
+                    </span>{" "}
+                    must match the code on the phone.
+                  </p>
                 ) : null}
               </DialogPanel>
               <DialogFooter variant="bare">
@@ -1048,6 +1069,7 @@ type AuthorizedClientsHeaderActionProps = {
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   isRevokingOtherClients: boolean;
   onRevokeOtherClients: () => void;
+  shortId: string | null;
 };
 
 const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
@@ -1055,6 +1077,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
   clientSessions,
   isRevokingOtherClients,
   onRevokeOtherClients,
+  shortId,
 }: AuthorizedClientsHeaderActionProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pairingLabel, setPairingLabel] = useState("");
@@ -1133,6 +1156,17 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
+            {shortId !== null ? (
+              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+                <p className="text-xs text-muted-foreground">Server code</p>
+                <p className="font-mono text-lg font-semibold tracking-[0.2em] text-foreground">
+                  {shortId}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Check this matches the code on the phone before it pairs.
+                </p>
+              </div>
+            ) : null}
             <label className="block">
               <span className="mb-1.5 block text-xs font-medium text-foreground">
                 Client label (optional)
@@ -1231,6 +1265,7 @@ type PairingClientsListProps = {
   isLoading: boolean;
   pairingLinks: ReadonlyArray<ServerPairingLinkRecord>;
   createdPairingCredentials: ReadonlyMap<string, string>;
+  shortId: string | null;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
@@ -1246,6 +1281,7 @@ const PairingClientsList = memo(function PairingClientsList({
   isLoading,
   pairingLinks,
   createdPairingCredentials,
+  shortId,
   clientSessions,
   revokingPairingLinkId,
   revokingClientSessionId,
@@ -1262,6 +1298,7 @@ const PairingClientsList = memo(function PairingClientsList({
           endpointUrl={endpointUrl}
           endpoints={endpoints}
           defaultEndpointKey={defaultEndpointKey}
+          shortId={shortId}
           presentation={presentation}
           revokingPairingLinkId={revokingPairingLinkId}
           onRevoke={onRevokePairingLink}
@@ -1828,6 +1865,8 @@ export function ConnectionsSettings() {
     reportFailure: false,
   });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const primaryShortId =
+    primaryEnvironmentId === null ? null : environmentShortId(primaryEnvironmentId);
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
     ? AuthAdministrativeScopes
@@ -3189,6 +3228,7 @@ export function ConnectionsSettings() {
         isLoading={isLoadingDesktopAccessManagement}
         pairingLinks={visibleDesktopPairingLinks}
         createdPairingCredentials={createdPairingCredentials}
+        shortId={primaryShortId}
         clientSessions={desktopClientSessions}
         revokingPairingLinkId={revokingDesktopPairingLinkId}
         revokingClientSessionId={revokingDesktopClientSessionId}
@@ -3378,6 +3418,7 @@ export function ConnectionsSettings() {
                   clientSessions={desktopClientSessions}
                   isRevokingOtherClients={isRevokingOtherDesktopClients}
                   onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                  shortId={primaryShortId}
                 />
               }
             >

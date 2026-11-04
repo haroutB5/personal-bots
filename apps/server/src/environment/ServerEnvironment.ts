@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  environmentShortId,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -205,6 +206,7 @@ export const make = Effect.gen(function* () {
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
+    shortId: environmentShortId(environmentId),
     label,
     platform: {
       os: platformOs(hostPlatform),
