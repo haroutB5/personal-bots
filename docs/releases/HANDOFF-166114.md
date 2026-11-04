@@ -33,5 +33,16 @@ Binary only. The previous release is `1906a0d1afb6` (1.66.113). No migration ran
 
 ## Gate evidence
 
-<!-- gate-evidence:begin -->
+<!-- gate-evidence:begin sha=2a7a8c31fec935706224a053890b0040eaddf8a9 release=2a7a8c31fec9 json-sha256=e2436fa9350c7ebd6329486cb9da4dbf5deb691e95f5e3fb298060ad108ee61d result=PASS -->
+
+- server-tests: PASS, exit 0
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, exit 0
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, exit 0
+- parity: PASS, exit 0
+
 <!-- gate-evidence:end -->
