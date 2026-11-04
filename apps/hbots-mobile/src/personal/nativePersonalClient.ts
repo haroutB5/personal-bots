@@ -298,6 +298,17 @@ export function createNativePersonal(
     return { promise, wake };
   };
   let retrySignal = newRetrySignal();
+  /**
+   * Retry pacing is there so a laptop that is off does not get hammered. A
+   * network that comes back is a new fact, so the pending wait is void, and
+   * the next attempt starts at once. The flag carries a wake that arrived
+   * while an attempt was in flight, when nothing was listening yet.
+   */
+  let retryImmediately = false;
+  const wakeRetry = () => {
+    retryImmediately = true;
+    retrySignal.wake();
+  };
   let unstable = 0;
   const relaunchKey = `hbots.network-relaunch.v1:${stored.environmentId}`;
   const RELAUNCH_COOLDOWN_MS = 5 * 60_000;
@@ -313,6 +324,7 @@ export function createNativePersonal(
   const startOutageWatch = () => {
     if (outageTimer !== null || disposed) return;
     let checking = false;
+    let wasOnline = true;
     outageTimer = setInterval(() => {
       if (disposed || relaunching || checking || current !== null) return;
       checking = true;
@@ -320,8 +332,13 @@ export function createNativePersonal(
         checking = false;
         if (disposed || relaunching || current !== null) return;
         if (!online) {
+          wasOnline = false;
           networkBackAt = null;
           return;
+        }
+        if (!wasOnline) {
+          wasOnline = true;
+          wakeRetry();
         }
         if (networkBackAt === null) {
           networkBackAt = Date.now();
@@ -453,7 +470,9 @@ export function createNativePersonal(
       retrySignal = newRetrySignal();
       attempt += 1;
       setState(offlineState(generation.value, attempt));
-      await Promise.race([sleep(backoffMs(attempt - 1)), disposedPromise, retrySignal.promise]);
+      const waitMs = retryImmediately ? 0 : backoffMs(attempt - 1);
+      retryImmediately = false;
+      await Promise.race([sleep(waitMs), disposedPromise, retrySignal.promise]);
     }
   };
 
@@ -510,7 +529,7 @@ export function createNativePersonal(
         current = null;
         void session.dispose();
       }
-      retrySignal.wake();
+      wakeRetry();
     },
     dispose: async () => {
       disposed = true;
