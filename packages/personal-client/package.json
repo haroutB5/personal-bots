@@ -200,6 +200,18 @@
     "./computer/systemStats": {
       "types": "./src/computer/systemStats.ts",
       "import": "./src/computer/systemStats.ts"
+    },
+    "./composer/outbox": {
+      "types": "./src/composer/outbox.ts",
+      "import": "./src/composer/outbox.ts"
+    },
+    "./composer/outboxBlobs": {
+      "types": "./src/composer/outboxBlobs.ts",
+      "import": "./src/composer/outboxBlobs.ts"
+    },
+    "./composer/outboxFlush": {
+      "types": "./src/composer/outboxFlush.ts",
+      "import": "./src/composer/outboxFlush.ts"
     }
   },
   "scripts": {
