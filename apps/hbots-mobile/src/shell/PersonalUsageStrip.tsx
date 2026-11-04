@@ -303,7 +303,7 @@ function RedeemBlock({
               <Pressable
                 onPress={() => setConfirming(false)}
                 accessibilityRole="button"
-                style={styles.primaryButton}
+                style={[styles.primaryButton, styles.confirmButton]}
               >
                 <Text style={styles.primaryButtonText}>Cancel</Text>
               </Pressable>
@@ -311,7 +311,7 @@ function RedeemBlock({
                 onPress={() => void redeem()}
                 disabled={busy}
                 accessibilityRole="button"
-                style={[styles.outlineButton, busy ? styles.disabled : null]}
+                style={[styles.outlineButton, styles.confirmButton, busy ? styles.disabled : null]}
               >
                 <Text style={styles.outlineButtonText}>Redeem</Text>
               </Pressable>
@@ -766,21 +766,21 @@ const styles = StyleSheet.create({
   confirmScrim: {
     flex: 1,
     backgroundColor: tokens.scrim,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
+    justifyContent: "flex-end",
   },
   confirmCard: {
     width: "100%",
-    maxWidth: 480,
     gap: 12,
-    borderRadius: 12,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: tokens.border,
     backgroundColor: tokens.surface,
     padding: 20,
+    paddingBottom: 28,
   },
   confirmTitle: { color: tokens.text, fontSize: 18, lineHeight: 24, fontWeight: "600" },
   confirmBody: { color: tokens.textSecondary, fontSize: 15, lineHeight: 21 },
-  confirmActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 4 },
+  confirmActions: { flexDirection: "column", gap: 8, marginTop: 4 },
+  confirmButton: { alignSelf: "stretch" },
 });

@@ -52,7 +52,12 @@ export function SystemStatsLine({ native }: { readonly native: NativePersonal })
   return (
     <View style={styles.line}>
       {parts.length > 0 ? (
-        <Text style={styles.text} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+        <Text
+          style={styles.text}
+          numberOfLines={1}
+          maxFontSizeMultiplier={1.2}
+          ellipsizeMode="tail"
+        >
           {parts.map((part, index) => (
             <Text key={part.key} style={part.busy ? styles.busy : undefined}>
               {index > 0 ? " · " : ""}
@@ -67,7 +72,7 @@ export function SystemStatsLine({ native }: { readonly native: NativePersonal })
 
 const styles = StyleSheet.create({
   line: {
-    height: 16,
+    minHeight: 16,
     marginTop: -6,
     marginBottom: 4,
     paddingHorizontal: 20,

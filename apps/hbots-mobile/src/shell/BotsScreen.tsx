@@ -511,6 +511,7 @@ export function BotsScreen({
               placeholder="Search bots and chats"
               placeholderTextColor={tokens.textSecondary}
               accessibilityLabel="Search bots and chats"
+              maxFontSizeMultiplier={1.5}
               style={styles.searchInput}
             />
           </View>
@@ -661,11 +662,12 @@ const styles = StyleSheet.create({
   searchBox: { marginTop: 10, marginBottom: 0, justifyContent: "center" },
   searchIcon: { position: "absolute", left: 14, zIndex: 1 },
   searchInput: {
-    height: 44,
+    minHeight: 44,
     borderRadius: 999,
     backgroundColor: tokens.fillMuted,
     paddingLeft: 40,
     paddingRight: 16,
+    paddingVertical: 10,
     color: tokens.text,
     fontSize: 16,
   },
