@@ -10,7 +10,6 @@ import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View } from "re
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
-import { AssetReadRefusedError, readAssetText } from "./assetText";
 import { SheetShell } from "./SheetShell";
 
 const TEXT_EXTENSIONS =
@@ -41,12 +40,20 @@ export function FilePreviewSheet({
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   const absolute = path !== null && /^[\\/]|^~|^[A-Za-z]:[\\/]/u.test(path);
+  const readsText = path !== null && TEXT_EXTENSIONS.test(path);
   const resource = useMemo<AssetResource | null>(
     () =>
       visible && path !== null && (cwd !== null || absolute)
-        ? { _tag: "host-file", cwd: cwd ?? "", path, disposition: "inline" }
+        ? {
+            _tag: "host-file",
+            cwd: cwd ?? "",
+            path,
+            // The inline route only mints previewable media, HTML and PDF.
+            // Text needs the download route, which serves any file type.
+            disposition: readsText ? "download" : "inline",
+          }
         : null,
-    [absolute, cwd, path, visible],
+    [absolute, cwd, path, readsText, visible],
   );
   const urlAtom = useMemo(
     () =>
@@ -68,13 +75,15 @@ export function FilePreviewSheet({
     if (url === null || path === null || !TEXT_EXTENSIONS.test(path)) return;
     void (async () => {
       try {
-        const body = await readAssetText(url);
-        if (live) setText(body);
-      } catch (cause) {
+        const response = await fetch(url, { cache: "no-store" });
         if (!live) return;
-        setFetchError(
-          cause instanceof AssetReadRefusedError ? cause.message : "Couldn't open that file.",
-        );
+        if (!response.ok) {
+          setFetchError("Couldn't read that file.");
+          return;
+        }
+        setText(await response.text());
+      } catch {
+        if (live) setFetchError("Couldn't open that file.");
       }
     })();
     return () => {
