@@ -55,7 +55,7 @@
   },
   {
     "id": "hbots-mobile-kotlin",
-    "kind": "check",
+    "kind": "node",
     "title": "hbots Android Kotlin unit tests",
     "cwd": "apps/hbots-mobile",
     "commands": [
@@ -65,11 +65,11 @@
   },
   {
     "id": "parity",
-    "kind": "check",
+    "kind": "node",
     "title": "Web to Android parity",
     "cwd": ".",
     "commands": [
-      "node scripts/personal/parity/parity-matrix.mjs . --ref HEAD --android-ref HEAD --check --out scripts/personal/parity/parity.json && git diff --exit-code scripts/personal/parity/parity.json"
+      "node scripts/personal/parity/parity-matrix.mjs . --ref HEAD --android-ref HEAD --client-ref HEAD --check --out scripts/personal/parity/parity.json && git diff --exit-code scripts/personal/parity/parity.json"
     ]
   }
 ]
