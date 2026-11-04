@@ -42,6 +42,8 @@ export interface WorkingProgressTarget {
   readonly updatedAt: string;
 }
 
+const NO_NOTES: ReadonlyMap<string, WorkingProgressEntry> = new Map();
+
 /**
  * Notes by thread id for the chats that are working right now. Nothing is
  * asked while no bot works. While one does, the read repeats when its chat
