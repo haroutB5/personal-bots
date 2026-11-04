@@ -335,13 +335,12 @@ describe("Settings plugins", () => {
     const links = plugins.findAllByType("a");
     expect(links.map((link) => link.props.href)).toEqual([
       "/bots/settings/connections",
-      "/bots/settings/connections",
       "/bots/settings/passwords",
       "/bots/settings/api-keys",
     ]);
     const row = JSON.stringify(renderer!.toJSON());
-    expect(row).toContain("Pair a phone");
-    expect(row).toContain("Create a pairing link or QR code for the hbots Android app");
+    expect(row).toContain("Create pairing link");
+    expect(row).toContain("Scan a QR code to pair the hbots Android app");
     expect(row).toContain("Keys bots can use, like Tavily and SerpApi");
     // The list and its Add form live on /bots/settings/api-keys now.
     expect(renderer!.root.findAllByProps({ "aria-labelledby": "settings-api-keys" })).toEqual([]);

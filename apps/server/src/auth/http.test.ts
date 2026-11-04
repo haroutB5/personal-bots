@@ -763,6 +763,24 @@ it.effect(
             const dpop = yield* readJson<{ access_token: string; token_type: string }>(paired);
             expect(dpop.token_type).toBe("DPoP");
 
+            const clientsResponse = yield* call(
+              new Request("http://127.0.0.1/api/auth/clients", {
+                headers: { cookie: ownerCookie },
+              }),
+            );
+            const clients =
+              yield* readJson<ReadonlyArray<{ client: { label?: string; deviceType: string } }>>(
+                clientsResponse,
+              );
+            expect(clients).toContainEqual(
+              expect.objectContaining({
+                client: expect.objectContaining({
+                  label: "Find X9 Pro",
+                  deviceType: "mobile",
+                }),
+              }),
+            );
+
             const replaySeconds = yield* nowSeconds();
             const replayProof = makeDpopProof({
               method: "POST",

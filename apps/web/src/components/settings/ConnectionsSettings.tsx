@@ -3404,7 +3404,7 @@ export function ConnectionsSettings() {
             ) : null}
           </SettingsSection>
 
-          {isLocalBackendRemotelyReachable ? (
+          {canManageLocalBackend ? (
             <FoldedSettingsSection
               id="authorized-clients"
               title="Authorized clients"
