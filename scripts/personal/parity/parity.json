@@ -759,7 +759,7 @@
       "component": "BotUsageSheet",
       "logic": {
         "files": 6,
-        "inPackage": ["botModelLabel.ts"],
+        "inPackage": ["tokenUsagePresentation.ts"],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
@@ -788,16 +788,17 @@
       "web": "ChatSettingsSheet.tsx:281",
       "component": "ChatSettingsSheet",
       "logic": {
-        "files": 38,
+        "files": 40,
         "inPackage": [
           "chatState.ts",
           "relativeTime.ts",
+          "chatNames.ts",
           "unreadChats.ts",
           "ownerChats.ts",
           "conversationModel.ts",
-          "groupModel.ts",
-          "chatActivity.ts",
-          "botSummaries.ts"
+          "botThreadRows.ts",
+          "botSummaries.ts",
+          "chatActivity.ts"
         ],
         "direct": ["chatSettingsModel.ts", "chatState.ts"]
       },
@@ -857,14 +858,8 @@
       "web": "NewChatDialog.tsx:30",
       "component": "NewChatDialog",
       "logic": {
-        "files": 36,
-        "inPackage": [
-          "perfFlags.ts",
-          "usePersonalBots.ts",
-          "groupModel.ts",
-          "chatState.ts",
-          "chatActivity.ts"
-        ],
+        "files": 35,
+        "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "groupModel.ts", "chatNames.ts"],
         "direct": ["chatNames.ts", "renameChat.ts", "useBotOpenChatNames.ts", "useKeyboardInset.ts"]
       },
       "pr": "A3",
@@ -895,7 +890,7 @@
       "logic": {
         "files": 32,
         "inPackage": [
-          "botModelLabel.ts",
+          "tokenUsagePresentation.ts",
           "usageStrip.ts",
           "usagePresentation.ts",
           "usePersonalBots.ts",
@@ -922,8 +917,8 @@
       "web": "RenameChatDialog.tsx:143",
       "component": "RenameChatDialog",
       "logic": {
-        "files": 18,
-        "inPackage": ["perfFlags.ts", "groupModel.ts", "chatState.ts", "chatActivity.ts"],
+        "files": 16,
+        "inPackage": ["perfFlags.ts", "chatNames.ts"],
         "direct": ["chatNames.ts", "renameChat.ts", "useKeyboardInset.ts"]
       },
       "pr": "A3",
@@ -1222,7 +1217,7 @@
       "web": "BotThreadsScreen.tsx:632",
       "via": "menu",
       "logic": {
-        "files": 73,
+        "files": 76,
         "inPackage": [
           "unreadChats.ts",
           "chatState.ts",
@@ -1230,10 +1225,12 @@
           "usePersonalBots.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatNames.ts",
           "conversationModel.ts",
-          "groupModel.ts",
-          "chatActivity.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
+          "groupModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1269,7 +1266,7 @@
       "web": "BotThreadsScreen.tsx:639",
       "via": "menu",
       "logic": {
-        "files": 73,
+        "files": 76,
         "inPackage": [
           "unreadChats.ts",
           "chatState.ts",
@@ -1277,10 +1274,12 @@
           "usePersonalBots.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatNames.ts",
           "conversationModel.ts",
-          "groupModel.ts",
-          "chatActivity.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
+          "groupModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1496,29 +1495,35 @@
       "web": "ConversationScreen.tsx:1597",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatState.ts",
-          "chatActivity.ts",
+          "chatNames.ts",
+          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatState.ts",
           "unreadChats.ts",
           "ownerChats.ts",
           "conversationModel.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
+          "messageReadStatus.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1593,29 +1598,35 @@
       "web": "ConversationScreen.tsx:1600",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatState.ts",
-          "chatActivity.ts",
+          "chatNames.ts",
+          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatState.ts",
           "unreadChats.ts",
           "ownerChats.ts",
           "conversationModel.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
+          "messageReadStatus.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1690,29 +1701,35 @@
       "web": "ConversationScreen.tsx:1611",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatState.ts",
-          "chatActivity.ts",
+          "chatNames.ts",
+          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatState.ts",
           "unreadChats.ts",
           "ownerChats.ts",
           "conversationModel.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
+          "messageReadStatus.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1787,29 +1804,35 @@
       "web": "ConversationScreen.tsx:1623",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatState.ts",
-          "chatActivity.ts",
+          "chatNames.ts",
+          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatState.ts",
           "unreadChats.ts",
           "ownerChats.ts",
           "conversationModel.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
+          "messageReadStatus.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1884,29 +1907,35 @@
       "web": "ConversationScreen.tsx:1632",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatState.ts",
-          "chatActivity.ts",
+          "chatNames.ts",
+          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatState.ts",
           "unreadChats.ts",
           "ownerChats.ts",
           "conversationModel.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
+          "messageReadStatus.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1981,29 +2010,35 @@
       "web": "ConversationScreen.tsx:1646",
       "via": "menu",
       "logic": {
-        "files": 127,
+        "files": 135,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatState.ts",
-          "chatActivity.ts",
+          "chatNames.ts",
+          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatState.ts",
           "unreadChats.ts",
           "ownerChats.ts",
           "conversationModel.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
+          "messageReadStatus.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -2121,11 +2156,14 @@
       "web": "GroupConversationScreen.tsx:598",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 68,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
+          "pendingOutgoing.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2158,11 +2196,14 @@
       "web": "GroupConversationScreen.tsx:600",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 68,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
+          "pendingOutgoing.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2195,11 +2236,14 @@
       "web": "GroupConversationScreen.tsx:611",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 68,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
+          "pendingOutgoing.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2232,11 +2276,14 @@
       "web": "GroupConversationScreen.tsx:614",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 68,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
+          "pendingOutgoing.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2269,11 +2316,14 @@
       "web": "GroupConversationScreen.tsx:618",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 68,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
+          "pendingOutgoing.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2306,11 +2356,14 @@
       "web": "GroupConversationScreen.tsx:622",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 68,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
+          "pendingOutgoing.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2343,11 +2396,14 @@
       "web": "GroupConversationScreen.tsx:624",
       "via": "menu",
       "logic": {
-        "files": 63,
+        "files": 68,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
+          "pendingOutgoing.ts",
           "perfFlags.ts",
+          "outboxBlobs.ts",
+          "outbox.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2432,7 +2488,7 @@
           "taskPresentation.ts",
           "relativeTime.ts",
           "greeting.ts",
-          "conversationModel.ts"
+          "contextUsed.ts"
         ],
         "direct": [
           "bulkSelection.ts",
@@ -2482,8 +2538,8 @@
       "web": "PersonalComposer.tsx:1308",
       "via": "menu",
       "logic": {
-        "files": 27,
-        "inPackage": ["conversationModel.ts"],
+        "files": 33,
+        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2507,8 +2563,8 @@
       "web": "PersonalComposer.tsx:1316",
       "via": "menu",
       "logic": {
-        "files": 27,
-        "inPackage": ["conversationModel.ts"],
+        "files": 33,
+        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2532,8 +2588,8 @@
       "web": "PersonalComposer.tsx:1325",
       "via": "menu",
       "logic": {
-        "files": 27,
-        "inPackage": ["conversationModel.ts"],
+        "files": 33,
+        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2557,8 +2613,8 @@
       "web": "PersonalComposer.tsx:1459",
       "via": "menu",
       "logic": {
-        "files": 27,
-        "inPackage": ["conversationModel.ts"],
+        "files": 33,
+        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2582,8 +2638,8 @@
       "web": "PersonalComposer.tsx:1468",
       "via": "menu",
       "logic": {
-        "files": 27,
-        "inPackage": ["conversationModel.ts"],
+        "files": 33,
+        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2890,7 +2946,7 @@
       "web": "BotThreadsScreen.tsx:202",
       "via": "gesture",
       "logic": {
-        "files": 73,
+        "files": 76,
         "inPackage": [
           "unreadChats.ts",
           "chatState.ts",
@@ -2898,10 +2954,12 @@
           "usePersonalBots.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatNames.ts",
           "conversationModel.ts",
-          "groupModel.ts",
-          "chatActivity.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
+          "groupModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -2937,7 +2995,7 @@
       "web": "BotThreadsScreen.tsx:240",
       "via": "gesture",
       "logic": {
-        "files": 73,
+        "files": 76,
         "inPackage": [
           "unreadChats.ts",
           "chatState.ts",
@@ -2945,10 +3003,12 @@
           "usePersonalBots.ts",
           "chatsSnapshot.ts",
           "relativeTime.ts",
+          "chatNames.ts",
           "conversationModel.ts",
-          "groupModel.ts",
-          "chatActivity.ts",
+          "botThreadRows.ts",
           "botSummaries.ts",
+          "chatActivity.ts",
+          "groupModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -2985,7 +3045,7 @@
       "via": "gesture",
       "logic": {
         "files": 6,
-        "inPackage": ["botModelLabel.ts"],
+        "inPackage": ["tokenUsagePresentation.ts"],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
@@ -3156,7 +3216,7 @@
           "taskPresentation.ts",
           "relativeTime.ts",
           "greeting.ts",
-          "conversationModel.ts"
+          "contextUsed.ts"
         ],
         "direct": [
           "bulkSelection.ts",
@@ -3183,8 +3243,8 @@
       "web": "MessageSwipeTime.tsx:61",
       "via": "gesture",
       "logic": {
-        "files": 25,
-        "inPackage": ["greeting.ts", "conversationModel.ts"],
+        "files": 24,
+        "inPackage": ["messageTime.ts"],
         "direct": ["messageTime.ts", "messageSwipe.ts", "useMessageSwipe.ts"]
       },
       "pr": "A4",
@@ -3272,7 +3332,7 @@
       "logic": {
         "files": 32,
         "inPackage": [
-          "botModelLabel.ts",
+          "tokenUsagePresentation.ts",
           "usageStrip.ts",
           "usagePresentation.ts",
           "usePersonalBots.ts",
@@ -3434,12 +3494,7 @@
       "web": "ContextUsedPanel.tsx:1",
       "logic": {
         "files": 44,
-        "inPackage": [
-          "usePersonalBots.ts",
-          "relativeTime.ts",
-          "greeting.ts",
-          "conversationModel.ts"
-        ],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "contextUsed.ts"],
         "direct": [
           "commandFeedback.ts",
           "contextUsed.ts",
@@ -3573,8 +3628,8 @@
       "title": "PersonalOfflineBanner",
       "web": "PersonalOfflineBanner.tsx:1",
       "logic": {
-        "files": 24,
-        "inPackage": ["usePersonalBots.ts"],
+        "files": 25,
+        "inPackage": ["usePersonalBots.ts", "outbox.ts"],
         "direct": ["offlineBanner.ts", "outbox.ts", "usePersonalBots.ts", "updateStatus.ts"]
       },
       "pr": "A2",
@@ -3589,7 +3644,7 @@
       "logic": {
         "files": 32,
         "inPackage": [
-          "botModelLabel.ts",
+          "tokenUsagePresentation.ts",
           "usageStrip.ts",
           "usagePresentation.ts",
           "usePersonalBots.ts",
@@ -5270,7 +5325,7 @@
           "taskPresentation.ts",
           "relativeTime.ts",
           "greeting.ts",
-          "conversationModel.ts"
+          "contextUsed.ts"
         ],
         "direct": [
           "bulkSelection.ts",
@@ -5582,8 +5637,8 @@
       "web": "PersonalComposer.tsx:1339",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["conversationModel.ts"],
+        "files": 33,
+        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
