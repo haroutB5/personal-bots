@@ -56,7 +56,7 @@ describe("connectWithDeadline", () => {
     expect(aborted).toBe(true);
   });
 
-  it("keeps the whole attempt under the 15 second reconnect budget", () => {
-    expect(CONNECT_DEADLINE_MS).toBeLessThanOrEqual(10_000);
+  it("keeps two failed attempts and their backoff inside the 15 second reconnect budget", () => {
+    expect(CONNECT_DEADLINE_MS).toBeLessThanOrEqual(5_000);
   });
 });
