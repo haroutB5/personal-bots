@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import com.facebook.react.modules.network.OkHttpClientProvider
 import java.util.concurrent.TimeUnit
@@ -62,9 +63,30 @@ class HbotsNetworkModule : Module() {
       }
     }
 
-    AsyncFunction("displayName") { uri: String ->
+    AsyncFunction("displayName") { uri: String, assetId: String ->
       val context = app() ?: return@AsyncFunction null
       try {
+        // The photo picker reports a generated name, but the media id still
+        // points at the gallery entry that holds the file's real name.
+        if (assetId.isNotBlank() && assetId.all(Char::isDigit)) {
+          context.contentResolver
+            .query(
+              MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+              arrayOf(MediaStore.Images.Media.DISPLAY_NAME),
+              "${MediaStore.Images.Media._ID} = ?",
+              arrayOf(assetId),
+              null,
+            )
+            ?.use { cursor ->
+              if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
+                if (index >= 0) {
+                  val name = cursor.getString(index)
+                  if (!name.isNullOrBlank()) return@AsyncFunction name
+                }
+              }
+            }
+        }
         val parsed = Uri.parse(uri)
         if (parsed.scheme == "content") {
           context.contentResolver

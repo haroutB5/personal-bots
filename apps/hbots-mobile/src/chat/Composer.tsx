@@ -163,7 +163,9 @@ export function Composer({
         quality: 1,
       });
       if (result.canceled) return;
-      const names = await Promise.all(result.assets.map((asset) => displayNameOf(asset.uri)));
+      const names = await Promise.all(
+        result.assets.map((asset) => displayNameOf(asset.uri, asset.assetId ?? null)),
+      );
       addPicked(
         result.assets.map((asset, index) => {
           const uri = asset.uri;
@@ -203,7 +205,7 @@ export function Composer({
       if (result.canceled) return;
       const asset = result.assets[0];
       if (asset === undefined) return;
-      const resolvedName = await displayNameOf(asset.uri);
+      const resolvedName = await displayNameOf(asset.uri, asset.assetId ?? null);
       addPicked([
         {
           id: `${Date.now()}-camera`,
