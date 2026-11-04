@@ -16,5 +16,6 @@ android {
 }
 
 dependencies {
+  implementation 'com.facebook.react:react-android:0.86.3'
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
