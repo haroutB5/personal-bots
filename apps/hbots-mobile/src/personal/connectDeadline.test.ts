@@ -39,6 +39,23 @@ describe("connectWithDeadline", () => {
     expect(disposed).toBe(true);
   });
 
+  it("aborts the attempt so its request and socket stop", async () => {
+    let aborted = false;
+    await expect(
+      connectWithDeadline(
+        (signal) =>
+          new Promise<never>((_resolve, reject) => {
+            signal.addEventListener("abort", () => {
+              aborted = true;
+              reject(new Error("aborted"));
+            });
+          }),
+        20,
+      ),
+    ).rejects.toThrow("timed out");
+    expect(aborted).toBe(true);
+  });
+
   it("keeps the whole attempt under the 15 second reconnect budget", () => {
     expect(CONNECT_DEADLINE_MS).toBeLessThanOrEqual(10_000);
   });

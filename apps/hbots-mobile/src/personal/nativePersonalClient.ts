@@ -313,10 +313,15 @@ export function createNativePersonal(
       generation.value += 1;
       setState(connectingState(generation.value, attempt));
       try {
-        const next = await connectWithDeadline(() =>
-          connectNativeSession(stored, appVersion, (providers) => {
-            Effect.runSync(SubscriptionRef.set(providersRef, providers));
-          }),
+        const next = await connectWithDeadline((signal) =>
+          connectNativeSession(
+            stored,
+            appVersion,
+            (providers) => {
+              Effect.runSync(SubscriptionRef.set(providersRef, providers));
+            },
+            signal,
+          ),
         );
         if (disposed) {
           await next.dispose();

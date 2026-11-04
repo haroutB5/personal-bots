@@ -16,11 +16,11 @@ const decodeToken = Schema.decodeUnknownSync(AuthAccessTokenResult);
 const WebSocketTicketWire = Schema.Struct({ ticket: AuthWebSocketTicketResult.fields.ticket });
 export const decodeTicket = Schema.decodeUnknownSync(WebSocketTicketWire);
 
-async function fetchDescriptor(httpBaseUrl: string) {
+async function fetchDescriptor(httpBaseUrl: string, signal?: AbortSignal) {
   const descriptor = await requestJson(
     "descriptor",
     new URL("/.well-known/t3/environment", httpBaseUrl),
-    {},
+    signal === undefined ? {} : { signal },
     5000,
   );
   return decodeDescriptor(descriptor);
@@ -29,8 +29,9 @@ async function fetchDescriptor(httpBaseUrl: string) {
 export async function openSocketUrl(
   session: StoredSession,
   clientAppVersion: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const descriptor = await fetchDescriptor(session.httpBaseUrl);
+  const descriptor = await fetchDescriptor(session.httpBaseUrl, signal);
   assertSameEnvironment(session.environmentId, descriptor.environmentId);
   const ticket = await requestJson(
     "ticket",
@@ -38,6 +39,7 @@ export async function openSocketUrl(
     {
       method: "POST",
       headers: { authorization: `Bearer ${session.accessToken}` },
+      ...(signal === undefined ? {} : { signal }),
     },
     5000,
   );
