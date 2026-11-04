@@ -42,6 +42,8 @@ import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
 import { createNativeEnvironmentCache } from "./nativeCache";
 import { connectWithDeadline } from "./connectDeadline";
+import { resetNetworkClient } from "./networkReset";
+import { shouldResetNetworkClient } from "./reconnectPolicy";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
 
@@ -391,6 +393,7 @@ export function createNativePersonal(
           options.onAuthDead(cause);
         }
       }
+      if (shouldResetNetworkClient(attempt + 1)) await resetNetworkClient();
       if (disposed) return;
       const ended = current;
       current = null;
