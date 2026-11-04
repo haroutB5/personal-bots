@@ -8,19 +8,19 @@
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
-    "items": 411,
+    "items": 413,
     "byKind": {
       "screen": 53,
-      "sheet": 24,
+      "sheet": 25,
       "action": 64,
       "card": 24,
-      "setting": 105,
+      "setting": 106,
       "pref": 14,
       "rpc": 127
     },
     "byStatus": {
-      "done": 40,
-      "planned": 336,
+      "done": 41,
+      "planned": 337,
       "n/a": 35,
       "unassigned": 0
     },
@@ -30,7 +30,7 @@
       "A4": 13,
       "A9": 37,
       "A10": 30,
-      "A14": 45,
+      "A14": 47,
       "A15": 55,
       "A11": 17,
       "A16": 22,
@@ -506,7 +506,7 @@
       "layout": false,
       "scope": "pairing",
       "pr": "A17",
-      "status": "planned",
+      "status": "done",
       "androidToday": "Paste-a-link pairing only (apps/hbots-mobile/src/App.tsx:773). No QR scan, server confirm or device label.",
       "check": "Open /pair on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
@@ -880,6 +880,31 @@
       "pr": "A2",
       "status": "planned",
       "check": "Open \"Redeem a banked x reset?\" from its screen on Android. Same fields, buttons and confirm wording as PersonalResetCredits.tsx:101. Back closes only the sheet."
+    },
+    {
+      "id": "sheet:PersonalSettingsScreen.tsx#create-pairing-link",
+      "kind": "sheet",
+      "title": "Create pairing link",
+      "web": "PersonalSettingsScreen.tsx:493",
+      "primitive": "Dialog",
+      "logic": {
+        "files": 34,
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "direct": [
+          "commandFeedback.ts",
+          "personalMode.ts",
+          "usePersonalBots.ts",
+          "personalPreferences.ts",
+          "personalTheme.ts",
+          "appVersion.ts",
+          "useRemovedBots.ts",
+          "memoryPresentation.ts",
+          "usePersonalAutomation.ts"
+        ]
+      },
+      "pr": "A14",
+      "status": "planned",
+      "check": "Open \"Create pairing link\" from its screen on Android. Same fields, buttons and confirm wording as PersonalSettingsScreen.tsx:493. Back closes only the sheet."
     },
     {
       "id": "sheet:PersonalUsageStrip.tsx#sheet-in-personalusagestrip",
@@ -3870,7 +3895,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#your-name-section",
       "kind": "setting",
       "title": "Your name (section)",
-      "web": "PersonalSettingsScreen.tsx:450",
+      "web": "PersonalSettingsScreen.tsx:577",
       "section": "Your name",
       "logic": {
         "files": 34,
@@ -3895,7 +3920,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#your-name-displaynameform",
       "kind": "setting",
       "title": "Your name / DisplayNameForm",
-      "web": "PersonalSettingsScreen.tsx:455",
+      "web": "PersonalSettingsScreen.tsx:582",
       "section": "Your name",
       "logic": {
         "files": 34,
@@ -3920,7 +3945,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-section",
       "kind": "setting",
       "title": "Bots (section)",
-      "web": "PersonalSettingsScreen.tsx:468",
+      "web": "PersonalSettingsScreen.tsx:595",
       "section": "Bots",
       "logic": {
         "files": 34,
@@ -3945,7 +3970,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-team",
       "kind": "setting",
       "title": "Bots / Team",
-      "web": "PersonalSettingsScreen.tsx:481",
+      "web": "PersonalSettingsScreen.tsx:608",
       "section": "Bots",
       "logic": {
         "files": 34,
@@ -3970,7 +3995,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-new-bot",
       "kind": "setting",
       "title": "Bots / New bot",
-      "web": "PersonalSettingsScreen.tsx:507",
+      "web": "PersonalSettingsScreen.tsx:634",
       "section": "Bots",
       "logic": {
         "files": 34,
@@ -3995,7 +4020,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#bots-removed-bots",
       "kind": "setting",
       "title": "Bots / Removed bots",
-      "web": "PersonalSettingsScreen.tsx:528",
+      "web": "PersonalSettingsScreen.tsx:655",
       "section": "Bots",
       "logic": {
         "files": 34,
@@ -4020,7 +4045,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#appearance-section",
       "kind": "setting",
       "title": "Appearance (section)",
-      "web": "PersonalSettingsScreen.tsx:556",
+      "web": "PersonalSettingsScreen.tsx:683",
       "section": "Appearance",
       "logic": {
         "files": 34,
@@ -4044,7 +4069,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#appearance-appearancecontrol",
       "kind": "setting",
       "title": "Appearance / AppearanceControl",
-      "web": "PersonalSettingsScreen.tsx:561",
+      "web": "PersonalSettingsScreen.tsx:688",
       "section": "Appearance",
       "logic": {
         "files": 34,
@@ -4068,7 +4093,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-section",
       "kind": "setting",
       "title": "Chat (section)",
-      "web": "PersonalSettingsScreen.tsx:568",
+      "web": "PersonalSettingsScreen.tsx:695",
       "section": "Chat",
       "logic": {
         "files": 34,
@@ -4093,7 +4118,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-show-tool-steps",
       "kind": "setting",
       "title": "Chat / Show tool steps",
-      "web": "PersonalSettingsScreen.tsx:576",
+      "web": "PersonalSettingsScreen.tsx:703",
       "section": "Chat",
       "logic": {
         "files": 34,
@@ -4118,7 +4143,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-show-routines-in-chats",
       "kind": "setting",
       "title": "Chat / Show routines in chats",
-      "web": "PersonalSettingsScreen.tsx:583",
+      "web": "PersonalSettingsScreen.tsx:710",
       "section": "Chat",
       "logic": {
         "files": 34,
@@ -4143,7 +4168,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#chat-autoarchivetaskchatsrow",
       "kind": "setting",
       "title": "Chat / AutoArchiveTaskChatsRow",
-      "web": "PersonalSettingsScreen.tsx:589",
+      "web": "PersonalSettingsScreen.tsx:716",
       "section": "Chat",
       "logic": {
         "files": 34,
@@ -4168,7 +4193,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#voice-calls-section",
       "kind": "setting",
       "title": "Voice calls (section)",
-      "web": "PersonalSettingsScreen.tsx:602",
+      "web": "PersonalSettingsScreen.tsx:729",
       "section": "Voice calls",
       "logic": {
         "files": 34,
@@ -4193,7 +4218,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#voice-calls-voicesettingssection",
       "kind": "setting",
       "title": "Voice calls / VoiceSettingsSection",
-      "web": "PersonalSettingsScreen.tsx:606",
+      "web": "PersonalSettingsScreen.tsx:733",
       "section": "Voice calls",
       "logic": {
         "files": 34,
@@ -4218,7 +4243,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-section",
       "kind": "setting",
       "title": "Plugins (section)",
-      "web": "PersonalSettingsScreen.tsx:609",
+      "web": "PersonalSettingsScreen.tsx:736",
       "section": "Plugins",
       "logic": {
         "files": 34,
@@ -4240,10 +4265,35 @@
       "check": "Change \"Plugins (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
+      "id": "setting:PersonalSettingsScreen.tsx#plugins-pairphonerow",
+      "kind": "setting",
+      "title": "Plugins / PairPhoneRow",
+      "web": "PersonalSettingsScreen.tsx:741",
+      "section": "Plugins",
+      "logic": {
+        "files": 34,
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "direct": [
+          "commandFeedback.ts",
+          "personalMode.ts",
+          "usePersonalBots.ts",
+          "personalPreferences.ts",
+          "personalTheme.ts",
+          "appVersion.ts",
+          "useRemovedBots.ts",
+          "memoryPresentation.ts",
+          "usePersonalAutomation.ts"
+        ]
+      },
+      "pr": "A14",
+      "status": "planned",
+      "check": "Change \"Plugins / PairPhoneRow\" on Android. The web app shows the new value after a refresh, and the reverse."
+    },
+    {
       "id": "setting:PersonalSettingsScreen.tsx#plugins-connections",
       "kind": "setting",
       "title": "Plugins / Connections",
-      "web": "PersonalSettingsScreen.tsx:622",
+      "web": "PersonalSettingsScreen.tsx:750",
       "section": "Plugins",
       "logic": {
         "files": 34,
@@ -4268,7 +4318,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-passwords",
       "kind": "setting",
       "title": "Plugins / Passwords",
-      "web": "PersonalSettingsScreen.tsx:644",
+      "web": "PersonalSettingsScreen.tsx:772",
       "section": "Plugins",
       "logic": {
         "files": 34,
@@ -4293,7 +4343,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#plugins-api-keys",
       "kind": "setting",
       "title": "Plugins / API keys",
-      "web": "PersonalSettingsScreen.tsx:666",
+      "web": "PersonalSettingsScreen.tsx:794",
       "section": "Plugins",
       "logic": {
         "files": 34,
@@ -4318,7 +4368,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-section",
       "kind": "setting",
       "title": "Routines, memory and notifications (section)",
-      "web": "PersonalSettingsScreen.tsx:683",
+      "web": "PersonalSettingsScreen.tsx:811",
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 34,
@@ -4343,7 +4393,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-routines",
       "kind": "setting",
       "title": "Routines, memory and notifications / Routines",
-      "web": "PersonalSettingsScreen.tsx:693",
+      "web": "PersonalSettingsScreen.tsx:821",
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 34,
@@ -4368,7 +4418,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-memory",
       "kind": "setting",
       "title": "Routines, memory and notifications / Memory",
-      "web": "PersonalSettingsScreen.tsx:701",
+      "web": "PersonalSettingsScreen.tsx:829",
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 34,
@@ -4393,7 +4443,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#routines-memory-and-notifications-notifications",
       "kind": "setting",
       "title": "Routines, memory and notifications / Notifications",
-      "web": "PersonalSettingsScreen.tsx:709",
+      "web": "PersonalSettingsScreen.tsx:837",
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 34,
@@ -4418,7 +4468,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#about-section",
       "kind": "setting",
       "title": "About (section)",
-      "web": "PersonalSettingsScreen.tsx:754",
+      "web": "PersonalSettingsScreen.tsx:882",
       "section": "About",
       "logic": {
         "files": 34,
@@ -4443,7 +4493,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#about-about",
       "kind": "setting",
       "title": "About / About",
-      "web": "PersonalSettingsScreen.tsx:771",
+      "web": "PersonalSettingsScreen.tsx:899",
       "section": "About",
       "logic": {
         "files": 34,
@@ -4468,7 +4518,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-section",
       "kind": "setting",
       "title": "Advanced (section)",
-      "web": "PersonalSettingsScreen.tsx:797",
+      "web": "PersonalSettingsScreen.tsx:925",
       "section": "Advanced",
       "logic": {
         "files": 34,
@@ -4492,7 +4542,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-developer-view",
       "kind": "setting",
       "title": "Advanced / Developer view",
-      "web": "PersonalSettingsScreen.tsx:812",
+      "web": "PersonalSettingsScreen.tsx:940",
       "section": "Advanced",
       "logic": {
         "files": 34,
@@ -4516,7 +4566,7 @@
       "id": "setting:PersonalSettingsScreen.tsx#advanced-diagnostics-overlay",
       "kind": "setting",
       "title": "Advanced / Diagnostics overlay",
-      "web": "PersonalSettingsScreen.tsx:839",
+      "web": "PersonalSettingsScreen.tsx:967",
       "section": "Advanced",
       "logic": {
         "files": 34,
