@@ -42,6 +42,8 @@ import type { ChatEnvironment } from "./chatEnvironment";
 import { uploadDraftAttachments, type DraftAttachment } from "./outboxNative";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import { attachmentName } from "./attachmentName";
+import { displayNameOf } from "../personal/networkReset";
 import { SheetAction, SheetCancel, SheetShell } from "../sheets/SheetShell";
 
 const MAX_ATTACHMENTS = 10;
@@ -161,10 +163,16 @@ export function Composer({
         quality: 1,
       });
       if (result.canceled) return;
+      const names = await Promise.all(result.assets.map((asset) => displayNameOf(asset.uri)));
       addPicked(
         result.assets.map((asset, index) => {
           const uri = asset.uri;
-          const name = asset.fileName ?? `Photo ${index + 1}.jpg`;
+          const name = attachmentName({
+            resolvedName: names[index] ?? null,
+            fileName: asset.fileName,
+            camera: false,
+            index,
+          });
           return {
             id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
             kind: "image",
@@ -195,11 +203,17 @@ export function Composer({
       if (result.canceled) return;
       const asset = result.assets[0];
       if (asset === undefined) return;
+      const resolvedName = await displayNameOf(asset.uri);
       addPicked([
         {
           id: `${Date.now()}-camera`,
           kind: "image",
-          name: asset.fileName ?? "Camera photo.jpg",
+          name: attachmentName({
+            resolvedName,
+            fileName: asset.fileName,
+            camera: true,
+            index: 0,
+          }),
           mimeType: asset.mimeType ?? "image/jpeg",
           sizeBytes: sizeOf(asset.uri, asset.fileSize ?? 0),
           uri: asset.uri,

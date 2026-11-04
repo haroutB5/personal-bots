@@ -10,6 +10,7 @@ import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View } from "re
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import { AssetReadRefusedError, readAssetText } from "./assetText";
 import { SheetShell } from "./SheetShell";
 
 const TEXT_EXTENSIONS =
@@ -67,15 +68,13 @@ export function FilePreviewSheet({
     if (url === null || path === null || !TEXT_EXTENSIONS.test(path)) return;
     void (async () => {
       try {
-        const response = await fetch(url, { cache: "no-store" });
+        const body = await readAssetText(url);
+        if (live) setText(body);
+      } catch (cause) {
         if (!live) return;
-        if (!response.ok) {
-          setFetchError("Couldn't read that file.");
-          return;
-        }
-        setText(await response.text());
-      } catch {
-        if (live) setFetchError("Couldn't open that file.");
+        setFetchError(
+          cause instanceof AssetReadRefusedError ? cause.message : "Couldn't open that file.",
+        );
       }
     })();
     return () => {

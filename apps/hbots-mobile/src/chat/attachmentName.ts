@@ -8,6 +8,8 @@ export function attachmentName(input: {
   readonly camera: boolean;
   readonly index: number;
 }): string {
+  const resolvedName = input.resolvedName?.trim();
+  if (resolvedName !== undefined && resolvedName.length > 0) return resolvedName;
   const fileName = input.fileName?.trim();
   if (fileName !== undefined && fileName.length > 0) return fileName;
   return input.camera ? "Camera photo.jpg" : `Photo ${String(input.index + 1)}.jpg`;

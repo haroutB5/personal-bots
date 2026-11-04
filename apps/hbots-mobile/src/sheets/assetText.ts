@@ -5,13 +5,21 @@ export interface TextResponse {
 
 export type TextFetcher = (url: string, init?: RequestInit) => Promise<TextResponse>;
 
+export class AssetReadRefusedError extends Error {
+  constructor() {
+    super("Couldn't read that file.");
+    this.name = "AssetReadRefusedError";
+  }
+}
+
 /**
- * The asset URL is already signed and unique per open. A cache directive is not
- * needed, and `no-store` makes the fetch polyfill rewrite the URL with a `_=`
- * query parameter, which the signed asset route does not expect.
+ * The asset URL is already signed and unique per open, so it needs no cache
+ * directive. `no-store` makes the fetch polyfill append a `_=` timestamp to the
+ * URL, which is the request that failed for text files while images, loaded by
+ * the native image component, kept working.
  */
 export async function readAssetText(url: string, doFetch: TextFetcher = fetch): Promise<string> {
-  const response = await doFetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error("Couldn't read that file.");
+  const response = await doFetch(url, { headers: { "Cache-Control": "no-cache" } });
+  if (!response.ok) throw new AssetReadRefusedError();
   return response.text();
 }
