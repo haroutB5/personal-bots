@@ -331,6 +331,7 @@ export function NewItemsSheet({
               contentContainerStyle={styles.form}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              style={styles.formScroll}
             >
               <Field
                 value={name}
@@ -406,6 +407,7 @@ const styles = StyleSheet.create({
   menu: { paddingVertical: 8 },
   menuRow: { minHeight: 52, justifyContent: "center", paddingHorizontal: 20 },
   menuText: { color: tokens.text, fontSize: 17 },
+  formScroll: { flexShrink: 1 },
   form: { padding: 20, gap: 14, paddingBottom: 32 },
   field: {
     height: 44,
