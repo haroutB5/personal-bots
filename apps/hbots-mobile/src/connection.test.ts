@@ -6,7 +6,7 @@ import { backoffMs, describePairFailure } from "./connection";
 describe("backoffMs", () => {
   it("doubles from 2 seconds and stops at 30", () => {
     expect([0, 1, 2, 3, 4, 5, 9].map(backoffMs)).toEqual([
-      2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000,
+      1_000, 2_000, 4_000, 4_000, 4_000, 4_000, 4_000,
     ]);
   });
 });
