@@ -154,6 +154,7 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
   });
   const connected = connection.phase === "connected";
   const connectedRef = useRef(connected);
+  const generationRef = useRef(connection.generation);
   const startTurnRef = useRef(startTurn);
 
   const sendEntry = async (entry: OutboxEntry): Promise<SendOutcome> => {
@@ -210,6 +211,7 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
   const sendEntryRef = useRef(sendEntry);
   useEffect(() => {
     connectedRef.current = connected;
+    generationRef.current = connection.generation;
     startTurnRef.current = startTurn;
     sendEntryRef.current = sendEntry;
   });
@@ -219,6 +221,7 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
     const flusher = createOutboxFlusher({
       environmentId: native.environmentId,
       isConnected: () => connectedRef.current,
+      connectionGeneration: () => generationRef.current,
       send: (entry) => sendEntryRef.current(entry),
     });
     flusherRef.current = flusher;
