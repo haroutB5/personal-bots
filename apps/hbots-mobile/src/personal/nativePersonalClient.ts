@@ -69,7 +69,11 @@ const connectingState = (generation: number, attempt: number): SupervisorConnect
   retryAt: null,
 });
 
-const offlineState = (generation: number, attempt: number): SupervisorConnectionState => ({
+const offlineState = (
+  generation: number,
+  attempt: number,
+  detail = "Can't reach your laptop.",
+): SupervisorConnectionState => ({
   desired: true,
   network: "online",
   phase: "offline",
@@ -78,7 +82,7 @@ const offlineState = (generation: number, attempt: number): SupervisorConnection
   generation,
   lastFailure: new ConnectionTransientError({
     reason: "remote-unavailable",
-    detail: "Can't reach your laptop.",
+    detail,
   }),
   retryAt: null,
 });
@@ -344,7 +348,7 @@ export function createNativePersonal(
           networkBackAt = Date.now();
           return;
         }
-        if (Date.now() - networkBackAt < 8_000) return;
+        if (Date.now() - networkBackAt < 5_000) return;
         const last = Number(ports.kv.getItem(relaunchKey) ?? "0");
         if (Number.isFinite(last) && Date.now() - last < RELAUNCH_COOLDOWN_MS) return;
         relaunching = true;
@@ -365,6 +369,7 @@ export function createNativePersonal(
 
   const loop = async () => {
     let attempt = 0;
+    let lastDetail = "Can't reach your laptop.";
     for (;;) {
       if (disposed) return;
       try {
@@ -401,6 +406,9 @@ export function createNativePersonal(
           ),
         );
         attempt = 0;
+        // A connection that works clears the relaunch guard, so the next outage
+        // may recover the same way instead of waiting out a stale cooldown.
+        ports.kv.removeItem(relaunchKey);
         void Effect.runPromise(next.session.initialConfig).then(
           (config) => Effect.runSync(SubscriptionRef.set(providersRef, config.providers)),
           () => undefined,
@@ -454,6 +462,7 @@ export function createNativePersonal(
         }
       } catch (cause) {
         unstable += 1;
+        lastDetail = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause);
         startOutageWatch();
         if (
           !disposed &&
@@ -474,7 +483,7 @@ export function createNativePersonal(
         }
         retrySignal = newRetrySignal();
         attempt += 1;
-        setState(offlineState(generation.value, attempt));
+        setState(offlineState(generation.value, attempt, lastDetail));
         const waitMs = retryImmediately ? 0 : backoffMs(attempt - 1);
         retryImmediately = false;
         await Promise.race([sleep(waitMs), disposedPromise, retrySignal.promise]);

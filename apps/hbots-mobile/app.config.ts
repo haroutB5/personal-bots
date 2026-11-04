@@ -38,6 +38,7 @@ const config: ExpoConfig = {
     versionCode: versionCodeFor(version),
     userInterfaceStyle: "dark",
     blockedPermissions: [...BLOCKED_PERMISSIONS],
+    permissions: ["android.permission.ACCESS_NETWORK_STATE"],
     predictiveBackGestureEnabled: true,
     allowBackup: false,
     adaptiveIcon: {

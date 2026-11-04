@@ -48,12 +48,19 @@ class HbotsNetworkModule : Module() {
     }
 
     Function("isOnline") {
-      val context = app() ?: return@Function false
-      val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        ?: return@Function false
-      val network = manager.activeNetwork ?: return@Function false
-      val capabilities = manager.getNetworkCapabilities(network) ?: return@Function false
-      capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+      // A thrown check crosses the bridge as a rejected promise and takes the
+      // caller's whole recovery path with it. Without the network-state
+      // permission this throws, so answer "unknown" instead.
+      try {
+        val context = app() ?: return@Function false
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+          ?: return@Function false
+        val network = manager.activeNetwork ?: return@Function false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return@Function false
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+      } catch (_: SecurityException) {
+        false
+      }
     }
 
     AsyncFunction("relaunch") {
