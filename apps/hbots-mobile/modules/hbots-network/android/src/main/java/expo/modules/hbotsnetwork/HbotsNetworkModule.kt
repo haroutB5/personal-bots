@@ -18,7 +18,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * saved session and outbox survive the restart.
  */
 class HbotsNetworkModule : Module() {
-  private fun app(): Context? = appContext.reactContext?.applicationContext
+  private fun app(): Context? =
+    appContext.currentActivity?.applicationContext ?: appContext.reactContext?.applicationContext
 
   override fun definition() = ModuleDefinition {
     Name("HbotsNetwork")
@@ -36,8 +37,7 @@ class HbotsNetworkModule : Module() {
         ?: return@Function false
       val network = manager.activeNetwork ?: return@Function false
       val capabilities = manager.getNetworkCapabilities(network) ?: return@Function false
-      capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+      capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     AsyncFunction("relaunch") {
