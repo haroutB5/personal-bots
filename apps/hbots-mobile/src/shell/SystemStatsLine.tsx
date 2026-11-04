@@ -66,7 +66,13 @@ export function SystemStatsLine({ native }: { readonly native: NativePersonal })
 }
 
 const styles = StyleSheet.create({
-  line: { height: 16, marginTop: -6, marginBottom: 4, justifyContent: "center" },
+  line: {
+    height: 16,
+    marginTop: -6,
+    marginBottom: 4,
+    paddingHorizontal: 20,
+    justifyContent: "center",
+  },
   text: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "500" },
   busy: { color: tokens.reviewText },
 });

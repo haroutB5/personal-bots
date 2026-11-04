@@ -55,46 +55,47 @@ export function BottomBar({
 }) {
   return (
     <View style={[styles.bar, { paddingBottom: bottomInset }]}>
-      {TABS.map(({ tab, label, Icon, ActiveIcon }) => {
-        const selected = tab === active;
-        const Glyph = selected ? ActiveIcon : Icon;
-        return (
-          <Pressable
-            key={tab}
-            onPress={() => onSelect(tab)}
-            accessibilityRole="tab"
-            accessibilityState={{ selected }}
-            accessibilityLabel={label}
-            style={styles.tab}
-          >
-            <Glyph
-              size={24}
-              color={selected ? tokens.text : tokens.textSecondary}
-              strokeWidth={1.75}
-            />
-            <Text
-              style={[styles.label, selected ? styles.labelActive : null]}
-              maxFontSizeMultiplier={1.3}
+      <View style={styles.tabs}>
+        {TABS.map(({ tab, label, Icon, ActiveIcon }) => {
+          const selected = tab === active;
+          const Glyph = selected ? ActiveIcon : Icon;
+          return (
+            <Pressable
+              key={tab}
+              onPress={() => onSelect(tab)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected }}
+              accessibilityLabel={label}
+              style={styles.tab}
             >
-              {label}
-            </Text>
-          </Pressable>
-        );
-      })}
+              <Glyph
+                size={24}
+                color={selected ? tokens.text : tokens.textSecondary}
+                strokeWidth={1.75}
+              />
+              <Text
+                style={[styles.label, selected ? styles.labelActive : null]}
+                maxFontSizeMultiplier={1.3}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   bar: {
-    flexDirection: "row",
     backgroundColor: tokens.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: tokens.border,
   },
+  tabs: { flexDirection: "row", height: 56 },
   tab: {
     flex: 1,
-    minHeight: 56,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,

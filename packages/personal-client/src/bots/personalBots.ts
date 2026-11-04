@@ -5,6 +5,7 @@ import type {
   PersonalFilesListResult,
   PersonalProfile,
   PersonalPushInAppNotification,
+  PersonalRoutineListResult,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import type { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
@@ -41,6 +42,14 @@ export function createPersonalBotsClient<R, ER, P>(
   const personalBotsList = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "personal-bots:list",
     tag: WS_METHODS.personalBotsList,
+    staleTimeMs: 10_000,
+    idleTtlMs: 5 * 60_000,
+  });
+
+  /** Enabled and paused routines, for the next run line on a bot row. */
+  const personalRoutinesList = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-routines:list",
+    tag: WS_METHODS.personalRoutinesList,
     staleTimeMs: 10_000,
     idleTtlMs: 5 * 60_000,
   });
@@ -271,6 +280,16 @@ export function createPersonalBotsClient<R, ER, P>(
     return client.useEnvironmentQuery(atom);
   }
 
+  function usePersonalRoutinesList(
+    environmentId: EnvironmentId | null,
+  ): EnvironmentQueryView<PersonalRoutineListResult> {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalRoutinesList({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
   function usePersonalPushInApp(
     environmentId: EnvironmentId | null,
   ): EnvironmentQueryView<ReadonlyArray<PersonalPushInAppNotification>> {
@@ -408,6 +427,7 @@ export function createPersonalBotsClient<R, ER, P>(
     personalProfileSet,
     usePersonalEnvironmentId,
     usePersonalBotsList,
+    usePersonalRoutinesList,
     usePersonalPushInApp,
     usePersonalArchivedLinks,
     usePersonalFiles,

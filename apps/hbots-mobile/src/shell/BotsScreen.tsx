@@ -224,6 +224,7 @@ export function BotsScreen({
 }) {
   const environmentId = native.environmentId;
   const list = native.bots.usePersonalBotsList(environmentId);
+  const routines = native.bots.usePersonalRoutinesList(environmentId);
   const providers = native.useProviders();
   const shellState = useAtomValue(native.shell.stateValueAtom(environmentId));
   const connection = native.useConnectionState();
@@ -298,9 +299,10 @@ export function BotsScreen({
             links: list.data.threads,
             shells,
             providers,
+            routines: routines.data?.routines ?? [],
             nowMs: now,
           }),
-    [list.data, now, providers, shells],
+    [list.data, now, providers, shells, routines.data],
   );
 
   const progressKey = useMemo(
@@ -473,12 +475,13 @@ export function BotsScreen({
         </View>
       </View>
 
+      <SystemStatsLine native={native} />
+
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <SystemStatsLine native={native} />
         <PersonalUsageStrip native={native} now={now} />
 
         {list.error !== null ? (
