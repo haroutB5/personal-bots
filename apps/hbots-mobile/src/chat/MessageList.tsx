@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment,
   OrchestrationLatestTurn,
   OrchestrationThreadActivity,
   PersonalReplyQuote,
@@ -18,13 +19,28 @@ import { IconPaperclip } from "@tabler/icons-react-native";
 import { useMemo, useRef, useState } from "react";
 import { Animated, FlatList, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 
+import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
-import { markdownBlocks, type InlineSpan, type MarkdownBlock } from "./markdown";
+import type { ChatEnvironment } from "./chatEnvironment";
+import { AttachmentImage } from "./AttachmentImage";
+import {
+  linkTarget,
+  markdownBlocks,
+  markdownNeedsWidth,
+  type InlineSpan,
+  type MarkdownBlock,
+} from "./markdown";
 
 type Row =
   | { readonly kind: "item"; readonly key: string; readonly item: ConversationItem }
   | { readonly kind: "pending"; readonly key: string; readonly message: PendingOutgoingMessage }
   | { readonly kind: "queued"; readonly key: string; readonly row: OutboxRow };
+
+type ImageAttachment = Extract<ChatAttachment, { readonly type: "image" }>;
+
+function isImageAttachment(attachment: ChatAttachment): attachment is ImageAttachment {
+  return attachment.type === "image";
+}
 
 function pathLike(text: string): boolean {
   const trimmed = text.trim();
@@ -40,10 +56,12 @@ function SpanText({
   spans,
   style,
   onOpenFile,
+  onOpenLink,
 }: {
   readonly spans: ReadonlyArray<InlineSpan>;
   readonly style?: object;
   readonly onOpenFile?: ((path: string) => void) | undefined;
+  readonly onOpenLink?: ((href: string) => void) | undefined;
 }) {
   return (
     <Text style={style}>
@@ -58,6 +76,22 @@ function SpanText({
         if (span.kind === "italic") {
           return (
             <Text key={index} style={styles.italic}>
+              {span.text}
+            </Text>
+          );
+        }
+        if (span.kind === "link") {
+          const target = linkTarget(span.href);
+          const path = target.kind === "file" ? target.path : null;
+          return (
+            <Text
+              key={index}
+              style={path !== null ? styles.fileChip : styles.link}
+              accessibilityRole="link"
+              onPress={() => {
+                if (onOpenLink !== undefined) onOpenLink(span.href);
+              }}
+            >
               {span.text}
             </Text>
           );
@@ -90,17 +124,25 @@ function SpanText({
 function MarkdownBody({
   text,
   onOpenFile,
+  onOpenLink,
   tone,
 }: {
   readonly text: string;
   readonly onOpenFile?: ((path: string) => void) | undefined;
+  readonly onOpenLink?: ((href: string) => void) | undefined;
   readonly tone: "assistant" | "user";
 }) {
   const blocks = useMemo(() => markdownBlocks(text), [text]);
   return (
     <View style={styles.markdown}>
       {blocks.map((block, index) => (
-        <Block key={index} block={block} onOpenFile={onOpenFile} tone={tone} />
+        <Block
+          key={index}
+          block={block}
+          onOpenFile={onOpenFile}
+          onOpenLink={onOpenLink}
+          tone={tone}
+        />
       ))}
     </View>
   );
@@ -109,17 +151,24 @@ function MarkdownBody({
 function Block({
   block,
   onOpenFile,
+  onOpenLink,
   tone,
 }: {
   readonly block: MarkdownBlock;
   readonly onOpenFile?: ((path: string) => void) | undefined;
+  readonly onOpenLink?: ((href: string) => void) | undefined;
   readonly tone: "assistant" | "user";
 }) {
   const base = tone === "user" ? styles.userText : styles.assistantText;
   switch (block.kind) {
     case "heading":
       return (
-        <SpanText spans={block.spans} style={[base, styles.heading]} onOpenFile={onOpenFile} />
+        <SpanText
+          spans={block.spans}
+          style={[base, styles.heading]}
+          onOpenFile={onOpenFile}
+          onOpenLink={onOpenLink}
+        />
       );
     case "code":
       return (
@@ -129,28 +178,52 @@ function Block({
           </Text>
         </View>
       );
-    case "bullet":
+    case "bullet": {
+      const marker = ["•", "◦", "▪"][block.depth ?? 0] ?? "•";
       return (
-        <View style={styles.listRow}>
-          <Text style={[base, styles.marker]}>•</Text>
-          <SpanText spans={block.spans} style={[base, styles.flex]} onOpenFile={onOpenFile} />
+        <View style={[styles.listRow, { paddingLeft: (block.depth ?? 0) * 16 }]}>
+          <Text style={[base, styles.marker]}>{marker}</Text>
+          <SpanText
+            spans={block.spans}
+            style={[base, styles.flex]}
+            onOpenFile={onOpenFile}
+            onOpenLink={onOpenLink}
+          />
         </View>
       );
+    }
     case "number":
       return (
-        <View style={styles.listRow}>
+        <View style={[styles.listRow, { paddingLeft: (block.depth ?? 0) * 16 }]}>
           <Text style={[base, styles.marker]}>{`${block.marker ?? "1"}.`}</Text>
-          <SpanText spans={block.spans} style={[base, styles.flex]} onOpenFile={onOpenFile} />
+          <SpanText
+            spans={block.spans}
+            style={[base, styles.flex]}
+            onOpenFile={onOpenFile}
+            onOpenLink={onOpenLink}
+          />
         </View>
       );
     case "quote":
       return (
         <View style={styles.quote}>
-          <SpanText spans={block.spans} style={[base, styles.quoteText]} onOpenFile={onOpenFile} />
+          <SpanText
+            spans={block.spans}
+            style={[base, styles.quoteText]}
+            onOpenFile={onOpenFile}
+            onOpenLink={onOpenLink}
+          />
         </View>
       );
     case "paragraph":
-      return <SpanText spans={block.spans} style={base} onOpenFile={onOpenFile} />;
+      return (
+        <SpanText
+          spans={block.spans}
+          style={base}
+          onOpenFile={onOpenFile}
+          onOpenLink={onOpenLink}
+        />
+      );
   }
 }
 
@@ -225,15 +298,23 @@ function SwipeMessageRow({
 }
 
 function UserBubble({
+  native,
+  chat,
   text,
   quote,
   attachments,
   onLongPress,
+  onOpenFile,
+  onOpenLink,
 }: {
+  readonly native: NativePersonal;
+  readonly chat: ChatEnvironment;
   readonly text: string;
   readonly quote: PersonalReplyQuote | null;
-  readonly attachments: ReadonlyArray<{ readonly id: string; readonly name: string }> | undefined;
+  readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
   readonly onLongPress: () => void;
+  readonly onOpenFile?: ((path: string) => void) | undefined;
+  readonly onOpenLink?: ((href: string) => void) | undefined;
 }) {
   return (
     <Pressable onLongPress={onLongPress} delayLongPress={350} style={styles.userBubble}>
@@ -247,22 +328,31 @@ function UserBubble({
           </Text>
         </View>
       ) : null}
-      <Text style={styles.userText} selectable>
-        {text}
-      </Text>
-      {attachments?.map((attachment) => (
-        <View key={attachment.id} style={styles.attachment}>
-          <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
-          <Text style={styles.attachmentText} numberOfLines={1}>
-            {attachment.name}
-          </Text>
-        </View>
-      ))}
+      <MarkdownBody text={text} tone="user" onOpenFile={onOpenFile} onOpenLink={onOpenLink} />
+      {attachments?.map((attachment) =>
+        isImageAttachment(attachment) ? (
+          <AttachmentImage
+            key={attachment.id}
+            native={native}
+            chat={chat}
+            attachment={attachment}
+          />
+        ) : (
+          <View key={attachment.id} style={styles.attachment}>
+            <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+            <Text style={styles.attachmentText} numberOfLines={1}>
+              {attachment.name}
+            </Text>
+          </View>
+        ),
+      )}
     </Pressable>
   );
 }
 
 export function MessageList({
+  native,
+  chat,
   items,
   pending,
   queued,
@@ -275,11 +365,14 @@ export function MessageList({
   onReply,
   onMessageMenu,
   onOpenFile,
+  onOpenLink,
   onCancelQueued,
   onRetryQueued,
   onLoadEarlier,
   loadEarlierBusy,
 }: {
+  readonly native: NativePersonal;
+  readonly chat: ChatEnvironment;
   readonly items: ReadonlyArray<ConversationItem>;
   readonly pending: ReadonlyArray<PendingOutgoingMessage>;
   readonly queued: ReadonlyArray<OutboxRow>;
@@ -297,6 +390,7 @@ export function MessageList({
     readonly sentAt: Date | null;
   }) => void;
   readonly onOpenFile: ((path: string) => void) | undefined;
+  readonly onOpenLink: ((href: string) => void) | undefined;
   readonly onCancelQueued: (id: string) => void;
   readonly onRetryQueued: (id: string) => void;
   readonly onLoadEarlier: (() => void) | null;
@@ -421,6 +515,7 @@ export function MessageList({
                 text={item.plan.planMarkdown}
                 tone="assistant"
                 onOpenFile={onOpenFile}
+                onOpenLink={onOpenLink}
               />
             </View>
           );
@@ -448,11 +543,20 @@ export function MessageList({
                 sentAt={sentAt}
                 onReply={() => onReply(replyQuoteForMessage({ message, botName: currentUserId }))}
               >
-                <View style={styles.userColumn}>
+                <View
+                  style={[
+                    styles.userColumn,
+                    markdownNeedsWidth(text) ? styles.userColumnWide : null,
+                  ]}
+                >
                   <UserBubble
+                    native={native}
+                    chat={chat}
                     text={text}
                     quote={quote}
                     attachments={message.attachments}
+                    onOpenFile={onOpenFile}
+                    onOpenLink={onOpenLink}
                     onLongPress={() =>
                       onMessageMenu({
                         messageId: String(message.id),
@@ -489,17 +593,34 @@ export function MessageList({
                   onMessageMenu({ messageId: String(message.id), name: botName, text, sentAt })
                 }
                 delayLongPress={350}
-                style={styles.assistantPress}
+                style={[
+                  styles.assistantPress,
+                  markdownNeedsWidth(text) ? styles.assistantWide : null,
+                ]}
               >
-                <MarkdownBody text={text} tone="assistant" onOpenFile={onOpenFile} />
-                {message.attachments?.map((attachment) => (
-                  <View key={attachment.id} style={styles.attachment}>
-                    <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
-                    <Text style={styles.attachmentText} numberOfLines={1}>
-                      {attachment.name}
-                    </Text>
-                  </View>
-                ))}
+                <MarkdownBody
+                  text={text}
+                  tone="assistant"
+                  onOpenFile={onOpenFile}
+                  onOpenLink={onOpenLink}
+                />
+                {message.attachments?.map((attachment) =>
+                  isImageAttachment(attachment) ? (
+                    <AttachmentImage
+                      key={attachment.id}
+                      native={native}
+                      chat={chat}
+                      attachment={attachment}
+                    />
+                  ) : (
+                    <View key={attachment.id} style={styles.attachment}>
+                      <IconPaperclip size={14} color={tokens.textSecondary} strokeWidth={2} />
+                      <Text style={styles.attachmentText} numberOfLines={1}>
+                        {attachment.name}
+                      </Text>
+                    </View>
+                  ),
+                )}
                 {contextTurns.has(String(message.id)) ? (
                   <Text style={styles.contextUsed}>{"Context used ⌄"}</Text>
                 ) : null}
@@ -524,6 +645,7 @@ const styles = StyleSheet.create({
   swipeTimeStart: { left: 4 },
   swipeTimeEnd: { right: 4 },
   userColumn: { alignItems: "flex-end", gap: 4, maxWidth: "78%" },
+  userColumnWide: { width: "78%" },
   userBubble: {
     alignSelf: "flex-end",
     borderRadius: 20,
@@ -534,10 +656,16 @@ const styles = StyleSheet.create({
   pendingBubble: { opacity: 0.82 },
   userText: { color: tokens.text, fontSize: 15, lineHeight: 21 },
   assistantPress: { maxWidth: "90%", gap: 6 },
+  assistantWide: { width: "90%" },
   assistantText: { color: tokens.text, fontSize: 15, lineHeight: 22 },
   markdown: { gap: 6, maxWidth: "100%" },
   bold: { fontWeight: "700" },
   italic: { fontStyle: "italic" },
+  link: {
+    color: tokens.primary,
+    textDecorationLine: "underline",
+    fontSize: 15,
+  },
   inlineCode: {
     fontFamily: "monospace",
     backgroundColor: tokens.fillMuted,

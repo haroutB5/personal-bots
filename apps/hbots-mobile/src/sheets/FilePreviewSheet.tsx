@@ -49,7 +49,8 @@ export function FilePreviewSheet({
 
   useEffect(() => {
     let live = true;
-    if (!visible || path === null || cwd === null) return;
+    const absolute = path !== null && /^[\/]|^~|^[A-Za-z]:[\\/]/u.test(path);
+    if (!visible || path === null || (cwd === null && !absolute)) return;
     setLoading(true);
     setError(null);
     setText(null);
@@ -59,7 +60,7 @@ export function FilePreviewSheet({
         const result = await createUrl({
           environmentId: native.environmentId,
           input: {
-            resource: { _tag: "host-file", cwd, path, disposition: "inline" },
+            resource: { _tag: "host-file", cwd: cwd ?? "", path, disposition: "inline" },
           },
         });
         if (!live) return;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownBlocks } from "./markdown";
+import { linkTarget, markdownBlocks, markdownNeedsWidth } from "./markdown";
 
 describe("markdownBlocks", () => {
   it("keeps paragraphs, headings and lists", () => {
@@ -53,5 +53,34 @@ describe("markdownBlocks", () => {
     const blocks = markdownBlocks("```\n[a](b)\n- not a bullet\n```");
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({ kind: "code", text: "[a](b)\n- not a bullet" });
+  });
+});
+
+describe("markdownNeedsWidth", () => {
+  it("asks for a definite width for lists and code blocks", () => {
+    expect(markdownNeedsWidth("- one")).toBe(true);
+    expect(markdownNeedsWidth("  - nested")).toBe(true);
+    expect(markdownNeedsWidth("1. one")).toBe(true);
+    expect(markdownNeedsWidth("```\nconst a = 1;\n```")).toBe(true);
+  });
+
+  it("leaves a paragraph able to hug its text", () => {
+    expect(markdownNeedsWidth("plain **bold** and `code` text")).toBe(false);
+  });
+});
+
+describe("linkTarget", () => {
+  it("sends web and mail links outside the app", () => {
+    expect(linkTarget("https://example.com/a")).toEqual({
+      kind: "external",
+      url: "https://example.com/a",
+    });
+    expect(linkTarget("mailto:a@b.c")).toEqual({ kind: "external", url: "mailto:a@b.c" });
+  });
+
+  it("opens workspace and absolute file paths in the file sheet", () => {
+    expect(linkTarget("docs/a.md")).toEqual({ kind: "file", path: "docs/a.md" });
+    expect(linkTarget("C:/work/a.ts")).toEqual({ kind: "file", path: "C:/work/a.ts" });
+    expect(linkTarget("~/notes/a.md")).toEqual({ kind: "file", path: "~/notes/a.md" });
   });
 });

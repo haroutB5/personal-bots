@@ -41,6 +41,7 @@ import { backoffMs } from "../connection";
 import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
 import { createNativeEnvironmentCache } from "./nativeCache";
+import { connectWithDeadline } from "./connectDeadline";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
 
@@ -312,9 +313,11 @@ export function createNativePersonal(
       generation.value += 1;
       setState(connectingState(generation.value, attempt));
       try {
-        const next = await connectNativeSession(stored, appVersion, (providers) => {
-          Effect.runSync(SubscriptionRef.set(providersRef, providers));
-        });
+        const next = await connectWithDeadline(() =>
+          connectNativeSession(stored, appVersion, (providers) => {
+            Effect.runSync(SubscriptionRef.set(providersRef, providers));
+          }),
+        );
         if (disposed) {
           await next.dispose();
           return;

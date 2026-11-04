@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 
 import type { ExpoConfig } from "expo/config";
 
+import { BLOCKED_PERMISSIONS } from "./src/permissions.ts";
 import { requireReleaseVersion } from "./scripts/versionCode.ts";
 
 const version = requireReleaseVersion(
@@ -36,11 +37,7 @@ const config: ExpoConfig = {
     package: "com.haroutb5.hbots",
     versionCode: versionCodeFor(version),
     userInterfaceStyle: "dark",
-    blockedPermissions: [
-      "android.permission.SYSTEM_ALERT_WINDOW",
-      "android.permission.READ_EXTERNAL_STORAGE",
-      "android.permission.WRITE_EXTERNAL_STORAGE",
-    ],
+    blockedPermissions: [...BLOCKED_PERMISSIONS],
     predictiveBackGestureEnabled: true,
     allowBackup: false,
     adaptiveIcon: {

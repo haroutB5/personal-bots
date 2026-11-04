@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveChatCwd } from "./chatCwd";
+import { resolveChatCwd } from "./chatCwd.ts";
 
 const projects = [
   { id: "project-personal", workspaceRoot: "/home/harout/.personal-bots/dev/personal-workspace" },

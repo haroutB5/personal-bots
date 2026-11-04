@@ -245,6 +245,10 @@
       "types": "./src/feed/chatFeed.ts",
       "import": "./src/feed/chatFeed.ts"
     },
+    "./feed/chatCwd": {
+      "types": "./src/feed/chatCwd.ts",
+      "import": "./src/feed/chatCwd.ts"
+    },
     "./feed/renameChat": {
       "types": "./src/feed/renameChat.ts",
       "import": "./src/feed/renameChat.ts"
