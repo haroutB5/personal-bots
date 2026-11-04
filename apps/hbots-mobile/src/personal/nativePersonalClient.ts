@@ -310,6 +310,7 @@ export function createNativePersonal(
 
   const loop = async () => {
     let attempt = 0;
+    let unstable = 0;
     for (;;) {
       if (disposed) return;
       generation.value += 1;
@@ -329,6 +330,7 @@ export function createNativePersonal(
           await next.dispose();
           return;
         }
+        const connectedAt = Date.now();
         current = next;
         Effect.runSync(SubscriptionRef.set(sessionRef, Option.some(next.session)));
         Effect.runSync(
@@ -384,7 +386,10 @@ export function createNativePersonal(
           liveness,
         ]);
         stopWatchdog();
+        // A session that drops within ten seconds is part of the same outage.
+        unstable = Date.now() - connectedAt >= 10_000 ? 0 : unstable + 1;
       } catch (cause) {
+        unstable += 1;
         if (
           !disposed &&
           options.onAuthDead !== undefined &&
@@ -393,7 +398,7 @@ export function createNativePersonal(
           options.onAuthDead(cause);
         }
       }
-      if (shouldResetNetworkClient(attempt + 1)) await resetNetworkClient();
+      if (shouldResetNetworkClient(unstable)) await resetNetworkClient();
       if (disposed) return;
       const ended = current;
       current = null;
