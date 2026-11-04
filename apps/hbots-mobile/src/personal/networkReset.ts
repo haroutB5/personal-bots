@@ -4,7 +4,7 @@ interface NetworkResetModule {
   readonly reset: () => Promise<boolean>;
   readonly isOnline: () => boolean;
   readonly canReachNetwork: () => Promise<boolean>;
-  readonly relaunch: () => Promise<boolean>;
+  readonly displayName: (uri: string) => Promise<string | null>;
 }
 
 const native = requireOptionalNativeModule<NetworkResetModule>("HbotsNetwork");
@@ -68,12 +68,13 @@ export async function phoneHasInternet(): Promise<boolean> {
   return jsProbe();
 }
 
-/** Rebuilds the app process. The saved session and outbox survive the restart. */
-export async function relaunchApp(): Promise<void> {
-  if (native === null) return;
+/** The content resolver's display name for a picked file, when the platform reports one. */
+export async function displayNameOf(uri: string): Promise<string | null> {
+  if (native === null) return null;
   try {
-    await native.relaunch();
+    const name = await native.displayName(uri);
+    return name !== null && name.trim().length > 0 ? name : null;
   } catch {
-    // The next attempt keeps trying the current process.
+    return null;
   }
 }

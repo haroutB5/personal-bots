@@ -42,7 +42,7 @@ import { classifyFailure } from "../failure";
 import { createNativePorts, type NativeBlob } from "../platform/nativePorts";
 import { createNativeEnvironmentCache } from "./nativeCache";
 import { connectWithDeadline } from "./connectDeadline";
-import { phoneHasInternet, relaunchApp, resetNetworkClient } from "./networkReset";
+import { phoneHasInternet, resetNetworkClient } from "./networkReset";
 import { shouldResetNetworkClient } from "./reconnectPolicy";
 import { connectNativeSession, environmentIdOf, type NativeSession } from "./nativeSession";
 import type { StoredSession } from "../session";
@@ -314,46 +314,36 @@ export function createNativePersonal(
     retrySignal.wake();
   };
   let unstable = 0;
-  const relaunchKey = `hbots.network-relaunch.v1:${stored.environmentId}`;
-  const RELAUNCH_COOLDOWN_MS = 5 * 60_000;
-  let outageTimer: ReturnType<typeof setInterval> | null = null;
-  let relaunching = false;
-  let networkBackAt: number | null = null;
-  const stopOutageWatch = () => {
-    networkBackAt = null;
-    if (outageTimer === null) return;
-    clearInterval(outageTimer);
-    outageTimer = null;
+  /**
+   * The phone's own network coming back is the one fact the retry loop cannot
+   * see, so a light watcher wakes it at once instead of waiting out the
+   * backoff. It only ever wakes the loop: recovery happens in place, with no
+   * app restart, because a restart loses the open chat for no gain.
+   */
+  let networkTimer: ReturnType<typeof setInterval> | null = null;
+  const stopNetworkWatch = () => {
+    if (networkTimer === null) return;
+    clearInterval(networkTimer);
+    networkTimer = null;
   };
-  const startOutageWatch = () => {
-    if (outageTimer !== null || disposed) return;
+  const startNetworkWatch = () => {
+    if (networkTimer !== null || disposed) return;
     let checking = false;
     let wasOnline = true;
-    outageTimer = setInterval(() => {
-      if (disposed || relaunching || checking || current !== null) return;
+    networkTimer = setInterval(() => {
+      if (disposed || checking || current !== null) return;
       checking = true;
       void phoneHasInternet().then((online) => {
         checking = false;
-        if (disposed || relaunching || current !== null) return;
+        if (disposed || current !== null) return;
         if (!online) {
           wasOnline = false;
-          networkBackAt = null;
           return;
         }
         if (!wasOnline) {
           wasOnline = true;
           wakeRetry();
         }
-        if (networkBackAt === null) {
-          networkBackAt = Date.now();
-          return;
-        }
-        if (Date.now() - networkBackAt < 5_000) return;
-        const last = Number(ports.kv.getItem(relaunchKey) ?? "0");
-        if (Number.isFinite(last) && Date.now() - last < RELAUNCH_COOLDOWN_MS) return;
-        relaunching = true;
-        ports.kv.setItem(relaunchKey, String(Date.now()));
-        void relaunchApp();
       });
     }, 1_000);
   };
@@ -406,9 +396,6 @@ export function createNativePersonal(
           ),
         );
         attempt = 0;
-        // A connection that works clears the relaunch guard, so the next outage
-        // may recover the same way instead of waiting out a stale cooldown.
-        ports.kv.removeItem(relaunchKey);
         void Effect.runPromise(next.session.initialConfig).then(
           (config) => Effect.runSync(SubscriptionRef.set(providersRef, config.providers)),
           () => undefined,
@@ -451,19 +438,14 @@ export function createNativePersonal(
         // A session that drops within ten seconds is part of the same outage.
         if (Date.now() - connectedAt >= 10_000) {
           unstable = 0;
-          // A healthy session clears the outage confirmation, but the watcher
-          // stays armed: it is the only thing that can bring the app back when
-          // the loop itself stops, which is the state that leaves it offline
-          // for good.
-          networkBackAt = null;
         } else {
           unstable += 1;
-          startOutageWatch();
+          startNetworkWatch();
         }
       } catch (cause) {
         unstable += 1;
         lastDetail = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause);
-        startOutageWatch();
+        startNetworkWatch();
         if (
           !disposed &&
           options.onAuthDead !== undefined &&
@@ -497,7 +479,7 @@ export function createNativePersonal(
     }
   };
 
-  startOutageWatch();
+  startNetworkWatch();
   void loop();
 
   return {
@@ -554,7 +536,7 @@ export function createNativePersonal(
     },
     dispose: async () => {
       disposed = true;
-      stopOutageWatch();
+      stopNetworkWatch();
       wakeDisposed?.();
       const session = current;
       current = null;

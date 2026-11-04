@@ -1,10 +1,10 @@
 package expo.modules.hbotsnetwork
 
 import android.content.Context
-import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.os.Process
+import android.net.Uri
+import android.provider.OpenableColumns
 import com.facebook.react.modules.network.OkHttpClientProvider
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
@@ -16,9 +16,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * The React Native fetch and WebSocket modules share one OkHttp client for the
  * whole process. After an airplane-mode flap its pool can hold sockets bound to
  * the old network, so every new request waits on a dead connection until its
- * timeout. Evicting the pool helps; when it does not, the app relaunches itself
- * once the phone reports working internet, which rebuilds the client while the
- * saved session and outbox survive the restart.
+ * timeout. Evicting the pool lets the next attempt build a fresh one. The
+ * reconnect loop recovers in place; it never restarts the app.
  */
 class HbotsNetworkModule : Module() {
   private fun app(): Context? =
@@ -63,14 +62,26 @@ class HbotsNetworkModule : Module() {
       }
     }
 
-    AsyncFunction("relaunch") {
-      val context = app() ?: return@AsyncFunction false
-      val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        ?: return@AsyncFunction false
-      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-      context.startActivity(intent)
-      Process.killProcess(Process.myPid())
-      true
+    AsyncFunction("displayName") { uri: String ->
+      val context = app() ?: return@AsyncFunction null
+      try {
+        val parsed = Uri.parse(uri)
+        if (parsed.scheme == "content") {
+          context.contentResolver
+            .query(parsed, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+              if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0) return@use cursor.getString(index)
+              }
+              null
+            }
+            ?.let { return@AsyncFunction it }
+        }
+        parsed.lastPathSegment
+      } catch (_: Exception) {
+        null
+      }
     }
   }
 }
