@@ -34,6 +34,8 @@ import {
 } from "../persistence/Errors.ts";
 import type { PersonalBotPersona } from "./personalBotInstructions.ts";
 import { serverPerfOptimizationOn } from "./perfFlags.ts";
+import { PersonalProjectionRelations } from "./engine/PersonalProjectionRelations.ts";
+import { PersonalProjectionRelationsV1Live } from "./engine/PersonalProjectionRelationsV1Live.ts";
 
 export const CreatePersonalBotInput = Schema.Struct({
   botId: PersonalBotId,
@@ -836,6 +838,7 @@ function toPersistenceSqlOrDecodeError(
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const rel = yield* PersonalProjectionRelations;
 
   const createBotRow = SqlSchema.void({
     Request: CreatePersonalBotInput,
@@ -1169,14 +1172,14 @@ export const make = Effect.gen(function* () {
             COALESCE(
               (
                 SELECT max(a.created_at)
-                FROM projection_thread_messages a
+                FROM ${sql.unsafe(rel.messages)} a
                 WHERE a.thread_id = t.thread_id AND a.role NOT IN ('system', 'reasoning')
               ),
               p.created_at,
               t.created_at
             ) AS base_activity_at
           FROM personal_bot_threads t
-          LEFT JOIN projection_threads p ON p.thread_id = t.thread_id
+          LEFT JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id
         ),
         timed AS (
           SELECT
@@ -1219,7 +1222,7 @@ export const make = Effect.gen(function* () {
             serverPerfOptimizationOn("owner-message-active-links") ? "r.archived_at IS NULL" : "1",
           )} THEN (
             SELECT max(o.created_at)
-            FROM projection_thread_messages o
+            FROM ${sql.unsafe(rel.messages)} o
             WHERE o.thread_id = r.thread_id
               AND o.role = 'user'
               AND o.message_id NOT LIKE 'personal-%'
@@ -1243,7 +1246,7 @@ export const make = Effect.gen(function* () {
           CASE
             WHEN r.eligible = 1 THEN (
               SELECT max(a.created_at)
-              FROM projection_thread_messages a
+              FROM ${sql.unsafe(rel.messages)} a
               WHERE a.thread_id = r.thread_id AND a.role = 'assistant'
             )
           END AS "lastReplyAt",
@@ -1258,12 +1261,12 @@ export const make = Effect.gen(function* () {
           r.marked_unread_at AS "markedUnreadAt"
         FROM ranked r
         LEFT JOIN personal_bots hb ON hb.bot_id = r.bot_id
-        LEFT JOIN projection_thread_messages m
+        LEFT JOIN ${sql.unsafe(rel.messages)} m
           ON r.eligible = 1
           AND r.preview_rank <= 2
           AND m.message_id = (
             SELECT n.message_id
-            FROM projection_thread_messages n
+            FROM ${sql.unsafe(rel.messages)} n
             WHERE n.thread_id = r.thread_id AND n.role NOT IN ('system', 'reasoning')
             ORDER BY n.created_at DESC, n.message_id DESC
             LIMIT 1
@@ -1291,7 +1294,7 @@ export const make = Effect.gen(function* () {
           EXISTS (
             SELECT 1
             FROM personal_bot_threads t
-            JOIN projection_threads p ON p.thread_id = t.thread_id
+            JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id
             WHERE t.bot_id = b.bot_id
               AND t.archived_at IS NULL
               AND p.archived_at IS NULL
@@ -1301,7 +1304,7 @@ export const make = Effect.gen(function* () {
               )
               AND EXISTS (
                 SELECT 1
-                FROM projection_thread_messages m
+                FROM ${sql.unsafe(rel.messages)} m
                 WHERE m.thread_id = t.thread_id AND m.role IN ('user', 'assistant')
               )
           ) AS "hasPrivateChat"
@@ -1376,7 +1379,7 @@ export const make = Effect.gen(function* () {
           m.attachments_json AS "attachments"
         FROM personal_bot_threads t
         JOIN personal_bots b ON b.bot_id = t.bot_id AND b.deleted_at IS NULL
-        JOIN projection_thread_messages m ON m.thread_id = t.thread_id
+        JOIN ${sql.unsafe(rel.messages)} m ON m.thread_id = t.thread_id
         WHERE m.attachments_json IS NOT NULL
           AND m.attachments_json <> '[]'
         ORDER BY m.created_at DESC, m.message_id DESC
@@ -1616,7 +1619,7 @@ export const make = Effect.gen(function* () {
       WITH hits AS (
         SELECT m.message_id, m.thread_id, m.role, m.created_at, m.text,
                instr(lower(m.text), ${input.needle}) AS pos
-        FROM projection_thread_messages m
+        FROM ${sql.unsafe(rel.messages)} m
         WHERE m.role IN ('user', 'assistant')
           AND instr(lower(m.text), ${input.needle}) > 0
       )
@@ -1632,7 +1635,7 @@ export const make = Effect.gen(function* () {
         substr(h.text, CASE WHEN h.pos > 60 THEN h.pos - 60 ELSE 1 END, 200) AS "snippet",
         CASE WHEN h.pos > 60 THEN h.pos - 60 ELSE 1 END AS "snippetStart"
       FROM hits h
-      JOIN projection_threads p ON p.thread_id = h.thread_id AND p.deleted_at IS NULL
+      JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = h.thread_id AND p.deleted_at IS NULL
       LEFT JOIN personal_bot_threads t ON t.thread_id = h.thread_id
       LEFT JOIN personal_bots b ON b.bot_id = t.bot_id
       LEFT JOIN personal_groups g ON g.thread_id = h.thread_id AND g.deleted_at IS NULL
@@ -1672,7 +1675,7 @@ export const make = Effect.gen(function* () {
     sql<{ readonly title: string }>`
       SELECT p.title AS "title"
       FROM personal_bot_threads t
-      JOIN projection_threads p ON p.thread_id = t.thread_id
+      JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id
       WHERE t.bot_id = ${input.botId}
         AND t.thread_id <> ${input.exceptThreadId ?? ""}
         AND t.archived_at IS NULL
@@ -1700,7 +1703,7 @@ export const make = Effect.gen(function* () {
         COALESCE(
           (
             SELECT max(a.created_at)
-            FROM projection_thread_messages a
+            FROM ${sql.unsafe(rel.messages)} a
             WHERE a.thread_id = t.thread_id AND a.role NOT IN ('system', 'reasoning')
           ),
           p.created_at,
@@ -1714,7 +1717,7 @@ export const make = Effect.gen(function* () {
             AND d.created_at <= t.created_at
         ) AS "taskChat"
       FROM personal_bot_threads t
-      JOIN projection_threads p ON p.thread_id = t.thread_id
+      JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id
       WHERE t.bot_id = ${input.botId}
         AND t.thread_id <> ${input.exceptThreadId ?? ""}
         AND t.archived_at IS NULL
@@ -1768,7 +1771,7 @@ export const make = Effect.gen(function* () {
           COALESCE(
             (
               SELECT max(a.created_at)
-              FROM projection_thread_messages a
+              FROM ${sql.unsafe(rel.messages)} a
               WHERE a.thread_id = t.thread_id AND a.role NOT IN ('system', 'reasoning')
             ),
             p.created_at,
@@ -1785,7 +1788,7 @@ export const make = Effect.gen(function* () {
               AND (
                 (d.source IN ('delegation', 'routine') AND d.created_at <= t.created_at)
                 OR (d.source = 'routine' AND EXISTS (
-                  SELECT 1 FROM projection_thread_messages relay
+                  SELECT 1 FROM ${sql.unsafe(rel.messages)} relay
                   WHERE relay.thread_id = t.thread_id
                     AND relay.role = 'assistant' AND relay.message_id LIKE 'personal-relay-%'
                 ))
@@ -1795,7 +1798,7 @@ export const make = Effect.gen(function* () {
             SELECT 1 FROM personal_routines r WHERE r.thread_id = t.thread_id
           ) AS "routineChat"
         FROM personal_bot_threads t
-        JOIN projection_threads p ON p.thread_id = t.thread_id
+        JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id
         JOIN personal_bots b ON b.bot_id = t.bot_id AND b.deleted_at IS NULL
         WHERE (${input.threadId} = '' OR t.thread_id = ${input.threadId})
           AND (${input.botId} = '' OR t.bot_id = ${input.botId})
@@ -1860,7 +1863,7 @@ export const make = Effect.gen(function* () {
       `;
       if (owner === undefined) return Option.none();
       const [thread] = yield* sql<{ readonly title: string }>`
-        SELECT title FROM projection_threads WHERE thread_id = ${input.threadId}
+        SELECT title FROM ${sql.unsafe(rel.threads)} WHERE thread_id = ${input.threadId}
       `;
       return Option.some({
         botId: owner.botId as PersonalBotId,
@@ -1877,7 +1880,7 @@ export const make = Effect.gen(function* () {
           t.bot_id AS "botId",
           (t.archived_at IS NOT NULL OR p.archived_at IS NOT NULL) AS "archived"
         FROM personal_bot_threads t
-        JOIN projection_threads p ON p.thread_id = t.thread_id AND p.deleted_at IS NULL
+        JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id AND p.deleted_at IS NULL
         WHERE t.thread_id = ${input.threadId}
           AND NOT EXISTS (
             SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
@@ -2046,7 +2049,7 @@ export const make = Effect.gen(function* () {
     sql<{ readonly botId: string; readonly count: number }>`
       SELECT t.bot_id AS "botId", COUNT(*) AS "count"
       FROM personal_bot_threads t
-      JOIN projection_threads p ON p.thread_id = t.thread_id AND p.deleted_at IS NULL
+      JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id AND p.deleted_at IS NULL
       WHERE t.archived_at IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id)
       GROUP BY t.bot_id
@@ -2065,7 +2068,7 @@ export const make = Effect.gen(function* () {
                b.name AS "botName",
                s.provider_name AS "providerName",
                s.resume_cursor_json AS "resumeCursorJson"
-        FROM provider_session_runtime s
+        FROM ${sql.unsafe(rel.providerSessions)} s
         JOIN personal_bot_threads t ON t.thread_id = s.thread_id
         JOIN personal_bots b ON b.bot_id = t.bot_id
         WHERE t.archived_at IS NULL
@@ -2221,4 +2224,11 @@ export const make = Effect.gen(function* () {
   } satisfies PersonalBotRepository["Service"];
 });
 
-export const layer = Layer.effect(PersonalBotRepository, make);
+/**
+ * The repository is the bottom of the personal chain, so it also hands the
+ * projection relations to every service above it. The engine implementation
+ * is chosen here, in one place.
+ */
+export const layer = Layer.effect(PersonalBotRepository, make).pipe(
+  Layer.provideMerge(PersonalProjectionRelationsV1Live),
+);
