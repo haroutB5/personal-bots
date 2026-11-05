@@ -13,6 +13,7 @@ import {
   type OrchestrationSession,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -389,6 +390,7 @@ const makeHarness = () => {
     Layer.provide(Layer.succeed(ProjectionSnapshotQuery, snapshotApi as never)),
     Layer.provide(Layer.succeed(ProjectionThreadMessageRepository, messageApi as never)),
     Layer.provide(Layer.succeed(ThreadBackgroundLivenessService, liveness)),
+    Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
   );
 
   return { layer, threads, hiddenShells, projects, dispatched, snapshotOptions, liveness, pubsub };

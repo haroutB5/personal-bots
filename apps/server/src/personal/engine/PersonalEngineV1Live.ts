@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -41,6 +42,7 @@ import {
   type CreateProjectInput,
   type CreateThreadInput,
   type OrchestrationThreadShellV1Wire,
+  type PersonalActivityView,
   type PersonalAppendNoticeInput,
   type PersonalCompleteNoticeInput,
   type PersonalMessageView,
@@ -53,8 +55,11 @@ import {
   type PersonalStopInput,
   type PersonalThreadEvent,
   type PersonalThreadStatus,
+  type PersonalToolStepView,
   type PersonalUpdateMetaInput,
+  type PersonalWorkingRow,
 } from "./PersonalEngine.ts";
+import { PersonalProjectionRelationsV1Live } from "./PersonalProjectionRelationsV1Live.ts";
 import { failureDetail, PersonalEngineError } from "./errors.ts";
 
 const BUSY_STATUSES: ReadonlySet<PersonalThreadStatus> = new Set(["starting", "running"]);
@@ -239,6 +244,7 @@ const make = Effect.gen(function* () {
   const snapshots = yield* ProjectionSnapshotQuery;
   const messages = yield* ProjectionThreadMessageRepository;
   const liveness = yield* ThreadBackgroundLivenessService;
+  const sql = yield* SqlClient.SqlClient;
   const statusByThread = new Map<string, PersonalThreadStatus>();
 
   const now = Effect.map(DateTime.now, DateTime.formatIso);
@@ -548,6 +554,156 @@ const make = Effect.gen(function* () {
       return filtered.slice(-input.limit).map(toMessageView);
     });
 
+  const latestContextTokens = (
+    threadId: ThreadId,
+  ): Effect.Effect<number | null, PersonalEngineError> =>
+    sql<{ readonly used: number | null }>`
+      SELECT json_extract(payload_json, '$.usedTokens') AS "used"
+      FROM projection_thread_activities
+      WHERE thread_id = ${threadId} AND kind = 'context-window.updated'
+      ORDER BY created_at DESC LIMIT 1
+    `.pipe(
+      Effect.map((rows) => (typeof rows[0]?.used === "number" ? rows[0].used : null)),
+      Effect.orElseSucceed(() => null),
+      Effect.mapError(engineError("latestContextTokens")),
+    );
+
+  const compactedSince = (input: {
+    readonly threadId: ThreadId;
+    readonly since: string;
+  }): Effect.Effect<boolean, PersonalEngineError> =>
+    sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS "count" FROM projection_thread_activities
+      WHERE thread_id = ${input.threadId} AND kind = 'context-compaction' AND created_at > ${input.since}
+    `.pipe(
+      Effect.map((rows) => (rows[0]?.count ?? 0) > 0),
+      Effect.orElseSucceed(() => true),
+      Effect.mapError(engineError("compactedSince")),
+    );
+
+  const threadUsedWeb = (input: {
+    readonly threadId: ThreadId;
+    readonly needles: ReadonlyArray<string>;
+  }): Effect.Effect<boolean, PersonalEngineError> =>
+    input.needles.length === 0
+      ? Effect.succeed(false)
+      : sql<{ readonly found: number }>`
+          SELECT 1 AS "found"
+          FROM projection_thread_activities a
+          WHERE a.thread_id = ${input.threadId} AND a.kind LIKE 'tool.%'
+            AND (
+              json_extract(a.payload_json, '$.itemType') = 'web_search'
+              OR ${sql.or(
+                input.needles.map(
+                  (needle) =>
+                    sql`instr(lower(a.summary || ' ' || COALESCE(json_extract(a.payload_json, '$.title'), '') || ' ' || substr(COALESCE(json_extract(a.payload_json, '$.detail'), ''), 1, 80)), ${needle}) > 0`,
+                ),
+              )}
+            )
+          LIMIT 1
+        `.pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.mapError(engineError("threadUsedWeb")),
+        );
+
+  const toolStepsSince = (input: {
+    readonly threadId: ThreadId;
+    readonly since: string;
+    readonly limit: number;
+  }): Effect.Effect<ReadonlyArray<PersonalToolStepView>, PersonalEngineError> => {
+    if (input.limit <= 0) return Effect.succeed([]);
+    return sql<{
+      readonly id: string;
+      readonly itemType: string | null;
+      readonly text: string;
+    }>`
+      SELECT activity_id AS "id",
+        json_extract(a.payload_json, '$.itemType') AS "itemType",
+        a.summary || ' ' || COALESCE(json_extract(a.payload_json, '$.title'), '') || ' '
+          || substr(COALESCE(json_extract(a.payload_json, '$.detail'), ''), 1, 80) AS "text"
+      FROM projection_thread_activities a
+      WHERE a.thread_id = ${input.threadId} AND a.kind LIKE 'tool.%'
+        AND a.created_at >= ${input.since}
+      LIMIT ${input.limit}
+    `.pipe(Effect.mapError(engineError("toolStepsSince")));
+  };
+
+  const activitiesByIds = (input: {
+    readonly threadId: ThreadId;
+    readonly ids: ReadonlyArray<string>;
+  }): Effect.Effect<ReadonlyArray<PersonalActivityView>, PersonalEngineError> => {
+    if (input.ids.length === 0) return Effect.succeed([]);
+    return sql<{
+      readonly id: string;
+      readonly kind: string;
+      readonly payloadJson: string;
+    }>`
+      SELECT activity_id AS "id", kind, payload_json AS "payloadJson"
+      FROM projection_thread_activities
+      WHERE thread_id = ${input.threadId} AND ${sql.in("activity_id", input.ids)}
+    `.pipe(
+      Effect.map((rows) =>
+        rows.flatMap((row) => {
+          try {
+            return [{ id: row.id, kind: row.kind, payload: JSON.parse(row.payloadJson) }];
+          } catch {
+            return [];
+          }
+        }),
+      ),
+      Effect.mapError(engineError("activitiesByIds")),
+    );
+  };
+
+  const workingSnapshot = (
+    threadIds: ReadonlyArray<ThreadId>,
+  ): Effect.Effect<ReadonlyArray<PersonalWorkingRow>, PersonalEngineError> => {
+    if (threadIds.length === 0) return Effect.succeed([]);
+    return sql<PersonalWorkingRow>`
+      SELECT
+        p.thread_id AS "threadId",
+        p.latest_turn_id AS "turnId",
+        (
+          SELECT substr(m.text, 1, 400) FROM projection_thread_messages m
+          WHERE m.thread_id = p.thread_id AND m.role = 'reasoning'
+            AND m.created_at >= MAX(COALESCE(p.latest_user_message_at, ''), COALESCE(t.requested_at, ''))
+          ORDER BY m.updated_at DESC, m.message_id DESC LIMIT 1
+        ) AS "reasoningText",
+        (
+          SELECT m.updated_at FROM projection_thread_messages m
+          WHERE m.thread_id = p.thread_id AND m.role = 'reasoning'
+            AND m.created_at >= MAX(COALESCE(p.latest_user_message_at, ''), COALESCE(t.requested_at, ''))
+          ORDER BY m.updated_at DESC, m.message_id DESC LIMIT 1
+        ) AS "reasoningAt",
+        (
+          SELECT NULLIF(json_extract(a.payload_json, '$.title'), '')
+          FROM projection_thread_activities a
+          WHERE a.thread_id = p.thread_id AND a.kind LIKE 'tool.%'
+            AND a.created_at >= MAX(COALESCE(p.latest_user_message_at, ''), COALESCE(t.requested_at, ''))
+          ORDER BY a.created_at DESC, a.sequence DESC LIMIT 1
+        ) AS "toolTitle",
+        (
+          SELECT a.summary FROM projection_thread_activities a
+          WHERE a.thread_id = p.thread_id AND a.kind LIKE 'tool.%'
+            AND a.created_at >= MAX(COALESCE(p.latest_user_message_at, ''), COALESCE(t.requested_at, ''))
+          ORDER BY a.created_at DESC, a.sequence DESC LIMIT 1
+        ) AS "toolSummary",
+        (
+          SELECT a.created_at FROM projection_thread_activities a
+          WHERE a.thread_id = p.thread_id AND a.kind LIKE 'tool.%'
+            AND a.created_at >= MAX(COALESCE(p.latest_user_message_at, ''), COALESCE(t.requested_at, ''))
+          ORDER BY a.created_at DESC, a.sequence DESC LIMIT 1
+        ) AS "toolAt"
+      FROM projection_threads p
+      LEFT JOIN projection_turns t
+        ON t.thread_id = p.thread_id AND t.turn_id = p.latest_turn_id
+      JOIN projection_thread_sessions s ON s.thread_id = p.thread_id
+      WHERE ${sql.in("p.thread_id", threadIds)}
+        AND p.deleted_at IS NULL
+        AND s.status IN ('running', 'starting')
+    `.pipe(Effect.mapError(engineError("workingSnapshot")));
+  };
+
   const liveTaskIds = (
     threadId: ThreadId,
   ): Effect.Effect<ReadonlyArray<string>, PersonalEngineError> =>
@@ -587,6 +743,12 @@ const make = Effect.gen(function* () {
     messageById,
     messagesByIds,
     listMessages,
+    latestContextTokens,
+    compactedSince,
+    threadUsedWeb,
+    toolStepsSince,
+    activitiesByIds,
+    workingSnapshot,
     liveTaskIds,
     shellSnapshot,
     events,
@@ -603,4 +765,5 @@ export const PersonalEngineV1Live = Layer.effect(PersonalEngine, make);
 export const PersonalEngineV1WiredLive = PersonalEngineV1Live.pipe(
   Layer.provide(ProjectionThreadMessageRepositoryLive),
   Layer.provide(ThreadBackgroundLivenessLive),
+  Layer.provideMerge(PersonalProjectionRelationsV1Live),
 );

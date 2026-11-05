@@ -90,6 +90,28 @@ export interface PersonalActivityView {
   readonly payload: unknown;
 }
 
+/**
+ * One tool step as the memory origin rule reads it. The text is what the
+ * provider showed for the step (its summary, title and a clipped detail), so
+ * the rule matches the same words on v1 activities and v2 turn items.
+ */
+export interface PersonalToolStepView {
+  readonly id: string;
+  readonly itemType: string | null;
+  readonly text: string;
+}
+
+/** The newest reasoning and tool step of every running chat, for its list row. */
+export interface PersonalWorkingRow {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | null;
+  readonly reasoningText: string | null;
+  readonly reasoningAt: string | null;
+  readonly toolTitle: string | null;
+  readonly toolSummary: string | null;
+  readonly toolAt: string | null;
+}
+
 export type PersonalThreadEvent =
   | {
       readonly _tag: "TurnStartRequested";
@@ -308,6 +330,35 @@ export interface PersonalEngineShape {
     readonly limit: number;
     readonly before?: DateTime.Utc;
   }) => Effect.Effect<ReadonlyArray<PersonalMessageView>, PersonalEngineError>;
+  /** The latest provider-reported context size for the chat, in tokens. */
+  readonly latestContextTokens: (
+    threadId: ThreadId,
+  ) => Effect.Effect<number | null, PersonalEngineError>;
+  /** Whether the provider compacted this chat after `since`. */
+  readonly compactedSince: (input: {
+    readonly threadId: ThreadId;
+    readonly since: string;
+  }) => Effect.Effect<boolean, PersonalEngineError>;
+  /** Whether any tool step of the chat matches one of the web or browser needles. */
+  readonly threadUsedWeb: (input: {
+    readonly threadId: ThreadId;
+    readonly needles: ReadonlyArray<string>;
+  }) => Effect.Effect<boolean, PersonalEngineError>;
+  /** The chat's tool steps since `since`, newest first, capped at `limit`. */
+  readonly toolStepsSince: (input: {
+    readonly threadId: ThreadId;
+    readonly since: string;
+    readonly limit: number;
+  }) => Effect.Effect<ReadonlyArray<PersonalToolStepView>, PersonalEngineError>;
+  /** Activities by id, for the full text behind a chat's previews. */
+  readonly activitiesByIds: (input: {
+    readonly threadId: ThreadId;
+    readonly ids: ReadonlyArray<string>;
+  }) => Effect.Effect<ReadonlyArray<PersonalActivityView>, PersonalEngineError>;
+  /** The newest reasoning and tool step of each chat whose bot is running. */
+  readonly workingSnapshot: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyArray<PersonalWorkingRow>, PersonalEngineError>;
   readonly liveTaskIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, PersonalEngineError>;
