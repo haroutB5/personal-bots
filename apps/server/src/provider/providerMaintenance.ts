@@ -23,6 +23,12 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import {
+  miseInstallDirFromCommandPath,
+  miseShimName,
+  resolveMiseLatestVersion,
+  resolveMiseOwnership,
+} from "../personal/providerUpdates/miseProviderMaintenance.ts";
 
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
@@ -80,6 +86,12 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
+  /**
+   * The `latest` alias a targeted mise install must move. Mise installs an
+   * older version without moving the alias, and the provider binary path
+   * follows that alias.
+   */
+  readonly latestPath?: string;
   /**
    * Extra environment for the spawned updater, on top of the server's own.
    * A native updater finds its install through the same variables the
@@ -166,6 +178,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateLockKey: string | null;
   /** Shown to the user instead of `<executable> <args>`; use for a bare tool name like `brew`. */
   readonly updateCommand?: string;
+  readonly latestPath?: string;
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
@@ -185,6 +198,7 @@ export function makeProviderMaintenanceCapabilities(input: {
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
+          ...(input.latestPath ? { latestPath: input.latestPath } : {}),
           ...(input.env ? { env: input.env } : {}),
         };
   return {
@@ -203,8 +217,29 @@ export function makeTargetedProviderUpdateAction(
 ): ProviderMaintenanceCommandAction | null {
   if (!/^\d+\.\d+\.\d+$/.test(version)) return null;
   const update = capabilities.update;
+  if (!update) return null;
+  if (update.lockKey === "mise") {
+    const latestPath = update.latestPath;
+    if (!latestPath) return null;
+    const index = update.args.findIndex((arg) => arg.endsWith("@latest"));
+    if (index < 0) return null;
+    const toolSpec = update.args[index]!.slice(0, -"@latest".length);
+    if (toolSpec.length === 0) return null;
+    const shellQuote = (word: string) => quoteShellWord(word, HostProcessPlatform.defaultValue());
+    const script = [
+      `[ -L ${shellQuote(latestPath)} ] || { echo "mise latest is not a symlink" >&2; exit 1; }`,
+      `${shellQuote(update.executable)} install ${shellQuote(toolSpec)}@${version}`,
+      `ln -sfn ${shellQuote(version)} ${shellQuote(latestPath)}`,
+    ].join(" && ");
+    return {
+      ...update,
+      executable: "/bin/sh",
+      args: ["-c", script],
+      command: script,
+    };
+  }
   const packageName = capabilities.packageName;
-  if (!update || !packageName) return null;
+  if (!packageName) return null;
   if (!/^(?:npm-global:|bun-global$|pnpm-global$|vite-plus-global$)/.test(update.lockKey))
     return null;
   const packageIndex = update.args.findIndex(
@@ -402,6 +437,29 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   }
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
+
+  // A mise-managed tool is owned by mise even when its real path looks like a
+  // package directory. Ask mise for its own latest so npm's earlier release
+  // cannot make the app install a version mise does not have yet.
+  const looksLikeMise =
+    commandPaths.some((commandPath) => miseInstallDirFromCommandPath(commandPath) !== null) ||
+    miseShimName(context.resolvedCommandPath) !== null;
+  if (looksLikeMise) {
+    const mise = yield* resolveMiseOwnership(context);
+    if (mise) {
+      return makeProviderMaintenanceCapabilities({
+        provider: definition.provider,
+        packageName,
+        updateExecutable: mise.misePath,
+        updateArgs: ["install", `${mise.toolSpec}@latest`],
+        updateLockKey: "mise",
+        updateCommand: `mise install ${mise.toolSpec}@latest`,
+        ...(context.platform === "win32" ? {} : { latestPath: `${mise.installDir}/latest` }),
+        env: context.env,
+        latestVersion: yield* resolveMiseLatestVersion(mise, context.env),
+      });
+    }
+  }
 
   const nativeUpdate = definition.nativeUpdate;
   if (nativeUpdate && commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))) {
