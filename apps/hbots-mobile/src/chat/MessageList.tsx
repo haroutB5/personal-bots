@@ -728,6 +728,7 @@ const styles = StyleSheet.create({
   userColumn: { alignSelf: "flex-end", alignItems: "flex-end", gap: 4, maxWidth: "78%" },
   userBubble: {
     alignSelf: "flex-end",
+    maxWidth: "100%",
     borderRadius: 20,
     backgroundColor: tokens.fillMuted,
     paddingHorizontal: 14,
@@ -848,6 +849,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     alignItems: "center",
     gap: 8,
+    maxWidth: "100%",
     marginTop: 6,
   },
   queuedState: { color: tokens.textSecondary, fontSize: 12, flexShrink: 1 },
