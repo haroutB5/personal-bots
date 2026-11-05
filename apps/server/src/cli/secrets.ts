@@ -15,7 +15,7 @@
  */
 import * as NodeFS from "node:fs";
 
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
 
 import {
@@ -64,7 +64,8 @@ export function readPassphrase(
   readStdin: () => string = () => NodeFS.readFileSync(0, "utf8"),
 ): string {
   const fromEnv = env[envName];
-  const value = fromEnv !== undefined && fromEnv !== "" ? fromEnv : readStdin().split(/\r?\n/)[0] ?? "";
+  const value =
+    fromEnv !== undefined && fromEnv !== "" ? fromEnv : (readStdin().split(/\r?\n/)[0] ?? "");
   const passphrase = value.trim();
   if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
     throw new SecretsPortabilityError(
@@ -184,9 +185,7 @@ const exportCommand = Command.make(
         json: flags.json,
       }),
     ).pipe(
-      Effect.flatMap((code) =>
-        code === 0 ? Effect.void : Effect.sync(() => process.exit(code)),
-      ),
+      Effect.flatMap((code) => (code === 0 ? Effect.void : Effect.sync(() => process.exit(code)))),
     ),
 ).pipe(Command.withDescription("Write the saved secrets as one passphrase-sealed bundle."));
 
@@ -209,11 +208,13 @@ const importCommand = Command.make(
         json: flags.json,
       }),
     ).pipe(
-      Effect.flatMap((code) =>
-        code === 0 ? Effect.void : Effect.sync(() => process.exit(code)),
-      ),
+      Effect.flatMap((code) => (code === 0 ? Effect.void : Effect.sync(() => process.exit(code)))),
     ),
-).pipe(Command.withDescription("Import a passphrase-sealed bundle, re-sealing the key for this machine."));
+).pipe(
+  Command.withDescription(
+    "Import a passphrase-sealed bundle, re-sealing the key for this machine.",
+  ),
+);
 
 /** `t3 secrets <export|import>`; the migration scripts call it, the app never does. */
 export const secretsCommand = Command.make("secrets").pipe(

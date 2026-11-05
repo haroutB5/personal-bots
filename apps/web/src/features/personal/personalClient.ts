@@ -1,5 +1,5 @@
 import { createPersonalClient, type PersonalClient } from "@hbots/personal-client/client";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { useActiveEnvironmentId } from "~/state/entities";

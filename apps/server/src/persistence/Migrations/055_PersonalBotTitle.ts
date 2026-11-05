@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Seeded bots get their default role labels; user-created bots start untitled.
 const SEED_TITLES: ReadonlyArray<readonly [string, string]> = [

@@ -1,11 +1,11 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -13,8 +13,8 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Terminal from "effect/Terminal";
 import * as TestClock from "effect/testing/TestClock";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
@@ -39,10 +39,8 @@ const TestIdTokenPayloadJson = Schema.fromJsonString(Schema.Struct({ email: Sche
 const encodeTestIdTokenHeader = Schema.encodeSync(TestIdTokenHeaderJson);
 const encodeTestIdTokenPayload = Schema.encodeSync(TestIdTokenPayloadJson);
 const idTokenWithEmail = (() => {
-  const header = Encoding.encodeBase64Url(encodeTestIdTokenHeader({ alg: "none" }));
-  const payload = Encoding.encodeBase64Url(
-    encodeTestIdTokenPayload({ email: "theo@example.test" }),
-  );
+  const header = Base64Url.encode(encodeTestIdTokenHeader({ alg: "none" }));
+  const payload = Base64Url.encode(encodeTestIdTokenPayload({ email: "theo@example.test" }));
   return `${header}.${payload}.`;
 })();
 
@@ -67,6 +65,7 @@ const makeTestTerminal = (queue: Queue.Queue<Terminal.UserInput>) =>
   Terminal.make({
     columns: Effect.succeed(80),
     rows: Effect.succeed(24),
+    size: Effect.never,
     readInput: Effect.succeed(Queue.asDequeue(queue)),
     readLine: Effect.never,
     display: () => Effect.void,

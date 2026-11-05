@@ -8,7 +8,7 @@ import * as NodeZlib from "node:zlib";
 import * as Effect from "effect/Effect";
 import * as Data from "effect/Data";
 import * as Schema from "effect/Schema";
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 /** Unzipped bodies past this are refused, so a small upload cannot expand without bound. */
 export const OTLP_MAX_UNZIPPED_BYTES = 32 * 1024 * 1024;

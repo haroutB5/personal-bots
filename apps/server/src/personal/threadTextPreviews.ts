@@ -22,7 +22,7 @@ import type {
   PersonalThreadFullTextResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { projectActivityPayload } from "../orchestration/ActivityPayloadProjection.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";

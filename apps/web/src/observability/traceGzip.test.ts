@@ -2,7 +2,7 @@ import * as NodeZlib from "node:zlib";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { HttpClientRequest } from "effect/unstable/http";
+import { HttpClientRequest } from "effect/http";
 import { afterEach, vi } from "vite-plus/test";
 
 import { gzipRequestBody } from "./traceGzip";

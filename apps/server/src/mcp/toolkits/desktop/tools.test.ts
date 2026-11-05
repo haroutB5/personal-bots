@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import {
   DESKTOP_IMAGE_TOOLS,

@@ -6,7 +6,7 @@
 // major bugs were Codex event ordering that unit mocks of the session and browser scripts both missed.)
 // taskProviderBoundary.test.ts covers the same ground one step later (the projected session), with a crash, a
 // lease expiry and a restart.
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import {
   EventId,
   PersonalBotId,

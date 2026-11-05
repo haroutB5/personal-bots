@@ -10,7 +10,7 @@
  */
 import * as NodeHttp from "node:http";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   PersonalTaskId,

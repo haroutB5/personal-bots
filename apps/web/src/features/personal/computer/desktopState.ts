@@ -34,7 +34,8 @@ export const desktopEnvironment = {
   activity: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
     label: "environment-data:personal-desktop:activity",
     tag: WS_METHODS.personalDesktopActivity,
-    transform: (stream) => stream.pipe(Stream.scan(EMPTY_DESKTOP_EVENTS, reduceDesktopEvents)),
+    transform: (stream) =>
+      stream.pipe(Stream.scan(() => EMPTY_DESKTOP_EVENTS, reduceDesktopEvents)),
   }),
 };
 

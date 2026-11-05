@@ -14,7 +14,7 @@
  * Run it by hand: it downloads tens of megabytes and starts third-party
  * programs.
  */
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -23,7 +23,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { makeCatalogInstaller } from "./installer.ts";
 import { makeProviderCatalog } from "./ProviderCatalog.ts";

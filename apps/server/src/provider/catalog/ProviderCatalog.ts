@@ -28,7 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 
 import {
   BUILT_IN_DESCRIPTORS,

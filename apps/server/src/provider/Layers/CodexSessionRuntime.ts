@@ -21,7 +21,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -33,7 +33,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
@@ -2617,7 +2617,7 @@ export const makeCodexSessionRuntime = (
           Effect.logError("Failed to emit Codex session closed event.", { cause }),
         ),
       );
-      yield* Scope.close(runtimeScope, Exit.void);
+      yield* Scope.close(runtimeScope as Scope.Closeable, Exit.void);
       forgetBotProviderProcess(options.threadId, codexPid);
       yield* Queue.shutdown(serverNotifications);
       yield* Queue.shutdown(events);

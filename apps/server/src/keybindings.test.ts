@@ -1,5 +1,5 @@
 import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 import * as Cause from "effect/Cause";

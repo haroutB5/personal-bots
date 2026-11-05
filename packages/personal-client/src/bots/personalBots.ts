@@ -16,7 +16,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { PersonalClient } from "../client.ts";
@@ -66,8 +66,9 @@ export function createPersonalBotsClient<R, ER, P>(
     tag: WS_METHODS.personalPushInApp,
     transform: (stream) =>
       stream.pipe(
-        Stream.scan([] as ReadonlyArray<PersonalPushInAppNotification>, (recent, notification) =>
-          [...recent, notification].slice(-IN_APP_FEED_KEEP),
+        Stream.scan(
+          () => [] as ReadonlyArray<PersonalPushInAppNotification>,
+          (recent, notification) => [...recent, notification].slice(-IN_APP_FEED_KEEP),
         ),
         Stream.prepend([[] as ReadonlyArray<PersonalPushInAppNotification>]),
       ),
@@ -264,7 +265,10 @@ export function createPersonalBotsClient<R, ER, P>(
   function usePersonalEnvironmentId(): EnvironmentId | null {
     const primary = client.host.usePrimaryEnvironmentId();
     const active = client.host.useActiveEnvironmentId();
-    return primary ?? active;
+    const environmentId = primary ?? active;
+    // An unpaired shell reports an empty id in some host implementations. It is
+    // absence, not an environment: branded ids reject it and no RPC can target it.
+    return environmentId === null || environmentId === "" ? null : environmentId;
   }
 
   function usePersonalBotsList(

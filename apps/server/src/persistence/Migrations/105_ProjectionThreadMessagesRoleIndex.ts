@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Additive index for the per-thread newest-message lookups that every bot list
 // and the 5-minute task-chat archive sweep run: max(created_at) filtered by

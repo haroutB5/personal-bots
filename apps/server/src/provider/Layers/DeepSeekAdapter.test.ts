@@ -2,7 +2,7 @@
 // sessions/events/errors, DeepSeek-worded failures, and the shared runtime
 // behaviors (streaming, tool roundtrip, cancel, second turn, resume) through
 // a fake SDK query — the real adapter/protocol boundary, not a mock wrapper.
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
   ProviderDriverKind,

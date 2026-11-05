@@ -59,7 +59,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import * as Effect from "effect/Effect";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 
 /**
  * The list query a stored card refreshes: the CHAT's card list, keyed by

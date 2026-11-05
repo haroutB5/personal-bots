@@ -23,7 +23,7 @@ import {
   VOICE_CALL_SAMPLE_TEXT,
   VOICE_CALL_SECRET_HEADER,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 
 import * as ServerConfig from "../../config.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";

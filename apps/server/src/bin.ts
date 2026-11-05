@@ -1,9 +1,9 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Argument, Command } from "effect/unstable/cli";
-import * as CliError from "effect/unstable/cli/CliError";
+import { Argument, Command } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
@@ -95,9 +95,10 @@ if (
   // event loop for the disk's latency (seconds under load). Swap the write for
   // an async one before anything logs. No-op for TTYs, pipes and `pair.ps1`.
   installAsyncConsoleFileRedirect();
-  Command.run(cli, { version: packageJson.version }).pipe(
-    Effect.scoped,
-    Effect.provide(CliRuntimeLayer),
-    NodeRuntime.runMain,
+  NodeRuntime.runMain(
+    Effect.provide(
+      Effect.scoped(Command.run(cli, { version: packageJson.version })),
+      CliRuntimeLayer,
+    ),
   );
 }

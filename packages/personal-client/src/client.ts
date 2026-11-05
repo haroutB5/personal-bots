@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 
 import type { PersonalPorts } from "./ports/personalPorts.ts";
 import { useAtomCommand } from "./react/command.ts";

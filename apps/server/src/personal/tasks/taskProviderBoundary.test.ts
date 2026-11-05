@@ -5,7 +5,7 @@
 // out-of-order events, a crash and a restart. The same stand-ins as PersonalTaskService.test.ts: commands are
 // recorded, the session and messages are set by the test, no timers (TestClock). taskProviderChain.test.ts runs
 // the same kind of scenarios through the real ingestion and engine.
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import {
   CommandId,
   CorrelationId,

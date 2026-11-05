@@ -2,7 +2,7 @@
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { expect } from "vite-plus/test";
 
 import * as Net from "@t3tools/shared/Net";

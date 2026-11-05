@@ -1,4 +1,4 @@
-import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { RpcClientError } from "effect/rpc/RpcClientError";
 
 export const SESSION_REVOKED_CLOSE_CODE = 4401;
 

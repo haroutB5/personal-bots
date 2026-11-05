@@ -3,7 +3,7 @@
 // heavy-job probe is pinned to "held" for the whole file. The 8/5 policy itself
 // is covered in heavyJobLock.test.ts.
 process.env.PERSONAL_TASKS_HEAVY_PROBE = "held";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as NodeURL from "node:url";
 import {
   CommandId,
@@ -40,7 +40,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";

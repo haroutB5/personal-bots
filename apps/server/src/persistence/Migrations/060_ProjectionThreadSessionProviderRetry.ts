@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // The shell stream re-reads each thread's projected session from this table,
 // so a provider rate limit / retry wait needs a column to reach clients.

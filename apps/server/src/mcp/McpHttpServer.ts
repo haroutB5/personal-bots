@@ -11,8 +11,8 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { PreviewAutomationError } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -21,7 +21,7 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as PersonalBotRepository from "../personal/PersonalBotRepository.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { toolFailureText } from "../expectedToolRefusals.ts";
-import { guardedToolkit, guardMcpServer } from "./McpSecretGuard.ts";
+import { guardedToolkit, guardMcpServer, provideRegistrationServices } from "./McpSecretGuard.ts";
 import { normalizeJsonResult } from "./jsonResult.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -409,7 +409,7 @@ const previewFailure =
   };
 const previewSnapshotFailure = previewFailure("snapshot");
 const previewEvaluateFailure = previewFailure("evaluate");
-const decodeToolJsonSchema = Schema.decodeUnknownEffect(McpSchema.ToolJsonSchema);
+const decodeToolJsonSchema = Schema.decodeUnknownEffect(McpSchema.ToolOutputJson);
 
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = guardMcpServer(yield* McpServer.McpServer);
@@ -792,6 +792,18 @@ const registerDesktopImageTools = Effect.fn("McpHttpServer.registerDesktopImageT
 export const DesktopToolkitRegistrationLive = Layer.mergeAll(
   guardedToolkit(DesktopStandardToolkit).pipe(Layer.provide(DesktopStandardToolkitHandlersLive)),
   Layer.effectDiscard(registerDesktopImageTools()).pipe(
+    Layer.provide(
+      provideRegistrationServices<
+        Exclude<
+          Tool.Requirements<
+            Toolkit.Tools<typeof DesktopImageToolkit>[keyof Toolkit.Tools<
+              typeof DesktopImageToolkit
+            >]
+          >,
+          McpInvocationContext.McpInvocationContext
+        >
+      >().layer,
+    ),
     Layer.provide(DesktopImageToolkitHandlersLive),
   ),
 ).pipe(Layer.provide(PersonalBotRepository.layer));
@@ -878,9 +890,32 @@ const PreviewStandardToolkitRegistrationLive = Layer.effectDiscard(
         }),
     });
   }),
-).pipe(Layer.provide(McpServer.McpServer.layer), Layer.provide(PreviewStandardToolkitHandlersLive));
+).pipe(
+  Layer.provide(
+    provideRegistrationServices<
+      Exclude<
+        Tool.Requirements<
+          Toolkit.Tools<typeof PreviewStandardToolkit>[keyof Toolkit.Tools<
+            typeof PreviewStandardToolkit
+          >]
+        >,
+        McpInvocationContext.McpInvocationContext
+      >
+    >().layer,
+  ),
+  Layer.provide(McpServer.McpServer.layer),
+  Layer.provide(PreviewStandardToolkitHandlersLive),
+);
 
 const PreviewSnapshotRegistrationLive = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
+  Layer.provide(
+    provideRegistrationServices<
+      Exclude<
+        Tool.Requirements<typeof PreviewSnapshotTool>,
+        McpInvocationContext.McpInvocationContext
+      >
+    >().layer,
+  ),
   Layer.provide(PreviewSnapshotToolkitHandlersLive),
 );
 
@@ -958,6 +993,14 @@ const DeviceStandardToolkitRegistrationLive = guardedToolkit(DeviceStandardToolk
 );
 
 const DeviceScreenshotRegistrationLive = Layer.effectDiscard(registerDeviceScreenshot()).pipe(
+  Layer.provide(
+    provideRegistrationServices<
+      Exclude<
+        Tool.Requirements<typeof DeviceScreenshotTool>,
+        McpInvocationContext.McpInvocationContext
+      >
+    >().layer,
+  ),
   Layer.provide(DeviceScreenshotToolkitHandlersLive),
 );
 
@@ -966,20 +1009,42 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceScreenshotRegistrationLive,
 );
 
-const McpTransportLive = McpServer.layerHttp({
-  name: "T3 Code",
-  version: packageJson.version,
-  path: "/mcp",
-  protocols: [McpProtocol.v2025_06_18],
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+/**
+ * `McpServer` for in-process calls, which provide `McpInvocationContext`
+ * around `callTool` as the auth middleware does for each /mcp request.
+ */
+export const layerInProcessMcpServer = McpServer.middleware<{
+  provides: McpInvocationContext.McpInvocationContext;
+}>()(
+  (effect) =>
+    Effect.flatMap(
+      Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+      Option.match({
+        onNone: () => Effect.die("Provide McpInvocationContext around the in-process MCP call."),
+        onSome: (scope) =>
+          Effect.provideService(effect, McpInvocationContext.McpInvocationContext, scope),
+      }),
+    ),
+  { global: true },
+).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
-export const layer = Layer.mergeAll(
+const ToolRegistrationsLive = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   BotsToolkitRegistrationLive,
   PersonalToolkitRegistrationLive,
   ConnectionsToolkitRegistrationLive,
-  CreateAppResumeLive,
   DeviceToolkitRegistrationLive,
   DesktopToolkitRegistrationLive,
-).pipe(Layer.provideMerge(McpTransportLive));
+);
+
+const McpTransportLive = McpServer.layerHttp({
+  name: "T3 Code",
+  version: packageJson.version,
+  path: "/mcp",
+  protocols: [McpProtocol.v2025_06_18],
+  allowSessionTermination: true,
+  registrations: ToolRegistrationsLive,
+}).pipe(Layer.provide(McpAuthMiddlewareLive));
+
+export const layer = Layer.merge(McpTransportLive, CreateAppResumeLive);

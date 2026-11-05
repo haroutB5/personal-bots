@@ -6,15 +6,15 @@ import {
   type ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/process";
+import { HttpClient } from "effect/http";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import { ServerConfig } from "../config.ts";

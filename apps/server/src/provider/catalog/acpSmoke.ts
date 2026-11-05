@@ -6,10 +6,10 @@
  *
  * @module provider/catalog/acpSmoke
  */
-import * as Crypto from "effect/Crypto";
+import * as Crypto from "@t3tools/shared/crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "../acp/AcpStderr.ts";

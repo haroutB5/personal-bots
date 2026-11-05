@@ -9,7 +9,7 @@ import {
   type OrchestrationCheckpointSummary,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

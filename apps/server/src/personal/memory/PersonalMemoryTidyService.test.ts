@@ -10,8 +10,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 
 import { ServerConfig } from "../../config.ts";
 import * as ServerConfigModule from "../../config.ts";

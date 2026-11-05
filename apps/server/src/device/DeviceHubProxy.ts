@@ -25,8 +25,9 @@ import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
-import * as Socket from "effect/unstable/socket/Socket";
+} from "effect/http";
+import type { HttpMethod } from "effect/http/HttpMethod";
+import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -166,7 +167,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   hubOrigin: string,
 ) {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
-  const method = request.method;
+  const method = request.method as HttpMethod;
   const upstreamRequest = HttpClientRequest.make(method)(upstreamUrl).pipe(
     HttpClientRequest.setHeaders(forwardHeaders(request, hubOrigin)),
     method === "GET" || method === "HEAD"

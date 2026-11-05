@@ -1,11 +1,17 @@
 import { PersonalTask } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { foldPersonalTasksFeed } from "./usePersonalAutomation";
 import { foldPersonalGroupsStream } from "./usePersonalGroups";
+
+// The web project's Vitest instance and the one @effect/vitest re-exports are
+// not the same instance under vite-plus 1.4, so run the effects directly.
+const itEffect = (name: string, f: () => Effect.Effect<void>) =>
+  // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- @effect/vitest resolves a second vite-plus copy under 1.4, so its it.effect cannot see this suite.
+  it(name, () => Effect.runPromise(f()));
 
 const decodeTask = Schema.decodeUnknownSync(PersonalTask);
 
@@ -40,7 +46,7 @@ function task(taskId: string): PersonalTask {
 describe("foldPersonalTasksFeed", () => {
   // The Tasks page reads `null` as "still loading": a root with no tasks used to
   // hang on "Loading…" forever, because an empty replay produced no value at all.
-  it.effect("emits the loaded empty map when the replay has no tasks", () =>
+  itEffect("emits the loaded empty map when the replay has no tasks", () =>
     Effect.gen(function* () {
       const values = [...(yield* Stream.runCollect(foldPersonalTasksFeed(Stream.empty)))];
 
@@ -49,7 +55,7 @@ describe("foldPersonalTasksFeed", () => {
     }),
   );
 
-  it.effect("folds the replay and live upserts onto that first empty map", () =>
+  itEffect("folds the replay and live upserts onto that first empty map", () =>
     Effect.gen(function* () {
       const values = [
         ...(yield* Stream.runCollect(
@@ -69,7 +75,7 @@ describe("foldPersonalTasksFeed", () => {
 });
 
 describe("foldPersonalGroupsStream", () => {
-  it.effect("emits the loaded empty feed when the replay has no groups", () =>
+  itEffect("emits the loaded empty feed when the replay has no groups", () =>
     Effect.gen(function* () {
       const values = [...(yield* Stream.runCollect(foldPersonalGroupsStream(Stream.empty)))];
 

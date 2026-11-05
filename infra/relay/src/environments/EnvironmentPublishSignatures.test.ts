@@ -1,5 +1,5 @@
 import * as NodeCrypto from "node:crypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import type {
   RelayAgentActivityPublishProofPayload,
   RelayAgentActivityPublishRequest,

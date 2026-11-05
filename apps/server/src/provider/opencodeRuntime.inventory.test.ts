@@ -1,6 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

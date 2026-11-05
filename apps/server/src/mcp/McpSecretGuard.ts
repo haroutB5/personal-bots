@@ -10,14 +10,16 @@
  * registered tool, hand-registered ones included, gets its payload masked first.
  * The brokered keys' `{{secret:NAME}}` placeholders are not values and pass.
  */
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpServer } from "effect/unstable/ai";
-import type * as Tool from "effect/unstable/ai/Tool";
-import type * as Toolkit from "effect/unstable/ai/Toolkit";
+import { McpServer } from "effect/ai";
+import type * as Tool from "effect/ai/Tool";
+import type * as Toolkit from "effect/ai/Toolkit";
 
 import { secretRedactor, type SecretRedactor } from "../personal/secrets/secretRedaction.ts";
 import { advertisedMcpTool } from "./advertisedJsonSchema.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 type McpServerService = McpServer.McpServer["Service"];
 
@@ -41,6 +43,23 @@ export const guardMcpServer = (
     },
   }) as McpServerService;
 
+/**
+ * Hands each tool call the services its registration was built with; the
+ * request's own context still wins. Effect 4.1 models tool handler services as
+ * request-level McpRequest requirements, and this middleware is the bridge
+ * from the registration layer's context to that request context.
+ */
+export const provideRegistrationServices = <Services>() =>
+  McpServer.middleware<{ provides: Services }>()(
+    Effect.map(
+      Effect.context<Services>(),
+      (services) => (effect) =>
+        Effect.updateContext(effect, (request: Context.Context<never>) =>
+          Context.merge(services, request),
+        ),
+    ),
+  );
+
 /** `McpServer.toolkit` with the secret guard on every tool the toolkit registers. */
 export const guardedToolkit = <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
@@ -52,4 +71,11 @@ export const guardedToolkit = <Tools extends Record<string, Tool.Any>>(
         Effect.provideService(McpServer.McpServer, guardMcpServer(server)),
       );
     }),
-  ).pipe(Layer.provide(McpServer.McpServer.layer));
+  ).pipe(
+    Layer.provide(
+      provideRegistrationServices<
+        Exclude<Tool.Requirements<Tools[keyof Tools]>, McpInvocationContext.McpInvocationContext>
+      >().layer,
+    ),
+    Layer.provide(McpServer.McpServer.layer),
+  );

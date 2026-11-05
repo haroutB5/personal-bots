@@ -17,7 +17,6 @@ import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
-import { feedStartsWith } from "./feedStartsWith";
 import { groupRelayThreadIds } from "./groupModel";
 import { personalBotsList, personalBotsListInput } from "./usePersonalBots";
 
@@ -83,17 +82,16 @@ export function foldPersonalGroupsFeed(
  * per round, and folding it per event would copy both maps n times (O(n²)) and
  * re-render every consumer n times. Live events still land within 50ms.
  *
- * The empty feed goes first, exactly as on the tasks feed: with no groups the
- * replay emits nothing, and `null` means "still loading" to a consumer.
+ * `Stream.scan` emits its initial state, exactly as on the tasks feed: with no
+ * groups the replay emits nothing, and `null` means "still loading" to a consumer.
  */
 export function foldPersonalGroupsStream<E, R>(
   stream: Stream.Stream<PersonalGroupStreamEvent, E, R>,
 ): Stream.Stream<PersonalGroupsFeedState, E, R> {
-  return feedStartsWith(EMPTY_PERSONAL_GROUPS_FEED)(
-    stream.pipe(
-      Stream.groupedWithin(256, "50 millis"),
-      Stream.scan(EMPTY_PERSONAL_GROUPS_FEED, foldPersonalGroupsFeed),
-    ),
+  return stream.pipe(
+    Stream.groupedWithin(256, "50 millis"),
+    Stream.filter((events) => events.length > 0),
+    Stream.scan(() => EMPTY_PERSONAL_GROUPS_FEED, foldPersonalGroupsFeed),
   );
 }
 

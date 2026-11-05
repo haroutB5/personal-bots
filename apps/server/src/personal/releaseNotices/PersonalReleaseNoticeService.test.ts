@@ -4,7 +4,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
@@ -137,13 +137,24 @@ describe("PersonalReleaseNotices", () => {
       const runDir = NodePath.join(config.baseDir, "run");
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(runDir, { recursive: true });
-        await NodeFSP.writeFile(NodePath.join(runDir, "restart-9.9.9-result.json"), JSON.stringify({
-          runner: "hbots-release.mjs (linux)", mode: "run", status: "waiting_for_idle",
-          version: "9.9.9", release: "abc123def456", runnerPid: 123,
-          updatedAt: new Date().toISOString(),
-          notifyThread: CTO_CHAT,
-          waitingAlert: { minutes: 20, text: "hbots release 9.9.9 waiting on: node pid 123, 245s", at: "2026-10-26T20:00:00Z" },
-        }));
+        await NodeFSP.writeFile(
+          NodePath.join(runDir, "restart-9.9.9-result.json"),
+          JSON.stringify({
+            runner: "hbots-release.mjs (linux)",
+            mode: "run",
+            status: "waiting_for_idle",
+            version: "9.9.9",
+            release: "abc123def456",
+            runnerPid: 123,
+            updatedAt: new Date().toISOString(),
+            notifyThread: CTO_CHAT,
+            waitingAlert: {
+              minutes: 20,
+              text: "hbots release 9.9.9 waiting on: node pid 123, 245s",
+              at: "2026-10-26T20:00:00Z",
+            },
+          }),
+        );
       });
       const service = yield* PersonalReleaseNotices;
       expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);
@@ -173,18 +184,26 @@ describe("PersonalReleaseNotices", () => {
       const runDir = NodePath.join(config.baseDir, "run");
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(runDir, { recursive: true });
-        await NodeFSP.writeFile(NodePath.join(runDir, "restart-9.9.9-result.json"), JSON.stringify({
-          runner: "hbots-release.mjs (linux)", mode: "run", status: "waiting_for_idle",
-          version: "9.9.9", release: "abc123def456", runnerPid: 123,
-          updatedAt: new Date().toISOString(),
-          notifyThread: CTO_CHAT,
-          waitingAlert: {
-            minutes: 20,
-            text: "hbots release 9.9.9 waiting on: node pid 123, 245s",
-            at: "2026-10-26T20:00:00Z",
-            noticeFile: "/home/harout/.personal-bots/dev/personal/release-notices/1-9.9.9-waiting-123-20.json",
-          },
-        }));
+        await NodeFSP.writeFile(
+          NodePath.join(runDir, "restart-9.9.9-result.json"),
+          JSON.stringify({
+            runner: "hbots-release.mjs (linux)",
+            mode: "run",
+            status: "waiting_for_idle",
+            version: "9.9.9",
+            release: "abc123def456",
+            runnerPid: 123,
+            updatedAt: new Date().toISOString(),
+            notifyThread: CTO_CHAT,
+            waitingAlert: {
+              minutes: 20,
+              text: "hbots release 9.9.9 waiting on: node pid 123, 245s",
+              at: "2026-10-26T20:00:00Z",
+              noticeFile:
+                "/home/harout/.personal-bots/dev/personal/release-notices/1-9.9.9-waiting-123-20.json",
+            },
+          }),
+        );
       });
       const service = yield* PersonalReleaseNotices;
       expect(yield* service.sweep).toEqual([]);
@@ -196,8 +215,11 @@ describe("PersonalReleaseNotices", () => {
     return Effect.gen(function* () {
       yield* linkCtoChat;
       yield* writeNotice("waiting.json", {
-        threadId: CTO_CHAT, version: "1.66.97", release: "abc123def456",
-        outcome: "waiting", detail: "node pid 123, 40m",
+        threadId: CTO_CHAT,
+        version: "1.66.97",
+        release: "abc123def456",
+        outcome: "waiting",
+        detail: "node pid 123, 40m",
       });
       const service = yield* PersonalReleaseNotices;
       expect(yield* service.sweep).toEqual([{ status: "posted", threadId: CTO_CHAT }]);

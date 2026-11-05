@@ -5,7 +5,7 @@
  * runtime is interrupted.
  */
 import * as NodeOS from "node:os";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import { it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { afterEach, beforeEach, describe, expect, vi } from "vite-plus/test";
 
 import { BOT_PROCESS_PRIORITY_ENV } from "./botProcessPriority.ts";

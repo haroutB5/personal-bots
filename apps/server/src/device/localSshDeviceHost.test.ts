@@ -1,9 +1,10 @@
 import { expect, it } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import {
   isLocalSshDeviceHost,
   LocalDeviceHostAddresses,
@@ -21,7 +22,13 @@ const spawner = ChildProcessSpawner.make((command) =>
     if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
     // Any attempt to actually connect fails this test.
     expect(command.args).toContain("-G");
-    const target = command.args.at(-1);
+    const rawTarget = command.args.at(-1);
+    const target =
+      typeof rawTarget === "string"
+        ? rawTarget
+        : rawTarget === undefined
+          ? undefined
+          : Redacted.value(rawTarget);
     const configs: Record<string, string> = {
       "mac-mini": "hostname 100.65.180.100\nport 22\n",
       remote: "hostname 192.0.2.1\nport 22\n",

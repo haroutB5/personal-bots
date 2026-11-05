@@ -1,6 +1,6 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeWS from "@effect/platform-node/NodeWS";
+import * as NodeServices from "@t3tools/shared/nodeServices";
 import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -77,7 +77,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import {
   FetchHttpClient,
   HttpBody,
@@ -86,11 +86,11 @@ import {
   HttpClientResponse,
   HttpRouter,
   HttpServer,
-} from "effect/unstable/http";
-import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
-import * as NetAddress from "effect/unstable/net/NetAddress";
-import * as Socket from "effect/unstable/socket/Socket";
+} from "effect/http";
+import { OtlpSerialization, OtlpTracer } from "effect/observability";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import * as NetAddress from "effect/net/NetAddress";
+import * as Socket from "effect/socket/Socket";
 import { vi } from "vite-plus/test";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -183,6 +183,7 @@ import {
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -1232,68 +1233,48 @@ const buildAppUnderTest = (options?: {
       ),
     );
 
-    const appLayer = servedRoutesLayer.pipe(
-      Layer.provide(resourceTelemetryLayer),
-      Layer.provide(UsageService.layerTest),
-      Layer.provide(
-        Layer.mock(AnalyticsService.AnalyticsService)({
-          record: () => Effect.void,
-          flush: Effect.void,
-          ...options?.layers?.analyticsService,
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
-          record: () => Effect.void,
-          ...options?.layers?.browserTraceCollector,
-        }),
-      ),
-      Layer.provide(otlpSerializationLayer(config.otlpTracesExport.protocol)),
-      Layer.provide(
-        Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
-          publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
-          snapshot: Effect.succeed({ sequence: 0, events: [] }),
-          stream: Stream.empty,
-          ...options?.layers?.serverLifecycleEvents,
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
-          awaitCommandReady: Effect.void,
-          markHttpListening: Effect.void,
-          markRunningProviderSessionsForContinuation: Effect.succeed([]),
-          clearProviderSessionContinuationMarkers: () => Effect.void,
-          enqueueCommand: (effect) => effect,
-          ...options?.layers?.serverRuntimeStartup,
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-          reportClientActivity: () => Effect.void,
-          removeRpcClient: () => Effect.void,
-          reportHostPowerState: () => Effect.void,
-          snapshot: Effect.succeed({
-            hostPower: {
-              source: "unknown",
-              idle: "unknown",
-              idleSeconds: null,
-              locked: "unknown",
-              suspended: false,
-              onBattery: "unknown",
-              lowPowerMode: "unknown",
-              thermalState: "unknown",
-              stale: true,
-              updatedAt: TEST_EPOCH,
-            },
-            leases: [],
-            activeForegroundLeaseCount: 0,
-            activeScopeKeys: [],
-            shouldRunOpportunisticWork: false,
-            updatedAt: TEST_EPOCH,
+    const appLayer = servedRoutesLayer
+      .pipe(
+        Layer.provide(resourceTelemetryLayer),
+        Layer.provide(UsageService.layerTest),
+        Layer.provide(
+          Layer.mock(AnalyticsService.AnalyticsService)({
+            record: () => Effect.void,
+            flush: Effect.void,
+            ...options?.layers?.analyticsService,
           }),
-          streamChanges: Stream.empty,
-          subscribe: Effect.succeed({
-            latest: {
+        ),
+        Layer.provide(
+          Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
+            record: () => Effect.void,
+            ...options?.layers?.browserTraceCollector,
+          }),
+        ),
+        Layer.provide(otlpSerializationLayer(config.otlpTracesExport.protocol)),
+        Layer.provide(
+          Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
+            publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
+            snapshot: Effect.succeed({ sequence: 0, events: [] }),
+            stream: Stream.empty,
+            ...options?.layers?.serverLifecycleEvents,
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
+            awaitCommandReady: Effect.void,
+            markHttpListening: Effect.void,
+            markRunningProviderSessionsForContinuation: Effect.succeed([]),
+            clearProviderSessionContinuationMarkers: () => Effect.void,
+            enqueueCommand: (effect) => effect,
+            ...options?.layers?.serverRuntimeStartup,
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            reportClientActivity: () => Effect.void,
+            removeRpcClient: () => Effect.void,
+            reportHostPowerState: () => Effect.void,
+            snapshot: Effect.succeed({
               hostPower: {
                 source: "unknown",
                 idle: "unknown",
@@ -1311,97 +1292,120 @@ const buildAppUnderTest = (options?: {
               activeScopeKeys: [],
               shouldRunOpportunisticWork: false,
               updatedAt: TEST_EPOCH,
-            },
-            changes: Stream.empty,
+            }),
+            streamChanges: Stream.empty,
+            subscribe: Effect.succeed({
+              latest: {
+                hostPower: {
+                  source: "unknown",
+                  idle: "unknown",
+                  idleSeconds: null,
+                  locked: "unknown",
+                  suspended: false,
+                  onBattery: "unknown",
+                  lowPowerMode: "unknown",
+                  thermalState: "unknown",
+                  stale: true,
+                  updatedAt: TEST_EPOCH,
+                },
+                leases: [],
+                activeForegroundLeaseCount: 0,
+                activeScopeKeys: [],
+                shouldRunOpportunisticWork: false,
+                updatedAt: TEST_EPOCH,
+              },
+              changes: Stream.empty,
+            }),
+            hasDemand: () => Effect.succeed(false),
+            shouldRunScopeWork: () => Effect.succeed(false),
+            shouldRunOpportunisticWork: Effect.succeed(false),
           }),
-          hasDemand: () => Effect.succeed(false),
-          shouldRunScopeWork: () => Effect.succeed(false),
-          shouldRunOpportunisticWork: Effect.succeed(false),
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(ServerEnvironment.ServerEnvironment)({
-          getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
-          getDescriptor: Effect.succeed(testEnvironmentDescriptor),
-          ...options?.layers?.serverEnvironment,
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-          resolve: () => Effect.succeed(null),
-          ...options?.layers?.repositoryIdentityResolver,
-        }),
-      ),
-      Layer.provide(
-        Layer.mergeAll(
+        ),
+        Layer.provide(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
+            getDescriptor: Effect.succeed(testEnvironmentDescriptor),
+            ...options?.layers?.serverEnvironment,
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () => Effect.succeed(null),
+            ...options?.layers?.repositoryIdentityResolver,
+          }),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(
+              CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
+              CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+                applyConfig: () => Effect.succeed({ status: "disabled" }),
+                recoveryRequests: Stream.empty,
+                requestRecovery: () => Effect.void,
+                withLinkStateLock: (effect) => effect,
+                ...options?.layers?.cloudManagedEndpointRuntime,
+              }),
+            ),
+            Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({
+              requestCatchUp: () => Effect.void,
+              ...options?.layers?.agentAwarenessRelay,
+            }),
+          ),
+        ),
+        Layer.provide(
           Layer.succeed(
-            CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
-            CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
-              applyConfig: () => Effect.succeed({ status: "disabled" }),
-              recoveryRequests: Stream.empty,
-              requestRecovery: () => Effect.void,
-              withLinkStateLock: (effect) => effect,
-              ...options?.layers?.cloudManagedEndpointRuntime,
+            RelayClient.RelayClient,
+            RelayClient.RelayClient.of({
+              resolve: Effect.succeed({
+                status: "missing",
+                version: RelayClient.CLOUDFLARED_VERSION,
+              }),
+              install: Effect.die("unused relay-client install"),
+              installWithProgress: () => Effect.die("unused relay-client install"),
+              ...options?.layers?.relayClient,
             }),
           ),
-          Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({
-            requestCatchUp: () => Effect.void,
-            ...options?.layers?.agentAwarenessRelay,
+        ),
+        Layer.provide(
+          Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
+            get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
+            getExisting: Effect.succeedNone,
+            hasCredential: Effect.succeed(false),
+            clear: Effect.void,
+            ...options?.layers?.cloudCliTokenManager,
           }),
         ),
-      ),
-      Layer.provide(
-        Layer.succeed(
-          RelayClient.RelayClient,
-          RelayClient.RelayClient.of({
-            resolve: Effect.succeed({
-              status: "missing",
-              version: RelayClient.CLOUDFLARED_VERSION,
-            }),
-            install: Effect.die("unused relay-client install"),
-            installWithProgress: () => Effect.die("unused relay-client install"),
-            ...options?.layers?.relayClient,
-          }),
-        ),
-      ),
-      Layer.provide(
-        Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
-          get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
-          getExisting: Effect.succeedNone,
-          hasCredential: Effect.succeed(false),
-          clear: Effect.void,
-          ...options?.layers?.cloudCliTokenManager,
+        Layer.updateService(PairingGrantStore.PairingGrantStore, (grants) => {
+          const subscribed = options?.onPairingChangesSubscribed;
+          if (!subscribed) return grants;
+          return {
+            ...grants,
+            streamChanges: Stream.unwrap(
+              Effect.gen(function* () {
+                const changes =
+                  yield* Queue.unbounded<PairingGrantStore.BootstrapCredentialChange>();
+                yield* grants.streamChanges.pipe(
+                  Stream.runForEach((change) => Queue.offer(changes, change)),
+                  Effect.forkScoped({ startImmediately: true }),
+                );
+                yield* subscribed;
+                return Stream.fromQueue(changes);
+              }),
+            ),
+          };
         }),
-      ),
-      Layer.updateService(PairingGrantStore.PairingGrantStore, (grants) => {
-        const subscribed = options?.onPairingChangesSubscribed;
-        if (!subscribed) return grants;
-        return {
-          ...grants,
-          streamChanges: Stream.unwrap(
-            Effect.gen(function* () {
-              const changes = yield* Queue.unbounded<PairingGrantStore.BootstrapCredentialChange>();
-              yield* grants.streamChanges.pipe(
-                Stream.runForEach((change) => Queue.offer(changes, change)),
-                Effect.forkScoped({ startImmediately: true }),
-              );
-              yield* subscribed;
-              return Stream.fromQueue(changes);
-            }),
-          ),
-        };
-      }),
-      Layer.provideMerge(makeAuthTestLayer()),
-      Layer.provideMerge(ServerSecretStore.layer),
-      Layer.provide(workspaceAndProjectServicesLayer),
-      Layer.provideMerge(
-        options?.layers?.httpClient === undefined
-          ? FetchHttpClient.layer
-          : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
-      ),
-      Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
-      Layer.provide(layerConfig),
-    );
+        Layer.provideMerge(makeAuthTestLayer()),
+        Layer.provideMerge(ServerSecretStore.layer),
+        Layer.provide(workspaceAndProjectServicesLayer),
+        Layer.provideMerge(
+          options?.layers?.httpClient === undefined
+            ? FetchHttpClient.layer
+            : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
+        ),
+        Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
+        Layer.provide(layerConfig),
+      )
+      .pipe(Layer.provide(PreviewAutomationBroker.layer));
 
     yield* Layer.build(appLayer);
     return config;
@@ -1427,7 +1431,7 @@ const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void
     Socket.WebSocketConstructor,
     (socketUrl, protocols) => {
       // Socket.makeWebSocket only ever passes its `protocols` option here.
-      const socket = new NodeSocket.NodeWS.WebSocket(
+      const socket = new NodeWS.WebSocket(
         socketUrl,
         protocols as string | string[] | undefined,
         cookie ? { headers: { cookie } } : undefined,
@@ -1444,7 +1448,7 @@ const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void
 };
 
 interface RawWsClient {
-  readonly socket: NodeSocket.NodeWS.WebSocket;
+  readonly socket: NodeWS.WebSocket;
   readonly closed: Promise<{ readonly code: number; readonly reason: string; readonly at: number }>;
 }
 
@@ -1452,10 +1456,7 @@ const openRawWsClient = (url: string) => {
   const { cookie, url: plainUrl } = parseSessionCookieFromWsUrl(url);
   return Effect.acquireRelease(
     Effect.callback<RawWsClient, Error>((resume) => {
-      const socket = new NodeSocket.NodeWS.WebSocket(
-        plainUrl,
-        cookie ? { headers: { cookie } } : undefined,
-      );
+      const socket = new NodeWS.WebSocket(plainUrl, cookie ? { headers: { cookie } } : undefined);
       const closed = new Promise<{ code: number; reason: string; at: number }>((resolve) => {
         socket.on("close", (code, reason) =>
           resolve({ code, reason: reason.toString(), at: performance.now() }),
@@ -1471,7 +1472,7 @@ const openRawWsClient = (url: string) => {
 const probeRawWsClient = (client: RawWsClient, id: string) =>
   Effect.promise(() => {
     const answered = new Promise<string>((resolve) => {
-      const onMessage = (data: NodeSocket.NodeWS.RawData) => {
+      const onMessage = (data: NodeWS.RawData) => {
         const message = JSON.parse(data.toString()) as {
           readonly _tag?: string;
           readonly requestId?: string;
@@ -4979,8 +4980,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const { cookie, url } = parseSessionCookieFromWsUrl(yield* getWsServerUrl("/ws"));
       const openSocket = (perMessageDeflate: boolean) =>
         Effect.acquireRelease(
-          Effect.callback<NodeSocket.NodeWS.WebSocket, Error>((resume) => {
-            const socket = new NodeSocket.NodeWS.WebSocket(url, {
+          Effect.callback<NodeWS.WebSocket, Error>((resume) => {
+            const socket = new NodeWS.WebSocket(url, {
               perMessageDeflate,
               ...(cookie ? { headers: { cookie } } : {}),
             });
@@ -6045,8 +6046,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const hubLog: string[] = [];
       let upstreams = 0;
       const hub = yield* Effect.acquireRelease(
-        Effect.callback<NodeSocket.NodeWS.WebSocketServer, Error>((resume) => {
-          const server = new NodeSocket.NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
+        Effect.callback<NodeWS.WebSocketServer, Error>((resume) => {
+          const server = new NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
           server.on("connection", (upstream) => {
             const id = ++upstreams;
             upstream.on("message", (data) => {
@@ -14498,8 +14499,8 @@ const hostileScenarios = [
       Effect.gen(function* () {
         const reached: Array<number> = [];
         const hub = yield* Effect.acquireRelease(
-          Effect.callback<NodeSocket.NodeWS.WebSocketServer, Error>((resume) => {
-            const wss = new NodeSocket.NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
+          Effect.callback<NodeWS.WebSocketServer, Error>((resume) => {
+            const wss = new NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" });
             wss.on("connection", (upstream) => {
               upstream.on("message", () => void reached.push(performance.now()));
             });

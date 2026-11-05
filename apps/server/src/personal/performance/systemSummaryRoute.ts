@@ -16,7 +16,7 @@ import { AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import { ServerConfig } from "../../config.ts";
 import { HostResources } from "../../resourceTelemetry/HostResources.ts";
