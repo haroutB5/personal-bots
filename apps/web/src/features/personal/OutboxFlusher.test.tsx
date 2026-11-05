@@ -11,6 +11,7 @@ import {
   resetOutboxForTesting,
 } from "./outbox";
 import { setOutboxBlobBackendForTesting } from "./outboxBlobs";
+import { OUTBOX_CONNECTION_CHECK_MS } from "./outboxFlush";
 import { OutboxFlusher } from "./OutboxFlusher";
 
 const mocks = vi.hoisted(() => ({
@@ -336,6 +337,7 @@ describe("sending the queue", () => {
     mocks.uploaded.mockReturnValueOnce(null).mockReturnValue([{ type: "file", id: "s1" }]);
     await mount();
     await settle();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(OUTBOX_CONNECTION_CHECK_MS)));
     expect(mocks.startTurn).not.toHaveBeenCalled();
     expect(getOutboxSnapshot().entries[0]?.attempts).toBe(1);
     await act(async () => void (await vi.advanceTimersByTimeAsync(2_000)));
