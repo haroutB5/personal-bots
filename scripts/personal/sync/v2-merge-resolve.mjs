@@ -27,7 +27,7 @@
 //
 // Exit codes: 0 dry run resolved as far as it can, 1 unresolvable conflict, a
 // renamed-into-v2 path or a row with no target, 2 usage or git error.
-import { execFileSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -196,7 +196,7 @@ export const followSourceTarget = (path, registry) => {
  * cherry-pick whose subject also appears in MB..U. No commit is not evidence.
  */
 export const isBackport = ({ repo, mergeBase, ours, path, upstreamSubjects }) => {
-  const subjects = execFileSync(
+  const subjects = NodeChildProcess.execFileSync(
     "git",
     ["-C", repo, "log", "--no-merges", "--format=%s", `${mergeBase}..${ours}`, "--", path],
     { encoding: "utf8", maxBuffer: 1 << 26 },
@@ -341,7 +341,11 @@ export const hasBrokenImport = ({ file, source, files, oursFiles }) =>
   });
 
 const git = (repo, args, options = {}) =>
-  execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: 1 << 28, ...options });
+  NodeChildProcess.execFileSync("git", ["-C", repo, ...args], {
+    encoding: "utf8",
+    maxBuffer: 1 << 28,
+    ...options,
+  });
 
 const tryGit = (repo, args) => {
   try {

@@ -125,6 +125,8 @@ const makeHarness = () => {
   });
   const dispatched: Array<OrchestrationCommand> = [];
   const snapshotOptions: Array<{ unsettledOnly?: boolean }> = [];
+  // The harness is synchronous; every test builds its engine inside it.effect.
+  // eslint-disable-next-line t3code/no-manual-effect-runtime-in-tests
   const pubsub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
   let sequence = 0;
 

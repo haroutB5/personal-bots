@@ -1,9 +1,10 @@
 // Fixtures for the ledger check. Run:
 //   node --test scripts/personal/sync/ledger-check.test.mjs
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { test } from "node:test";
+import * as NodeTest from "node:test";
+const { test } = NodeTest;
 
 import { checkLedgerText, LEDGER_HEADER, missingPatches, openAtErrors } from "./ledger-check.mjs";
 
@@ -18,21 +19,23 @@ test("a well-formed ledger passes and keeps its rows", () => {
   ].join("\n");
 
   const result = checkLedgerText(text);
-  assert.deepEqual(result.errors, []);
-  assert.equal(result.rows.length, 2);
-  assert.equal(result.rows[0].targetPR, "C2");
+  NodeAssert.deepEqual(result.errors, []);
+  NodeAssert.equal(result.rows.length, 2);
+  NodeAssert.equal(result.rows[0].targetPR, "C2");
 });
 
 test("a row without a target PR fails by name", () => {
   const text = [header, row(["apps/server/src/a.ts", "content", "12", "", "open", ""])].join("\n");
-  assert.deepEqual(checkLedgerText(text).errors, ["line 2: apps/server/src/a.ts has no target PR"]);
+  NodeAssert.deepEqual(checkLedgerText(text).errors, [
+    "line 2: apps/server/src/a.ts has no target PR",
+  ]);
 });
 
 test("a dropped row needs a reason", () => {
   const text = [header, row(["apps/server/src/a.ts", "content", "0", "C2", "dropped", "  "])].join(
     "\n",
   );
-  assert.deepEqual(checkLedgerText(text).errors, [
+  NodeAssert.deepEqual(checkLedgerText(text).errors, [
     "line 2: apps/server/src/a.ts is dropped without a reason",
   ]);
 });
@@ -46,30 +49,30 @@ test("structural damage is reported per row", () => {
   ].join("\n");
 
   const { errors } = checkLedgerText(text);
-  assert.ok(
+  NodeAssert.ok(
     errors.some((error) => error.includes("kind must be one of")),
     errors.join("\n"),
   );
-  assert.ok(
+  NodeAssert.ok(
     errors.some((error) => error.includes("ourLines must be a non-negative integer")),
     errors.join("\n"),
   );
-  assert.ok(
+  NodeAssert.ok(
     errors.some((error) => error.includes("status must be one of")),
     errors.join("\n"),
   );
-  assert.ok(
+  NodeAssert.ok(
     errors.some((error) => error.includes("duplicate path")),
     errors.join("\n"),
   );
-  assert.ok(
+  NodeAssert.ok(
     errors.some((error) => error.includes("expected 6 columns, got 3")),
     errors.join("\n"),
   );
 });
 
 test("a missing header is rejected", () => {
-  assert.deepEqual(checkLedgerText("a.ts\tcontent\t1\tC2\topen\t").errors, [
+  NodeAssert.deepEqual(checkLedgerText("a.ts\tcontent\t1\tC2\topen\t").errors, [
     `header must be: ${header}`,
   ]);
 });
@@ -86,7 +89,7 @@ test("--patches reports exactly the rows without a patch file", () => {
     ].join("\n"),
   );
 
-  assert.deepEqual(missingPatches(rows, dir), ["apps/server/src/b.ts"]);
+  NodeAssert.deepEqual(missingPatches(rows, dir), ["apps/server/src/b.ts"]);
 });
 
 test("--no-open-at B1 reports a row B1 left open and accepts a closed one", () => {
@@ -99,10 +102,10 @@ test("--no-open-at B1 reports a row B1 left open and accepts a closed one", () =
       row(["apps/server/src/d.ts", "content", "1", "C2", "open", ""]),
     ].join("\n"),
   );
-  assert.deepEqual(openAtErrors(rows, "B1"), [
+  NodeAssert.deepEqual(openAtErrors(rows, "B1"), [
     "line 2: apps/server/src/a.ts is open at B1; a merge row must be closed there",
   ]);
-  assert.deepEqual(openAtErrors(rows, "C2"), [
+  NodeAssert.deepEqual(openAtErrors(rows, "C2"), [
     "line 5: apps/server/src/d.ts is open at C2; a merge row must be closed there",
   ]);
 });

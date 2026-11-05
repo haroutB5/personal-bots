@@ -14,7 +14,7 @@
 //
 // Exit codes: 0 census matches the baseline, 1 unexpected or stale entry,
 // 2 usage or git error.
-import { execFileSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -157,7 +157,10 @@ export const parseBaseline = (value) => {
 };
 
 const git = (repo, ...args) =>
-  execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: 1 << 28 });
+  NodeChildProcess.execFileSync("git", ["-C", repo, ...args], {
+    encoding: "utf8",
+    maxBuffer: 1 << 28,
+  });
 
 const parseArgs = (argv) => {
   const repo = argv[0];

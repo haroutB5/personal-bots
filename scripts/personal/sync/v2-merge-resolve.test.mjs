@@ -1,7 +1,8 @@
 // Fixtures for the B1 resolver rules. Run:
 //   node --test scripts/personal/sync/v2-merge-resolve.test.mjs
-import assert from "node:assert/strict";
-import { test } from "node:test";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeTest from "node:test";
+const { test } = NodeTest;
 
 import {
   backportMatches,
@@ -21,43 +22,43 @@ const plan = (overrides) =>
   planFor({ path: "apps/server/src/x.ts", seam: false, broken: false, ...overrides });
 
 test("modify-delete takes the deletion and parks our diff", () => {
-  assert.deepEqual(plan({ status: "UD" }), { action: "take-deletion", kind: "modify-delete" });
+  NodeAssert.deepEqual(plan({ status: "UD" }), { action: "take-deletion", kind: "modify-delete" });
 });
 
 test("content conflicts outside the seam take upstream", () => {
-  assert.deepEqual(plan({ status: "UU" }), { action: "take-upstream", kind: "content" });
-  assert.deepEqual(plan({ status: "DU" }), { action: "take-upstream", kind: "content" });
+  NodeAssert.deepEqual(plan({ status: "UU" }), { action: "take-upstream", kind: "content" });
+  NodeAssert.deepEqual(plan({ status: "DU" }), { action: "take-upstream", kind: "content" });
 });
 
 test("add/add is added-broken only when our file no longer compiles", () => {
-  assert.deepEqual(plan({ status: "AA", broken: true }), {
+  NodeAssert.deepEqual(plan({ status: "AA", broken: true }), {
     action: "remove-added",
     kind: "added-broken",
   });
-  assert.deepEqual(plan({ status: "AA", broken: false }), {
+  NodeAssert.deepEqual(plan({ status: "AA", broken: false }), {
     action: "take-upstream",
     kind: "content",
   });
 });
 
 test("the nine seam files stay unmerged in a dry run and take upstream with --apply", () => {
-  assert.equal(SEAM_FILES.length, 9);
-  assert.ok(SEAM_FILES.includes("apps/server/src/auth/RpcAuthorization.ts"));
-  assert.ok(SEAM_FILES.includes("apps/server/src/mcp/McpHttpServer.ts"));
-  assert.ok(SEAM_FILES.includes("apps/server/src/mcp/McpInvocationContext.ts"));
+  NodeAssert.equal(SEAM_FILES.length, 9);
+  NodeAssert.ok(SEAM_FILES.includes("apps/server/src/auth/RpcAuthorization.ts"));
+  NodeAssert.ok(SEAM_FILES.includes("apps/server/src/mcp/McpHttpServer.ts"));
+  NodeAssert.ok(SEAM_FILES.includes("apps/server/src/mcp/McpInvocationContext.ts"));
   const seam = "apps/server/src/server.ts";
-  assert.deepEqual(plan({ status: "UU", path: seam, seam: true }), {
+  NodeAssert.deepEqual(plan({ status: "UU", path: seam, seam: true }), {
     action: "leave-seam",
     kind: null,
   });
-  assert.deepEqual(plan({ status: "UU", path: seam, seam: true, apply: true }), {
+  NodeAssert.deepEqual(plan({ status: "UU", path: seam, seam: true, apply: true }), {
     action: "take-upstream",
     kind: null,
   });
 });
 
 test("an unknown conflict is reported, never guessed", () => {
-  assert.deepEqual(plan({ status: "XY" }), { action: "unclassified", kind: null });
+  NodeAssert.deepEqual(plan({ status: "XY" }), { action: "unclassified", kind: null });
 });
 
 test("our added lines count without the file header", () => {
@@ -70,7 +71,7 @@ test("our added lines count without the file header", () => {
     "+new",
     "+more",
   ].join("\n");
-  assert.equal(countPatchLines(patch), 2);
+  NodeAssert.equal(countPatchLines(patch), 2);
 });
 
 test("same content under orchestration-v2 is a relocation", () => {
@@ -82,8 +83,8 @@ test("same content under orchestration-v2 is a relocation", () => {
     ["apps/server/src/orchestration-v2/A.ts", "h1"],
     ["apps/server/src/orchestration-v2/B.ts", "h2"],
   ]);
-  assert.deepEqual(renamedIntoV2(ours, result), ["apps/server/src/orchestration-v2/A.ts"]);
-  assert.deepEqual(
+  NodeAssert.deepEqual(renamedIntoV2(ours, result), ["apps/server/src/orchestration-v2/A.ts"]);
+  NodeAssert.deepEqual(
     renamedIntoV2(ours, new Map(result).set("apps/server/src/orchestration-v2/A.ts", "h9")),
     [],
   );
@@ -92,7 +93,7 @@ test("same content under orchestration-v2 is a relocation", () => {
 test("an import that existed at ours and is gone after the merge is broken", () => {
   const file = "apps/server/src/personal/a.ts";
   const source = 'import { engine } from "../orchestration/Services/OrchestrationEngine.ts";';
-  assert.equal(
+  NodeAssert.equal(
     hasBrokenImport({
       file,
       source,
@@ -101,7 +102,7 @@ test("an import that existed at ours and is gone after the merge is broken", () 
     }),
     true,
   );
-  assert.equal(
+  NodeAssert.equal(
     hasBrokenImport({
       file,
       source,
@@ -113,7 +114,7 @@ test("an import that existed at ours and is gone after the merge is broken", () 
 });
 
 test("a missing asset that never resolved is not a broken import", () => {
-  assert.equal(
+  NodeAssert.equal(
     hasBrokenImport({
       file: "apps/server/src/personal/a.ts",
       source: 'import data from "./model-manifest.json" with { type: "json" };',
@@ -125,15 +126,15 @@ test("a missing asset that never resolved is not a broken import", () => {
 });
 
 test("target PR falls back to B1 for triage", () => {
-  assert.equal(targetPrFor("apps/server/src/personal/a.ts"), "3a");
-  assert.equal(targetPrFor("apps/server/src/orchestration-v2/a.ts"), "C1-C3");
-  assert.equal(targetPrFor("apps/web/src/a.tsx"), "phase 4");
-  assert.equal(targetPrFor("docs/readme.md"), "B1");
+  NodeAssert.equal(targetPrFor("apps/server/src/personal/a.ts"), "3a");
+  NodeAssert.equal(targetPrFor("apps/server/src/orchestration-v2/a.ts"), "C1-C3");
+  NodeAssert.equal(targetPrFor("apps/web/src/a.tsx"), "phase 4");
+  NodeAssert.equal(targetPrFor("docs/readme.md"), "B1");
 });
 
 test("the DeepSeek area is tested before the generic provider area", () => {
-  assert.equal(targetPrFor("packages/provider-deepseek/src/x.ts"), "D1-D7");
-  assert.equal(targetPrFor("packages/provider-pi/src/x.ts"), "C5-C9");
+  NodeAssert.equal(targetPrFor("packages/provider-deepseek/src/x.ts"), "D1-D7");
+  NodeAssert.equal(targetPrFor("packages/provider-pi/src/x.ts"), "C5-C9");
 });
 
 const registry = () =>
@@ -147,8 +148,8 @@ const registry = () =>
   );
 
 test("the registry parses and rejects a duplicate path", () => {
-  assert.equal(registry().size, 3);
-  assert.throws(() =>
+  NodeAssert.equal(registry().size, 3);
+  NodeAssert.throws(() =>
     parseRegistryText(
       [
         "path\ttarget\tstatusAfterB1\trule\tflag\treason",
@@ -161,10 +162,13 @@ test("the registry parses and rejects a duplicate path", () => {
 
 test("rule 1: a backport is every subject with an upstream PR number", () => {
   const upstream = new Set(["fix(cloud): keep a token (#25301)"]);
-  assert.equal(backportMatches(["fix(cloud): keep a token (#25301)"], upstream), true);
-  assert.equal(backportMatches([], upstream), false);
-  assert.equal(backportMatches(["local fix"], upstream), false);
-  assert.equal(backportMatches(["fix(cloud): keep a token (#25301)", "local"], upstream), false);
+  NodeAssert.equal(backportMatches(["fix(cloud): keep a token (#25301)"], upstream), true);
+  NodeAssert.equal(backportMatches([], upstream), false);
+  NodeAssert.equal(backportMatches(["local fix"], upstream), false);
+  NodeAssert.equal(
+    backportMatches(["fix(cloud): keep a token (#25301)", "local"], upstream),
+    false,
+  );
 });
 
 test("rule 2: the registry wins before any area rule", () => {
@@ -174,7 +178,7 @@ test("rule 2: the registry wins before any area rule", () => {
     registry: registry(),
     backport: false,
   });
-  assert.deepEqual(assignment, {
+  NodeAssert.deepEqual(assignment, {
     target: "D1",
     status: "dropped",
     rule: "registry",
@@ -193,9 +197,9 @@ test("rule 3: a test whose added lines only stub v1 services is dropped", () => 
     "+  getPendingInputActivities: () => Effect.void,",
     "+});",
   ].join("\n");
-  assert.equal(isV1StubPatch({ path: "apps/server/src/x.test.ts", patch }), true);
-  assert.equal(isV1StubPatch({ path: "apps/server/src/x.ts", patch }), false);
-  assert.equal(
+  NodeAssert.equal(isV1StubPatch({ path: "apps/server/src/x.test.ts", patch }), true);
+  NodeAssert.equal(isV1StubPatch({ path: "apps/server/src/x.ts", patch }), false);
+  NodeAssert.equal(
     isV1StubPatch({
       path: "apps/server/src/x.test.ts",
       patch: ["+  expect(turn).toEqual({ status: 'running' });"].join("\n"),
@@ -212,11 +216,11 @@ test("rule 4: a test takes the target of the source it names", () => {
       "apps/server/src/usage/usageScanCache.ts\tC14\topen\tregistry\t\treset window",
     ].join("\n"),
   );
-  assert.equal(
+  NodeAssert.equal(
     followSourceTarget("apps/server/src/orchestration/decider.delete.test.ts", entries)?.target,
     "C1",
   );
-  assert.equal(
+  NodeAssert.equal(
     followSourceTarget("apps/server/test/usageScanCache.test.ts", entries)?.target,
     "C14",
   );
@@ -229,7 +233,7 @@ test("rule 5: an unregistered path falls to its area", () => {
     registry: new Map(),
     backport: false,
   });
-  assert.deepEqual(assignment, {
+  NodeAssert.deepEqual(assignment, {
     target: "C5-C9",
     status: "open",
     rule: "area",
@@ -239,7 +243,7 @@ test("rule 5: an unregistered path falls to its area", () => {
 });
 
 test("rule 6: no match is null, never B1 open", () => {
-  assert.equal(
+  NodeAssert.equal(
     targetFor({ path: "docs/readme.md", patch: null, registry: new Map(), backport: false }),
     null,
   );
