@@ -30,6 +30,7 @@ import {
 import type { NativeBlob } from "../platform/nativePorts";
 import { appAtomRegistry } from "../personal/atomRegistry";
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import { resetNetworkClient } from "../personal/networkReset";
 import type { ChatEnvironment } from "./chatEnvironment";
 import { useEffect, useRef } from "react";
 
@@ -123,6 +124,7 @@ async function uploadOne(
   },
   uri: string,
 ): Promise<AttachmentUpload> {
+  await prepareNetworkForUpload(native);
   const controller = new AbortController();
   const result = await runAttachmentUploadCycle({
     registry: appAtomRegistry,
