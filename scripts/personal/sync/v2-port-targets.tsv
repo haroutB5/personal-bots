@@ -1,0 +1,180 @@
+path	target	statusAfterB1	rule	flag	reason
+apps/mobile/src/features/usage/usageProviders.ts	D1	open	area		deepseek usage literal; D1 checks mobile switches
+apps/server/integration/OrchestrationEngineHarness.integration.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/integration/orphanedProviderSessionStartup.integration.test.ts	C4	open	area	bot persona and model on resume	a turn resumed after restart keeps the bot's instructions and model
+apps/server/package.json	B1	done	union		take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+apps/server/scripts/acp-mock-agent.ts	C8	open	area		ACP mock for steer and busy-refusal tests
+apps/server/src/assets/AssetAccess.ts	C12	open	area	security: credential files readable and secrets in logs if dropped	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/auth/EnvironmentAuth.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/http.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/http.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/RpcAuthorization.test.ts	A9	open	area		personal scope cases move with the scope table into personal/ in A9
+apps/server/src/auth/ServerSecretStore.test.ts	C12	open	area	security: credential files readable and secrets in logs if dropped	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/auth/ServerSecretStore.ts	C12	open	area	security: credential files readable and secrets in logs if dropped	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/auth/SessionStore.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/auth/SessionStore.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/bin.ts	C12	open	area	security: credential files readable and secrets in logs if dropped	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/checkpointing/CheckpointDiffQuery.test.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/cli/connect.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/connect.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/pair.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cli/pair.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/CliTokenManager.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/cloud/CliTokenManager.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/cloud/config.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/http.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/cloud/http.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/device/DeviceHubProxy.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/device/DeviceHubProxy.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/device/LocalDeviceHost.test.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/device/LocalDeviceHost.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/environment/ServerEnvironmentLabel.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/environment/ServerEnvironmentLabel.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/git/GitManager.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/git/GitWorkflowService.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/mcp/advertisedJsonSchema.test.ts	B1	dropped	take-upstream		U ed44f251d8 (#25423) carries the compact advertised schema
+apps/server/src/mcp/advertisedJsonSchema.ts	B1	dropped	take-upstream		U ed44f251d8 (#25423) carries the compact advertised schema
+apps/server/src/mcp/McpHttpServer.test.ts	C13	open	area	shared persistent browser for bots	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/McpProviderSession.ts	C5	open	appendix-a		hook file listed in Appendix A
+apps/server/src/mcp/PreviewAutomationBroker.test.ts	C13	open	area	shared persistent browser for bots	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/PreviewAutomationBroker.ts	C13	open	area	shared persistent browser for bots	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/bots/handlers.test.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/mcp/toolkits/bots/handlers.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/mcp/toolkits/bots/leadBots.test.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/mcp/toolkits/connections/createApp.handlers.test.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/mcp/toolkits/connections/handlers.test.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/mcp/toolkits/connections/handlers.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/mcp/toolkits/device/tools.ts	C13	open	area	shared persistent browser for bots	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/personal/handlers.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/mcp/toolkits/personal/memoryHandlers.test.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/mcp/toolkits/preview/handlers.ts	C13	open	area	shared persistent browser for bots	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/preview/tools.test.ts	C13	open	area	shared persistent browser for bots	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/preview/tools.ts	C13	open	area	shared persistent browser for bots	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/mcp/toolkits/pullRequests/tools.ts	C13	open	area	shared persistent browser for bots	shared browser leases, browser error text, richer computer actions, shorter tool copy
+apps/server/src/orchestration/ActivityPayloadProjection.test.ts	C10	open	follow-source		test of an Appendix A hook file
+apps/server/src/orchestration/ActivityPayloadProjection.ts	C10	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/decider.delete.test.ts	C1	open	port-as-v2-test	question cards and stuck starting rows	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/decider.ts	C1	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/decider.userInputDismiss.test.ts	C1	open	port-as-v2-test	question cards and stuck starting rows	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/decider.userMessageAppend.test.ts	C1	open	port-as-v2-test	question cards and stuck starting rows	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/http.ts	C3	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/Layers/CheckpointReactor.test.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/orchestration/Layers/CheckpointReactor.ts	C10	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts	C1	open	port-as-v2-test	question cards and stuck starting rows	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/Layers/OrchestrationEngine.ts	B1	dropped	appendix-a		Appendix A class DROP, v1 artefact
+apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/orchestration/Layers/PersonalBrowserArchiveReactor.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/orchestration/Layers/PersonalBrowserTurnReactor.ts	A8	open	area	every bot MCP tool	Appendix B, added outside personal; A8 moves it under personal/
+apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts	C1	open	port-as-v2-test	question cards and stuck starting rows	user-visible behaviour (question answers, pending turn start, deleted-thread guard); port the case against v2, drop it if v2 already passes
+apps/server/src/orchestration/Layers/ProjectionPipeline.ts	B1	dropped	appendix-a		Appendix A class DROP, v1 artefact
+apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts	C3	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts	C4+C10	open	follow-source		test of an Appendix A hook file
+apps/server/src/orchestration/Layers/ProviderCommandReactor.ts	C4+C10	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.activity.test.ts	C10	open	follow-source		test of an Appendix A hook file
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts	C10	open	follow-source		test of an Appendix A hook file
+apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts	C10	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts	C10	open	follow-source		test of an Appendix A hook file
+apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts	C10	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/messageContext.test.ts	C2	open	port-as-v2-test	notice context	assistant notice carries message context; C2 postNotice
+apps/server/src/orchestration/PullRequestSyncReactor.ts	C10	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/Services/ProjectionSnapshotQuery.ts	C3	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/Services/ProviderCommandReactor.ts	C10	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/ThreadBackgroundLiveness.ts	C2	open	appendix-a		hook file listed in Appendix A
+apps/server/src/orchestration/ThreadSettlementReactor.ts	C10	open	appendix-a		hook file listed in Appendix A
+apps/server/src/preview/PortScanner.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/processRunner.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/project/AgentSessionImporter.test.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/project/AgentSessionScanner.test.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/project/ProjectSetupScriptRunner.test.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/project/RepositoryIdentityResolver.test.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/project/RepositoryIdentityResolver.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/server.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/serverLogger.ts	C12	open	area	security: credential files readable and secrets in logs if dropped	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/serverRuntimeStartup.reconcile.test.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/serverRuntimeStartup.test.ts	B1	dropped	take-upstream		our lines only stub v1 service methods or provide personal layers to a v1 harness
+apps/server/src/serverRuntimeStartup.ts	C4	open	area	bot persona and model on resume	a turn resumed after restart keeps the bot's instructions and model
+apps/server/src/serverSettings.test.ts	C9	open	area		typed provider secrets, Gemini effort defaults
+apps/server/src/serverSettings.ts	C9	open	area		typed provider secrets, Gemini effort defaults
+apps/server/src/startupAccess.test.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/startupAccess.ts	C11	open	area	phone sign-in stays alive; revoked sessions lose their sockets	session renew and revoke, revoked-socket close, phone session slide, pair --connect
+apps/server/src/storageCleanup.ts	C10	open	area		withStallJob wrap
+apps/server/src/telemetry/AnalyticsService.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/telemetry/AnalyticsService.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/textGeneration/ClaudeTextGeneration.test.ts	C5	open	area	memory tidy and summaries need generateStructured	Haiku background model and generateStructured, used by memory tidy and summaries
+apps/server/src/textGeneration/ClaudeTextGeneration.ts	C5	open	area	memory tidy and summaries need generateStructured	Haiku background model and generateStructured, used by memory tidy and summaries
+apps/server/src/textGeneration/OpenCode2TextGeneration.ts	C7	open	area		OpenCode 2 text generation
+apps/server/src/textGeneration/TextGeneration.ts	C5	open	area	memory tidy and summaries need generateStructured	Haiku background model and generateStructured, used by memory tidy and summaries
+apps/server/src/usage/antigravityUsageReader.test.ts	C8	open	follow-source		test of an Appendix A hook file
+apps/server/src/usage/antigravityUsageReader.ts	C8	open	appendix-a		hook file listed in Appendix A
+apps/server/src/usage/botUsage.test.ts	A6b	open	area	per-bot token usage	per-bot token usage read (botTokenUsage family); move under personal/ in A6b
+apps/server/src/usage/botUsage.ts	A6b	open	area	per-bot token usage	per-bot token usage read (botTokenUsage family); move under personal/ in A6b
+apps/server/src/usage/cursorUsageReader.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/usage/opencodeUsageReader.test.ts	C7	open	follow-source		test of an Appendix A hook file
+apps/server/src/usage/opencodeUsageReader.ts	C7	open	appendix-a		hook file listed in Appendix A
+apps/server/src/usage/usageAggregation.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/usage/UsageLimitSources.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usagePricing.test.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usagePricing.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageScanCache.test.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageScanCache.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/UsageService.test.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/UsageService.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageTranscriptReader.test.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageTranscriptReader.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+apps/server/src/usage/usageTranscripts.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/usage/usageTranscripts.ts	C9+D6	open	appendix-a		hook file listed in Appendix A
+apps/server/src/vcs/GitVcsDriverCore.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+apps/server/src/workspace/WorkspaceFileSystem.test.ts	C12	open	area	security: credential files readable and secrets in logs if dropped	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/workspace/WorkspaceFileSystem.ts	C12	open	area	security: credential files readable and secrets in logs if dropped	sealed connection credentials, secret export and import, log redaction, protected host-file deny list
+apps/server/src/workspace/WorkspaceSearchIndex.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/src/workspace/WorkspaceSearchIndex.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+apps/server/test/ActivityPayloadProjection.test.ts	C10	open	follow-source		test of an Appendix A hook file
+apps/server/vite.config.ts	B1	done	union		take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+docs/internals/connection-runtime.md	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+knip.jsonc	B1	done	union		take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+oxlint-plugin-t3code/index.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+oxlint-plugin-t3code/rules/no-unscoped-has.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+oxlint-plugin-t3code/rules/no-unscoped-has.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+package.json	B1	done	union		take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+packages/client-runtime/src/connection/errors.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/client-runtime/src/connection/errors.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/client-runtime/src/connection/registry.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/client-runtime/src/connection/supervisor.test.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/connection/supervisor.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/connection/wakeups.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/client-runtime/src/errors/transport.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/client-runtime/src/errors/transport.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/client-runtime/src/pendingRequests.test.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/pendingRequests.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/assets.test.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/assets.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/server.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/shell-sync.test.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/shell.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/shellSnapshotHttp.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threadReducer.test.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threadReducer.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threads-sync.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/client-runtime/src/state/threads.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/state/threadSnapshotHttp.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/client-runtime/src/work-log/presentation.ts	C16	open	area	Android app build and bot list	personal-client and hbots-mobile import these entry points; U drops ./pending-requests and reshapes EnvironmentThreadShell
+packages/shared/package.json	B1	done	union		take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+packages/shared/src/DrainableWorker.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/shared/src/DrainableWorker.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/shared/src/KeyedCoalescingWorker.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/shared/src/nodeSqliteClient.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/shared/src/nodeSqliteClient.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/observability.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/relayClient.test.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/shared/src/relayClient.ts	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+packages/shared/src/shell.test.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/shell.ts	C15	open	area	Linux preview port discovery	SQLite on one worker thread, PATH walk off the loop, resolved git exe, git TTL, Linux ss port scan, Linux Android SDK path
+packages/shared/src/usageLimits.test.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+packages/shared/src/usageLimits.ts	C14	open	area	Team screen token usage and usage-limit windows	DeepSeek, Antigravity and OpenCode Go pricing, off-loop scan, reset-window reads, probe backoff
+patches/effect@4.0.0-rc.115.patch	B1	dropped	take-upstream		only upstream commits (#N) on our side, each present in U
+pnpm-lock.yaml	B1	done	regenerate		take upstream, then pnpm install --lockfile-only after the manifests
+pnpm-workspace.yaml	B1	done	union		take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+scripts/export-brand-icons.ts	phase 4	open	area		WebP splash and small favicon
+scripts/lib/brand-assets.test.ts	phase 4	open	area		WebP splash and small favicon
+scripts/lib/cli-external-packages.test.ts	B1	done	union		take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides
+vite.config.ts	B1	done	union		take upstream, re-apply our hunk with git apply --3way, keep both key sets; B1 tsc decides

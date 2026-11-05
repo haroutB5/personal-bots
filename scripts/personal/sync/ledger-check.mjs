@@ -1,6 +1,6 @@
 // Ledger check: the v2 port must not lose a hook silently.
 //
-//   node scripts/personal/sync/ledger-check.mjs [--file <ledger.tsv>] [--patches <dir>]
+//   node scripts/personal/sync/ledger-check.mjs [--file <ledger.tsv>] [--patches <dir>] [--no-open-at <PR>]
 //
 // Columns: path  kind  ourLines  targetPR  status  reason
 //   kind   modify-delete | content | added-broken
@@ -9,7 +9,8 @@
 // Fails when a row has no target PR, when a dropped row has no reason, and on
 // any structural damage (bad column count, unknown kind or status, duplicate
 // path, non-integer line count). With --patches, every row must have
-// <dir>/<path>.patch so the parked hunk is reviewable.
+// <dir>/<path>.patch so the parked hunk is reviewable. With --no-open-at, a row
+// whose target names that PR must be closed at merge time.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -88,16 +89,26 @@ export const missingPatches = (rows, patchesDir) =>
     .filter((row) => !NodeFS.existsSync(NodePath.join(patchesDir, `${row.path}.patch`)))
     .map((row) => row.path);
 
+/** Rows a merge target must close: target names the PR and status is still open. */
+export const openAtErrors = (rows, targetPR) =>
+  rows
+    .filter((row) => row.targetPR === targetPR && row.status === "open")
+    .map(
+      (row) =>
+        `line ${row.lineNumber}: ${row.path} is open at ${targetPR}; a merge row must be closed there`,
+    );
+
 const parseArgs = (argv) => {
-  const options = { file: DEFAULT_LEDGER_PATH, patches: null };
+  const options = { file: DEFAULT_LEDGER_PATH, patches: null, noOpenAt: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--file" || arg === "--patches") {
+    if (arg === "--file" || arg === "--patches" || arg === "--no-open-at") {
       const next = argv[index + 1];
       if (next === undefined) {
         throw new Error(`${arg} needs a value`);
       }
-      options[arg.slice(2)] = NodePath.resolve(next);
+      if (arg === "--no-open-at") options.noOpenAt = next;
+      else options[arg.slice(2)] = NodePath.resolve(next);
       index += 1;
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -113,7 +124,7 @@ const main = () => {
   } catch (error) {
     console.error(`ledger-check: ${error.message}`);
     console.error(
-      "Usage: node scripts/personal/sync/ledger-check.mjs [--file <ledger.tsv>] [--patches <dir>]",
+      "Usage: node scripts/personal/sync/ledger-check.mjs [--file <ledger.tsv>] [--patches <dir>] [--no-open-at <PR>]",
     );
     process.exit(2);
   }
@@ -128,6 +139,9 @@ const main = () => {
     for (const path of missingPatches(rows, options.patches)) {
       errors.push(`no patch for ${path} under ${options.patches}`);
     }
+  }
+  if (options.noOpenAt !== null) {
+    errors.push(...openAtErrors(rows, options.noOpenAt));
   }
 
   if (errors.length > 0) {

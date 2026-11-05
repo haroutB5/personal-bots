@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { test } from "node:test";
 
-import { checkLedgerText, LEDGER_HEADER, missingPatches } from "./ledger-check.mjs";
+import { checkLedgerText, LEDGER_HEADER, missingPatches, openAtErrors } from "./ledger-check.mjs";
 
 const header = LEDGER_HEADER.join("\t");
 const row = (columns) => columns.join("\t");
@@ -87,4 +87,22 @@ test("--patches reports exactly the rows without a patch file", () => {
   );
 
   assert.deepEqual(missingPatches(rows, dir), ["apps/server/src/b.ts"]);
+});
+
+test("--no-open-at B1 reports a row B1 left open and accepts a closed one", () => {
+  const { rows } = checkLedgerText(
+    [
+      header,
+      row(["apps/server/src/a.ts", "content", "1", "B1", "open", ""]),
+      row(["apps/server/src/b.ts", "content", "1", "B1", "dropped", "upstream has it"]),
+      row(["apps/server/src/c.ts", "content", "1", "B1", "done", ""]),
+      row(["apps/server/src/d.ts", "content", "1", "C2", "open", ""]),
+    ].join("\n"),
+  );
+  assert.deepEqual(openAtErrors(rows, "B1"), [
+    "line 2: apps/server/src/a.ts is open at B1; a merge row must be closed there",
+  ]);
+  assert.deepEqual(openAtErrors(rows, "C2"), [
+    "line 5: apps/server/src/d.ts is open at C2; a merge row must be closed there",
+  ]);
 });
