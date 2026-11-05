@@ -21,9 +21,7 @@ import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
-import { QueuedMessageSender } from "../components/QueuedMessageSender";
-import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
-import { ProviderAuthCallbackCoordinator } from "../components/settings/ProviderAuthCallbackCoordinator";
+
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
 import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
@@ -109,6 +107,21 @@ const SshPasswordPromptDialog = lazy(() =>
 const ThemeEditorHost = lazy(() =>
   import("../components/settings/ThemeEditorHost").then((module) => ({
     default: module.ThemeEditorHost,
+  })),
+);
+const QueuedMessageSender = lazy(() =>
+  import("../components/QueuedMessageSender").then((module) => ({
+    default: module.QueuedMessageSender,
+  })),
+);
+const ChatGptWelcomeCoordinator = lazy(() =>
+  import("../components/settings/ChatGptWelcomeCoordinator").then((module) => ({
+    default: module.ChatGptWelcomeCoordinator,
+  })),
+);
+const ProviderAuthCallbackCoordinator = lazy(() =>
+  import("../components/settings/ProviderAuthCallbackCoordinator").then((module) => ({
+    default: module.ProviderAuthCallbackCoordinator,
   })),
 );
 
@@ -316,8 +329,6 @@ function RootRouteView() {
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
-        <ProviderAuthCallbackCoordinator />
-        <ChatGptWelcomeCoordinator />
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}
           hostedStatic={authGateState.status === "hosted-static"}
@@ -329,7 +340,6 @@ function RootRouteView() {
             {MANAGED_AUTH_SKIPPED ? null : <ConnectOnboardingDialog />}
             <SshPasswordPromptDialog />
           </DeferredMount>
-          <QueuedMessageSender />
           <ConfirmDialogHost />
           {leanShell ? null : (
             // Desktop and developer-view tools, quiet in the Bots shell anyway
@@ -356,6 +366,9 @@ function RootRouteView() {
           {/* Above the router: a theme draft is judged by walking the app, so the
               editor has to survive navigation away from settings. */}
           <DeferredMount>
+            <ProviderAuthCallbackCoordinator />
+            <ChatGptWelcomeCoordinator />
+            <QueuedMessageSender />
             <ThemeEditorHost />
           </DeferredMount>
         </FirstRunGate>
