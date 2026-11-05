@@ -256,9 +256,15 @@ importers:
       expo-crypto:
         specifier: ~57.0.2
         version: 57.0.2(expo@57.0.18)
+      expo-document-picker:
+        specifier: ~57.0.1
+        version: 57.0.1(expo@57.0.18)
       expo-file-system:
         specifier: ~57.0.6
         version: 57.0.6(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))
+      expo-image-picker:
+        specifier: ~57.0.14
+        version: 57.0.14(expo@57.0.18)
       expo-secure-store:
         specifier: ~57.0.2
         version: 57.0.2(expo@57.0.18)
@@ -19624,7 +19630,7 @@ snapshots:
 
   expo-document-picker@57.0.1(expo@57.0.18):
     dependencies:
-      expo: 57.0.18(41fd11498a34454c91128cdad32f22f8)
+      expo: 57.0.18(a43d12e192ace4ae463d00b8d08cfa0a)
 
   expo-eas-client@57.0.2: {}
 
@@ -19666,7 +19672,7 @@ snapshots:
 
   expo-image-loader@57.0.1(expo@57.0.18):
     dependencies:
-      expo: 57.0.18(41fd11498a34454c91128cdad32f22f8)
+      expo: 57.0.18(a43d12e192ace4ae463d00b8d08cfa0a)
 
   expo-image-manipulator@57.0.17(expo@57.0.18):
     dependencies:
@@ -19675,7 +19681,7 @@ snapshots:
 
   expo-image-picker@57.0.14(expo@57.0.18):
     dependencies:
-      expo: 57.0.18(41fd11498a34454c91128cdad32f22f8)
+      expo: 57.0.18(a43d12e192ace4ae463d00b8d08cfa0a)
       expo-image-loader: 57.0.1(expo@57.0.18)
 
   expo-image@57.0.3(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3):

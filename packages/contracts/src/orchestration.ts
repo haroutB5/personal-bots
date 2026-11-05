@@ -35,6 +35,7 @@ import {
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getCommandReceipt: "orchestration.getCommandReceipt",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
@@ -2388,6 +2389,22 @@ export const DispatchResult = Schema.Struct({
 });
 export type DispatchResult = typeof DispatchResult.Type;
 
+/**
+ * Whether the server handled the one command that carries a queued message.
+ * A client whose socket lost the reply asks this on the next connection and
+ * learns whether the message landed instead of sending it blind again.
+ */
+export const CommandReceiptLookupInput = Schema.Struct({
+  commandId: CommandId,
+});
+export type CommandReceiptLookupInput = typeof CommandReceiptLookupInput.Type;
+
+export const CommandReceiptLookup = Schema.Struct({
+  status: Schema.Literals(["accepted", "rejected", "missing"]),
+  error: Schema.NullOr(Schema.String),
+});
+export type CommandReceiptLookup = typeof CommandReceiptLookup.Type;
+
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
@@ -2487,6 +2504,10 @@ export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  getCommandReceipt: {
+    input: CommandReceiptLookupInput,
+    output: CommandReceiptLookup,
   },
   getWorkflowScript: {
     input: OrchestrationGetWorkflowScriptInput,

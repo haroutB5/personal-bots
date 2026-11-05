@@ -14,7 +14,9 @@ import {
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
+  readAttachmentUpload,
   releaseDraftAttachment,
+  retryAttachmentUpload,
   startAttachmentUpload,
 } from "~/lib/attachmentUploadQueue";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
@@ -116,7 +118,11 @@ export function OutboxFlusher(): null {
       if (loaded === null) return { kind: "rejected", message: ATTACHMENT_LOST };
       draftAttachments = loaded;
       for (const attachment of draftAttachments) {
-        startAttachmentUpload({ environmentId: targetEnvironment, image: attachment });
+        if (readAttachmentUpload(attachment.id)?.status === "failed") {
+          retryAttachmentUpload({ environmentId: targetEnvironment, image: attachment });
+        } else {
+          startAttachmentUpload({ environmentId: targetEnvironment, image: attachment });
+        }
       }
       await awaitAttachmentUploads(draftAttachments.map((attachment) => attachment.id));
       uploaded = getUploadedAttachments({
@@ -126,7 +132,7 @@ export function OutboxFlusher(): null {
       if (uploaded === null) {
         disposeAttachments(draftAttachments, false);
         return connectedRef.current
-          ? { kind: "unknown", reason: "Couldn't send: an attachment didn't upload. Try again." }
+          ? { kind: "rejected", message: "Couldn't send: an attachment didn't upload. Try again." }
           : { kind: "not-sent" };
       }
     }
@@ -201,16 +207,18 @@ export function OutboxFlusher(): null {
     };
   }, [environmentId]);
 
-  // Anything runnable: waiting entries of this laptop. A new message, or the
-  // connection coming back, starts a pass; a failed entry waits for its Retry.
-  const runnableKey = entries
-    .filter((entry) => entry.environmentId === environmentId && entry.status === "waiting")
-    .map((entry) => entry.id)
+  // Anything queued for this laptop. A new message starts a pass, and a
+  // connection change wakes it, including the offline edge: the flusher needs
+  // to see the drop before it can tell a real reconnect from a queue change.
+  // A failed entry waits for Retry or a new connection; the flusher decides.
+  const queueKey = entries
+    .filter((entry) => entry.environmentId === environmentId)
+    .map((entry) => `${entry.id}:${entry.status}`)
     .join("|");
   useEffect(() => {
-    if (!connected || runnableKey.length === 0) return;
+    if (environmentId === null || queueKey.length === 0) return;
     flusherRef.current?.trigger();
-  }, [connected, environmentId, runnableKey]);
+  }, [connected, environmentId, queueKey]);
 
   // Bytes of messages that left the queue without their cleanup (a crash).
   const idsKey = entries.map((entry) => entry.id).join("|");

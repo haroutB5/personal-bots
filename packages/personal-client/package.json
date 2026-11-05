@@ -200,6 +200,74 @@
     "./computer/systemStats": {
       "types": "./src/computer/systemStats.ts",
       "import": "./src/computer/systemStats.ts"
+    },
+    "./composer/outbox": {
+      "types": "./src/composer/outbox.ts",
+      "import": "./src/composer/outbox.ts"
+    },
+    "./composer/outboxBlobs": {
+      "types": "./src/composer/outboxBlobs.ts",
+      "import": "./src/composer/outboxBlobs.ts"
+    },
+    "./composer/outboxFlush": {
+      "types": "./src/composer/outboxFlush.ts",
+      "import": "./src/composer/outboxFlush.ts"
+    },
+    "./feed/types": {
+      "types": "./src/feed/types.ts",
+      "import": "./src/feed/types.ts"
+    },
+    "./feed/pendingOutgoing": {
+      "types": "./src/feed/pendingOutgoing.ts",
+      "import": "./src/feed/pendingOutgoing.ts"
+    },
+    "./feed/chatNames": {
+      "types": "./src/feed/chatNames.ts",
+      "import": "./src/feed/chatNames.ts"
+    },
+    "./feed/botThreadRows": {
+      "types": "./src/feed/botThreadRows.ts",
+      "import": "./src/feed/botThreadRows.ts"
+    },
+    "./feed/messageTime": {
+      "types": "./src/feed/messageTime.ts",
+      "import": "./src/feed/messageTime.ts"
+    },
+    "./feed/messageReadStatus": {
+      "types": "./src/feed/messageReadStatus.ts",
+      "import": "./src/feed/messageReadStatus.ts"
+    },
+    "./feed/contextUsed": {
+      "types": "./src/feed/contextUsed.ts",
+      "import": "./src/feed/contextUsed.ts"
+    },
+    "./feed/chatFeed": {
+      "types": "./src/feed/chatFeed.ts",
+      "import": "./src/feed/chatFeed.ts"
+    },
+    "./feed/chatCwd": {
+      "types": "./src/feed/chatCwd.ts",
+      "import": "./src/feed/chatCwd.ts"
+    },
+    "./feed/renameChat": {
+      "types": "./src/feed/renameChat.ts",
+      "import": "./src/feed/renameChat.ts"
+    },
+    "./feed/messageReply": {
+      "types": "./src/feed/messageReply.ts",
+      "import": "./src/feed/messageReply.ts"
+    },
+    "./feed/composerText": {
+      "types": "./src/feed/composerText.ts",
+      "import": "./src/feed/composerText.ts"
+    },
+    "./bots/botMuteModel": {
+      "types": "./src/bots/botMuteModel.ts",
+      "import": "./src/bots/botMuteModel.ts"
+    },
+    "./usage/tokenUsagePresentation": {
+      "types": "./src/usage/tokenUsagePresentation.ts",
+      "import": "./src/usage/tokenUsagePresentation.ts"
     }
   },
   "scripts": {

@@ -2045,6 +2045,11 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       const handlers = WsRpcGroup.of({
+        [ORCHESTRATION_WS_METHODS.getCommandReceipt]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getCommandReceipt,
+            orchestrationEngine.getCommandReceipt(input.commandId),
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

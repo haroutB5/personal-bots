@@ -5,7 +5,7 @@ import { isThreadLive, isThreadRateLimited } from "./botSummaries";
 import { chatActivityMs } from "./chatActivity";
 import { type ChatChipKind, type ChatChipState, chatChipState, stateWords } from "./chatChipRows";
 import { isChatPinned, snoozeEndMs, whenWords } from "./chatState";
-import { conversationChatTitle } from "./ConversationHeaderName";
+import { conversationChatTitle } from "./chatNames";
 import { formatRelativeTime } from "./relativeTime";
 
 /**

@@ -19,7 +19,9 @@ function browserKeyValueStore(area: () => Storage | null): KeyValueStore {
     setItem: (key, value) => areaOrNull()?.setItem(key, value),
     removeItem: (key) => areaOrNull()?.removeItem(key),
     subscribe: (listener) => {
-      if (typeof window === "undefined") return () => undefined;
+      if (typeof window === "undefined" || typeof window.addEventListener !== "function") {
+        return () => undefined;
+      }
       const onStorage = (event: StorageEvent) => {
         if (event.storageArea === null || event.storageArea === areaOrNull()) listener(event.key);
       };

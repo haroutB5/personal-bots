@@ -1,4 +1,3 @@
-import type { BlobStore } from "@hbots/personal-client/ports/blobStore";
 import type { Clock } from "@hbots/personal-client/ports/clock";
 import type { Confirm } from "@hbots/personal-client/ports/confirm";
 import type { Ids } from "@hbots/personal-client/ports/ids";
@@ -7,15 +6,10 @@ import type { PersonalPorts } from "@hbots/personal-client/ports/personalPorts";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { randomUUID } from "~/lib/utils";
-import { indexedDbBackend } from "../outboxBlobs";
 import { webKeyValueStore, whenIdle } from "./webStorage";
+import { webBlobStore } from "./webBlobStore";
 
-export { webKeyValueStore };
-
-export const webBlobStore: BlobStore<Blob> = {
-  ...indexedDbBackend,
-  sizeOf: (blob) => blob.size,
-};
+export { webBlobStore, webKeyValueStore };
 
 export const webClock: Clock = {
   now: () => Date.now(),

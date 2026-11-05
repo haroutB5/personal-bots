@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { botsHomeState } from "./botsHomeState";
+import { botsHomeState, snapshotRowTarget } from "./botsHomeState";
 
 describe("Bots home states", () => {
   it("paints the cache before the live list", () => {
@@ -70,5 +70,18 @@ describe("Bots home states", () => {
         query: "planner",
       }),
     ).toBe("list");
+  });
+});
+
+describe("snapshotRowTarget", () => {
+  it("opens the cached chat when the row remembers one", () => {
+    expect(snapshotRowTarget({ threadId: "thread-1" })).toEqual({
+      kind: "chat",
+      threadId: "thread-1",
+    });
+  });
+
+  it("opens the bot when the cached row has no chat yet", () => {
+    expect(snapshotRowTarget({ threadId: null })).toEqual({ kind: "bot" });
   });
 });
