@@ -81,6 +81,8 @@ import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
 export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersistence) => {
   const {
     sql,
+    engine,
+    rel,
     storageFailure,
     decodeAll,
     scopeCondition,
@@ -143,11 +145,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
 
   /** Whether the provider compacted this chat since `sinceIso` (its context may have lost the list). */
   const compactedSince = (threadId: ThreadId, sinceIso: string) =>
-    sql<{ readonly count: number }>`
-      SELECT COUNT(*) AS "count" FROM projection_thread_activities
-      WHERE thread_id = ${threadId} AND kind = 'context-compaction' AND created_at > ${sinceIso}
-    `.pipe(
-      Effect.map((rows) => (rows[0]?.count ?? 0) > 0),
+    engine.compactedSince({ threadId, since: sinceIso }).pipe(
       // Unknown means resend: a missing list costs more than a repeated one.
       Effect.orElseSucceed(() => true),
     );
@@ -160,11 +158,11 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
   ) =>
     Effect.gen(function* () {
       const titles = yield* sql<{ readonly title: string }>`
-        SELECT title FROM projection_threads WHERE thread_id = ${threadId} LIMIT 1
+        SELECT title FROM ${sql.unsafe(rel.threads)} WHERE thread_id = ${threadId} LIMIT 1
       `;
       const recent = yield* sql<{ readonly text: string }>`
         SELECT substr(text, 1, ${APP_SIGNAL_RECENT_CHARS}) AS "text"
-        FROM projection_thread_messages
+        FROM ${sql.unsafe(rel.messages)}
         WHERE thread_id = ${threadId} AND message_id <> ${currentMessageId ?? ""}
           AND role = 'user'
         ORDER BY created_at DESC LIMIT ${APP_SIGNAL_RECENT_MESSAGES}
