@@ -9,8 +9,8 @@ import {
   headerSubline,
   stopLabelFor,
   type SourceDriver,
-} from "./computerDrivers";
-import type { ComputerActivityEvent } from "./computerContract";
+} from "./computerDrivers.ts";
+import type { ComputerActivityEvent } from "./computerContract.ts";
 
 const NOW = Date.parse("2026-10-26T10:10:00.000Z");
 

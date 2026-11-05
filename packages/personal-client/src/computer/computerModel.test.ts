@@ -27,7 +27,7 @@ import {
   PERSONAL_BROWSER_ROUTE_BASE,
   planViewportRequest,
   reduceComputerFeed,
-} from "./computerModel";
+} from "./computerModel.ts";
 
 const status = (overrides: Partial<PersonalBrowserStatus> = {}): PersonalBrowserStatus => ({
   state: "connected",

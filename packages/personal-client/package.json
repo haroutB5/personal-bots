@@ -404,6 +404,34 @@
     "./settings/providerApiKeys": {
       "types": "./src/settings/providerApiKeys.ts",
       "import": "./src/settings/providerApiKeys.ts"
+    },
+    "./computer/computerContract": {
+      "types": "./src/computer/computerContract.ts",
+      "import": "./src/computer/computerContract.ts"
+    },
+    "./computer/computerActivity": {
+      "types": "./src/computer/computerActivity.ts",
+      "import": "./src/computer/computerActivity.ts"
+    },
+    "./computer/computerModel": {
+      "types": "./src/computer/computerModel.ts",
+      "import": "./src/computer/computerModel.ts"
+    },
+    "./computer/computerSource": {
+      "types": "./src/computer/computerSource.ts",
+      "import": "./src/computer/computerSource.ts"
+    },
+    "./computer/computerDrivers": {
+      "types": "./src/computer/computerDrivers.ts",
+      "import": "./src/computer/computerDrivers.ts"
+    },
+    "./computer/desktopModel": {
+      "types": "./src/computer/desktopModel.ts",
+      "import": "./src/computer/desktopModel.ts"
+    },
+    "./computer/personalComputer": {
+      "types": "./src/computer/personalComputer.ts",
+      "import": "./src/computer/personalComputer.ts"
     }
   },
   "scripts": {
