@@ -51,7 +51,7 @@ import type { ChatEnvironment } from "../chat/chatEnvironment";
 import { BotAvatar } from "./BotAvatar";
 import { InAppNotifications } from "./InAppNotifications";
 import { NewItemsSheet } from "./NewItemsSheet";
-import { botsHomeState, snapshotRowTarget } from "./botsHomeState";
+import { botsHomeState, botTapTarget } from "./botsHomeState";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { SystemStatsLine } from "./SystemStatsLine";
@@ -245,12 +245,16 @@ function Skeleton() {
   );
 }
 
+interface NewChatTarget {
+  readonly botId: string;
+  readonly botName: string;
+}
+
 export function BotsScreen({
   native,
   chat,
   installedVersion,
   onOpenChat,
-  onOpenBot,
   onOpenChats,
   onOpenTeam,
   onOpenSettings,
@@ -259,7 +263,6 @@ export function BotsScreen({
   readonly chat: ChatEnvironment;
   readonly installedVersion: string;
   readonly onOpenChat: (botId: string, threadId: string) => void;
-  readonly onOpenBot: (botId: string) => void;
   readonly onOpenChats: (botId: string) => void;
   readonly onOpenTeam: () => void;
   readonly onOpenSettings: () => void;
@@ -277,7 +280,7 @@ export function BotsScreen({
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [actionBot, setActionBot] = useState<BotSummary | null>(null);
-  const [newChatBot, setNewChatBot] = useState<BotSummary | null>(null);
+  const [newChatBot, setNewChatBot] = useState<NewChatTarget | null>(null);
   const [renameTarget, setRenameTarget] = useState<BotSummary | null>(null);
   const [snoozeTarget, setSnoozeTarget] = useState<BotSummary | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -477,14 +480,17 @@ export function BotsScreen({
     setSnapshot(cache);
   }, [environmentId, list.data, native, split]);
 
-  const openSummary = (summary: BotSummary) => {
-    const thread = summary.newestThread;
-    if (thread === null) {
-      onOpenBot(summary.bot.botId);
-      return;
-    }
-    onOpenChat(summary.bot.botId, thread.id);
+  const openBot = (target: NewChatTarget, newestThreadId: string | null) => {
+    const tap = botTapTarget(newestThreadId);
+    if (tap.kind === "chat") onOpenChat(target.botId, tap.threadId);
+    else setNewChatBot(target);
   };
+
+  const openSummary = (summary: BotSummary) =>
+    openBot(
+      { botId: summary.bot.botId, botName: summary.bot.name },
+      summary.newestThread?.id ?? null,
+    );
 
   const newestThreadOf = (summary: BotSummary) => {
     const thread = summary.newestThread;
@@ -684,10 +690,7 @@ export function BotsScreen({
                 {snapshotSplit.pinned.map((row) => (
                   <Pressable
                     key={row.botId}
-                    onPress={() => {
-                      if (row.threadId !== null) onOpenChat(row.botId, row.threadId);
-                      else onOpenBot(row.botId);
-                    }}
+                    onPress={() => openBot({ botId: row.botId, botName: row.name }, row.threadId)}
                     accessibilityRole="button"
                     accessibilityLabel={row.name}
                     style={styles.tile}
@@ -714,11 +717,7 @@ export function BotsScreen({
                 row={row}
                 now={now}
                 last={index === snapshotSplit.rest.length - 1}
-                onPress={() => {
-                  const target = snapshotRowTarget(row);
-                  if (target.kind === "chat") onOpenChat(row.botId, target.threadId);
-                  else onOpenBot(row.botId);
-                }}
+                onPress={() => openBot({ botId: row.botId, botName: row.name }, row.threadId)}
               />
             ))}
           </>
@@ -813,7 +812,9 @@ export function BotsScreen({
         onNewChat={() => {
           const target = actionBot;
           setActionBot(null);
-          if (target !== null) setNewChatBot(target);
+          if (target !== null) {
+            setNewChatBot({ botId: target.bot.botId, botName: target.bot.name });
+          }
         }}
         onAllChats={() => {
           const target = actionBot;
@@ -847,15 +848,15 @@ export function BotsScreen({
         <NewChatSheet
           native={native}
           visible
-          botId={newChatBot.bot.botId}
-          botName={newChatBot.bot.name}
+          botId={newChatBot.botId}
+          botName={newChatBot.botName}
           openChatTitles={
             list.data?.threads
-              .filter((link) => link.botId === newChatBot.bot.botId && link.archivedAt === null)
+              .filter((link) => link.botId === newChatBot.botId && link.archivedAt === null)
               .map((link) => shells.find((shell) => shell.id === link.threadId)?.title ?? "") ?? []
           }
           onClose={() => setNewChatBot(null)}
-          onCreated={(threadId) => onOpenChat(newChatBot.bot.botId, threadId)}
+          onCreated={(threadId) => onOpenChat(newChatBot.botId, threadId)}
         />
       ) : null}
       {renameTarget !== null ? (

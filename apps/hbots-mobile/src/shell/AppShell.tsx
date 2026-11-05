@@ -336,7 +336,6 @@ function TabsWithBots({
             chat={chat}
             installedVersion={installedVersion}
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
-            onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
             onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
             onOpenTeam={() => navigation.navigate("Team")}
             onOpenSettings={() => navigation.navigate("Settings")}

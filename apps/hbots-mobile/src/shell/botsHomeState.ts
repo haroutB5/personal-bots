@@ -29,11 +29,13 @@ export function botsHomeState(input: {
   return input.query.trim().length > 0 ? "no-match" : "empty";
 }
 
-/** What a cached Bots row opens: its last chat, or the bot when it has none. */
-export type SnapshotRowTarget =
+/** What tapping a bot opens: its newest chat, or a fresh chat when it has none. */
+export type BotTapTarget =
   | { readonly kind: "chat"; readonly threadId: string }
-  | { readonly kind: "bot" };
+  | { readonly kind: "new-chat" };
 
-export function snapshotRowTarget(row: { readonly threadId: string | null }): SnapshotRowTarget {
-  return row.threadId === null ? { kind: "bot" } : { kind: "chat", threadId: row.threadId };
+export function botTapTarget(newestThreadId: string | null): BotTapTarget {
+  return newestThreadId === null
+    ? { kind: "new-chat" }
+    : { kind: "chat", threadId: newestThreadId };
 }

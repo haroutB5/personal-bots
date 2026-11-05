@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { botsHomeState, snapshotRowTarget } from "./botsHomeState";
+import { botsHomeState, botTapTarget } from "./botsHomeState";
 
 describe("Bots home states", () => {
   it("paints the cache before the live list", () => {
@@ -73,15 +73,12 @@ describe("Bots home states", () => {
   });
 });
 
-describe("snapshotRowTarget", () => {
-  it("opens the cached chat when the row remembers one", () => {
-    expect(snapshotRowTarget({ threadId: "thread-1" })).toEqual({
-      kind: "chat",
-      threadId: "thread-1",
-    });
+describe("botTapTarget", () => {
+  it("opens the newest chat when the bot has one", () => {
+    expect(botTapTarget("thread-1")).toEqual({ kind: "chat", threadId: "thread-1" });
   });
 
-  it("opens the bot when the cached row has no chat yet", () => {
-    expect(snapshotRowTarget({ threadId: null })).toEqual({ kind: "bot" });
+  it("starts a new chat when the bot has none", () => {
+    expect(botTapTarget(null)).toEqual({ kind: "new-chat" });
   });
 });
