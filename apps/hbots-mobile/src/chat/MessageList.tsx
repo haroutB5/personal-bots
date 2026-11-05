@@ -853,7 +853,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   queuedState: { color: tokens.textSecondary, fontSize: 12, flexShrink: 1 },
-  queuedButton: { minHeight: 32, justifyContent: "center" },
+  queuedButton: { minHeight: 32, justifyContent: "center", flexShrink: 0 },
   queuedButtonText: { color: tokens.text, fontSize: 12, fontWeight: "600" },
   loadEarlier: { minHeight: 44, alignItems: "center", justifyContent: "center" },
   loadEarlierText: { color: tokens.textSecondary, fontSize: 13 },
