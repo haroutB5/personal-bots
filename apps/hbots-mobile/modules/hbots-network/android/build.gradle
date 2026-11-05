@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.hbotsnetwork'
+version = '0.0.1'
+
+android {
+  namespace 'expo.modules.hbotsnetwork'
+  defaultConfig {
+    minSdkVersion 26
+    versionCode 1
+    versionName '0.0.1'
+  }
+}
+
+dependencies {
+  implementation 'com.facebook.react:react-android:0.86.3'
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

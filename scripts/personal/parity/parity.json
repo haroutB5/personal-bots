@@ -1,10 +1,10 @@
 {
   "generatedBy": "scripts/personal/parity/parity-matrix.mjs",
   "web": {
-    "ref": "HEAD"
+    "ref": "3c18bf5e3a01d6f71918b8f09aee53b612997808"
   },
   "android": {
-    "ref": "HEAD",
+    "ref": "3c18bf5e3a01d6f71918b8f09aee53b612997808",
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
@@ -19,8 +19,8 @@
       "rpc": 127
     },
     "byStatus": {
-      "done": 41,
-      "planned": 337,
+      "done": 58,
+      "planned": 320,
       "n/a": 35,
       "unassigned": 0
     },
@@ -141,7 +141,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "androidToday": "Read-only bot rows from the saved cache (apps/hbots-mobile/src/App.tsx:115). No chats, taps or actions.",
       "check": "Open /bots on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
@@ -480,7 +480,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "androidToday": "Shell states only: booting, connecting, \"Can't reach your laptop\", signed out, too old (apps/hbots-mobile/src/App.tsx:718). No tabs or back stack.",
       "check": "Open / on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
@@ -506,7 +506,7 @@
       "layout": false,
       "scope": "pairing",
       "pr": "A17",
-      "status": "done",
+      "status": "planned",
       "androidToday": "Paste-a-link pairing only (apps/hbots-mobile/src/App.tsx:773). No QR scan, server confirm or device label.",
       "check": "Open /pair on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
@@ -878,7 +878,7 @@
         "direct": ["usagePresentation.ts"]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Redeem a banked x reset?\" from its screen on Android. Same fields, buttons and confirm wording as PersonalResetCredits.tsx:101. Back closes only the sheet."
     },
     {
@@ -932,7 +932,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Sheet in PersonalUsageStrip\" from its screen on Android. Same fields, buttons and confirm wording as PersonalUsageStrip.tsx:571. Back closes only the sheet."
     },
     {
@@ -1391,7 +1391,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"New bot\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:890 does, checked on the web app."
     },
     {
@@ -1452,7 +1452,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"New group\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:891 does, checked on the web app."
     },
     {
@@ -1513,7 +1513,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"New team\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:894 does, checked on the web app."
     },
     {
@@ -3332,7 +3332,7 @@
         ]
       },
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"edge swipe back\" on Android where PersonalShell.tsx:91 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3385,7 +3385,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"drag a sheet down to close\" on Android where PersonalUsageStrip.tsx:482 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3506,7 +3506,7 @@
         ]
       },
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"edge swipe back\" on Android where useChatSwipeBack.tsx:89 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3669,7 +3669,7 @@
         "direct": ["offlineBanner.ts", "outbox.ts", "usePersonalBots.ts", "updateStatus.ts"]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows PersonalOfflineBanner on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3697,7 +3697,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows PersonalUsageStrip on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -9107,7 +9107,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBots.workingProgress from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9175,7 +9175,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBots.threadShells from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9379,7 +9379,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPush.inApp from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9448,7 +9448,7 @@
       ],
       "userAction": true,
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPush.ackInApp from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9516,7 +9516,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBots.getProfile from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9652,7 +9652,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBots.tokenUsage from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {

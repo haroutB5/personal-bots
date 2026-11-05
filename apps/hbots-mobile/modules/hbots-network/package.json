@@ -1,0 +1,8 @@
+{
+  "name": "hbots-network",
+  "version": "0.0.1",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

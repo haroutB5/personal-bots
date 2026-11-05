@@ -3,7 +3,30 @@ import * as DateTime from "effect/DateTime";
 
 const at = (iso: string) => DateTime.fromDateUnsafe(new Date(iso));
 
-import { buildChatChips, chatSendModelSelection, latestUsedTokens } from "./chatModel";
+import {
+  buildChatChips,
+  chatSendModelSelection,
+  chatHeaderModel,
+  latestUsedTokens,
+} from "./chatModel";
+
+describe("chatHeaderModel", () => {
+  it("keeps the bot name from the cached list when the live list is offline", () => {
+    const header = chatHeaderModel({
+      bot: null,
+      shell: null,
+      title: "R2 LINK",
+      session: null,
+      latestTurn: null,
+      activities: [],
+      providers: [],
+      usedTokens: null,
+      nowMs: Date.parse("2026-11-04T12:00:00.000Z"),
+      fallbackBotName: "Assistant",
+    });
+    expect(header.botName).toBe("Assistant");
+  });
+});
 
 describe("buildChatChips", () => {
   it("puts pinned chats first and then newest activity, current chip included", () => {

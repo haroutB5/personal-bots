@@ -16,7 +16,11 @@ import { deleteOutboxBlobs } from "./outboxBlobs.ts";
  *   earlier attempt that had landed.
  * - `not-sent`: it never left this device (not connected). Nothing to
  *   count, nothing to worry about; wait for the connection.
- * - `unknown`: the connection dropped or the laptop did not answer. The
+ * - `interrupted`: the connection this attempt started on went away while it
+ *   was in flight. The message may or may not have landed; the same ids go out
+ *   again on the next connection, and nothing is counted against it, because
+ *   the phone's network is not the message's fault.
+ * - `unknown`: the connection stayed up and the laptop did not answer. The
  *   message may or may not have landed; the same ids go out again and the
  *   server's command receipt makes the second attempt harmless.
  * - `rejected`: the server answered and refused it, with a reason.
@@ -24,6 +28,7 @@ import { deleteOutboxBlobs } from "./outboxBlobs.ts";
 export type SendOutcome =
   | { readonly kind: "sent" }
   | { readonly kind: "not-sent" }
+  | { readonly kind: "interrupted" }
   | { readonly kind: "unknown"; readonly reason?: string }
   | { readonly kind: "rejected"; readonly message: string };
 
@@ -76,6 +81,13 @@ export interface OutboxFlushDeps {
   /** The environment whose laptop this device is talking to. */
   readonly environmentId: string;
   readonly isConnected: () => boolean;
+  /**
+   * Counts connections, one number per socket. It changes when a new socket is
+   * established, which is what tells an in-flight send that the socket it
+   * started on is gone. Omitted where the transport has one socket for the life
+   * of the page, such as the web app.
+   */
+  readonly connectionGeneration?: () => number;
   /** Uploads what must be uploaded and sends the one command. Never throws on a failed send. */
   readonly send: (entry: OutboxEntry) => Promise<SendOutcome>;
 }
@@ -93,13 +105,33 @@ export const OUTBOX_RETRY_DELAYS_MS = [1_500, 4_000, 10_000] as const;
 export const OUTBOX_SEND_TIMEOUT_MS = 45_000;
 export const OUTBOX_UPLOAD_SEND_TIMEOUT_MS = 6 * 60_000;
 
-function answeredWithin(send: () => Promise<SendOutcome>, ms: number): Promise<SendOutcome> {
+/** How often an in-flight send checks it is still on the socket it started on. */
+export const OUTBOX_CONNECTION_CHECK_MS = 250;
+
+/**
+ * Bounds one send attempt two ways. The timeout covers a laptop that is
+ * connected but slow to answer. The connection check covers the phone losing
+ * its network mid-send: that attempt can never be answered, so waiting out the
+ * full timeout would hold the message for up to 45 s after the network is back.
+ */
+function answeredWithin(
+  send: () => Promise<SendOutcome>,
+  ms: number,
+  connectionLost: () => boolean,
+): Promise<SendOutcome> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve({ kind: "unknown" }), ms);
+    let settled = false;
     const settle = (outcome: SendOutcome) => {
-      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      clearInterval(watch);
       resolve(outcome);
     };
+    const timeout = setTimeout(() => settle({ kind: "unknown" }), ms);
+    const watch = setInterval(() => {
+      if (connectionLost()) settle({ kind: "interrupted" });
+    }, OUTBOX_CONNECTION_CHECK_MS);
     Promise.resolve()
       .then(send)
       .then(settle, () => settle({ kind: "unknown" }));
@@ -140,6 +172,7 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
       .map((entry) => entry.threadId),
   );
   const tried = new Set<string>();
+  const generation = deps.connectionGeneration ?? (() => 0);
   let slowest = 0;
   for (;;) {
     if (!deps.isConnected()) return { retryInMs: null };
@@ -149,9 +182,11 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
     }
     tried.add(entry.id);
     setOutboxSending(entry.id, true);
+    const startedOn = generation();
     const outcome = await answeredWithin(
       () => deps.send(entry),
       entry.attachments.length > 0 ? OUTBOX_UPLOAD_SEND_TIMEOUT_MS : OUTBOX_SEND_TIMEOUT_MS,
+      () => !deps.isConnected() || generation() !== startedOn,
     );
     setOutboxSending(entry.id, false);
     switch (outcome.kind) {
@@ -167,6 +202,14 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
       }
       case "not-sent": {
         // Not connected after all: stop, and ask again shortly.
+        blocked.add(entry.threadId);
+        slowest = Math.max(slowest, OUTBOX_RETRY_DELAYS_MS[0]);
+        break;
+      }
+      case "interrupted": {
+        // The socket went away under it. Nothing is counted: the next
+        // connection resends the same ids, and the server's receipt makes the
+        // repeat harmless.
         blocked.add(entry.threadId);
         slowest = Math.max(slowest, OUTBOX_RETRY_DELAYS_MS[0]);
         break;
