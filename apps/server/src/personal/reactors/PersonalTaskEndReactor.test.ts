@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
-import { PersonalDesktop } from "../../personal/desktop/PersonalDesktop.ts";
-import { PersonalTaskService } from "../../personal/tasks/PersonalTaskService.ts";
+import { PersonalDesktop } from "../desktop/PersonalDesktop.ts";
+import { PersonalTaskService } from "../tasks/PersonalTaskService.ts";
 import { PersonalTaskEndReactorLive } from "./PersonalTaskEndReactor.ts";
 
 describe("PersonalTaskEndReactor", () => {

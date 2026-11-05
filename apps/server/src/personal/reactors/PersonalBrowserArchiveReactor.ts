@@ -9,20 +9,19 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { PersonalBrowser } from "../../personal/browser/PersonalBrowser.ts";
-import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
+import { PersonalEngine } from "../engine/PersonalEngine.ts";
 
 export const PersonalBrowserArchiveReactorLive = Layer.effectDiscard(
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* PersonalEngine;
     const browser = yield* PersonalBrowser;
-    const events = yield* engine.subscribeDomainEvents;
-    yield* Stream.runForEach(events, (event) =>
-      event.type === "thread.archived"
-        ? browser.releaseThread(event.payload.threadId).pipe(
+    yield* Stream.runForEach(engine.events, (event) =>
+      event._tag === "ThreadArchived"
+        ? browser.releaseThread(event.threadId).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("personal browser archive cleanup failed", {
-                threadId: event.payload.threadId,
+                threadId: event.threadId,
                 cause,
               }),
             ),

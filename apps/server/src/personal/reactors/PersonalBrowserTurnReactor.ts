@@ -9,20 +9,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { PersonalBrowser } from "../../personal/browser/PersonalBrowser.ts";
-import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
+import { PersonalEngine } from "../engine/PersonalEngine.ts";
 
 const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 
 export const PersonalBrowserTurnReactorLive = Layer.effectDiscard(
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* PersonalEngine;
     const browser = yield* PersonalBrowser;
-    const events = yield* engine.subscribeDomainEvents;
-    yield* Stream.runForEach(events, (event) =>
-      event.type === "thread.session-set" &&
-      !ACTIVE_SESSION_STATUSES.has(event.payload.session.status)
-        ? browser.releaseLease(event.payload.threadId)
+    yield* Stream.runForEach(engine.events, (event) =>
+      event._tag === "StatusChanged" && !ACTIVE_SESSION_STATUSES.has(event.status)
+        ? browser.releaseLease(event.threadId)
         : Effect.void,
     ).pipe(Effect.forkScoped);
   }),

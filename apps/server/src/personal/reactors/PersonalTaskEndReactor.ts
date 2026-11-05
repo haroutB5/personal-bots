@@ -12,8 +12,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { PersonalDesktop } from "../../personal/desktop/PersonalDesktop.ts";
-import { PersonalTaskService } from "../../personal/tasks/PersonalTaskService.ts";
+import { PersonalDesktop } from "../desktop/PersonalDesktop.ts";
+import { PersonalTaskService } from "../tasks/PersonalTaskService.ts";
 
 export const PersonalTaskEndReactorLive = Layer.effectDiscard(
   Effect.gen(function* () {
