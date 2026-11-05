@@ -315,19 +315,7 @@ export const makeTaskCore = () =>
 
     /** The latest context size the thread's provider reported, in tokens. */
     const latestContextTokens = (threadId: ThreadId) =>
-      Option.match(workStore, {
-        onNone: () => Effect.succeed(null as number | null),
-        onSome: ({ sql }) =>
-          sql<{ readonly used: number | null }>`
-            SELECT json_extract(payload_json, '$.usedTokens') AS "used"
-            FROM projection_thread_activities
-            WHERE thread_id = ${threadId} AND kind = 'context-window.updated'
-            ORDER BY created_at DESC LIMIT 1
-          `.pipe(
-            Effect.map((rows) => (typeof rows[0]?.used === "number" ? rows[0].used : null)),
-            Effect.orElseSucceed(() => null),
-          ),
-      });
+      engine.latestContextTokens(threadId).pipe(Effect.orElseSucceed(() => null));
 
     /**
      * Best effort, never fails the caller: a task that ended adds its status,
