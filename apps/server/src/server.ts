@@ -62,6 +62,7 @@ import { ProviderCatalog } from "./provider/catalog/ProviderCatalog.ts";
 import { CatalogInstaller } from "./provider/catalog/installer.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { layer as providerMaintenanceRunnerLayer } from "./provider/providerMaintenanceRunner.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
 import { ProviderUsageLimitsIngestionLive } from "./provider/Layers/ProviderUsageLimitsIngestion.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
@@ -659,7 +660,12 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   // The balance watcher rides the same step: it needs the instance key from
   // settings, the provider's own balance reader, and the warned flag in
   // personal_meta, all of which the rest of this chain provides.
-  Layer.provideMerge(Layer.merge(PersonalProviderUpdates.layer, DeepSeekBalanceWatcher.layer)),
+  Layer.provideMerge(
+    Layer.merge(
+      PersonalProviderUpdates.layer.pipe(Layer.provideMerge(providerMaintenanceRunnerLayer)),
+      DeepSeekBalanceWatcher.layer,
+    ),
+  ),
   // Consumes the routine service and the bot service/repository below.
   Layer.provideMerge(PersonalClaudeCodeReview.layer),
   Layer.provideMerge(PersonalTurnRetry.layer),

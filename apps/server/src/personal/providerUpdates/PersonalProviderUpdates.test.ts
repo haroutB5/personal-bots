@@ -96,7 +96,7 @@ const event = (type: string, threadId: ThreadId) =>
 
 const makeHarness = (meta = new Map<string, string>()) => {
   const state = {
-    providers: [claude("2.1.263")],
+    providers: [claude("2.1.263")] as Array<ServerProvider>,
     sessions: [] as Array<ProviderSession>,
     shells: new Map<ThreadId, OrchestrationThreadShell>(),
     stopped: [] as Array<ThreadId>,
@@ -121,8 +121,21 @@ const makeHarness = (meta = new Map<string, string>()) => {
         state.projections.push(smokeCheck);
         state.providers = state.providers.map((provider) => {
           if (provider.instanceId !== instanceId) return provider;
-          const { smokeCheck: _previous, ...rest } = provider;
-          return smokeCheck === null ? rest : { ...rest, smokeCheck };
+          const next = { ...provider };
+          if (smokeCheck === null) delete next.smokeCheck;
+          else next.smokeCheck = smokeCheck;
+          return next;
+        });
+      }),
+    updateProvider: () => Effect.sync(() => state.providers),
+    setAutoUpdate: (instanceId, autoUpdate) =>
+      Effect.sync(() => {
+        state.providers = state.providers.map((provider) => {
+          if (provider.instanceId !== instanceId) return provider;
+          const next = { ...provider };
+          if (autoUpdate === null) delete next.autoUpdate;
+          else next.autoUpdate = autoUpdate;
+          return next;
         });
       }),
     runtimeEvents: Stream.empty,

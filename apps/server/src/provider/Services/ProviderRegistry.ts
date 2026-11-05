@@ -10,6 +10,7 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
+  ServerProviderAutoUpdate,
   ServerProviderSmokeCheck,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
@@ -18,9 +19,9 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 
-export type ProviderMaintenanceActionKind = "update" | "smokeCheck";
+export type ProviderMaintenanceActionKind = "update" | "smokeCheck" | "autoUpdate";
 
-/** Volatile per-instance state projected onto `ServerProvider.updateState` / `.smokeCheck`. */
+/** Volatile per-instance state projected onto `ServerProvider.updateState` / `.smokeCheck` / `.autoUpdate`. */
 export type ProviderMaintenanceActionStateInput =
   | {
       readonly instanceId: ProviderInstanceId;
@@ -31,6 +32,11 @@ export type ProviderMaintenanceActionStateInput =
       readonly instanceId: ProviderInstanceId;
       readonly action: "smokeCheck";
       readonly state: ServerProviderSmokeCheck | null;
+    }
+  | {
+      readonly instanceId: ProviderInstanceId;
+      readonly action: "autoUpdate";
+      readonly state: ServerProviderAutoUpdate | null;
     };
 
 export interface ProviderRegistryShape {

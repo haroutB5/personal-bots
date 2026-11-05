@@ -1,4 +1,6 @@
 import type {
+  CommandId,
+  CommandReceiptLookup,
   OrchestrationClientOrigin,
   OrchestrationEvent,
   OrchestrationReadModel,
@@ -459,11 +461,25 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       return yield* Deferred.await(result);
     });
 
+  const getCommandReceipt: OrchestrationEngineShape["getCommandReceipt"] = (commandId: CommandId) =>
+    commandReceiptRepository.getByCommandId({ commandId }).pipe(
+      Effect.map((receipt): CommandReceiptLookup =>
+        Option.match(receipt, {
+          onNone: () => ({ status: "missing", error: null }),
+          onSome: (row) => ({ status: row.status, error: row.error }),
+        }),
+      ),
+      // A failed read only means "not confirmed". Resending under the same
+      // command id is harmless, so the queue falls back to that.
+      Effect.orElseSucceed((): CommandReceiptLookup => ({ status: "missing", error: null })),
+    );
+
   return {
     readEvents,
     readThreadEvents,
     getThreadReplayStats,
     dispatch,
+    getCommandReceipt,
     subscribeDomainEvents: PubSub.subscribe(eventPubSub).pipe(Effect.map(Stream.fromSubscription)),
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)

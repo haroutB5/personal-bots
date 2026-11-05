@@ -11,6 +11,8 @@
  * @module OrchestrationEngineService
  */
 import type {
+  CommandId,
+  CommandReceiptLookup,
   OrchestrationClientOrigin,
   OrchestrationCommand,
   OrchestrationEvent,
@@ -74,6 +76,14 @@ export interface OrchestrationEngineShape {
     command: OrchestrationCommand,
     options?: { readonly origin?: OrchestrationClientOrigin },
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
+
+  /**
+   * Whether this exact command id was handled, and how. A client whose reply
+   * was lost asks this on the next connection instead of guessing whether the
+   * message landed. A failed read reports `missing`; resending is safe because
+   * dispatch is idempotent on the command id.
+   */
+  readonly getCommandReceipt: (commandId: CommandId) => Effect.Effect<CommandReceiptLookup, never>;
 
   /**
    * Stream persisted domain events in dispatch order.

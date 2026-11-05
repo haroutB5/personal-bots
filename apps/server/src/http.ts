@@ -1,5 +1,6 @@
 import * as Mime from "effect/unstable/http/Mime";
 import {
+  ATTACHMENT_UPLOAD_ENDPOINT_HEADER,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
@@ -473,18 +474,21 @@ export const attachmentUploadRouteLayer = HttpRouter.add(
   `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const answeredHeaders = { [ATTACHMENT_UPLOAD_ENDPOINT_HEADER]: "1" };
+    const answered = (body: string, status: number) =>
+      HttpServerResponse.text(body, { status, headers: answeredHeaders });
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) {
-      return HttpServerResponse.text("Bad Request", { status: 400 });
+      return answered("Bad Request", 400);
     }
 
     const token = url.value.pathname.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
     if (!token) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
+      return answered("Not Found", 404);
     }
     const claims = yield* validateAttachmentUploadToken(token);
     if (!claims) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
+      return answered("Not Found", 404);
     }
 
     const contentLengthHeader = request.headers["content-length"];
@@ -493,17 +497,15 @@ export const attachmentUploadRouteLayer = HttpRouter.add(
       (!Number.isInteger(Number(contentLengthHeader)) ||
         Number(contentLengthHeader) !== claims.sizeBytes)
     ) {
-      return HttpServerResponse.text("Content-Length must match the upload size.", {
-        status: 400,
-      });
+      return answered("Content-Length must match the upload size.", 400);
     }
 
     // Keep the request stream in the route scope until the response is sent.
     const bodyPull = yield* Stream.toPull(request.stream);
     const stored = yield* storeAttachmentUpload(claims, Stream.fromPull(Effect.succeed(bodyPull)));
     return stored.ok
-      ? HttpServerResponse.empty({ status: 204 })
-      : HttpServerResponse.text(stored.detail, { status: stored.status });
+      ? HttpServerResponse.empty({ status: 204, headers: answeredHeaders })
+      : answered(stored.detail, stored.status);
   }),
 );
 

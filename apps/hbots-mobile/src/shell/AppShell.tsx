@@ -447,7 +447,6 @@ function TabsWithBots({
             chat={chat}
             installedVersion={installedVersion}
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
-            onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
             onOpenChats={(botId) => navigation.navigate("Bot", { botId })}
             onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}
             onNewGroup={() => navigation.navigate("GroupNew")}

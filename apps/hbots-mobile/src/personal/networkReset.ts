@@ -3,6 +3,12 @@ import { requireOptionalNativeModule } from "expo";
 interface NetworkResetModule {
   readonly reset: () => Promise<boolean>;
   readonly evictPool?: () => Promise<boolean>;
+  readonly uploadFile?: (
+    url: string,
+    uri: string,
+    mimeType: string,
+    endpointHeader: string,
+  ) => Promise<{ readonly status: number; readonly endpoint: boolean }>;
   readonly isOnline: () => boolean;
   readonly canReachNetwork: () => Promise<boolean>;
 }
@@ -56,6 +62,22 @@ export async function evictConnectionPool(): Promise<void> {
   } catch {
     // A pool that still holds the old sockets only costs the upload one timeout.
   }
+}
+
+/**
+ * Uploads one file over the shared OkHttp client. `endpointHeader` is the
+ * marker the upload route answers with, so the caller can tell the endpoint
+ * refusing the bytes from a gateway that never reached it.
+ */
+export async function uploadFileNative(
+  url: string,
+  uri: string,
+  mimeType: string,
+  endpointHeader: string,
+): Promise<{ readonly status: number; readonly endpoint: boolean }> {
+  const upload = native?.uploadFile;
+  if (upload === undefined) throw new Error("This build has no native upload.");
+  return upload(url, uri, mimeType, endpointHeader);
 }
 
 /**

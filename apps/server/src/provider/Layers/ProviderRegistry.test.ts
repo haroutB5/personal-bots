@@ -187,6 +187,24 @@ function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   });
 }
 
+const isMiseExecutable = (command: string) => command === "mise" || /[\\/]mise$/.test(command);
+
+/**
+ * No test in this file may run the laptop's real mise against its real data.
+ * Answer every mise probe with a failed install instead, and leave every other
+ * command on the real Node spawner.
+ */
+const testNodeServices = Layer.effect(
+  ChildProcessSpawner.ChildProcessSpawner,
+  Effect.map(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
+    ChildProcessSpawner.make((command) =>
+      command._tag === "StandardCommand" && isMiseExecutable(command.command)
+        ? Effect.succeed(mockHandle({ stdout: "", stderr: "", code: 1 }))
+        : spawner.spawn(command),
+    ),
+  ),
+).pipe(Layer.provideMerge(NodeServices.layer));
+
 function mockSpawnerLayer(
   handler: (args: ReadonlyArray<string>) => {
     stdout: string;
@@ -379,7 +397,7 @@ const awaitPersistedProvider = (
     Effect.forkScoped,
   );
 
-it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
+it.layer(Layer.mergeAll(testNodeServices, ServerSettingsModule.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
@@ -1099,7 +1117,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Effect.provide(
               ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-codex-retired-model-cache-",
-              }).pipe(Layer.provideMerge(NodeServices.layer)),
+              }).pipe(Layer.provideMerge(testNodeServices)),
             ),
           ),
         );
@@ -1181,7 +1199,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Effect.provide(
               ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-usage-seed-cache-",
-              }).pipe(Layer.provideMerge(NodeServices.layer)),
+              }).pipe(Layer.provideMerge(testNodeServices)),
             ),
           ),
         );
@@ -1523,7 +1541,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   prefix: "t3-provider-registry-background-refresh-",
                 }),
               ),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(testNodeServices),
             ),
           ).pipe(Scope.provide(scope));
           yield* Effect.gen(function* () {
@@ -1612,7 +1630,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                     prefix: "t3-provider-registry-background-refresh-",
                   }),
                 ),
-                Layer.provideMerge(NodeServices.layer),
+                Layer.provideMerge(testNodeServices),
               ),
             ).pipe(Scope.provide(scope));
             yield* Effect.gen(function* () {
@@ -1698,7 +1716,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   prefix: "t3-provider-registry-refresh-latest-",
                 }),
               ),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(testNodeServices),
             ),
           ).pipe(Scope.provide(scope));
           yield* Effect.gen(function* () {
@@ -1824,7 +1842,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   prefix: "t3-provider-registry-workspace-snapshot-",
                 }),
               ),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(testNodeServices),
             ),
           ).pipe(Scope.provide(scope));
 
@@ -2020,7 +2038,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   prefix: "t3-provider-registry-reconnect-refresh-",
                 }),
               ),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(testNodeServices),
             ),
           ).pipe(Scope.provide(scope));
 
@@ -2147,7 +2165,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 }),
               ),
               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(testNodeServices),
             ),
           ).pipe(Scope.provide(scope));
 
@@ -2274,7 +2292,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                     prefix: "t3-provider-registry-opencode-authoritative-persist-",
                   }),
                 ),
-                Layer.provideMerge(NodeServices.layer),
+                Layer.provideMerge(testNodeServices),
               ),
             ).pipe(Scope.provide(scope));
 
@@ -2378,7 +2396,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 }),
               ),
               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(testNodeServices),
             ),
           ).pipe(Scope.provide(scope));
 
@@ -2494,7 +2512,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 }),
               ),
               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(testNodeServices),
             ),
           ).pipe(Scope.provide(scope));
 
@@ -2715,6 +2733,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 if (command._tag !== "StandardCommand") return spawner.spawn(command);
+                if (isMiseExecutable(command.command)) {
+                  return Effect.succeed(mockHandle({ stdout: "", stderr: "", code: 1 }));
+                }
                 spawnedCommands.push(command.command);
                 const beforeSpawn =
                   command.command === secondMissing
@@ -2725,7 +2746,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 return beforeSpawn.pipe(Effect.andThen(spawner.spawn(command)));
               }),
             ),
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(testNodeServices),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
           );
           const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(
@@ -2833,7 +2854,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             // built-in drivers need the usage service here.
             Layer.provideMerge(UsageService.layerTest),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(testNodeServices),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
           );
           const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(

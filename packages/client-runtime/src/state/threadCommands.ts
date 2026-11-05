@@ -2,6 +2,7 @@ import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
 import {
   WS_METHODS,
+  type CommandReceiptLookupInput,
   type EnvironmentId,
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
@@ -54,6 +55,7 @@ import {
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
+  readCommandReceipt,
   setThreadAutoSettle,
   settleThread,
   snoozeThread,
@@ -220,6 +222,10 @@ export function createThreadEnvironmentAtoms<R, E>(
       execute: (input: StartThreadTurnInput) => startThreadTurn(input),
       scheduler,
       concurrency,
+    }),
+    commandReceipt: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:command-receipt",
+      execute: (input: CommandReceiptLookupInput) => readCommandReceipt(input),
     }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",

@@ -606,7 +606,12 @@ export function ChatScreen({
               void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
             }}
             onCancelQueued={(id) => removeOutboxEntry(id)}
-            onRetryQueued={(id) => retryOutboxEntry(id)}
+            onRetryQueued={(id) => {
+              retryOutboxEntry(id);
+              // Retry means now. A socket waiting out its backoff would
+              // otherwise turn the tap into another 20 s of "Sending…".
+              if (!native.readConnection().connected) native.retry();
+            }}
             onLoadEarlier={loadEarlierAvailable ? loadEarlier : null}
             loadEarlierBusy={page?.loadingOlder === true}
           />

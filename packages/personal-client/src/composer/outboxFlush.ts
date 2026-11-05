@@ -33,6 +33,19 @@ export type SendOutcome =
   | { readonly kind: "unknown"; readonly reason?: string }
   | { readonly kind: "rejected"; readonly message: string };
 
+/**
+ * What the laptop says about a command whose reply the phone never saw.
+ * - `landed`: it handled the command, so the message is on the transcript.
+ * - `refused`: it handled and rejected the command, with the reason.
+ * - `absent`: it has no receipt, so the message did not land and must be sent.
+ * - `unknown`: the read did not answer; leave the entry for the next attempt.
+ */
+export type ConfirmOutcome =
+  | { readonly kind: "landed" }
+  | { readonly kind: "refused"; readonly message: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "unknown" };
+
 /** Errors that mean the request never went out (the client refused it before sending). */
 const NOT_SENT_TAGS: ReadonlySet<string> = new Set([
   "EnvironmentRpcUnavailableError",
@@ -92,12 +105,37 @@ export interface OutboxFlushDeps {
   readonly connectionGeneration?: () => number;
   /** Uploads what must be uploaded and sends the one command. Never throws on a failed send. */
   readonly send: (entry: OutboxEntry) => Promise<SendOutcome>;
+  /**
+   * Asks the laptop whether an entry's command was handled. Called for the
+   * oldest entry of each chat after a reconnect, before anything is resent, so
+   * a message whose confirmation was lost does not hold its chat any longer.
+   */
+  readonly confirm?: (entry: OutboxEntry) => Promise<ConfirmOutcome>;
 }
 
 /** Consecutive unanswered attempts before the queue stops retrying by itself. */
 export const OUTBOX_MAX_UNANSWERED = 3;
 /** Waits between passes while the laptop is connected but not answering. */
 export const OUTBOX_RETRY_DELAYS_MS = [1_500, 4_000, 10_000] as const;
+
+export const OUTBOX_INTERRUPTED_BACKOFF_START_MS = 2_000;
+export const OUTBOX_INTERRUPTED_BACKOFF_CAP_MS = 30_000;
+
+/**
+ * How long to wait before resending a message whose attempt was interrupted
+ * `streak` times in a row (1 for the first). Doubles from 2 s and stops at
+ * 30 s, so a gateway that is down is polled twice a minute, not every 1.8 s.
+ */
+export function interruptedRetryDelayMs(streak: number): number {
+  const doublings = Math.max(0, Math.min(streak, 32) - 1);
+  return Math.min(
+    OUTBOX_INTERRUPTED_BACKOFF_START_MS * 2 ** doublings,
+    OUTBOX_INTERRUPTED_BACKOFF_CAP_MS,
+  );
+}
+
+/** Consecutive interrupted attempts per queued message id. */
+export type InterruptedStreaks = Map<string, number>;
 
 /**
  * A send that has not been answered by now counts as unanswered, so one hung request cannot hold up every
@@ -109,6 +147,9 @@ export const OUTBOX_UPLOAD_SEND_TIMEOUT_MS = 6 * 60_000;
 
 /** How often an in-flight send checks it is still on the socket it started on. */
 export const OUTBOX_CONNECTION_CHECK_MS = 250;
+
+/** A receipt read that hangs must not hold the queue behind it. */
+export const OUTBOX_CONFIRM_TIMEOUT_MS = 5_000;
 
 /**
  * Bounds one send attempt two ways. The timeout covers a laptop that is
@@ -175,6 +216,45 @@ function reviveInterrupted(environmentId: string): void {
   }
 }
 
+/**
+ * Settles the oldest entry of every chat against the laptop's command
+ * receipts. On a link that drops every few seconds the phone can miss the
+ * reply to a send whose command landed, and that entry then holds its chat
+ * behind it forever. A landed entry leaves the queue, a refused one shows its
+ * reason, and an absent or unanswered one stays for the normal pass.
+ */
+async function confirmHeadEntries(deps: OutboxFlushDeps): Promise<void> {
+  const confirm = deps.confirm;
+  if (confirm === undefined) return;
+  const heads = new Map<string, OutboxEntry>();
+  for (const entry of getOutboxSnapshot().entries) {
+    if (entry.environmentId !== deps.environmentId || entry.rejected) continue;
+    const head = heads.get(entry.threadId);
+    if (head === undefined || entry.seq < head.seq) heads.set(entry.threadId, entry);
+  }
+  for (const entry of heads.values()) {
+    const outcome = await new Promise<ConfirmOutcome>((resolve) => {
+      const timer = setTimeout(() => resolve({ kind: "unknown" }), OUTBOX_CONFIRM_TIMEOUT_MS);
+      confirm(entry).then(
+        (answer) => {
+          clearTimeout(timer);
+          resolve(answer);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve({ kind: "unknown" });
+        },
+      );
+    });
+    if (outcome.kind === "landed") {
+      removeOutboxEntry(entry.id);
+      void deleteOutboxBlobs(entry.id);
+    } else if (outcome.kind === "refused") {
+      markOutboxFailed(entry.id, outcome.message, true);
+    }
+  }
+}
+
 export interface OutboxPassResult {
   /** The pass stopped early and wants another one after this many ms; null when it is done. */
   readonly retryInMs: number | null;
@@ -201,7 +281,10 @@ function nextRunnable(
  * flusher when a new connection arrives, so a network failure does not hold a
  * chat for good without letting it loop on every trigger.
  */
-export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassResult> {
+export async function runOutboxPass(
+  deps: OutboxFlushDeps,
+  streaks: InterruptedStreaks = new Map(),
+): Promise<OutboxPassResult> {
   // Chats with a refused message ahead of the rest never send past it.
   const blocked = new Set<string>(
     getOutboxSnapshot()
@@ -209,6 +292,8 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
       .map((entry) => entry.threadId),
   );
   const tried = new Set<string>();
+  const queued = new Set(getOutboxSnapshot().entries.map((item) => item.id));
+  for (const id of streaks.keys()) if (!queued.has(id)) streaks.delete(id);
   const generation = deps.connectionGeneration ?? (() => 0);
   let slowest = 0;
   for (;;) {
@@ -231,11 +316,13 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
     setOutboxSending(entry.id, false);
     switch (outcome.kind) {
       case "sent": {
+        streaks.delete(entry.id);
         removeOutboxEntry(entry.id);
         void deleteOutboxBlobs(entry.id);
         break;
       }
       case "rejected": {
+        streaks.delete(entry.id);
         markOutboxFailed(entry.id, outcome.message, true);
         blocked.add(entry.threadId);
         break;
@@ -247,14 +334,18 @@ export async function runOutboxPass(deps: OutboxFlushDeps): Promise<OutboxPassRe
         break;
       }
       case "interrupted": {
-        // The socket went away under it. Nothing is counted: the next
-        // connection resends the same ids, and the server's receipt makes the
-        // repeat harmless.
+        // The socket went away under it, or a gateway answered for the
+        // server. Nothing is counted: the next connection resends the same
+        // ids, and the server's receipt makes the repeat harmless. While the
+        // socket stays up the wait doubles, so an outage is not hammered.
+        const streak = (streaks.get(entry.id) ?? 0) + 1;
+        streaks.set(entry.id, streak);
         blocked.add(entry.threadId);
-        slowest = Math.max(slowest, OUTBOX_RETRY_DELAYS_MS[0]);
+        slowest = Math.max(slowest, interruptedRetryDelayMs(streak));
         break;
       }
       case "unknown": {
+        streaks.delete(entry.id);
         recordOutboxUnanswered(entry.id, true);
         const attempts =
           getOutboxSnapshot().entries.find((item) => item.id === entry.id)?.attempts ??
@@ -287,9 +378,18 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
   /** null until the first trigger, so a cold start never counts as a reconnect. */
   let seenConnected: boolean | null = null;
   let seenGeneration: number | null = null;
+  /** A reconnect wants receipt confirmation before the next pass sends anything. */
+  let reconcile = false;
+  /**
+   * Interrupted attempts in a row, per message. Anything that reaches the
+   * flusher from outside its own retry timer (a new connection, a Retry tap, a
+   * new message) clears them, so the backoff only grows while nothing changes.
+   */
+  const streaks: InterruptedStreaks = new Map();
 
-  const trigger = (): void => {
+  const run = (fromRetryTimer: boolean): void => {
     if (disposed) return;
+    if (!fromRetryTimer) streaks.clear();
     const connected = deps.isConnected();
     const generation = deps.connectionGeneration?.() ?? null;
     const reconnected =
@@ -299,7 +399,7 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
     seenConnected = connected;
     seenGeneration = generation;
     if (!connected) return;
-    if (reconnected) reviveInterrupted(deps.environmentId);
+    if (reconnected) reconcile = true;
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
@@ -314,10 +414,15 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
         let result: OutboxPassResult;
         do {
           again = false;
-          result = await runOutboxPass(deps);
+          if (reconcile) {
+            reconcile = false;
+            await confirmHeadEntries(deps);
+            reviveInterrupted(deps.environmentId);
+          }
+          result = await runOutboxPass(deps, streaks);
         } while (again && !isDisposed() && deps.isConnected());
         if (result.retryInMs !== null && !isDisposed() && deps.isConnected()) {
-          timer = setTimeout(trigger, result.retryInMs);
+          timer = setTimeout(() => run(true), result.retryInMs);
         }
       } finally {
         running = false;
@@ -326,7 +431,7 @@ export function createOutboxFlusher(deps: OutboxFlushDeps) {
   };
 
   return {
-    trigger,
+    trigger: (): void => run(false),
     dispose: () => {
       disposed = true;
       if (timer !== null) clearTimeout(timer);

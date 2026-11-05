@@ -13,10 +13,12 @@ import {
 import {
   classifySendFailure,
   createOutboxFlusher,
+  interruptedRetryDelayMs,
   OUTBOX_CONNECTION_CHECK_MS,
   OUTBOX_MAX_UNANSWERED,
   OUTBOX_SEND_TIMEOUT_MS,
   runOutboxPass,
+  type ConfirmOutcome,
   type SendOutcome,
 } from "./outboxFlush.ts";
 
@@ -613,6 +615,224 @@ describe("the flusher", () => {
     flusher.trigger();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(send).toHaveBeenCalledTimes(1);
+    flusher.dispose();
+  });
+});
+
+describe("a lost confirmation on a new connection", () => {
+  async function settle(): Promise<void> {
+    for (let tick = 0; tick < 100; tick += 1) {
+      await Promise.resolve();
+    }
+  }
+
+  it("takes the receipt's word that a message landed and releases the chat", async () => {
+    enqueueOutboxEntry(entry("landed"));
+    markOutboxFailed("landed", "Couldn't send: your laptop didn't answer. Try again.", false);
+    enqueueOutboxEntry(entry("behind"));
+    let connected = false;
+    const confirmed: string[] = [];
+    const sent: string[] = [];
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => 1,
+      confirm: async (item) => {
+        confirmed.push(item.id);
+        return { kind: "landed" };
+      },
+      send: async (item) => {
+        sent.push(item.id);
+        return { kind: "sent" };
+      },
+    });
+    flusher.trigger();
+    connected = true;
+    flusher.trigger();
+    await settle();
+    expect(confirmed).toEqual(["landed"]);
+    expect(sent).toEqual(["behind"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("carries the laptop's refusal from the receipt instead of resending", async () => {
+    enqueueOutboxEntry(entry("refused"));
+    markOutboxFailed("refused", "Couldn't send: your laptop didn't answer. Try again.", false);
+    enqueueOutboxEntry(entry("behind"));
+    let connected = false;
+    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "sent" }));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => 1,
+      confirm: async () => ({ kind: "refused", message: "Couldn't send: that chat is gone." }),
+      send,
+    });
+    flusher.trigger();
+    connected = true;
+    flusher.trigger();
+    await settle();
+    expect(send).not.toHaveBeenCalled();
+    expect(getOutboxSnapshot().entries[0]).toMatchObject({
+      id: "refused",
+      status: "failed",
+      rejected: true,
+      error: "Couldn't send: that chat is gone.",
+    });
+    expect(ids()).toEqual(["refused", "behind"]);
+    flusher.dispose();
+  });
+
+  it("sends a message the receipt says never landed, then the next one", async () => {
+    enqueueOutboxEntry(entry("absent"));
+    markOutboxFailed("absent", "Couldn't send: your laptop didn't answer. Try again.", false);
+    enqueueOutboxEntry(entry("behind"));
+    let connected = false;
+    const sent: string[] = [];
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => connected,
+      connectionGeneration: () => 1,
+      confirm: async () => ({ kind: "absent" }),
+      send: async (item) => {
+        sent.push(item.id);
+        return { kind: "sent" };
+      },
+    });
+    flusher.trigger();
+    connected = true;
+    flusher.trigger();
+    await settle();
+    expect(sent).toEqual(["absent", "behind"]);
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+
+  it("does not ask for a receipt on the first connection", async () => {
+    enqueueOutboxEntry(entry("first"));
+    const confirm = vi.fn(async (): Promise<ConfirmOutcome> => ({ kind: "landed" }));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => true,
+      connectionGeneration: () => 1,
+      confirm,
+      send: async () => ({ kind: "sent" }),
+    });
+    flusher.trigger();
+    await settle();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(ids()).toEqual([]);
+    flusher.dispose();
+  });
+});
+
+describe("the wait after an interrupted send", () => {
+  it("doubles from 2 s and stops at 30 s", () => {
+    expect([1, 2, 3, 4, 5, 6, 40].map(interruptedRetryDelayMs)).toEqual([
+      2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000,
+    ]);
+  });
+
+  it("a pass that keeps being interrupted asks for longer waits", async () => {
+    enqueueOutboxEntry(entry("one"));
+    const streaks = new Map<string, number>();
+    const deps = {
+      environmentId: "env",
+      isConnected: () => true,
+      send: async (): Promise<SendOutcome> => ({ kind: "interrupted" }),
+    };
+    const waits: Array<number | null> = [];
+    for (let pass = 0; pass < 7; pass += 1) {
+      waits.push((await runOutboxPass(deps, streaks)).retryInMs);
+    }
+    expect(waits).toEqual([2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000]);
+    expect(getOutboxSnapshot().entries[0]?.attempts).toBe(0);
+  });
+
+  it("a message that finally goes out leaves no backoff behind", async () => {
+    enqueueOutboxEntry(entry("one"));
+    const streaks = new Map<string, number>();
+    const outcomes: SendOutcome[] = [{ kind: "interrupted" }, { kind: "interrupted" }];
+    const deps = {
+      environmentId: "env",
+      isConnected: () => true,
+      send: async (): Promise<SendOutcome> => outcomes.shift() ?? { kind: "sent" },
+    };
+    expect((await runOutboxPass(deps, streaks)).retryInMs).toBe(2_000);
+    expect((await runOutboxPass(deps, streaks)).retryInMs).toBe(4_000);
+    expect((await runOutboxPass(deps, streaks)).retryInMs).toBeNull();
+    expect(streaks.size).toBe(0);
+  });
+});
+
+describe("the flusher during a gateway outage", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const outage = (generation: () => number = () => 0) => {
+    const send = vi.fn(async (_item: OutboxEntry): Promise<SendOutcome> => ({
+      kind: "interrupted",
+    }));
+    const flusher = createOutboxFlusher({
+      environmentId: "env",
+      isConnected: () => true,
+      connectionGeneration: generation,
+      send,
+    });
+    return { send, flusher };
+  };
+
+  it("retries after 2, 4, 8, 16 and then every 30 seconds", async () => {
+    enqueueOutboxEntry(entry("one"));
+    const { send, flusher } = outage();
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(1);
+    const attemptsAt: number[] = [];
+    let seen = 1;
+    for (let second = 1; second <= 120; second += 1) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      if (send.mock.calls.length > seen) {
+        seen = send.mock.calls.length;
+        attemptsAt.push(second);
+      }
+    }
+    expect(attemptsAt).toEqual([2, 6, 14, 30, 60, 90, 120]);
+    flusher.dispose();
+  });
+
+  it("starts again at 2 seconds on a new connection", async () => {
+    enqueueOutboxEntry(entry("one"));
+    let generation = 0;
+    const { send, flusher } = outage(() => generation);
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(2_000 + 4_000 + 8_000);
+    expect(send).toHaveBeenCalledTimes(4);
+    generation = 1;
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(send).toHaveBeenCalledTimes(6);
+    flusher.dispose();
+  });
+
+  it("starts again at 2 seconds when the owner taps Retry", async () => {
+    enqueueOutboxEntry(entry("one"));
+    const { send, flusher } = outage();
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(2_000 + 4_000);
+    expect(send).toHaveBeenCalledTimes(3);
+    markOutboxFailed("one", "Couldn't send: your laptop didn't answer. Try again.", false);
+    retryOutboxEntry("one");
+    flusher.trigger();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(send).toHaveBeenCalledTimes(5);
     flusher.dispose();
   });
 });

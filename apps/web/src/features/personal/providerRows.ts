@@ -91,6 +91,28 @@ function megabytes(bytes: number): string {
   return String(Math.max(0, Math.round(bytes / MEGABYTE)));
 }
 
+/** "Next attempt Fri 03:18" for a row whose daily clock is still running. */
+function nextAttemptText(
+  automatic: { readonly nextAttemptAt: string | null },
+  now: Date,
+): string | null {
+  const nextAttemptAt =
+    automatic.nextAttemptAt === null ? Number.NaN : Date.parse(automatic.nextAttemptAt);
+  return Number.isFinite(nextAttemptAt)
+    ? `Next attempt ${formatRetryTime(new Date(nextAttemptAt), now)}`
+    : null;
+}
+
+/** The schedule leads the detail line so a clamped row never hides it. */
+function detailWithNextAttempt(
+  next: string | null,
+  message: string | null | undefined,
+): string | null {
+  const detail = firstLine(message);
+  if (next === null) return detail;
+  return detail === null ? next : `${next} · ${detail}`;
+}
+
 /** First line of a provider message, trimmed to fit a row's detail line. */
 export function firstLine(text: string | null | undefined, max = 160): string | null {
   const line = text
@@ -376,10 +398,61 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
   }
   // 14. Update available
   if (advisory?.status === "behind_latest") {
+    const latest = advisory.latestVersion;
+    const automatic = snapshot.autoUpdate;
+    if (automatic?.status === "blocked") {
+      return row(
+        "updateAvailable",
+        "review",
+        latest === null ? "New version" : `New version ${latest}`,
+        {
+          tone: "review",
+          detail: firstLine(automatic.message),
+          action: oneClick ? { kind: "update", label: "Update" } : null,
+        },
+      );
+    }
+    if (automatic?.status === "rolled_back") {
+      const next = nextAttemptText(automatic, now);
+      return row("updateAvailable", "review", "Update rolled back", {
+        tone: "review",
+        detail: detailWithNextAttempt(next, automatic.message),
+        action: oneClick ? { kind: "update", label: "Update" } : null,
+      });
+    }
+    if (automatic?.status === "failed") {
+      const next = nextAttemptText(automatic, now);
+      return row("updateFailed", "review", "Update failed", {
+        tone: "review",
+        detail: detailWithNextAttempt(next, automatic.message),
+        action: oneClick ? { kind: "tryAgain", label: "Try again" } : null,
+      });
+    }
+    if (automatic?.status === "updating") {
+      return row(
+        "updating",
+        "none",
+        automatic.toVersion === null ? "Updating…" : `Updating to ${automatic.toVersion}…`,
+        { busy: true, progress: { fraction: null }, detail: firstLine(automatic.message) },
+      );
+    }
+    if (automatic !== undefined) {
+      const next = nextAttemptText(automatic, now);
+      const schedule = next === null ? null : `Updates automatically · ${next}`;
+      return row(
+        "updateAvailable",
+        "live",
+        latest === null ? "New version" : `New version ${latest}`,
+        {
+          detail: schedule ?? firstLine(automatic.message) ?? "Updates automatically.",
+          action: oneClick ? { kind: "update", label: "Update" } : null,
+        },
+      );
+    }
     return row(
       "updateAvailable",
       "live",
-      advisory.latestVersion === null ? "New version" : `New version ${advisory.latestVersion}`,
+      latest === null ? "New version" : `New version ${latest}`,
       {
         detail: oneClick ? null : "Update it on your computer.",
         action: oneClick ? { kind: "update", label: "Update" } : null,
@@ -393,6 +466,21 @@ export function providerRow(input: ProviderRowInput): ProviderRow {
   // 16. Ready
   const version =
     snapshot.version === null ? "Version not reported" : `Version ${snapshot.version}`;
+  const automatic = snapshot.autoUpdate;
+  if (
+    automatic?.status === "managed" ||
+    automatic?.status === "updated" ||
+    automatic?.status === "waiting_for_limit"
+  ) {
+    return row(
+      "ready",
+      "live",
+      `${snapshot.version ?? "Version not reported"} · Updates automatically`,
+      {
+        detail: automatic.status === "updated" ? firstLine(automatic.message) : null,
+      },
+    );
+  }
   return row("ready", "live", advisory?.status === "current" ? `${version} · Up to date` : version);
 }
 
