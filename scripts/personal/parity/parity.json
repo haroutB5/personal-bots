@@ -19,8 +19,8 @@
       "rpc": 127
     },
     "byStatus": {
-      "done": 58,
-      "planned": 318,
+      "done": 142,
+      "planned": 234,
       "n/a": 35,
       "unassigned": 0
     },
@@ -168,7 +168,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/$botId/edit on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -181,7 +181,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/$botId/ on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -194,7 +194,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/groups/$groupId on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -207,7 +207,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/groups/new on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -220,7 +220,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/new on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -350,7 +350,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/removed on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -363,7 +363,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/team on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -376,7 +376,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/teams/new on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -759,7 +759,7 @@
       "component": "BotUsageSheet",
       "logic": {
         "files": 6,
-        "inPackage": ["tokenUsagePresentation.ts"],
+        "inPackage": [],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
@@ -788,18 +788,8 @@
       "web": "ChatSettingsSheet.tsx:281",
       "component": "ChatSettingsSheet",
       "logic": {
-        "files": 40,
-        "inPackage": [
-          "chatState.ts",
-          "relativeTime.ts",
-          "chatNames.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
-          "botSummaries.ts",
-          "chatActivity.ts"
-        ],
+        "files": 41,
+        "inPackage": ["chatState.ts", "conversationModel.ts", "botSummaries.ts", "chatActivity.ts"],
         "direct": ["chatSettingsModel.ts", "chatState.ts"]
       },
       "pr": "A8",
@@ -833,7 +823,7 @@
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Delete ?\" from its screen on Android. Same fields, buttons and confirm wording as GroupDeleteSheet.tsx:27. Back closes only the sheet."
     },
     {
@@ -848,7 +838,7 @@
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"GroupSettingsSheet\" from its screen on Android. Same fields, buttons and confirm wording as GroupSettingsSheet.tsx:341. Back closes only the sheet."
     },
     {
@@ -859,7 +849,7 @@
       "component": "NewChatDialog",
       "logic": {
         "files": 36,
-        "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "groupModel.ts", "chatNames.ts"],
+        "inPackage": ["perfFlags.ts", "usePersonalBots.ts"],
         "direct": ["chatNames.ts", "renameChat.ts", "useBotOpenChatNames.ts", "useKeyboardInset.ts"]
       },
       "pr": "A3",
@@ -874,7 +864,7 @@
       "primitive": "AlertDialog",
       "logic": {
         "files": 3,
-        "inPackage": ["usagePresentation.ts"],
+        "inPackage": [],
         "direct": ["usagePresentation.ts"]
       },
       "pr": "A2",
@@ -888,14 +878,8 @@
       "web": "PersonalUsageStrip.tsx:571",
       "primitive": "Sheet",
       "logic": {
-        "files": 32,
-        "inPackage": [
-          "tokenUsagePresentation.ts",
-          "usageStrip.ts",
-          "usagePresentation.ts",
-          "usePersonalBots.ts",
-          "relativeTime.ts"
-        ],
+        "files": 33,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -917,8 +901,8 @@
       "web": "RenameChatDialog.tsx:143",
       "component": "RenameChatDialog",
       "logic": {
-        "files": 17,
-        "inPackage": ["perfFlags.ts", "chatNames.ts"],
+        "files": 18,
+        "inPackage": ["perfFlags.ts"],
         "direct": ["chatNames.ts", "renameChat.ts", "useKeyboardInset.ts"]
       },
       "pr": "A3",
@@ -947,12 +931,12 @@
       "web": "TeamLeadConfirm.tsx:34",
       "primitive": "Sheet",
       "logic": {
-        "files": 7,
+        "files": 9,
         "inPackage": ["perfFlags.ts"],
         "direct": ["teamConstellationModel.ts"]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Sheet in TeamLeadConfirm\" from its screen on Android. Same fields, buttons and confirm wording as TeamLeadConfirm.tsx:34. Back closes only the sheet."
     },
     {
@@ -967,7 +951,7 @@
         "direct": []
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"TeamMembersSheet\" from its screen on Android. Same fields, buttons and confirm wording as TeamMembersSheet.tsx:23. Back closes only the sheet."
     },
     {
@@ -977,7 +961,7 @@
       "web": "TeamScreen.tsx:817",
       "primitive": "Sheet",
       "logic": {
-        "files": 56,
+        "files": 59,
         "inPackage": [
           "usePersonalBots.ts",
           "perfFlags.ts",
@@ -1005,7 +989,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"New team with\" from its screen on Android. Same fields, buttons and confirm wording as TeamScreen.tsx:817. Back closes only the sheet."
     },
     {
@@ -1050,7 +1034,7 @@
       "component": "ProviderSheet",
       "logic": {
         "files": 31,
-        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
+        "inPackage": ["conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
@@ -1065,7 +1049,7 @@
       "component": "ConfirmSheet",
       "logic": {
         "files": 31,
-        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
+        "inPackage": ["conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
@@ -1080,7 +1064,7 @@
       "component": "InstallConfirmSheet",
       "logic": {
         "files": 31,
-        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
+        "inPackage": ["conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
@@ -1095,7 +1079,7 @@
       "component": "RemapSheet",
       "logic": {
         "files": 31,
-        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
+        "inPackage": ["conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
@@ -1109,7 +1093,7 @@
       "web": "voice/VoiceSettingsSection.tsx:475",
       "component": "VoiceSheet",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["voice/voiceCallApi.ts", "usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -1130,7 +1114,7 @@
       "web": "voice/VoiceSettingsSection.tsx:384",
       "primitive": "Sheet",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["voice/voiceCallApi.ts", "usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -1151,7 +1135,7 @@
       "web": "voice/VoiceSettingsSection.tsx:418",
       "primitive": "Sheet",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["voice/voiceCallApi.ts", "usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -1172,8 +1156,8 @@
       "web": "BotMute.tsx:76",
       "via": "menu",
       "logic": {
-        "files": 21,
-        "inPackage": ["usePersonalBots.ts", "botMuteModel.ts"],
+        "files": 22,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["botMuteModel.ts", "usePersonalBots.ts"]
       },
       "pr": "A3",
@@ -1187,8 +1171,8 @@
       "web": "BotMute.tsx:81",
       "via": "menu",
       "logic": {
-        "files": 21,
-        "inPackage": ["usePersonalBots.ts", "botMuteModel.ts"],
+        "files": 22,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["botMuteModel.ts", "usePersonalBots.ts"]
       },
       "pr": "A3",
@@ -1202,8 +1186,8 @@
       "web": "BotMute.tsx:86",
       "via": "menu",
       "logic": {
-        "files": 21,
-        "inPackage": ["usePersonalBots.ts", "botMuteModel.ts"],
+        "files": 22,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["botMuteModel.ts", "usePersonalBots.ts"]
       },
       "pr": "A3",
@@ -1217,20 +1201,12 @@
       "web": "BotThreadsScreen.tsx:632",
       "via": "menu",
       "logic": {
-        "files": 76,
+        "files": 75,
         "inPackage": [
-          "unreadChats.ts",
           "chatState.ts",
-          "ownerChats.ts",
           "usePersonalBots.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatNames.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
-          "groupModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1256,7 +1232,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select chats\" on Android. The server state changes exactly as the web action at BotThreadsScreen.tsx:632 does, checked on the web app."
     },
     {
@@ -1266,20 +1242,12 @@
       "web": "BotThreadsScreen.tsx:639",
       "via": "menu",
       "logic": {
-        "files": 76,
+        "files": 75,
         "inPackage": [
-          "unreadChats.ts",
           "chatState.ts",
-          "ownerChats.ts",
           "usePersonalBots.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatNames.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
-          "groupModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -1305,7 +1273,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select archived chats\" on Android. The server state changes exactly as the web action at BotThreadsScreen.tsx:639 does, checked on the web app."
     },
     {
@@ -1315,18 +1283,15 @@
       "web": "ChatsScreen.tsx:890",
       "via": "menu",
       "logic": {
-        "files": 83,
+        "files": 89,
         "inPackage": [
           "personalMode.ts",
-          "relativeTime.ts",
           "perfFlags.ts",
           "usePersonalBots.ts",
           "botSummaries.ts",
           "secretRequestCards.ts",
           "chatsSnapshot.ts",
-          "botMuteModel.ts",
           "groupModel.ts",
-          "unreadChats.ts",
           "delegationModel.ts",
           "chatState.ts",
           "chatActivity.ts",
@@ -1376,18 +1341,15 @@
       "web": "ChatsScreen.tsx:891",
       "via": "menu",
       "logic": {
-        "files": 83,
+        "files": 89,
         "inPackage": [
           "personalMode.ts",
-          "relativeTime.ts",
           "perfFlags.ts",
           "usePersonalBots.ts",
           "botSummaries.ts",
           "secretRequestCards.ts",
           "chatsSnapshot.ts",
-          "botMuteModel.ts",
           "groupModel.ts",
-          "unreadChats.ts",
           "delegationModel.ts",
           "chatState.ts",
           "chatActivity.ts",
@@ -1437,18 +1399,15 @@
       "web": "ChatsScreen.tsx:894",
       "via": "menu",
       "logic": {
-        "files": 83,
+        "files": 89,
         "inPackage": [
           "personalMode.ts",
-          "relativeTime.ts",
           "perfFlags.ts",
           "usePersonalBots.ts",
           "botSummaries.ts",
           "secretRequestCards.ts",
           "chatsSnapshot.ts",
-          "botMuteModel.ts",
           "groupModel.ts",
-          "unreadChats.ts",
           "delegationModel.ts",
           "chatState.ts",
           "chatActivity.ts",
@@ -1498,37 +1457,27 @@
       "web": "ConversationScreen.tsx:1597",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 144,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatNames.ts",
-          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatState.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "messageReadStatus.ts",
+          "conversationModel.ts",
           "botModelLabel.ts",
-          "botMuteModel.ts"
+          "chatState.ts",
+          "chatActivity.ts"
         ],
         "direct": [
           "perfFlags.ts",
@@ -1602,37 +1551,27 @@
       "web": "ConversationScreen.tsx:1600",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 144,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatNames.ts",
-          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatState.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "messageReadStatus.ts",
+          "conversationModel.ts",
           "botModelLabel.ts",
-          "botMuteModel.ts"
+          "chatState.ts",
+          "chatActivity.ts"
         ],
         "direct": [
           "perfFlags.ts",
@@ -1706,37 +1645,27 @@
       "web": "ConversationScreen.tsx:1611",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 144,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatNames.ts",
-          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatState.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "messageReadStatus.ts",
+          "conversationModel.ts",
           "botModelLabel.ts",
-          "botMuteModel.ts"
+          "chatState.ts",
+          "chatActivity.ts"
         ],
         "direct": [
           "perfFlags.ts",
@@ -1810,37 +1739,27 @@
       "web": "ConversationScreen.tsx:1623",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 144,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatNames.ts",
-          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatState.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "messageReadStatus.ts",
+          "conversationModel.ts",
           "botModelLabel.ts",
-          "botMuteModel.ts"
+          "chatState.ts",
+          "chatActivity.ts"
         ],
         "direct": [
           "perfFlags.ts",
@@ -1914,37 +1833,27 @@
       "web": "ConversationScreen.tsx:1632",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 144,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatNames.ts",
-          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatState.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "messageReadStatus.ts",
+          "conversationModel.ts",
           "botModelLabel.ts",
-          "botMuteModel.ts"
+          "chatState.ts",
+          "chatActivity.ts"
         ],
         "direct": [
           "perfFlags.ts",
@@ -2018,37 +1927,27 @@
       "web": "ConversationScreen.tsx:1646",
       "via": "menu",
       "logic": {
-        "files": 137,
+        "files": 144,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
           "delegationModel.ts",
           "chatNotices.ts",
-          "chatNames.ts",
-          "pendingOutgoing.ts",
           "previewPrivacy.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatState.ts",
-          "unreadChats.ts",
-          "ownerChats.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
           "taskPresentation.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
           "voice/voiceCallApi.ts",
           "memoryCards.ts",
           "leadBotChangeCards.ts",
           "connectionApprovalCards.ts",
           "secretRequestCards.ts",
           "questionCards.ts",
-          "messageReadStatus.ts",
+          "conversationModel.ts",
           "botModelLabel.ts",
-          "botMuteModel.ts"
+          "chatState.ts",
+          "chatActivity.ts"
         ],
         "direct": [
           "perfFlags.ts",
@@ -2122,7 +2021,7 @@
       "web": "DelegationCard.tsx:190",
       "via": "menu",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts", "previewPrivacy.ts", "delegationModel.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -2142,8 +2041,8 @@
       "web": "FilesScreen.tsx:334",
       "via": "menu",
       "logic": {
-        "files": 31,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
+        "files": 33,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -2165,14 +2064,11 @@
       "web": "GroupConversationScreen.tsx:598",
       "via": "menu",
       "logic": {
-        "files": 68,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
-          "pendingOutgoing.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
+          "groupModel.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2195,7 +2091,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Group settings...\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:598 does, checked on the web app."
     },
     {
@@ -2205,14 +2101,11 @@
       "web": "GroupConversationScreen.tsx:600",
       "via": "menu",
       "logic": {
-        "files": 68,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
-          "pendingOutgoing.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
+          "groupModel.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2235,7 +2128,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:600 does, checked on the web app."
     },
     {
@@ -2245,14 +2138,11 @@
       "web": "GroupConversationScreen.tsx:611",
       "via": "menu",
       "logic": {
-        "files": 68,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
-          "pendingOutgoing.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
+          "groupModel.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2275,7 +2165,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Unpin group / Pin group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:611 does, checked on the web app."
     },
     {
@@ -2285,14 +2175,11 @@
       "web": "GroupConversationScreen.tsx:614",
       "via": "menu",
       "logic": {
-        "files": 68,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
-          "pendingOutgoing.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
+          "groupModel.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2315,7 +2202,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Snooze...\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:614 does, checked on the web app."
     },
     {
@@ -2325,14 +2212,11 @@
       "web": "GroupConversationScreen.tsx:618",
       "via": "menu",
       "logic": {
-        "files": 68,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
-          "pendingOutgoing.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
+          "groupModel.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2355,7 +2239,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Unarchive group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:618 does, checked on the web app."
     },
     {
@@ -2365,14 +2249,11 @@
       "web": "GroupConversationScreen.tsx:622",
       "via": "menu",
       "logic": {
-        "files": 68,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
-          "pendingOutgoing.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
+          "groupModel.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2395,7 +2276,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Archive group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:622 does, checked on the web app."
     },
     {
@@ -2405,14 +2286,11 @@
       "web": "GroupConversationScreen.tsx:624",
       "via": "menu",
       "logic": {
-        "files": 68,
+        "files": 70,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
-          "pendingOutgoing.ts",
           "perfFlags.ts",
-          "outboxBlobs.ts",
-          "outbox.ts",
+          "groupModel.ts",
           "conversationModel.ts",
           "chatState.ts"
         ],
@@ -2435,7 +2313,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Delete group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:624 does, checked on the web app."
     },
     {
@@ -2450,7 +2328,7 @@
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Message privately\" on Android. The server state changes exactly as the web action at GroupSettingsSheet.tsx:278 does, checked on the web app."
     },
     {
@@ -2465,7 +2343,7 @@
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Edit bot\" on Android. The server state changes exactly as the web action at GroupSettingsSheet.tsx:281 does, checked on the web app."
     },
     {
@@ -2480,7 +2358,7 @@
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Remove from group\" on Android. The server state changes exactly as the web action at GroupSettingsSheet.tsx:283 does, checked on the web app."
     },
     {
@@ -2490,14 +2368,12 @@
       "web": "MemoryScreen.tsx:536",
       "via": "menu",
       "logic": {
-        "files": 51,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
           "taskPresentation.ts",
-          "relativeTime.ts",
-          "greeting.ts",
-          "contextUsed.ts"
+          "greeting.ts"
         ],
         "direct": [
           "bulkSelection.ts",
@@ -2524,7 +2400,7 @@
       "web": "PasswordsScreen.tsx:438",
       "via": "menu",
       "logic": {
-        "files": 28,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -2547,8 +2423,8 @@
       "web": "PersonalComposer.tsx:1308",
       "via": "menu",
       "logic": {
-        "files": 33,
-        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
+        "files": 34,
+        "inPackage": [],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2572,8 +2448,8 @@
       "web": "PersonalComposer.tsx:1316",
       "via": "menu",
       "logic": {
-        "files": 33,
-        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
+        "files": 34,
+        "inPackage": [],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2597,8 +2473,8 @@
       "web": "PersonalComposer.tsx:1325",
       "via": "menu",
       "logic": {
-        "files": 33,
-        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
+        "files": 34,
+        "inPackage": [],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2622,8 +2498,8 @@
       "web": "PersonalComposer.tsx:1459",
       "via": "menu",
       "logic": {
-        "files": 33,
-        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
+        "files": 34,
+        "inPackage": [],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2647,8 +2523,8 @@
       "web": "PersonalComposer.tsx:1468",
       "via": "menu",
       "logic": {
-        "files": 33,
-        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
+        "files": 34,
+        "inPackage": [],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -2674,11 +2550,9 @@
       "logic": {
         "files": 37,
         "inPackage": [
-          "unreadChats.ts",
           "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "conversationModel.ts"
         ],
         "direct": [
@@ -2765,8 +2639,8 @@
       "web": "TasksScreen.tsx:390",
       "via": "menu",
       "logic": {
-        "files": 33,
-        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts", "relativeTime.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "bulkSelection.ts",
           "useBulkDelete.ts",
@@ -2791,12 +2665,12 @@
       "web": "TeamConstellationCard.tsx:173",
       "via": "menu",
       "logic": {
-        "files": 8,
+        "files": 10,
         "inPackage": ["perfFlags.ts"],
         "direct": ["teamDiagramModel.ts", "teamConstellationModel.ts", "useTeamBotDrag.ts"]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Remove team / Remove team (move its bots first)\" on Android. The server state changes exactly as the web action at TeamConstellationCard.tsx:173 does, checked on the web app."
     },
     {
@@ -2806,7 +2680,7 @@
       "web": "computer/ComputerScreen.tsx:1265",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 62,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2836,7 +2710,7 @@
       "web": "computer/ComputerScreen.tsx:1266",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 62,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2866,7 +2740,7 @@
       "web": "computer/ComputerScreen.tsx:1270",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 62,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2896,7 +2770,7 @@
       "web": "computer/ComputerScreen.tsx:1397",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 62,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2926,7 +2800,7 @@
       "web": "computer/ComputerScreen.tsx:1402",
       "via": "menu",
       "logic": {
-        "files": 61,
+        "files": 62,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -2956,20 +2830,12 @@
       "web": "BotThreadsScreen.tsx:202",
       "via": "gesture",
       "logic": {
-        "files": 76,
+        "files": 75,
         "inPackage": [
-          "unreadChats.ts",
           "chatState.ts",
-          "ownerChats.ts",
           "usePersonalBots.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatNames.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
-          "groupModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -2995,7 +2861,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"long press\" on Android where BotThreadsScreen.tsx:202 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3005,20 +2871,12 @@
       "web": "BotThreadsScreen.tsx:240",
       "via": "gesture",
       "logic": {
-        "files": 76,
+        "files": 75,
         "inPackage": [
-          "unreadChats.ts",
           "chatState.ts",
-          "ownerChats.ts",
           "usePersonalBots.ts",
           "chatsSnapshot.ts",
-          "relativeTime.ts",
-          "chatNames.ts",
-          "conversationModel.ts",
-          "botThreadRows.ts",
           "botSummaries.ts",
-          "chatActivity.ts",
-          "groupModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
@@ -3044,7 +2902,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"swipe to delete\" on Android where BotThreadsScreen.tsx:240 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3055,7 +2913,7 @@
       "via": "gesture",
       "logic": {
         "files": 6,
-        "inPackage": ["tokenUsagePresentation.ts"],
+        "inPackage": [],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
@@ -3084,18 +2942,15 @@
       "web": "ChatsScreen.tsx:1171",
       "via": "gesture",
       "logic": {
-        "files": 83,
+        "files": 89,
         "inPackage": [
           "personalMode.ts",
-          "relativeTime.ts",
           "perfFlags.ts",
           "usePersonalBots.ts",
           "botSummaries.ts",
           "secretRequestCards.ts",
           "chatsSnapshot.ts",
-          "botMuteModel.ts",
           "groupModel.ts",
-          "unreadChats.ts",
           "delegationModel.ts",
           "chatState.ts",
           "chatActivity.ts",
@@ -3145,7 +3000,7 @@
       "web": "ConversationSidePanel.tsx:67",
       "via": "gesture",
       "logic": {
-        "files": 22,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": ["desktopColumns.ts", "personalPreferences.ts"]
       },
@@ -3174,8 +3029,8 @@
       "web": "FilesScreen.tsx:174",
       "via": "gesture",
       "logic": {
-        "files": 31,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
+        "files": 33,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -3197,8 +3052,8 @@
       "web": "FilesScreen.tsx:177",
       "via": "gesture",
       "logic": {
-        "files": 31,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
+        "files": 33,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -3220,14 +3075,12 @@
       "web": "MemoryScreen.tsx:176",
       "via": "gesture",
       "logic": {
-        "files": 51,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
           "taskPresentation.ts",
-          "relativeTime.ts",
-          "greeting.ts",
-          "contextUsed.ts"
+          "greeting.ts"
         ],
         "direct": [
           "bulkSelection.ts",
@@ -3255,7 +3108,7 @@
       "via": "gesture",
       "logic": {
         "files": 24,
-        "inPackage": ["messageTime.ts"],
+        "inPackage": [],
         "direct": ["messageTime.ts", "messageSwipe.ts", "useMessageSwipe.ts"]
       },
       "pr": "A4",
@@ -3269,7 +3122,7 @@
       "web": "PasswordsScreen.tsx:304",
       "via": "gesture",
       "logic": {
-        "files": 28,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -3292,7 +3145,7 @@
       "web": "PersonalShell.tsx:91",
       "via": "gesture",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts", "perfFlags.ts", "personalMode.ts"],
         "direct": [
           "desktopColumns.ts",
@@ -3317,7 +3170,7 @@
       "web": "PersonalShell.tsx:185",
       "via": "gesture",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts", "perfFlags.ts", "personalMode.ts"],
         "direct": [
           "desktopColumns.ts",
@@ -3341,14 +3194,8 @@
       "web": "PersonalUsageStrip.tsx:482",
       "via": "gesture",
       "logic": {
-        "files": 32,
-        "inPackage": [
-          "tokenUsagePresentation.ts",
-          "usageStrip.ts",
-          "usagePresentation.ts",
-          "usePersonalBots.ts",
-          "relativeTime.ts"
-        ],
+        "files": 33,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -3391,8 +3238,8 @@
       "web": "TasksScreen.tsx:169",
       "via": "gesture",
       "logic": {
-        "files": 33,
-        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts", "relativeTime.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "bulkSelection.ts",
           "useBulkDelete.ts",
@@ -3417,7 +3264,7 @@
       "web": "TeamScreen.tsx:513",
       "via": "gesture",
       "logic": {
-        "files": 56,
+        "files": 59,
         "inPackage": [
           "usePersonalBots.ts",
           "perfFlags.ts",
@@ -3445,7 +3292,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"drag a bot between teams\" on Android where TeamScreen.tsx:513 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3470,7 +3317,7 @@
       "web": "useChatSwipeBack.tsx:89",
       "via": "gesture",
       "logic": {
-        "files": 31,
+        "files": 32,
         "inPackage": ["usePersonalBots.ts", "perfFlags.ts"],
         "direct": [
           "botsBackStack.ts",
@@ -3504,8 +3351,8 @@
       "title": "ContextUsedPanel",
       "web": "ContextUsedPanel.tsx:1",
       "logic": {
-        "files": 44,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "contextUsed.ts"],
+        "files": 45,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "contextUsed.ts",
@@ -3523,7 +3370,7 @@
       "title": "ConversationRoutinesPanel",
       "web": "ConversationRoutinesPanel.tsx:1",
       "logic": {
-        "files": 26,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": ["conversationRoutinesModel.ts", "routineHook.ts", "usePersonalAutomation.ts"]
       },
@@ -3537,7 +3384,7 @@
       "title": "ConversationSidePanel",
       "web": "ConversationSidePanel.tsx:1",
       "logic": {
-        "files": 22,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": ["desktopColumns.ts", "personalPreferences.ts"]
       },
@@ -3550,7 +3397,7 @@
       "title": "DelegationCard",
       "web": "DelegationCard.tsx:1",
       "logic": {
-        "files": 29,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts", "previewPrivacy.ts", "delegationModel.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -3574,7 +3421,7 @@
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows GroupRoundCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3588,7 +3435,7 @@
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows GroupVoteCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3626,7 +3473,7 @@
       "web": "MemoryChangeCard.tsx:1",
       "logic": {
         "files": 7,
-        "inPackage": ["relativeTime.ts", "greeting.ts", "memoryCards.ts"],
+        "inPackage": ["greeting.ts", "memoryCards.ts"],
         "direct": ["memoryCards.ts", "memoryPresentation.ts"]
       },
       "pr": "A6",
@@ -3639,8 +3486,8 @@
       "title": "PersonalOfflineBanner",
       "web": "PersonalOfflineBanner.tsx:1",
       "logic": {
-        "files": 25,
-        "inPackage": ["usePersonalBots.ts", "outbox.ts"],
+        "files": 26,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["offlineBanner.ts", "outbox.ts", "usePersonalBots.ts", "updateStatus.ts"]
       },
       "pr": "A2",
@@ -3653,14 +3500,8 @@
       "title": "PersonalUsageStrip",
       "web": "PersonalUsageStrip.tsx:1",
       "logic": {
-        "files": 32,
-        "inPackage": [
-          "tokenUsagePresentation.ts",
-          "usageStrip.ts",
-          "usagePresentation.ts",
-          "usePersonalBots.ts",
-          "relativeTime.ts"
-        ],
+        "files": 33,
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -3683,11 +3524,9 @@
       "logic": {
         "files": 37,
         "inPackage": [
-          "unreadChats.ts",
           "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "conversationModel.ts"
         ],
         "direct": [
@@ -3724,8 +3563,8 @@
       "title": "RulesUsageCard",
       "web": "RulesUsageCard.tsx:1",
       "logic": {
-        "files": 26,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
+        "files": 27,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts"],
         "direct": ["memoryPresentation.ts", "usePersonalAutomation.ts"]
       },
       "pr": "A6",
@@ -3752,12 +3591,12 @@
       "title": "TeamConstellationCard",
       "web": "TeamConstellationCard.tsx:1",
       "logic": {
-        "files": 8,
+        "files": 10,
         "inPackage": ["perfFlags.ts"],
         "direct": ["teamDiagramModel.ts", "teamConstellationModel.ts", "useTeamBotDrag.ts"]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows TeamConstellationCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3798,7 +3637,7 @@
       "title": "ComputerDriverCard",
       "web": "computer/ComputerDriverCard.tsx:1",
       "logic": {
-        "files": 26,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "computer/computerContract.ts",
@@ -3873,8 +3712,8 @@
       "web": "PersonalSettingsScreen.tsx:450",
       "section": "Your name",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3898,8 +3737,8 @@
       "web": "PersonalSettingsScreen.tsx:455",
       "section": "Your name",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3923,8 +3762,8 @@
       "web": "PersonalSettingsScreen.tsx:468",
       "section": "Bots",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3948,8 +3787,8 @@
       "web": "PersonalSettingsScreen.tsx:481",
       "section": "Bots",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3973,8 +3812,8 @@
       "web": "PersonalSettingsScreen.tsx:507",
       "section": "Bots",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3998,8 +3837,8 @@
       "web": "PersonalSettingsScreen.tsx:528",
       "section": "Bots",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4023,8 +3862,8 @@
       "web": "PersonalSettingsScreen.tsx:556",
       "section": "Appearance",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4047,8 +3886,8 @@
       "web": "PersonalSettingsScreen.tsx:561",
       "section": "Appearance",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4071,8 +3910,8 @@
       "web": "PersonalSettingsScreen.tsx:568",
       "section": "Chat",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4096,8 +3935,8 @@
       "web": "PersonalSettingsScreen.tsx:576",
       "section": "Chat",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4121,8 +3960,8 @@
       "web": "PersonalSettingsScreen.tsx:583",
       "section": "Chat",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4146,8 +3985,8 @@
       "web": "PersonalSettingsScreen.tsx:589",
       "section": "Chat",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4171,8 +4010,8 @@
       "web": "PersonalSettingsScreen.tsx:602",
       "section": "Voice calls",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4196,8 +4035,8 @@
       "web": "PersonalSettingsScreen.tsx:606",
       "section": "Voice calls",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4221,8 +4060,8 @@
       "web": "PersonalSettingsScreen.tsx:609",
       "section": "Plugins",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4246,8 +4085,8 @@
       "web": "PersonalSettingsScreen.tsx:622",
       "section": "Plugins",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4271,8 +4110,8 @@
       "web": "PersonalSettingsScreen.tsx:644",
       "section": "Plugins",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4296,8 +4135,8 @@
       "web": "PersonalSettingsScreen.tsx:666",
       "section": "Plugins",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4321,8 +4160,8 @@
       "web": "PersonalSettingsScreen.tsx:683",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4346,8 +4185,8 @@
       "web": "PersonalSettingsScreen.tsx:693",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4371,8 +4210,8 @@
       "web": "PersonalSettingsScreen.tsx:701",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4396,8 +4235,8 @@
       "web": "PersonalSettingsScreen.tsx:709",
       "section": "Routines, memory and notifications",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4421,8 +4260,8 @@
       "web": "PersonalSettingsScreen.tsx:754",
       "section": "About",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4446,8 +4285,8 @@
       "web": "PersonalSettingsScreen.tsx:771",
       "section": "About",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4471,8 +4310,8 @@
       "web": "PersonalSettingsScreen.tsx:797",
       "section": "Advanced",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4495,8 +4334,8 @@
       "web": "PersonalSettingsScreen.tsx:812",
       "section": "Advanced",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4519,8 +4358,8 @@
       "web": "PersonalSettingsScreen.tsx:839",
       "section": "Advanced",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts", "personalMode.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "greeting.ts", "personalMode.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4543,13 +4382,8 @@
       "web": "PersonalProvidersSection.tsx:1",
       "section": "Providers",
       "logic": {
-        "files": 46,
-        "inPackage": [
-          "usePersonalBots.ts",
-          "usagePresentation.ts",
-          "conversationModel.ts",
-          "botSummaries.ts"
-        ],
+        "files": 47,
+        "inPackage": ["usePersonalBots.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["commandFeedback.ts", "providerRows.ts", "usePersonalBots.ts"]
       },
       "pr": "A14",
@@ -4563,7 +4397,7 @@
       "web": "ApiKeysScreen.tsx:111",
       "via": "field",
       "logic": {
-        "files": 21,
+        "files": 22,
         "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalBots.ts", "useSecretRequests.ts"]
       },
@@ -4578,7 +4412,7 @@
       "web": "ApiKeysScreen.tsx:151",
       "via": "field",
       "logic": {
-        "files": 21,
+        "files": 22,
         "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalBots.ts", "useSecretRequests.ts"]
       },
@@ -4593,7 +4427,7 @@
       "web": "ApiKeysScreen.tsx:166",
       "via": "field",
       "logic": {
-        "files": 21,
+        "files": 22,
         "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalBots.ts", "useSecretRequests.ts"]
       },
@@ -4609,11 +4443,11 @@
       "via": "field",
       "logic": {
         "files": 2,
-        "inPackage": ["botAvatarShapes.ts"],
+        "inPackage": [],
         "direct": ["botAvatarShapes.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Shape\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4624,11 +4458,11 @@
       "via": "field",
       "logic": {
         "files": 2,
-        "inPackage": ["botAvatarShapes.ts"],
+        "inPackage": [],
         "direct": ["botAvatarShapes.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Colour\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4638,32 +4472,31 @@
       "web": "BotFallbackSection.tsx:38",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
+        "files": 26,
+        "inPackage": [],
         "direct": ["botFormModel.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Switch model when the usage limit is hit The bot keeps replying on this model until its own limit resets, then goes back.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#name",
       "kind": "setting",
       "title": "Name",
-      "web": "BotForm.tsx:611",
+      "web": "BotForm.tsx:331",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4676,27 +4509,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#title-optional",
       "kind": "setting",
       "title": "Title (optional)",
-      "web": "BotForm.tsx:638",
+      "web": "BotForm.tsx:358",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4709,27 +4541,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Title (optional)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#description",
       "kind": "setting",
       "title": "Description",
-      "web": "BotForm.tsx:654",
+      "web": "BotForm.tsx:374",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4742,27 +4573,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Description\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#instructions",
       "kind": "setting",
       "title": "Instructions",
-      "web": "BotForm.tsx:668",
+      "web": "BotForm.tsx:388",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4775,27 +4605,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Instructions\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#provider",
       "kind": "setting",
       "title": "Provider",
-      "web": "BotForm.tsx:682",
+      "web": "BotForm.tsx:402",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4808,27 +4637,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Provider\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#model",
       "kind": "setting",
       "title": "Model",
-      "web": "BotForm.tsx:731",
+      "web": "BotForm.tsx:451",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4841,27 +4669,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Model\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#effort",
       "kind": "setting",
       "title": "Effort",
-      "web": "BotForm.tsx:762",
+      "web": "BotForm.tsx:479",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4874,27 +4701,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Effort\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#context-window",
       "kind": "setting",
       "title": "Context window",
-      "web": "BotForm.tsx:792",
+      "web": "BotForm.tsx:502",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4907,27 +4733,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Context window\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#agent-mode",
       "kind": "setting",
       "title": "Agent mode",
-      "web": "BotForm.tsx:823",
+      "web": "BotForm.tsx:526",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4940,27 +4765,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Agent mode\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#team",
       "kind": "setting",
       "title": "Team",
-      "web": "BotForm.tsx:896",
+      "web": "BotForm.tsx:592",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -4973,27 +4797,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Team\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#team-lead-one-per-team-making-this-bot-the-lead-",
       "kind": "setting",
       "title": "Team lead One per team. Making this bot the lead replaces the current one.",
-      "web": "BotForm.tsx:923",
+      "web": "BotForm.tsx:619",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -5006,27 +4829,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Team lead One per team. Making this bot the lead replaces the current one.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#pin-to-top-keeps-this-bot-in-the-pinned-box-at-t",
       "kind": "setting",
       "title": "Pin to top Keeps this bot in the Pinned box at the top of Bots.",
-      "web": "BotForm.tsx:938",
+      "web": "BotForm.tsx:634",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -5039,27 +4861,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Pin to top Keeps this bot in the Pinned box at the top of Bots.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#save-memories-without-asking-keeps-what-you-tell",
       "kind": "setting",
       "title": "Save memories without asking Keeps what you tell this bot for later chats without you saying \"remember\", except in a chat that had a sensitive site open.",
-      "web": "BotForm.tsx:953",
+      "web": "BotForm.tsx:649",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -5072,27 +4893,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Save memories without asking Keeps what you tell this bot for later chats without you saying \"remember\", except in a chat that had a sensitive site open.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#hide-message-previews-keeps-this-bot-s-message-t",
       "kind": "setting",
       "title": "Hide message previews Keeps this bot's message text out of lists, cards, notifications and banners. It only shows inside the chat.",
-      "web": "BotForm.tsx:969",
+      "web": "BotForm.tsx:665",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -5105,27 +4925,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Hide message previews Keeps this bot's message text out of lists, cards, notifications and banners. It only shows inside the chat.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#notifications",
       "kind": "setting",
       "title": "Notifications",
-      "web": "BotForm.tsx:999",
+      "web": "BotForm.tsx:693",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -5138,27 +4957,26 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Notifications\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotForm.tsx#avatar",
       "kind": "setting",
       "title": "Avatar",
-      "web": "BotForm.tsx:1029",
+      "web": "BotForm.tsx:716",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 57,
         "inPackage": [
           "usePersonalBots.ts",
-          "groupModel.ts",
           "chatsSnapshot.ts",
           "botSummaries.ts",
-          "botMuteModel.ts",
           "botModelLabel.ts"
         ],
         "direct": [
-          "voice/botVoiceCalls.ts",
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "packages/personal-client/src/bots/botDraft.ts",
           "botFormModel.ts",
           "botModelLabel.ts",
           "botMuteModel.ts",
@@ -5171,7 +4989,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Avatar\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5181,12 +4999,16 @@
       "web": "BotModelPickFields.tsx:69",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
-        "direct": ["botFormModel.ts", "botSummaries.ts"]
+        "files": 29,
+        "inPackage": ["botSummaries.ts"],
+        "direct": [
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "botFormModel.ts",
+          "botSummaries.ts"
+        ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"provider\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5196,87 +5018,99 @@
       "web": "BotModelPickFields.tsx:100",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
-        "direct": ["botFormModel.ts", "botSummaries.ts"]
+        "files": 29,
+        "inPackage": ["botSummaries.ts"],
+        "direct": [
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "botFormModel.ts",
+          "botSummaries.ts"
+        ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"model\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotModelPickFields.tsx#effort",
       "kind": "setting",
       "title": "effort",
-      "web": "BotModelPickFields.tsx:139",
+      "web": "BotModelPickFields.tsx:136",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
-        "direct": ["botFormModel.ts", "botSummaries.ts"]
+        "files": 29,
+        "inPackage": ["botSummaries.ts"],
+        "direct": [
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "botFormModel.ts",
+          "botSummaries.ts"
+        ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"effort\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotModelPickFields.tsx#context-window",
       "kind": "setting",
       "title": "context window",
-      "web": "BotModelPickFields.tsx:166",
+      "web": "BotModelPickFields.tsx:156",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
-        "direct": ["botFormModel.ts", "botSummaries.ts"]
+        "files": 29,
+        "inPackage": ["botSummaries.ts"],
+        "direct": [
+          "packages/personal-client/src/bots/botFormFields.ts",
+          "botFormModel.ts",
+          "botSummaries.ts"
+        ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"context window\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotScheduleSection.tsx#use-a-different-model-at-set-times-every-day-bet",
       "kind": "setting",
       "title": "Use a different model at set times Every day, between these times (your laptop's clock), the bot uses this model instead.",
-      "web": "BotScheduleSection.tsx:48",
+      "web": "BotScheduleSection.tsx:43",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
-        "direct": ["botFormModel.ts"]
+        "files": 28,
+        "inPackage": [],
+        "direct": ["packages/personal-client/src/bots/botFormFields.ts", "botFormModel.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Use a different model at set times Every day, between these times (your laptop's clock), the bot uses this model instead.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotScheduleSection.tsx#from",
       "kind": "setting",
       "title": "From",
-      "web": "BotScheduleSection.tsx:68",
+      "web": "BotScheduleSection.tsx:63",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
-        "direct": ["botFormModel.ts"]
+        "files": 28,
+        "inPackage": [],
+        "direct": ["packages/personal-client/src/bots/botFormFields.ts", "botFormModel.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"From\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
       "id": "setting:BotScheduleSection.tsx#to",
       "kind": "setting",
       "title": "To",
-      "web": "BotScheduleSection.tsx:85",
+      "web": "BotScheduleSection.tsx:80",
       "via": "field",
       "logic": {
-        "files": 27,
-        "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
-        "direct": ["botFormModel.ts"]
+        "files": 28,
+        "inPackage": [],
+        "direct": ["packages/personal-client/src/bots/botFormFields.ts", "botFormModel.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"To\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5291,7 +5125,7 @@
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Only in this group\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5346,14 +5180,12 @@
       "web": "MemoryScreen.tsx:566",
       "via": "field",
       "logic": {
-        "files": 51,
+        "files": 53,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
           "taskPresentation.ts",
-          "relativeTime.ts",
-          "greeting.ts",
-          "contextUsed.ts"
+          "greeting.ts"
         ],
         "direct": [
           "bulkSelection.ts",
@@ -5381,11 +5213,11 @@
       "via": "field",
       "logic": {
         "files": 25,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5396,11 +5228,11 @@
       "via": "field",
       "logic": {
         "files": 25,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bots of\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5411,11 +5243,11 @@
       "via": "field",
       "logic": {
         "files": 25,
-        "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in NewGroupScreen\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5425,7 +5257,7 @@
       "web": "NewTeamForm.tsx:221",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
@@ -5436,7 +5268,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Team name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5446,7 +5278,7 @@
       "web": "NewTeamForm.tsx:255",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
@@ -5457,7 +5289,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Leader Optional\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5467,7 +5299,7 @@
       "web": "NewTeamForm.tsx:266",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
@@ -5478,7 +5310,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"No leader for now\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5488,7 +5320,7 @@
       "web": "NewTeamForm.tsx:281",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
@@ -5499,7 +5331,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in NewTeamForm\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5509,7 +5341,7 @@
       "web": "NewTeamForm.tsx:306",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
@@ -5520,7 +5352,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bots to move into the new team\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5530,7 +5362,7 @@
       "web": "NewTeamForm.tsx:312",
       "via": "field",
       "logic": {
-        "files": 25,
+        "files": 27,
         "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
@@ -5541,7 +5373,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in NewTeamForm\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5551,8 +5383,8 @@
       "web": "NotificationsScreen.tsx:286",
       "via": "field",
       "logic": {
-        "files": 34,
-        "inPackage": ["usePersonalBots.ts", "perfFlags.ts", "relativeTime.ts"],
+        "files": 35,
+        "inPackage": ["usePersonalBots.ts", "perfFlags.ts"],
         "direct": [
           "commandFeedback.ts",
           "relativeTime.ts",
@@ -5573,7 +5405,7 @@
       "web": "PasswordsScreen.tsx:133",
       "via": "field",
       "logic": {
-        "files": 28,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -5596,7 +5428,7 @@
       "web": "PasswordsScreen.tsx:159",
       "via": "field",
       "logic": {
-        "files": 28,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -5619,7 +5451,7 @@
       "web": "PasswordsScreen.tsx:198",
       "via": "field",
       "logic": {
-        "files": 28,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -5642,7 +5474,7 @@
       "web": "PasswordsScreen.tsx:213",
       "via": "field",
       "logic": {
-        "files": 28,
+        "files": 30,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
@@ -5665,8 +5497,8 @@
       "web": "PersonalComposer.tsx:1339",
       "via": "field",
       "logic": {
-        "files": 33,
-        "inPackage": ["outboxFlush.ts", "outboxBlobs.ts", "outbox.ts"],
+        "files": 34,
+        "inPackage": [],
         "direct": [
           "outbox.ts",
           "outboxBlobs.ts",
@@ -5690,7 +5522,7 @@
       "web": "PersonalConnectionsScreen.tsx:152",
       "via": "field",
       "logic": {
-        "files": 22,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5710,7 +5542,7 @@
       "web": "PersonalConnectionsScreen.tsx:336",
       "via": "field",
       "logic": {
-        "files": 22,
+        "files": 23,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5745,7 +5577,7 @@
       "web": "RoutineForm.tsx:254",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5765,7 +5597,7 @@
       "web": "RoutineForm.tsx:276",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5785,7 +5617,7 @@
       "web": "RoutineForm.tsx:294",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5805,7 +5637,7 @@
       "web": "RoutineForm.tsx:317",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5825,7 +5657,7 @@
       "web": "RoutineForm.tsx:336",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5845,7 +5677,7 @@
       "web": "RoutineForm.tsx:366",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5865,7 +5697,7 @@
       "web": "RoutineForm.tsx:385",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5885,7 +5717,7 @@
       "web": "RoutineForm.tsx:416",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5905,7 +5737,7 @@
       "web": "RoutineForm.tsx:437",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5925,7 +5757,7 @@
       "web": "RoutineForm.tsx:450",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5945,7 +5777,7 @@
       "web": "RoutineForm.tsx:466",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5965,7 +5797,7 @@
       "web": "RoutineForm.tsx:486",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -5985,7 +5817,7 @@
       "web": "RoutineForm.tsx:493",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -6005,7 +5837,7 @@
       "web": "RoutineForm.tsx:511",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -6025,7 +5857,7 @@
       "web": "RoutineForm.tsx:514",
       "via": "field",
       "logic": {
-        "files": 24,
+        "files": 25,
         "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
@@ -6180,13 +6012,8 @@
       "web": "providers/ProviderPage.tsx:1606",
       "via": "field",
       "logic": {
-        "files": 52,
-        "inPackage": [
-          "botSummaries.ts",
-          "usagePresentation.ts",
-          "conversationModel.ts",
-          "usePersonalBots.ts"
-        ],
+        "files": 53,
+        "inPackage": ["botSummaries.ts", "conversationModel.ts", "usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "providerRows.ts",
@@ -8450,289 +8277,6 @@
       "check": "Android calls personalConnections.importAdopt from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
-      "id": "rpc:personalGroupsList",
-      "kind": "rpc",
-      "title": "personalGroupsList (query)",
-      "web": "usePersonalGroups.ts:27",
-      "rpcKind": "query",
-      "wire": "personalGroups.list",
-      "contract": "packages/contracts/src/rpc.ts:714",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.list from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsSubscribe",
-      "kind": "rpc",
-      "title": "personalGroupsSubscribe (subscription)",
-      "web": "usePersonalGroups.ts:104",
-      "rpcKind": "subscription",
-      "wire": "personalGroups.subscribe",
-      "contract": "packages/contracts/src/rpc.ts:723",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.subscribe from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsCreate",
-      "kind": "rpc",
-      "title": "personalGroupsCreate (command)",
-      "web": "usePersonalGroups.ts:129",
-      "rpcKind": "command",
-      "wire": "personalGroups.create",
-      "contract": "packages/contracts/src/rpc.ts:715",
-      "views": [
-        "AllChatsCount.tsx",
-        "ApiKeysScreen.tsx",
-        "BotForm.tsx",
-        "BotMute.tsx",
-        "BotRoutinesSection.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ColumnResizeHandle.tsx",
-        "ContextUsedPanel.tsx",
-        "ConversationRoutinesPanel.tsx",
-        "ConversationScreen.tsx",
-        "ConversationShellFirst.tsx",
-        "ConversationSidePanel.tsx",
-        "DelegationCard.tsx",
-        "FilesScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "InAppNotifications.tsx",
-        "MemoryScreen.tsx",
-        "MemoryTidyPanels.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "NewTeamForm.tsx",
-        "NewTeamScreen.tsx",
-        "NoteNoticeRow.tsx",
-        "NotificationsScreen.tsx",
-        "OutboxFlusher.tsx",
-        "PasswordsScreen.tsx",
-        "PersonalConnectionsScreen.tsx",
-        "PersonalOfflineBanner.tsx",
-        "PersonalProvidersSection.tsx",
-        "PersonalSettingsScreen.tsx",
-        "PersonalShell.tsx",
-        "PersonalTabBar.tsx",
-        "PersonalUsageStrip.tsx",
-        "RemovedBotsScreen.tsx",
-        "RoutineDetailScreen.tsx",
-        "RoutineForm.tsx",
-        "RulesUsageCard.tsx",
-        "SystemStatsLine.tsx",
-        "TaskDetailScreen.tsx",
-        "TasksScreen.tsx",
-        "TeamScreen.tsx",
-        "TokenUsageSection.tsx",
-        "UpdateStatusLine.tsx",
-        "computer/ComputerDriverCard.tsx",
-        "computer/ComputerScreen.tsx",
-        "computer/ComputerSourceRow.tsx",
-        "providers/AddProviderScreen.tsx",
-        "providers/CatalogProviderPage.tsx",
-        "providers/ProviderPage.tsx",
-        "useChatSwipeBack.tsx",
-        "useNewChatPrompt.tsx",
-        "voice/CallTranscript.tsx",
-        "voice/VoiceSettingsSection.tsx"
-      ],
-      "userAction": true,
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.create from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsUpdate",
-      "kind": "rpc",
-      "title": "personalGroupsUpdate (command)",
-      "web": "usePersonalGroups.ts:135",
-      "rpcKind": "command",
-      "wire": "personalGroups.update",
-      "contract": "packages/contracts/src/rpc.ts:716",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "userAction": true,
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.update from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsDelete",
-      "kind": "rpc",
-      "title": "personalGroupsDelete (command)",
-      "web": "usePersonalGroups.ts:141",
-      "rpcKind": "command",
-      "wire": "personalGroups.delete",
-      "contract": "packages/contracts/src/rpc.ts:717",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "userAction": true,
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.delete from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsAddMember",
-      "kind": "rpc",
-      "title": "personalGroupsAddMember (command)",
-      "web": "usePersonalGroups.ts:147",
-      "rpcKind": "command",
-      "wire": "personalGroups.addMember",
-      "contract": "packages/contracts/src/rpc.ts:718",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "userAction": true,
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.addMember from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsRemoveMember",
-      "kind": "rpc",
-      "title": "personalGroupsRemoveMember (command)",
-      "web": "usePersonalGroups.ts:153",
-      "rpcKind": "command",
-      "wire": "personalGroups.removeMember",
-      "contract": "packages/contracts/src/rpc.ts:719",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "userAction": true,
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.removeMember from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsSendMessage",
-      "kind": "rpc",
-      "title": "personalGroupsSendMessage (command)",
-      "web": "usePersonalGroups.ts:164",
-      "rpcKind": "command",
-      "wire": "personalGroups.sendMessage",
-      "contract": "packages/contracts/src/rpc.ts:720",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "userAction": true,
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.sendMessage from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsContinueRound",
-      "kind": "rpc",
-      "title": "personalGroupsContinueRound (command)",
-      "web": "usePersonalGroups.ts:169",
-      "rpcKind": "command",
-      "wire": "personalGroups.continueRound",
-      "contract": "packages/contracts/src/rpc.ts:721",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "userAction": true,
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.continueRound from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalGroupsStop",
-      "kind": "rpc",
-      "title": "personalGroupsStop (command)",
-      "web": "usePersonalGroups.ts:174",
-      "rpcKind": "command",
-      "wire": "personalGroups.stop",
-      "contract": "packages/contracts/src/rpc.ts:722",
-      "views": [
-        "AllChatsCount.tsx",
-        "BotForm.tsx",
-        "BotThreadsScreen.tsx",
-        "ChatsScreen.tsx",
-        "ConversationScreen.tsx",
-        "GroupConversationScreen.tsx",
-        "NewChatDialog.tsx",
-        "NewGroupScreen.tsx",
-        "OutboxFlusher.tsx"
-      ],
-      "userAction": true,
-      "pr": "A10",
-      "status": "planned",
-      "check": "Android calls personalGroups.stop from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
       "id": "rpc:personalLoginsList",
       "kind": "rpc",
       "title": "personalLoginsList (query)",
@@ -8814,33 +8358,6 @@
       "pr": "A15",
       "status": "planned",
       "check": "Android calls personalLogins.setSensitive from FilesScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalBotsListRemoved",
-      "kind": "rpc",
-      "title": "personalBotsListRemoved (query)",
-      "web": "useRemovedBots.ts:24",
-      "rpcKind": "query",
-      "wire": "personalBots.listRemoved",
-      "contract": "packages/contracts/src/rpc.ts:680",
-      "views": ["PersonalSettingsScreen.tsx", "RemovedBotsScreen.tsx"],
-      "pr": "A11",
-      "status": "planned",
-      "check": "Android calls personalBots.listRemoved from PersonalSettingsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
-    },
-    {
-      "id": "rpc:personalBotsRestore",
-      "kind": "rpc",
-      "title": "personalBotsRestore (command)",
-      "web": "useRemovedBots.ts:42",
-      "rpcKind": "command",
-      "wire": "personalBots.restore",
-      "contract": "packages/contracts/src/rpc.ts:681",
-      "views": ["PersonalSettingsScreen.tsx", "RemovedBotsScreen.tsx"],
-      "userAction": true,
-      "pr": "A11",
-      "status": "planned",
-      "check": "Android calls personalBots.restore from PersonalSettingsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalSecretsListPending",
@@ -9200,7 +8717,7 @@
       "id": "rpc:personalBotsList",
       "kind": "rpc",
       "title": "personalBotsList (query)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:44",
+      "web": "packages/personal-client/src/bots/personalBots.ts:52",
       "rpcKind": "query",
       "wire": "personalBots.list",
       "contract": "packages/contracts/src/rpc.ts:660",
@@ -9265,10 +8782,78 @@
       "check": "Android calls personalBots.list from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
+      "id": "rpc:personalBotsListRemoved",
+      "kind": "rpc",
+      "title": "personalBotsListRemoved (query)",
+      "web": "packages/personal-client/src/bots/personalBots.ts:72",
+      "rpcKind": "query",
+      "wire": "personalBots.listRemoved",
+      "contract": "packages/contracts/src/rpc.ts:680",
+      "views": [
+        "AllChatsCount.tsx",
+        "ApiKeysScreen.tsx",
+        "BotForm.tsx",
+        "BotMute.tsx",
+        "BotRoutinesSection.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
+        "ContextUsedPanel.tsx",
+        "ConversationRoutinesPanel.tsx",
+        "ConversationScreen.tsx",
+        "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
+        "DelegationCard.tsx",
+        "FilesScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "InAppNotifications.tsx",
+        "MemoryScreen.tsx",
+        "MemoryTidyPanels.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "NewTeamForm.tsx",
+        "NewTeamScreen.tsx",
+        "NoteNoticeRow.tsx",
+        "NotificationsScreen.tsx",
+        "OutboxFlusher.tsx",
+        "PasswordsScreen.tsx",
+        "PersonalConnectionsScreen.tsx",
+        "PersonalOfflineBanner.tsx",
+        "PersonalProvidersSection.tsx",
+        "PersonalSettingsScreen.tsx",
+        "PersonalShell.tsx",
+        "PersonalTabBar.tsx",
+        "PersonalUsageStrip.tsx",
+        "RemovedBotsScreen.tsx",
+        "RoutineDetailScreen.tsx",
+        "RoutineForm.tsx",
+        "RulesUsageCard.tsx",
+        "SystemStatsLine.tsx",
+        "TaskDetailScreen.tsx",
+        "TasksScreen.tsx",
+        "TeamScreen.tsx",
+        "TokenUsageSection.tsx",
+        "UpdateStatusLine.tsx",
+        "computer/ComputerDriverCard.tsx",
+        "computer/ComputerScreen.tsx",
+        "computer/ComputerSourceRow.tsx",
+        "providers/AddProviderScreen.tsx",
+        "providers/CatalogProviderPage.tsx",
+        "providers/ProviderPage.tsx",
+        "useChatSwipeBack.tsx",
+        "useNewChatPrompt.tsx",
+        "voice/CallTranscript.tsx",
+        "voice/VoiceSettingsSection.tsx"
+      ],
+      "pr": "A11",
+      "status": "done",
+      "check": "Android calls personalBots.listRemoved from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
       "id": "rpc:personalPushInApp",
       "kind": "rpc",
       "title": "personalPushInApp (subscription)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:66",
+      "web": "packages/personal-client/src/bots/personalBots.ts:86",
       "rpcKind": "subscription",
       "wire": "personalPush.inApp",
       "contract": "packages/contracts/src/rpc.ts:817",
@@ -9336,7 +8921,7 @@
       "id": "rpc:personalPushAckInApp",
       "kind": "rpc",
       "title": "personalPushAckInApp (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:78",
+      "web": "packages/personal-client/src/bots/personalBots.ts:98",
       "rpcKind": "command",
       "wire": "personalPush.ackInApp",
       "contract": "packages/contracts/src/rpc.ts:818",
@@ -9402,10 +8987,79 @@
       "check": "Android calls personalPush.ackInApp from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
+      "id": "rpc:personalGroupsCreate",
+      "kind": "rpc",
+      "title": "personalGroupsCreate (command)",
+      "web": "packages/personal-client/src/bots/personalBots.ts:120",
+      "rpcKind": "command",
+      "wire": "personalGroups.create",
+      "contract": "packages/contracts/src/rpc.ts:715",
+      "views": [
+        "AllChatsCount.tsx",
+        "ApiKeysScreen.tsx",
+        "BotForm.tsx",
+        "BotMute.tsx",
+        "BotRoutinesSection.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
+        "ContextUsedPanel.tsx",
+        "ConversationRoutinesPanel.tsx",
+        "ConversationScreen.tsx",
+        "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
+        "DelegationCard.tsx",
+        "FilesScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "InAppNotifications.tsx",
+        "MemoryScreen.tsx",
+        "MemoryTidyPanels.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "NewTeamForm.tsx",
+        "NewTeamScreen.tsx",
+        "NoteNoticeRow.tsx",
+        "NotificationsScreen.tsx",
+        "OutboxFlusher.tsx",
+        "PasswordsScreen.tsx",
+        "PersonalConnectionsScreen.tsx",
+        "PersonalOfflineBanner.tsx",
+        "PersonalProvidersSection.tsx",
+        "PersonalSettingsScreen.tsx",
+        "PersonalShell.tsx",
+        "PersonalTabBar.tsx",
+        "PersonalUsageStrip.tsx",
+        "RemovedBotsScreen.tsx",
+        "RoutineDetailScreen.tsx",
+        "RoutineForm.tsx",
+        "RulesUsageCard.tsx",
+        "SystemStatsLine.tsx",
+        "TaskDetailScreen.tsx",
+        "TasksScreen.tsx",
+        "TeamScreen.tsx",
+        "TokenUsageSection.tsx",
+        "UpdateStatusLine.tsx",
+        "computer/ComputerDriverCard.tsx",
+        "computer/ComputerScreen.tsx",
+        "computer/ComputerSourceRow.tsx",
+        "providers/AddProviderScreen.tsx",
+        "providers/CatalogProviderPage.tsx",
+        "providers/ProviderPage.tsx",
+        "useChatSwipeBack.tsx",
+        "useNewChatPrompt.tsx",
+        "voice/CallTranscript.tsx",
+        "voice/VoiceSettingsSection.tsx"
+      ],
+      "userAction": true,
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.create from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
       "id": "rpc:personalBotsGetProfile",
       "kind": "rpc",
       "title": "personalBotsGetProfile (query)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:127",
+      "web": "packages/personal-client/src/bots/personalBots.ts:147",
       "rpcKind": "query",
       "wire": "personalBots.getProfile",
       "contract": "packages/contracts/src/rpc.ts:676",
@@ -9473,7 +9127,7 @@
       "id": "rpc:personalBotsListFiles",
       "kind": "rpc",
       "title": "personalBotsListFiles (query)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:138",
+      "web": "packages/personal-client/src/bots/personalBots.ts:158",
       "rpcKind": "query",
       "wire": "personalBots.listFiles",
       "contract": "packages/contracts/src/rpc.ts:678",
@@ -9541,7 +9195,7 @@
       "id": "rpc:personalBotsTokenUsage",
       "kind": "rpc",
       "title": "personalBotsTokenUsage (query)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:152",
+      "web": "packages/personal-client/src/bots/personalBots.ts:172",
       "rpcKind": "query",
       "wire": "personalBots.tokenUsage",
       "contract": "packages/contracts/src/rpc.ts:673",
@@ -9609,7 +9263,7 @@
       "id": "rpc:personalBotsCreate",
       "kind": "rpc",
       "title": "personalBotsCreate (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:177",
+      "web": "packages/personal-client/src/bots/personalBots.ts:197",
       "rpcKind": "command",
       "wire": "personalBots.create",
       "contract": "packages/contracts/src/rpc.ts:661",
@@ -9671,14 +9325,14 @@
       ],
       "userAction": true,
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBots.create from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalBotsUpdate",
       "kind": "rpc",
       "title": "personalBotsUpdate (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:183",
+      "web": "packages/personal-client/src/bots/personalBots.ts:203",
       "rpcKind": "command",
       "wire": "personalBots.update",
       "contract": "packages/contracts/src/rpc.ts:662",
@@ -9740,14 +9394,14 @@
       ],
       "userAction": true,
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBots.update from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalBotsRecheckProvider",
       "kind": "rpc",
       "title": "personalBotsRecheckProvider (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:190",
+      "web": "packages/personal-client/src/bots/personalBots.ts:210",
       "rpcKind": "command",
       "wire": "personalBots.recheckProvider",
       "contract": "packages/contracts/src/rpc.ts:679",
@@ -9809,14 +9463,14 @@
       ],
       "userAction": true,
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBots.recheckProvider from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalBotsDelete",
       "kind": "rpc",
       "title": "personalBotsDelete (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:195",
+      "web": "packages/personal-client/src/bots/personalBots.ts:215",
       "rpcKind": "command",
       "wire": "personalBots.delete",
       "contract": "packages/contracts/src/rpc.ts:663",
@@ -9878,14 +9532,83 @@
       ],
       "userAction": true,
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBots.delete from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalBotsRestore",
+      "kind": "rpc",
+      "title": "personalBotsRestore (command)",
+      "web": "packages/personal-client/src/bots/personalBots.ts:222",
+      "rpcKind": "command",
+      "wire": "personalBots.restore",
+      "contract": "packages/contracts/src/rpc.ts:681",
+      "views": [
+        "AllChatsCount.tsx",
+        "ApiKeysScreen.tsx",
+        "BotForm.tsx",
+        "BotMute.tsx",
+        "BotRoutinesSection.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ColumnResizeHandle.tsx",
+        "ContextUsedPanel.tsx",
+        "ConversationRoutinesPanel.tsx",
+        "ConversationScreen.tsx",
+        "ConversationShellFirst.tsx",
+        "ConversationSidePanel.tsx",
+        "DelegationCard.tsx",
+        "FilesScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "InAppNotifications.tsx",
+        "MemoryScreen.tsx",
+        "MemoryTidyPanels.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "NewTeamForm.tsx",
+        "NewTeamScreen.tsx",
+        "NoteNoticeRow.tsx",
+        "NotificationsScreen.tsx",
+        "OutboxFlusher.tsx",
+        "PasswordsScreen.tsx",
+        "PersonalConnectionsScreen.tsx",
+        "PersonalOfflineBanner.tsx",
+        "PersonalProvidersSection.tsx",
+        "PersonalSettingsScreen.tsx",
+        "PersonalShell.tsx",
+        "PersonalTabBar.tsx",
+        "PersonalUsageStrip.tsx",
+        "RemovedBotsScreen.tsx",
+        "RoutineDetailScreen.tsx",
+        "RoutineForm.tsx",
+        "RulesUsageCard.tsx",
+        "SystemStatsLine.tsx",
+        "TaskDetailScreen.tsx",
+        "TasksScreen.tsx",
+        "TeamScreen.tsx",
+        "TokenUsageSection.tsx",
+        "UpdateStatusLine.tsx",
+        "computer/ComputerDriverCard.tsx",
+        "computer/ComputerScreen.tsx",
+        "computer/ComputerSourceRow.tsx",
+        "providers/AddProviderScreen.tsx",
+        "providers/CatalogProviderPage.tsx",
+        "providers/ProviderPage.tsx",
+        "useChatSwipeBack.tsx",
+        "useNewChatPrompt.tsx",
+        "voice/CallTranscript.tsx",
+        "voice/VoiceSettingsSection.tsx"
+      ],
+      "userAction": true,
+      "pr": "A11",
+      "status": "done",
+      "check": "Android calls personalBots.restore from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalBotsCreateThread",
       "kind": "rpc",
       "title": "personalBotsCreateThread (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:201",
+      "web": "packages/personal-client/src/bots/personalBots.ts:236",
       "rpcKind": "command",
       "wire": "personalBots.createThread",
       "contract": "packages/contracts/src/rpc.ts:664",
@@ -9954,7 +9677,7 @@
       "id": "rpc:personalBotsArchiveThread",
       "kind": "rpc",
       "title": "personalBotsArchiveThread (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:207",
+      "web": "packages/personal-client/src/bots/personalBots.ts:242",
       "rpcKind": "command",
       "wire": "personalBots.archiveThread",
       "contract": "packages/contracts/src/rpc.ts:665",
@@ -10023,7 +9746,7 @@
       "id": "rpc:personalBotsDeleteThread",
       "kind": "rpc",
       "title": "personalBotsDeleteThread (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:213",
+      "web": "packages/personal-client/src/bots/personalBots.ts:248",
       "rpcKind": "command",
       "wire": "personalBots.deleteThread",
       "contract": "packages/contracts/src/rpc.ts:666",
@@ -10092,7 +9815,7 @@
       "id": "rpc:personalBotsArchiveThreads",
       "kind": "rpc",
       "title": "personalBotsArchiveThreads (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:221",
+      "web": "packages/personal-client/src/bots/personalBots.ts:256",
       "rpcKind": "command",
       "wire": "personalBots.archiveThreads",
       "contract": "packages/contracts/src/rpc.ts:667",
@@ -10161,7 +9884,7 @@
       "id": "rpc:personalBotsDeleteThreads",
       "kind": "rpc",
       "title": "personalBotsDeleteThreads (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:227",
+      "web": "packages/personal-client/src/bots/personalBots.ts:262",
       "rpcKind": "command",
       "wire": "personalBots.deleteThreads",
       "contract": "packages/contracts/src/rpc.ts:674",
@@ -10230,7 +9953,7 @@
       "id": "rpc:personalBotsUpdateThreads",
       "kind": "rpc",
       "title": "personalBotsUpdateThreads (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:238",
+      "web": "packages/personal-client/src/bots/personalBots.ts:273",
       "rpcKind": "command",
       "wire": "personalBots.updateThreads",
       "contract": "packages/contracts/src/rpc.ts:670",
@@ -10299,7 +10022,7 @@
       "id": "rpc:personalFilesDelete",
       "kind": "rpc",
       "title": "personalFilesDelete (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:264",
+      "web": "packages/personal-client/src/bots/personalBots.ts:299",
       "rpcKind": "command",
       "wire": "personalFiles.delete",
       "contract": "packages/contracts/src/rpc.ts:698",
@@ -10368,7 +10091,7 @@
       "id": "rpc:personalFilesDeleteMany",
       "kind": "rpc",
       "title": "personalFilesDeleteMany (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:270",
+      "web": "packages/personal-client/src/bots/personalBots.ts:305",
       "rpcKind": "command",
       "wire": "personalFiles.deleteMany",
       "contract": "packages/contracts/src/rpc.ts:699",
@@ -10437,7 +10160,7 @@
       "id": "rpc:personalBotsSetProfile",
       "kind": "rpc",
       "title": "personalBotsSetProfile (command)",
-      "web": "packages/personal-client/src/bots/personalBots.ts:276",
+      "web": "packages/personal-client/src/bots/personalBots.ts:311",
       "rpcKind": "command",
       "wire": "personalBots.setProfile",
       "contract": "packages/contracts/src/rpc.ts:677",
@@ -11115,6 +10838,220 @@
       "pr": "X4",
       "status": "planned",
       "check": "Android calls personalVoiceCalls.searchWeb from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsList",
+      "kind": "rpc",
+      "title": "personalGroupsList (query)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:170",
+      "rpcKind": "query",
+      "wire": "personalGroups.list",
+      "contract": "packages/contracts/src/rpc.ts:714",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.list from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsSubscribe",
+      "kind": "rpc",
+      "title": "personalGroupsSubscribe (subscription)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:178",
+      "rpcKind": "subscription",
+      "wire": "personalGroups.subscribe",
+      "contract": "packages/contracts/src/rpc.ts:723",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.subscribe from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsUpdate",
+      "kind": "rpc",
+      "title": "personalGroupsUpdate (command)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:199",
+      "rpcKind": "command",
+      "wire": "personalGroups.update",
+      "contract": "packages/contracts/src/rpc.ts:716",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "userAction": true,
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.update from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsDelete",
+      "kind": "rpc",
+      "title": "personalGroupsDelete (command)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:205",
+      "rpcKind": "command",
+      "wire": "personalGroups.delete",
+      "contract": "packages/contracts/src/rpc.ts:717",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "userAction": true,
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.delete from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsAddMember",
+      "kind": "rpc",
+      "title": "personalGroupsAddMember (command)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:211",
+      "rpcKind": "command",
+      "wire": "personalGroups.addMember",
+      "contract": "packages/contracts/src/rpc.ts:718",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "userAction": true,
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.addMember from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsRemoveMember",
+      "kind": "rpc",
+      "title": "personalGroupsRemoveMember (command)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:217",
+      "rpcKind": "command",
+      "wire": "personalGroups.removeMember",
+      "contract": "packages/contracts/src/rpc.ts:719",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "userAction": true,
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.removeMember from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsSendMessage",
+      "kind": "rpc",
+      "title": "personalGroupsSendMessage (command)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:228",
+      "rpcKind": "command",
+      "wire": "personalGroups.sendMessage",
+      "contract": "packages/contracts/src/rpc.ts:720",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "userAction": true,
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.sendMessage from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsContinueRound",
+      "kind": "rpc",
+      "title": "personalGroupsContinueRound (command)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:233",
+      "rpcKind": "command",
+      "wire": "personalGroups.continueRound",
+      "contract": "packages/contracts/src/rpc.ts:721",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "userAction": true,
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.continueRound from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalGroupsStop",
+      "kind": "rpc",
+      "title": "personalGroupsStop (command)",
+      "web": "packages/personal-client/src/groups/personalGroups.ts:238",
+      "rpcKind": "command",
+      "wire": "personalGroups.stop",
+      "contract": "packages/contracts/src/rpc.ts:722",
+      "views": [
+        "AllChatsCount.tsx",
+        "BotForm.tsx",
+        "BotThreadsScreen.tsx",
+        "ChatsScreen.tsx",
+        "ConversationScreen.tsx",
+        "GroupConversationScreen.tsx",
+        "NewChatDialog.tsx",
+        "NewGroupScreen.tsx",
+        "OutboxFlusher.tsx"
+      ],
+      "userAction": true,
+      "pr": "A10",
+      "status": "done",
+      "check": "Android calls personalGroups.stop from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     }
   ]
 }
