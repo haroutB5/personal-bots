@@ -16,6 +16,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { AntigravityInstallation } from "../AntigravityInstallation.ts";
+import { CodexInstallation } from "../CodexInstallation.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { PersonalBotService } from "../../personal/PersonalBotService.ts";
 import { makeProviderInstallation } from "../providerInstallation.ts";
@@ -147,6 +148,7 @@ describe.skipIf(process.env.HBOTS_CATALOG_DRIVER_LIVE !== "1")("Registry ACP loc
               Layer.succeed(CatalogInstaller, installer),
               Layer.succeed(ProviderCatalog, catalog),
               Layer.mock(AntigravityInstallation)({ managedDirectory: root }),
+              Layer.mock(CodexInstallation)({ managedDirectory: root }),
               Layer.mock(ProviderInstanceRegistry)({
                 getInstance: () => Effect.succeed(driver),
                 listInstances: Effect.succeed([driver]),
