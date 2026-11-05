@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 
-import { parseClaudeModelSlug } from "./ClaudeModelCatalog.ts";
+import { parseClaudeModelSlug } from "../../provider/ClaudeModelCatalog.ts";
 
 /**
  * Small, fast Claude work runs on Haiku 5.5 (1.66.5), each piece with its own

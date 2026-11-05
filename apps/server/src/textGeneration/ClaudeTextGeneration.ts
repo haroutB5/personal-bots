@@ -54,7 +54,7 @@ import {
   resolveTextGenerationModel,
   textGenerationBackgroundEffort,
   textGenerationFallbackModel,
-} from "../provider/claudeBackgroundModels.ts";
+} from "../personal/claude/claudeBackgroundModels.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 

@@ -31,7 +31,7 @@ import * as Layer from "effect/Layer";
 import {
   CLAUDE_TEXT_GENERATION_DEFAULT_MODEL,
   resolveTextGenerationModel,
-} from "../../provider/claudeBackgroundModels.ts";
+} from "../claude/claudeBackgroundModels.ts";
 import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { VoiceCallSummaryAnswer, summaryFromAnswerObject } from "./voiceCallSummary.ts";
 

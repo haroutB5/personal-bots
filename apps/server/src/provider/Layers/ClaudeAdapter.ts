@@ -125,7 +125,10 @@ import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { logPersonalBotPluginSkillProblems } from "../botPluginSkillDiagnostics.ts";
-import { botSubagentModelEnvironment, exploreSubagentAgents } from "../claudeBackgroundModels.ts";
+import {
+  botSubagentModelEnvironment,
+  exploreSubagentAgents,
+} from "../../personal/claude/claudeBackgroundModels.ts";
 import { claudeAutoCompactWindow, claudeShellOutputSettings } from "../personalBotContextLimits.ts";
 import { mcpToolStepLabel } from "../mcpToolStepLabel.ts";
 import {

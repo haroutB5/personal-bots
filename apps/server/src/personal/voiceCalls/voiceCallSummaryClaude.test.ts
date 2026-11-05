@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 
 import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
-import { CLAUDE_TEXT_GENERATION_DEFAULT_MODEL } from "../../provider/claudeBackgroundModels.ts";
+import { CLAUDE_TEXT_GENERATION_DEFAULT_MODEL } from "../claude/claudeBackgroundModels.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { VOICE_CALL_GREETING_SUMMARY } from "./voiceCallSummary.ts";
