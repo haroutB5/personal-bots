@@ -3,9 +3,17 @@ import {
   assetUrlStateFromResult,
   EMPTY_ASSET_URL_ATOM,
 } from "@t3tools/client-runtime/state/assets";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -67,6 +75,8 @@ export function FilePreviewSheet({
   );
   const state = assetUrlStateFromResult(useAtomValue(urlAtom), native.httpBaseUrl);
   const url = state._tag === "Success" ? state.url : null;
+  const refreshAsset = useAtomRefresh(urlAtom);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -89,7 +99,14 @@ export function FilePreviewSheet({
     return () => {
       live = false;
     };
-  }, [path, url]);
+  }, [attempt, path, url]);
+
+  // A missing file is remembered by the asset atom. Retry asks it again and
+  // re-reads the text, so a file created after the first look opens here.
+  const retry = () => {
+    refreshAsset();
+    setAttempt((value) => value + 1);
+  };
 
   const name = path === null ? "" : (path.split(/[\\/]/).at(-1) ?? path);
   const error =
@@ -118,9 +135,14 @@ export function FilePreviewSheet({
             <ActivityIndicator color={tokens.textSecondary} />
           </View>
         ) : error !== null ? (
-          <Text style={styles.error} accessibilityRole="alert">
-            {error}
-          </Text>
+          <View style={styles.center}>
+            <Text style={styles.error} accessibilityRole="alert">
+              {error}
+            </Text>
+            <Pressable onPress={retry} accessibilityRole="button" style={styles.retry}>
+              <Text style={styles.retryText}>Try again</Text>
+            </Pressable>
+          </View>
         ) : wrongKind !== null ? (
           <Text style={styles.error} accessibilityRole="alert">
             {wrongKind}
@@ -151,8 +173,17 @@ export function FilePreviewSheet({
 const styles = StyleSheet.create({
   body: { padding: 12, gap: 10, maxHeight: 620 },
   path: { color: tokens.textTertiary, fontSize: 12, lineHeight: 17 },
-  center: { paddingVertical: 32, alignItems: "center" },
-  error: { color: tokens.error, fontSize: 14, lineHeight: 20 },
+  center: { paddingVertical: 32, alignItems: "center", gap: 12 },
+  error: { color: tokens.error, fontSize: 14, lineHeight: 20, textAlign: "center" },
+  retry: {
+    minHeight: 44,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
+    justifyContent: "center",
+  },
+  retryText: { color: tokens.text, fontSize: 15, fontWeight: "500" },
   scroll: {
     borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
