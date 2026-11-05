@@ -18,6 +18,7 @@ import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
 import { BotFormScreen } from "../bots/BotFormScreen";
+import { BotThreadsScreen } from "../bots/BotThreadsScreen";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
 import { UpdateSettings } from "../UpdateSettings";
@@ -26,7 +27,6 @@ import { BottomBar } from "./BottomBar";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
 import { ChatScreen } from "../screens/ChatScreen";
-import { ChatsListScreen } from "../screens/ChatsListScreen";
 
 export interface AppShellProps {
   readonly native: NativePersonal;
@@ -42,7 +42,6 @@ export interface AppShellProps {
 export type RootStackParamList = {
   Tabs: { readonly tab?: TabName } | undefined;
   Chat: { readonly botId: string; readonly threadId: string; readonly requestId?: string };
-  Chats: { readonly botId: string };
   Bot: { readonly botId: string };
   BotNew: undefined;
   BotEdit: { readonly botId: string };
@@ -247,29 +246,23 @@ function Shell({ props }: { readonly props: AppShellProps }) {
               threadId={route.params.threadId}
               onBack={() => navigation.goBack()}
               onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
-              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+              onOpenChats={(botId) => navigation.navigate("Bot", { botId })}
               onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
             />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Chats">
+        <Stack.Screen name="Bot">
           {({ navigation, route }) => (
-            <ChatsListScreen
+            <BotThreadsScreen
               native={props.native}
               chat={chat}
               botId={route.params.botId}
               onBack={() => navigation.goBack()}
               onOpenChat={(threadId) =>
-                navigation.replace("Chat", { botId: route.params.botId, threadId })
+                navigation.navigate("Chat", { botId: route.params.botId, threadId })
               }
+              onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
             />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Bot">
-          {({ navigation }) => (
-            <HeaderScreen title="Bot" onBack={() => navigation.goBack()}>
-              <Placeholder title="Bot" body="Bot settings will show here." />
-            </HeaderScreen>
           )}
         </Stack.Screen>
         <Stack.Screen name="BotNew">
@@ -368,7 +361,7 @@ function TabsWithBots({
             installedVersion={installedVersion}
             onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
             onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
-            onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+            onOpenChats={(botId) => navigation.navigate("Bot", { botId })}
             onOpenTeam={() => navigation.navigate("Team")}
             onOpenSettings={() => navigation.navigate("Settings")}
           />

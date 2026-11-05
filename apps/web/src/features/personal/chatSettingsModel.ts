@@ -1,6 +1,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { PersonalBotThread } from "@t3tools/contracts";
 
+import { quotedChatName } from "@hbots/personal-client/bots/chatActionText";
 import { isThreadLive, isThreadRateLimited } from "./botSummaries";
 import { chatActivityMs } from "./chatActivity";
 import { type ChatChipKind, type ChatChipState, chatChipState, stateWords } from "./chatChipRows";
@@ -241,27 +242,6 @@ export function chatSettingsHint(chipsShown: boolean): string {
   return chipsShown ? "or hold a chip" : "or hold the name";
 }
 
-const open = "“";
-const close = "”";
-
-/** The chat's name in the sentences that name it: “Tennis”. */
-export function quotedChatName(title: string): string {
-  return `${open}${title}${close}`;
-}
-
-/**
- * What a failed action on another chat says, naming the chat: with the server's
- * own reason when it gave one, else "Try again."
- */
-export function chatActionFailure(
-  action: "archive" | "delete" | "rename",
-  title: string,
-  reason?: string,
-): string {
-  const lead = `Couldn't ${action} ${quotedChatName(title)}`;
-  return reason === undefined ? `${lead}. Try again.` : `${lead}: ${reason}`;
-}
-
 /** The polite announcement after an action on another chat succeeded. */
 export function chatActionAnnouncement(
   action: "pin" | "unpin" | "snooze" | "markUnread" | "archive" | "delete" | "rename" | "wake",
@@ -288,3 +268,5 @@ export function chatActionAnnouncement(
       return `${name} renamed${detail === undefined ? "" : ` to ${quotedChatName(detail)}`}.`;
   }
 }
+
+export { chatActionFailure, quotedChatName } from "@hbots/personal-client/bots/chatActionText";

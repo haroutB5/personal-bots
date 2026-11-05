@@ -25,6 +25,10 @@
       "types": "./src/bots/chatActivity.ts",
       "import": "./src/bots/chatActivity.ts"
     },
+    "./bots/chatActionText": {
+      "types": "./src/bots/chatActionText.ts",
+      "import": "./src/bots/chatActionText.ts"
+    },
     "./bots/chatState": {
       "types": "./src/bots/chatState.ts",
       "import": "./src/bots/chatState.ts"
