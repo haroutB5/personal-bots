@@ -21,6 +21,15 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
+  descriptorChoices,
+  descriptorValue,
+  modelChoices,
+  notificationChoices,
+  providerChoices,
+  currentMuteLabelOf,
+  voiceCallsLine,
+} from "@hbots/personal-client/bots/botFormFields";
+import {
   assessBotDraft,
   BOT_NAME_MAX as NAME_MAX,
   BOT_TITLE_MAX as TITLE_MAX,
@@ -50,18 +59,12 @@ import {
   botContextWindowDescriptor,
   botEffortDescriptor,
   defaultModelFor,
-  modelOptionLabel,
   noBotProviderMessage,
   usesModelSearch,
 } from "./botFormModel";
 import { botModelLabel } from "./botModelLabel";
-import {
-  botMuteState,
-  MUTE_CHOICES,
-  mutedUntilLabel,
-  type BotNotificationsChoice,
-} from "./botMuteModel";
-import { resolveBotProvider, providerLine } from "./botSummaries";
+import type { BotNotificationsChoice } from "./botMuteModel";
+import { resolveBotProvider } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { useDeleteBot } from "./useDeleteBot";
 import {
@@ -179,12 +182,7 @@ function BotForm({
   const [baseline] = useState(() => rawDraft);
   // The mute the bot had when the form opened, named for the select's "keep" option.
   // A bot muted until turned back on reads plain "Off" here (owner's wording).
-  const [currentMuteLabel] = useState(() => {
-    const nowMs = Date.now();
-    const state = bot === null ? null : botMuteState(bot, nowMs);
-    if (state?.muted !== true) return null;
-    return state.indefinite ? "Off" : mutedUntilLabel(state, nowMs);
-  });
+  const [currentMuteLabel] = useState(() => currentMuteLabelOf(bot, Date.now()));
   const dirty = !botDraftsEqual(rawDraft, baseline);
   const leavingRef = useRef(false);
   useBlocker({
@@ -243,21 +241,12 @@ function BotForm({
 
   const effortDescriptor = botEffortDescriptor(selectedProvider, draft.model);
   // A saved effort the new model does not offer falls back to its default.
-  const effortValue =
-    effortDescriptor?.options.some((option) => option.id === draft.effort) === true
-      ? draft.effort
-      : "";
+  const effortValue = descriptorValue(effortDescriptor, draft.effort);
   const agentModeDescriptor = botAgentModeDescriptor(selectedProvider, draft.model);
   // A saved mode the new model does not offer falls back to its default.
-  const agentModeValue =
-    agentModeDescriptor?.options.some((option) => option.id === draft.agentMode) === true
-      ? draft.agentMode
-      : "";
+  const agentModeValue = descriptorValue(agentModeDescriptor, draft.agentMode);
   const contextWindowDescriptor = botContextWindowDescriptor(selectedProvider, draft.model);
-  const contextWindowValue =
-    contextWindowDescriptor?.options.some((option) => option.id === draft.contextWindow) === true
-      ? draft.contextWindow
-      : "";
+  const contextWindowValue = descriptorValue(contextWindowDescriptor, draft.contextWindow);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -427,9 +416,9 @@ function BotForm({
             }}
             className={`${FIELD_CLASS} h-11`}
           >
-            {providerOptions.map((provider) => (
-              <option key={provider.instanceId} value={provider.instanceId}>
-                {providerLine(resolveBotProvider(provider.instanceId, providers))}
+            {providerChoices(providerOptions, providers).map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
               </option>
             ))}
           </select>
@@ -475,12 +464,9 @@ function BotForm({
               onChange={(event) => update({ model: event.target.value })}
               className={`${FIELD_CLASS} h-11`}
             >
-              {models.some((model) => model.slug === draft.model) ? null : (
-                <option value={draft.model}>{draft.model}</option>
-              )}
-              {models.map((model) => (
-                <option key={model.slug} value={model.slug}>
-                  {modelOptionLabel(model)}
+              {modelChoices(models, draft.model).map((choice) => (
+                <option key={choice.value} value={choice.value}>
+                  {choice.label}
                 </option>
               ))}
             </select>
@@ -499,16 +485,9 @@ function BotForm({
             onChange={(event) => update({ effort: event.target.value })}
             className={`${FIELD_CLASS} h-11`}
           >
-            <option value="">
-              Default
-              {(() => {
-                const fallback = effortDescriptor.options.find((option) => option.isDefault);
-                return fallback === undefined ? "" : ` (${fallback.label})`;
-              })()}
-            </option>
-            {effortDescriptor.options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
+            {descriptorChoices(effortDescriptor).map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
               </option>
             ))}
           </select>
@@ -529,16 +508,9 @@ function BotForm({
             onChange={(event) => update({ contextWindow: event.target.value })}
             className={`${FIELD_CLASS} h-11`}
           >
-            <option value="">
-              Default
-              {(() => {
-                const fallback = contextWindowDescriptor.options.find((option) => option.isDefault);
-                return fallback === undefined ? "" : ` (${fallback.label})`;
-              })()}
-            </option>
-            {contextWindowDescriptor.options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
+            {descriptorChoices(contextWindowDescriptor).map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
               </option>
             ))}
           </select>
@@ -560,16 +532,9 @@ function BotForm({
             onChange={(event) => update({ agentMode: event.target.value })}
             className={`${FIELD_CLASS} h-11`}
           >
-            <option value="">
-              Default
-              {(() => {
-                const fallback = agentModeDescriptor.options.find((option) => option.isDefault);
-                return fallback === undefined ? "" : ` (${fallback.label})`;
-              })()}
-            </option>
-            {agentModeDescriptor.options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
+            {descriptorChoices(agentModeDescriptor).map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
               </option>
             ))}
           </select>
@@ -719,9 +684,7 @@ function BotForm({
         <span className="min-w-0">
           Voice calls
           <span className="block text-sm text-[var(--personal-text-secondary)]">
-            {draft.lead === true
-              ? "On for team leads: this bot is one, so its chats show a call button."
-              : "Off: only team leads can take calls. Make this bot a team lead to turn calls on."}
+            {voiceCallsLine(draft.lead)}
           </span>
         </span>
       </div>
@@ -738,16 +701,9 @@ function BotForm({
           }
           className={`${FIELD_CLASS} h-11`}
         >
-          {currentMuteLabel !== null ? <option value="keep">{currentMuteLabel}</option> : null}
-          <option value="on">On</option>
-          {MUTE_CHOICES.filter(
-            // Already off: the "keep" option above is the one "Off".
-            (choice) => !(choice.key === "indefinitely" && currentMuteLabel === "Off"),
-          ).map((choice) => (
-            <option key={choice.key} value={choice.key}>
-              {choice.key === "indefinitely"
-                ? "Off"
-                : `Mute ${choice.label.charAt(0).toLowerCase()}${choice.label.slice(1)}`}
+          {notificationChoices(currentMuteLabel).map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
             </option>
           ))}
         </select>

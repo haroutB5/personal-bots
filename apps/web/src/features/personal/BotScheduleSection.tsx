@@ -4,14 +4,9 @@ import type { ServerProvider } from "@t3tools/contracts";
 
 import { FIELD_CLASS, LABEL_CLASS } from "./BotModelFields";
 import { BotModelPickFields, MODEL_PICK_HELP_CLASS } from "./BotModelPickFields";
-import { SCHEDULE_TIME_OPTIONS, scheduleHelpLine, type ScheduleDraft } from "./botFormModel";
+import { scheduleTimeChoices as timeChoices } from "@hbots/personal-client/bots/botFormFields";
 
-/** The choices a time picker shows: every 15 minutes, plus a saved time that is off that grid. */
-function timeChoices(current: string): ReadonlyArray<string> {
-  return SCHEDULE_TIME_OPTIONS.includes(current) || current === ""
-    ? SCHEDULE_TIME_OPTIONS
-    : [...SCHEDULE_TIME_OPTIONS, current].toSorted();
-}
+import { scheduleHelpLine, type ScheduleDraft } from "./botFormModel";
 
 /**
  * "Use a different model at set times": a daily From and To (the laptop's local

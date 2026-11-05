@@ -41,6 +41,18 @@
       "types": "./src/bots/botDraft.ts",
       "import": "./src/bots/botDraft.ts"
     },
+    "./bots/botFormFields": {
+      "types": "./src/bots/botFormFields.ts",
+      "import": "./src/bots/botFormFields.ts"
+    },
+    "./bots/modelPlanFilter": {
+      "types": "./src/bots/modelPlanFilter.ts",
+      "import": "./src/bots/modelPlanFilter.ts"
+    },
+    "./bots/modelSearchView": {
+      "types": "./src/bots/modelSearchView.ts",
+      "import": "./src/bots/modelSearchView.ts"
+    },
     "./bots/commandFeedback": {
       "types": "./src/bots/commandFeedback.ts",
       "import": "./src/bots/commandFeedback.ts"

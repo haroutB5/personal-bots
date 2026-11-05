@@ -17,6 +17,7 @@ import type { AndroidRelease } from "../compat";
 import { createChatEnvironment } from "../chat/chatEnvironment";
 import { configureNativeOutbox, useNativeOutboxFlusher } from "../chat/outboxNative";
 import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
+import { BotFormScreen } from "../bots/BotFormScreen";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import type { UpdateSnapshot } from "../updater";
 import { UpdateSettings } from "../UpdateSettings";
@@ -43,6 +44,8 @@ export type RootStackParamList = {
   Chat: { readonly botId: string; readonly threadId: string; readonly requestId?: string };
   Chats: { readonly botId: string };
   Bot: { readonly botId: string };
+  BotNew: undefined;
+  BotEdit: { readonly botId: string };
   Task: { readonly taskId: string };
   Routine: { readonly routineId: string };
   Team: undefined;
@@ -161,6 +164,10 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       };
     case "bot":
       return { name: "Bot", params: { botId: route.botId } };
+    case "botNew":
+      return { name: "BotNew" };
+    case "botEdit":
+      return { name: "BotEdit", params: { botId: route.botId } };
     case "task":
       return { name: "Task", params: { taskId: route.taskId } };
     case "routine":
@@ -263,6 +270,30 @@ function Shell({ props }: { readonly props: AppShellProps }) {
             <HeaderScreen title="Bot" onBack={() => navigation.goBack()}>
               <Placeholder title="Bot" body="Bot settings will show here." />
             </HeaderScreen>
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="BotNew">
+          {({ navigation }) => (
+            <BotFormScreen
+              native={props.native}
+              target={{ kind: "new" }}
+              onBack={() => navigation.goBack()}
+              onLeave={() => navigation.goBack()}
+              onDeleted={() => navigation.popToTop()}
+              onOpenTeam={() => navigation.navigate("Team")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="BotEdit">
+          {({ navigation, route }) => (
+            <BotFormScreen
+              native={props.native}
+              target={{ kind: "edit", botId: route.params.botId }}
+              onBack={() => navigation.goBack()}
+              onLeave={() => navigation.goBack()}
+              onDeleted={() => navigation.popToTop()}
+              onOpenTeam={() => navigation.navigate("Team")}
+            />
           )}
         </Stack.Screen>
         <Stack.Screen name="Task">

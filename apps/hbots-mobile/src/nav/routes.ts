@@ -18,6 +18,8 @@ export type Route =
       readonly requestId?: string;
     }
   | { readonly kind: "bot"; readonly botId: string }
+  | { readonly kind: "botNew" }
+  | { readonly kind: "botEdit"; readonly botId: string }
   | { readonly kind: "task"; readonly taskId: string }
   | { readonly kind: "routine"; readonly routineId: string }
   | { readonly kind: "settings" }
@@ -130,7 +132,10 @@ export function parseDeepLink(raw: string): NavState | null {
         url.searchParams.get("request") ?? undefined,
       );
     case "bot":
-      return first === undefined ? null : { stack: [BOTS, { kind: "bot", botId: first }] };
+      if (first === undefined) return null;
+      return second === "edit"
+        ? { stack: [BOTS, { kind: "bot", botId: first }, { kind: "botEdit", botId: first }] }
+        : { stack: [BOTS, { kind: "bot", botId: first }] };
     case "task":
       return first === undefined ? null : { stack: [BOTS, { kind: "task", taskId: first }] };
     case "settings":
