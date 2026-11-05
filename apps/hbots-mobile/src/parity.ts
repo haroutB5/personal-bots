@@ -1,4 +1,4 @@
-export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A6", "A7"];
+export const MERGED_PRS: readonly string[] = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"];
 export const DONE_ITEMS: readonly string[] = [
   "rpc:personalBotsList",
   "screen:routes/_personal.tsx#personal",
@@ -90,4 +90,9 @@ export const DONE_ITEMS: readonly string[] = [
   "rpc:personalSecretsListPending",
   "rpc:personalSecretsFulfill",
   "rpc:personalSecretsCancel",
+  "sheet:BotUsageSheet.tsx#botusagesheet",
+  "sheet:ChatSettingsSheet.tsx#chatsettingssheet",
+  "action:BotUsageSheet.tsx#drag-a-sheet-down-to-close",
+  "card:ContextUsedPanel.tsx#contextusedpanel",
+  "card:ConversationRoutinesPanel.tsx#conversationroutinespanel",
 ];

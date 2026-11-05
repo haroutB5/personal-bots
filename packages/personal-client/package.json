@@ -193,6 +193,22 @@
       "types": "./src/settings/secretAccess.ts",
       "import": "./src/settings/secretAccess.ts"
     },
+    "./conversation/routinesModel": {
+      "types": "./src/conversation/routinesModel.ts",
+      "import": "./src/conversation/routinesModel.ts"
+    },
+    "./conversation/routineStatus": {
+      "types": "./src/conversation/routineStatus.ts",
+      "import": "./src/conversation/routineStatus.ts"
+    },
+    "./bots/chatChipRows": {
+      "types": "./src/bots/chatChipRows.ts",
+      "import": "./src/bots/chatChipRows.ts"
+    },
+    "./bots/chatSettingsModel": {
+      "types": "./src/bots/chatSettingsModel.ts",
+      "import": "./src/bots/chatSettingsModel.ts"
+    },
     "./conversation/previewPrivacy": {
       "types": "./src/conversation/previewPrivacy.ts",
       "import": "./src/conversation/previewPrivacy.ts"

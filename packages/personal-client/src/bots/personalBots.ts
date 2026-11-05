@@ -8,6 +8,7 @@ import type {
   PersonalLoginRequest,
   PersonalMemoryCardsResult,
   PersonalMemoryRulesUsage,
+  PersonalMemoryTurnContext,
   PersonalProfile,
   PersonalPushInAppNotification,
   PersonalRoutineListResult,
@@ -331,6 +332,19 @@ export function createPersonalBotsClient<R, ER, P>(
     staleTimeMs: 10_000,
   });
 
+  /** One turn's memory: rules, notes and why they matched. Read only when opened. */
+  const personalMemoryTurnContext = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-memory:turn-context",
+    tag: WS_METHODS.personalMemoryTurnContext,
+    staleTimeMs: 30_000,
+    idleTtlMs: 5 * 60_000,
+  });
+
+  const personalMemoryFeedback = createEnvironmentRpcCommand(runtime, {
+    label: "personal-memory:feedback",
+    tag: WS_METHODS.personalMemoryFeedback,
+  });
+
   /**
    * Every secret a bot is waiting on. Polled: the server has no secret
    * subscription, and a request that lands while the chat is open still has to
@@ -619,6 +633,23 @@ export function createPersonalBotsClient<R, ER, P>(
     return client.useEnvironmentQuery(atom);
   }
 
+  function usePersonalMemoryTurnContext(
+    environmentId: EnvironmentId | null,
+    input: { readonly threadId: string; readonly messageId: string } | null,
+  ): EnvironmentQueryView<PersonalMemoryTurnContext | null> {
+    const atom = useMemo(
+      () =>
+        environmentId === null || input === null
+          ? null
+          : personalMemoryTurnContext({
+              environmentId,
+              input: { threadId: input.threadId as never, messageId: input.messageId as never },
+            }),
+      [environmentId, input],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
   function usePersonalPendingSecrets(
     environmentId: EnvironmentId | null,
   ): EnvironmentQueryView<PersonalSecretsListPendingResult> {
@@ -677,6 +708,9 @@ export function createPersonalBotsClient<R, ER, P>(
     personalMemoryCards,
     personalMemoryTidyDecide,
     personalMemoryRulesUsage,
+    personalMemoryTurnContext,
+    personalMemoryFeedback,
+    usePersonalMemoryTurnContext,
     usePersonalTasks,
     usePersonalRelatedTasks,
     usePersonalTaskDetail,

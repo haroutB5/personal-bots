@@ -3,7 +3,6 @@ import {
   initialSecretAccess,
   secretAccessChoice,
   secretAccessProblem,
-  type SecretAccessChoice,
   type SecretAccessState,
 } from "@hbots/personal-client/settings/secretAccess";
 import { IconCheck, IconX } from "@tabler/icons-react-native";
